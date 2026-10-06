@@ -97,6 +97,13 @@ export interface ForgeConfig {
   /** A header a trusted edge sets to the client's address (\`FORGE_CLIENT_IP_HEADER\`). */
   clientIpHeader?: string;
   /**
+   * How often this process holds what it has open against each account's
+   * standing in the database (\`http/caller.ts\`), so a suspension made by
+   * another process — a roll's other half — reaches it too.
+   * @default 5000
+   */
+  standingSweepMs?: number;
+  /**
    * The SSH listener's port, once it is up — `serveForgeSsh` writes the real
    * one back here when it was asked for an ephemeral port. Every surface that
    * shows an `ssh://` clone URL reads it from here, so there is one answer.

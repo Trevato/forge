@@ -660,7 +660,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
     (k) => k !== kind,
   );
 
-  const body = html`${repoHeader(ctx, repo, "app", { compact: true })}
+  const body = html`${repoHeader(ctx, repo, "runs", { compact: true })}
     <div class="mt">
       ${wordFilterBar(
         (word) => runsHref(base, kind, word),

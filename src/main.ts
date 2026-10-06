@@ -12,6 +12,7 @@ import { firstBoot } from "./spawn/first-boot.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
+import { drainStreams } from "./http/sse.ts";
 import { serve } from "./http/server.ts";
 import { runSync } from "./origins/sync.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
@@ -394,6 +395,9 @@ function shutdown(): void {
   if (draining) return;
   draining = true;
   health.draining = true;
+  // Streams end now, with a resume hint: their browsers reconnect to the
+  // process that replaced this one, not to this one while it finishes.
+  drainStreams();
   const sessions = ssh?.sessions() ?? 0;
   app.log.info("forge draining", { sshSessions: sessions });
   clearInterval(deliveryTimer);

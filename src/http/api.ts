@@ -108,6 +108,7 @@ import {
   deleteLabel,
   deleteRepo,
   deleteWebhook,
+  FORKS_PER_DAY,
   forkRepo,
   updateRepoSettings,
 } from "../actions/repos.ts";
@@ -241,7 +242,7 @@ import {
   removeFromCrew,
   updateAgent,
 } from "../actions/crew.ts";
-import { assignIssue } from "../actions/issues.ts";
+import { assignIssue, editIssue, TAKEN_UP } from "../actions/issues.ts";
 import { steerRepoRun } from "../actions/runs.ts";
 import {
   dependencyWords,
@@ -620,6 +621,34 @@ function originAware(error: string, status = 422): Response {
     );
   return respondAccess(error, status);
 }
+
+/**
+ * The words a PATCH on an issue or a pull brings: `title` and `body`, each
+ * a string when given. Anything else in those keys is a bad request.
+ */
+function textFrom(
+  input: Record<string, unknown>,
+): { title?: string; body?: string } | undefined {
+  const out: { title?: string; body?: string } = {};
+  for (const key of ["title", "body"] as const) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (typeof value !== "string") return undefined;
+    out[key] = value;
+  }
+  return out;
+}
+
+/** An edit refused because someone who directs the crew acted on the words. */
+const takenUp = () => apiError("taken_up", 403, TAKEN_UP);
+
+/** A PATCH that changes nothing it knows is a request with nothing in it. */
+const NOTHING_TO_CHANGE = () =>
+  apiError(
+    "nothing_to_change",
+    422,
+    "send a new title or body, a state, or both",
+  );
 
 /**
  * `reason` and `into` of a close request, or undefined when they are not
@@ -1612,7 +1641,10 @@ export function apiRoutes(router: Router<Handler>): void {
       parent,
       str(input.name) || undefined,
     );
-    if (!forked.ok) return respondAccess(forked.error, 422);
+    if (!forked.ok)
+      return forked.error === "limit"
+        ? apiError("limit", 429, `at most ${FORKS_PER_DAY} forks a day: try again tomorrow`)
+        : respondAccess(forked.error, 422);
     return json(forked.value, 201);
   });
 
@@ -2491,7 +2523,8 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadIssue(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
-      // Sealing is its own act, a writer's (`setIssueSealed`).
+      // Three acts a PATCH may carry, each its own authorization and each
+      // alone a whole request: sealing (a writer's), new words, a new state.
       let issue = found.issue;
       if (typeof input.sealed === "boolean") {
         const sealed = setIssueSealed(
@@ -2503,23 +2536,50 @@ export function apiRoutes(router: Router<Handler>): void {
         );
         if (!sealed.ok) return originAware(sealed.error, 409);
         issue = sealed.value;
-        if (input.state === undefined) return json(withLabels(ctx, issue));
       }
-      const wanted = str(input.state);
-      if (wanted !== "open" && wanted !== "closed")
+      const text = textFrom(input);
+      if (text === undefined) return json({ error: "invalid_text" }, 422);
+      const wanted = input.state === undefined ? undefined : str(input.state);
+      if (wanted !== undefined && wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
-      const closing = closingFrom(input);
-      if (closing === undefined) return json({ error: "invalid_reason" }, 422);
-      const changed = await setIssueStateThrough(
-        ctx.app,
-        ctx.auth.user,
-        found.repo,
-        issue,
-        wanted,
-        closing,
-      );
-      if (!changed.ok) return originAware(changed.error, 409);
-      return json(withLabels(ctx, changed.value));
+      if (
+        wanted === undefined &&
+        text.title === undefined &&
+        text.body === undefined
+      )
+        return typeof input.sealed === "boolean"
+          ? json(withLabels(ctx, issue))
+          : NOTHING_TO_CHANGE();
+      if (text.title !== undefined || text.body !== undefined) {
+        const edited = editIssue(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          issue,
+          text,
+        );
+        if (!edited.ok)
+          return edited.error === "taken_up"
+            ? takenUp()
+            : originAware(edited.error, 422);
+        issue = edited.value;
+      }
+      if (wanted !== undefined) {
+        const closing = closingFrom(input);
+        if (closing === undefined)
+          return json({ error: "invalid_reason" }, 422);
+        const changed = await setIssueStateThrough(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          issue,
+          wanted,
+          closing,
+        );
+        if (!changed.ok) return originAware(changed.error, 409);
+        issue = changed.value;
+      }
+      return json(withLabels(ctx, issue));
     },
   );
 
@@ -2625,17 +2685,41 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
-      const wanted = str(input.state);
-      if (wanted !== "open" && wanted !== "closed")
+      // The same two halves as an issue's PATCH: words, then state.
+      const text = textFrom(input);
+      if (text === undefined) return json({ error: "invalid_text" }, 422);
+      const wanted = input.state === undefined ? undefined : str(input.state);
+      if (wanted !== undefined && wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
-      const changed = await setIssueStateThrough(
-        ctx.app,
-        ctx.auth.user,
-        found.repo,
-        found.pull,
-        wanted,
-      );
-      if (!changed.ok) return originAware(changed.error, 409);
+      if (
+        wanted === undefined &&
+        text.title === undefined &&
+        text.body === undefined
+      )
+        return NOTHING_TO_CHANGE();
+      if (text.title !== undefined || text.body !== undefined) {
+        const edited = editIssue(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          found.pull,
+          text,
+        );
+        if (!edited.ok)
+          return edited.error === "taken_up"
+            ? takenUp()
+            : originAware(edited.error, 422);
+      }
+      if (wanted !== undefined) {
+        const changed = await setIssueStateThrough(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          getPull(ctx.app.db, found.repo.id, found.pull.number)!,
+          wanted,
+        );
+        if (!changed.ok) return originAware(changed.error, 409);
+      }
       return json(
         withLabels(ctx, getPull(ctx.app.db, found.repo.id, found.pull.number)!),
       );

@@ -756,13 +756,13 @@ describe("origins on the web", () => {
     expect(studioHtml).toContain(`${originServers.url}/octo/widgets`);
     expect(studioHtml).toContain("synced");
 
-    // `?mode=dev` on the same address is unaffected: same dots, same words.
+    // An old dev cookie changes nothing (#603): the same one line. dev's
+    // three-place strip is the code's, on the Files step.
     const devHtml = await (
       await asUser(`${alice}; forge_mode=dev`, "/alice/widgets")
     ).text();
-    expect(devHtml).toContain('class="where"');
-    expect(devHtml).toContain("workbench");
-    expect(devHtml).toContain("this machine");
+    expect(devHtml).not.toContain('class="where"');
+    expect(devHtml).toContain("synced");
   });
 
   test("disconnecting is confirmed on a page that says what it costs", async () => {

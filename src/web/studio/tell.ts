@@ -3,10 +3,11 @@
  * answers three questions — who has it, what it is waiting on, and what the
  * crew has done with it. Where it stands is `tellWord`, which every studio
  * list of tells reads too, so a tell says the same thing in a row as it does
- * on its own page. Nothing a dev-mode reader needs (labels, milestones, the
- * dependency form) belongs here; `?mode=dev` reads that page, unchanged.
+ * on its own page. The bookkeeping of a plain issue (labels, milestones,
+ * the dependency form) does not belong here.
  */
 
+import { mayEditIssue } from "../../actions/issues.ts";
 import { threadNote } from "../../crew/direct.ts";
 import type { Database } from "bun:sqlite";
 import { appsRuntime } from "../../apps/runtime.ts";
@@ -232,8 +233,7 @@ async function tellClosingPull(
 
 /**
  * GET /:owner/:name/issues/:number and /tells/:number: one page, two
- * addresses, for every repository and every viewer — `?mode=dev` and the
- * mode cookie change nothing. Same `threadContext` at both, so a reader who
+ * addresses, for every repository and every viewer. Same `threadContext` at both, so a reader who
  * may not see it gets the forge's not-found at either.
  */
 export async function tellPage(ctx: Ctx): Promise<Response> {
@@ -330,7 +330,13 @@ async function studioTell(
     </div>
   </div>`;
 
-  const talk = conversation(ctx, repo, issue, { openVerb: "opened this" });
+  const talk = conversation(ctx, repo, issue, {
+    openVerb: "opened this",
+    editAction:
+      mayEditIssue(ctx.app, repo, issue, user).ok && repo.origin === null
+        ? `${repoBase(repo)}/issues/${issue.number}/edit`
+        : undefined,
+  });
   const applied = labelsFor(db, issue.id);
   const allLabels = listLabels(db, repo.id);
   // Closed until asked for: neither is the next thing a person does here,

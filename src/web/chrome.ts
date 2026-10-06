@@ -8,7 +8,9 @@
  * `ui.ts` may not. That is the line between the two files.
  */
 
+import { sshCommand } from "../ssh/command.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
+import { mayReadRuns } from "../actions/runs.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { edgeLoginUrl } from "../http/edge.ts";
 import {
@@ -16,7 +18,6 @@ import {
   canRead,
   forkParentFor,
   getRepo,
-  getRepoById,
   visibleForks,
 } from "../core/repos.ts";
 import type { Repo } from "../core/repos.ts";
@@ -106,6 +107,7 @@ export type RepoTab =
   | "commits"
   | "branches"
   | "app"
+  | "runs"
   | "settings";
 
 export interface RepoHeaderOptions {
@@ -165,9 +167,9 @@ export function scopeHeader(
 
   const isApp =
     repo !== undefined && getAppByRepo(ctx.app.db, repo.id) !== undefined;
-  // The studio's tabs for an app: the app itself first, then the map, what
-  // was told and every change. Code, commits and branches are dev mode's.
-  const studio = ctx.mode === "studio" && isApp;
+  // An app speaks the studio's words (told, changes), a plain repository
+  // git's (issues, pulls, commits, branches) — for every viewer (#603).
+  const studio = isApp;
   // An app's home is the app, for every viewer, and its code is the Files
   // step one tab over (`repoFiles`); any other repository's home is its code.
   const items: TabItem[] = [
@@ -197,8 +199,8 @@ export function scopeHeader(
           },
         ]),
     {
-      // Studio names its own lists — told, not issues; dev's tabs are
-      // unchanged in dev mode and on a repository that is not an app.
+      // Studio names its own lists — told, not issues; a repository that is
+      // not an app keeps git's words.
       label: studio ? "Told" : "Issues",
       href: studio ? tellsHref(base) : `${base}/issues`,
       icon: studio ? "clock" : "issue",
@@ -262,6 +264,24 @@ export function scopeHeader(
         shortcut: "g f",
       });
   }
+  // The depth row's last two steps (#603): the runs, for who may read them
+  // (`mayReadRuns`: a private app's are for those who may enter it), and
+  // how to open the terminal (the TUI over SSH) for whoever has keys. A
+  // repository only browsed from elsewhere has no runs here.
+  if (repo !== undefined && mayReadRuns(ctx.app, ctx.auth.user, repo))
+    items.push({
+      label: "Runs",
+      href: `${base}/runs`,
+      icon: "activity",
+      current: active === "runs",
+      shortcut: "g r",
+    });
+  if (ctx.auth.user !== undefined && sshCommand(ctx.app) !== undefined)
+    items.push({
+      label: "Terminal",
+      href: "/settings/keys#terminal",
+      icon: "command",
+    });
   if (admin)
     items.push({
       label: "Settings",
@@ -339,7 +359,7 @@ export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
   const base = repoBase(repo);
   const name = `${repo.ownerName}/${repo.name}`;
   const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
-  const studio = ctx.mode === "studio" && isApp;
+  const studio = isApp;
   if (studio) {
     return [
       { t: `${name} — Studio`, h: base, c: "This repo" },
@@ -352,7 +372,9 @@ export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
       ...(mayDirectCrew(ctx.app.db, repo, ctx.auth.user)
         ? [{ t: `${name} — Tell the crew`, h: `${base}#tell`, c: "This repo" }]
         : []),
-      { t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" },
+      ...(mayReadRuns(ctx.app, ctx.auth.user, repo)
+        ? [{ t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" }]
+        : []),
       { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
     ];
   }
@@ -363,7 +385,9 @@ export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
     { t: `${name} — Pull requests`, h: `${base}/pulls`, c: "This repo" },
     { t: `${name} — Commits`, h: `${base}/commits`, c: "This repo" },
     { t: `${name} — New issue`, h: `${base}/issues/new`, c: "This repo" },
-    { t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" },
+    ...(mayReadRuns(ctx.app, ctx.auth.user, repo)
+      ? [{ t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" }]
+      : []),
     { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
   ];
 }
