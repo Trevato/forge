@@ -137,6 +137,12 @@ export interface CreateUserInput {
    * @default false
    */
   allowReserved?: boolean;
+  /**
+   * The account naming this one, whose own name does not count against it:
+   * an admin's everyday account may carry the admin's handle ("ada-me").
+   * Every other protected name still does.
+   */
+  reservedSelf?: string;
 }
 
 export async function createUser(
@@ -166,7 +172,7 @@ export async function createUser(
   if (
     !agent &&
     input.allowReserved !== true &&
-    reservedName(db, input.username) !== undefined
+    reservedName(db, input.username, input.reservedSelf) !== undefined
   )
     return err("username_reserved");
 

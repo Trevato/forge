@@ -177,6 +177,17 @@ describe("the claim link in the fragment, and its re-issue", () => {
     });
     expect(old.status).toBe(404);
     expect(getUserByName(child.db, "old")).toBeUndefined();
+    // A reserved name is refused for what it is (#720), and the link is
+    // not spent by the refusal.
+    const reserved = await claim({
+      token: tokenOf(second),
+      username: "admin",
+      email: "admin@x.test",
+      password: PASSWORD,
+    });
+    expect(reserved.status).toBe(422);
+    expect(await reserved.text()).toContain("That name is reserved.");
+    expect(getUserByName(child.db, "admin")).toBeUndefined();
     const ok = await claim({
       token: tokenOf(second),
       username: "maria-owner",
