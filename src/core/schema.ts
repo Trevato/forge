@@ -1399,5 +1399,9 @@ export const migrations: readonly string[] = [
   // a writer unseals it (`core/sealed.ts`).
   `
   ALTER TABLE issue ADD COLUMN sealed INTEGER NOT NULL DEFAULT 0;
+  -- The crew works a sealed report in a private repository of its own,
+  -- read by the base's writers and crew only, so the fix is never in the
+  -- base's git or a public fork's before it merges.
+  ALTER TABLE repo ADD COLUMN sealed_for TEXT REFERENCES repo(id) ON DELETE CASCADE;
   `,
 ];

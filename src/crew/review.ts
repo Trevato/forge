@@ -20,7 +20,7 @@ import type { App } from "../app.ts";
 import { listCrewRoles, type Agent } from "../core/agents.ts";
 import { getHold, lastRelease } from "../core/holds.ts";
 import { getIssueById } from "../core/issues.ts";
-import { listPulls, pullDiff, type Pull } from "../core/pulls.ts";
+import { listPulls, pullDiff, type Pull, pullDir} from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { reviewSummary } from "../core/reviews.ts";
 import { checksForHead } from "../core/runs.ts";
@@ -166,7 +166,7 @@ export async function sendToReview(
   const issue = getIssueById(app.db, pull.id);
   if (!issue) return "wait";
   const { diff } = await pullDiff(
-    repoDir(app.reposRoot, repo.ownerName, repo.name),
+    await pullDir(app.db, app.reposRoot, repo, pull),
     pull,
   );
   const reviewer = pickReviewer(

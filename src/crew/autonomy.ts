@@ -55,6 +55,7 @@ import {
   listPulls,
   type MergePullError,
   type Pull,
+  pullDir,
 } from "../core/pulls.ts";
 import {
   getRepoById,
@@ -1047,7 +1048,8 @@ export async function landIfGreen(
   // up to date, before anyone is asked whether it should land. A conflict
   // is remembered by the two tips it was between: until one of them moves
   // there is nothing new to try.
-  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  // Asked where the pull's objects are: a sealed one's own place (`pullDir`).
+  const dir = await pullDir(app.db, app.reposRoot, repo, pull);
   const baseTip =
     (await resolveOid(dir, `refs/heads/${pull.baseBranch}`)) ?? "";
   const between = `${pull.headOid}:${baseTip}`;

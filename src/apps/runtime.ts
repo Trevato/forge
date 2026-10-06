@@ -13,6 +13,7 @@
  * commit, once.
  */
 
+import { pullDir, runDir } from "../core/pulls.ts";
 import { accountActive } from "../core/accounts.ts";
 import { sshCommand } from "../ssh/command.ts";
 import { appHostSuffix } from "./host.ts";
@@ -667,7 +668,7 @@ export class AppsRuntime {
       const env = previewEnv(pull.number);
       open.add(env);
       if (only === "production") continue;
-      const head = await this.pullHead(dir, pull);
+      const head = await this.pullHead(repo, pull);
       if (head === undefined) continue;
       // A preview the forge built in an earlier life comes back asleep, not
       // deployed: nobody is looking at it this second, and the first who
@@ -710,7 +711,8 @@ export class AppsRuntime {
     }
   }
 
-  private async pullHead(dir: string, pull: Pull): Promise<string | undefined> {
+  private async pullHead(repo: Repo, pull: Pull): Promise<string | undefined> {
+    const dir = await pullDir(this.app.db, this.app.reposRoot, repo, pull);
     const ref = pull.crossRepo
       ? `refs/pull/${pull.number}/head`
       : `refs/heads/${pull.headBranch}`;
@@ -799,7 +801,7 @@ export class AppsRuntime {
       case "pull.reopened": {
         const pull = this.pullFromEvent(repo, event);
         if (!pull) return;
-        const head = await this.pullHead(dir, pull);
+        const head = await this.pullHead(repo, pull);
         if (head !== undefined)
           this.requestDeploy(
             record,
@@ -832,7 +834,7 @@ export class AppsRuntime {
         if (event.payload["state"] !== "approved") return;
         const pull = this.pullFromEvent(repo, event);
         if (!pull || pull.state !== "open") return;
-        const head = await this.pullHead(dir, pull);
+        const head = await this.pullHead(repo, pull);
         if (head !== undefined)
           this.requestDeploy(
             record,
@@ -1129,7 +1131,8 @@ export class AppsRuntime {
     | { ok: true; value: Live; tested: Promise<Result<void, string>> }
     | { ok: false; error: string }
   > {
-    const bare = repoDir(this.app.reposRoot, repo.ownerName, repo.name);
+    // A sealed pull's preview is built from where its work is (`pullDir`).
+    const bare = await runDir(this.app.db, this.app.reposRoot, repo, run.issueId);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, run.commitOid, "forge.json"),
       readFileAt(bare, run.commitOid, "package.json"),

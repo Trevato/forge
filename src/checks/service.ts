@@ -11,6 +11,7 @@
  * is that command's business.
  */
 
+import { pullDir, runDir } from "../core/pulls.ts";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -180,7 +181,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       });
       return undefined;
     }
-    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    // A sealed pull's commit is where its work is, never in the base (`pullDir`).
+    const bare = await runDir(app.db, app.reposRoot, repo, issueId);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, commitOid, "forge.json"),
       readFileAt(bare, commitOid, "package.json"),
@@ -350,7 +352,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     | { ok: true }
     | { ok: false; error: string; detail?: CheckDetail | undefined }
   > {
-    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const bare = await runDir(app.db, app.reposRoot, repo, run.issueId);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, run.commitOid, "forge.json"),
       readFileAt(bare, run.commitOid, "package.json"),
@@ -573,7 +575,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   }
 
   async function headOf(repo: Repo, pull: Pull): Promise<string | undefined> {
-    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const dir = await pullDir(app.db, app.reposRoot, repo, pull);
     const ref = pull.crossRepo
       ? `refs/pull/${pull.number}/head`
       : `refs/heads/${pull.headBranch}`;

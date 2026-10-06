@@ -138,7 +138,13 @@ import {
   type Permission,
   type Team,
 } from "../core/orgs.ts";
-import { getPull, listPulls, pullDiff, type Pull } from "../core/pulls.ts";
+import {
+  getPull,
+  listPulls,
+  pullDiff,
+  pullDir,
+  type Pull,
+} from "../core/pulls.ts";
 import {
   canAdmin,
   canRead,
@@ -879,8 +885,12 @@ async function pullHeadOid(ctx: Ctx, repo: Repo, pull: Pull): Promise<string> {
   const ref = pull.crossRepo
     ? `refs/pull/${pull.number}/head`
     : `refs/heads/${pull.headBranch}`;
-  return (await resolveOid(dirOf(ctx, repo), ref)) ?? pull.headOid;
+  return (await resolveOid(await pullDirOf(ctx, repo, pull), ref)) ?? pull.headOid;
 }
+
+/** Where a pull's objects are (`pullDir`): its base, or a sealed one's own place. */
+const pullDirOf = (ctx: Ctx, repo: Repo, pull: Pull): Promise<string> =>
+  pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull);
 
 function positiveInt(raw: string | undefined): number | undefined {
   const n = Number(raw);
@@ -2438,7 +2448,7 @@ export function apiRoutes(router: Router<Handler>): void {
     // a second round trip, and the review gate beside it so a client knows
     // whether merging is even on offer.
     const { status, diff } = await pullDiff(
-      dirOf(ctx, found.repo),
+      await pullDirOf(ctx, found.repo, found.pull),
       found.pull,
       { db: ctx.app.db, requireReview: found.repo.requireReview },
     );
@@ -2576,7 +2586,10 @@ export function apiRoutes(router: Router<Handler>): void {
     async (ctx) => {
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      const { diff } = await pullDiff(dirOf(ctx, found.repo), found.pull);
+      const { diff } = await pullDiff(
+        await pullDirOf(ctx, found.repo, found.pull),
+        found.pull,
+      );
       return json(
         withOutdated(
           readerMarked(

@@ -103,6 +103,12 @@ export interface Repo {
   readonly directionIssueId: string | null;
   /** The repo this was forked from, or null. */
   readonly forkParentId: string | null;
+  /**
+   * The repository whose sealed reports this one holds the work for
+   * (`core/sealed.ts`): a private repository its owner's crew pushes to,
+   * read only by the base's writers and crew. Null for every other one.
+   */
+  readonly sealedFor: string | null;
   /** The origin this mirrors, or null for a native repo. */
   readonly origin: RepoOrigin | null;
   /**
@@ -132,6 +138,7 @@ interface RepoRow {
   crew_outsiders: number;
   direction_issue_id: string | null;
   fork_parent_id: string | null;
+  sealed_for: string | null;
   origin_id: string | null;
   origin_kind: "github" | "forgejo" | "gitea" | null;
   origin_full_name: string | null;
@@ -167,6 +174,7 @@ function toRepo(row: RepoRow): Repo {
     crewOutsiders: row.crew_outsiders === 1,
     directionIssueId: row.direction_issue_id,
     forkParentId: row.fork_parent_id,
+    sealedFor: row.sealed_for,
     origin:
       row.origin_id !== null && row.origin_kind !== null
         ? {
@@ -315,8 +323,14 @@ export async function forkRepo(
   parent: Repo,
   ownerId: string,
   name?: string,
+  /**
+   * The private repository the owner works the parent's sealed reports in
+   * (`sealed.ts`): private whatever the parent is, no fork in the graph,
+   * read by the parent's writers and crew. One per owner and parent.
+   */
+  sealed = false,
 ): Promise<Result<Repo, ForkRepoError>> {
-  const forkName = name ?? parent.name;
+  const forkName = name ?? (sealed ? `${parent.name}-sealed` : parent.name);
   if (!isSafeName(forkName)) return err("invalid_name");
   const owner = db
     .query<
@@ -330,7 +344,11 @@ export async function forkRepo(
   // comes first so a re-fork reports "already_forked", not "name_taken".
   if (
     db
-      .query("SELECT 1 FROM repo WHERE owner_id = ?1 AND fork_parent_id = ?2")
+      .query(
+        sealed
+          ? "SELECT 1 FROM repo WHERE owner_id = ?1 AND sealed_for = ?2"
+          : "SELECT 1 FROM repo WHERE owner_id = ?1 AND fork_parent_id = ?2",
+      )
       .get(ownerId, parent.id)
   ) {
     return err("already_forked");
@@ -355,17 +373,18 @@ export async function forkRepo(
   rowOrUndo(forkDir, () =>
     db
       .query(
-        `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+        `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id, sealed_for)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
       )
       .run(
         repoId,
         ownerId,
         forkName,
-        parent.visibility,
+        sealed ? "private" : parent.visibility,
         parent.description,
         parent.defaultBranch,
-        parent.id,
+        sealed ? null : parent.id,
+        sealed ? parent.id : null,
       ),
   );
   return ok(getRepoById(db, repoId)!);
@@ -383,6 +402,20 @@ function rowOrUndo(dir: string, insert: () => unknown): void {
     rmSync(dir, { recursive: true, force: true });
     throw error;
   }
+}
+
+/** The private repository `ownerId` works `baseId`'s sealed reports in, if any. */
+export function getSealedFork(
+  db: Database,
+  ownerId: string,
+  baseId: string,
+): Repo | undefined {
+  const row = db
+    .query<RepoRow, [string, string]>(
+      `${SELECT} WHERE repo.owner_id = ?1 AND repo.sealed_for = ?2`,
+    )
+    .get(ownerId, baseId);
+  return row ? toRepo(row) : undefined;
 }
 
 /** Repos forked directly from this one. */
@@ -680,6 +713,15 @@ export function canRead(
   if (repo.visibility === "public") return true;
   if (personalOrDirect(repo, user)) return true;
   if (onCrew(db, repo, user)) return true;
+  // The work on a sealed report is read by whoever may see the report on
+  // its base: the base's writers and crew, and nobody else (`sealed.ts`).
+  if (repo.sealedFor !== null) {
+    const base = getRepoById(db, repo.sealedFor);
+    return (
+      base !== undefined &&
+      (canWrite(db, base, user) || onCrew(db, base, user))
+    );
+  }
   return accessAllows(orgAccessFor(db, repo, user), "read");
 }
 

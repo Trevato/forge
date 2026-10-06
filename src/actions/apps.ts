@@ -6,6 +6,7 @@
  * the repository may look at it and open its environments.
  */
 
+import { pullDir } from "../core/pulls.ts";
 import { getIssue } from "../core/issues.ts";
 import { mayView } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
@@ -596,7 +597,8 @@ async function commitFor(
   const ref = pull.crossRepo
     ? `refs/pull/${pull.number}/head`
     : `refs/heads/${pull.headBranch}`;
-  return (await resolveOid(dir, ref)) ?? (pull.headOid || undefined);
+  const at = await pullDir(app.db, app.reposRoot, repo, pull);
+  return (await resolveOid(at, ref)) ?? (pull.headOid || undefined);
 }
 
 export { previewEnv };
