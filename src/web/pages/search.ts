@@ -14,7 +14,7 @@ import { search } from "../../actions/search.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getPull } from "../../core/pulls.ts";
-import { canEnterApp, canWrite, getRepo, getRepoById } from "../../core/repos.ts";
+import { canWrite, enterableApps, getRepo } from "../../core/repos.ts";
 import {
   cleanQuery,
   searchKind,
@@ -62,6 +62,8 @@ interface Asked {
 interface Apps {
   readonly byId: ReadonlyMap<string, AppRecord>;
   readonly names: ReadonlySet<string>;
+  /** The app ids the viewer may enter (`enterableApps`), read once for the page. */
+  readonly enterable: ReadonlySet<string>;
 }
 
 const privateBadge = (yes: boolean): Html =>
@@ -73,16 +75,10 @@ const privateBadge = (yes: boolean): Html =>
  * be a guess dressed as a fact. */
 function appState(
   ctx: Ctx,
+  apps: Apps,
   record: AppRecord,
 ): { tone: Tone; word: string } | undefined {
-  if (record.access === "private") {
-    const repo = getRepoById(ctx.app.db, record.repoId);
-    if (
-      repo === undefined ||
-      !canEnterApp(ctx.app.db, repo, record, ctx.auth.user, { named: false })
-    )
-      return undefined;
-  }
+  if (!apps.enterable.has(record.id)) return undefined;
   const envs = envsFor(ctx.app, ctx.auth.user, record);
   const state = envs.find((e) => e.env === "production")?.state ?? "stopped";
   const tone: Tone =
@@ -112,7 +108,7 @@ function repoHitRow(ctx: Ctx, apps: Apps, hit: RepoHit): Html {
     const record = apps.byId.get(hit.id);
     // A private app's state is its writers' and crew's (`appState`): anyone
     // else gets the counts a plain repository shows.
-    const live = record === undefined ? undefined : appState(ctx, record);
+    const live = record === undefined ? undefined : appState(ctx, apps, record);
     return row({
       href: `/${name}`,
       nav: true,
@@ -370,6 +366,15 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   const apps: Apps = {
     byId: seen.records,
     names: new Set(seen.repos.map((r) => `${r.ownerName}/${r.name}`)),
+    enterable: enterableApps(
+      ctx.app.db,
+      seen.repos.flatMap((repo) => {
+        const app = seen.records.get(repo.id);
+        return app === undefined ? [] : [{ repo, app }];
+      }),
+      ctx.auth.user,
+      { named: false },
+    ),
   };
 
   const chips = seg(
