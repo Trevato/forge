@@ -327,7 +327,7 @@ async function studioTell(
   const talk = conversation(ctx, repo, issue, {
     openVerb: "opened this",
     editAction:
-      mayEditIssue(ctx.app, repo, issue, user) && repo.origin === null
+      mayEditIssue(ctx.app, repo, issue, user).ok && repo.origin === null
         ? `${repoBase(repo)}/issues/${issue.number}/edit`
         : undefined,
   });

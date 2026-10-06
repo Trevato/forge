@@ -12,7 +12,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { editIssue, openIssue } from "../src/actions/issues.ts";
+import {
+  assignIssue,
+  editIssue,
+  openIssue,
+  TAKEN_UP,
+} from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
@@ -20,6 +25,7 @@ import { listEvents } from "../src/core/events.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getPull, openPullsClosing, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { submitReview } from "../src/core/reviews.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -442,5 +448,160 @@ describe("new words for an issue or a pull", () => {
     // A stranger sees neither.
     const anonymous = await page(change);
     expect(anonymous).not.toContain('id="edit"');
+  });
+  test("an author who cannot direct the crew edits an issue only until a writer adopts it", async () => {
+    // Bob reads the garden and may not direct its crew. His suggestion is
+    // his to reword while nobody who directs the crew has acted on it.
+    const made = openIssue(app, bob, repo, {
+      title: "Plant tulips",
+      body: "By the gate.",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const tulips = made.value;
+    const path = `/alice/garden/issues/${tulips.number}`;
+    expect(
+      (await patch(tokens["bob"]!, path, { body: "By the gate, in rows." }))
+        .status,
+    ).toBe(200);
+    expect(words(tulips).body).toBe("By the gate, in rows.");
+    const his = await signIn("bob");
+    expect(await page(path, his)).toContain(`action="${path}/edit"`);
+
+    // Alice adopts it: it is the crew's work now, as she read it.
+    expect(assignIssue(app, alice, repo, tulips, bot).ok).toBe(true);
+    const refused = await patch(tokens["bob"]!, path, {
+      body: "Dig up the roses instead.",
+    });
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as any).error).toBe("taken_up");
+    expect(
+      (
+        await mcp(tokens["bob"]!, {
+          repo: "alice/garden",
+          number: tulips.number,
+          body: "x",
+        })
+      ).error,
+    ).toContain(TAKEN_UP);
+    expect(
+      (await form(`${path}/edit`, his, { title: "Roses", body: "x" })).status,
+    ).toBe(303);
+    expect(editIssue(app, bob, repo, tulips, { body: "x" })).toEqual({
+      ok: false,
+      error: "taken_up",
+    });
+    expect(words(tulips).body).toBe("By the gate, in rows.");
+    expect(await page(path, his)).not.toContain('id="edit"');
+    // The writer still may.
+    expect(
+      (
+        await patch(tokens["alice"]!, path, {
+          title: "Plant tulips by the gate",
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  test("an agent edits its own pull only until a person approved it", async () => {
+    const path = `/alice/garden/pulls/${pull.number}`;
+    expect(
+      (
+        await patch(tokens["bot"]!, path, {
+          body: `Closes #${asked.number}\n\nBefore the approval.`,
+        })
+      ).status,
+    ).toBe(200);
+    // The crew's own reviewer approving is not a person's word on it.
+    const quill = await createAgent(app, alice, { username: "quill" });
+    if (!quill.ok) throw new Error(String(quill.error));
+    expect(
+      submitReview(app.db, {
+        issueId: pull.id,
+        authorId: quill.value.user.id,
+        state: "approved",
+        commitOid: pull.headOid,
+      }).ok,
+    ).toBe(true);
+    expect(
+      (
+        await patch(tokens["bot"]!, path, {
+          body: `Closes #${asked.number}\n\nStill before a person's.`,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      submitReview(app.db, {
+        issueId: pull.id,
+        authorId: alice.id,
+        state: "approved",
+        commitOid: pull.headOid,
+      }).ok,
+    ).toBe(true);
+    const refused = await patch(tokens["bot"]!, path, {
+      body: "Closes #2\n\nAfter.",
+    });
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as any).error).toBe("taken_up");
+    expect(words(pull).body).toEndWith("Still before a person's.");
+    // A person who writes still may.
+    expect(
+      (
+        await patch(tokens["alice"]!, path, {
+          title: "Water the beds, approved",
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  test("an outside contributor edits a pull only until a writer reviews it", async () => {
+    await commitToBranch(app, alice, repo, {
+      branch: "bob/tulips",
+      base: "main",
+      message: "tulips",
+      files: [{ path: "tulips.md", content: "red\n" }],
+    });
+    const opened = await openPull(app, bob, repo, {
+      title: "Tulips",
+      body: "Red ones.",
+      baseBranch: "main",
+      headBranch: "bob/tulips",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const theirs = opened.value;
+    const path = `/alice/garden/pulls/${theirs.number}`;
+    expect(
+      (await patch(tokens["bob"]!, path, { body: "Red ones, by the gate." }))
+        .status,
+    ).toBe(200);
+
+    // Alice approved what she read; a new "Closes #N" under it is not his to add.
+    const reviewed = submitReview(app.db, {
+      issueId: theirs.id,
+      authorId: alice.id,
+      state: "approved",
+      commitOid: theirs.headOid,
+    });
+    expect(reviewed.ok).toBe(true);
+    const refused = await patch(tokens["bob"]!, path, {
+      body: `Closes #${asked.number}\n\nRed ones, by the gate.`,
+    });
+    expect(refused.status).toBe(403);
+    expect(((await refused.json()) as any).error).toBe("taken_up");
+    expect(editIssue(app, bob, repo, theirs, { title: "Roses" })).toEqual({
+      ok: false,
+      error: "taken_up",
+    });
+    expect(words(theirs)).toEqual({
+      title: "Tulips",
+      body: "Red ones, by the gate.",
+    });
+    expect(openPullsClosing(app.db, repo.id).get(asked.number)?.id).not.toBe(
+      theirs.id,
+    );
+    // The writer still may.
+    expect(
+      (await patch(tokens["alice"]!, path, { title: "Tulips by the gate" }))
+        .status,
+    ).toBe(200);
   });
 });

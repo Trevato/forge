@@ -765,7 +765,9 @@ export async function wordsSubmit(
       originError(edited.error) ??
       (edited.error === "forbidden" || edited.error === "unauthorized"
         ? "Only the author or someone with write access can edit this."
-        : edited.error === "empty_title"
+        : edited.error === "taken_up"
+          ? "A writer has taken this up: comment instead."
+          : edited.error === "empty_title"
           ? "A title is needed."
           : edited.error === "title_too_long"
             ? `A title is at most ${MAX_TITLE} characters.`

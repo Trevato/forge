@@ -19,7 +19,11 @@
 
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
-import { addCommentThrough, editIssue } from "../actions/issues.ts";
+import {
+  addCommentThrough,
+  editIssue,
+  TAKEN_UP,
+} from "../actions/issues.ts";
 import {
   dependencyWords,
   linkIssue,
@@ -363,7 +367,9 @@ const TOOLS: readonly Tool[] = [
           edited.error,
           edited.error === "forbidden"
             ? "only the author, or a person who writes here, edits this"
-            : edited.error === "nothing_to_change"
+            : edited.error === "taken_up"
+              ? TAKEN_UP
+              : edited.error === "nothing_to_change"
               ? "send a title, a body, or both"
               : "that could not be changed",
         );

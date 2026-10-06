@@ -231,7 +231,7 @@ import {
   removeFromCrew,
   updateAgent,
 } from "../actions/crew.ts";
-import { assignIssue, editIssue } from "../actions/issues.ts";
+import { assignIssue, editIssue, TAKEN_UP } from "../actions/issues.ts";
 import { steerRepoRun } from "../actions/runs.ts";
 import {
   dependencyWords,
@@ -627,6 +627,9 @@ function textFrom(
   }
   return out;
 }
+
+/** An edit refused because someone who directs the crew acted on the words. */
+const takenUp = () => apiError("taken_up", 403, TAKEN_UP);
 
 /** A PATCH that changes nothing it knows is a request with nothing in it. */
 const NOTHING_TO_CHANGE = () =>
@@ -2466,7 +2469,10 @@ export function apiRoutes(router: Router<Handler>): void {
           issue,
           text,
         );
-        if (!edited.ok) return originAware(edited.error, 422);
+        if (!edited.ok)
+          return edited.error === "taken_up"
+            ? takenUp()
+            : originAware(edited.error, 422);
         issue = edited.value;
       }
       if (wanted !== undefined) {
@@ -2604,7 +2610,10 @@ export function apiRoutes(router: Router<Handler>): void {
           found.pull,
           text,
         );
-        if (!edited.ok) return originAware(edited.error, 422);
+        if (!edited.ok)
+          return edited.error === "taken_up"
+            ? takenUp()
+            : originAware(edited.error, 422);
       }
       if (wanted !== undefined) {
         const changed = await setIssueStateThrough(

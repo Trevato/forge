@@ -46,9 +46,11 @@ import {
 import { isStructural, pillarsOf } from "../core/pillars.ts";
 import { getPull } from "../core/pulls.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
-import type { User } from "../core/users.ts";
+import { getUserById, type User } from "../core/users.ts";
+import { mayDirectCrew, unadoptedAmong } from "../crew/direct.ts";
 import { laterGate } from "../crew/later.ts";
 import { handedOverAt } from "../crew/parks.ts";
+import { listReviews } from "../core/reviews.ts";
 import {
   applyLabelNames,
   commentByRemoteId,
@@ -105,23 +107,60 @@ export type EditError =
   | MirrorError
   | TitleError
   | "body_too_long"
-  | "nothing_to_change";
+  | "nothing_to_change"
+  | "taken_up";
+
+/** The sentence a refused author reads: someone who directs the crew acted. */
+export const TAKEN_UP = "a writer has taken this up: comment instead";
 
 /**
- * Whose words these are to change: the author's, or a person's who writes
- * the repository. The pages ask this before offering the form, so nobody
- * is shown one the server would refuse. A mirror is refused separately,
- * with its own words.
+ * Whose words these are to change, and the one word why not.
+ *
+ * A person who writes the repository may change anyone's. The author may
+ * change their own — while they are still only theirs. Someone who may
+ * not direct the crew (a reader on a public repository, an outside
+ * contributor) keeps that right only until a person who writes has acted
+ * on the words: adopted the issue (assigned it, or linked it into the map),
+ * or reviewed the pull. After that the words are what was adopted or
+ * reviewed, and a rewrite would put new work in the crew's hands, or a new
+ * `Closes #N` under an approval, with nobody who directs the crew having
+ * seen it (#619). They comment instead. An agent edits only what it wrote,
+ * and its own pull only until a person approved it: what the merge closes
+ * is what the approval saw.
+ *
+ * The pages ask this before offering the form, so nobody is shown one the
+ * server would refuse. A mirror is refused separately, with its own words.
  */
 export function mayEditIssue(
   app: App,
   repo: Repo,
   issue: Issue,
   user: User | undefined,
-): boolean {
-  if (user === undefined || !canRead(app.db, repo, user)) return false;
-  if (user.id === issue.authorId) return true;
-  return user.kind !== "agent" && canWrite(app.db, repo, user);
+): Result<true, "forbidden" | "taken_up"> {
+  if (user === undefined || !canRead(app.db, repo, user))
+    return err("forbidden");
+  if (user.id !== issue.authorId)
+    return user.kind !== "agent" && canWrite(app.db, repo, user)
+      ? ok(true)
+      : err("forbidden");
+  // Asked of the row as it is now, not as the caller last read it: an
+  // assignment or a review made since is what this clock turns on.
+  const now = getIssueById(app.db, issue.id) ?? issue;
+  if (user.kind === "agent") {
+    if (now.kind === "issue") return ok(true);
+    const approved = listReviews(app.db, now.id).some(
+      (r) =>
+        r.state === "approved" &&
+        getUserById(app.db, r.authorId)?.kind === "user",
+    );
+    return approved ? err("taken_up") : ok(true);
+  }
+  if (mayDirectCrew(app.db, repo, user)) return ok(true);
+  const untouched =
+    now.kind === "pull"
+      ? listReviews(app.db, now.id).length === 0
+      : unadoptedAmong(app.db, repo, [now]).has(now.id);
+  return untouched ? ok(true) : err("taken_up");
 }
 
 /**
@@ -147,7 +186,8 @@ export function editIssue(
   const user = requireParticipant(app, actor, repo);
   if (!user.ok) return user;
   if (issue.repoId !== repo.id) return err("not_found");
-  if (!mayEditIssue(app, repo, issue, user.value)) return err("forbidden");
+  const may = mayEditIssue(app, repo, issue, user.value);
+  if (!may.ok) return may;
   if (isMirror(app, repo)) return err("mirrored");
   if (input.title === undefined && input.body === undefined)
     return err("nothing_to_change");

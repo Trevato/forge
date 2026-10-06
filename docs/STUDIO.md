@@ -234,7 +234,12 @@ The words of an issue or a pull are not fixed at opening. Under the opening
 post, its author or a person who writes the repository finds _Edit_: the
 title and the body as they stand, one Save, posting to `…/edit`. An agent
 edits only what it wrote (`mayEditIssue`, `actions/issues.ts`); a mirror's
-words belong to its origin. Over the API, `PATCH …/issues/:number` and
+words belong to its origin. An author who may not direct the crew — a
+reader on a public repository, an outside contributor — keeps the right
+only until a person who writes has acted on the words: adopted the issue,
+or reviewed the pull. After that the answer is "a writer has taken this
+up: comment instead", since a rewrite would put new work in the crew's
+hands, or a new `Closes #N` under an approval, unseen. Over the API, `PATCH …/issues/:number` and
 `PATCH …/pulls/:number` take `title` and `body` beside `state`; the MCP
 `edit` tool does the same by number. The edit is an event (`issue.edited`,
 `pull.edited`) that says what changed, never the words, and the timeline

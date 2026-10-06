@@ -469,7 +469,7 @@ async function changeConversation(
       reviewEntry(review, headOid, glyph),
     ),
     editAction:
-      mayEditIssue(ctx.app, repo, pull, ctx.auth.user) && !mirrored
+      mayEditIssue(ctx.app, repo, pull, ctx.auth.user).ok && !mirrored
         ? `${thread}/edit`
         : undefined,
   });
