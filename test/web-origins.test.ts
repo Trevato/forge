@@ -399,7 +399,7 @@ describe("origins on the web", () => {
 
   // ---- pins ----
 
-  test("the pin toggle round-trips and the dashboard lists what is pinned", async () => {
+  test("the pin toggle round-trips and the home lists what is pinned", async () => {
     const aliceId = getUserByName(app.db, "alice")!.id;
     const pinned = await asUser(alice, "/alice/widgets/pin", {
       form: { pinned: "1" },
@@ -410,7 +410,7 @@ describe("origins on the web", () => {
     const dash = await (await asUser(`${alice}; forge_mode=dev`, "/")).text();
     expect(dash).toContain("On your machine");
     expect(dash).toContain("forge sync");
-    expect(dash).toContain("Pinned");
+    expect(dash).toContain('href="/alice/widgets"');
     // The pin card says where each repo lives, and offers the way back out.
     expect(dash).toContain("Unpin");
 
@@ -566,8 +566,12 @@ describe("origins on the web", () => {
     });
     expect(stale.status).toBe(404);
     // Identical but for the per-response CSP nonce, which every page gets.
+    // The code the guesser typed echoes in the page's manifest link (#824):
+    // scrub it with the nonce, since both are the visitor's own bytes.
     const sameBut = (text: string): string =>
-      text.replaceAll(/nonce="[^"]*"/g, 'nonce="N"');
+      text
+        .replaceAll(/nonce="[^"]*"/g, 'nonce="N"')
+        .replaceAll(/here\?path=[^"&\s]*/g, "here?path=");
     expect(sameBut(await stale.text())).toBe(sameBut(await unknown.text()));
 
     // A finished flow's link dies with it, and the code is not reissued.

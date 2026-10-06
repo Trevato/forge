@@ -12,6 +12,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -116,7 +117,7 @@ describe("search: one query, four sources", () => {
       await fetch(`${base}/api/v1/tokens`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username, password, name: scope, scope }),
+        body: JSON.stringify({ adminConfirm: true, username, password, name: scope, scope }),
       }),
     ).then((t) => t.token);
   };
@@ -299,10 +300,12 @@ describe("search: one query, four sources", () => {
 
     // The classic one: if `-e` were missing, this would be `git grep
     // --delete-everything`, and git would refuse or, worse, obey.
+    const canary = join(dataDir, "written-by-git");
     const hostile = await find(
-      `q=${encodeURIComponent("--output=/tmp/pwned")}&kind=code`,
+      `q=${encodeURIComponent(`--output=${canary}`)}&kind=code`,
     );
     expect(hostile.code).toEqual([]);
+    expect(existsSync(canary)).toBe(false);
   });
 
   test("a query containing -- is matched literally", async () => {

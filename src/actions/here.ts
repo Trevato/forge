@@ -28,6 +28,10 @@ import { SYSTEM_NAMES } from "../core/reserved.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
+import { originForRepo } from "../core/origins.ts";
+import { getPull } from "../core/pulls.ts";
+import { pullMayRun } from "../core/pull_trust.ts";
+import { emailVerified } from "../core/verify.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 export interface Action {
@@ -39,6 +43,8 @@ export interface Action {
   readonly mcp?: string;
   /** `true`: needs an account the caller does not have; `false`: needs none. */
   readonly account?: boolean;
+  /** `true`: needs a verified email, which this account has not proven yet. */
+  readonly verify?: boolean;
 }
 
 export interface Manifest {
@@ -52,6 +58,9 @@ export interface Manifest {
           readonly access: "public" | "private";
           readonly state?: string;
         };
+        /** On a pull's page: whether its code runs here (checks, preview)
+         * now, or waits for a writer's approval of its head. */
+        readonly pull?: { readonly number: number; readonly runs: boolean };
       };
   readonly you:
     | { readonly as: "anonymous" }
@@ -86,7 +95,7 @@ export function manifestFor(
     },
     docs: `${origin}/llms.txt`,
   };
-  const [owner, name] = path
+  const [owner, name, section, number] = path
     .split(/[?#]/, 1)[0]!
     .split("/")
     .filter((s) => s !== "")
@@ -99,9 +108,12 @@ export function manifestFor(
     });
   // Two segments under a name the forge keeps for itself are its own page,
   // never a repository (`core/reserved.ts`).
+  // `/:owner/-/…` is an account's or an org's own page (its teams), never
+  // a repository.
   if (
     owner === undefined ||
     name === undefined ||
+    name === "-" ||
     SYSTEM.has(owner.toLowerCase())
   )
     return ok({
@@ -113,8 +125,24 @@ export function manifestFor(
   const repo = getRepo(app.db, owner, name.replace(/\.git$/, ""));
   if (repo === undefined || !canRead(app.db, repo, viewer))
     return err("not_found");
+  const pull =
+    (section === "pulls" || section === "changes") &&
+    number !== undefined &&
+    /^[1-9]\d*$/.test(number)
+      ? getPull(app.db, repo.id, Number(number))
+      : undefined;
   return ok({
-    here: repoHere(app, repo, viewer),
+    here: {
+      ...repoHere(app, repo, viewer),
+      ...(pull === undefined
+        ? {}
+        : {
+            pull: {
+              number: pull.number,
+              runs: pullMayRun(app.db, repo, pull, pull.headOid),
+            },
+          }),
+    },
     you: youFor(viewer, scope, repo, app),
     actions: repoActions(app, repo, viewer, scope),
     ...common,
@@ -157,9 +185,15 @@ function repoHere(
   // A private app the viewer may not enter is not there, to them.
   if (record === undefined || !canEnterApp(app.db, repo, record, viewer))
     return base;
-  const production = appsRuntime(app)
-    ?.status(record)
-    .find((e) => e.env === "production");
+  // Its state is its writers' and crew's: a person it only names enters it
+  // and sees nothing behind it.
+  const production = canEnterApp(app.db, repo, record, viewer, {
+    named: false,
+  })
+    ? appsRuntime(app)
+        ?.status(record)
+        .find((e) => e.env === "production")
+    : undefined;
   return {
     ...base,
     app: {
@@ -204,13 +238,25 @@ function repoActions(
       mcp: "report",
       account: false,
     });
+  // What creates or costs waits for a proven email (`requireVerified`).
+  const unproven =
+    viewer !== undefined && !emailVerified(db, viewer.id) ? { verify: true } : {};
+  // On a mirror an issue or a comment is written on the origin, through the
+  // account that connected it, and only that account (`writeThroughFor`).
+  const link = originForRepo(db, repo.id);
+  const talks = link === undefined || link.origin.userId === viewer?.id;
   // Open to anyone who can read and is signed in (`requireParticipant`).
   const participant: Action[] = [
-    { do: "open an issue", http: `POST ${r}/issues` },
-    { do: "comment", http: `POST ${r}/issues/{number}/comments` },
+    ...(talks
+      ? [
+          { do: "open an issue", http: `POST ${r}/issues` },
+          { do: "comment", http: `POST ${r}/issues/{number}/comments` },
+        ]
+      : []),
     {
       do: "offer a change",
       http: `POST ${r}/forks, then POST ${r}/pulls {headRepo}`,
+      ...unproven,
     },
   ];
   if (viewer === undefined)
@@ -221,7 +267,7 @@ function repoActions(
     out.push({ do: "open the app", http: `GET ${r}/app/production/open` });
   if (!acts) return out;
   if (mayDirectCrew(db, repo, viewer))
-    out.push({ do: "tell the crew", mcp: "tell" });
+    out.push({ do: "tell the crew", mcp: "tell", ...unproven });
   // A verdict is a writer's or the crew's; the merge is a person's.
   // The same rule `submitReview` asks.
   if (

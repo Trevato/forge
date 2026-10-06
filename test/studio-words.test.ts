@@ -549,10 +549,11 @@ describe("dev's vocabulary never reaches a studio page", () => {
         path: `${repoPath}/pulls/${openPullNumber}`,
         // #171: the composer's close button used to say "Close pull
         // request" here, dev's own noun on the studio's own page.
-        shows: ["Close change"],
+        // One change page (#628): the diff, the branch and the merge box are
+        // its Files step, which speaks git on purpose, so it is not a row.
+        shows: ["Close change", `${repoPath}/pulls/${openPullNumber}/files`],
         hides: ['class="where"'],
-        dev: ["diff-table", openBranch, "Close pull request", "workbench"],
-        devTitle: `${openPullTitle} · vocab`,
+        title: `${openPullTitle} · vocab`,
       },
       {
         word: "look (the studio's noun)",
@@ -563,7 +564,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
       {
         word: "shipped",
         path: `${repoPath}/pulls/${mergedPullNumber}`,
-        dev: ["diff-table"],
+        shows: ['data-word="shipped"'],
       },
       {
         // #197: the map used to link every card to dev's `/issues/:number`
@@ -871,9 +872,9 @@ describe("dev's vocabulary never reaches a studio page", () => {
     });
     if (!plain.ok) throw new Error(String(plain.error));
     const titles = new Map([
-      ["/alice/plain/issues", "Everything told · plain"],
+      ["/alice/plain/issues", "Issues · plain"],
       ["/alice/plain/issues/new", "New issue · plain"],
-      ["/alice/plain/pulls", "Every change · plain"],
+      ["/alice/plain/pulls", "Pull requests · plain"],
       ["/alice/plain/runs", "Every run · plain"],
     ]);
     for (const [path, title] of titles) {

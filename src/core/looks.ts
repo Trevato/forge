@@ -84,6 +84,8 @@ export interface Look {
   readonly createdAt: string;
   /** Why there is no picture, when there is none. */
   readonly error: string | null;
+  /** Who the picture was taken as: the owner (an admin), or nobody. */
+  readonly takenAs: "owner" | "nobody";
 }
 
 interface Row {
@@ -96,6 +98,7 @@ interface Row {
   path: string;
   created_at: string;
   error: string | null;
+  taken_as: "owner" | "nobody";
 }
 
 const toLook = (r: Row): Look => ({
@@ -108,6 +111,7 @@ const toLook = (r: Row): Look => ({
   path: r.path,
   createdAt: r.created_at,
   error: r.error,
+  takenAs: r.taken_as,
 });
 
 export interface RecordLookInput {
@@ -118,16 +122,18 @@ export interface RecordLookInput {
   readonly kind: LookKind;
   readonly path: string;
   readonly error?: string | undefined;
+  /** Who it was taken as; the owner unless said. */
+  readonly takenAs?: "owner" | "nobody" | undefined;
 }
 
 /** Record a picture, or the reason there is none. A retake replaces. */
 export function recordLook(db: Database, input: RecordLookInput): Look {
   const page = input.page ?? DEFAULT_PAGE;
   db.query(
-    `INSERT INTO look (id, app_id, env, commit_oid, page, kind, path, error)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+    `INSERT INTO look (id, app_id, env, commit_oid, page, kind, path, error, taken_as)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
      ON CONFLICT (app_id, env, commit_oid, page, kind) DO UPDATE SET
-       path = excluded.path, error = excluded.error,
+       path = excluded.path, error = excluded.error, taken_as = excluded.taken_as,
        created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
   ).run(
     newId(),
@@ -138,6 +144,7 @@ export function recordLook(db: Database, input: RecordLookInput): Look {
     input.kind,
     input.path,
     input.error ?? null,
+    input.takenAs ?? "owner",
   );
   return getLook(db, input.appId, input.env, input.commitOid, page, input.kind)!;
 }

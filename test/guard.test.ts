@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { running } from "../src/kernel/version.ts";
 import {
   forgeHealth,
   parseGuard,
@@ -89,7 +90,11 @@ test("/api/v1/health answers anyone, from the mounted ConfigMap", async () => {
   expect(body.ok).toBe(true);
   expect(body.rollout.state).toBe("ok");
   expect(body.draining).toBe(false);
-  expect(body.version).toMatch(/^\d+\.\d+\.\d+/);
+  // What is running, as the build stamped it (`test/version.test.ts`).
+  expect([body.version, body.commit]).toEqual([
+    running().version,
+    running().commit,
+  ]);
 
   mkdirSync(guardDir, { recursive: true });
   writeFileSync(join(guardDir, "status.json"), status({ stuck: "quota refused <b>" }));

@@ -81,6 +81,7 @@ import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
+import { capReached, ISSUE_RUN_CAP } from "./guard.ts";
 import { interruptionOf } from "./interrupted.ts";
 import {
   PARK_NOTE,
@@ -361,6 +362,7 @@ export async function driveRepo(
       !proposed.has(r.issue.number) &&
       (r.issue.assigneeId === null || !planners.has(r.issue.assigneeId)) &&
       !stalled(app, repo, r.issue) &&
+      !atRunCap(app, repo, r.issue) &&
       parkedCount(app, repo, r.issue.id) < PARK_STRIKES,
   );
   const next = await nextOf(app, repo, ready);
@@ -452,12 +454,14 @@ async function planIfThin(
        ORDER BY created_at DESC LIMIT 1`,
     )
     .get(direction.id);
-  if (breakerTripped(app.db, direction.id, now))
+  if (breakerTripped(app.db, repo, direction.id, now))
     return notPlanned(repo, "parked: three failed runs in an hour");
   // The hand-overs the planner has not been given: newer than its last pass.
   const seen = lastPlan?.created_at ?? "";
   const owed = handed.filter((issue) => issue.at > seen);
   if (ready >= THIN_MAP && owed.length === 0) return false;
+  if (atRunCap(app, repo, direction))
+    return notPlanned(repo, "parked: the direction is at its run cap");
   if (lastPlan !== null && lastPlan !== undefined) {
     // A planner that declined the direction is not asked again until a
     // person has said something on it, or the crew hands it an issue.
@@ -620,18 +624,25 @@ export function parkForBreaker(
   repo: Repo,
   issue: Issue,
   agent: Agent,
-): void {
+  note: string = BREAKER_NOTE,
+): boolean {
   const author =
     (repo.autonomyBy === null ? undefined : getUserById(app.db, repo.autonomyBy)) ??
     agent.user;
   if (issue.assigneeId !== null) assignIssue(app, author, repo, issue, null);
   const last = listComments(app.db, issue.id).at(-1);
-  if (last?.body === BREAKER_NOTE) return;
-  addComment(app, author, repo, issue, BREAKER_NOTE);
-  log.info("parked by the breaker", {
+  if (last?.body === note) return false;
+  addComment(app, author, repo, issue, note);
+  log.info(note === BREAKER_NOTE ? "parked by the breaker" : "parked at the run cap", {
     repo: `${repo.ownerName}/${repo.name}`,
     issue: issue.number,
   });
+  return true;
+}
+
+/** Whether `issue` is at its run cap (`guard.ts`): the clock neither picks nor plans it. */
+export function atRunCap(app: App, repo: Repo, issue: Issue): boolean {
+  return capReached(app.db, repo, issue, app.config.issueRunCap ?? ISSUE_RUN_CAP);
 }
 
 /** How many times the crew has parked this issue since a person who directs it last spoke (`parks.ts`). */

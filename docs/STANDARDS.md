@@ -51,7 +51,11 @@ It is computed from the checks the routes themselves ask (`canRead`,
 `canWrite`, `canAdmin`, `canEnterApp`, `mayDirectCrew`), so it never offers
 what a route would refuse; a repository the caller cannot read is
 `not_found`, and a private app the caller may not enter is not mentioned.
-The MCP tool `here {url}` answers the same. `src/actions/here.ts`,
+An action waiting on a proven email says `verify: true`; on a mirror,
+issues and comments are offered only to the account that connected it (they
+are written on the origin, through it). On a pull's page, `here.pull.runs`
+says whether its checks and preview run now or wait for a writer to approve
+its head (`pullMayRun`). The MCP tool `here {url}` answers the same. `src/actions/here.ts`,
 `test/here-manifest.test.ts`.
 
 An agent finds the path without being told. Every page carries

@@ -61,6 +61,9 @@ export interface DiffViewOptions {
   /** Base path for comment forms and "+" links, e.g. `/owner/repo/pulls/3`.
    * When set, lines become commentable. */
   reviewBase?: string;
+  /** The page the diff is read on, for the "+" links and Cancel, when it
+   * is not `reviewBase` itself — e.g. `/owner/repo/pulls/3/files`. */
+  reviewPage?: string;
   /** Base path for a stubbed file's "View file" link, e.g.
    * `/owner/repo/blob/<oid>` — the file's path is appended. Omit to render
    * the stub without a link (a live/origin diff has no local blob route). */
@@ -251,7 +254,7 @@ function renderRow(row: Row, ctx: RowCtx): Html {
     if (n === null) return html`<td class="dn"></td>`;
     if (!opts.reviewBase || !isAnchorSide)
       return html`<td class="dn">${n}</td>`;
-    const href = `${opts.reviewBase}?rc=${encodeURIComponent(path)}~${side}~${n}#rc`;
+    const href = `${opts.reviewPage ?? opts.reviewBase}?rc=${encodeURIComponent(path)}~${side}~${n}#rc`;
     return html`<td class="dn">
       <a class="dn-comment" href="${href}" title="Comment on this line">${n}</a>
     </td>`;
@@ -349,7 +352,7 @@ function reviewRows(
             class="btn"
             data-size="sm"
             data-variant="ghost"
-            href="${opts.reviewBase}"
+            href="${opts.reviewPage ?? opts.reviewBase}"
             >Cancel</a
           >
         </div>

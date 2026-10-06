@@ -343,7 +343,7 @@ describe("a spawned child's own keys and domain", () => {
     try {
       const token = (
         JSON.parse(spawnBody) as { claimUrl: string }
-      ).claimUrl.split("/claim/")[1]!;
+      ).claimUrl.split("/claim#")[1]!;
       const claimed = await fetch(`${childServers.url}/claim/${token}`, {
         method: "POST",
         headers: { origin: childServers.url },

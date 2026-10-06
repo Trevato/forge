@@ -13,6 +13,7 @@ import type { Pull } from "../core/pulls.ts";
 import { OUTSIDE_LABEL, OUTSIDE_TITLE, saysOutside } from "../core/reports.ts";
 import type { Repo } from "../core/repos.ts";
 import { READER } from "./direct.ts";
+import { newsSince } from "./news.ts";
 import {
   REVIEW_ROUNDS,
   type Review,
@@ -347,17 +348,7 @@ function taskBody(input: TaskInput): string {
   }
 
   // feedback
-  const news = {
-    comments: input.comments.filter(
-      (c) => c.createdAt > input.since && !isAgent(c.authorName),
-    ),
-    reviews: input.reviews.filter(
-      (r) => r.createdAt > input.since && !isAgent(r.authorName),
-    ),
-    lines: input.reviewComments.filter(
-      (c) => c.createdAt > input.since && !isAgent(c.authorName),
-    ),
-  };
+  const news = newsSince({ ...input, agentName: input.agent.user.username });
   out.push(
     input.pull !== undefined
       ? `There is feedback on your pull #${issue.number} (${issue.title}).`

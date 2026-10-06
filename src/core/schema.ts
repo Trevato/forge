@@ -1346,4 +1346,52 @@ export const migrations: readonly string[] = [
     UPDATE subscription SET spent_usd = spent_usd + NEW.cost_usd WHERE id = NEW.subscription_id;
   END;
   `,
+  // 57 — spend reported from outside (`core/outside_spend.ts`): what a
+  // session the forge did not run (a build team, a person's own assistant)
+  // says a change cost it. Shown beside the crew's own runs, never added to
+  // them, and never read by a limit: it is a claim, not a measurement.
+  `
+  CREATE TABLE outside_spend (
+    id          TEXT PRIMARY KEY,
+    repo_id     TEXT NOT NULL REFERENCES repo(id) ON DELETE CASCADE,
+    issue_id    TEXT REFERENCES issue(id) ON DELETE SET NULL,
+    reporter_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    who         TEXT NOT NULL,
+    model       TEXT NOT NULL DEFAULT '',
+    tokens_in   INTEGER NOT NULL DEFAULT 0,
+    tokens_out  INTEGER NOT NULL DEFAULT 0,
+    usd         REAL NOT NULL DEFAULT 0,
+    note        TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX outside_spend_repo ON outside_spend(repo_id, created_at);
+  `,
+  // 58 — a signed-in browser has a name and a last-seen time (#750), so its
+  // person (and the forge's owner) can list them and sign one out. The id
+  // is not the secret: the cookie's hash stays the key.
+  `
+  ALTER TABLE session ADD COLUMN id TEXT;
+  ALTER TABLE session ADD COLUMN last_seen_at TEXT;
+  UPDATE session SET id = lower(hex(randomblob(12))) WHERE id IS NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS session_id ON session(id);
+  `,
+  // 59 — every message the forge sent, by a keyed hash of its recipient (#784): the
+  // per-recipient and forge-wide mail caps count it, across restarts.
+  `
+  CREATE TABLE IF NOT EXISTS mail_sent (
+    id        TEXT PRIMARY KEY,
+    recipient TEXT NOT NULL,
+    at        TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS mail_sent_recipient ON mail_sent(recipient, at);
+  CREATE INDEX IF NOT EXISTS mail_sent_at ON mail_sent(at);
+  `,
+  // 60 — who a picture was taken as (#738): the owner, signed in as an
+  // admin, or nobody. A public app's previews are taken as nobody, and only
+  // a picture taken as nobody is a reader's to see. Every picture before
+  // this was the owner's, which is what the default says.
+  `
+  ALTER TABLE look ADD COLUMN taken_as TEXT NOT NULL DEFAULT 'owner'
+    CHECK (taken_as IN ('owner','nobody'));
+  `,
 ];

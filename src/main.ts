@@ -7,6 +7,7 @@
 import { parseCidrs } from "./kernel/cidr.ts";
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
+import { syncAllPillars } from "./actions/pillars.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
@@ -35,6 +36,7 @@ import { recordAskLedger } from "./web/studio/asks.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
 import { pruneTokens } from "./core/tokens.ts";
 import { dataHomeRefusal } from "./kernel/data_home.ts";
+import { running } from "./kernel/version.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -122,6 +124,12 @@ const app = createApp({
         },
       }
     : {}),
+  // FORGE_MAIL_DAILY: the most messages the forge sends in a day, to
+  // everyone together (`actions/mail.ts`).
+  ...(Number.isInteger(Number(process.env.FORGE_MAIL_DAILY)) &&
+  Number(process.env.FORGE_MAIL_DAILY) > 0
+    ? { mailDailyCap: Number(process.env.FORGE_MAIL_DAILY) }
+    : {}),
   // Who may say who the client is: the ingress in front of a hosted forge.
   ...(trustedProxies.length > 0 ? { trustedProxies } : {}),
   ...((process.env.FORGE_CLIENT_IP_HEADER ?? "").trim() !== ""
@@ -129,6 +137,12 @@ const app = createApp({
     : {}),
   ...(Number(process.env.FORGE_CREW_CEILING_USD) > 0
     ? { crewCeilingUsd: Number(process.env.FORGE_CREW_CEILING_USD) }
+    : {}),
+  // FORGE_CREW_ISSUE_RUNS: runs one issue may start in a day before it is
+  // parked for a person (`crew/guard.ts`).
+  ...(Number.isInteger(Number(process.env.FORGE_CREW_ISSUE_RUNS)) &&
+  Number(process.env.FORGE_CREW_ISSUE_RUNS) > 0
+    ? { issueRunCap: Number(process.env.FORGE_CREW_ISSUE_RUNS) }
     : {}),
   ...((process.env.FORGE_EDGE_NAME ?? "").trim() === ""
     ? {}
@@ -148,6 +162,9 @@ const app = createApp({
 });
 
 await reconcile(app);
+// Issues linked under a pillar's umbrella before pillars had labels.
+const labelled = syncAllPillars(app);
+if (labelled > 0) app.log.info("pillars labelled", { issues: labelled });
 const servers = await serve(app);
 const sshStarted =
   sshPort > 0 ? await startForgeSsh(app, { port: sshPort }) : undefined;
@@ -222,8 +239,6 @@ const probes = apps === undefined ? undefined : startProbes(app, apps);
 // The snapshot: everything that cannot be rebuilt, nightly, to what an
 // operator sealed on the Backups page, else the platform's (`S3_*`) or a
 // directory (`FORGE_SNAPSHOT_DIR`). A forge given none says so on that page.
-const VERSION =
-  ((await import("../package.json")) as { version?: string }).version ?? "0";
 const snapshots = startSnapshots(
   app,
   () =>
@@ -233,7 +248,7 @@ const snapshots = startSnapshots(
       bus: app.bus,
     })?.store,
   {
-    version: VERSION,
+    version: running().version,
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
   },
 );

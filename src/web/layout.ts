@@ -15,6 +15,7 @@ import { edgeLoginUrl, edgeLogoutUrl } from "../http/edge.ts";
 import { json } from "../http/respond.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { secret } from "../kernel/id.ts";
+import { runningLine } from "../kernel/version.ts";
 import {
   metaThemeColor,
   THEME_NAMES,
@@ -478,10 +479,20 @@ function topbar(
     </header>`;
 }
 
-function footer(): Html {
+/**
+ * The foot of every page. A site admin reads what is running there, as the
+ * build stamped it (`kernel/version.ts`), in place of the line everyone
+ * else gets: the one person who is asked "which version is this?".
+ */
+function footer(ctx: Ctx): Html {
   return html`<footer class="foot">
     <span class="mark"></span>
-    <span>forge — your code, your machine</span>
+    <span
+      >forge
+      ${ctx.auth.user?.isAdmin === true
+        ? runningLine()
+        : "— your code, your machine"}</span
+    >
     <span class="spacer"></span>
     <button
       class="btn js-only"
@@ -532,7 +543,7 @@ export function page(options: PageOptions, status = 200): Response {
     >
       ${flash ? flashToast(flash) : null}${options.body}
     </main>
-    ${options.bare ? null : footer()} ${overlays()}
+    ${options.bare ? null : footer(ctx)} ${overlays()}
     ${paletteIndex(ctx, options.palette ?? [])}`;
 
   const doc = html`<!doctype html>
