@@ -47,6 +47,7 @@ import { childEnv, runStep } from "../apps/process.ts";
 import { noteReached } from "../apps/egress_report.ts";
 import {
   capacityCount,
+  noteBooted,
   capacityEnv,
   egressSetting,
 } from "../core/capacity.ts";
@@ -157,6 +158,7 @@ export const checksFor = (app: App): ChecksHandle | undefined =>
 export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   // Read on every pick (`core/capacity.ts`): an admin's change is honoured
   // by the next check, not the next boot. `concurrency` is the boot default.
+  noteBooted(app.db, "checks.concurrency", String(options.concurrency ?? 1));
   const capacity = (): number =>
     capacityCount(app.db, "checks.concurrency", options.concurrency ?? 1);
   const gate = new Gate(capacity());
