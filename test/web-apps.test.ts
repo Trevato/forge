@@ -306,6 +306,30 @@ describe("apps, runs and the crew on the web", () => {
     ).toBe(true);
   }, 20_000);
 
+  test("the app's tabs and doors: no second home key, no App button under the App tab, and telling the crew is offered only to who may", async () => {
+    // The palette's studio rows, so a studio browser.
+    const studio = (cookie: string) =>
+      cookie.replace("forge_mode=dev", "forge_mode=studio");
+    const home = await (await web(studio(alice), "/alice/hello")).text();
+    // `g h` is the wordmark's go-home key, once; the App tab takes none.
+    expect(home.split('data-shortcut="g h"').length - 1).toBe(1);
+    expect(home).toContain("— Tell the crew");
+    const files = await (await web(alice, "/alice/hello/files")).text();
+    expect(files).toContain('class="app-strip"');
+    const strip = files.slice(
+      files.indexOf('class="app-strip"'),
+      files.indexOf("</div>", files.indexOf('class="app-strip"')),
+    );
+    expect(strip).not.toContain(">App<");
+    // bob reads the public app but cannot write it; a visitor neither.
+    expect(await (await web(studio(bob), "/alice/hello")).text()).not.toContain(
+      "— Tell the crew",
+    );
+    expect(await (await web("", "/alice/hello")).text()).not.toContain(
+      "— Tell the crew",
+    );
+  });
+
   test("the runs list, one run's log page, and the short door to it", async () => {
     const [run] = await runsOf(hello);
     expect(run).toBeDefined();

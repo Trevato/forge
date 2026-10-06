@@ -6,7 +6,12 @@
  */
 
 import { closeStreamsOf, noteCaller } from "./caller.ts";
-import { accountAct, accountsPage } from "../web/pages/accounts.ts";
+import {
+  accountAct,
+  accountsPage,
+  personSignInsPage,
+  signInAct,
+} from "../web/pages/accounts.ts";
 import { defect } from "../kernel/error.ts";
 import {
   armClose,
@@ -161,6 +166,10 @@ import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { explorePage } from "../web/studio/explore.ts";
 import {
+  makeItYoursPage,
+  makeItYoursSubmit,
+} from "../web/studio/make_it_yours.ts";
+import {
   frontUpdate,
   liveAppsFragment,
   liveOnYouFragment,
@@ -279,6 +288,7 @@ import {
   resendVerifyLink,
   passwordUpdate,
   tokenCreate,
+  sessionDelete,
   tokenDelete,
   tokensPage,
 } from "../web/pages/account.ts";
@@ -581,6 +591,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
+  router.add("POST", "/settings/sessions/:id/delete", sessionDelete);
   // The crew: a forge admin's section, hidden from everyone else.
   router.add("GET", "/settings/subscriptions", subscriptionsPage);
   router.add("POST", "/settings/subscriptions", subscriptionAdd);
@@ -607,6 +618,17 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/backups/test", backupsTest);
   router.add("POST", "/settings/backups/clear", backupsClear);
   router.add("GET", "/settings/accounts", accountsPage);
+  router.add("GET", "/settings/accounts/:username", personSignInsPage);
+  router.add(
+    "POST",
+    "/settings/accounts/:username/tokens/:id/delete",
+    signInAct("token"),
+  );
+  router.add(
+    "POST",
+    "/settings/accounts/:username/sessions/:id/delete",
+    signInAct("session"),
+  );
   router.add(
     "POST",
     "/settings/accounts/:username/suspend",
@@ -946,6 +968,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);
   router.add("POST", "/:owner/:name/fork", forkSubmit);
+  // Make it yours (#606): a fork with its app, planned, then made.
+  router.add("GET", "/:owner/:name/make-it-yours", makeItYoursPage);
+  router.add("POST", "/:owner/:name/make-it-yours", makeItYoursSubmit);
   // A fork takes what it follows: git's part by itself, the rest by the crew.
   router.add("POST", "/:owner/:name/following", followingSubmit);
   // A mirror pulls on demand; a pin says "keep this on my machine". Both are

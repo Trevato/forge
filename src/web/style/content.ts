@@ -175,6 +175,20 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .form-actions .close-reason { width: auto; min-height: 32px; padding-block: 0; }
 .form-actions .close-into { display: none; width: 7em; min-height: 32px; }
 .form-actions:has(.close-reason option[value="split"]:checked) .close-into { display: inline-block; }
+/* On a phone the Markdown hint takes its own line, so the reason, Close and
+   Comment stay together on the next one instead of Comment wrapping alone. */
+@media (max-width: 480px) {
+  .comment-form .form-actions > .muted.small { flex-basis: 100%; }
+  .comment-form .form-actions > .spacer { display: none; }
+  .comment-form .form-actions > :last-child { margin-left: auto; }
+  /* The reason select, Close and Comment must fit 332 px with room to
+     spare: a tighter gap and a narrower select. */
+  .comment-form .form-actions { gap: 6px; }
+  .comment-form .form-actions .close-reason { padding-inline: 8px 24px; max-width: 84px; }
+  /* Words carry the buttons here; their icons give back the width a 360 px
+     row needs for "Close issue", and the buttons keep their full height. */
+  .comment-form .form-actions .btn .ico { display: none; }
+}
 .connect-more .connect-path { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
 .connect-path h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .connect-path h3 .ico { color: var(--muted-fg); }
@@ -215,6 +229,10 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   .repo-layout { grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; }
   .repo-layout > .about { position: sticky; top: calc(var(--topbar-h) + 16px); }
 }
+/* Make it yours: what is copied and what is not, read before saying yes. */
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin: 0; }
+.kv dt { color: var(--muted-fg); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
 .about dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; margin: 0; }
 .about dt { color: var(--muted-fg); }
 .about dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }

@@ -93,6 +93,7 @@ import {
   parseExploreQuery,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
+import { makeItYours } from "../actions/make_it_yours.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
@@ -856,6 +857,43 @@ const TOOLS: readonly Tool[] = [
           limit,
           ...(cursor === undefined ? {} : { cursor }),
         }),
+      );
+    },
+  },
+  {
+    name: "make_it_yours",
+    description:
+      "Make an app you can see yours: a fork of its code and history into your account, registered as your own app (its first deploy starts at once), following the original. Its data, variables, secrets, crew and domains are not copied. Plans unless dryRun is false; the answer names the copy, its address, and what is and is not copied. Someone who already has a copy is landed on it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        name: { type: "string", description: "A name for your copy; the original's by default." },
+        dryRun: { type: "boolean" },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    dryByDefault: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const name = str(args["name"]);
+      const made = await makeItYours(ctx.app, user, repo, {
+        dryRun: args["dryRun"] !== false,
+        ...(name === "" ? {} : { name }),
+      });
+      if (!made.ok)
+        return made.error.kind === "invalid"
+          ? bad("invalid", made.error.message)
+          : made.error.kind === "own"
+            ? bad("own", "this app is already yours")
+            : made.error.kind === "unverified"
+              ? bad("unverified", "prove your email first")
+              : bad("not_found", "no such app or repository (owner/name)");
+      const { made: done, ...plan } = made.value;
+      return good(
+        done === undefined ? plan : { ...plan, url: `/${done.repo.ownerName}/${done.repo.name}` },
       );
     },
   },
