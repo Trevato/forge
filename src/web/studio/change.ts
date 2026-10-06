@@ -364,9 +364,12 @@ async function changeConversation(
       }
     : undefined;
   // Whoever opened it, Ship is offered only where `mergePull` would take
-  // it: a review gate that is not yet satisfied, or a mirror, offers none.
-  const decision =
-    reviewed && !mirrored ? (crewDecision ?? own) : undefined;
+  // it: a mirror offers no decision at all, and a review gate that is not
+  // yet satisfied holds back only the one that ships — a crew change whose
+  // check failed still offers Retry or Close, and its reason is the check.
+  const candidate = crewDecision ?? own;
+  const waitsOnReview = !reviewed && candidate?.kind === "look";
+  const decision = mirrored || waitsOnReview ? undefined : candidate;
   // Nothing to offer yet, said plainly to a writer: the merge belongs to the
   // origin, the review gate is still closed, or the check has not gone green
   // and this repository waits for that before it ships.
@@ -374,7 +377,7 @@ async function changeConversation(
     ? undefined
     : mirrored
       ? "it merges on the origin, from its Files step"
-      : !reviewed
+      : !reviewed && (candidate === undefined || waitsOnReview)
         ? "it waits on an approving review of what it is now"
         : crewDecision === undefined && !conflicted && !ownReady
           ? note
@@ -480,7 +483,12 @@ async function changeConversation(
         ${talk.node}
         ${composer(ctx, {
           action: `${thread}/comments`,
-          stateAction: `${thread}/state`,
+          // Closing is its author's or a writer's (`setIssueState`): nobody
+          // else is shown a button the server would only refuse.
+          ...(ctx.auth.user !== undefined &&
+          (ctx.auth.user.id === pull.authorId || writer)
+            ? { stateAction: `${thread}/state` }
+            : {}),
           state: pull.state,
           locked: pull.mergedAt !== null,
           closeLabel: "Close change",

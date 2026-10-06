@@ -2,8 +2,8 @@
  * `/explore` (#607): the apps, people and forges the viewer can see, ranked
  * by real numbers and shown with them, narrowed in one line that lives in
  * the URL (`?q=kind:app sort:forks garden`). Every app row says "Make it
- * yours": a fork into the viewer's account, one press (#606 makes it the
- * whole app). Decided in `actions/explore.ts`; this page only draws it.
+ * yours" (#606): a plan of the copy, then the app as theirs. Decided in
+ * `actions/explore.ts`; this page only draws it.
  */
 
 import {
@@ -49,15 +49,17 @@ function rowHtml(ctx: Ctx, row: ExploreRow): Html {
       ${when(said, (s) => html`<span class="muted small">${s}</span>`)}
     </span>
     ${when(
-      row.kind === "app" && ctx.auth.user !== undefined ? row.repo : undefined,
+      row.kind === "app" &&
+        ctx.auth.user !== undefined &&
+        row.repo?.owner !== ctx.auth.user.username
+        ? row.repo
+        : undefined,
       (repo) =>
-        html`<form
-          method="post"
-          action="/${repo.owner}/${repo.name}/fork"
-          class="inline"
-        >
-          ${btn("Make it yours", { size: "sm", icon: "fork" })}
-        </form>`,
+        btn("Make it yours", {
+          href: `/${repo.owner}/${repo.name}/make-it-yours`,
+          size: "sm",
+          icon: "fork",
+        }),
     )}
   </li>`;
 }
