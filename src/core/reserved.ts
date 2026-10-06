@@ -219,6 +219,13 @@ export function reservedName(
   db: Database,
   name: string,
   self?: string,
+  /**
+   * A display name is where real names live: it is the owner's only when it
+   * is their handle with nothing but honorific words around it ("the real
+   * trevato", "Trevato official"), so "Maria Garcia" stays free beside an
+   * admin called maria. A username is held to the whole rule.
+   */
+  as: "username" | "display" = "username",
 ): Reservation | undefined {
   const shape = skeleton(name);
   if (shape === "") return undefined;
@@ -246,11 +253,14 @@ export function reservedName(
   const words = wordsOf(name);
   if (words.length > 1) {
     const claimsRole = words.some((w) => ROLE_WORDS.has(w));
+    const bare = words.filter((w) => !HONORIFIC_WORDS.has(w));
     for (const holder of holders) {
       const handle = skeleton(holder.username);
       if (handle.length < 3 || !words.includes(handle)) continue;
-      if (holder.is_agent !== 1) return "owner";
-      if (claimsRole) return "agent";
+      if (holder.is_agent !== 1) {
+        if (as === "username" || (bare.length === 1 && bare[0] === handle))
+          return "owner";
+      } else if (claimsRole) return "agent";
     }
   }
   // The same, run together: "trevato2", "trevatoo", "realtrevato",
@@ -262,7 +272,12 @@ export function reservedName(
     if (handle.length < 3) continue;
     if (holder.is_agent === 1) {
       if (runsWithRole(run, handle)) return "agent";
-    } else if (ownersRunOn(run, handle)) return "owner";
+    } else if (
+      as === "username"
+        ? ownersRunOn(run, handle)
+        : bareIs(run, handle, HONORIFIC_WORDS)
+    )
+      return "owner";
   }
   return undefined;
 }
