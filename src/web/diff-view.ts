@@ -10,6 +10,7 @@
  * until then lines render as escaped plain text, which degrades cleanly.
  */
 
+import type { Mark } from "../core/marks.ts";
 import type { Diff, DiffLine, FileDiff, Hunk } from "../git/diff.ts";
 import {
   anchorKey,
@@ -56,6 +57,8 @@ export interface DiffViewOptions {
   comments?: Map<string, ReviewComment[]>;
   /** Thread state, under the same key as `comments`. */
   threads?: Map<string, ThreadView>;
+  /** Who each reviewer is, by username (`core/marks.ts`). */
+  marks?: ReadonlyMap<string, Mark>;
   /** Render an inline comment form at this anchor (from a `?rc=` link). */
   active?: { path: string; side: Side; line: number };
   /** Base path for comment forms and "+" links, e.g. `/owner/repo/pulls/3`.
@@ -308,7 +311,8 @@ function reviewRows(
     const outdated = c.lineHash !== currentHash;
     return html`<div class="rc">
       <div class="rc-head">
-        ${userLink(c.authorName)} ${time(c.createdAt)}
+        ${userLink(c.authorName, { mark: opts.marks?.get(c.authorName) })}
+        ${time(c.createdAt)}
         ${when(
           outdated,
           () => html`<span class="badge rc-outdated">outdated</span>`,
@@ -370,7 +374,10 @@ function reviewRows(
             >${icon("check")}
             resolved${state.resolvedBy === null
               ? null
-              : html` by ${userLink(state.resolvedBy)}`}
+              : html` by
+                  ${userLink(state.resolvedBy, {
+                    mark: opts.marks?.get(state.resolvedBy),
+                  })}`}
             · ${time(state.resolvedAt)}</span
           >
           ${threadToggle(opts, state, false)}

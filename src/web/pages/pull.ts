@@ -19,6 +19,7 @@ import {
 } from "../../actions/pulls.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
+import { marksByName } from "../../core/marks.ts";
 import {
   pullDiff,
   pullDir,
@@ -658,7 +659,8 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     pull.mergedAt === null && pull.state === "open"
       ? await wallOf(dir, status.baseOid, status.headOid)
       : undefined;
-  const reviewComments = byAnchor(listReviewComments(ctx.app.db, pull.id));
+  const reviewLines = listReviewComments(ctx.app.db, pull.id);
+  const reviewComments = byAnchor(reviewLines);
   const mayMerge = canWrite(ctx.app.db, repo, ctx.auth.user);
   const applied = labelsFor(ctx.app.db, pull.id);
   const allLabels = listLabels(ctx.app.db, repo.id);
@@ -679,6 +681,10 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     syntax,
     comments: reviewComments,
     threads: threadViews,
+    marks: marksByName(ctx.app.db, [
+      ...reviewLines.map((c) => c.authorName),
+      ...[...threadViews.values()].map((t) => t.resolvedBy ?? ""),
+    ]),
     fileLinkBase: `${base}/blob/${status.headOid}`,
     ...(ctx.auth.user
       ? { reviewBase: thread, reviewPage: `${thread}/files` }

@@ -10,6 +10,7 @@
  */
 
 import { mayEditIssue } from "../../actions/issues.ts";
+import { marksByName, type Mark } from "../../core/marks.ts";
 import { mayView } from "../../core/sealed.ts";
 import { threadNote } from "../../crew/direct.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
@@ -130,7 +131,12 @@ export function wallCard(wall: Wall): Html {
  * current position, and a dismissed approval that still looks like an
  * approval is exactly how a review gate becomes decorative.
  */
-function reviewEntry(review: Review, headOid: string, glyph: Glyph): Entry {
+function reviewEntry(
+  review: Review,
+  headOid: string,
+  glyph: Glyph,
+  marks: ReadonlyMap<string, Mark>,
+): Entry {
   const stale = review.commitOid !== headOid;
   const tone: Tone = stale
     ? "default"
@@ -141,7 +147,7 @@ function reviewEntry(review: Review, headOid: string, glyph: Glyph): Entry {
         : "default";
   const who =
     review.originAuthor === null
-      ? userLink(review.authorName)
+      ? userLink(review.authorName, { mark: marks.get(review.authorName) })
       : originTag(review.originAuthor, glyph);
   return {
     at: review.createdAt,
@@ -172,6 +178,8 @@ function reviewEntry(review: Review, headOid: string, glyph: Glyph): Entry {
  * who opened it and in answer to whom, where it came from, and what the
  * crew spent on it. */
 export function changeHead(ctx: Ctx, repo: Repo, pull: Pull): Html {
+  const who = toldBy(ctx.app.db, pull);
+  const marks = marksByName(ctx.app.db, [pull.authorName, who ?? ""]);
   return html`<div class="issue-head">
     <h1>${pull.title} <span class="number">#${pull.number}</span></h1>
     <div class="issue-meta">
@@ -179,12 +187,14 @@ export function changeHead(ctx: Ctx, repo: Repo, pull: Pull): Html {
       <span
         >${pull.originAuthor
           ? originTag(pull.originAuthor, originGlyph(repo))
-          : userLink(pull.authorName)}
+          : userLink(pull.authorName, { mark: marks.get(pull.authorName) })}
         opened this ${time(pull.createdAt)}</span
       >${when(
-        toldBy(ctx.app.db, pull),
-        (who) =>
-          html`<span class="told-by">in answer to ${userLink(who)}</span>`,
+        who,
+        (name) =>
+          html`<span class="told-by"
+            >in answer to ${userLink(name, { mark: marks.get(name) })}</span
+          >`,
       )}
       ${when(
         pull.originUrl,
@@ -466,10 +476,15 @@ async function changeConversation(
 
   const glyph = originGlyph(repo);
   const headOid = status?.headOid ?? pull.headOid;
+  const reviews = listReviews(db, pull.id);
+  const reviewerMarks = marksByName(
+    db,
+    reviews.map((r) => r.authorName),
+  );
   const talk = conversation(ctx, repo, pull, {
     openVerb: "opened this",
-    extra: listReviews(db, pull.id).map((review) =>
-      reviewEntry(review, headOid, glyph),
+    extra: reviews.map((review) =>
+      reviewEntry(review, headOid, glyph, reviewerMarks),
     ),
     editAction:
       mayEditIssue(ctx.app, repo, pull, ctx.auth.user).ok && !mirrored

@@ -57,6 +57,7 @@ import { accountSections } from "./origins.ts";
 import { readSpend } from "../../actions/spend.ts";
 import { liveRegionsJs } from "../client.ts";
 import { spendView } from "./spend.ts";
+import { markOf } from "../../core/marks.ts";
 
 const POOL = "/settings/subscriptions";
 
@@ -181,7 +182,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
               meta: html`${kindText(s)} · ${scopeText(s)}${s.id === PLATFORM
                 ? null
                 : html` · added ${time(s.createdAt)}`}${by
-                ? html` by ${userLink(by.username)}`
+                ? html` by ${userLink(by.username, { mark: markOf(by) })}`
                 : null}
               ·
               ${s.lastUsedAt === null

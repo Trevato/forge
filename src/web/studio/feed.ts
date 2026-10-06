@@ -8,6 +8,7 @@
  * Every string on a card is plain text and is escaped here, once.
  */
 
+import { marksByName, type Mark } from "../../core/marks.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { readFeed } from "../../feed/feed.ts";
@@ -15,7 +16,7 @@ import type { FeedItem } from "../../feed/rank.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import { outboxJs } from "../outbox.ts";
-import { avatar, btn, empty, timeAgo } from "../ui.ts";
+import { avatar, btn, empty, nameMark, timeAgo } from "../ui.ts";
 import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
@@ -53,7 +54,10 @@ const saysMore = (item: FeedItem): boolean =>
  * why, when that is news; and one quiet control for the rest — say
  * something (steer a run, tell the crew), dismiss, mute.
  */
-export function feedCard(item: FeedItem): Html {
+export function feedCard(
+  item: FeedItem,
+  marks: ReadonlyMap<string, Mark> = new Map(),
+): Html {
   const steer = item.kind === "run" || item.kind === "cost";
   const target = steer && RUN_LINK.test(item.link) ? `${item.link}/steer` : null;
   return html`<article
@@ -66,7 +70,8 @@ export function feedCard(item: FeedItem): Html {
   >
     <div class="fcard-head">
       ${avatar(item.actor ?? item.app)}
-      <strong class="fcard-who">${item.actor ?? item.app}</strong>
+      <strong class="fcard-who">${item.actor ?? item.app}</strong
+      >${nameMark(item.actor === null ? undefined : marks.get(item.actor))}
       <span class="fcard-app muted small">${item.app} · ${timeAgo(item.at)}</span>
       <span class="spacer"></span>
       <span class="badge">${KIND_LABEL[item.kind]}</span>
@@ -143,6 +148,11 @@ export function feedRegion(user: User, ctx: Ctx): Html {
   const items = readFeed(ctx.app.db, user, { limit: FEED_FIRST_PAGE }).items.filter(
     (item) => item.kind !== "ask",
   );
+  // Who each poster is, asked once for the page (`core/marks.ts`).
+  const marks = marksByName(
+    ctx.app.db,
+    items.map((item) => item.actor ?? ""),
+  );
   return html`<section
     id="live-feed"
     class="feed"
@@ -156,7 +166,7 @@ export function feedRegion(user: User, ctx: Ctx): Html {
           title: "Nothing new",
           note: "When something happens in your apps, it lands here.",
         })
-      : items.map(feedCard)}
+      : items.map((item) => feedCard(item, marks))}
   </section>`;
 }
 

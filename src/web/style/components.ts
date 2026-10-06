@@ -232,6 +232,13 @@ a.sha:hover { color: var(--accent); }
 
 .byline { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
 .byline a:hover { color: var(--accent); }
+.name-mark {
+  display: inline-block; padding: 0 5px; border-radius: 4px;
+  font-size: 10px; font-weight: 600; line-height: 15px; letter-spacing: 0.04em;
+  text-transform: uppercase; white-space: nowrap; vertical-align: 1px;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.name-mark[data-mark="crew"] { color: var(--muted-fg); background: var(--muted); }
 
 /* ---- card ---- */
 .card {

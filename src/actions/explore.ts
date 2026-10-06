@@ -17,6 +17,7 @@
 
 import type { App } from "../app.ts";
 import { appsForRepos } from "../core/apps.ts";
+import { markOf, type Mark } from "../core/marks.ts";
 import {
   frontScore,
   frontSignals,
@@ -119,6 +120,8 @@ export interface ExploreRow {
   readonly score: number;
   /** An app's repository, for "Make it yours". */
   readonly repo?: { readonly owner: string; readonly name: string };
+  /** A person's mark, from their account (`core/marks.ts`): the owner's, never a typed one. */
+  readonly mark?: Mark;
   /**
    * Whether this viewer may make the app theirs (#606, #922): signed in, a
    * person, not its owner, and the app one they may copy — public, or a
@@ -209,11 +212,14 @@ export async function explore(
       .filter((t): t is string => t !== null)
       .sort()
       .at(-1);
+    const owner = owners.get(repo.ownerId);
+    const mark = markOf(owner);
     people.set(repo.ownerName, {
       kind: "person",
       name: repo.ownerName,
       url: `/${repo.ownerName}`,
-      description: owners.get(repo.ownerId)?.displayName ?? "",
+      description: owner?.displayName ?? "",
+      ...(mark === undefined ? {} : { mark }),
       numbers: {
         forks: (was?.numbers.forks ?? 0) + row.numbers.forks,
         ships: (was?.numbers.ships ?? 0) + row.numbers.ships,

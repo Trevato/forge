@@ -38,6 +38,7 @@ import { html, raw, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { crewReadiness } from "../pages/crew.ts";
 import { grantsSection } from "../pages/subscriptions.ts";
+import { markOf } from "../../core/marks.ts";
 import {
   btn,
   card,
@@ -144,7 +145,9 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
           crew.map((c) =>
             row({
               lead: icon("bot"),
-              title: html`${userLink(c.agent.user.username)}`,
+              title: html`${userLink(c.agent.user.username, {
+                mark: markOf(c.agent.user),
+              })}`,
               meta: html`<span title="${c.agent.brief}"
                 >${ROLE_WORD[c.role]}${c.agent.model === ""
                   ? ""
@@ -315,7 +318,10 @@ ${repo.autonomyDirection}</textarea
             One or two sentences. The planner turns this into issues and links
             them when nothing is left to build.
             ${planner
-              ? html`Planner here: ${userLink(planner.agent.user.username)}.`
+              ? html`Planner here:
+                ${userLink(planner.agent.user.username, {
+                  mark: markOf(planner.agent.user),
+                })}.`
               : html`No planner on the crew yet — set one under Crew, or the
                 map is only what people write.`}
           </p>

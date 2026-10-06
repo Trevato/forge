@@ -12,6 +12,7 @@
 
 import { VERIFYING_NOTE, type EnvState, type EnvStatus } from "../apps/runtime.ts";
 import type { PreviewData } from "../apps/data.ts";
+import type { Mark } from "../core/marks.ts";
 import type { RunKind, RunState } from "../core/runs.ts";
 import {
   estimateTokens,
@@ -708,11 +709,14 @@ export function avatar(name: string, size?: "md" | "lg"): Html {
  * after it as a sibling, which silently tears the row apart. So a linked row
  * gets the name as text, and the row's own href carries the navigation.
  */
-export function userTag(username: string, o: { avatar?: boolean } = {}): Html {
+export function userTag(
+  username: string,
+  o: { avatar?: boolean; mark?: Mark | undefined } = {},
+): Html {
   return html`<span class="byline"
     >${o.avatar === false ? null : avatar(username)}<span class="byline-name"
       >${username}</span
-    ></span
+    >${nameMark(o.mark)}</span
   >`;
 }
 
@@ -728,15 +732,30 @@ export function originTag(login: string, kind: IconName): Html {
   >`;
 }
 
-/** An author: avatar plus a link to their profile. Never bare text. */
+/**
+ * The mark beside a name that says who it is: the owner's, the crew's
+ * (`core/marks.ts`). Drawn by the forge from the account, never from a
+ * display name; the `data-mark` attribute is what a typed name cannot make.
+ */
+export function nameMark(mark: Mark | undefined): Html | null {
+  if (mark === undefined) return null;
+  return html`<span
+    class="name-mark"
+    data-mark="${mark}"
+    title="${mark === "owner" ? "The owner of this forge" : "An agent on the crew"}"
+    >${mark}</span
+  >`;
+}
+
+/** An author: avatar plus a link to their profile, and their mark. Never bare text. */
 export function userLink(
   username: string,
-  o: { avatar?: boolean; display?: string } = {},
+  o: { avatar?: boolean; display?: string; mark?: Mark | undefined } = {},
 ): Html {
   return html`<span class="byline"
     >${o.avatar === false ? null : avatar(username)}<a href="/${username}"
       >${o.display || username}</a
-    ></span
+    >${nameMark(o.mark)}</span
   >`;
 }
 

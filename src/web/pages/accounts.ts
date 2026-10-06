@@ -41,6 +41,7 @@ import {
 } from "../ui.ts";
 import { sessionsCard } from "./account.ts";
 import { accountSections } from "./origins.ts";
+import { markOf } from "../../core/marks.ts";
 
 function shell(ctx: Ctx, body: Html, status = 200): Response {
   return page(
@@ -81,9 +82,7 @@ function row(a: AccountRow, sole: readonly string[]): Html {
   const actionable = a.kind === "user" && !a.isAdmin && a.removedAt === null;
   return html`<li class="row">
     <div class="row-main">
-      ${userLink(a.username)} ${standing(a)}
-      ${a.isAdmin ? badge("Owner", { variant: "secondary" }) : null}
-      ${a.kind === "agent" ? badge("Agent", { variant: "secondary" }) : null}
+      ${userLink(a.username, { mark: markOf(a) })} ${standing(a)}
       <div class="row-meta">
         joined
         ${time(a.createdAt)}${how.length > 0
