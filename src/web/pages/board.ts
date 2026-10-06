@@ -368,7 +368,7 @@ function asksStrip(ctx: Ctx): Html | null {
   const since = new Date(Date.now() - ASKS_WINDOW_DAYS * 86_400_000).toISOString();
   const m = askMeasure(ctx.app.db, user.id, since);
   if (m.raised + m.acted + m.dismissed + m.expired === 0) return null;
-  return html`<a class="board-asks" id="asks-measure" href="/asks"
+  return html`<a class="board-asks" id="asks-measure" href="/#needs-you"
     >Asks, ${ASKS_WINDOW_DAYS} days: <b>${m.raised}</b> raised · <b>${m.acted}</b> acted
     on · <b>${m.dismissed}</b> dismissed · <b>${m.expired}</b> went by themselves</a
   >`;
