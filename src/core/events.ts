@@ -92,11 +92,28 @@ export class EventBus {
   }
 }
 
+/**
+ * Events after the one named `?n`, in the order they were written.
+ *
+ * An event's id is its name; its place is the table's own sequence (its
+ * rowid), which SQLite keeps strictly increasing across every connection.
+ * Ids are made in order only within one process: during a roll two write
+ * to one database (#875), and an event the other writes in the same
+ * millisecond may carry the smaller id. A replay that resumed by id would
+ * skip it; resumed by sequence, it misses nothing (#932). A cursor nobody
+ * holds (an event pruned, or a guess) falls back to comparing ids. Ids a
+ * migration makes in SQL take their order from the sequence the same way.
+ */
+const afterEvent = (n: number): string =>
+  `(CASE WHEN EXISTS (SELECT 1 FROM event AS c WHERE c.id = ?${n})
+      THEN event.rowid > (SELECT c.rowid FROM event AS c WHERE c.id = ?${n})
+      ELSE event.id > ?${n} END)`;
+
 export interface ListEventsOptions {
   repoId?: string;
   /** Restrict to events of this kind. */
   kind?: string;
-  /** Return events with id greater than this (exclusive). */
+  /** Return events written after this one (exclusive; `afterEvent`). */
   afterId?: string;
   /** @default 100 */
   limit?: number;
@@ -126,13 +143,13 @@ export function listEventsVisibleTo(
   let where = `event.repo_id IS NOT NULL AND ${repoVisible(viewer !== undefined)}`;
   if (options.afterId !== undefined) {
     params.push(options.afterId);
-    where += ` AND event.id > ?${params.length}`;
+    where += ` AND ${afterEvent(params.length)}`;
   }
   params.push(options.limit ?? 100);
   return db
     .query<EventRow, (string | number)[]>(
       `SELECT event.* FROM event JOIN repo ON repo.id = event.repo_id
-       WHERE ${where} ORDER BY event.id DESC LIMIT ?${params.length}`,
+       WHERE ${where} ORDER BY event.rowid DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toEvent);
@@ -180,13 +197,13 @@ export function listEvents(
   }
   if (options.afterId !== undefined) {
     params.push(options.afterId);
-    clauses.push(`id > ?${params.length}`);
+    clauses.push(afterEvent(params.length));
   }
   params.push(options.limit ?? 100);
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   return db
     .query<EventRow, (string | number)[]>(
-      `SELECT * FROM event ${where} ORDER BY id DESC LIMIT ?${params.length}`,
+      `SELECT * FROM event ${where} ORDER BY event.rowid DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toEvent);

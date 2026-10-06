@@ -31,11 +31,17 @@ import {
   SLUG_MAX,
   type AppRecord,
 } from "../core/apps.ts";
-import { canEnterApp, canRead, getRepoById, type Repo } from "../core/repos.ts";
+import {
+  canEnterApp,
+  canRead,
+  forksSince,
+  getRepoById,
+  type Repo,
+} from "../core/repos.ts";
 import { isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { enableApp } from "./apps.ts";
-import { forkRepo, updateRepoSettings } from "./repos.ts";
+import { FORKS_PER_DAY, forkRepo } from "./repos.ts";
 
 export interface MakeItYoursPlan {
   readonly dryRun: boolean;
@@ -72,21 +78,23 @@ export const NOT_COPIED = [
   "its domains",
 ] as const;
 
-/** How many copies one account may make in any 24 hours (#853). */
-export const COPIES_PER_DAY = 5;
+/**
+ * How many copies one account may make in any 24 hours (#853): the limit
+ * every fork a person makes is held to (`FORKS_PER_DAY`, #888), counted
+ * with the fork's own write, so no way of copying goes around it.
+ */
+export const COPIES_PER_DAY = FORKS_PER_DAY;
 const DAY_MS = 86_400_000;
 
 /** The account's copies in the last 24 hours, oldest first. */
-function copiesToday(app: App, ownerId: string, now: number): string[] {
-  return app.db
-    .query<{ created_at: string }, [string, string]>(
-      `SELECT created_at FROM repo
-       WHERE owner_id = ?1 AND fork_parent_id IS NOT NULL AND created_at >= ?2
-       ORDER BY created_at`,
-    )
-    .all(ownerId, new Date(now - DAY_MS).toISOString())
-    .map((r) => r.created_at);
-}
+const copiesToday = (app: App, ownerId: string, now: number): string[] =>
+  forksSince(app.db, ownerId, new Date(now - DAY_MS).toISOString());
+
+/** When the oldest of today's copies leaves the window. */
+const resetsAt = (app: App, ownerId: string, now: number): string => {
+  const oldest = copiesToday(app, ownerId, now)[0];
+  return new Date((oldest === undefined ? now : Date.parse(oldest)) + DAY_MS).toISOString();
+};
 
 /** A free slug from the copy's owner and name: `name-owner`, then a number. */
 function freeSlug(app: App, repo: { name: string }, owner: string): string {
@@ -194,11 +202,9 @@ export async function makeItYours(
   };
   if (dryRun) return ok(plan);
   if (copiesLeft === 0)
-    return err({
-      kind: "limit",
-      resetsAt: new Date(Date.parse(today[0]!) + DAY_MS).toISOString(),
-    });
-  const forked = await forkRepo(app, actor, source, name);
+    return err({ kind: "limit", resetsAt: resetsAt(app, actor.id, now) });
+  // Born with the chosen visibility: the copy never exists as public first.
+  const forked = await forkRepo(app, actor, source, name, { visibility, now });
   if (!forked.ok) {
     switch (forked.error) {
       case "not_found":
@@ -212,6 +218,8 @@ export async function makeItYours(
           kind: "invalid",
           message: `you already have a repository named ${name}: choose another name`,
         });
+      case "limit":
+        return err({ kind: "limit", resetsAt: resetsAt(app, actor.id, now) });
       default:
         return err({
           kind: "invalid",
@@ -219,18 +227,7 @@ export async function makeItYours(
         });
     }
   }
-  // A fork takes the original's visibility; the copy takes the person's
-  // choice before its app exists, so nothing of it is public by accident.
-  let copy = forked.value;
-  if (copy.visibility !== visibility) {
-    const set = await updateRepoSettings(app, actor, copy, { visibility });
-    if (!set.ok)
-      return err({
-        kind: "invalid",
-        message: `the copy is made, but it could not be made ${visibility}`,
-      });
-    copy = set.value;
-  }
+  const copy = forked.value;
   const enabled = enableApp(app, actor, copy, { slug, access: visibility });
   if (!enabled.ok)
     return err({

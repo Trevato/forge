@@ -323,10 +323,14 @@ describe("a spawned child's own keys and domain", () => {
         "keepAccess",
         "name",
         "org",
+        // The hash of the parent's status secret (#776): the child keeps only
+        // the hash, so this names nothing in the parent and reveals no secret.
+        "statusHash",
         "upstream",
         "url",
       ]);
       expect(JSON.stringify(record)).not.toContain(dir);
+      expect(String(record["statusHash"])).toMatch(/^[0-9a-f]{64}$/);
     } finally {
       child.close();
     }

@@ -137,7 +137,12 @@ export function newIssuePage(ctx: Ctx): Response {
     return canRead(ctx.app.db, repo, undefined)
       ? accountOrReport(ctx, repo)
       : signInFirst(ctx);
-  return composePage(ctx, repo, { title: "", body: "" });
+  // `?sealed=1`: the repository page's "report it sealed" link.
+  return composePage(ctx, repo, {
+    title: "",
+    body: "",
+    sealed: ctx.url.searchParams.get("sealed") === "1",
+  });
 }
 
 /**

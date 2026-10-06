@@ -272,8 +272,10 @@ async function copyInto(
         const made = await createUser(child.db, {
           username: owner.username,
           email: `${owner.username}@spawn.forge.invalid`,
-          // Seeded by the parent's owner, who is proven there.
+          // Seeded by the parent's owner, who is proven there, under the
+          // name they already hold there.
           trusted: true,
+          allowReserved: true,
         });
         return made.ok ? made.value : undefined;
       })());
@@ -281,7 +283,8 @@ async function copyInto(
 
     let org = getOrg(child.db, plan.org);
     if (!org) {
-      const made = createOrg(child.db, plan.org, founder.id);
+      // Named by the spawner, who was held to the rule on the parent.
+      const made = createOrg(child.db, plan.org, founder.id, { allowReserved: true });
       if (!made.ok) return err(`could not make org ${plan.org}: ${made.error}`);
       org = made.value;
     }

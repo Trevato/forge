@@ -104,9 +104,13 @@ describe("stripForgeDirs", () => {
     expect(stripForgeDirs([dir], `(see ${dir}.)`)).toBe("(see .)");
     expect(stripForgeDirs([dir], `"${dir}.", it said`)).toBe('".", it said');
     expect(stripForgeDirs([dir], `${dir}...`)).toBe("...");
-    // A name that goes on after the dot is a sibling, left whole.
+    // A name that goes on after the dot is a sibling, left whole — after
+    // one dot or two.
     expect(stripForgeDirs([dir], `${dir}.bak is kept`)).toBe(
       `${dir}.bak is kept`,
+    );
+    expect(stripForgeDirs([dir], `${dir}..bak is kept`)).toBe(
+      `${dir}..bak is kept`,
     );
   });
 

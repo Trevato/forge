@@ -250,8 +250,12 @@ describe("asks that earn their place", () => {
     // "more" sits inside it, and the stylesheet hides each where it is not.
     expect(wide!.indexOf('id="asks-more"')).toBeLessThan(wide!.indexOf("</details>"));
     const css = await (await fetch(`${servers.url}${home.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
-    expect(css).toContain("@media (max-width: 480px) {\n  .needs-you #asks-more > summary { display: none; }");
-    expect(css).toContain("@media (min-width: 481px) {\n  .needs-you #asks-phone-more > summary { display: none; }");
+    // Only where the browser can hold a details element open: an older one
+    // keeps both summaries, so no ask is out of reach.
+    const held = css.slice(css.indexOf("@supports selector(::details-content) {"));
+    expect(held).toContain("@media (max-width: 480px) {\n    .needs-you #asks-more > summary { display: none; }");
+    expect(held).toContain("@media (min-width: 481px) {\n    .needs-you #asks-phone-more > summary { display: none; }");
+    expect(css.indexOf("#asks-more > summary")).toBeGreaterThan(css.indexOf("@supports selector(::details-content)"));
     // Arriving at #needs-you, the first Tab lands on an ask, not the bulk step.
     const bulk = asks.indexOf('id="asks-bulk"');
     expect(bulk).toBeGreaterThan(asks.indexOf("</details>"));
@@ -340,5 +344,15 @@ describe("asks that earn their place", () => {
     const asks = await page("/");
     expect(asks).toContain("2 green changes wait for your look");
     expect(asks).toContain("<b>security</b>: \u201cWiden the board id\u201d");
+    // On a phone the row is its head line, its two asks one tap away; a
+    // wider screen holds them open (the lead's call: the fold wins).
+    const group = asks.slice(asks.indexOf("2 green changes wait for your look"));
+    expect(group).toContain('<details class="ask-group">');
+    expect(group).toContain("<summary>Show all 2</summary>");
+    const css = await (await fetch(`${servers.url}${asks.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
+    const wide = css.slice(css.indexOf("@supports selector(::details-content) {"));
+    expect(wide.slice(wide.indexOf("@media (min-width: 481px)"))).toContain(
+      ".needs-you .ask-group > summary { display: none; }",
+    );
   });
 });

@@ -5,11 +5,13 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { unsealReleased } from "../actions/sealed.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import {
   closeStreamsOf,
   closeStreamsOfSession,
   noteCaller,
+  sweepStanding,
 } from "./caller.ts";
 import {
   accountAct,
@@ -202,6 +204,7 @@ import {
   assigneeSubmit,
   labelsSubmit,
   stateSubmit,
+  wordsSubmit,
 } from "../web/pages/thread.ts";
 import {
   appOpen,
@@ -391,7 +394,6 @@ import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
   appWebSocket,
-  closeSocketsOf,
   proxyApp,
   resolveAppHost,
 } from "../apps/proxy.ts";
@@ -853,6 +855,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/issues/:number/state", (ctx) =>
     stateSubmit(ctx, "issue"),
   );
+  router.add("POST", "/:owner/:name/issues/:number/edit", (ctx) =>
+    wordsSubmit(ctx, "issue"),
+  );
   router.add("POST", "/:owner/:name/issues/:number/labels", (ctx) =>
     labelsSubmit(ctx, "issue"),
   );
@@ -927,6 +932,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/pulls/:number/merge", pullMergeSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/state", (ctx) =>
     stateSubmit(ctx, "pull"),
+  );
+  router.add("POST", "/:owner/:name/pulls/:number/edit", (ctx) =>
+    wordsSubmit(ctx, "pull"),
   );
   router.add("POST", "/:owner/:name/pulls/:number/labels", (ctx) =>
     labelsSubmit(ctx, "pull"),
@@ -1468,6 +1476,19 @@ async function handleHook(app: App, request: Request): Promise<Response> {
     actorId: input.actorId || undefined,
     payload: { updates: input.updates },
   });
+  // A tag that releases a sealed report's fix opens the report
+  // (`actions/sealed.ts`). Off the hook's answer: git need not wait for it.
+  void unsealReleased(
+    app,
+    repo,
+    input.updates,
+    input.actorId ? getUserById(app.db, input.actorId) : undefined,
+  ).catch((error) =>
+    app.log.warn("could not unseal released reports", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      error: String(error),
+    }),
+  );
   return new Response("");
 }
 
@@ -1555,10 +1576,12 @@ export async function serve(app: App): Promise<Servers> {
   // An account suspended or removed ends what it has open on this
   // listener: its event streams and the app sockets it was let into. A
   // browser signed out ends the streams it opened.
+  const unclosed = (error: unknown): void =>
+    app.log.warn("something held open did not close", { error: String(error) });
   const endOpen = app.bus.subscribe((event) => {
     if (event.kind === "session.ended") {
       const id = event.payload["sessionId"];
-      if (typeof id === "string") closeStreamsOfSession(id);
+      if (typeof id === "string") closeStreamsOfSession(app.db, id, unclosed);
       return;
     }
     if (event.kind !== "account.suspended" && event.kind !== "account.removed")
@@ -1567,9 +1590,17 @@ export async function serve(app: App): Promise<Servers> {
     const user =
       typeof name === "string" ? getUserByName(app.db, name) : undefined;
     if (user === undefined) return;
-    closeStreamsOf(user.id);
-    closeSocketsOf(user.id);
+    closeStreamsOf(app.db, user.id, unclosed);
   });
+  // And every process holds what it has open against the database, so a
+  // suspension or sign-out another process wrote reaches it too (#846).
+  const sweep = setInterval(
+    () =>
+      sweepStanding(app.db, (error) =>
+        app.log.warn("standing sweep did not finish", { error: String(error) }),
+      ),
+    app.config.standingSweepMs ?? 5_000,
+  );
   // Who may say who the client is (\`http/peer.ts\`), settled once.
   const proxies = parseCidrs((app.config.trustedProxies ?? []).join(","));
   if (!proxies.ok)
@@ -1648,6 +1679,7 @@ export async function serve(app: App): Promise<Servers> {
     port,
     stop() {
       endOpen();
+      clearInterval(sweep);
       web.stop(true);
       internal.stop(true);
       // Our socket goes with us; a corpse is only ever an unclean exit's.
@@ -1727,7 +1759,7 @@ async function answerGet(
   // a stream this request opens is the account's, to end with it.
   if (auth.user !== undefined) {
     noteSignedIn(request);
-    noteCaller(request, auth.user.id, auth.sessionId);
+    noteCaller(request, app.db, auth.user.id, auth.sessionId);
   }
 
   // The two things standing between one runaway agent and everybody

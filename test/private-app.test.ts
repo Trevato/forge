@@ -262,7 +262,7 @@ describe("a private app on a public repository stays private", () => {
     expect((await as(aliceCookie)).environments.length).toBeGreaterThan(0);
   });
 
-  test("a private app's runs and logs are refused to a reader and an anonymous visitor; a writer reads them", async () => {
+  test("a private app's runs and logs are refused to a reader and an anonymous visitor, who get no Runs tab (#906); a writer reads them", async () => {
     const run = listRuns(app.db, record.repoId, { kind: "deploy", limit: 1 })[0];
     expect(run).toBeDefined();
     if (run === undefined) return;
@@ -285,10 +285,15 @@ describe("a private app on a public repository stays private", () => {
       ).json()) as any;
       expect(listed.items).toEqual([]);
       const page = await (
-        await fetch(`${base}/runs`, { headers: { ...headers, cookie: `${cookie}; forge_mode=dev` } })
+        await fetch(`${base}/runs`, { headers })
       ).text();
       expect(page).not.toContain(run.id);
+      // No door that leads nowhere: no Runs tab, no Runs in the palette.
+      const home = await (await fetch(base, { headers })).text();
+      expect(home).not.toContain('/alice/ledger/runs"');
     }
+    const writer = await (await fetch(base, { headers: { cookie: aliceCookie } })).text();
+    expect(writer).toContain('href="/alice/ledger/runs"');
     for (const path of paths) {
       const res = await fetch(path, { headers: { cookie: aliceCookie } });
       expect(`${path} ${res.status}`).toBe(`${path} 200`);

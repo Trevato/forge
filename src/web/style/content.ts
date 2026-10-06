@@ -447,6 +447,15 @@ form.inline { display: inline; margin-left: auto; }
 .explore-main { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .explore-name { font-weight: 600; }
 .explore-line .input { flex: 1; min-width: 0; }
+/* On a phone the first rows belong on the first screen: one row of chips
+   that scrolls sideways, and a row's verb under its numbers. */
+@media (max-width: 600px) {
+  .explore-filters { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .explore-filters .seg { flex: none; }
+  .explore-row { flex-wrap: wrap; row-gap: 6px; }
+  .explore-row > .explore-main { flex-basis: 100%; }
+  .explore-row > .btn { margin-left: 0; }
+}
 
 /* The featured repository: its picture and its crew at work, side by side
    on a desk, stacked on a phone. */
@@ -1160,15 +1169,22 @@ textarea.editor:focus { outline: none; }
    its words, not the column. */
 .needs-you #asks-bulk select { width: auto; }
 /* A phone shows the top asks and one "N more" that opens in place to all
-   of them; a wider screen shows ASKS_SHOWN and its own "N more" past that. */
-@media (max-width: 480px) {
-  .needs-you #asks-more > summary { display: none; }
-  .needs-you #asks-more::details-content { content-visibility: visible; }
-  .needs-you #asks-more > .stack { margin-top: 0; }
+   of them; a wider screen shows ASKS_SHOWN and its own "N more" past that.
+   Only where a details element can be held open: elsewhere both summaries
+   stay, so every ask is still a tap away. */
+@supports selector(::details-content) {
+  @media (max-width: 480px) {
+    .needs-you #asks-more > summary { display: none; }
+    .needs-you #asks-more::details-content { content-visibility: visible; }
+    .needs-you #asks-more > .stack { margin-top: 0; }
+  }
+  @media (min-width: 481px) {
+    .needs-you #asks-phone-more > summary { display: none; }
+    .needs-you #asks-phone-more::details-content { content-visibility: visible; }
+    .needs-you #asks-phone-more > .stack { margin-top: 0; }
+    .needs-you .ask-group > summary { display: none; }
+    .needs-you .ask-group::details-content { content-visibility: visible; }
+  }
 }
-@media (min-width: 481px) {
-  .needs-you #asks-phone-more > summary { display: none; }
-  .needs-you #asks-phone-more::details-content { content-visibility: visible; }
-  .needs-you #asks-phone-more > .stack { margin-top: 0; }
-}
+.needs-you .ask-group > summary { padding: 10px 14px; cursor: pointer; }
 `;

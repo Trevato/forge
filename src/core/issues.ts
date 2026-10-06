@@ -491,6 +491,29 @@ export interface Comment {
   readonly originAuthor: string | null;
 }
 
+/**
+ * New words for an issue or a pull: the title, the body, or both. The same
+ * caps as opening. Touches `updated_at`, as a comment does: an edit is
+ * someone attending to it.
+ */
+export function updateIssueText(
+  db: Database,
+  issueId: string,
+  input: { title?: string | undefined; body?: string | undefined },
+): Result<Issue, TitleError | "body_too_long" | "not_found"> {
+  const before = getIssueById(db, issueId);
+  if (before === undefined) return err("not_found");
+  const title = input.title === undefined ? before.title : input.title.trim();
+  if (title === "") return err("empty_title");
+  if (title.length > MAX_TITLE) return err("title_too_long");
+  const body = input.body ?? before.body;
+  if (body.length > MAX_BODY) return err("body_too_long");
+  db.query(
+    "UPDATE issue SET title = ?1, body = ?2, updated_at = ?3 WHERE id = ?4",
+  ).run(title, body, new Date().toISOString(), issueId);
+  return ok(getIssueById(db, issueId)!);
+}
+
 export function addComment(
   db: Database,
   input: { issueId: string; authorId: string; body: string },

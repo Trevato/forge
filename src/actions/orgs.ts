@@ -19,7 +19,6 @@ import {
   type Permission,
   type Team,
 } from "../core/orgs.ts";
-import { reservedName } from "../core/reserved.ts";
 import { getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireOrgAdmin, requireUser } from "./access.ts";
@@ -30,7 +29,7 @@ export function createOrg(
   name: string,
 ): Result<
   User,
-  "unauthorized" | "name_reserved" | "unverified" | "agent_cannot_own" | CreateOrgError
+  "unauthorized" | "unverified" | "agent_cannot_own" | CreateOrgError
 > {
   const user = requireUser(actor);
   if (!user.ok) return user;
@@ -38,14 +37,7 @@ export function createOrg(
   if (user.value.kind === "agent") return err("agent_cannot_own");
   const proven = requireVerified(app, user.value);
   if (!proven.ok) return proven;
-  // An org shares the account namespace: it may not take a reserved name.
-  // A name someone already holds is taken (foundOrg says so); only a new
-  // name can be a reserved one.
-  if (
-    getUserByName(app.db, name) === undefined &&
-    reservedName(app.db, name) !== undefined
-  )
-    return err("name_reserved");
+  // A reserved name is refused where orgs are made (`core/orgs.ts`).
   const created = foundOrg(app.db, name, user.value.id);
   if (!created.ok) return created;
   app.bus.append({

@@ -306,8 +306,7 @@ async function find(ctx: Ctx, a: Asked): Promise<SearchResults> {
 /**
  * GET /search — everything the viewer can see, in one box, with no script.
  *
- * One page for every viewer — `?mode=dev` and the mode cookie change
- * nothing: apps and repositories, tells and changes, then code, each a
+ * One page for every viewer: apps and repositories, tells and changes, then code, each a
  * section. The same visibility as everywhere, so a signed-out reader sees
  * exactly the public repositories a signed-out reader would anywhere else.
  *

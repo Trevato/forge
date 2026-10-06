@@ -18,7 +18,7 @@
  * "mirrored" on the others, which is honest rather than silently wrong.
  */
 
-import { canSeeSealed, setSealed } from "../core/sealed.ts";
+import { canSeeSealed, mayView, setSealed } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { crewRole, isCrew } from "../core/agents.ts";
@@ -34,6 +34,7 @@ import {
   setAssignee,
   setIssueLabels as writeLabels,
   setIssueState as writeState,
+  updateIssueText,
   type CloseReason,
   type Comment,
   type Issue,
@@ -46,9 +47,15 @@ import {
 import { isStructural, pillarsOf } from "../core/pillars.ts";
 import { getPull } from "../core/pulls.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
-import type { User } from "../core/users.ts";
+import { getUserById, type User } from "../core/users.ts";
+import {
+  directorsAmong,
+  mayDirectCrew,
+  unadoptedAmong,
+} from "../crew/direct.ts";
 import { laterGate } from "../crew/later.ts";
 import { handedOverAt } from "../crew/parks.ts";
+import { listReviews } from "../core/reviews.ts";
 import {
   applyLabelNames,
   commentByRemoteId,
@@ -102,6 +109,147 @@ export function openIssue(
     payload: { number: created.value.number },
   });
   return created;
+}
+
+export type EditError =
+  | AccessError
+  | MirrorError
+  | TitleError
+  | "body_too_long"
+  | "nothing_to_change"
+  | "taken_up";
+
+/** The sentence a refused author reads: someone who directs the crew acted. */
+export const TAKEN_UP = "a writer has taken this up: comment instead";
+
+/**
+ * Whose words these are to change, and the one word why not.
+ *
+ * A person who writes the repository may change anyone's. The author may
+ * change their own — while they are still only theirs. Someone who may
+ * not direct the crew (a reader on a public repository, an outside
+ * contributor) keeps that right only until a person who directs the crew
+ * has acted on the words: adopted the issue (assigned it, or linked it into
+ * the map), or reviewed the pull. After that the words are what was
+ * adopted or reviewed, and a rewrite would put new work in the crew's
+ * hands, or a new `Closes #N` under an approval, with nobody who directs
+ * the crew having seen it (#619). They comment instead. Acted is acted:
+ * an assignment taken back later does not hand the words back, since the
+ * next assignment would hand the crew whatever they say by then. An agent edits only what it wrote,
+ * and its own pull only until a person approved it: what the merge closes
+ * is what the approval saw.
+ *
+ * The pages ask this before offering the form, so nobody is shown one the
+ * server would refuse. A mirror is refused separately, with its own words.
+ */
+export function mayEditIssue(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  user: User | undefined,
+): Result<true, "forbidden" | "taken_up"> {
+  if (user === undefined || !canRead(app.db, repo, user))
+    return err("forbidden");
+  if (!mayView(app.db, repo, issue, user)) return err("forbidden");
+  if (user.id !== issue.authorId)
+    return user.kind !== "agent" && canWrite(app.db, repo, user)
+      ? ok(true)
+      : err("forbidden");
+  // Asked of the row as it is now, not as the caller last read it: an
+  // assignment or a review made since is what this clock turns on.
+  const now = getIssueById(app.db, issue.id) ?? issue;
+  if (user.kind === "agent") {
+    if (now.kind === "issue") return ok(true);
+    const approved = listReviews(app.db, now.id).some(
+      (r) =>
+        r.state === "approved" &&
+        getUserById(app.db, r.authorId)?.kind === "user",
+    );
+    return approved ? err("taken_up") : ok(true);
+  }
+  if (mayDirectCrew(app.db, repo, user)) return ok(true);
+  const untouched =
+    now.kind === "pull"
+      ? !reviewedByDirector(app, repo, now)
+      : !everAdopted(app, repo, now) &&
+        unadoptedAmong(app.db, repo, [now]).has(now.id);
+  return untouched ? ok(true) : err("taken_up");
+}
+
+/**
+ * Whether a person who directs the crew has ever assigned this issue or
+ * linked it into the map — read from the outbox, which keeps what the row
+ * forgets when an assignment is taken back. A link the crew's planner made
+ * is not adoption, as `unadoptedAmong` says.
+ */
+function everAdopted(app: App, repo: Repo, issue: Issue): boolean {
+  const actors = app.db
+    .query<{ actor: string }, [string, number]>(
+      `SELECT DISTINCT actor_id AS actor FROM event
+        WHERE repo_id = ?1 AND actor_id IS NOT NULL
+          AND kind IN ('issue.assigned', 'issue.blocked')
+          AND (json_extract(payload, '$.number') = ?2
+            OR json_extract(payload, '$.blockedBy') = ?2)`,
+    )
+    .all(repo.id, issue.number)
+    .map((r) => r.actor);
+  return directorsAmong(app.db, repo, actors).length > 0;
+}
+
+/** Whether a person who directs the crew has reviewed this pull, in any state. */
+function reviewedByDirector(app: App, repo: Repo, pull: Issue): boolean {
+  return (
+    directorsAmong(
+      app.db,
+      repo,
+      listReviews(app.db, pull.id).map((r) => r.authorId),
+    ).length > 0
+  );
+}
+
+/**
+ * Change the title or the body of an issue or a pull after it was opened:
+ * the pull whose body still says "work in progress", the issue whose title
+ * no longer says what it asks. Its author's say over their own words, any
+ * author's; a person who writes the repository may edit anyone's. An agent
+ * that did not write it may not: the crew lands, labels and closes, but a
+ * person's words are the person's. A mirror's words belong to its origin.
+ *
+ * What a pull closes, who it answers, and the map are all read from the
+ * body on every read, so they follow the edit with no column to drift. The
+ * event says that an edit happened and to what, never the words: the page
+ * has them, and a sealed pull's words stay where its seal keeps them.
+ */
+export function editIssue(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  issue: Issue,
+  input: { title?: string | undefined; body?: string | undefined },
+): Result<Issue, EditError> {
+  const user = requireParticipant(app, actor, repo);
+  if (!user.ok) return user;
+  if (issue.repoId !== repo.id) return err("not_found");
+  // A sealed issue is, to anyone it is sealed from, not there.
+  if (!mayView(app.db, repo, issue, user.value)) return err("not_found");
+  const may = mayEditIssue(app, repo, issue, user.value);
+  if (!may.ok) return may;
+  if (isMirror(app, repo)) return err("mirrored");
+  if (input.title === undefined && input.body === undefined)
+    return err("nothing_to_change");
+  const changed = (["title", "body"] as const).filter(
+    (field) => input[field] !== undefined && input[field] !== issue[field],
+  );
+  if (changed.length === 0) return ok(issue);
+  const updated = updateIssueText(app.db, issue.id, input);
+  if (!updated.ok) return updated;
+  app.bus.append({
+    kind: `${issue.kind}.edited`,
+    repoId: repo.id,
+    actorId: user.value.id,
+    payload: { number: issue.number, changed },
+  });
+  return updated;
 }
 
 /**

@@ -333,11 +333,10 @@ describe("web ui", () => {
       body: form({ name: "sc-ript", visibility: "public" }),
       redirect: "manual",
     });
-    // `mode=dev` because the by-name rows in the studio's own palette are
-    // apps, not every repository (`paletteIndex`, `src/web/layout.ts`) — a
-    // plain repository like this one is dev's box to find.
+    // The palette's by-name rows are every repository, apps first
+    // (`paletteIndex`, `src/web/layout.ts`), so a plain one is there too.
     const html = await (
-      await fetch(`${base}/?mode=dev`, { headers: { cookie: owner } })
+      await fetch(`${base}/`, { headers: { cookie: owner } })
     ).text();
     const start = html.indexOf(
       '<script type="application/json" id="palette-index">',

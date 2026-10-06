@@ -30,6 +30,7 @@ for a tunnel and a forge that sleeps.
 | `apps`         | the apps you can see: live or not, where served, how each runs itself, what is working            |        |
 | `tell`         | a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick            | yes    |
 | `say`          | speak on an issue or a pull; a working builder hears it as its next step                          | yes    |
+| `edit`         | a new title or body for an issue or a pull: its author's, or a writer's; an agent edits only what it wrote | yes    |
 | `seal`         | `{ repo, number, sealed }`: seal a security report (and the pull that fixes it) so only writers and the crew see it, or unseal it for every reader; a writer's, recorded | yes    |
 | `now`          | what the crew is doing right now: who, on what, since when, at what cost; a planner that declined the direction and waits for you comes first (`run: null`, its words in `says`) |        |
 | `stop`         | stop one run by its id from `now`                                                                 | yes    |
