@@ -119,6 +119,12 @@ export interface ExploreRow {
   readonly score: number;
   /** An app's repository, for "Make it yours". */
   readonly repo?: { readonly owner: string; readonly name: string };
+  /**
+   * Whether this viewer may make the app theirs (#606, #922): signed in, a
+   * person, not its owner, and the app one they may copy — public, or a
+   * private one they enter as its own. The same rules Make it yours checks.
+   */
+  readonly copyable?: boolean;
 }
 
 export async function explore(
@@ -166,6 +172,15 @@ export async function explore(
       : { ...s, awakeHours: 0 };
   };
 
+  const copyable = (repo: Repo): boolean => {
+    if (viewer === undefined || viewer.kind === "agent" || !isActive(viewer)) return false;
+    if (repo.ownerId === viewer.id) return false;
+    const record = records.get(repo.id)!;
+    return (
+      record.access === "public" ||
+      canEnterApp(db, repo, record, viewer, { named: false })
+    );
+  };
   const appRows: ExploreRow[] = appRepos.map((repo) => {
     const s = told(repo);
     return {
@@ -182,6 +197,7 @@ export async function explore(
       shippedAt: s.shippedAt,
       score: frontScore(s, now, weights),
       repo: { owner: repo.ownerName, name: repo.name },
+      copyable: copyable(repo),
     };
   });
 

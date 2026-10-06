@@ -37,7 +37,7 @@ function numbers(row: ExploreRow): string {
   return parts.filter((p) => p !== "").join(" · ");
 }
 
-function rowHtml(ctx: Ctx, row: ExploreRow): Html {
+function rowHtml(row: ExploreRow): Html {
   const said = numbers(row);
   return html`<li class="row explore-row">
     <span class="explore-main">
@@ -49,11 +49,7 @@ function rowHtml(ctx: Ctx, row: ExploreRow): Html {
       ${when(said, (s) => html`<span class="muted small">${s}</span>`)}
     </span>
     ${when(
-      row.kind === "app" &&
-        ctx.auth.user !== undefined &&
-        row.repo?.owner !== ctx.auth.user.username
-        ? row.repo
-        : undefined,
+      row.copyable === true ? row.repo : undefined,
       (repo) =>
         btn("Make it yours", {
           href: `/${repo.owner}/${repo.name}/make-it-yours`,
@@ -84,7 +80,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     { label: "Fresh", sort: "fresh" as const },
   ];
   const body = html`${pageHead("Explore", {
-      sub: "Apps and the people who make them, ranked by forks, what shipped this month, use and how lately — the numbers on every row.",
+      sub: "Apps and their makers, ranked by forks, ships, use and how lately — the numbers on every row.",
     })}
     <form method="get" action="/explore" class="bar mb explore-line">
       <input
@@ -98,7 +94,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
-    <div class="filters mb">
+    <div class="filters mb explore-filters">
       ${seg(
         kinds.map((k) => ({
           label: k.label,
@@ -120,6 +116,6 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
           title: "Nothing matches",
           note: "Clear the line to see everything you can.",
         })
-      : listCard(rows.map((row) => rowHtml(ctx, row)))}`;
+      : listCard(rows.map(rowHtml))}`;
   return page({ ctx, title: "Explore", body });
 }
