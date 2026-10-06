@@ -10,7 +10,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { createApp, type App } from "../src/app.ts";
 import { runGitCapture } from "../src/git/env.ts";
 import { listBranches } from "../src/git/branches.ts";
@@ -471,7 +470,6 @@ describe("edits on a mirror: the origin's refusal is final", () => {
         password: ALICE_PASSWORD,
       }),
     });
-    resetConnectLimit();
 
     const connected = await read<{ id: string }>(
       await api("/api/v1/user/origins", {

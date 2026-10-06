@@ -11,7 +11,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { editFiles, MAX_FILE_BYTES } from "../src/actions/contents.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { createApp, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
@@ -425,7 +424,6 @@ describe("edits on a mirror land upstream first", () => {
         password: ALICE_PASSWORD,
       }),
     });
-    resetConnectLimit();
 
     const connected = await read<{ id: string }>(
       await api("/api/v1/user/origins", {

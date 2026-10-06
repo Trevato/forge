@@ -17,6 +17,8 @@ export interface Auth {
   readonly scope: TokenScope | undefined;
   /** `edge`: the platform in front of the forge signed this person in. */
   readonly via: "session" | "edge" | "token" | "password" | "none";
+  /** Which signed-in browser asked, when `via` is `session`. */
+  readonly sessionId?: string;
 }
 
 export interface Ctx {

@@ -45,6 +45,7 @@ import {
 } from "../pages/site.ts";
 import { writableAppsOf } from "./asks.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
+import { homeTabs } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
 import { everydayCard } from "../pages/everyday.ts";
 import { nextStepsCard } from "../pages/next-steps.ts";
@@ -170,11 +171,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
   const firstSteps = await nextStepsCard(ctx, user);
   const body = html`<h1 class="sr-only">Home</h1>
     ${firstSteps ?? everydayCard(ctx, user)} ${address}
-    <nav class="home-tabs seg" aria-label="Home">
-      <a href="/" aria-current="page">Feed</a>
-      <a href="/apps">Your apps</a>
-      <a href="/asked">Asked</a>
-    </nav>
+    ${homeTabs("feed")}
     <div class="dash">
       <div class="dash-main stack">
         ${composer(ctx, user)}

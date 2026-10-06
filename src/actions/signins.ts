@@ -7,7 +7,12 @@
  */
 
 import type { App } from "../app.ts";
-import { endSession, listSessions, type SessionInfo } from "../core/sessions.ts";
+import {
+  destroySession,
+  endSession,
+  listSessions,
+  type SessionInfo,
+} from "../core/sessions.ts";
 import { deleteToken, listTokens, type TokenInfo } from "../core/tokens.ts";
 import { getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -85,6 +90,22 @@ export function revokeAccountToken(
   return ok();
 }
 
+/**
+ * Sign out the browser asking: the same path as ending it from Settings, so
+ * the streams its other tabs hold end now, not when they next reconnect. A
+ * cookie that no longer names a live session is simply forgotten.
+ */
+export function signOutHere(
+  app: App,
+  actor: User | undefined,
+  sessionId: string | undefined,
+  token: string | undefined,
+): void {
+  if (actor !== undefined && sessionId !== undefined)
+    endAccountSession(app, actor, actor.username, sessionId);
+  else if (token !== undefined) destroySession(app.db, token);
+}
+
 /** Sign one of an account's browsers out. */
 export function endAccountSession(
   app: App,
@@ -96,5 +117,11 @@ export function endAccountSession(
   if (!user.ok) return user;
   if (!endSession(app.db, user.value.id, sessionId)) return err("not_found");
   audited(app, actor!, user.value, "session");
+  // The browser's open streams end with it (the listener's `session.ended`).
+  app.bus.append({
+    kind: "session.ended",
+    actorId: actor!.id,
+    payload: { sessionId },
+  });
   return ok();
 }
