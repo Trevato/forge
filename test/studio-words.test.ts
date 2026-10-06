@@ -872,9 +872,9 @@ describe("dev's vocabulary never reaches a studio page", () => {
     });
     if (!plain.ok) throw new Error(String(plain.error));
     const titles = new Map([
-      ["/alice/plain/issues", "Everything told · plain"],
+      ["/alice/plain/issues", "Issues · plain"],
       ["/alice/plain/issues/new", "New issue · plain"],
-      ["/alice/plain/pulls", "Every change · plain"],
+      ["/alice/plain/pulls", "Pull requests · plain"],
       ["/alice/plain/runs", "Every run · plain"],
     ]);
     for (const [path, title] of titles) {
