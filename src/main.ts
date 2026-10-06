@@ -334,7 +334,7 @@ const staleTimer = setInterval(() => void tickAsks(), 120_000);
 void tickAsks();
 
 app.log.info("forge is up", { url: servers.url, data: app.config.dataDir });
-// Only an agent is on a crew (migration 61 refuses anyone else). A person
+// Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
 // put on one before that is reported here for the owner to take off — the
 // forge never removes it on its own.
 for (const p of peopleOnCrews(app.db))

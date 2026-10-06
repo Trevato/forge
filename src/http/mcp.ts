@@ -17,9 +17,11 @@
  * no page. `ro` tokens read; `rw` tokens act.
  */
 
+import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
-import { addCommentThrough } from "../actions/issues.ts";
+import { watchMilestone } from "../actions/watches.ts";
+import { addCommentThrough, setIssueSealed } from "../actions/issues.ts";
 import {
   dependencyWords,
   linkIssue,
@@ -28,6 +30,7 @@ import {
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
+import { clientRows } from "../spawn/clients.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
 import { readReturns, reportSpend } from "../actions/returns.ts";
@@ -47,7 +50,8 @@ import {
 import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
 import { appsRuntime, envsFor } from "../apps/runtime.ts";
-import { getIssue, getIssueById } from "../core/issues.ts";
+import { getIssue, getIssueById, listOpenAgentPullsVisibleTo } from "../core/issues.ts";
+import { waitsForPerson } from "../crew/review.ts";
 import { getPull } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
@@ -74,6 +78,8 @@ import {
 } from "../crew/direct.ts";
 import { setCrewOutsiders } from "../actions/repos.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
+import { undoFleetOp } from "../actions/fleet.ts";
+import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
 import {
   milestoneData,
   milestonesJson,
@@ -174,7 +180,10 @@ function issueArg(ctx: Ctx, repo: Repo, args: Args, key: string) {
     typeof n === "number" && Number.isInteger(n) && n > 0
       ? getIssue(ctx.app.db, repo.id, n)
       : undefined;
-  return issue ?? bad("no_such_issue", `no issue #${String(n)}`);
+  // A sealed report is not there for anyone who may not see it.
+  return issue !== undefined && mayView(ctx.app.db, repo, issue, ctx.auth.user)
+    ? issue
+    : bad("no_such_issue", `no issue #${String(n)}`);
 }
 
 const isAnswer = (v: Repo | Answer): v is Answer => "ok" in v;
@@ -316,7 +325,7 @@ const TOOLS: readonly Tool[] = [
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
       const issue = getIssue(ctx.app.db, repo.id, Number(args["number"]));
-      if (issue === undefined)
+      if (issue === undefined || !mayView(ctx.app.db, repo, issue, user))
         return bad("not_found", "no issue or pull by that number");
       const said = await addCommentThrough(
         ctx.app,
@@ -364,18 +373,59 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "seal",
+    description:
+      "Seal or unseal an issue or pull: a sealed security report, and the pull that fixes it, is seen only by people who can write the app and its crew; everyone else is told there is no such thing. Unsealing shows it to every reader. A writer's call, recorded in the app's activity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "number" },
+        sealed: { type: "boolean" },
+      },
+      required: ["repo", "number", "sealed"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const issue = issueArg(ctx, repo, args, "number");
+      if ("ok" in issue) return issue;
+      if (typeof args["sealed"] !== "boolean")
+        return bad("invalid", "sealed is true or false");
+      const done = setIssueSealed(ctx.app, user, repo, issue, args["sealed"]);
+      if (!done.ok)
+        return bad(
+          done.error,
+          done.error === "mirrored"
+            ? "a mirror's issues live on its origin, in the open"
+            : "only someone who can write here seals or unseals",
+        );
+      return good({
+        number: done.value.number,
+        sealed: done.value.sealed,
+        says: done.value.sealed
+          ? `#${done.value.number} is sealed: only writers and the crew see it.`
+          : `#${done.value.number} is unsealed: every reader sees it.`,
+      });
+    },
+  },
+  {
     name: "now",
     description:
-      "What the crew is doing right now, across your apps: who, on what, since when, and what it has cost so far; a planner that declined the direction and waits for you comes first, as a row with no run and its words in `says`.",
+      "What the crew is doing right now, across your apps: who, on what, since when, and what it has cost so far; a planner that declined the direction and waits for you comes first, as a row with no run and its words in `says`; then each agent pull that waits for your review (no reviewer on the crew, or one that lapsed), with `since`.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
       const { repos } = appsOf(ctx, user);
       const byId = new Map(repos.map((r) => [r.id, r]));
       // A private app's runs are for those who may enter it (`mayReadRuns`).
+      // A run on a sealed report is for those who may see the report.
       const runs = listActiveRuns(
         ctx.app.db,
         repos.filter((r) => mayReadRuns(ctx.app, user, r)).map((r) => r.id),
+      ).filter((r) =>
+        mayViewId(ctx.app.db, byId.get(r.repoId)!, r.issueId, user),
       );
       const actors = getUsersByIds(
         ctx.app.db,
@@ -399,8 +449,34 @@ const TOOLS: readonly Tool[] = [
         since: d.at,
         costUsd: 0,
       }));
+      // An agent's green pull that waits for a person's review (#597): no
+      // reviewer on the crew, or one that lapsed — with its age, never silent.
+      const ownRepos = repos.filter((r) => owned.has(r.id));
+      const reviewWaits = listOpenAgentPullsVisibleTo(ctx.app.db, user, 200)
+        .filter((i) => ownRepos.some((r) => r.id === i.repoId))
+        .flatMap((issue) => {
+          const pull = getPull(ctx.app.db, issue.repoId, issue.number);
+          const repo = byId.get(issue.repoId);
+          const wait = pull && repo ? waitsForPerson(ctx.app.db, repo.id, pull) : undefined;
+          return wait === undefined || repo === undefined
+            ? []
+            : [
+                {
+                  run: null,
+                  app: `${repo.ownerName}/${repo.name}`,
+                  who: "you",
+                  on: `#${issue.number} ${issue.title}`,
+                  why: "review",
+                  state: "waiting for your review",
+                  says: wait.why === "lapsed" ? "the reviewer did not answer" : "no reviewer on the crew",
+                  since: wait.since,
+                  costUsd: 0,
+                },
+              ];
+        });
       return good([
         ...waiting,
+        ...reviewWaits,
         ...runs.map((r) => {
           const repo = byId.get(r.repoId)!;
           const issue =
@@ -666,6 +742,25 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "forges",
+    description:
+      "The forges you sent from here (an admin's list): each child's name, address, whom it is for, the apps it was given, when it was sent, whether its person has claimed it, and when anything last happened there. `claimed` is null when the child did not answer.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    async run(ctx, user) {
+      if (!user.isAdmin)
+        return bad("forbidden", "only an admin of this forge sees the forges it sent");
+      const forges = await clientRows(ctx.app);
+      return good({
+        says:
+          forges.length === 0
+            ? "This forge has sent no forges yet."
+            : `${forges.length} forge${forges.length === 1 ? "" : "s"} sent from here.`,
+        forges,
+      });
+    },
+  },
+  {
     name: "claim_link",
     description:
       "A new claim link for a child forge you spawned that nobody has claimed yet; the old link stops working at once. Only an admin of this forge, and never for a claimed child. The secret is in the link's #fragment: send the link whole.",
@@ -926,17 +1021,31 @@ const TOOLS: readonly Tool[] = [
       properties: {
         pinned: { type: "array", items: { type: "string" }, maxItems: 12 },
         hidden: { type: "array", items: { type: "string" }, maxItems: 200 },
+        weights: {
+          type: "object",
+          description: "What counts toward an app's place, each 0 to 10: forks, ships, use, fresh. One left out keeps what is set.",
+          properties: {
+            forks: { type: "number", minimum: 0, maximum: 10 },
+            ships: { type: "number", minimum: 0, maximum: 10 },
+            use: { type: "number", minimum: 0, maximum: 10 },
+            fresh: { type: "number", minimum: 0, maximum: 10 },
+          },
+        },
         dryRun: { type: "boolean" },
       },
     },
     writes: true,
     dryByDefault: true,
     run(ctx, user, args) {
-      if (args["pinned"] === undefined && args["hidden"] === undefined)
+      if (
+        args["pinned"] === undefined &&
+        args["hidden"] === undefined &&
+        args["weights"] === undefined
+      )
         return good(frontJson(ctx.app, user));
       const picks = frontInput(ctx.app, args);
       if (picks === undefined)
-        return bad("invalid", "pinned and hidden are lists of owner/name");
+        return bad("invalid", "pinned and hidden are lists of owner/name; weights an object of forks, ships, use, fresh");
       const set = setFront(ctx.app, user, picks, args["dryRun"] !== false);
       if (!set.ok)
         return set.error.kind === "forbidden"
@@ -962,7 +1071,9 @@ const TOOLS: readonly Tool[] = [
     run(ctx, user, args) {
       const repo = planRepo(ctx, user, args);
       if (isAnswer(repo)) return repo;
-      const graph = repoGraph(ctx.app.db, repo.id);
+      const graph = repoGraph(ctx.app.db, repo.id, {
+        ...sealedScope(ctx.app.db, repo, user),
+      });
       return good(
         mapJson(
           repo,
@@ -1011,6 +1122,116 @@ const TOOLS: readonly Tool[] = [
             "no issue by that number waits for others here",
           )
         : good(data);
+    },
+  },
+  {
+    name: "watch",
+    description:
+      "Watch a milestone, or stop (`watch: false`): its progress then shows as one item in your feed, and your phone is told once, when it lands. Yours alone; `milestones` with `issue` says whether you watch it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        issue: {
+          type: "integer",
+          minimum: 1,
+          description: "The number of an issue that waits for others.",
+        },
+        watch: {
+          type: "boolean",
+          description: "false to stop watching; anything else watches.",
+        },
+      },
+      required: ["app", "issue"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const number = args["issue"];
+      const set =
+        typeof number === "number" && Number.isInteger(number) && number > 0
+          ? watchMilestone(ctx.app, user, repo, number, args["watch"] !== false)
+          : undefined;
+      if (set === undefined || (!set.ok && set.error === "not_found"))
+        return bad(
+          "not_a_milestone",
+          "no issue by that number waits for others here",
+        );
+      return set.ok
+        ? good(set.value)
+        : bad("forbidden", "only a person watches a milestone");
+    },
+  },
+  {
+    name: "limb",
+    description:
+      "One action on a whole limb of the plan — a milestone and everything beneath it that only it needs. `defer` moves the limb behind the Later gate, so the crew picks none of it; `resume` brings it back, under `pillar` when you name one; `close` closes every open issue of the limb as not doing, with `reason` said on each; `undo` reverses an `operation` by its id. A dry run unless `dryRun` is false: it answers with every row before and after, what the action takes along (`taken`) and what stays because something outside the limb still waits for it (`kept`), and changes nothing. Applying and undoing take an admin token of a person who administers the app, and answer with the receipt.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        issue: {
+          type: "integer",
+          minimum: 1,
+          description: "The limb: the number of its issue.",
+        },
+        action: { type: "string", enum: ["defer", "resume", "close", "undo"] },
+        reason: {
+          type: "string",
+          description: "For close: why it is not being done, in one sentence.",
+        },
+        pillar: {
+          type: "string",
+          description:
+            "For resume: the pillar to put it back under, by name or short form; under none when absent.",
+        },
+        operation: {
+          type: "string",
+          description: "For undo: the id of the operation to reverse.",
+        },
+        dryRun: {
+          type: "boolean",
+          description: "false to apply; anything else plans and changes nothing.",
+        },
+      },
+      required: ["app", "action"],
+    },
+    writes: true,
+    dryByDefault: true,
+    async run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const dry = args["dryRun"] !== false;
+      // The fleet's rule: a read credential plans, an admin one applies.
+      if (!dry && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "applying a limb action takes an admin token");
+      const refused = (e: { code: string; message: string }) =>
+        bad(e.code, e.message);
+      if (args["action"] === "undo") {
+        if (dry) return bad("invalid", "undo is not a dry run: pass dryRun false");
+        const undone = await undoFleetOp(ctx.app, user, str(args["operation"]));
+        return undone.ok ? good(undone.value) : refused(undone.error);
+      }
+      const number = args["issue"];
+      if (
+        !isLimbAction(args["action"]) ||
+        typeof number !== "number" ||
+        !Number.isInteger(number) ||
+        number < 1
+      )
+        return bad("invalid", "give the limb's issue number and an action: defer, resume, close or undo");
+      const request = {
+        action: args["action"],
+        ...(typeof args["reason"] === "string" ? { reason: args["reason"] } : {}),
+        ...(typeof args["pillar"] === "string" ? { pillar: args["pillar"] } : {}),
+      };
+      if (dry) {
+        const plan = previewLimb(ctx.app, user, repo, number, request);
+        return plan.ok ? good({ dryRun: true, ...plan.value }) : refused(plan.error);
+      }
+      const op = await applyLimb(ctx.app, user, repo, number, request);
+      return op.ok ? good({ dryRun: false, ...op.value }) : refused(op.error);
     },
   },
   {

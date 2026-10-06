@@ -67,7 +67,7 @@ export function convergeIssue(
   parent: Repo,
 ): Issue | undefined {
   const title = convergeTitle(parent);
-  return listIssues(app.db, fork.id, { state: "open", limit: 200 }).find(
+  return listIssues(app.db, fork.id, { sealed: true, state: "open", limit: 200 }).find(
     (i) => i.title === title,
   );
 }
@@ -78,7 +78,7 @@ export function proposalFor(
   fork: Repo,
   issue: Issue,
 ): Pull | undefined {
-  return listPulls(app.db, fork.id, { state: "open", limit: 100 }).find(
+  return listPulls(app.db, fork.id, { sealed: true, state: "open", limit: 100 }).find(
     (p) =>
       closesFromBody(p.body).includes(issue.number) ||
       new RegExp(`^[^/]+/${issue.number}(-|$)`).test(p.headBranch),

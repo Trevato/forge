@@ -8,7 +8,7 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
-import { capacityCount } from "../core/capacity.ts";
+import { capacityCount, noteBooted } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
 import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
@@ -131,6 +131,8 @@ export async function startCrew(
     });
   // The shell sandbox is policy, not decoration: where the host cannot
   // hold a run to it, the runs say so instead of warning on every command.
+  // The default the Capacity page shows and goes back to (`core/capacity.ts`).
+  noteBooted(app.db, "crew.concurrency", String(options.concurrency));
   const sandbox = await sandboxAvailable();
   // Temp directories of runs a stopped forge never finished: old enough
   // that no forge beside this one (a rollout) can still be using them.

@@ -1,7 +1,9 @@
 /**
  * The review gate: with a reviewer on the crew, a green pull — a person's or
  * an agent's — is queued for review and lands only on an approval of its
- * current head. Without a reviewer it lands as before.
+ * current head. An agent's pull never ships by lapse or for want of a
+ * reviewer: it waits for a person (#597). A person's own pull lands as
+ * before.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -23,6 +25,7 @@ import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { landIfGreen, settleAgentRun } from "../src/crew/autonomy.ts";
+import { waitsForPerson } from "../src/crew/review.ts";
 
 describe("the review gate", () => {
   let dataDir: string;
@@ -96,7 +99,8 @@ describe("the review gate", () => {
     app.db
       .query("UPDATE issue SET author_id = ?2 WHERE id = ?1")
       .run(opened.value.id, author.id);
-    return passCheck(opened.value);
+    // Read back: the pull as the forge now has it, author and all.
+    return passCheck(getPull(app.db, repo.id, opened.value.number)!);
   }
 
   function passCheck(pull: Pull): Pull {
@@ -163,29 +167,57 @@ describe("the review gate", () => {
     });
   }
 
-  test("a reviewer asked twice who never answers does not hold the pull: it lands, and says so", async () => {
+  /** End every review run still queued on this pull with no verdict. */
+  const unanswered = (pull: Pull) => {
+    for (const run of reviewRuns(pull).filter((r) => r.state === "queued")) {
+      claimRun(app.db, run.id);
+      finishRun(app.db, run.id, {
+        state: "failed",
+        summary: "reviewed: no verdict was posted",
+      });
+    }
+  };
+
+  test("an agent's pull whose review lapses never ships: it waits for a person, and a person's approval lands it", async () => {
     setCrewRole(app.db, repo.id, quill.id, "reviewer");
     const pull = await greenPull(mason, "unanswered");
     expect(await landIfGreen(app, fresh(), pull)).toBe(false);
-    const ended = () => {
-      for (const run of reviewRuns(pull).filter((r) => r.state === "queued")) {
-        claimRun(app.db, run.id);
-        finishRun(app.db, run.id, {
-          state: "failed",
-          summary: "reviewed: no verdict was posted",
-        });
-      }
-    };
-    ended();
+    unanswered(pull);
     // Back with nothing: sent once more.
     expect(await landIfGreen(app, fresh(), pull)).toBe(false);
     expect(reviewRuns(pull)).toHaveLength(2);
-    ended();
-    expect(await landIfGreen(app, fresh(), pull)).toBe(true);
+    unanswered(pull);
+    // Lapsed: it does not ship, and is not sent a third time.
+    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
+    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
     expect(reviewRuns(pull)).toHaveLength(2);
-    expect(
-      listComments(app.db, pull.id).map((c) => c.body).join("\n"),
-    ).toContain("without a review");
+    expect(getPull(app.db, repo.id, pull.number)?.mergedAt).toBeNull();
+    expect(waitsForPerson(app.db, repo.id, getPull(app.db, repo.id, pull.number)!)?.why).toBe("lapsed");
+    approve(pull, alice);
+    expect(waitsForPerson(app.db, repo.id, getPull(app.db, repo.id, pull.number)!)).toBeUndefined();
+    expect(await landIfGreen(app, fresh(), pull)).toBe(true);
+  });
+
+  test("with no reviewer on the crew an agent's pull waits for a person and says why", async () => {
+    setCrewRole(app.db, repo.id, quill.id, "builder");
+    const pull = await greenPull(mason, "no-reviewer");
+    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
+    expect(reviewRuns(pull)).toHaveLength(0);
+    expect(waitsForPerson(app.db, repo.id, getPull(app.db, repo.id, pull.number)!)?.why).toBe("no reviewer");
+    approve(pull, alice);
+    expect(await landIfGreen(app, fresh(), pull)).toBe(true);
+  });
+
+  test("a person's own pull is unchanged: a review that lapses does not hold it; it lands, and says so", async () => {
+    setCrewRole(app.db, repo.id, quill.id, "reviewer");
+    const pull = await greenPull(alice, "person-unanswered");
+    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
+    unanswered(pull);
+    expect(await landIfGreen(app, fresh(), pull)).toBe(false);
+    unanswered(pull);
+    expect(await landIfGreen(app, fresh(), pull)).toBe(true);
+    expect(listComments(app.db, pull.id).map((c) => c.body).join("\n")).toContain("without a review");
+    expect(waitsForPerson(app.db, repo.id, pull)).toBeUndefined();
   });
 
   test("a change requested on the head holds the pull", async () => {

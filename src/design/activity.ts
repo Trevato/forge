@@ -94,6 +94,8 @@ const WORDS: Record<string, string> = {
   "issue.reopened": "reopened an issue",
   "issue.commented": "commented on an issue",
   "issue.labeled": "labelled an issue",
+  "issue.sealed": "sealed a security report",
+  "issue.unsealed": "unsealed a security report",
   "pull.opened": "opened a pull request",
   "pull.merged": "merged a pull request",
   "pull.closed": "closed a pull request",

@@ -8,6 +8,7 @@
  * page that sent them, or JSON when the asks panel asked in place.
  */
 
+import { mayView } from "../../core/sealed.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment, setIssueStateThrough } from "../../actions/issues.ts";
 import { tell } from "../../actions/tell.ts";
@@ -113,7 +114,8 @@ export async function shipSubmit(ctx: Ctx): Promise<Response> {
   const pull = Number.isInteger(number)
     ? getPull(ctx.app.db, repo.id, number)
     : undefined;
-  if (!pull) return notFoundPage(ctx);
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
+    return notFoundPage(ctx);
   const merged = await mergePull(ctx.app, ctx.auth.user, repo, pull, "squash");
   // A conflict is never the person's to fix: the pull's agent brings the
   // branch up to date, and the pull comes back green, or lands on its own.
@@ -194,7 +196,8 @@ export async function takeBackSubmit(ctx: Ctx): Promise<Response> {
   const pull = Number.isInteger(number)
     ? getPull(ctx.app.db, repo.id, number)
     : undefined;
-  if (!pull) return notFoundPage(ctx);
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
+    return notFoundPage(ctx);
   const reverted = await revertPull(ctx.app, ctx.auth.user, repo, pull);
   if (!reverted.ok)
     return flashOrJson(ctx, `${base}/pulls/${pull.number}`, {
@@ -218,7 +221,8 @@ export async function saySubmit(ctx: Ctx): Promise<Response> {
   const pull = Number.isInteger(number)
     ? getPull(ctx.app.db, repo.id, number)
     : undefined;
-  if (!pull) return notFoundPage(ctx);
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
+    return notFoundPage(ctx);
   const text = field(form, "text").trim();
   if (text === "")
     return flashTo(ctx, base, {
@@ -239,7 +243,7 @@ function heldPull(ctx: Ctx, repo: Repo) {
   const pull = Number.isInteger(number)
     ? getPull(ctx.app.db, repo.id, number)
     : undefined;
-  return pull === undefined
+  return pull === undefined || !mayView(ctx.app.db, repo, pull, ctx.auth.user)
     ? undefined
     : { pull, back: `${changeHref(repoBase(repo), pull.number)}#hold` };
 }

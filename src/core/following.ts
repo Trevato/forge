@@ -327,20 +327,22 @@ export async function refreshPullHead(
   if (head === undefined) return undefined;
   const headDir = repoDir(forge.reposRoot, head.ownerName, head.name);
   const baseDir = repoDir(forge.reposRoot, repo.ownerName, repo.name);
+  // A sealed pull's snapshot stays where its work lives, out of the base
+  // everyone reads (`pullDir`, `core/sealed.ts`).
+  const apart = pull.sealed && head.sealedFor === repo.id;
+  const snapshotDir = apart ? headDir : baseDir;
   // Two cheap `rev-parse`s before a fetch: this runs on every read of a
   // cross-repo pull, and the overwhelmingly common answer is "nothing moved".
   const [live, snapshot] = await Promise.all([
     resolveOid(headDir, `refs/heads/${pull.headBranch}`),
-    resolveOid(baseDir, `refs/pull/${pull.number}/head`),
+    resolveOid(snapshotDir, `refs/pull/${pull.number}/head`),
   ]);
   if (live === undefined || live === snapshot) return undefined;
-  const tip = await fetchInto(
-    baseDir,
-    headDir,
-    `refs/heads/${pull.headBranch}`,
-  );
+  const tip = apart
+    ? live
+    : await fetchInto(baseDir, headDir, `refs/heads/${pull.headBranch}`);
   if (tip === undefined) return undefined;
-  await writeRef(baseDir, `refs/pull/${pull.number}/head`, tip);
+  await writeRef(snapshotDir, `refs/pull/${pull.number}/head`, tip);
   // The row says where the head is too, so a reader of the pull — the API,
   // a page — sees the same tip the ref holds.
   forge.db

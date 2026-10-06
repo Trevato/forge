@@ -16,6 +16,7 @@ import {
 } from "../../actions/front.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos } from "../../core/apps.ts";
+import { WEIGHT_MAX, WEIGHT_NAMES } from "../../core/front.ts";
 import { LOOK_SIZES } from "../../core/looks.ts";
 import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
@@ -23,7 +24,7 @@ import type { Ctx } from "../../http/context.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
-import { field, readForm } from "../form.ts";
+import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment, page, redirect } from "../layout.ts";
@@ -289,6 +290,14 @@ function featuredCard(featured: NonNullable<FrontPage["featured"]>): Html {
   </section>`;
 }
 
+/** A weight's name as the controls say it. */
+const WEIGHT_LABEL: Record<(typeof WEIGHT_NAMES)[number], string> = {
+  forks: "Forks",
+  ships: "Shipped",
+  use: "Use",
+  fresh: "Fresh",
+};
+
 /**
  * What a site admin may change about the front page, on the page itself
  * (`/front`): every pin in order with move and unpin, every shown app with
@@ -345,6 +354,25 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
           required
         />
         ${btn("Pin", { size: "sm" })}
+      </form>
+      <form method="post" action="/front" class="front-weights">
+        <input type="hidden" name="action" value="weights" />
+        <span class="small muted">What counts, 0 to ${WEIGHT_MAX}:</span>
+        ${WEIGHT_NAMES.map(
+          (k) =>
+            html`<label class="small"
+              >${WEIGHT_LABEL[k]}
+              <input
+                class="input"
+                type="number"
+                min="0"
+                max="${WEIGHT_MAX}"
+                step="0.5"
+                name="${k}"
+                value="${String(picks.weights[k])}"
+            /></label>`,
+        )}
+        ${btn("Rank", { size: "sm" })}
       </form>
       <p class="small muted">
         The first pin a stranger can read is featured; the rest lead the
@@ -429,28 +457,43 @@ export function studioDoor(ctx: Ctx): Response {
   return page({ ctx, title: "forge", body });
 }
 
-/** The pick one `/front` button asks for, applied to the current picks. */
+/** What one `/front` form asks for, applied to what is set now. */
+type FrontChange = {
+  pinned: readonly string[];
+  hidden: readonly string[];
+  weights: Record<string, unknown>;
+};
+
 function nextPicks(
   current: FrontPicksJson,
   action: string,
-  repo: string,
-): FrontPicksJson | undefined {
+  form: Form,
+): FrontChange | undefined {
+  const repo = field(form, "repo").trim();
+  const weights: Record<string, unknown> = { ...current.weights };
   const pinned = current.pinned.filter((r) => r !== repo);
   const hidden = current.hidden.filter((r) => r !== repo);
   const at = current.pinned.indexOf(repo);
   switch (action) {
+    case "weights":
+      // Each box a number; one left empty keeps what is set.
+      for (const k of WEIGHT_NAMES) {
+        const v = field(form, k).trim();
+        if (v !== "") weights[k] = Number(v);
+      }
+      return { pinned: current.pinned, hidden: current.hidden, weights };
     case "pin":
-      return { pinned: [...pinned, repo], hidden };
+      return { pinned: [...pinned, repo], hidden, weights };
     case "unpin":
     case "show":
-      return { pinned, hidden };
+      return { pinned, hidden, weights };
     case "hide":
-      return { pinned, hidden: [...hidden, repo] };
+      return { pinned, hidden: [...hidden, repo], weights };
     case "up":
     case "down": {
       if (at === -1) return undefined;
       const to = Math.max(0, Math.min(pinned.length, at + (action === "up" ? -1 : 1)));
-      return { pinned: [...pinned.slice(0, to), repo, ...pinned.slice(to)], hidden };
+      return { pinned: [...pinned.slice(0, to), repo, ...pinned.slice(to)], hidden, weights };
     }
     default:
       return undefined;
@@ -463,8 +506,7 @@ export async function frontUpdate(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   if (!ctx.auth.user.isAdmin) return new Response("forbidden", { status: 403 });
-  const repo = field(form, "repo").trim();
-  const next = nextPicks(frontPicksJson(ctx.app), field(form, "action"), repo);
+  const next = nextPicks(frontPicksJson(ctx.app), field(form, "action"), form);
   if (next === undefined) return new Response("bad request", { status: 400 });
   const set = setFront(ctx.app, ctx.auth.user, next);
   return redirect("/front", {

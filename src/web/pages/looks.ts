@@ -7,6 +7,7 @@
  * long as anyone likes and is never the wrong commit's.
  */
 
+import { sealedPreview } from "../../core/sealed.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { isEnvName, previewEnv } from "../../apps/data.ts";
@@ -106,6 +107,8 @@ export function mayFetchLook(
 ): boolean {
   const user = ctx.auth.user;
   if (canSeeOwnerFacts(ctx.app.db, repo, user)) return true;
+  // A sealed pull's pictures are the writers' (`core/sealed.ts`).
+  if (sealedPreview(ctx.app.db, repo.id, look.env)) return false;
   // A private app's pictures are for whoever may enter it (#620, #752): a
   // person it names sees them; a reader who is not named does not.
   if (!canEnterApp(ctx.app.db, repo, record, user)) return false;

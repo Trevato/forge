@@ -142,6 +142,7 @@ import {
 import { commitPage, commitsPage } from "../web/pages/commits.ts";
 import {
   issueCommentSubmit,
+  issueSealSubmit,
   issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
@@ -149,7 +150,17 @@ import {
 } from "../web/pages/issues.ts";
 import { tellPage } from "../web/studio/tell.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
-import { milestonePage, milestonesPage } from "../web/pages/milestones.ts";
+import {
+  milestonePage,
+  milestonesPage,
+  milestoneWatch,
+} from "../web/pages/milestones.ts";
+import {
+  limbPreviewPage,
+  limbReceiptPage,
+  limbSubmit,
+  limbUndo,
+} from "../web/pages/limb.ts";
 import {
   modeSubmit,
   saySubmit,
@@ -160,8 +171,9 @@ import {
   composerSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
-import { everydayCreate, everydayKeep } from "../web/pages/everyday.ts";
+import { everydayCreate, everydayKeep, everydaySwitch } from "../web/pages/everyday.ts";
 import { claimFragmentPage, claimPage, claimSubmit } from "../web/pages/claim.ts";
+import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import {
@@ -518,6 +530,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/claim", claimSubmit);
   router.add("GET", "/claim/:token", claimPage);
   // "+ New forge": the spawn door as a page, an admin's only (spawn/door.ts).
+  router.add("GET", "/forges", forgesPage);
+  router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
   router.add("POST", "/claim/:token", claimSubmit);
@@ -603,6 +617,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/password", passwordUpdate);
   // The everyday account: an admin's daily account, apart from admin (#596).
   router.add("POST", "/settings/everyday", everydayCreate);
+  router.add("POST", "/settings/everyday/switch", everydaySwitch);
   router.add("POST", "/settings/everyday/keep", everydayKeep);
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
@@ -834,6 +849,7 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/issues/:number/comments",
     issueCommentSubmit,
   );
+  router.add("POST", "/:owner/:name/issues/:number/seal", issueSealSubmit);
   // Close/reopen and labels are their own verbs, not riders on a comment.
   router.add("POST", "/:owner/:name/issues/:number/state", (ctx) =>
     stateSubmit(ctx, "issue"),
@@ -863,6 +879,19 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/map", mapPage);
   router.add("GET", "/:owner/:name/milestones", milestonesPage);
   router.add("GET", "/:owner/:name/milestones/:number", milestonePage);
+  router.add("POST", "/:owner/:name/milestones/:number/watch", milestoneWatch);
+  router.add("GET", "/:owner/:name/milestones/:number/limb", limbPreviewPage);
+  router.add("POST", "/:owner/:name/milestones/:number/limb", limbSubmit);
+  router.add(
+    "GET",
+    "/:owner/:name/milestones/:number/limb/:op",
+    limbReceiptPage,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/milestones/:number/limb/:op/undo",
+    limbUndo,
+  );
 
   // Pull requests. Same /new-before-/:number ordering discipline.
   // One list of pulls, at `/pulls` and `/changes` alike; one change under
