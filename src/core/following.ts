@@ -495,7 +495,9 @@ export async function lineageOf(
     }
     level = next;
   }
-  if (level.some((n) => listForks(forge.db, n.repo.id).length > 0))
+  // "More below" only for forks this viewer could see: a private fork past
+  // the bound is not hinted at, any more than one inside it is shown.
+  if (level.some((n) => listForks(forge.db, n.repo.id).some(mayRead)))
     truncated = true;
   return { root, size, truncated };
 }

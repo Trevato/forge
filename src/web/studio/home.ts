@@ -156,6 +156,7 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
     <nav class="home-tabs seg" aria-label="Home">
       <a href="/" aria-current="page">Feed</a>
       <a href="/apps">Your apps</a>
+      <a href="/asked">Asked</a>
     </nav>
     <div class="dash">
       <div class="dash-main stack">
@@ -164,11 +165,16 @@ export async function studioHome(ctx: Ctx, user: User): Promise<Response> {
           <span class="spacer"></span>
           <a class="small muted" href="/asked">What you asked for</a>
         </div>
-        ${user.isAdmin || appRepos.length > 0 ? crewKeyNote(ctx) : null}
         ${feedNote()}
         ${feedRegion(user, ctx)}
       </div>
       <aside class="dash-rail stack home-rail">
+        ${
+          // The crew's missing key is the owner's to fix, not the first
+          // thing above every post: beside the timeline on a desk, after it
+          // on a phone.
+          user.isAdmin || appRepos.length > 0 ? crewKeyNote(ctx) : null
+        }
         ${appsRegion(ctx, user)}
         ${onYouRegion(ctx, user)}
       </aside>

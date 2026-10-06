@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { accountSignIns, endAccountSession } from "../actions/signins.ts";
 import { STRANGER_MAX } from "./limits.ts";
 import {
   askedIn,
@@ -24,8 +25,9 @@ import {
   verifyAccount,
 } from "../actions/accounts.ts";
 import { resendVerification } from "../actions/verify.ts";
+import { CAPPED_WORDS } from "../actions/mail.ts";
 import { emailVerified } from "../core/verify.ts";
-import { forgeHealth } from "../kernel/guard.ts";
+import { readHealth } from "../actions/health.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
@@ -246,7 +248,6 @@ import {
   type Run,
 } from "../core/runs.ts";
 import { resolveOid } from "../git/merge.ts";
-import { vitals } from "../kernel/vitals.ts";
 import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
@@ -1058,6 +1059,8 @@ export function apiRoutes(router: Router<Handler>): void {
       return apiError("too_soon", 429, "a link was sent a moment ago; check your inbox, or try again in a few minutes");
     if (sent.error === "no_mail")
       return apiError("no_mail", 503, "this forge sends no mail yet; ask its owner to verify you");
+    if (sent.error === "capped")
+      return apiError("capped", 429, CAPPED_WORDS);
     return apiError("failed", 502, "the link could not be sent; try again");
   });
 
@@ -1254,6 +1257,33 @@ export function apiRoutes(router: Router<Handler>): void {
     const removed = deleteToken(ctx.app, ctx.auth.user, ctx.params.id!);
     if (!removed.ok) return respondAccess(removed.error, 422);
     return new Response(null, { status: 204 });
+  });
+
+  // Where an account is signed in: its person, or the forge's owner for any
+  // person (`actions/signins.ts`). Anyone else finds no such account.
+  router.add("GET", "/api/v1/users/:username/signins", (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const seen = accountSignIns(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.username!,
+      cookieValue(ctx.request, "forge_session"),
+    );
+    if (!seen.ok) return notFound();
+    return json({ tokens: seen.value.tokens, sessions: seen.value.sessions });
+  });
+
+  router.add("DELETE", "/api/v1/users/:username/sessions/:id", (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const done = endAccountSession(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.username!,
+      ctx.params.id!,
+    );
+    return done.ok ? new Response(null, { status: 204 }) : notFound();
   });
 
   // ── organizations & teams ────────────────────────────────────────────
@@ -3307,16 +3337,9 @@ export function apiRoutes(router: Router<Handler>): void {
   // How the forge is, and the platform's word on its rollout: anyone may
   // read it (a monitor has no account). A site admin also gets the forge's
   // own vitals alongside, `ok` being both.
-  router.add("GET", "/api/v1/health", (ctx) => {
-    const forge = forgeHealth();
-    if (!ctx.auth.user?.isAdmin) return json(forge);
-    const runtime = appsRuntime(ctx.app);
-    const envs = runtime
-      ? listApps(ctx.app.db).flatMap((record) => runtime.status(record))
-      : [];
-    const v = vitals({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, envs });
-    return json({ ...v, ...forge, ok: forge.ok && v.ok });
-  });
+  router.add("GET", "/api/v1/health", (ctx) =>
+    json(readHealth(ctx.app, ctx.auth.user)),
+  );
 
   // Explore (#607): the rows /explore shows, for the same one line.
   router.add("GET", "/api/v1/explore", async (ctx) => {
