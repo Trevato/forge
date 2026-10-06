@@ -56,10 +56,8 @@ import {
   badge,
   btn,
   card,
-  dot,
   empty,
   envFacts,
-  envPhrase,
   envStateBadge,
   icon,
   listCard,
@@ -118,68 +116,6 @@ function appsForViewer(ctx: Ctx): AppEntry[] {
 export function envLabel(env: EnvName): string {
   const number = envPull(env);
   return number === undefined ? "production" : `preview of #${number}`;
-}
-
-/**
- * One app in a list. The dot is production's state; the title goes to the
- * repository's home and the URL opens the app — two links, so the row is not itself
- * one (a link inside a link tears the row apart).
- */
-function appRow(entry: AppEntry): Html {
-  const base = repoBase(entry.repo);
-  const name = `${entry.repo.ownerName}/${entry.repo.name}`;
-  return row({
-    nav: true,
-    lead: dot(envPhrase(entry.production).tone),
-    title: html`<a href="${base}">${name}</a>`,
-    titleAttr: name,
-    meta: html`${entry.url === undefined
-      ? html`<span>not serving</span>`
-      : html`<a href="${base}/app/production/open" title="Open ${entry.url}"
-          >${entry.url}</a
-        >`}${when(
-      entry.previews > 0,
-      () =>
-        html` · ${entry.previews} preview${entry.previews === 1 ? "" : "s"}`,
-    )}`,
-    trail: html`${when(
-      entry.repo.visibility === "private",
-      () =>
-        html`<span class="badge" data-variant="secondary"
-          >${icon("lock")}Private</span
-        >`,
-    )}`,
-  });
-}
-
-/** The dashboard's Apps card: what runs, and the button that makes one. */
-export function appsCard(ctx: Ctx): Html {
-  const entries = appsForViewer(ctx);
-  const head = html`${icon("rocket")}
-    <h2>Apps</h2>
-    <span class="spacer"></span>
-    ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
-    ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}`;
-  if (entries.length === 0) {
-    return card(
-      html`<p class="muted small">
-        An app is a repository that runs — here, with a URL in seconds and a
-        preview for every pull request.
-      </p>`,
-      { head },
-    );
-  }
-  const shown = entries.slice(0, 8);
-  return listCard(shown.map(appRow), {
-    head,
-    ...(entries.length > shown.length
-      ? {
-          foot: html`<a href="/apps"
-            >All ${entries.length} apps ${icon("chevronRight")}</a
-          >`,
-        }
-      : {}),
-  });
 }
 
 /**

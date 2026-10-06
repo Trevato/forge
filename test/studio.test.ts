@@ -193,7 +193,7 @@ describe("the studio", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("home is the studio by default with no cookie at all; ?mode= is a link that switches this browser, both ways", async () => {
+  test("home is the feed with no cookie at all, and in every mode (#625); ?mode= still switches this browser until #603", async () => {
     const plainResponse = await fetch(`${base}/`, { headers: { cookie } });
     const plain = await plainResponse.text();
     expect(plain).toContain("Your apps");
@@ -212,8 +212,9 @@ describe("the studio", () => {
       headers: { cookie },
     });
     const dev = await devResponse.text();
-    expect(dev).toContain("<h1>Your repositories</h1>");
-    expect(dev).not.toContain("Your apps");
+    // One home: dev's dashboard is gone, and the dev browser gets the feed.
+    expect(dev).not.toContain("<h1>Your repositories</h1>");
+    expect(dev).toContain("Your apps");
     expect(devResponse.headers.get("set-cookie")).toContain("forge_mode=dev");
 
     // `?mode=dev` still wins for this browser even once studio's cookie is set.
@@ -222,7 +223,7 @@ describe("the studio", () => {
         headers: { cookie: `${cookie}; forge_mode=studio` },
       })
     ).text();
-    expect(stillDev).toContain("<h1>Your repositories</h1>");
+    expect(stillDev).toContain("Your apps");
 
     // And the link's switch stuck: this browser stays in dev with no query.
     const devCookie = (devResponse.headers.get("set-cookie") ?? "").split(
@@ -233,7 +234,9 @@ describe("the studio", () => {
         headers: { cookie: `${cookie}; ${devCookie}` },
       })
     ).text();
-    expect(asDev).toContain("<h1>Your repositories</h1>");
+    expect(asDev).toContain("Your apps");
+    // Your repositories are one step away, on your own page.
+    expect(asDev).toContain('href="/alice"');
 
     // The toggle's own POST still flips it back, cookie and all.
     const flipped = await post("/mode", { mode: "studio", back: "/" });
@@ -2154,7 +2157,8 @@ describe("the studio", () => {
     const erinHome = await (await erinGet("/")).text();
     expect(erinHome).toContain("No apps yet");
     expect(erinHome).toContain('href="/apps/new"');
-    expect(erinHome).toContain('href="/?mode=dev"');
+    expect(erinHome).toContain('href="/erin"');
+    expect(erinHome).not.toContain("/?mode=dev");
     expect(erinHome).not.toContain('href="/alice/lighthouse"');
     expect(erinHome).not.toContain("tell the crew something");
 

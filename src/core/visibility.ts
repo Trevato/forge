@@ -13,15 +13,28 @@
  * repos and nothing else; a site admin sees everything.
  */
 
+/**
+ * The repo's owner is in good standing (#831). A suspended or removed
+ * account's repositories are kept, and hidden: from every list, page and
+ * route a reader has, until the owner of the forge restores the account.
+ */
+export const OWNER_STANDING = `NOT EXISTS (
+  SELECT 1 FROM user AS held WHERE held.id = repo.owner_id
+    AND (held.suspended_at IS NOT NULL OR held.removed_at IS NOT NULL))`;
+
+/** What a signed-out reader may see. */
+export const PUBLIC_VISIBLE = `(repo.visibility = 'public' AND ${OWNER_STANDING})`;
+
 /** Repos `?1` may read, as a boolean expression over a `repo` row. */
 export const REPO_VISIBLE = `(
-  repo.visibility = 'public'
-  OR repo.owner_id = ?1
-  OR repo.owner_id IN (
-    SELECT team.org_id FROM team
-    JOIN team_member ON team_member.team_id = team.id
-    WHERE team_member.user_id = ?1)
-  OR EXISTS (SELECT 1 FROM user AS me WHERE me.id = ?1 AND me.is_admin = 1)
+  EXISTS (SELECT 1 FROM user AS me WHERE me.id = ?1 AND me.is_admin = 1)
+  OR (${OWNER_STANDING} AND (
+    repo.visibility = 'public'
+    OR repo.owner_id = ?1
+    OR repo.owner_id IN (
+      SELECT team.org_id FROM team
+      JOIN team_member ON team_member.team_id = team.id
+      WHERE team_member.user_id = ?1)))
 )`;
 
 /**
@@ -48,4 +61,4 @@ export const REPO_WRITABLE = `(
  * hit most often and cached least.
  */
 export const repoVisible = (signedIn: boolean): string =>
-  signedIn ? REPO_VISIBLE : "repo.visibility = 'public'";
+  signedIn ? REPO_VISIBLE : PUBLIC_VISIBLE;

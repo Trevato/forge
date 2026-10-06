@@ -101,7 +101,7 @@ export function composer(ctx: Ctx, user: User): Html {
       title: "No apps yet",
       note: "Make one, tell the crew what it is, and watch it come up here.",
       action: html`${btn("New app", { href: "/apps/new", variant: "primary" })}
-        ${btn("Repositories", { href: "/?mode=dev" })}`,
+        ${btn("Repositories", { href: `/${user.username}` })}`,
     });
   const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
   const first = slug(repos[0]!);
