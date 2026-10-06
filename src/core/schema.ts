@@ -1366,4 +1366,10 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX outside_spend_repo ON outside_spend(repo_id, created_at);
   `,
+  // 58 — a sealed issue (#621): a security report, and the pull that fixes
+  // it, seen only by people who can write the repository and its crew until
+  // a writer unseals it (`crew/sealed.ts`).
+  `
+  ALTER TABLE issue ADD COLUMN sealed INTEGER NOT NULL DEFAULT 0;
+  `,
 ];

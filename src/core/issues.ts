@@ -56,6 +56,12 @@ export interface Issue {
   readonly assigneeIsAgent: boolean;
   /** Whether the author is a crew member, not a person. */
   readonly authorIsAgent: boolean;
+  /**
+   * A security report, or the pull that fixes one: seen only by people who
+   * can write the repository and its crew until a writer unseals it
+   * (`core/sealed.ts`).
+   */
+  readonly sealed: boolean;
 }
 
 interface IssueRow {
@@ -78,6 +84,7 @@ interface IssueRow {
   assignee_name: string | null;
   assignee_is_agent: number | null;
   author_is_agent: number;
+  sealed: number;
 }
 
 const SELECT = `
@@ -107,6 +114,7 @@ function toIssue(row: IssueRow): Issue {
     assigneeName: row.assignee_name,
     assigneeIsAgent: row.assignee_is_agent === 1,
     authorIsAgent: row.author_is_agent === 1,
+    sealed: row.sealed === 1,
   };
 }
 
