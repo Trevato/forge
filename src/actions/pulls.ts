@@ -28,6 +28,7 @@ import {
   type CreatePullError,
   type MergePullError,
   type Pull,
+  pullDir,
 } from "../core/pulls.ts";
 import { isStructural, pillarsOf } from "../core/pillars.ts";
 import type { Repo } from "../core/repos.ts";
@@ -165,8 +166,12 @@ export async function openPull(
 
   const head = input.headRepo;
   if (head && head.id !== baseRepo.id) {
-    // The fork must be readable and actually descend from this base.
-    if (!canRead(app.db, head, user.value) || head.forkParentId !== baseRepo.id)
+    // The fork must be readable and actually descend from this base — or be
+    // the private place this base's sealed work is done in (`core/sealed.ts`).
+    if (
+      !canRead(app.db, head, user.value) ||
+      (head.forkParentId !== baseRepo.id && head.sealedFor !== baseRepo.id)
+    )
       return err("not_found");
   }
   const created = await createPull(
@@ -274,7 +279,7 @@ async function anchorLines(
   lines: readonly ReviewInput[],
 ): Promise<Result<AnchoredLine[], BodyError | "bad_anchor">> {
   const { status, diff } = await pullDiff(
-    repoDir(app.reposRoot, repo.ownerName, repo.name),
+    await pullDir(app.db, app.reposRoot, repo, pull),
     pull,
   );
   const out: AnchoredLine[] = [];
@@ -357,11 +362,14 @@ export async function mergePull(
     requester ? commitIdentity(app.config, requester) : null,
     lander,
   );
+  const baseDir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const at = await pullDir(app.db, app.reposRoot, repo, pull);
   const merged = await landPull(
     app.db,
-    repoDir(app.reposRoot, repo.ownerName, repo.name),
+    baseDir,
     pull,
     {
+      ...(at === baseDir ? {} : { sealedFrom: at }),
       gate: {
         db: app.db,
         requireReview: repo.requireReview,
@@ -492,8 +500,10 @@ export async function submitReview(
   const anchored = await anchorLines(app, repo, pull, lines);
   if (!anchored.ok) return anchored;
 
-  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
-  const status = await pullStatus(dir, pull);
+  const status = await pullStatus(
+    await pullDir(app.db, app.reposRoot, repo, pull),
+    pull,
+  );
 
   const through = writeThroughFor(app, user, repo);
   if (!through.ok) return through;

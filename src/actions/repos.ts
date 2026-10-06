@@ -17,6 +17,7 @@ import {
   createRepo as initRepo,
   deleteRepo as destroyRepo,
   forkRepo as cloneRepo,
+  getSealedFork,
   updateRepoSettings as writeSettings,
   type CreateRepoError,
   type ForkRepoError,
@@ -135,6 +136,38 @@ export async function forkRepo(
   return forked;
 }
 
+/**
+ * The private repository an agent works `base`'s sealed reports in
+ * (`core/sealed.ts`), made on first need: private, out of the fork graph,
+ * read by the base's writers and crew only. No event: its existence is
+ * nobody else's to hear of.
+ */
+export async function sealedForkFor(
+  app: App,
+  agent: User,
+  base: Repo,
+): Promise<Result<Repo, ForkRepoError>> {
+  const existing = getSealedFork(app.db, agent.id, base.id);
+  if (existing !== undefined) return ok(existing);
+  const made = await cloneRepo(
+    app.db,
+    app.reposRoot,
+    base,
+    agent.id,
+    undefined,
+    true,
+  );
+  if (made.ok || made.error !== "name_taken") return made;
+  return cloneRepo(
+    app.db,
+    app.reposRoot,
+    base,
+    agent.id,
+    `${base.ownerName}-${base.name}-sealed`,
+    true,
+  );
+}
+
 export type UpdateSettingsError = "not_found" | "unknown_branch";
 
 /**
@@ -152,6 +185,10 @@ export async function updateRepoSettings(
   // Who the crew obeys is a person's call: an agent never widens it, even
   // one on a team that administers the repository (`crew/direct.ts`).
   if (settings.crewOutsiders !== undefined && admin.value.kind === "agent")
+    return err("not_found");
+  // The work on a sealed report stays private until it merges into its
+  // base, whoever owns it (`core/sealed.ts`).
+  if (repo.sealedFor !== null && settings.visibility === "public")
     return err("not_found");
   const branch = settings.defaultBranch;
   if (branch !== undefined && branch !== repo.defaultBranch) {

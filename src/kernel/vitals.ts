@@ -12,6 +12,11 @@ import { freemem, totalmem } from "node:os";
 import { recentErrors, type ErrorLine } from "./log.ts";
 import { leaseLapsed, listRunning, queueDepth } from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
+import { egressSetting } from "../core/capacity.ts";
+
+/** What every new cell may reach while egress is only reported. */
+export const EGRESS_REPORTED =
+  "Egress is reported, not enforced: every new app, preview, terminal and check cell may reach any public host on ports 80 and 443. Set it back to enforce under Settings → Capacity.";
 
 /** Free disk under this share of the volume is something to say. */
 export const DISK_FREE_MIN = 0.1;
@@ -108,6 +113,10 @@ export function vitals(input: VitalsInput): Vitals {
     needs.push(
       `${seen.lastHour} errors in the last hour (${ERROR_BURST} or more is a burst).`,
     );
+
+  // Deliberate, and still to be said while it lasts (`core/capacity.ts`):
+  // only an admin sees vitals, so naming what is open here tells nobody else.
+  if (egressSetting(input.db) === "report") needs.push(EGRESS_REPORTED);
 
   return {
     ok: needs.length === 0,

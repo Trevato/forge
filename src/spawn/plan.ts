@@ -15,6 +15,8 @@ export const MAX_SUBSCRIPTIONS = 200;
 export const MAX_BRIEF_CHARS = 20_000;
 /** The spawner's words for what the child is for: its direction. */
 export const MAX_DIRECTION_CHARS = 2000;
+/** Whom a child is for (a person, a client, an organisation): kept in the parent's ledger only. */
+export const MAX_FOR_CHARS = 200;
 /** The whole-life budget on a child's model key, in dollars. */
 export const MIN_BUDGET_USD = 1;
 /**
@@ -53,6 +55,8 @@ export interface SpawnInput {
   readonly direction?: unknown;
   /** Whether the spawner keeps owner access once the child is claimed; false unless true. */
   readonly keepAccess?: unknown;
+  /** Whom the child is for, in the spawner's words; optional, never copied into the child. */
+  readonly for?: unknown;
   /**
    * The whole-life budget on the child's model key, in dollars, when one is given.
    * The key itself never enters the plan: only that there is one, capped.
@@ -86,6 +90,8 @@ export interface SpawnPlan {
   readonly keepAccess: boolean;
   /** The child's model key's whole-life budget in dollars; null when it gets no key. */
   readonly budgetUsd: number | null;
+  /** Whom the child is for, for the parent's client list; absent when unsaid. */
+  readonly forWhom?: string;
 }
 
 export interface DryRun {
@@ -184,7 +190,25 @@ export function planSpawn(
     budgetUsd = Math.round(cap * 100) / 100;
   }
 
-  return ok({ name, org, apps, briefs, subscriptions, direction, keepAccess, budgetUsd });
+  let forWhom = "";
+  if (input.for !== undefined && input.for !== null) {
+    if (typeof input.for !== "string") return refuse("for", "must be text");
+    forWhom = input.for.trim();
+    if (forWhom.length > MAX_FOR_CHARS) return refuse("for", `at most ${MAX_FOR_CHARS} characters`);
+  }
+
+  // `forWhom` only when said, so a plan without it hashes as it always did.
+  return ok({
+    name,
+    org,
+    apps,
+    briefs,
+    subscriptions,
+    direction,
+    keepAccess,
+    budgetUsd,
+    ...(forWhom === "" ? {} : { forWhom }),
+  });
 }
 
 const enc = new TextEncoder();

@@ -24,6 +24,7 @@ import {
   listTeamMembers,
   listTeams,
   orgAccess,
+  personOwners,
   type Permission,
   type Team,
 } from "../../core/orgs.ts";
@@ -308,6 +309,9 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
   const isSelf =
     ctx.auth.user !== undefined && (ctx.auth.user.id === owner.id || canManage);
   const apps = await appsSection(ctx, owner, isSelf);
+  // Said to the people it concerns: its members and the forge's owner.
+  const ownerless =
+    isOrg && access !== "none" && personOwners(ctx.app.db, owner.id).length === 0;
 
   const body = html`<div class="page-head">
       ${avatar(owner.username, "lg")}
@@ -327,6 +331,17 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
         }),
       )}
     </div>
+    ${ownerless
+      ? card(
+          html`<p>
+            Nobody can administer this organization right now: everyone on
+            its Owners team is suspended or removed. What it holds stays as
+            it is; the forge's owner can unsuspend an owner or
+            <a href="/${owner.username}/-/teams/${OWNERS_TEAM}">add one</a>.
+          </p>`,
+          { tone: "attn" },
+        )
+      : null}
     ${apps.html}
     ${repoSection(ctx, owner, isSelf, apps.count > 0)}
     ${when(isOrg && accessAllows(access, "read"), () =>

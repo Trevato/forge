@@ -98,7 +98,21 @@ export function capacityPage(ctx: Ctx): Response {
       meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}`,
     }),
   );
-  const body = html`${card(
+  const reported = settings.some(
+    (s) => s.key === "cells.egress" && s.value === "report",
+  );
+  const body = html`${when(
+      reported,
+      () => html`<p class="error-note mb" id="egress-reported">
+        ${icon("alert")} Egress is reported, not enforced: every new app,
+        preview, terminal and check cell may reach any public host on ports
+        80 and 443, declared or not. Private, loopback and cluster addresses,
+        and every other port, stay refused. The forge's vitals (the board's
+        strip, the health check for admins) say so while it lasts. Set it back to enforce once each app's reported hosts
+        are in its forge.json.
+      </p>`,
+    )}
+    ${card(
     html`<div class="card-body">
         <p class="muted small">
           How much the forge does at once. A change here takes effect on the
