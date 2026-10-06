@@ -1471,7 +1471,12 @@ async function handleHook(app: App, request: Request): Promise<Response> {
   });
   // A tag that releases a sealed report's fix opens the report
   // (`actions/sealed.ts`). Off the hook's answer: git need not wait for it.
-  void unsealReleased(app, repo, input.updates).catch((error) =>
+  void unsealReleased(
+    app,
+    repo,
+    input.updates,
+    input.actorId ? getUserById(app.db, input.actorId) : undefined,
+  ).catch((error) =>
     app.log.warn("could not unseal released reports", {
       repo: `${repo.ownerName}/${repo.name}`,
       error: String(error),

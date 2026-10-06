@@ -19,6 +19,8 @@ import { getPull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -29,8 +31,10 @@ let app: App;
 let servers: Servers;
 let alice: User;
 let mallory: User;
+let bot: User;
 let repo: Repo;
 let baseOid = "";
+let aliceRw = "";
 
 const ok = <T>(
   r: { ok: true; value: T } | { ok: false; error: unknown },
@@ -101,6 +105,10 @@ beforeAll(async () => {
       files: [{ path: "README.md", content: "# square\n" }],
     }),
   ).commitOid;
+  const agent = ok(await createAgent(app, alice, { username: "bot" }));
+  bot = agent.user;
+  expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+  aliceRw = createToken(app.db, alice.id, "push", "rw").token;
 }, 30_000);
 
 afterAll(async () => {
@@ -136,7 +144,7 @@ describe("the way out: its fix released", () => {
     const { report, pull } = await reportAndFix("early");
     const opened = await unsealReleased(app, repo, [
       { ref: "refs/tags/v0", newOid: baseOid },
-    ]);
+    ], alice);
     expect(opened).toEqual([]);
     expect(getIssue(app.db, repo.id, report.number)!.sealed).toBe(true);
     expect(getPull(app.db, repo.id, pull)!.sealed).toBe(true);
@@ -144,7 +152,7 @@ describe("the way out: its fix released", () => {
     expect(
       await unsealReleased(app, repo, [
         { ref: "refs/heads/main", newOid: baseOid },
-      ]),
+      ], alice),
     ).toEqual([]);
   });
 
@@ -152,7 +160,7 @@ describe("the way out: its fix released", () => {
     const { report, mergeOid, pull } = await reportAndFix("late");
     const opened = await unsealReleased(app, repo, [
       { ref: "refs/tags/v1.0.1", newOid: mergeOid },
-    ]);
+    ], alice);
     expect(opened).toContain(report.number);
     expect(opened).toContain(pull);
     expect(getIssue(app.db, repo.id, report.number)!.sealed).toBe(false);
@@ -162,6 +170,49 @@ describe("the way out: its fix released", () => {
         e.kind === "issue.unsealed" && e.payload["number"] === report.number,
     );
     expect(record?.payload["released"]).toBe("v1.0.1");
+  });
+});
+
+describe("a release is a person's", () => {
+  test("a tag an agent or a reader pushes opens nothing, even one that contains the fix", async () => {
+    const { report, mergeOid } = await reportAndFix("asked");
+    for (const pusher of [bot, mallory, undefined])
+      expect(
+        await unsealReleased(
+          app,
+          repo,
+          [{ ref: "refs/tags/v9", newOid: mergeOid }],
+          pusher,
+        ),
+      ).toEqual([]);
+    expect(getIssue(app.db, repo.id, report.number)!.sealed).toBe(true);
+  });
+
+  test("through a real git push of a writer's tag, the report opens", async () => {
+    const { report, mergeOid } = await reportAndFix("pushed");
+    const work = await mkdtemp(join(tmpdir(), "forge-sealed-tag-"));
+    const git = async (args: string[], cwd = work) => {
+      const proc = Bun.spawn(["git", ...args], {
+        cwd,
+        env: gitClientEnv(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return proc.exited;
+    };
+    const as = (who: User, token: string) =>
+      `${servers.url.replace("http://", `http://${who.username}:${token}@`)}/alice/square.git`;
+    expect(await git(["clone", "-q", as(alice, aliceRw), "c"])).toBe(0);
+    const dir = join(work, "c");
+    // A crew agent cannot push to the base at all here; one that could is
+    // refused by the release rule above. A writer tags it: the report opens.
+    expect(await git(["tag", "v-person", mergeOid], dir)).toBe(0);
+    expect(await git(["push", "-q", "origin", "v-person"], dir)).toBe(0);
+    const deadline = Date.now() + 10_000;
+    while (getIssue(app.db, repo.id, report.number)!.sealed && Date.now() < deadline)
+      await Bun.sleep(100);
+    expect(getIssue(app.db, repo.id, report.number)!.sealed).toBe(false);
+    await rm(work, { recursive: true, force: true });
   });
 });
 

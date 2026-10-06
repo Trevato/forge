@@ -4,13 +4,16 @@
  * history every reader may learn from: so when a tag is pushed whose
  * commit contains the merged pull that closed a sealed report, the report
  * and that pull are unsealed, and the record says the release did it.
- * Before then only a writer unseals (`setIssueSealed`).
+ * Before then only a writer unseals (`setIssueSealed`). A release is a
+ * person's act: a tag an agent pushes opens nothing, or the crew — which
+ * reads the sealed report, words and all — could publish it by asking.
  */
 
 import type { App } from "../app.ts";
 import { getIssue } from "../core/issues.ts";
 import { closesFromBody, listPulls } from "../core/pulls.ts";
-import type { Repo } from "../core/repos.ts";
+import { canWrite, type Repo } from "../core/repos.ts";
+import { isActive, type User } from "../core/users.ts";
 import { setSealed } from "../core/sealed.ts";
 import { isAncestor } from "../git/local.ts";
 import { repoDir } from "../git/repos.ts";
@@ -30,7 +33,15 @@ export async function unsealReleased(
   app: App,
   repo: Repo,
   updates: readonly RefUpdate[],
+  pusher: User | undefined,
 ): Promise<number[]> {
+  if (
+    pusher === undefined ||
+    pusher.kind !== "user" ||
+    !isActive(pusher) ||
+    !canWrite(app.db, repo, pusher)
+  )
+    return [];
   const tags = updates.filter(
     (u) => u.ref.startsWith("refs/tags/") && !/^0+$/.test(u.newOid),
   );
@@ -60,6 +71,7 @@ export async function unsealReleased(
         app.bus.append({
           kind: "issue.unsealed",
           repoId: repo.id,
+          actorId: pusher.id,
           payload: { number: issue.number, released: release },
         });
       }
