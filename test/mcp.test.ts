@@ -173,6 +173,7 @@ describe("the forge over MCP", () => {
       "claim_link",
       "take_updates",
       "converge",
+      "next_steps",
       "asked",
       "app_members",
       "explore",
@@ -180,6 +181,8 @@ describe("the forge over MCP", () => {
       "make_it_yours",
       "front_page",
       "map",
+      "milestones",
+      "limb",
       "returns",
       "spend",
       "usage",
@@ -187,6 +190,7 @@ describe("the forge over MCP", () => {
       "unlink",
       "hold",
       "plan",
+      "capacity",
       "report",
     ]);
     const byName = new Map<string, any>(

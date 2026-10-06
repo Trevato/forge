@@ -13,9 +13,12 @@ import {
   everydayOf,
   EVERYDAY_WHY,
   keepAdmin,
+  joinAsWriter,
   linkEveryday,
 } from "../../core/everyday.ts";
+import { spawnedOrg } from "../../spawn/claim.ts";
 import { reservedName } from "../../core/reserved.ts";
+import { requireVerified } from "../../actions/verify.ts";
 import { createSession } from "../../core/sessions.ts";
 import { createUser, getUserByName, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -66,8 +69,17 @@ export function everydayLine(ctx: Ctx, user: User): Html | null {
 
 function everydayForm(ctx: Ctx, user: User, offerKeep: boolean): Html {
   return card(
-    html`<p class="mb">${EVERYDAY_WHY}</p>
-      <form method="post" action="/settings/everyday" class="stack">
+    html`<p class="mb">${EVERYDAY_WHY}</p>${everydayFields(ctx, user, offerKeep)}`,
+    { id: "everyday", head: html`<h2>Make your everyday account</h2>` },
+  );
+}
+
+/** The form alone, for a card that says why itself (the first-login steps, #600). */
+export const everydayAsk = (ctx: Ctx, user: User): Html =>
+  everydayFields(ctx, user, true);
+
+function everydayFields(ctx: Ctx, user: User, offerKeep: boolean): Html {
+  return html`<form method="post" action="/settings/everyday" class="stack">
         ${formField({
           label: "Username",
           name: "username",
@@ -107,9 +119,7 @@ function everydayForm(ctx: Ctx, user: User, offerKeep: boolean): Html {
         method="post"
         action="/settings/everyday/keep"
         hidden
-      ></form>`,
-    { id: "everyday", head: html`<h2>Make your everyday account</h2>` },
-  );
+      ></form>`;
 }
 
 // POST /settings/everyday — make the everyday account, link it, sign in as it.
@@ -138,11 +148,14 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
     return say("Passwords need at least 10 characters.");
   // The reserved-name rule was applied above with the admin as \`self\`:
   // their own handle may appear in their everyday name ("ada-me").
+  // A proven admin vouches for their own second account, as a claim
+  // vouches for the first: held back, it could not tell the crew.
   const made = await createUser(ctx.app.db, {
     username,
     email,
     password,
     allowReserved: true,
+    trusted: requireVerified(ctx.app, admin).ok,
   });
   if (!made.ok)
     return say(
@@ -153,6 +166,16 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
           : "That account could not be made.",
     );
   linkEveryday(ctx.app.db, admin, made.value);
+  // On a spawned forge the apps are the client's org's: the everyday
+  // account writes to it, or it could not open or tell the crew anything.
+  const spawned = await spawnedOrg(ctx.app);
+  if (spawned && !joinAsWriter(ctx.app.db, spawned.org, made.value))
+    // Signed in as it, the account would see nothing: the admin stays, at
+    // the org's teams, where the one fix is.
+    return flashTo(ctx, `/${spawned.org.username}#teams`, {
+      tone: "danger",
+      message: `${made.value.username} was made but could not join ${spawned.org.username}: add it to a team that writes there, then sign in as it.`,
+    });
   const session = createSession(ctx.app.db, made.value.id);
   return redirect("/", {
     cookie: sessionCookie(session.token, session.expiresAt, ctx.url),

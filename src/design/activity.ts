@@ -20,10 +20,6 @@ const environment = (env: unknown): string => {
   return preview === "" ? "production" : `the preview of #${preview}`;
 };
 
-/** Moments rather than facts: a feed shows what came of them instead. */
-export const isTransientEvent = (kind: string): boolean =>
-  kind === "run.queued" || kind === "run.started";
-
 export function eventVerb(event: ForgeEvent): string {
   const { kind, payload } = event;
   if (kind === "run.finished") {

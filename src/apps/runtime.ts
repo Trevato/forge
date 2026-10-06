@@ -83,6 +83,7 @@ import {
 import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
+import { egressSetting } from "../core/capacity.ts";
 import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
 import {
   startProcess,
@@ -1284,6 +1285,8 @@ export class AppsRuntime {
       home: join(envDir(dataDir, record.id, env), "home"),
       onUndeclared: (host, port) =>
         noteReached(dataDir, record.repoId, host, port),
+      // Asked at every start: an admin's flip reaches the next cell.
+      egressMode: egressSetting(this.app.db),
     };
   }
 
@@ -1332,6 +1335,7 @@ export class AppsRuntime {
               limits: resolveLimits("app", live.manifest.limits),
               terminal: true,
               onUndeclared: base.onUndeclared,
+              egressMode: base.egressMode,
             },
     };
   }

@@ -24,8 +24,14 @@ import {
   frontPicks,
   frontScore,
   frontSignals,
+  frontWeights,
+  isWeight,
   rankFront,
   setFrontPicks,
+  setFrontWeights,
+  WEIGHT_MAX,
+  WEIGHT_NAMES,
+  type FrontWeights,
   type FrontSignals,
 } from "../core/front.ts";
 import { getIssuesByIds } from "../core/issues.ts";
@@ -85,17 +91,41 @@ export interface FrontPage {
 /**
  * Whether a thumb is one taken as a stranger: not one from before thumbs
  * were (`keepLook`), which was the owner's view. A picture's file never
- * changes under its path, so each is read once.
+ * changes under its path, so each is read once — and remembered only while
+ * it is still one of the pictures the page looks at: each page drops the
+ * paths it did not ask about, so the memory is never larger than the
+ * current pictures, however often they are retaken (#768).
  */
-const kept = new Map<string, boolean>();
-function strangersThumb(app: App, look: Look): boolean {
-  let keep = kept.get(look.path);
-  if (keep === undefined) {
-    keep = keepLook(app.config.dataDir, look);
-    if (look.error === null) kept.set(look.path, keep);
+const thumbChecks = new WeakMap<App, Map<string, boolean>>();
+
+function strangersThumbs(app: App): {
+  check: (look: Look) => boolean;
+  /** Forget every path this page did not ask about. */
+  done: () => void;
+} {
+  let known = thumbChecks.get(app);
+  if (known === undefined) {
+    known = new Map();
+    thumbChecks.set(app, known);
   }
-  return keep;
+  const memo = known;
+  const asked = new Set<string>();
+  return {
+    check: (look) => {
+      asked.add(look.path);
+      let keep = memo.get(look.path);
+      if (keep === undefined) {
+        keep = keepLook(app.config.dataDir, look);
+        if (look.error === null) memo.set(look.path, keep);
+      }
+      return keep;
+    },
+    done: () => {
+      for (const path of memo.keys()) if (!asked.has(path)) memo.delete(path);
+    },
+  };
 }
+
 
 type Scores = Map<string, { s: FrontSignals; score: number }>;
 
@@ -111,8 +141,9 @@ function scoresFor(app: App, repoIds: readonly string[], now: number): Scores {
   )
     return kept.scores;
   const signals = frontSignals(app.db, repoIds, now);
+  const weights = frontWeights(app.db);
   const scores: Scores = new Map(
-    [...signals].map(([id, s]) => [id, { s, score: frontScore(s, now) }]),
+    [...signals].map(([id, s]) => [id, { s, score: frontScore(s, now, weights) }]),
   );
   remembered.set(app, { at: now, scores });
   return scores;
@@ -160,6 +191,7 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
     ]),
   ];
   const scores = scoresFor(app, ids, now);
+  const thumbs = strangersThumbs(app);
   const looks = looksForApps(
     db,
     [...appOf.values()].map((r) => r.id),
@@ -183,7 +215,7 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
               l.commitOid === production?.commitOid &&
               l.page === DEFAULT_PAGE &&
               l.kind === "thumb" &&
-              strangersThumb(app, l),
+              thumbs.check(l),
           );
     const scored = scores.get(repo.id) ?? {
       s: { awakeHours: 0, ships: 0, forks: 0, shippedAt: null },
@@ -204,7 +236,7 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
           : lookUrl(`/${repo.ownerName}/${repo.name}`, thumb),
       pinned: isPinned,
       signals,
-      score: open ? scored.score : frontScore(signals, now),
+      score: open ? scored.score : frontScore(signals, now, frontWeights(db)),
     };
   };
 
@@ -222,6 +254,7 @@ export function frontPage(app: App, now = Date.now()): FrontPage {
       .filter(tileable)
       .map((e) => ({ ...e, id: e.repo.id, owner: e.repo.ownerName })),
   );
+  thumbs.done();
   // Featured is a card, not a tile: the first pin may be a repository with
   // no app, or one whose app strangers cannot open (the forge itself) —
   // its crew at work is the picture. An app strangers can open that is
@@ -270,6 +303,8 @@ function crewAtWork(app: App, repo: Repo): CrewAtWork {
 export interface FrontPicksJson {
   readonly pinned: readonly string[];
   readonly hidden: readonly string[];
+  /** How the page ranks: what forks, ships, use and freshness count for. */
+  readonly weights: FrontWeights;
 }
 
 export function frontPicksJson(app: App): FrontPicksJson {
@@ -282,6 +317,7 @@ export function frontPicksJson(app: App): FrontPicksJson {
   return {
     pinned: picks.pinned.flatMap(named),
     hidden: [...picks.hidden].flatMap(named).sort(),
+    weights: frontWeights(app.db),
   };
 }
 
@@ -292,16 +328,33 @@ export type SetFrontError =
 /**
  * Set every pick at once, by `owner/name`. A site admin's alone. A private
  * repository may be pinned — it shows once it is public — and a name that
- * is no repository is refused, as is one both pinned and hidden. A dry
- * run checks all of it and answers with the picks it would set, unsaved.
+ * is no repository is refused, as is one both pinned and hidden. The
+ * weights (#767) are each a number from 0 to `WEIGHT_MAX`. A dry run checks
+ * all of it and answers with what it would set, unsaved.
  */
 export function setFront(
   app: App,
   user: User | undefined,
-  input: { pinned: readonly string[]; hidden: readonly string[] },
+  input: {
+    pinned: readonly string[];
+    hidden: readonly string[];
+    weights?: Record<string, unknown>;
+  },
   dryRun = false,
 ): Result<FrontPicksJson, SetFrontError> {
   if (user === undefined || !user.isAdmin) return err({ kind: "forbidden" });
+  const weights = input.weights ?? frontWeights(app.db);
+  if (!WEIGHT_NAMES.every((k) => isWeight(weights[k])))
+    return err({
+      kind: "invalid",
+      message: `each weight (${WEIGHT_NAMES.join(", ")}) is a number from 0 to ${WEIGHT_MAX}`,
+    });
+  const weighed: FrontWeights = {
+    forks: weights["forks"] as number,
+    ships: weights["ships"] as number,
+    use: weights["use"] as number,
+    fresh: weights["fresh"] as number,
+  };
   if (input.pinned.length > MAX_PINNED)
     return err({ kind: "invalid", message: `pin at most ${MAX_PINNED}` });
   if (input.hidden.length > MAX_HIDDEN)
@@ -336,30 +389,49 @@ export function setFront(
     });
   const named = (repos: Repo[]) => repos.map((r) => `${r.ownerName}/${r.name}`);
   if (dryRun)
-    return ok({ pinned: named(pinned.value), hidden: named(hidden.value).sort() });
+    return ok({
+      pinned: named(pinned.value),
+      hidden: named(hidden.value).sort(),
+      weights: weighed,
+    });
   setFrontPicks(
     app.db,
     pinned.value.map((r) => r.id),
     hidden.value.map((r) => r.id),
     user.id,
   );
+  setFrontWeights(app.db, weighed, user.id);
   forgetFrontScores(app);
   return ok(frontPicksJson(app));
 }
 
 /**
- * `{pinned, hidden}` from a request body or tool call: each an array of
- * `owner/name` strings; one left out keeps what is set now, and a body
- * with neither is refused rather than taken for "no change".
+ * `{pinned, hidden, weights}` from a request body or tool call: pinned and
+ * hidden each an array of `owner/name` strings, weights an object of some
+ * of `forks ships use fresh`; anything left out keeps what is set now, and
+ * a body with none of them is refused rather than taken for "no change".
  */
 export function frontInput(
   app: App,
   input: unknown,
-): { pinned: readonly string[]; hidden: readonly string[] } | undefined {
+):
+  | {
+      pinned: readonly string[];
+      hidden: readonly string[];
+      weights: Record<string, unknown>;
+    }
+  | undefined {
   if (typeof input !== "object" || input === null || Array.isArray(input))
     return undefined;
   const record = input as Record<string, unknown>;
-  if (record["pinned"] === undefined && record["hidden"] === undefined)
+  if (
+    record["pinned"] === undefined &&
+    record["hidden"] === undefined &&
+    record["weights"] === undefined
+  )
+    return undefined;
+  const given = record["weights"];
+  if (given !== undefined && (typeof given !== "object" || given === null || Array.isArray(given)))
     return undefined;
   const current = frontPicksJson(app);
   const names = (v: unknown, kept: readonly string[]) =>
@@ -370,9 +442,12 @@ export function frontInput(
         : undefined;
   const pinned = names(record["pinned"], current.pinned);
   const hidden = names(record["hidden"], current.hidden);
-  return pinned === undefined || hidden === undefined
-    ? undefined
-    : { pinned, hidden };
+  if (pinned === undefined || hidden === undefined) return undefined;
+  const weights: Record<string, unknown> = { ...current.weights };
+  for (const k of WEIGHT_NAMES)
+    if (given !== undefined && k in (given as object))
+      weights[k] = (given as Record<string, unknown>)[k];
+  return { pinned, hidden, weights };
 }
 
 /** The front page as JSON: what a stranger is shown; a site admin also gets the picks. */

@@ -142,7 +142,11 @@ export function updateAgent(
 
 // ---- the crew of a repository ----
 
-/** Put an agent on a repository's crew. Idempotent. */
+/**
+ * Put an agent on a repository's crew. Idempotent. Only an agent: the
+ * database refuses anyone else (`repo_crew_agents_only`), so a caller that passes a
+ * person has a bug, and hears about it as an error, not a quiet no.
+ */
 export function addCrew(
   db: Database,
   repoId: string,
@@ -156,6 +160,22 @@ export function addCrew(
       )
       .run(repoId, userId, addedBy ?? null).changes > 0
   );
+}
+
+/**
+ * People — not agents — on any crew: what `repo_crew_agents_only` now refuses, if any
+ * was put there before it. Reported at boot, never removed by the forge.
+ */
+export function peopleOnCrews(
+  db: Database,
+): { repoId: string; username: string }[] {
+  return db
+    .query<{ repoId: string; username: string }, []>(
+      `SELECT repo_crew.repo_id AS repoId, user.username AS username
+       FROM repo_crew JOIN user ON user.id = repo_crew.user_id
+       WHERE user.is_agent = 0 ORDER BY repo_crew.repo_id, user.username`,
+    )
+    .all();
 }
 
 export function removeCrew(

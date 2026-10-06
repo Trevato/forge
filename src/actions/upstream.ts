@@ -10,7 +10,10 @@
 
 import type { App } from "../app.ts";
 import { forkRelation } from "../core/following.ts";
-import { getRepoById, type Repo } from "../core/repos.ts";
+import {
+  forkParentFor,
+  type Repo,
+} from "../core/repos.ts";
 import { listPulls, mergedPullsForRepos, type Pull } from "../core/pulls.ts";
 import type { User } from "../core/users.ts";
 import { aheadOids } from "../git/merge.ts";
@@ -51,10 +54,7 @@ export async function proposeUpstream(
 ): Promise<Result<Proposal, ProposeUpstreamError>> {
   const writer = requireWriter(app, actor, fork);
   if (!writer.ok) return writer;
-  const parent =
-    fork.forkParentId === null
-      ? undefined
-      : getRepoById(app.db, fork.forkParentId);
+  const parent = forkParentFor(app.db, fork, actor);
   if (parent === undefined) return err("not_a_fork");
   const already = openProposal(app, fork, parent);
   if (already !== undefined)

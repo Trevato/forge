@@ -29,7 +29,7 @@ import {
 } from "../../core/orgs.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
-import { getUserByName, type User } from "../../core/users.ts";
+import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
@@ -250,7 +250,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
           ),
         )}
 
-    <h2 class="mt">Teams</h2>
+    <h2 class="mt" id="teams">Teams</h2>
     ${listCard(
       teams.map((t) =>
         row({
@@ -298,7 +298,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
 // their other repositories, then — for an org — its members and teams.
 export async function ownerProfile(ctx: Ctx): Promise<Response> {
   const owner = getUserByName(ctx.app.db, ctx.params.owner ?? "");
-  if (!owner) return notFoundPage(ctx);
+  if (!owner || hiddenFrom(owner, ctx.auth.user)) return notFoundPage(ctx);
 
   const isOrg = owner.kind === "org";
   const access = isOrg
@@ -575,7 +575,9 @@ export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
       message:
         added.error === "no_such_user"
           ? `No account called ${username || "that"}.`
-          : "Could not add that member.",
+          : added.error === "agent_cannot_own"
+            ? `${username} is an agent: an agent never administers an organization.`
+            : "Could not add that member.",
     });
   return flashTo(ctx, dest, {
     message: added.value.added
@@ -603,13 +605,14 @@ export async function teamMemberRemove(ctx: Ctx): Promise<Response> {
       message:
         removed.error === "no_such_user"
           ? `No account called ${username || "that"}.`
-          : "Could not remove that member.",
+          : removed.error === "last_owner"
+            ? `${r.team.name} must keep at least one person who owns ${r.org.username}. Make someone else an owner first.`
+            : "Could not remove that member.",
     });
   return flashTo(ctx, dest, {
     message: removed.value.removed
       ? `Removed ${username} from ${r.team.name}.`
-      : `${r.team.name} must keep at least one owner.`,
-    ...(removed.value.removed ? {} : { tone: "danger" as const }),
+      : `${username} was not on ${r.team.name}.`,
   });
 }
 

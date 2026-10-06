@@ -19,6 +19,8 @@ import {
 } from "../../actions/signins.ts";
 import { mailConfigured } from "../../actions/verify.ts";
 import type { AccountRow } from "../../core/accounts.ts";
+import { soleOwnedOrgs } from "../../core/orgs.ts";
+import { getUserByName } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { readForm } from "../form.ts";
@@ -59,7 +61,8 @@ function standing(a: AccountRow): Html {
   return html``;
 }
 
-function row(a: AccountRow): Html {
+/** `sole`: the organizations this account is the only person owning. */
+function row(a: AccountRow, sole: readonly string[]): Html {
   const at = `/settings/accounts/${encodeURIComponent(a.username)}`;
   const how = [
     a.via ?? (a.kind === "agent" ? "crew" : ""),
@@ -82,7 +85,9 @@ function row(a: AccountRow): Html {
         ${time(a.createdAt)}${how.length > 0
           ? html` · ${how.join(" · ")}`
           : null}
-        · ${holds.join(" · ")}
+        · ${holds.join(" · ")}${sole.length > 0
+          ? html` · only owner of ${sole.join(", ")}`
+          : null}
       </div>
     </div>
     ${actionable
@@ -136,7 +141,15 @@ export function accountsPage(ctx: Ctx): Response {
       people.length === 0
         ? empty({ icon: "users", title: "Nobody has joined yet." })
         : html`<ul class="rows">
-            ${people.map(row)}
+            ${people.map((a) => {
+              const user = getUserByName(ctx.app.db, a.username);
+              return row(
+                a,
+                user === undefined
+                  ? []
+                  : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username),
+              );
+            })}
           </ul>`,
       {
         head: html`<h2>Who is on this forge</h2>
@@ -251,7 +264,9 @@ export function accountAct(act: Act) {
         message:
           done.error === "not_allowed"
             ? "You cannot do that to yourself, another admin, or an agent."
-            : "That did not finish; nothing was lost. Try again.",
+            : done.error === "last_owner"
+              ? `${username} is the only person owning an organization (named in their row). Make someone else an owner first; nothing was changed.`
+              : "That did not finish; nothing was lost. Try again.",
         tone: "danger",
       });
     }

@@ -32,14 +32,22 @@ export function usePlacement(app: App, placement: Placement): void {
   placements.set(app, placement);
 }
 
+/** The host a hosted child lives under: `<name>.<this>`. */
+export const childHost = (app: App): string =>
+  app.config.url ? new URL(app.config.url).host : (app.config.host ?? "localhost");
+
 function placementFor(app: App): Placement {
   let p = placements.get(app);
   if (!p) {
-    const host = app.config.url ? new URL(app.config.url).host : (app.config.host ?? "localhost");
-    p = hostedPlacement({ host });
+    p = hostedPlacement({ host: childHost(app) });
     placements.set(app, p);
   }
   return p;
+}
+
+/** Why this forge can hold no child right now, or undefined when it can. */
+export function noRoom(app: App): string | undefined {
+  return placementFor(app).room?.()?.message;
 }
 
 /** One status and one sentence per kind of failure. */

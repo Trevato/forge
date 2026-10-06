@@ -5,7 +5,12 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
-import { closeStreamsOf, noteCaller } from "./caller.ts";
+import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
+import {
+  closeStreamsOf,
+  closeStreamsOfSession,
+  noteCaller,
+} from "./caller.ts";
 import {
   accountAct,
   accountsPage,
@@ -26,7 +31,7 @@ import {
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
-import { sessionUser } from "../core/sessions.ts";
+import { sessionOf } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
 import { forgeHost } from "../core/commit_identity.ts";
 import {
@@ -145,6 +150,13 @@ import {
 } from "../web/pages/issues.ts";
 import { tellPage } from "../web/studio/tell.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
+import { milestonePage, milestonesPage } from "../web/pages/milestones.ts";
+import {
+  limbPreviewPage,
+  limbReceiptPage,
+  limbSubmit,
+  limbUndo,
+} from "../web/pages/limb.ts";
 import {
   modeSubmit,
   saySubmit,
@@ -157,6 +169,7 @@ import {
 } from "../web/studio/actions.ts";
 import { everydayCreate, everydayKeep } from "../web/pages/everyday.ts";
 import { claimFragmentPage, claimPage, claimSubmit } from "../web/pages/claim.ts";
+import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import {
   asksBulkSubmit,
@@ -406,8 +419,14 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
 
   const session = cookieValue(request, "forge_session");
   if (session !== undefined) {
-    const user = sessionUser(app.db, session);
-    if (user.ok) return { user: user.value, scope: "admin", via: "session" };
+    const found = sessionOf(app.db, session);
+    if (found.ok)
+      return {
+        user: found.value.user,
+        scope: "admin",
+        via: "session",
+        sessionId: found.value.id,
+      };
   }
 
   const header = request.headers.get("authorization");
@@ -505,6 +524,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/claim", claimFragmentPage);
   router.add("POST", "/claim", claimSubmit);
   router.add("GET", "/claim/:token", claimPage);
+  // "+ New forge": the spawn door as a page, an admin's only (spawn/door.ts).
+  router.add("GET", "/forges/new", newForgePage);
+  router.add("POST", "/forges/new", newForgeSubmit);
   router.add("POST", "/claim/:token", claimSubmit);
   // The front page as a stranger sees it, for anyone; a site admin there
   // also gets the controls that decide it (#686).
@@ -613,6 +635,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/cloud/write", cloudWrite);
   router.add("POST", "/settings/cloud/audit", cloudAudit);
   router.add("POST", "/settings/cloud/remove", cloudRemove);
+  router.add("GET", "/settings/capacity", capacityPage);
+  router.add("POST", "/settings/capacity", capacitySet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
   router.add("POST", "/settings/backups/destination", backupsDestination);
@@ -845,6 +869,20 @@ export function buildRouter(): Router<Handler> {
     dependencySubmit,
   );
   router.add("GET", "/:owner/:name/map", mapPage);
+  router.add("GET", "/:owner/:name/milestones", milestonesPage);
+  router.add("GET", "/:owner/:name/milestones/:number", milestonePage);
+  router.add("GET", "/:owner/:name/milestones/:number/limb", limbPreviewPage);
+  router.add("POST", "/:owner/:name/milestones/:number/limb", limbSubmit);
+  router.add(
+    "GET",
+    "/:owner/:name/milestones/:number/limb/:op",
+    limbReceiptPage,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/milestones/:number/limb/:op/undo",
+    limbUndo,
+  );
 
   // Pull requests. Same /new-before-/:number ordering discipline.
   // One list of pulls, at `/pulls` and `/changes` alike; one change under
@@ -1506,8 +1544,14 @@ export async function serve(app: App): Promise<Servers> {
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
   // An account suspended or removed ends what it has open on this
-  // listener: its event streams and the app sockets it was let into.
+  // listener: its event streams and the app sockets it was let into. A
+  // browser signed out ends the streams it opened.
   const endOpen = app.bus.subscribe((event) => {
+    if (event.kind === "session.ended") {
+      const id = event.payload["sessionId"];
+      if (typeof id === "string") closeStreamsOfSession(id);
+      return;
+    }
     if (event.kind !== "account.suspended" && event.kind !== "account.removed")
       return;
     const name = event.payload["username"];
@@ -1676,7 +1720,7 @@ async function answerGet(
   // a stream this request opens is the account's, to end with it.
   if (auth.user !== undefined) {
     noteSignedIn(request);
-    noteCaller(request, auth.user.id);
+    noteCaller(request, auth.user.id, auth.sessionId);
   }
 
   // The two things standing between one runaway agent and everybody

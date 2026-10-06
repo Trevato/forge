@@ -9,7 +9,12 @@
  */
 
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
-import { accountSignIns, endAccountSession } from "../actions/signins.ts";
+import { changeCapacity, listCapacity } from "../actions/capacity.ts";
+import {
+  accountSignIns,
+  endAccountSession,
+  signOutHere,
+} from "../actions/signins.ts";
 import { STRANGER_MAX } from "./limits.ts";
 import {
   askedIn,
@@ -115,7 +120,10 @@ import {
 } from "../actions/users.ts";
 import { listEvents } from "../core/events.ts";
 import { audienceFilter } from "../core/event_audience.ts";
-import { getReposByIds } from "../core/repos.ts";
+import {
+  forkParentFor,
+  getReposByIds,
+} from "../core/repos.ts";
 import {
   commentCounts,
   getIssue,
@@ -137,6 +145,7 @@ import {
   listTeamsVisibleTo,
   type Permission,
   type Team,
+  soleOwnedOrgs,
 } from "../core/orgs.ts";
 import {
   getPull,
@@ -166,9 +175,14 @@ import {
   listReviews,
   withOutdated,
 } from "../core/reviews.ts";
-import { createSession, destroySession } from "../core/sessions.ts";
+import { createSession } from "../core/sessions.ts";
 import { listTokens } from "../core/tokens.ts";
-import { getUserByName, verifyPassword, type User } from "../core/users.ts";
+import {
+  getUserByName,
+  hiddenFrom,
+  verifyPassword,
+  type User,
+} from "../core/users.ts";
 import { isPinned } from "../core/pins.ts";
 import { listWebhooks } from "../core/webhooks.ts";
 import { diffCommit } from "../git/diff.ts";
@@ -237,6 +251,11 @@ import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
+import {
+  milestoneData,
+  milestonesJson,
+} from "../web/pages/milestones.ts";
+import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
 import { appsRuntime, envsFor, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
@@ -309,7 +328,7 @@ import {
   parseExploreQuery,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
-import { makeItYours } from "../actions/make_it_yours.ts";
+import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -1010,12 +1029,14 @@ export function apiRoutes(router: Router<Handler>): void {
 
   router.add("GET", "/api/v1/users/:username", (ctx) => {
     const user = getUserByName(ctx.app.db, ctx.params.username!);
-    return user ? json(publicProfile(user)) : notFound();
+    return user && !hiddenFrom(user, ctx.auth.user)
+      ? json(publicProfile(user))
+      : notFound();
   });
 
   router.add("GET", "/api/v1/users/:username/repos", (ctx) => {
     const user = getUserByName(ctx.app.db, ctx.params.username!);
-    if (!user) return notFound();
+    if (!user || hiddenFrom(user, ctx.auth.user)) return notFound();
     const query = repoQuery(ctx);
     const items = listReposByOwner(
       ctx.app.db,
@@ -1047,8 +1068,7 @@ export function apiRoutes(router: Router<Handler>): void {
     // Cookie-authenticated logout, so it must be same-origin like any other
     // cookie mutation — otherwise it's a cross-site forced-logout.
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
-    const token = cookieValue(ctx.request, "forge_session");
-    if (token !== undefined) destroySession(ctx.app.db, token);
+    signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
     return json({}, 200, {
       "set-cookie": sessionCookie("", new Date(0), ctx.url),
     });
@@ -1133,6 +1153,32 @@ export function apiRoutes(router: Router<Handler>): void {
   const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
     ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
 
+  // The forge's capacity (`core/capacity.ts`): read and changed live by an
+  // admin, never by an agent; anyone else is told the door is not there.
+  router.add("GET", "/api/v1/admin/capacity", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const listed = listCapacity(ctx.app, ctx.auth.user);
+    return listed.ok ? json(listed.value) : notFound();
+  });
+
+  router.add("PUT", "/api/v1/admin/capacity/:key", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const value = input.value === null ? null : str(input.value);
+    const changed = changeCapacity(ctx.app, ctx.auth.user, ctx.params.key!, value);
+    if (changed.ok) return json(changed.value);
+    if (changed.error === "not_found") return notFound();
+    return apiError(
+      changed.error,
+      422,
+      changed.error === "no_such_setting"
+        ? "no such capacity setting"
+        : "that value is outside what this setting takes",
+    );
+  });
+
   router.add("GET", "/api/v1/admin/accounts", (ctx) => {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
@@ -1167,6 +1213,18 @@ export function apiRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
     const done = await removeAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    if (!done.ok && done.error === "last_owner") {
+      const user = getUserByName(ctx.app.db, ctx.params.username!);
+      const orgs =
+        user === undefined
+          ? []
+          : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username);
+      return apiError(
+        "last_owner",
+        409,
+        `${ctx.params.username} is the only person owning ${orgs.join(", ")}: make someone else an owner first`,
+      );
+    }
     return done.ok ? json({ removed: ctx.params.username }) : accountError(done.error);
   });
 
@@ -1401,10 +1459,15 @@ export function apiRoutes(router: Router<Handler>): void {
         found.team,
         username,
       );
-      if (!removed.ok) return respondAccess(removed.error, 422);
+      if (!removed.ok)
+        return removed.error === "last_owner"
+          ? apiError(
+              "last_owner",
+              409,
+              "an organization keeps at least one person who owns it; make someone else an owner first",
+            )
+          : respondAccess(removed.error, 422);
       if (!isMember) return notFound();
-      // A member who could not be removed is the last owner.
-      if (!removed.value.removed) return json({ error: "protected" }, 409);
       return new Response(null, { status: 204 });
     },
   );
@@ -1647,10 +1710,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (!repo) return notFound();
       if (!mayDirectCrew(ctx.app.db, repo, ctx.auth.user))
         return respondAccess("forbidden", 403);
-      const parent =
-        repo.forkParentId === null
-          ? undefined
-          : getRepoById(ctx.app.db, repo.forkParentId);
+      const parent = forkParentFor(ctx.app.db, repo, ctx.auth.user);
       if (parent === undefined)
         return apiError("not_a_fork", 404, "this repository follows nothing");
       const outcome = await convergeFork(ctx.app, repo, parent, ctx.auth.user);
@@ -2253,6 +2313,57 @@ export function apiRoutes(router: Router<Handler>): void {
       );
       if (!confirmed.ok) return respondAccess(confirmed.error, 422);
       return new Response(null, { status: 204 });
+    },
+  );
+  // Milestones as data: the plan's limbs with their weights, and one
+  // milestone opened. The same numbers as the pages.
+  router.add("GET", "/api/v1/repos/:owner/:name/milestones", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    return json(milestonesJson(ctx, repo));
+  });
+  router.add(
+    "GET",
+    "/api/v1/repos/:owner/:name/milestones/:number",
+    (ctx) => {
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const number = positiveInt(ctx.params.number);
+      const data =
+        number === undefined ? undefined : milestoneData(ctx, repo, number);
+      return data === undefined ? notFound() : json(data);
+    },
+  );
+  // One action on a whole limb (#733): defer, resume, or close as not
+  // doing. A fleet operation in every respect — a dry run by default with a
+  // read credential, an admin token to apply, the receipt in
+  // /api/v1/fleet/ops/:id and its undo at …/undo.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/milestones/:number/limb",
+    async (ctx) => {
+      const input = await body(ctx.request);
+      const dryRun = input.dryRun !== false;
+      const denied = requireScope(ctx, dryRun ? "ro" : "admin");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      const number = positiveInt(ctx.params.number);
+      if (!repo || number === undefined) return notFound();
+      if (!isLimbAction(input.action))
+        return apiError("bad_action", 422, "action is defer, resume or close");
+      const request = {
+        action: input.action,
+        ...(typeof input.reason === "string" ? { reason: input.reason } : {}),
+        ...(typeof input.pillar === "string" ? { pillar: input.pillar } : {}),
+      };
+      if (dryRun) {
+        const plan = previewLimb(ctx.app, ctx.auth.user, repo, number, request);
+        if (!plan.ok) return respondFleet(plan.error);
+        return json({ dryRun: true, ...plan.value });
+      }
+      const op = await applyLimb(ctx.app, ctx.auth.user, repo, number, request);
+      if (!op.ok) return respondFleet(op.error);
+      return json({ dryRun: false, ...op.value }, 201);
     },
   );
   // The map as data: ready now, blocked on, the critical path, every edge,
@@ -3411,12 +3522,25 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const name = str(input.name);
+    const visibility = str(input.visibility);
+    if (visibility !== "" && visibility !== "public" && visibility !== "private")
+      return apiError("invalid", 422, "visibility is public or private");
     const made = await makeItYours(ctx.app, ctx.auth.user, repo, {
       dryRun,
       ...(name === "" ? {} : { name }),
+      ...(visibility === "" ? {} : { visibility }),
     });
     if (!made.ok)
-      return made.error.kind === "invalid"
+      return made.error.kind === "limit"
+        ? json(
+            {
+              error: "limit",
+              message: `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`,
+              resetsAt: made.error.resetsAt,
+            },
+            429,
+          )
+        : made.error.kind === "invalid"
         ? apiError("invalid", 422, made.error.message)
         : made.error.kind === "own"
           ? apiError("own", 409, "this app is already yours")
@@ -3444,7 +3568,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const picks = frontInput(ctx.app, input);
     if (picks === undefined)
-      return apiError("invalid", 422, "send {pinned, hidden}: arrays of owner/name");
+      return apiError("invalid", 422, "send {pinned, hidden, weights}: arrays of owner/name; weights an object of forks, ships, use, fresh");
     const set = setFront(ctx.app, ctx.auth.user, picks);
     if (!set.ok)
       return set.error.kind === "forbidden"

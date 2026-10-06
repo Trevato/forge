@@ -21,7 +21,7 @@
 import { canSeeSealed, setSealed } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
-import { isCrew } from "../core/agents.ts";
+import { crewRole, isCrew } from "../core/agents.ts";
 import { moveBlockersToChildren } from "../core/dependencies.ts";
 import {
   addComment as insertComment,
@@ -41,11 +41,14 @@ import {
   type Label,
   type BodyError,
   type TitleError,
+  standsForPerson,
 } from "../core/issues.ts";
 import { isStructural, pillarsOf } from "../core/pillars.ts";
 import { getPull } from "../core/pulls.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
+import { laterGate } from "../crew/later.ts";
+import { handedOverAt } from "../crew/parks.ts";
 import {
   applyLabelNames,
   commentByRemoteId,
@@ -222,12 +225,21 @@ export function setIssueState(
   if (!user.ok) return user;
   if (issue.repoId !== repo.id) return err("not_found");
   if (isMirror(app, repo)) return err("mirrored");
+  // An author's say over their own issue is a person's. An agent closes an
+  // issue by landing a pull for it, or by the planner's grant below, and
+  // reopens nothing: otherwise what it opened to replace a person's ask
+  // would be its own to close, and the ask gone with no person deciding.
   // A sealed report's author follows it and speaks on it, but its state is
   // the writers' (`core/sealed.ts`).
+  const ownSay =
+    user.value.kind !== "agent" &&
+    user.value.id === issue.authorId &&
+    !issue.sealed;
   const mayModerate =
+    ownSay ||
     canWrite(app.db, repo, user.value) ||
-    (user.value.id === issue.authorId &&
-      (!issue.sealed || canSeeSealed(app.db, repo, user.value)));
+    (state === "closed" &&
+      handedToPlanner(app, repo, issue, user.value, closing));
   if (!mayModerate) return err("forbidden");
   // The plan's own issues — a pillar's umbrella, the Later umbrella, the
   // Later gate — are a person's to close, whatever access an agent holds:
@@ -277,6 +289,51 @@ export function setIssueState(
   // The parts serve what the whole served.
   inheritPillar(app, user.value, repo, issue, children);
   return ok(changed);
+}
+
+/**
+ * The one close a crew member may make on an issue it did not write: the
+ * repository's planner, on an open issue the crew parked twice and handed
+ * to it (`crew/parks.ts`). Nothing a person asked for is lost by it:
+ *
+ * - split, only into what replaces it — every issue named must be an open
+ *   issue made since the hand-over, not the issue itself and not the Later
+ *   gate, so a closed or an old issue cannot stand in for a drop;
+ * - dropped, only when an agent wrote the issue. A person's ask is dropped
+ *   by a person.
+ *
+ * Done is what a landed pull or a person says; a pull, a reopen, and every
+ * other issue stay with the people who can write here.
+ */
+function handedToPlanner(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  actor: User,
+  closing: Closing,
+): boolean {
+  if (issue.kind !== "issue" || issue.state !== "open") return false;
+  if (crewRole(app.db, repo.id, actor.id) !== "planner") return false;
+  const handed = handedOverAt(app.db, repo, issue.id);
+  if (handed === undefined) return false;
+  // Dropped only when no person's ask stands in it — not one the planner
+  // wrote to replace a person's, however many times it was split since.
+  if (closing.reason === "dropped") return !standsForPerson(app.db, issue);
+  if (closing.reason !== "split") return false;
+  const into = closing.into ?? [];
+  if (into.length === 0) return false;
+  const gate = laterGate(app.db, repo.id);
+  return into.every((number) => {
+    const part = getIssue(app.db, repo.id, number);
+    return (
+      part !== undefined &&
+      part.kind === "issue" &&
+      part.state === "open" &&
+      part.id !== issue.id &&
+      part.number !== gate &&
+      part.createdAt > handed
+    );
+  });
 }
 
 /** How an issue closes: done unless said otherwise; split names its children. */

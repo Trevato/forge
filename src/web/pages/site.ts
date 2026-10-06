@@ -1,6 +1,6 @@
 /**
- * The site pages: the home's dispatch and the signed-in dashboard, sign in and
- * sign up, creating a repository, search, and the confirmation step every
+ * The site pages: the home's dispatch and the cards its rail borrows, sign in
+ * and sign up, creating a repository, search, and the confirmation step every
  * destructive action passes through. Plain forms, zero JavaScript required,
  * fast everywhere — a phone in the redwoods is the reference device.
  *
@@ -8,75 +8,45 @@
  * typed still in it. A dead end that loses input is a bug, not a message.
  */
 
+import { signOutHere } from "../../actions/signins.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo } from "../../actions/repos.ts";
 import { signUp } from "../../actions/users.ts";
-import { listEventsVisibleTo, type ForgeEvent } from "../../core/events.ts";
-import { audienceFilter } from "../../core/event_audience.ts";
-import {
-  getIssuesByRef,
-  listAssignedTo,
-  listOpenAgentPullsVisibleTo,
-  type Issue,
-} from "../../core/issues.ts";
+import { listAssignedTo, type Issue } from "../../core/issues.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
-import { listPins, pinnedRepoIds } from "../../core/pins.ts";
+import { listPins } from "../../core/pins.ts";
 import {
   canRead,
   getReposByIds,
   listReposVisibleTo,
-  writableRepoIds,
   type Repo,
 } from "../../core/repos.ts";
-import { latestRunsForIssues } from "../../core/runs.ts";
-import { createSession, destroySession } from "../../core/sessions.ts";
-import {
-  getUsersByIds,
-  hasAnyUser,
-  verifyPassword,
-  type User,
-} from "../../core/users.ts";
+import { createSession } from "../../core/sessions.ts";
+import { hasAnyUser, verifyPassword, type User } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
-import { crossOrigin, type Ctx } from "../../http/context.ts";
-import { askCountFor, askSentence } from "../studio/asks.ts";
+import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
+import { homeTop } from "../studio/asks_page.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
-import {
-  hostOf,
-  notFoundPage,
-  pageHead,
-  signInFirst,
-} from "../chrome.ts";
+import { hostOf, pageHead, signInFirst } from "../chrome.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { icon, type IconName } from "../icons.ts";
-import {
-  eventActor,
-  eventVerb,
-  isTransientEvent,
-} from "../../design/activity.ts";
+import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
-import { liveClientJs, liveMount } from "../live.ts";
 import {
   btn,
   card,
-  empty,
   field as formField,
   iconBtn,
   listCard,
-  pager,
-  repoCounts,
   row,
-  runStateBadge,
   selectField,
   time,
-  userTag,
 } from "../ui.ts";
-import { appsCard } from "./apps.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hasAdmin } from "../../spawn/claim.ts";
@@ -98,196 +68,7 @@ function safeNext(raw: string | null): string | undefined {
   return raw;
 }
 
-/**
- * One repository row. The lead glyph carries provenance — a mirror wears its
- * origin's mark rather than the generic repo book — and a pin shows in the
- * trail, because "is this on my machine" is a property of the row, not a
- * separate list to cross-reference.
- */
-const repoRow = (repo: Repo, pinned?: ReadonlySet<string>): Html =>
-  row({
-    href: `/${repo.ownerName}/${repo.name}`,
-    nav: true,
-    lead: icon(
-      repo.origin !== null
-        ? repo.origin.kind
-        : repo.forkParentId !== null
-          ? "fork"
-          : "repo",
-    ),
-    title: `${repo.ownerName}/${repo.name}`,
-    titleAttr: `${repo.ownerName}/${repo.name}`,
-    ...(repo.description !== "" ? { meta: html`${repo.description}` } : {}),
-    trail: html`${repoCounts({
-      openIssues: repo.counts?.openIssues,
-      openPulls: repo.counts?.openPulls,
-    })}${when(
-      pinned?.has(repo.id) === true,
-      () =>
-        html`<span class="badge" data-variant="outline" title="On your machine"
-          >${icon("pin")}Pinned</span
-        >`,
-    )}${when(
-      repo.visibility === "private",
-      () =>
-        html`<span class="badge" data-variant="secondary"
-          >${icon("lock")}Private</span
-        >`,
-    )}`,
-  });
-
 // ---- home ----
-
-/** Which glyph an event wears in the activity rail. */
-function eventIcon(kind: string): IconName {
-  if (kind === "push") return "commit";
-  if (kind === "issue.closed") return "issueClosed";
-  if (kind.startsWith("issue.")) return "issue";
-  if (kind === "pull.merged") return "merge";
-  if (kind.startsWith("pull.")) return "pull";
-  if (kind === "repo.forked") return "fork";
-  if (kind.startsWith("repo.")) return "repo";
-  if (kind.startsWith("label.")) return "tag";
-  if (kind.startsWith("webhook.")) return "webhook";
-  if (kind.startsWith("team.") || kind.startsWith("org.")) return "users";
-  if (kind.startsWith("token.") || kind.startsWith("key.")) return "key";
-  if (kind.startsWith("settings.")) return "settings";
-  if (kind.startsWith("app.") || kind === "run.finished") return "rocket";
-  if (kind.startsWith("crew.")) return "bot";
-  return "activity";
-}
-
-/** Which conversation, if any, an event is about — for one grouped read. */
-function eventIssueRef(
-  event: ForgeEvent,
-): { repoId: string; number: number } | undefined {
-  const number = event.payload["number"];
-  return typeof number === "number" && event.repoId !== null
-    ? { repoId: event.repoId, number }
-    : undefined;
-}
-
-const issueKey = (repoId: string, number: number): string =>
-  `${repoId}#${number}`;
-
-/**
- * The thing an event happened to, as `#3 Title` or a label/hook name. The
- * issues arrive as a map the caller filled in one grouped read — a feed of
- * forty rows must not be forty `getIssue` calls.
- */
-function eventSubject(
-  issues: Map<string, { title: string }>,
-  event: ForgeEvent,
-): string {
-  const ref = eventIssueRef(event);
-  if (ref !== undefined) {
-    const issue = issues.get(issueKey(ref.repoId, ref.number));
-    return issue ? `#${ref.number} ${issue.title}` : `#${ref.number}`;
-  }
-  for (const key of ["name", "url", "parent", "summary"] as const) {
-    const value = event.payload[key];
-    if (typeof value === "string" && value !== "") return value;
-  }
-  const updates = event.payload["updates"];
-  if (Array.isArray(updates)) {
-    const ref = (updates[0] as { ref?: string } | undefined)?.ref;
-    if (typeof ref === "string") return ref.replace(/^refs\/heads\//, "");
-  }
-  return "";
-}
-
-/**
- * Recent activity, plus the repositories worth watching for more of it.
- *
- * There is no user-level event stream — the outbox fans out per repository —
- * so the rail names the few repositories its own rows came from and the live
- * client subscribes to those. That is the honest bound: the pill says "3 new"
- * for the repositories you were just looking at, and never pretends to cover
- * a forge-wide feed it is not connected to.
- */
-function activityRail(
-  ctx: Ctx,
-  user: User | undefined,
-): { body: Html; watch: string[] } {
-  const db = ctx.app.db;
-  // The visibility rule lives in the query, so this is the twelve most recent
-  // things *this viewer* can see — not the twelve newest events in the forge
-  // filtered down to however few of them happened to be visible.
-  // A run being queued or started is a moment, not a fact; the rail shows
-  // what came of it. Read a little past twelve so the cut keeps its size.
-  // Being able to read a repository is not being its audience for everything:
-  // configuration (a webhook's URL, a variable's name) is its admins' alone.
-  const events = listEventsVisibleTo(db, user, { limit: 24 })
-    .filter(audienceFilter(db, user))
-    .filter((e: ForgeEvent) => !isTransientEvent(e.kind))
-    .slice(0, 12);
-  const byId = getReposByIds(
-    db,
-    events.map((e: ForgeEvent) => e.repoId ?? "").filter(Boolean),
-  );
-  const watch: string[] = [];
-  for (const event of events) {
-    const repo = byId.get(event.repoId ?? "");
-    if (repo === undefined) continue;
-    const at = `/${repo.ownerName}/${repo.name}`;
-    if (!watch.includes(at)) watch.push(at);
-  }
-  if (events.length === 0) {
-    return {
-      watch,
-      body: card(
-        html`<p class="muted small">
-          Nothing has happened yet. Push a commit or open an issue and it shows
-          up here.
-        </p>`,
-        { head: html`<h2>Recent activity</h2>` },
-      ),
-    };
-  }
-  // Three grouped reads for the whole rail: the actors, and the conversations
-  // the rows name. Asked per row this was two queries a row.
-  const actors = getUsersByIds(
-    db,
-    events.map((e: ForgeEvent) => e.actorId ?? "").filter(Boolean),
-  );
-  const issues = getIssuesByRef(
-    db,
-    events
-      .map(eventIssueRef)
-      .filter((r): r is { repoId: string; number: number } => r !== undefined),
-  );
-  const body = card(
-    html`<ul class="list act">
-      ${events.map((event: ForgeEvent) => {
-        const repo = byId.get(event.repoId ?? "")!;
-        const actor =
-          event.actorId === null ? undefined : actors.get(event.actorId);
-        const subject = eventSubject(issues, event);
-        const where = `${repo.ownerName}/${repo.name}`;
-        // `via: "origin"` means the sync worker saw this upstream rather than
-        // someone doing it here. The glyph is the only honest way to say so
-        // without a second line of prose on every row.
-        const viaOrigin = event.payload["via"] === "origin";
-        // A deploy with no actor is the forge's own doing, and says so.
-        const who = eventActor(event, actor?.username);
-        return row({
-          href: `/${where}`,
-          lead: icon(
-            viaOrigin && repo.origin !== null
-              ? repo.origin.kind
-              : eventIcon(event.kind),
-          ),
-          title: html`<strong>${who}</strong> ${eventVerb(event)}`,
-          meta: html`${where}${subject !== "" ? html` · ${subject}` : null}`,
-          titleAttr: `${who} ${eventVerb(event)}`,
-          trail: time(event.createdAt),
-        });
-      })}
-    </ul>`,
-    { head: html`<h2>Recent activity</h2>`, pad: false },
-  );
-  return { body, watch };
-}
 
 /**
  * What you keep on your machine. The server stores the *choice* and nothing
@@ -295,20 +76,13 @@ function activityRail(
  * that acts on them — never a status the server would only ever hold a stale
  * copy of.
  */
-function downloadsCard(ctx: Ctx, user: User): Html {
+export function downloadsCard(ctx: Ctx, user: User): Html {
   const pins = listPins(ctx.app.db, user.id);
   const head = html`${icon("download")}
     <h2>On your machine</h2>`;
-  if (pins.length === 0) {
-    return card(
-      html`<p class="muted small">
-        Pin a repository (the ${icon("pin")} on its header) and the local client
-        keeps it cloned under
-        <span class="mono">~/src/&lt;host&gt;/&lt;owner&gt;/&lt;repo&gt;</span>.
-      </p>`,
-      { head },
-    );
-  }
+  // Nothing pinned is nothing to show: the pin on a repository's header
+  // says what it does where it is pressed.
+  if (pins.length === 0) return html``;
   const repos = getReposByIds(
     ctx.app.db,
     pins.map((pin) => pin.repoId),
@@ -385,39 +159,8 @@ function downloadsCard(ctx: Ctx, user: User): Html {
   );
 }
 
-/**
- * The inbox (docs/APPS.md): pulls the crew opened that are waiting on a
- * person, and whatever is assigned to the viewer. Both are absent when
- * empty — a card saying "nothing" is a zero drawn, and the absence carries
- * the same information — so a quiet forge opens on its repositories.
- */
-function inbox(ctx: Ctx, user: User): Html {
-  const needs = needsYouCard(ctx, user);
-  const mine = onYouCard(ctx, user);
-  if (needs === undefined && mine === undefined) return html``;
-  return html`<div class="stack mb">${needs ?? null} ${mine ?? null}</div>`;
-}
-
 const threadPath = (repo: Repo, issue: Issue): string =>
   `/${repo.ownerName}/${repo.name}/${issue.kind === "pull" ? "pulls" : "issues"}/${issue.number}`;
-
-/**
- * Needs you: one line that links to `/asks`, where the single list of what
- * asks the viewer lives (`studio/asks.ts` decides what counts). Absent when
- * nothing asks — a card saying "nothing" is a zero drawn.
- */
-function needsYouCard(ctx: Ctx, user: User): Html | undefined {
-  const count = askCountFor(ctx, user);
-  if (count === 0) return undefined;
-  return card(
-    html`<a href="/asks">${askSentence(count)}</a>`,
-    {
-      head: html`${icon("eye")}
-        <h2>Needs you</h2>
-        <span class="muted small">decisions, and the forge's own health</span>`,
-    },
-  );
-}
 
 /** Open issues and pulls assigned to the viewer, anywhere they can see. */
 export function onYouCard(ctx: Ctx, user: User): Html | undefined {
@@ -463,19 +206,12 @@ export function onYouCard(ctx: Ctx, user: User): Html | undefined {
   });
 }
 
-function orgsCard(ctx: Ctx, user: User): Html {
+export function orgsCard(ctx: Ctx, user: User): Html {
   const orgs = listOrgsForUser(ctx.app.db, user.id);
-  const head = html`<h2>Your organizations</h2>
-    <span class="spacer"></span>
-    ${btn("New", { href: "/organizations/new", size: "sm", icon: "plus" })}`;
-  if (orgs.length === 0) {
-    return card(
-      html`<p class="muted small">
-        Organizations own repositories as a group, with teams for access.
-      </p>`,
-      { head },
-    );
-  }
+  // A new one is the "+" menu's; with none, there is nothing to show.
+  if (orgs.length === 0) return html``;
+  const head = html`${icon("users")}
+    <h2>Your organizations</h2>`;
   return listCard(
     orgs.map((org) =>
       row({
@@ -489,8 +225,8 @@ function orgsCard(ctx: Ctx, user: User): Html {
   );
 }
 
-/** The terminal is a front door, not a footnote: the command, on the dashboard. */
-function terminalCard(ctx: Ctx): Html {
+/** The terminal is a front door, not a footnote: the command, on the home. */
+export function terminalCard(ctx: Ctx): Html {
   const ssh = sshCommand(ctx.app);
   if (ssh === undefined) return html``;
   return card(
@@ -506,99 +242,12 @@ function terminalCard(ctx: Ctx): Html {
   );
 }
 
-function dashboard(ctx: Ctx, user: User): Html {
-  const query = (ctx.url.searchParams.get("q") ?? "").trim();
-  const cursor = ctx.url.searchParams.get("cursor") ?? "";
-  const perPage = 20;
-  const repos = listReposVisibleTo(ctx.app.db, user, {
-    limit: perPage + 1,
-    ...(query !== "" ? { query } : {}),
-    ...(cursor !== "" ? { cursor } : {}),
-  });
-  const shown = repos.slice(0, perPage);
-  const last = shown[shown.length - 1];
-  const more = repos.length > perPage && last !== undefined;
-  const carry = query !== "" ? `q=${encodeURIComponent(query)}&` : "";
-  // Cursor lists only move forward; "Newer" is the way back to the top.
-  const pinned = pinnedRepoIds(ctx.app.db, user.id);
-  const rail = activityRail(ctx, user);
-
-  const filter = html`<form class="filters" method="get" action="/">
-    <input
-      class="input search"
-      type="search"
-      name="q"
-      value="${query}"
-      placeholder="Filter repositories"
-      aria-label="Filter repositories"
-      data-search-input
-    />
-    <button class="btn" data-size="sm" type="submit">Filter</button>
-    ${when(query !== "", () =>
-      btn("Clear", { href: "/", size: "sm", variant: "ghost" }),
-    )}
-  </form>`;
-
-  const list =
-    shown.length === 0
-      ? empty({
-          icon: "repo",
-          title: query === "" ? "No repositories yet" : "No matches",
-          note:
-            query === ""
-              ? "Create one here, or just push to a remote that does not exist yet."
-              : "Nothing you can see matches that filter.",
-          action:
-            query === ""
-              ? btn("New repository", { href: "/new", variant: "primary" })
-              : btn("Clear filter", { href: "/" }),
-        })
-      : listCard(shown.map((repo) => repoRow(repo, pinned)));
-
-  return html`<div class="dash">
-    <div>
-      ${inbox(ctx, user)}
-      ${pageHead("Your repositories", {
-        actions: btn("New repository", {
-          href: "/new",
-          variant: "primary",
-          size: "sm",
-          icon: "plus",
-          shortcut: "c",
-        }),
-      })}
-      ${filter} ${list}
-      ${pager({
-        ...(cursor !== ""
-          ? { prev: carry === "" ? "/" : `/?${carry.slice(0, -1)}` }
-          : {}),
-        ...(more && last ? { next: `/?${carry}cursor=${last.id}` } : {}),
-      })}
-    </div>
-    <aside class="stack">
-      ${terminalCard(ctx)} ${appsCard(ctx)} ${rail.body}
-      ${downloadsCard(ctx, user)} ${orgsCard(ctx, user)}
-    </aside>
-    ${liveMount({
-      repo: rail.watch[0] ?? "",
-      repos: rail.watch.slice(1),
-    })}
-  </div>`;
-}
-
+// GET / — the one home: a stranger gets the door, and a signed-in person
+// the feed (`studioHome`, #599), whatever the mode (#625).
 export async function home(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
-  // A stranger gets the studio's door in either mode. Signed in, studio is
-  // the default: apps, the crew, what asks you; `?mode=dev` on the home is
-  // the escape hatch to the repositories, resolved once for `ctx.mode`.
   if (user === undefined) return studioDoor(ctx);
-  if (ctx.mode === "studio") return await studioHome(ctx, user);
-  return page({
-    ctx,
-    title: "forge",
-    body: dashboard(ctx, user),
-    scriptJs: liveClientJs,
-  });
+  return await studioHome(ctx, user, homeTop(ctx));
 }
 
 // ---- authentication ----
@@ -909,9 +558,7 @@ export async function themeSubmit(ctx: Ctx): Promise<Response> {
 export function logoutSubmit(ctx: Ctx): Response {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
     return new Response("forbidden", { status: 403 });
-  const cookie = ctx.request.headers.get("cookie") ?? "";
-  const match = cookie.match(/forge_session=([^;]+)/);
-  if (match) destroySession(ctx.app.db, match[1]!);
+  signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
   return redirect("/", sessionCookie("", new Date(0), ctx.url));
 }
 

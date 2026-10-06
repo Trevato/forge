@@ -21,7 +21,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { createToken } from "../src/actions/users.ts";
 import { listOrigins } from "../src/core/origins.ts";
 import { listReposByOwner } from "../src/core/repos.ts";
@@ -219,7 +218,6 @@ describe("browsing an origin repository on the web", () => {
     delete process.env.FORGE_GITHUB_CLIENT_ID;
     alice = await signUp("alice");
     bob = await signUp("bob");
-    resetConnectLimit();
     forgetProviders(dataDir);
 
     const connected = await asUser(alice, "/settings/origins/token", {

@@ -338,6 +338,16 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 /* A subscription's headroom for people: a small number beside its windows. */
 .headroom { display: flex; align-items: center; gap: 6px; }
 .headroom .input { width: 5em; }
+/* A spawned forge's first steps (#600): three rows, the next one leading. */
+.next-crew { margin: 0 0 12px 1.1em; }
+.next-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.next-step { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); gap: 8px; align-items: start; }
+.next-step-mark { color: var(--faint); padding-top: 2px; }
+.next-step[data-done="yes"] .next-step-mark { color: var(--success, var(--accent)); }
+.next-step[data-done="yes"] .next-step-title { color: var(--muted-fg); text-decoration: line-through; }
+.next-step[data-primary] .next-step-title { font-weight: 600; }
+.next-step-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 36rem; }
+.next-step-apps { display: flex; flex-wrap: wrap; gap: 6px; }
 /* The everyday-account ask on the home: a form's width, not the page's. */
 .everyday-ask { max-width: 34rem; margin-bottom: 16px; }
 /* On a phone an account's controls go under its name, not over it. */
@@ -466,6 +476,8 @@ form.inline { display: inline; margin-left: auto; }
 .front-pick { gap: 8px; }
 .front-pick form.inline { margin-left: 0; }
 .front-pin-any { padding: 12px 16px; flex-wrap: nowrap; }
+.front-weights { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 0 16px 12px; }
+.front-weights .input { width: 4.5em; margin-left: 4px; }
 .front-pin-any .input { flex: 1; min-width: 0; }
 .front-controls .small { padding: 0 16px 14px; }
 @media (max-width: 520px) {
@@ -1126,6 +1138,15 @@ textarea.editor:focus { outline: none; }
   border: 1px dashed var(--border); border-radius: var(--radius);
 }
 .no-hits .ico { color: var(--faint); flex: none; }
+/* "+ New forge" (#426): the claim link, shown once, impossible to miss. */
+.claim-link-box {
+  margin: 0; padding: 12px 14px; font-size: 15px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--muted); overflow-wrap: anywhere;
+}
 
 }
+/* What needs you, pinned on the home: the bulk step's select as wide as
+   its words, not the column. */
+.needs-you #asks-bulk select { width: auto; }
 `;

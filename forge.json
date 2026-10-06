@@ -8,7 +8,7 @@
     "limits": { "memory": 2048, "cpus": 2, "disk": 8192 }
   },
   "check": {
-    "run": "bun x tsc --noEmit && bun scripts/test-shards.ts --timeout 60000 --gate",
+    "run": "bun x tsc --noEmit && FORGE_CHECK_SHARDS=2 bun scripts/test-shards.ts --timeout 60000 --gate",
     "timeout": 1800,
     "limits": { "memory": 4096, "cpus": 4, "disk": 8192 }
   }

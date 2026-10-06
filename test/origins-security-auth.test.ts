@@ -1,11 +1,17 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { oauthCallbackUri } from "../src/http/api.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getOriginById, sealedSecrets } from "../src/core/origins.ts";
 import { getRepo } from "../src/core/repos.ts";
@@ -116,9 +122,28 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
   let fake: FakeForge;
   let oauth: FakeOAuth;
   let base: string;
-  let api: Caller;
+  let caller: Caller;
+  // Each test starts its flows as an account of its own, and a test that
+  // starts more than five uses more than one: the connect cap (five per
+  // person per window) has its own test, and these are about the flow.
+  let who = "alice";
+  let accounts = 0;
+  const fresh = async (): Promise<string> => {
+    const name = `flow${++accounts}`;
+    await createUsers(base, [name]);
+    proveAll(app);
+    // A code flow needs the client registered by the account that starts it.
+    await caller("/api/v1/user/origin-apps", {
+      method: "POST",
+      as: name,
+      body: JSON.stringify({ host: fake.url, clientId: CLIENT_ID }),
+    });
+    return name;
+  };
+  const api: Caller = (path, init) =>
+    caller(path, { ...init, as: init?.as ?? who });
 
-  const start = async (as = "alice") => {
+  const start = async (as = who) => {
     const response = await api("/api/v1/user/origins/oauth", {
       method: "POST",
       as,
@@ -149,15 +174,18 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    api = callerFor(base);
+    caller = callerFor(base);
     await createUsers(base, ["alice", "bob"]);
     proveAll(app);
-    resetConnectLimit();
     forgetProviders(dataDir);
     await api("/api/v1/user/origin-apps", {
       method: "POST",
+      as: "alice",
       body: JSON.stringify({ host: fake.url, clientId: CLIENT_ID }),
     });
+  });
+  beforeEach(async () => {
+    who = await fresh();
   });
   afterAll(async () => {
     fake.stop();
@@ -168,9 +196,8 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
   });
 
   test("a state belongs to the user who started it: nobody else can spend it, and it stays valid for its owner", async () => {
-    resetConnectLimit();
     app.db.query("DELETE FROM origin").run();
-    const flow = await start("alice");
+    const flow = await start();
     const exchanges = refreshCount();
 
     // Bob, signed in, presents Alice's state with a valid code.
@@ -220,7 +247,7 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
           { id: string },
           [string]
         >("SELECT id FROM user WHERE username = ?1")
-        .get("alice")!.id,
+        .get(who)!.id,
     );
 
     // ...and the same state+code is dead on replay: no second exchange.
@@ -327,7 +354,8 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
       "state=https://evil.com/%3F&code=x",
     ];
     for (const extra of attempts) {
-      resetConnectLimit();
+      // Six flows: more than one account's five.
+      who = await fresh();
       const flow = await start();
       const response = await callback(
         `state=${encodeURIComponent(flow.state)}&code=${oauth.authCode}&${extra}`,
@@ -346,7 +374,6 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
   });
 
   test("the registered redirect_uri comes from FORGE_URL, never the Host header", async () => {
-    resetConnectLimit();
     app.db.query("DELETE FROM origin").run();
     process.env.FORGE_URL = "https://forge.example.test/";
     const response = await api("/api/v1/user/origins/oauth", {
@@ -453,7 +480,6 @@ describe("OAuth device flow: a flow is private to the user who started it", () =
     api = callerFor(servers.url);
     await createUsers(servers.url, ["alice", "bob"]);
     proveAll(app);
-    resetConnectLimit();
     forgetProviders(dataDir);
     process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
   });
@@ -566,7 +592,6 @@ describe("refresh serialisation and needs_reauth", () => {
     api = callerFor(servers.url);
     await createUsers(servers.url, ["alice"]);
     proveAll(app);
-    resetConnectLimit();
     forgetProviders(dataDir);
     await api("/api/v1/user/origin-apps", {
       method: "POST",
@@ -780,7 +805,6 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
     // mirror can have.
     await createUsers(base, ["bob", "alice", "carol"]);
     proveAll(app);
-    resetConnectLimit();
     forgetProviders(dataDir);
 
     const registered = await seen(
@@ -836,7 +860,6 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
   });
 
   test("every origin and app route refuses ro and rw tokens; an admin token passes the gate", async () => {
-    resetConnectLimit();
     const ro = await mintToken(base, "alice", "ro");
     const rw = await mintToken(base, "alice", "rw");
     const admin = await mintToken(base, "alice", "admin");
@@ -929,7 +952,6 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
       ).status,
     ).toBe(204);
     expect((await api("/api/v1/user/pins", { none: true })).status).toBe(401);
-    resetConnectLimit();
   });
 
   test("another user's origin, flow and app are not_found on every route — even for a site admin", async () => {
@@ -981,7 +1003,6 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
     expect(
       app.db.query("SELECT 1 FROM origin_app WHERE id = ?1").get(appId),
     ).not.toBeNull();
-    resetConnectLimit();
   });
 
   test("a non-owner writer of a mirror cannot write through it", async () => {
