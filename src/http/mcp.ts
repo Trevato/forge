@@ -20,6 +20,7 @@
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
+import { watchMilestone } from "../actions/watches.ts";
 import { addCommentThrough, setIssueSealed } from "../actions/issues.ts";
 import {
   dependencyWords,
@@ -1121,6 +1122,45 @@ const TOOLS: readonly Tool[] = [
             "no issue by that number waits for others here",
           )
         : good(data);
+    },
+  },
+  {
+    name: "watch",
+    description:
+      "Watch a milestone, or stop (`watch: false`): its progress then shows as one item in your feed, and your phone is told once, when it lands. Yours alone; `milestones` with `issue` says whether you watch it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        issue: {
+          type: "integer",
+          minimum: 1,
+          description: "The number of an issue that waits for others.",
+        },
+        watch: {
+          type: "boolean",
+          description: "false to stop watching; anything else watches.",
+        },
+      },
+      required: ["app", "issue"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const number = args["issue"];
+      const set =
+        typeof number === "number" && Number.isInteger(number) && number > 0
+          ? watchMilestone(ctx.app, user, repo, number, args["watch"] !== false)
+          : undefined;
+      if (set === undefined || (!set.ok && set.error === "not_found"))
+        return bad(
+          "not_a_milestone",
+          "no issue by that number waits for others here",
+        );
+      return set.ok
+        ? good(set.value)
+        : bad("forbidden", "only a person watches a milestone");
     },
   },
   {

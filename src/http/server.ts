@@ -150,7 +150,11 @@ import {
 } from "../web/pages/issues.ts";
 import { tellPage } from "../web/studio/tell.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
-import { milestonePage, milestonesPage } from "../web/pages/milestones.ts";
+import {
+  milestonePage,
+  milestonesPage,
+  milestoneWatch,
+} from "../web/pages/milestones.ts";
 import {
   limbPreviewPage,
   limbReceiptPage,
@@ -158,7 +162,6 @@ import {
   limbUndo,
 } from "../web/pages/limb.ts";
 import {
-  modeSubmit,
   saySubmit,
   shipSubmit,
   takeBackSubmit,
@@ -193,7 +196,6 @@ import {
 import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
-import { DEFAULT_MODE, isMode, modeCookie, type Mode } from "../web/mode.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
 import {
   assigneeSubmit,
@@ -544,7 +546,6 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/signup", signupSubmit);
   router.add("POST", "/logout", logoutSubmit);
   router.add("POST", "/theme", themeSubmit);
-  router.add("POST", "/mode", modeSubmit);
   // The board: a live wall of the crews at work, for a second monitor.
   router.add("GET", "/board", boardPage);
   // The board's tokens line, opened: what the spend bought (core/returns.ts).
@@ -875,6 +876,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/map", mapPage);
   router.add("GET", "/:owner/:name/milestones", milestonesPage);
   router.add("GET", "/:owner/:name/milestones/:number", milestonePage);
+  router.add("POST", "/:owner/:name/milestones/:number/watch", milestoneWatch);
   router.add("GET", "/:owner/:name/milestones/:number/limb", limbPreviewPage);
   router.add("POST", "/:owner/:name/milestones/:number/limb", limbSubmit);
   router.add(
@@ -1199,23 +1201,24 @@ function withRateHeaders(
 }
 
 /**
- * `?mode=studio` or `?mode=dev` on any URL sets the cookie, exactly like the
- * toggle's POST — a link someone is handed must work as a switch by itself,
- * not just for the one page it lands on.
+ * There is one forge, not two (#603): an address carrying the old
+ * `?mode=studio|dev` is the same page without it. A page answers there with
+ * a redirect to its own clean address, and the cookie that used to hold the
+ * choice is let go on the way.
  */
-function withModeCookie(
-  response: Response,
-  mode: Mode | undefined,
-  secure: boolean,
-): Response {
-  if (mode === undefined) return response;
-  try {
-    response.headers.append("set-cookie", modeCookie(mode, secure));
-  } catch {
-    // Same tradeoff as the rate headers: a frozen header set should not
-    // fail the request.
-  }
-  return response;
+function withoutMode(url: URL, request: Request): Response | undefined {
+  if (request.method !== "GET" || !url.searchParams.has("mode")) return undefined;
+  const clean = new URL(url);
+  clean.searchParams.delete("mode");
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  return new Response(null, {
+    status: 303,
+    headers: {
+      location: `${clean.pathname}${clean.search}${clean.hash}`,
+      "set-cookie": `forge_mode=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly${secure}`,
+      "cache-control": "no-store",
+    },
+  });
 }
 
 const REPLAYABLE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -1705,7 +1708,6 @@ async function answerGet(
     // even for someone who is.
     if (!isApiPath && prefersHtml(request, url.pathname)) {
       const themeCookie = cookieValue(request, "forge_theme") ?? "";
-      const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
       const anonCtx: Ctx = {
         app,
         request,
@@ -1713,7 +1715,6 @@ async function answerGet(
         params: {},
         auth: { user: undefined, scope: undefined, via: "none" },
         theme: isThemeName(themeCookie) ? themeCookie : undefined,
-        mode: isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE,
       };
       return notFoundPage(anonCtx);
     }
@@ -1740,14 +1741,10 @@ async function answerGet(
   }
 
   const themeCookie = cookieValue(request, "forge_theme") ?? "";
-  const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
-  // `?mode=` on the URL is the escape hatch: a plain link a person is
-  // handed switches the browser by itself, the same way the toggle's
-  // POST does, so it must work in both directions with no form.
-  const modeParam = url.searchParams.get("mode");
-  const modeOverride = isMode(modeParam) ? modeParam : undefined;
-  const mode =
-    modeOverride ?? (isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE);
+  if (!isApiPath) {
+    const clean = withoutMode(url, request);
+    if (clean !== undefined) return clean;
+  }
   const invoke = (into: Request): Response | Promise<Response> =>
     matched.handler({
       app,
@@ -1756,7 +1753,6 @@ async function answerGet(
       params: matched.params,
       auth,
       theme: isThemeName(themeCookie) ? themeCookie : undefined,
-      mode,
     });
 
   // A signed-in browser's outbox replays by key too (web/outbox.ts): the
@@ -1768,8 +1764,5 @@ async function answerGet(
     replayAs === undefined
       ? await invoke(request)
       : await withIdempotency(app, request, url, replayAs, invoke);
-  return withRateHeaders(
-    withModeCookie(response, modeOverride, url.protocol === "https:"),
-    verdict,
-  );
+  return withRateHeaders(response, verdict);
 }

@@ -4,7 +4,9 @@
  * when the forge's events change what asks them — a pull the crew stopped
  * on, a green pull waiting for a look, a repository at its ceiling, and for
  * the forge's admin a person who just joined — one
- * short line and a link to the asks screen is posted there.
+ * short line and a link to the asks screen is posted there. A milestone
+ * the person watches says one line too, once, when it lands, with a link to
+ * the milestone; its progress never does.
  *
  * What asks a person is read the way the asks panel reads it
  * (`askLinesFor`), as that person, so nothing private leaves for someone who
@@ -26,6 +28,7 @@ import type { App } from "../app.ts";
 import { isPrivateHost } from "../actions/migrate.ts";
 import { getUserSetting, setUserSetting } from "../core/settings.ts";
 import { getUserById } from "../core/users.ts";
+import { landedLines } from "../core/watches.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
@@ -189,10 +192,13 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       seen.delete(userId);
       return;
     }
-    // What asks them, and for an admin, who joined (`actions/accounts.ts`).
-    const asks: { line: string; items: readonly string[] }[] = [
-      ...askLinesFor(app.db, user),
+    // What asks them; for an admin, who joined (`actions/accounts.ts`); and
+    // a milestone they watch that landed (`core/watches.ts`), which links
+    // to itself.
+    const asks: { line: string; items: readonly string[]; link?: string }[] = [
+      ...askLinesFor(app.db, user).map((a) => ({ line: a.line, items: a.items })),
       ...newAccountLines(app.db, user, now()),
+      ...landedLines(app.db, user, now()),
       ...mailCeilingLines(app, user, now()),
     ];
     const before = seen.get(userId);
@@ -211,8 +217,12 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       recent.push(t);
       let delivered = false;
       try {
-        delivered = await send(url, `${oneLine(ask.line)}\n${link}`, {
-          click: link,
+        const to =
+          ask.link === undefined
+            ? link
+            : new URL(ask.link, options.forgeUrl).toString();
+        delivered = await send(url, `${oneLine(ask.line)}\n${to}`, {
+          click: to,
           title: "forge",
         });
       } catch {

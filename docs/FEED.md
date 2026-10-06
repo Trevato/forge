@@ -27,6 +27,11 @@ Anything the viewer cannot read is a 404.
   own words).
 - Pending asks (`askLinesFor`), only for what the viewer may decide.
 - Decision-ledger outcomes, only for repositories the viewer may write.
+- The milestones the viewer watches (`core/watches.ts`), one `milestone`
+  item each and only when there is something new: how far it is and what
+  merged since they last opened it, that it landed, or that it was dropped
+  or split. Its id carries its progress, so the item is replaced, never
+  repeated, as the milestone moves. Not muted with its app.
 
 Runs already announce themselves on the outbox (`run.*`); looks did not, so
 `look.taken` was added.

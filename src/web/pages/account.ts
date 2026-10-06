@@ -615,7 +615,7 @@ function keysView(
   const ssh = sshCommand(ctx.app);
   return html`${ssh === undefined
       ? html`<p class="mb muted" id="terminal-off">The terminal is off on this forge.</p>`
-      : html`<p class="mb terminal-line">
+      : html`<p class="mb terminal-line" id="terminal">
           <code class="mono">${ssh}</code>
           ${when(
             ctx.app.config.sshHostKey,
