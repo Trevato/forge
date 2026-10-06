@@ -271,6 +271,26 @@ describe("the everyday account", () => {
     expect((await mint("kim")).status).toBe(201);
   });
 
+  test("an admin who already has one is shown the way to it: asked again, and on their settings, a sign-in as it", async () => {
+    const ada = await signIn("ada");
+    const again = await post(ada, "/settings/everyday", { username: "ada-two", email: "two@x.test", password: PASSWORD });
+    expect(again.status).toBe(303);
+    const flash = (again.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const settings = await page(`${ada}; ${flash}`, again.headers.get("location")!);
+    expect(settings).toContain("You already have an everyday account, ada-me");
+    expect(settings).toContain('action="/settings/everyday/switch"');
+    expect(settings).toContain("Sign in as ada-me");
+    // Switching ends this admin session and lands on sign in, saying as whom.
+    const switched = await post(ada, "/settings/everyday/switch", {});
+    expect(switched.status).toBe(303);
+    expect(switched.headers.get("location")).toContain("/signin");
+    expect(switched.headers.get("set-cookie") ?? "").toContain("forge_session=;");
+    expect((await fetch(url("/settings"), { headers: { cookie: ada }, redirect: "manual" })).status).not.toBe(200);
+    // Someone without an everyday account has nothing to switch to.
+    const kim = await signIn("kim");
+    expect((await post(kim, "/settings/everyday/switch", {})).status).toBe(404);
+  });
+
   test("an everyday account may not take a name the forge reserves", async () => {
     const boss = await signIn("bea");
     await post(boss, "/settings/everyday", { username: "settings", email: "s@x.test", password: PASSWORD });
