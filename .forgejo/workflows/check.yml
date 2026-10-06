@@ -17,7 +17,8 @@ jobs:
       # Do not set NODE_OPTIONS here: a job-wide heap lets Node claim the
       # check cell and the kernel OOMs (`Killed`, exit 137). forge.json
       # check.run scopes heap to `node --max-old-space-size=…` for tsc only,
-      # then runs one test shard so peak RSS stays under check.limits.memory.
+      # then FORGE_CHECK_SHARDS=1 makes test-shards run one file per process
+      # (serial) so peak RSS stays under the isolated runner cgroup.
     steps:
       - name: derive owner + app
         run: |

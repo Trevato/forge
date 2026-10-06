@@ -102,14 +102,22 @@ if (table !== "") {
 }
 const weight = weigher(files, size, times);
 // Recording runs one file per process, so every file is its own slice.
-const slices = record
-  ? files.map((file) => [file])
-  : splitFiles(files, count.value, weight);
+// FORGE_CHECK_SHARDS=1 on the isolated Actions runner still OOMed when one
+// bun test held the whole gate (#386/#388, exit 137 ~15–17m). Same count
+// with one-file-per-process, serial, keeps peak RSS to a single suite.
+const serialFiles = !record && count.value === 1;
+const slices =
+  record || serialFiles
+    ? files.map((file) => [file])
+    : splitFiles(files, count.value, weight);
 
 console.log(
   record
     ? `test-shards: recording ${files.length} files, ${count.value} at a time`
-    : `test-shards: ${files.length} files in ${slices.length} shard${slices.length === 1 ? "" : "s"}, ` +
+    : serialFiles
+      ? `test-shards: ${files.length} files serial (one bun test each; FORGE_CHECK_SHARDS=1), ` +
+        `expected ${files.reduce((sum, file) => sum + weight(file), 0).toFixed(0)}s`
+      : `test-shards: ${files.length} files in ${slices.length} shard${slices.length === 1 ? "" : "s"}, ` +
         `expected ${slices.map((slice) => slice.reduce((sum, file) => sum + weight(file), 0).toFixed(0) + "s").join(" ")}`,
 );
 
@@ -134,6 +142,11 @@ type Timed = ShardResult & { seconds: number };
 
 async function runShard(slice: string[], index: number): Promise<Timed> {
   const started = performance.now();
+  // Print before spawn so a mid-suite cgroup SIGKILL still leaves a breadcrumb
+  // (shard stdout is buffered until the child exits).
+  process.stdout.write(
+    `test-shards: start ${index + 1}/${slices.length} ${slice.join(" ")}\n`,
+  );
   // An exact path, never a filter: `test/web.test.ts` alone would also
   // match any file whose path contains it, in some other shard.
   const paths = slice.map((file) =>
@@ -188,7 +201,11 @@ async function pool(width: number): Promise<Timed[]> {
 }
 
 const started = performance.now();
-const results = await pool(record ? count.value : slices.length);
+// Serial one-file processes when SHARDS=1; record keeps its worker width;
+// multi-shard still runs every slice side by side.
+const results = await pool(
+  serialFiles ? 1 : record ? count.value : slices.length,
+);
 const ending = tally(results, (performance.now() - started) / 1000);
 const spread = results.map((result) => result.seconds);
 console.log(`\n${ending.lines.join("\n")}`);

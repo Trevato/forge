@@ -15,7 +15,7 @@
   },
   "check": {
     "run": "node --max-old-space-size=1536 ./node_modules/typescript/lib/tsc.js --noEmit && FORGE_CHECK_SHARDS=1 bun scripts/test-shards.ts --timeout 60000 --gate",
-    "timeout": 3600,
+    "timeout": 7200,
     "limits": {
       "memory": 4096,
       "cpus": 4,
