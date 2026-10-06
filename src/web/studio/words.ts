@@ -210,7 +210,12 @@ export async function pullWord(
   }
   if (pull.state === "closed")
     return { word: "stopped", note: "closed without shipping" };
-  return checkRunWord(checkSummary(ctx.db, pull.id, pull.headOid));
+  const check = checkSummary(ctx.db, pull.id, pull.headOid);
+  // A repository that is not an app never deploys a head, so it never gets
+  // a look: an open change there waits on a person, and says so.
+  if (ctx.record === undefined && check.state === "none")
+    return { word: "waiting", note: "open — waiting on a person" };
+  return checkRunWord(check);
 }
 
 /**
@@ -358,7 +363,7 @@ const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
  * live script repaints as a run finishes (`studioRunJs`). `cancelled` draws
  * the same quiet, secondary look as `waiting` and `planned` — a restart is
  * never the danger red a real failure earns. */
-export function wordBadge(word: Word, id?: string): Html {
+export function wordBadge(word: Word, id?: string, plain = false): Html {
   const variant =
     word === "look" || word === "shipped" || word === "done"
       ? "success"
@@ -372,7 +377,9 @@ export function wordBadge(word: Word, id?: string): Html {
     data-variant="${variant}"
     data-word="${word}"
     ${id === undefined ? null : html`id="${id}"`}
-    >${word === "working" ? icon("loader") : null}${word}</span
+    >${word === "working" ? icon("loader") : null}${plain && word === "told"
+      ? "open"
+      : word}</span
   >`;
 }
 

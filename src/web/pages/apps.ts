@@ -542,13 +542,6 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
           >${previews} preview${previews === 1 ? "" : "s"}</span
         >`,
     )}
-    <span class="spacer"></span>
-    ${btn("App", {
-      href: appHref(repo),
-      size: "sm",
-      variant: "ghost",
-      icon: "chevronRight",
-    })}
   </div>`;
 }
 
