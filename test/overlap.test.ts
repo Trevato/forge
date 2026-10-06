@@ -14,7 +14,12 @@ import { openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
-import { createWebhook } from "../src/core/webhooks.ts";
+import {
+  CLAIM_MS,
+  createWebhook,
+  DELIVER_TIMEOUT_MS,
+  deliverDue,
+} from "../src/core/webhooks.ts";
 import { serve } from "../src/http/server.ts";
 import { drainStreams } from "../src/http/sse.ts";
 
@@ -128,6 +133,42 @@ describe("two processes on one data directory start each run once", () => {
       receiver.stop(true);
     }
   }, 120_000);
+
+  test("a claim taken late in a slow batch does not lapse while its row is sent", async () => {
+    expect(CLAIM_MS).toBeGreaterThan(DELIVER_TIMEOUT_MS);
+    app.db.run("DELETE FROM webhook_delivery");
+    app.db.run("DELETE FROM webhook");
+    const hits = new Map<string, number>();
+    const receiver = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const id = request.headers.get("x-forge-delivery") ?? "";
+        hits.set(id, (hits.get(id) ?? 0) + 1);
+        await Bun.sleep(300);
+        return new Response("ok");
+      },
+    });
+    try {
+      const made = createWebhook(app.db, {
+        repoId,
+        url: `http://127.0.0.1:${receiver.port}/slow`,
+        kinds: "",
+      });
+      if (!made.ok) throw new Error(String(made.error));
+      for (let n = 0; n < 4; n++)
+        app.bus.append({ kind: "push", repoId, payload: { slow: n } });
+      // A batch that began a while ago, as one behind a slow endpoint has:
+      // its claims must still be leased from the moment each is taken.
+      const behind = deliverDue(app.db, app.log, new Date(Date.now() - 2 * CLAIM_MS));
+      await Bun.sleep(100);
+      const beside = deliverDue(app.db, app.log);
+      await Promise.all([behind, beside]);
+      expect(hits.size).toBe(4);
+      expect([...hits.values()].every((n) => n === 1)).toBe(true);
+    } finally {
+      receiver.stop(true);
+    }
+  });
 
   test("a draining process ends its open streams with a resume hint", async () => {
     const servers = await serve(app);
