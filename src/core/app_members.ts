@@ -27,6 +27,31 @@ export function isAppMember(
   );
 }
 
+/**
+ * Of these apps, the ones that name `userId` — `isAppMember` for a whole
+ * page in one read per chunk, never one per row.
+ */
+export function appsNaming(
+  db: Database,
+  userId: string,
+  appIds: readonly string[],
+): Set<string> {
+  const out = new Set<string>();
+  const unique = [...new Set(appIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    for (const row of db
+      .query<{ app_id: string }, string[]>(
+        `SELECT app_id FROM app_member WHERE user_id = ?1
+           AND app_id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})`,
+      )
+      .all(userId, ...batch))
+      out.add(row.app_id);
+  }
+  return out;
+}
+
 /** Everyone an app names, by username. */
 export function appMembers(db: Database, appId: string): AppMember[] {
   return db
