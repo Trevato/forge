@@ -14,7 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addComment } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
-import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
+import { commitToBranch, createRepo, sealedForkFor } from "../src/actions/repos.ts";
 import type { Agent } from "../src/core/agents.ts";
 import { recordDecision } from "../src/core/decisions.ts";
 import { audienceFilter } from "../src/core/event_audience.ts";
@@ -186,8 +186,10 @@ beforeAll(async () => {
   report = getIssue(app.db, repo.id, n)!;
   ok(addComment(app, alice, repo, report, COMMENT));
 
-  // The crew's fix: a pull that closes the report is sealed with it.
-  const fork = ok(await forkRepo(app, bot.user, repo, "square"));
+  // The crew's fix: a pull that closes the report is sealed with it. It is
+  // worked where the crew works sealed reports — its private repository; a
+  // public fork's branch would publish the fix (#865).
+  const fork = ok(await sealedForkFor(app, bot.user, repo));
   ok(
     await commitToBranch(app, bot.user, fork, {
       branch: `bot/${n}`,

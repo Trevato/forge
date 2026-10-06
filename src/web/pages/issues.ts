@@ -12,6 +12,7 @@ import {
 } from "../../actions/issues.ts";
 import type { Issue } from "../../core/issues.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
+import { privateRepoForSealed } from "../../actions/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
@@ -255,6 +256,31 @@ export async function issueSealSubmit(ctx: Ctx): Promise<Response> {
               : "Only someone who can write here seals or unseals.",
         },
   );
+}
+
+// POST /:owner/:name/issues/:number/private — the place to fix a sealed report by hand
+export async function issuePrivateSubmit(ctx: Ctx): Promise<Response> {
+  const found = threadContext(ctx, "issue");
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const made = await privateRepoForSealed(ctx.app, ctx.auth.user, found.repo, found.issue);
+  const back = `${repoBase(found.repo)}/issues/${found.issue.number}`;
+  if (!made.ok)
+    return made.error === "not_found"
+      ? notFoundPage(ctx)
+      : flashTo(ctx, back, {
+          tone: "danger",
+          message:
+            made.error === "not_sealed"
+              ? "This report is not sealed: its fix can be worked in the open."
+              : "The private repository could not be made just now.",
+        });
+  const there = `${made.value.ownerName}/${made.value.name}`;
+  return flashTo(ctx, back, {
+    message: `Your private repository for sealed work is ${there}: push the fix to ${ctx.url.origin}/${there}.git and open the pull from there, saying "Closes #${found.issue.number}". Only you, this repository's writers and its crew can read it.`,
+  });
 }
 
 // POST /:owner/:name/issues/:number/comments

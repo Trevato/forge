@@ -16,7 +16,8 @@ import { listEvents } from "../../core/events.ts";
 import { repoGraph } from "../../core/dependencies.ts";
 import { labelsFor, listLabels, type Issue } from "../../core/issues.ts";
 import { getPull, openPullsClosing, type Pull } from "../../core/pulls.ts";
-import { canEnterApp, canWrite, type Repo } from "../../core/repos.ts";
+import { canEnterApp, canWrite, getSealedFork, type Repo } from "../../core/repos.ts";
+import { canSeeSealed } from "../../core/sealed.ts";
 import { activeRunFor, listRuns } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -368,6 +369,7 @@ async function studioTell(
         })}
       </div>
       <aside>
+        ${privateWorkCard(ctx, repo, issue, `${thread}/private`)}
         ${runsCard}
         ${closingCard}
         ${dependenciesCard(ctx, repo, issue, `${thread}/dependencies`)}
@@ -390,6 +392,39 @@ async function studioTell(
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: liveClientJs,
   });
+}
+
+/**
+ * Where to fix a sealed report by hand, for a person who may see it: a
+ * branch here, or on a public fork, is public — the fix says where the
+ * hole is — so the private repository the crew uses is offered (#865).
+ */
+function privateWorkCard(ctx: Ctx, repo: Repo, issue: Issue, action: string): Html | null {
+  const user = ctx.auth.user;
+  if (!issue.sealed || user === undefined || user.kind === "agent") return null;
+  if (!canSeeSealed(ctx.app.db, repo, user)) return null;
+  const mine = getSealedFork(ctx.app.db, user.id, repo.id);
+  return card(
+    html`<p>
+        A branch on ${repo.ownerName}/${repo.name}, or on a public fork, is
+        public: its fix shows where the hole is. Fix this one in your private
+        repository — only you, this repository's writers and its crew read it
+        — and open the pull from there.
+      </p>
+      ${mine
+        ? html`<p class="small">
+            Yours: <a href="/${mine.ownerName}/${mine.name}">${mine.ownerName}/${mine.name}</a>
+            · push to <code>${ctx.url.origin}/${mine.ownerName}/${mine.name}.git</code>
+          </p>`
+        : html`<form method="post" action="${action}" class="mt">
+            ${btn("Work on this privately", { variant: "primary", icon: "lock" })}
+          </form>`}`,
+    {
+      id: "work-privately",
+      head: html`${icon("lock")}
+        <h2>Fix it privately</h2>`,
+    },
+  );
 }
 
 /**

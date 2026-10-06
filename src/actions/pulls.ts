@@ -33,6 +33,7 @@ import {
 import { isStructural, pillarsOf } from "../core/pillars.ts";
 import type { Repo } from "../core/repos.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
+import { sealedByNumber } from "../core/sealed.ts";
 import {
   addReviewComment,
   anchorContent,
@@ -84,6 +85,14 @@ export interface OpenPullInput {
   /** The issue id of the pull this one reverts ("Take it back"). Native
    * repos only — a mirror's pull is the origin's, which has no such field. */
   revertsIssueId?: string;
+  /**
+   * A person's deliberate yes to fixing a sealed report from a branch that
+   * is already public (this repository, or a public fork). Without it such
+   * a pull is refused (`sealed_in_public`) and the private repository is
+   * offered instead. An agent's is never taken: the crew works sealed
+   * reports in its private repository.
+   */
+  confirmPublic?: boolean;
 }
 
 export async function openPull(
@@ -94,7 +103,11 @@ export async function openPull(
 ): Promise<
   Result<
     Pull,
-    CreatePullError | "not_found" | "unauthorized" | WriteThroughError
+    | CreatePullError
+    | "not_found"
+    | "unauthorized"
+    | "sealed_in_public"
+    | WriteThroughError
   >
 > {
   const user = requireParticipant(app, actor, baseRepo);
@@ -174,6 +187,19 @@ export async function openPull(
     )
       return err("not_found");
   }
+  // A fix for a sealed report, from a branch anyone can read (this
+  // repository, or a public fork), publishes where the hole is. Refused
+  // unless a person says yes to that; the private repository is the way.
+  const fixesSealed = closesFromBody(input.body ?? "").some((n) =>
+    sealedByNumber(app.db, baseRepo.id, n),
+  );
+  const apart = head !== undefined && head.sealedFor === baseRepo.id;
+  if (
+    fixesSealed &&
+    !apart &&
+    !(input.confirmPublic === true && user.value.kind !== "agent")
+  )
+    return err("sealed_in_public");
   const created = await createPull(
     app.db,
     repoDir(app.reposRoot, baseRepo.ownerName, baseRepo.name),

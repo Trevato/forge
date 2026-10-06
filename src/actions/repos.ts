@@ -6,6 +6,7 @@
 
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
+import { canSeeSealed } from "../core/sealed.ts";
 import {
   createLabel as insertLabel,
   deleteLabel as removeLabel,
@@ -183,6 +184,27 @@ export async function sealedForkFor(
     `${base.ownerName}-${base.name}-sealed`,
     { sealed: true },
   );
+}
+
+/**
+ * The private repository a writer fixes this sealed report in by hand
+ * (#865's review): the same one the crew uses, made on first need, owned
+ * by the writer and read by the base's writers and crew only. A branch on
+ * the base or on a public fork is public; this is the place that is not.
+ * Anyone who may not see sealed reports here gets `not_found`, as for a
+ * report they cannot see; an issue that is not sealed has nothing to hide.
+ */
+export async function privateRepoForSealed(
+  app: App,
+  actor: User | undefined,
+  base: Repo,
+  issue: { readonly sealed: boolean },
+): Promise<Result<Repo, ForkRepoError | "not_found" | "not_sealed" | "unverified">> {
+  if (!actor || !canSeeSealed(app.db, base, actor)) return err("not_found");
+  if (!issue.sealed) return err("not_sealed");
+  const proven = requireVerified(app, actor);
+  if (!proven.ok) return proven;
+  return sealedForkFor(app, actor, base);
 }
 
 export type UpdateSettingsError = "not_found" | "unknown_branch";
