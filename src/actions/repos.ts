@@ -110,9 +110,11 @@ export async function createRepo(
 
 /**
  * How many forks one person may make in any 24 hours (#853, #888): each may
- * become an app that deploys at once. The crew's agents fork per issue to
- * work, and the forge's own admin answers for its forge: neither is held to
- * it.
+ * become an app that deploys at once. Counted from the ledger of forks made,
+ * so deleting one makes no room. The crew's agents fork per issue to work —
+ * bounded instead by the crew's own concurrency and spend ceilings, since an
+ * agent forks only for a run — and the forge's own admin answers for its
+ * forge: neither is held to it.
  */
 export const FORKS_PER_DAY = 5;
 

@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { suspendAccount } from "../src/actions/accounts.ts";
 import { newApp } from "../src/actions/apps.ts";
-import { forkRepo } from "../src/actions/repos.ts";
+import { deleteRepo, forkRepo } from "../src/actions/repos.ts";
 import { createAgent } from "../src/actions/crew.ts";
 import { COPIES_PER_DAY, makeItYours } from "../src/actions/make_it_yours.ts";
 import { envDataDir } from "../src/apps/data.ts";
@@ -472,6 +472,23 @@ describe("make it yours", () => {
         const forked = await forkRepo(app, agent.value.user, getRepo(app.db, "alice", lane)!, `bee-${lane}`);
         if (!forked.ok) throw new Error(`agent fork of ${lane}: ${forked.error}`);
       }
+    }, 120_000);
+
+    test("deleting a copy makes no room: five made, one deleted, the next is refused", async () => {
+      const kim = await person("kim");
+      for (let n = 0; n < COPIES_PER_DAY; n++) {
+        const forked = await forkRepo(app, kim, await source(`row-${n}`));
+        expect(forked.ok).toBe(true);
+      }
+      const gone = await deleteRepo(app, kim, getRepo(app.db, "kim", "row-0")!);
+      expect(gone.ok).toBe(true);
+      expect(getRepo(app.db, "kim", "row-0")).toBeUndefined();
+      const next = await forkRepo(app, kim, await source("row-extra"));
+      expect(next.ok).toBe(false);
+      if (!next.ok) expect(next.error).toBe("limit");
+      const viaCopy = await makeItYours(app, kim, getRepo(app.db, "alice", "row-extra")!, { dryRun: false });
+      expect(viaCopy.ok).toBe(false);
+      if (!viaCopy.ok) expect(viaCopy.error.kind).toBe("limit");
     }, 120_000);
 
     test("two copies at once, one place left: exactly one is made", async () => {

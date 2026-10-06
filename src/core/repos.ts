@@ -311,16 +311,18 @@ export type ForkRepoError =
 
 const DAY_MS = 86_400_000;
 
-/** An owner's forks made since `since`, oldest first. */
+/**
+ * When an owner made each fork since `since`, oldest first — from the
+ * ledger of forks made (`fork_made`), not the forks that still exist: a
+ * deleted copy still counts toward the day it was made in.
+ */
 export function forksSince(db: Database, ownerId: string, since: string): string[] {
   return db
-    .query<{ created_at: string }, [string, string]>(
-      `SELECT created_at FROM repo
-       WHERE owner_id = ?1 AND fork_parent_id IS NOT NULL AND created_at >= ?2
-       ORDER BY created_at`,
+    .query<{ made_at: string }, [string, string]>(
+      `SELECT made_at FROM fork_made WHERE owner_id = ?1 AND made_at >= ?2 ORDER BY made_at`,
     )
     .all(ownerId, since)
-    .map((r) => r.created_at);
+    .map((r) => r.made_at);
 }
 
 /** A marker the row's transaction throws when the day's forks are made. */
@@ -407,6 +409,10 @@ export async function forkRepo(
           parent.description,
           parent.defaultBranch,
           parent.id,
+        );
+        db.query(`INSERT INTO fork_made (owner_id, made_at) VALUES (?1, ?2)`).run(
+          ownerId,
+          new Date(now).toISOString(),
         );
       })(),
     );
