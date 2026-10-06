@@ -11,6 +11,8 @@ import {
   createOrg as foundOrg,
   createTeam as insertTeam,
   deleteTeam as removeTeam,
+  OWNERS_TEAM,
+  personOwners,
   removeTeamMember as dropMember,
   type CreateOrgError,
   type CreateTeamError,
@@ -26,9 +28,14 @@ export function createOrg(
   app: App,
   actor: User | undefined,
   name: string,
-): Result<User, "unauthorized" | "name_reserved" | "unverified" | CreateOrgError> {
+): Result<
+  User,
+  "unauthorized" | "name_reserved" | "unverified" | "agent_cannot_own" | CreateOrgError
+> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  // Its founder is its first owner, and an agent never owns one.
+  if (user.value.kind === "agent") return err("agent_cannot_own");
   const proven = requireVerified(app, user.value);
   if (!proven.ok) return proven;
   // An org shares the account namespace: it may not take a reserved name.
@@ -98,12 +105,19 @@ export function addTeamMember(
   org: User,
   team: Team,
   username: string,
-): Result<{ added: boolean }, "not_found" | "no_such_user"> {
+): Result<
+  { added: boolean },
+  "not_found" | "no_such_user" | "agent_cannot_own"
+> {
   const admin = requireOrgAdmin(app, actor, org);
   if (!admin.ok) return admin;
   if (team.orgId !== org.id) return err("not_found");
   const user = getUserByName(app.db, username);
   if (!user || user.kind === "org") return err("no_such_user");
+  // An agent is never admin (CLAUDE.md, invariant 10): not on Owners, not on
+  // any team that confers admin.
+  if (user.kind === "agent" && team.permission === "admin")
+    return err("agent_cannot_own");
   const added = insertMember(app.db, team, user.id);
   if (added)
     app.bus.append({
@@ -114,19 +128,28 @@ export function addTeamMember(
   return ok({ added });
 }
 
-/** Removing the last owner is refused — the org would have no admin left. */
+/**
+ * Removing the last person who owns the organization is refused, with
+ * `last_owner`: it would be left with nobody who can administer it. An
+ * agent never counts as that owner.
+ */
 export function removeTeamMember(
   app: App,
   actor: User | undefined,
   org: User,
   team: Team,
   username: string,
-): Result<{ removed: boolean }, "not_found" | "no_such_user"> {
+): Result<{ removed: boolean }, "not_found" | "no_such_user" | "last_owner"> {
   const admin = requireOrgAdmin(app, actor, org);
   if (!admin.ok) return admin;
   if (team.orgId !== org.id) return err("not_found");
   const user = getUserByName(app.db, username);
   if (!user) return err("no_such_user");
+  if (team.name === OWNERS_TEAM) {
+    const people = personOwners(app.db, org.id);
+    if (people.includes(user.id) && people.length === 1)
+      return err("last_owner");
+  }
   const removed = dropMember(app.db, team, user.id);
   if (removed)
     app.bus.append({

@@ -157,6 +157,9 @@ export function addTeamMember(
 ): boolean {
   const user = getUserById(db, userId);
   if (!user || user.kind === "org") return false; // can't nest orgs
+  // An agent is never admin (CLAUDE.md, invariant 10): no team that confers
+  // it takes one — the action says why (`agent_cannot_own`).
+  if (user.kind === "agent" && team.permission === "admin") return false;
   return (
     db
       .query(
@@ -166,20 +169,55 @@ export function addTeamMember(
   );
 }
 
-/** Remove a member, refusing to empty the Owners team (an org needs an admin). */
+/**
+ * The people — never an agent — on an organization's Owners team: who keeps
+ * it administrable. An organization must always have one.
+ */
+export function personOwners(db: Database, orgId: string): string[] {
+  return (
+    db
+      .query<{ user_id: string }, [string, string]>(
+        `SELECT m.user_id FROM team_member m
+           JOIN team t ON t.id = m.team_id
+           JOIN user u ON u.id = m.user_id
+          WHERE t.org_id = ?1 AND t.name = ?2 AND u.kind = 'user'
+            AND u.is_agent = 0 AND u.removed_at IS NULL`,
+      )
+      .all(orgId, OWNERS_TEAM)
+  ).map((r) => r.user_id);
+}
+
+/** The organizations `userId` is the only person owning: removing them would orphan these. */
+export function soleOwnedOrgs(db: Database, userId: string): User[] {
+  return (
+    db
+      .query<{ org_id: string }, [string, string]>(
+        `SELECT DISTINCT t.org_id FROM team_member m JOIN team t ON t.id = m.team_id
+          WHERE m.user_id = ?1 AND t.name = ?2`,
+      )
+      .all(userId, OWNERS_TEAM)
+  )
+    .filter((r) => {
+      const left = personOwners(db, r.org_id);
+      return left.length === 1 && left[0] === userId;
+    })
+    .map((r) => getUserById(db, r.org_id))
+    .filter((u): u is User => u !== undefined);
+}
+
+/**
+ * Remove a member, refusing to take the last person off the Owners team: an
+ * organization needs someone who can administer it, and an agent never can.
+ */
 export function removeTeamMember(
   db: Database,
   team: Team,
   userId: string,
 ): boolean {
   if (team.name === OWNERS_TEAM) {
-    const count = db
-      .query<
-        { n: number },
-        [string]
-      >("SELECT COUNT(*) AS n FROM team_member WHERE team_id = ?1")
-      .get(team.id);
-    if ((count?.n ?? 0) <= 1) return false;
+    // Taking an agent off is always allowed; taking off the last person is not.
+    const people = personOwners(db, team.orgId);
+    if (people.includes(userId) && people.length === 1) return false;
   }
   return (
     db
