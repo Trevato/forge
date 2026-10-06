@@ -8,8 +8,18 @@
 
 export const health = { draining: false };
 
-export function healthResponse(): Response {
+/**
+ * `notes` are said after the status, one per line, while something an
+ * operator must not forget is on — egress only reported, not enforced
+ * (`core/capacity.ts`). The status line itself stays `ok` or `draining`.
+ */
+export function healthResponse(notes: readonly string[] = []): Response {
+  const extra = notes.map((n) => `\n${n}`).join("");
   return health.draining
-    ? new Response("draining", { status: 503 })
-    : new Response("ok", { status: 200 });
+    ? new Response(`draining${extra}`, { status: 503 })
+    : new Response(`ok${extra}`, { status: 200 });
 }
+
+/** What every new cell may reach while egress is only reported. */
+export const EGRESS_REPORTED =
+  "egress: reported, not enforced: every new app, preview, terminal and check cell may reach any public host on ports 80 and 443";
