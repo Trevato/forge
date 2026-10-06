@@ -139,6 +139,7 @@ import {
   listTeamsVisibleTo,
   type Permission,
   type Team,
+  soleOwnedOrgs,
 } from "../core/orgs.ts";
 import { getPull, listPulls, pullDiff, type Pull } from "../core/pulls.ts";
 import {
@@ -1167,6 +1168,18 @@ export function apiRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
     const done = await removeAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    if (!done.ok && done.error === "last_owner") {
+      const user = getUserByName(ctx.app.db, ctx.params.username!);
+      const orgs =
+        user === undefined
+          ? []
+          : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username);
+      return apiError(
+        "last_owner",
+        409,
+        `${ctx.params.username} is the only person owning ${orgs.join(", ")}: make someone else an owner first`,
+      );
+    }
     return done.ok ? json({ removed: ctx.params.username }) : accountError(done.error);
   });
 
@@ -1401,10 +1414,15 @@ export function apiRoutes(router: Router<Handler>): void {
         found.team,
         username,
       );
-      if (!removed.ok) return respondAccess(removed.error, 422);
+      if (!removed.ok)
+        return removed.error === "last_owner"
+          ? apiError(
+              "last_owner",
+              409,
+              "an organization keeps at least one person who owns it; make someone else an owner first",
+            )
+          : respondAccess(removed.error, 422);
       if (!isMember) return notFound();
-      // A member who could not be removed is the last owner.
-      if (!removed.value.removed) return json({ error: "protected" }, 409);
       return new Response(null, { status: 204 });
     },
   );

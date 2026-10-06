@@ -468,7 +468,12 @@ against the ceiling, runs, shipped, and whether it is paused — plus any
 other app the crew spent on this week — and beneath it the efficiency
 signal: spend per shipped change over the last 7 days (the usage ledger's
 `cost_usd` ÷ pulls merged, `core/efficiency.ts`, every app in one grouped
-query), or "$4.10 spent, nothing shipped" when there is no ratio. A site
+query), or "$4.10 spent, nothing shipped" when there is no ratio. Above the
+regions, whoever owns an app gets a line for each thing its crew waits on
+them for: a planner that declined the direction, with a box to answer it,
+and each issue the crew parked twice and handed to its planner, with why
+and a link to the issue where the planner answers — that one stays until
+the issue is split, replaced or deferred (`docs/PLANNING.md`). A site
 admin also gets a strip of the subscriptions above the regions: each
 account's 5-hour and weekly window — used, left, resets — in the words
 `windowWords` (`studio/words.ts`) gives them, with _inferred_ beside every

@@ -59,7 +59,11 @@ import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { avatar, hueOf, icon } from "../ui.ts";
 import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
-import { struckOut } from "../../crew/parks.ts";
+import {
+  parkedTwice,
+  struckOut,
+  type ParkedTwice,
+} from "../../crew/parks.ts";
 import {
   OUTSIDERS_NOTE,
   proposedWork,
@@ -443,6 +447,8 @@ export interface Marks {
   readonly parked: Set<string>;
   /** Why an issue is parked on a closed blocker, by issue id: "#4 was dropped". */
   readonly why: Map<string, string>;
+  /** The issues the crew parked twice: the planner's now, with every reason. */
+  readonly twice: readonly ParkedTwice[];
 }
 
 /**
@@ -502,7 +508,14 @@ export function marksFor(
     const had = why.get(h.issueId);
     why.set(h.issueId, had === undefined ? note : `${had}; ${note}`);
   }
-  return { crew: crewMarks(runs), waiting, onHold, parked, why };
+  return {
+    crew: crewMarks(runs),
+    waiting,
+    onHold,
+    parked,
+    why,
+    twice: parkedTwice(db, [repo]),
+  };
 }
 
 export const NO_MARKS: Marks = {
@@ -511,6 +524,7 @@ export const NO_MARKS: Marks = {
   onHold: new Map(),
   parked: new Set(),
   why: new Map(),
+  twice: [],
 };
 
 /**
@@ -1476,6 +1490,12 @@ export function mapJson(
       .filter((i) => marks.crew.has(i.id))
       .map((i) => i.number),
     issues: graph.issues.map(brief),
+    // What the crew gave up on and the planner now holds: never only a word.
+    parkedTwice: marks.twice.map((t) => ({
+      number: t.number,
+      title: t.title,
+      reasons: t.reasons,
+    })),
     counts: countWords(graph.issues.map((i) => wordFor(i, readySet, marks))),
     edges: graph.edges.map((e) => {
       const a = graph.issues.find((i) => i.id === e.issueId);
