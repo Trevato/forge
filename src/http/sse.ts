@@ -17,7 +17,7 @@
 import { holdForCaller } from "./caller.ts";
 import type { App } from "../app.ts";
 import type { User } from "../core/users.ts";
-import { listEventsVisibleTo } from "../core/events.ts";
+import { listEvents, listEventsVisibleTo } from "../core/events.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
 import type { ForgeEvent } from "../core/events.ts";
@@ -181,12 +181,9 @@ export function viewerStream(
   // Readable is not the same as meant-for: configuration events are the
   // admins', a person's own choices are theirs (`core/event_audience.ts`).
   const meant = audienceFilter(app.db, viewer);
-  const after =
-    request.headers.get("last-event-id") ??
-    new URL(request.url).searchParams.get("since") ??
-    undefined;
+  const after = resumeFrom(request);
   return eventStream(request, (emit) => {
-    if (after !== undefined && after !== "") {
+    if (after !== undefined) {
       const missed = listEventsVisibleTo(app.db, viewer, {
         afterId: after,
         limit: 200,
@@ -209,12 +206,29 @@ export function sseStream(
   viewer: User | undefined,
 ): Response {
   const meant = audienceFilter(app.db, viewer);
-  return eventStream(request, (emit) =>
-    app.bus.subscribe((event: ForgeEvent) => {
-      // The event id doubles as the SSE id, so a reconnecting client can
-      // resume from where it stopped.
+  const after = resumeFrom(request);
+  return eventStream(request, (emit) => {
+    // The event id doubles as the SSE id, so a reconnecting client resumes
+    // from where it stopped: what it missed first, oldest first, then live.
+    if (after !== undefined)
+      for (const event of listEvents(app.db, {
+        repoId,
+        afterId: after,
+        limit: 200,
+      }).reverse())
+        if (meant(event)) emit(event.kind, event, event.id);
+    return app.bus.subscribe((event: ForgeEvent) => {
       if (event.repoId === repoId && meant(event))
         emit(event.kind, event, event.id);
-    }),
-  );
+    });
+  });
+}
+
+/** Where a reconnecting client asks to resume: the last event it heard. */
+function resumeFrom(request: Request): string | undefined {
+  const after =
+    request.headers.get("last-event-id") ??
+    new URL(request.url).searchParams.get("since") ??
+    "";
+  return after === "" ? undefined : after;
 }
