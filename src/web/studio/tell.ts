@@ -3,8 +3,9 @@
  * answers three questions — who has it, what it is waiting on, and what the
  * crew has done with it. Where it stands is `tellWord`, which every studio
  * list of tells reads too, so a tell says the same thing in a row as it does
- * on its own page. The bookkeeping of a plain issue (labels, milestones,
- * the dependency form) does not belong here.
+ * on its own page. What it waits for (its dependencies) stays in view;
+ * what a person only sometimes changes (who has it, its labels) waits in
+ * one closed Details section.
  */
 
 import { mayEditIssue } from "../../actions/issues.ts";
