@@ -175,7 +175,7 @@ export async function runView(
     )}
   </div>`;
 
-  const body = html`${repoHeader(ctx, repo, "app", {
+  const body = html`${repoHeader(ctx, repo, "runs", {
       compact: true,
       ownTitle: true,
     })}

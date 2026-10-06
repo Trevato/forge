@@ -5,6 +5,7 @@
  * bytes, forward the protocol version, and never interpret the pack stream.
  */
 
+import { holdForCaller } from "../http/caller.ts";
 import { gunzipSync } from "node:zlib";
 import {
   closeAfter,
@@ -143,8 +144,12 @@ async function spawnService(
     () => proc.kill("SIGKILL"),
     options.timeoutMs ?? 600_000,
   );
+  // A transfer under way is the account's, and ends with its standing
+  // (\`http/caller.ts\`): a clone does not run on after a suspension.
+  const unhold = holdForCaller(request, () => proc.kill("SIGKILL"));
   void proc.exited.finally(() => {
     clearTimeout(timer);
+    unhold();
     release();
   });
   request.signal.addEventListener("abort", () => proc.kill("SIGKILL"));

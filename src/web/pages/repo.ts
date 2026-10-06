@@ -10,12 +10,7 @@
 
 import { canRead, listForks, type Repo } from "../../core/repos.ts";
 import { forkRepo } from "../../actions/repos.ts";
-import {
-  forkDrift,
-  syncFork,
-  takeUpdates,
-  type ForkDrift,
-} from "../../actions/forks.ts";
+import { forkDrift, takeUpdates, type ForkDrift } from "../../actions/forks.ts";
 import { lineageOf } from "../../core/following.ts";
 import { followingCard, followingOf, lineageCard } from "./following.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
@@ -905,7 +900,7 @@ export async function repoFiles(ctx: Ctx): Promise<Response> {
  * the studio, the offer to make a repository that is not an app one. */
 async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
-  const noApp = ctx.mode === "studio" && !isApp ? noAppCard(ctx, repo) : null;
+  const noApp = isApp ? null : noAppCard(ctx, repo);
   const scope = localScope(ctx, repo);
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
   const refs = await refSetFrom(scope.source);
