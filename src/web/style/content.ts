@@ -1139,6 +1139,12 @@ textarea.editor:focus { outline: none; }
 /* The client list (#776): whom a forge is for is the point of the row, so
    its line wraps rather than being cut off on a phone. */
 .forges-sent .row-meta { white-space: normal; }
+/* "+ New forge" (#426): the claim link, shown once, impossible to miss. */
+.claim-link-box {
+  margin: 0; padding: 12px 14px; font-size: 15px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--muted); overflow-wrap: anywhere;
+}
 
 }
 `;

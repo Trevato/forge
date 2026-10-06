@@ -94,6 +94,67 @@ describe("sign-ins: tokens and browsers, seen and ended", () => {
     expect(await signedIn({ cookie: here })).toBe(true);
   });
 
+  test("signing a browser out ends the live streams it opened, and only those", async () => {
+    const here = cookieFor(ada);
+    const there = cookieFor(ada);
+    const open = async (cookie: string) => {
+      const res = await fetch(`${base}/events`, { headers: { cookie } });
+      expect(res.status).toBe(200);
+      const reader = res.body!.getReader();
+      await reader.read();
+      return reader;
+    };
+    const away = await open(there);
+    const kept = await open(here);
+    const id = listSessions(app.db, ada.id, there.split("=")[1]).find(
+      (s) => s.current,
+    )!.id;
+    expect((await post(`/settings/sessions/${id}/delete`, here)).status).toBe(303);
+    const ended = (async () => {
+      for (;;) if ((await away.read()).done) return true;
+    })();
+    expect(
+      await Promise.race([ended, Bun.sleep(5_000).then(() => false)]),
+    ).toBe(true);
+    const still = await Promise.race([
+      kept.read().then((r) => (r.done ? "ended" : "data")),
+      Bun.sleep(500).then(() => "open"),
+    ]);
+    expect(still).not.toBe("ended");
+    await kept.cancel();
+  });
+
+  test("signing out from the page ends every stream that browser holds, in every tab", async () => {
+    const cookie = cookieFor(ada);
+    const elsewhere = cookieFor(ada);
+    const open = async (c: string) => {
+      const res = await fetch(`${base}/events`, { headers: { cookie: c } });
+      const reader = res.body!.getReader();
+      await reader.read();
+      return reader;
+    };
+    const tabs = [await open(cookie), await open(cookie)];
+    const other = await open(elsewhere);
+    expect((await post("/logout", cookie)).status).toBe(303);
+    for (const tab of tabs) {
+      const ended = (async () => {
+        for (;;) if ((await tab.read()).done) return true;
+      })();
+      expect(
+        await Promise.race([ended, Bun.sleep(5_000).then(() => false)]),
+      ).toBe(true);
+    }
+    expect(await signedIn({ cookie })).toBe(false);
+    // The account's other browser was not the one that signed out.
+    const still = await Promise.race([
+      other.read().then((r) => (r.done ? "ended" : "data")),
+      Bun.sleep(500).then(() => "open"),
+    ]);
+    expect(still).not.toBe("ended");
+    expect(await signedIn({ cookie: elsewhere })).toBe(true);
+    await other.cancel();
+  });
+
   test("a browser's last-seen time moves when it is used", async () => {
     const cookie = cookieFor(bo);
     expect(listSessions(app.db, bo.id)[0]!.lastSeenAt).toBeNull();
