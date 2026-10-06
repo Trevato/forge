@@ -523,6 +523,17 @@ describe("new words for an issue or a pull", () => {
     });
     expect(words(tulips).body).toBe("By the gate, in rows.");
     expect(await page(path, his)).not.toContain('id="edit"');
+    // Taken back is not handed back: the next assignment would hand the
+    // crew whatever he says by then.
+    expect(assignIssue(app, alice, repo, tulips, null).ok).toBe(true);
+    expect(
+      (await patch(tokens["bob"]!, path, { body: "Dig up the roses instead." }))
+        .status,
+    ).toBe(403);
+    expect(editIssue(app, bob, repo, tulips, { body: "x" })).toEqual({
+      ok: false,
+      error: "taken_up",
+    });
     // The writer still may.
     expect(
       (
@@ -605,6 +616,21 @@ describe("new words for an issue or a pull", () => {
         .status,
     ).toBe(200);
 
+    // A stranger's comment-review is not a director acting: his words stay his.
+    const carol = await person("carol");
+    expect(
+      submitReview(app.db, {
+        issueId: theirs.id,
+        authorId: carol.id,
+        state: "commented",
+        commitOid: theirs.headOid,
+      }).ok,
+    ).toBe(true);
+    expect(
+      (await patch(tokens["bob"]!, path, { body: "Red ones, in a row." }))
+        .status,
+    ).toBe(200);
+
     // Alice approved what she read; a new "Closes #N" under it is not his to add.
     const reviewed = submitReview(app.db, {
       issueId: theirs.id,
@@ -624,7 +650,7 @@ describe("new words for an issue or a pull", () => {
     });
     expect(words(theirs)).toEqual({
       title: "Tulips",
-      body: "Red ones, by the gate.",
+      body: "Red ones, in a row.",
     });
     expect(openPullsClosing(app.db, repo.id).get(asked.number)?.id).not.toBe(
       theirs.id,

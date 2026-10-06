@@ -14,6 +14,7 @@
  * whole of this screen's design.
  */
 
+import { mayView } from "../../core/sealed.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
 import { listAssignedTo, type Issue } from "../../core/issues.ts";
 import { listPins, pinnedRepoIds, type Pin } from "../../core/pins.ts";
@@ -132,7 +133,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     );
     return issues.flatMap((issue) => {
       const repo = byId.get(issue.repoId);
-      return repo !== undefined && canRead(f.db, repo, f.user)
+      return repo !== undefined &&
+        canRead(f.db, repo, f.user) &&
+        mayView(f.db, repo, issue, f.user)
         ? [{ issue, repo }]
         : [];
     });
