@@ -18,7 +18,7 @@ import {
 } from "../../core/everyday.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
 import { reservedName } from "../../core/reserved.ts";
-import { requireVerified } from "../../core/verify.ts";
+import { requireVerified } from "../../actions/verify.ts";
 import { createSession } from "../../core/sessions.ts";
 import { createUser, getUserByName, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
