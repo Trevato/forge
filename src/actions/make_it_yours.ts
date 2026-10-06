@@ -16,6 +16,11 @@
  *   (`fork.diverged`) and takes updates on request.
  * - Someone who already made it theirs is landed on their copy, and its app
  *   is registered if it was not.
+ * - A copy starts private unless the person chooses public (#852) — never
+ *   public when the original is private: its code is not theirs to show.
+ * - At most `COPIES_PER_DAY` copies an account in any 24 hours (#853): each
+ *   is a repository and an app that deploys at once. Landing on a copy
+ *   already made does not count.
  */
 
 import type { App } from "../app.ts";
@@ -30,7 +35,7 @@ import { canEnterApp, canRead, getRepoById, type Repo } from "../core/repos.ts";
 import { isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { enableApp } from "./apps.ts";
-import { forkRepo } from "./repos.ts";
+import { forkRepo, updateRepoSettings } from "./repos.ts";
 
 export interface MakeItYoursPlan {
   readonly dryRun: boolean;
@@ -44,6 +49,10 @@ export interface MakeItYoursPlan {
   readonly notCopied: readonly string[];
   /** True when the viewer already had a copy, and is landed on it. */
   readonly existing: boolean;
+  /** Who may see the copy: private unless chosen otherwise. */
+  readonly visibility: "public" | "private";
+  /** Copies this account may still make in the next 24 hours. */
+  readonly copiesLeft: number;
 }
 
 export type MakeItYoursError =
@@ -51,6 +60,8 @@ export type MakeItYoursError =
   | { readonly kind: "unauthorized" }
   | { readonly kind: "unverified" }
   | { readonly kind: "own" }
+  /** Today's copies are made; another may be made from `resetsAt`. */
+  | { readonly kind: "limit"; readonly resetsAt: string }
   | { readonly kind: "invalid"; readonly message: string };
 
 export const COPIED = ["the code", "its history"] as const;
@@ -60,6 +71,22 @@ export const NOT_COPIED = [
   "its crew",
   "its domains",
 ] as const;
+
+/** How many copies one account may make in any 24 hours (#853). */
+export const COPIES_PER_DAY = 5;
+const DAY_MS = 86_400_000;
+
+/** The account's copies in the last 24 hours, oldest first. */
+function copiesToday(app: App, ownerId: string, now: number): string[] {
+  return app.db
+    .query<{ created_at: string }, [string, string]>(
+      `SELECT created_at FROM repo
+       WHERE owner_id = ?1 AND fork_parent_id IS NOT NULL AND created_at >= ?2
+       ORDER BY created_at`,
+    )
+    .all(ownerId, new Date(now - DAY_MS).toISOString())
+    .map((r) => r.created_at);
+}
 
 /** A free slug from the copy's owner and name: `name-owner`, then a number. */
 function freeSlug(app: App, repo: { name: string }, owner: string): string {
@@ -78,7 +105,12 @@ export async function makeItYours(
   app: App,
   actor: User | undefined,
   source: Repo,
-  input: { readonly dryRun?: boolean; readonly name?: string } = {},
+  input: {
+    readonly dryRun?: boolean;
+    readonly name?: string;
+    readonly visibility?: "public" | "private";
+  } = {},
+  now = Date.now(),
 ): Promise<
   Result<
     MakeItYoursPlan & { readonly made?: { repo: Repo; app: AppRecord } },
@@ -105,6 +137,14 @@ export async function makeItYours(
   if (source.ownerId === actor.id) return err({ kind: "own" });
   const dryRun = input.dryRun !== false;
   const name = input.name?.trim() || source.name;
+  const visibility = input.visibility ?? "private";
+  if (visibility === "public" && source.visibility !== "public")
+    return err({
+      kind: "invalid",
+      message: "a copy of a private repository stays private",
+    });
+  const today = copiesToday(app, actor.id, now);
+  const copiesLeft = Math.max(0, COPIES_PER_DAY - today.length);
   const already = app.db
     .query<
       { id: string },
@@ -124,6 +164,8 @@ export async function makeItYours(
       copied: COPIED,
       notCopied: NOT_COPIED,
       existing: true,
+      visibility: copy.visibility,
+      copiesLeft,
     };
     if (dryRun) return ok(plan);
     if (copyApp !== undefined)
@@ -147,8 +189,15 @@ export async function makeItYours(
     copied: COPIED,
     notCopied: NOT_COPIED,
     existing: false,
+    visibility,
+    copiesLeft,
   };
   if (dryRun) return ok(plan);
+  if (copiesLeft === 0)
+    return err({
+      kind: "limit",
+      resetsAt: new Date(Date.parse(today[0]!) + DAY_MS).toISOString(),
+    });
   const forked = await forkRepo(app, actor, source, name);
   if (!forked.ok) {
     switch (forked.error) {
@@ -170,11 +219,23 @@ export async function makeItYours(
         });
     }
   }
-  const enabled = enableApp(app, actor, forked.value, { slug });
+  // A fork takes the original's visibility; the copy takes the person's
+  // choice before its app exists, so nothing of it is public by accident.
+  let copy = forked.value;
+  if (copy.visibility !== visibility) {
+    const set = await updateRepoSettings(app, actor, copy, { visibility });
+    if (!set.ok)
+      return err({
+        kind: "invalid",
+        message: `the copy is made, but it could not be made ${visibility}`,
+      });
+    copy = set.value;
+  }
+  const enabled = enableApp(app, actor, copy, { slug, access: visibility });
   if (!enabled.ok)
     return err({
       kind: "invalid",
       message: `the copy is made, but its app could not be registered: ${enabled.error}`,
     });
-  return ok({ ...plan, made: { repo: forked.value, app: enabled.value } });
+  return ok({ ...plan, made: { repo: copy, app: enabled.value } });
 }

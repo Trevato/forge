@@ -8,6 +8,7 @@
  * typed still in it. A dead end that loses input is a bug, not a message.
  */
 
+import { signOutHere } from "../../actions/signins.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
@@ -22,11 +23,12 @@ import {
   listReposVisibleTo,
   type Repo,
 } from "../../core/repos.ts";
-import { createSession, destroySession } from "../../core/sessions.ts";
+import { createSession } from "../../core/sessions.ts";
 import { hasAnyUser, verifyPassword, type User } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
-import { crossOrigin, type Ctx } from "../../http/context.ts";
+import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
+import { homeTop } from "../studio/asks_page.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
@@ -245,7 +247,7 @@ export function terminalCard(ctx: Ctx): Html {
 export async function home(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (user === undefined) return studioDoor(ctx);
-  return await studioHome(ctx, user);
+  return await studioHome(ctx, user, homeTop(ctx));
 }
 
 // ---- authentication ----
@@ -556,9 +558,7 @@ export async function themeSubmit(ctx: Ctx): Promise<Response> {
 export function logoutSubmit(ctx: Ctx): Response {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
     return new Response("forbidden", { status: 403 });
-  const cookie = ctx.request.headers.get("cookie") ?? "";
-  const match = cookie.match(/forge_session=([^;]+)/);
-  if (match) destroySession(ctx.app.db, match[1]!);
+  signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
   return redirect("/", sessionCookie("", new Date(0), ctx.url));
 }
 

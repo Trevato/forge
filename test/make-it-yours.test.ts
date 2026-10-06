@@ -14,7 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { suspendAccount } from "../src/actions/accounts.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { createAgent } from "../src/actions/crew.ts";
-import { makeItYours } from "../src/actions/make_it_yours.ts";
+import { COPIES_PER_DAY, makeItYours } from "../src/actions/make_it_yours.ts";
 import { envDataDir } from "../src/apps/data.ts";
 import { getAppByRepo, listApps, type AppRecord } from "../src/core/apps.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
@@ -322,4 +322,74 @@ describe("make it yours", () => {
     for (const who of ["carol", "helper", "dana", "erin"])
       expect(app.db.query(`SELECT COUNT(*) AS n FROM repo JOIN user ON user.id = repo.owner_id WHERE user.username = ?1`).get(who)).toEqual({ n: 0 });
   });
+
+  test("a copy starts private unless chosen public, and never public from a private original (#852)", async () => {
+    const frank = await createUser(app.db, {
+      trusted: true,
+      username: "frank",
+      email: "frank@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!frank.ok) throw new Error(frank.error);
+    const plan = await makeItYours(app, frank.value, garden, { dryRun: true });
+    expect(plan.ok && plan.value.visibility).toBe("private");
+    const made = await makeItYours(app, frank.value, garden, { dryRun: false });
+    if (!made.ok || made.value.made === undefined) throw new Error("not made");
+    expect(made.value.made.repo.visibility).toBe("private");
+    expect(made.value.made.app.access).toBe("private");
+    expect(getRepo(app.db, "frank", "garden")!.visibility).toBe("private");
+    // Chosen public, it is public — app and code.
+    const other = await newApp(app, alice, { name: "orchard", visibility: "public" });
+    if (!other.ok) throw new Error("orchard");
+    const open = await api("/api/v1/repos/alice/orchard/make-it-yours", createToken(app.db, frank.value.id, "rw", "rw").token, {
+      dryRun: false,
+      visibility: "public",
+    });
+    expect(open.status).toBe(201);
+    expect(getRepo(app.db, "frank", "orchard")!.visibility).toBe("public");
+    expect(getAppByRepo(app.db, getRepo(app.db, "frank", "orchard")!.id)!.access).toBe("public");
+    // A private original's copy stays private, whoever asks.
+    const secret = await newApp(app, frank.value, { name: "secret-plot", visibility: "private" });
+    if (!secret.ok) throw new Error("secret");
+    const asAdmin = await makeItYours(app, alice, secret.value.repo, { dryRun: true, visibility: "public" });
+    expect(asAdmin.ok).toBe(false);
+    if (!asAdmin.ok) expect(asAdmin.error.kind).toBe("invalid");
+  }, 60_000);
+
+  test("at most five copies an account a day; the sixth is refused and nothing made; landing on a copy already made still works (#853)", async () => {
+    const gina = await createUser(app.db, {
+      trusted: true,
+      username: "gina",
+      email: "gina@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!gina.ok) throw new Error(gina.error);
+    const token = createToken(app.db, gina.value.id, "rw", "rw").token;
+    for (let n = 0; n < COPIES_PER_DAY; n++) {
+      const src = await newApp(app, alice, { name: `bed-${n}`, visibility: "public" });
+      if (!src.ok) throw new Error("bed");
+      const made = await makeItYours(app, gina.value, src.value.repo, { dryRun: false });
+      expect(made.ok).toBe(true);
+    }
+    const sixth = await newApp(app, alice, { name: "bed-extra", visibility: "public" });
+    if (!sixth.ok) throw new Error("bed-extra");
+    const plan = await makeItYours(app, gina.value, sixth.value.repo, { dryRun: true });
+    expect(plan.ok && plan.value.copiesLeft).toBe(0);
+    const refused = await makeItYours(app, gina.value, sixth.value.repo, { dryRun: false });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(refused.error.kind).toBe("limit");
+      if (refused.error.kind === "limit")
+        expect(Date.parse(refused.error.resetsAt)).toBeGreaterThan(Date.now());
+    }
+    const viaApi = await api("/api/v1/repos/alice/bed-extra/make-it-yours", token, { dryRun: false });
+    expect(viaApi.status).toBe(429);
+    expect(getRepo(app.db, "gina", "bed-extra")).toBeUndefined();
+    // A day later, one may be made again.
+    const tomorrow = await makeItYours(app, gina.value, sixth.value.repo, { dryRun: true }, Date.now() + 86_400_000 + 1000);
+    expect(tomorrow.ok && tomorrow.value.copiesLeft).toBe(COPIES_PER_DAY);
+    // Landing on a copy already made is not a new copy.
+    const again = await makeItYours(app, gina.value, getRepo(app.db, "alice", "bed-0")!, { dryRun: false });
+    expect(again.ok && again.value.existing).toBe(true);
+  }, 120_000);
 });

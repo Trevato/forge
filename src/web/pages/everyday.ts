@@ -169,13 +169,17 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
   // On a spawned forge the apps are the client's org's: the everyday
   // account writes to it, or it could not open or tell the crew anything.
   const spawned = await spawnedOrg(ctx.app);
-  if (spawned) joinAsWriter(ctx.app.db, spawned.org, made.value);
+  const joined =
+    !spawned || joinAsWriter(ctx.app.db, spawned.org, made.value);
   const session = createSession(ctx.app.db, made.value.id);
   return redirect("/", {
     cookie: sessionCookie(session.token, session.expiresAt, ctx.url),
     url: ctx.url,
     flash: {
-      message: `You are signed in as ${made.value.username}, your everyday account. Sign in as ${admin.username} when you mean to change the forge.`,
+      message: joined
+        ? `You are signed in as ${made.value.username}, your everyday account. Sign in as ${admin.username} when you mean to change the forge.`
+        : `You are signed in as ${made.value.username}, your everyday account, but it could not join ${spawned?.org.username ?? "your organisation"}: add it to a team that writes there, as ${admin.username}.`,
+      ...(joined ? {} : { tone: "danger" as const }),
     },
   });
 }

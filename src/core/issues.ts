@@ -281,6 +281,38 @@ export function createIssue(
   return ok(getIssueById(db, issueId)!);
 }
 
+/**
+ * Whether a person's ask stands in this issue: a person wrote it (or it
+ * came from an origin, under a name no account here holds), or it was named
+ * in the `into` of a split that closed an issue a person's ask stood in. The
+ * chain is followed, so splitting twice does not make an ask the crew's.
+ * Read from the `issue.closed` events, which are the one record of a split.
+ */
+export function standsForPerson(
+  db: Database,
+  issue: Issue,
+  seen: Set<string> = new Set(),
+): boolean {
+  if (!issue.authorIsAgent || issue.originAuthor !== null) return true;
+  seen.add(issue.id);
+  const parents = db
+    .query<{ number: number }, [string, number]>(
+      `SELECT json_extract(payload, '$.number') AS number FROM event
+        WHERE repo_id = ?1 AND kind = 'issue.closed'
+          AND json_extract(payload, '$.reason') = 'split'
+          AND EXISTS (
+            SELECT 1 FROM json_each(json_extract(payload, '$.into'))
+             WHERE value = ?2)`,
+    )
+    .all(issue.repoId, issue.number);
+  for (const row of parents) {
+    const parent = getIssue(db, issue.repoId, row.number);
+    if (parent === undefined || seen.has(parent.id)) continue;
+    if (standsForPerson(db, parent, seen)) return true;
+  }
+  return false;
+}
+
 export function getIssue(
   db: Database,
   repoId: string,

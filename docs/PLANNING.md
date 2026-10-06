@@ -53,8 +53,8 @@ someone is, and one word:
   a large inline SVG repaints the whole drawing every frame.
 - _blocked_ — open, waiting for something open.
 - _waiting_ — an open pull would close it: proposed, not landed.
-- _parked_ — the last word on it is the crew parking it; a quiet warning
-  tint, for the planner's next pass.
+- _parked_ — the crew parked it twice since someone who directs the crew
+  last spoke on it; a quiet warning tint. It is the planner's now (below).
 - _done_ — closed, still on an edge; it recedes.
 
 Working outranks waiting, waiting outranks parked, and the rest is what
@@ -87,7 +87,8 @@ which is what an agent reads before it starts and what a repository in
 autonomous mode reads to pick the next thing. Both carry where the crew
 is: an issue with an agent run in flight is marked _working_ on the
 drawing and listed under `working` in the data; every issue in the data
-carries its `word`, and `counts` sums them.
+carries its `word`, and `counts` sums them. `parkedTwice` lists each issue
+the crew handed to the planner — its number, title and every reason.
 
 ### The global map
 
@@ -108,6 +109,45 @@ palette, and from the Apps card on either home. `GET /api/v1/map` is the
 same, one entry per repository, each the repository's map data plus
 `autonomy`, `spentTodayUsd`, `ceilingUsd`, `inFlight`, `workers` and
 `idle`.
+
+## Parked twice
+
+An issue the crew parked twice since someone who may direct the crew last
+spoke on it is struck out: the clock no longer dispatches it. A reader's
+comment does not start the count again, and neither does the planner's. A
+park is the crew's own note, written in the name of someone who directs
+it or by one of the repository's agents; a comment that only reads like one
+strikes nothing. A struck-out issue is not dropped. The second park says every reason on the issue, in the one
+note, and hands it to the planner (`crew/parks.ts`):
+
+- **The planner's next pass is owed it.** A hand-over newer than the last
+  planning run asks the planner once — with a full map, and even when the
+  planner declined the direction and no person has spoken. Its task lists
+  _Parked twice: #n_ with every reason.
+- **The planner leaves it in one of three states**: split (closed as
+  `split` into its parts), replaced (a fresh issue, the old one closed as
+  split into it with "replaced by #m"), or deferred (linked to wait for the
+  Later gate — the open issue whose title starts _Later gate_, which the
+  owner closes to let deferred work start — with the reasons in a comment).
+  A planner closes an issue by exactly this grant, on an open issue the
+  crew parked twice: `split`, only into open issues made since the
+  hand-over, never the issue itself or the Later gate, so a closed or an
+  old issue cannot stand in for a drop; and `dropped`, only when no
+  person's ask stands in the issue: an agent wrote it, and it did not come
+  from a split of a person's issue, however many splits ago
+  (`standsForPerson`). What a person asked for is dropped by a person.
+  Never `done`, never a pull, never a reopen, never on a mirror.
+- **Writing an issue does not make it an agent's to close.** An author's
+  say over their own issue is a person's. An agent closes an issue by
+  landing a pull for it or by the grant above, and reopens none — so the
+  issue a planner opened to replace a person's ask is not the planner's to
+  close, and the ask cannot be lost that way (#724).
+- **Until then it is listed**: on the board, above its regions, for
+  whoever owns the app, with its reasons and a link to the issue; and under
+  `parkedTwice` in the map's data and the MCP's `map`. A comment from the
+  planner or a builder does not take it off. What does: it is closed, it
+  waits for something open, someone takes it up (a run in flight, or an
+  open pull that would close it), or a person says on it what to try.
 
 ## Planning by the crew
 
@@ -179,6 +219,44 @@ this; three surfaces show what it reads.
   each app that has pillars: every pillar and its count, zero or not, each
   a link to its issues.
 
+## Milestones
+
+How far each thing asked for is, read from the dependency tree
+(`core/milestones.ts`); nothing is stored. A _milestone_ is an issue that
+waits for others, and what is beneath it is everything it waits for,
+directly or through others. The plan's furniture is beneath nothing: one
+pillar's umbrella waiting for another is an order between pillars.
+
+`/:owner/:name/milestones` is the plan as a handful of _limbs_ — the
+pillars and Later, or, in a repository with no pillars, the issues that
+wait for others and that nothing waits for. Each is one line with its
+weight: done of total, open beneath it, how many are building, pulls merged
+in the last 7 days, its last movement and, for whoever may see owner facts,
+what it cost. The work counted is what is open and what closed as done;
+dropped and split issues are neither.
+
+`/:owner/:name/milestones/:number` is one milestone opened: who is building
+what, what is blocked and on what, what merged this week, and a plain
+estimate — the open issues at the pace of the last 7 days, or a sentence
+saying there is no pace to estimate from. What it waits for directly shows
+as limbs where a child brings a tree of its own, and as leaves where it
+brings none (one that only waits for its siblings is a leaf in an order).
+Leaves show only on the limb they are under.
+
+A limb is flagged _a candidate to trim_ when it has open work, nothing
+landed in 7 days and it has been here that long, or when it has eight or
+more open issues and nobody building. Later is deferred on purpose and is
+never flagged.
+
+It is one tap away: each pillar in the map's _By pillar_ and in the board's
+7-day line opens its milestone, the map names the page, and the issue page
+of anything that waits for others says _see how far it is_. The same
+numbers are data at `GET /api/v1/repos/:owner/:name/milestones` and
+`…/milestones/:number`, and in the MCP's `milestones`. An agent's name and
+the spend are the owner's to see: a reader gets "the crew" and no cost.
+Read-only: watching a milestone (#732) and acting on a whole limb (#733)
+come after.
+
 ## A repository on its own
 
 A repository has one setting for how much the crew does without being
@@ -218,7 +296,7 @@ asked, under **Settings → Autonomy**:
   could not be brought up to date, is _parked_ — closed with the reason,
   its issue put back on the map unassigned with the same note — and the
   crew moves on; the planner's next pass splits or rewrites a parked
-  issue, and one parked twice is left to the direction. A dry map is
+  issue, and one parked twice is handed to the planner (below). A dry map is
   planned again within twenty minutes, and the planner is told the
   direction is never finished: when what it names is built, it proposes
   the next increment and leaves at least three ready issues. The reviewer

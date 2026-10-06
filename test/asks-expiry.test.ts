@@ -45,7 +45,7 @@ describe("asks that expire, hold and collapse", () => {
     return (await response.text()).replace(/\s+/g, " ");
   };
   const sentence = (page: string): string =>
-    /<h1 id="asks-sentence">([^<]*)<\/h1>/.exec(page)?.[1] ?? "";
+    /<h2 id="asks-sentence"[^>]*>([^<]*)<\/h2>/.exec(page)?.[1] ?? "";
   const headerCount = (page: string): number =>
     Number(/>Asks<span class="pill"[^>]*>(\d+)</.exec(page)?.[1] ?? 0);
 
@@ -131,7 +131,7 @@ describe("asks that expire, hold and collapse", () => {
     pears = await botPull("pears", [{ path: "PEARS.md", content: "pears\n" }]);
     green(apples);
     green(pears);
-    const page = await get("/asks");
+    const page = await get("/");
     expect(sentence(page)).toBe("1 thing needs you");
     expect(headerCount(page)).toBe(1);
     expect(page).toContain("2 green changes wait for your look");
@@ -148,17 +148,21 @@ describe("asks that expire, hold and collapse", () => {
       (i) => i.kind === "ask",
     );
     expect(asks).toHaveLength(1);
-    expect(asks[0]!.link).toBe(`/asks#look-${repo.id}`);
+    expect(asks[0]!.link).toBe(`/#look-${repo.id}`);
     expect(page).toContain(`id="look-${repo.id}"`);
   });
 
-  test("an ask card in the feed offers no Mute: asks are never muted away", async () => {
+  test("an ask is pinned above the feed, never a post in it that could be muted away", async () => {
+    // #634: what needs you is pinned on the home; the timeline holds no ask
+    // card at all, so there is nothing to mute.
     const fragment = await get("/live/feed");
-    const card =
-      /<article[^>]*data-kind="ask"[\s\S]*?<\/article>/.exec(fragment)?.[0] ??
-      "";
-    expect(card).toContain('data-feed="dismissed"');
-    expect(card).not.toContain('data-feed="muted"');
+    expect(fragment).not.toContain('data-kind="ask"');
+    const home = await get("/");
+    expect(home).toContain('<section id="needs-you"');
+    const at = home.indexOf('<section id="needs-you"');
+    expect(home.slice(at, home.indexOf("</section>", at))).not.toContain(
+      'data-feed="muted"',
+    );
   });
 
   test("dismissing the row holds until something new happens under it", async () => {
@@ -170,7 +174,7 @@ describe("asks that expire, hold and collapse", () => {
       repoId: repo.id,
       actorId: null,
     });
-    let page = await get("/asks");
+    let page = await get("/");
     expect(sentence(page)).toBe("All fine");
     expect(headerCount(page)).toBe(0);
     expect(askLinesFor(app.db, aliceUser)).toHaveLength(0);
@@ -180,10 +184,14 @@ describe("asks that expire, hold and collapse", () => {
     // A new check on one of them: that one asks again, on its own.
     await tick();
     green(apples);
-    page = await get("/asks");
+    page = await get("/");
     expect(sentence(page)).toBe("1 thing needs you");
-    expect(page).toContain("Bot: apples");
-    expect(page).not.toContain("Bot: pears");
+    const pinned = page.slice(
+      page.indexOf('<section id="needs-you"'),
+      page.indexOf("</section>", page.indexOf('<section id="needs-you"')),
+    );
+    expect(pinned).toContain("Bot: apples");
+    expect(pinned).not.toContain("Bot: pears");
     const lines = askLinesFor(app.db, aliceUser);
     expect(lines.map((l) => l.id)).toEqual([`look:${apples.id}`]);
     expect(lines[0]!.link).toBe(
@@ -200,7 +208,7 @@ describe("asks that expire, hold and collapse", () => {
       repoId: repo.id,
       actorId: null,
     });
-    expect(sentence(await get("/asks"))).toBe("All fine");
+    expect(sentence(await get("/"))).toBe("All fine");
     // The merge box is the change's Files step (#628).
     const change = await get(
       `/${repo.ownerName}/${repo.name}/pulls/${apples.number}/files`,
@@ -228,7 +236,7 @@ describe("asks that expire, hold and collapse", () => {
     });
     await sweepStaleAsks(app);
     expect(askLinesFor(app.db, aliceUser)).toHaveLength(0);
-    expect(sentence(await get("/asks"))).toBe("All fine");
+    expect(sentence(await get("/"))).toBe("All fine");
     // Its own page still says why it cannot ship.
     const change = await get(
       `/${repo.ownerName}/${repo.name}/pulls/${plums.number}`,
