@@ -7,7 +7,7 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
-import { appsOf, askCountFor } from "./studio/asks.ts";
+import { askCountFor } from "./studio/asks.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
@@ -35,7 +35,7 @@ import { prefersJson } from "./form.ts";
 import { html, raw, when, type Html } from "./html.ts";
 import { noRoom } from "../spawn/door.ts";
 import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
-import { btn, iconBtn, kbd, menu, pill, type MenuItem } from "./ui.ts";
+import { btn, kbd, menu, pill, type MenuItem } from "./ui.ts";
 
 /** One row of the command palette: title, href, category. */
 export interface PaletteItem {
@@ -140,41 +140,11 @@ function themeMenu(active: ThemeName | undefined): Html {
 }
 
 /**
- * Studio or dev, for this browser. Two buttons, one form each, so the
- * choice is a POST like the theme's and never a query parameter that
- * leaks into links.
- */
-function modeToggle(ctx: Ctx): Html {
-  if (!ctx.auth.user) return html``;
-  const back = ctx.url.pathname + ctx.url.search;
-  const one = (mode: "studio" | "dev", label: string) =>
-    html`<form method="post" action="/mode">
-      <input type="hidden" name="mode" value="${mode}" />
-      <input type="hidden" name="back" value="${back}" />
-      <button
-        type="submit"
-        aria-pressed="${ctx.mode === mode ? "true" : "false"}"
-        aria-label="${label}"
-        title="${mode === "studio"
-          ? "Apps, the crew, what is on you"
-          : "Code, commits, branches, runs"}"
-      >
-        ${icon(mode === "studio" ? "rocket" : "code")}<span class="hide-sm"
-          >${label}</span
-        >
-      </button>
-    </form>`;
-  return html`<span class="mode-toggle" role="group" aria-label="Studio or dev">
-    ${one("studio", "studio")}${one("dev", "dev")}
-  </span>`;
-}
-
-/**
- * Studio only: the way to `/asks`, with how many things ask the viewer — the
- * very count the page leads with (`askCountFor`). Quiet when nothing does.
+ * The way to what needs you, with how many things ask the viewer — the very
+ * count the home's pinned section leads with (`askCountFor`).
  */
 function asksLink(ctx: Ctx): Html {
-  if (!ctx.auth.user || ctx.mode !== "studio") return html``;
+  if (!ctx.auth.user) return html``;
   const count = askCountFor(ctx, ctx.auth.user);
   return html`<a
     class="btn"
@@ -285,29 +255,8 @@ function helpButton(): Html {
 
 // ---- palette index ----
 
-const STATIC_PALETTE_DEV: PaletteItem[] = [
-  { t: "Home", h: "/", c: "Go to" },
-  { t: "Apps", h: "/apps", c: "Go to" },
-  { t: "Explore", h: "/explore", c: "Go to" },
-  { t: "Map", h: "/map", c: "Go to" },
-  { t: "What you asked for", h: "/asked", c: "Go to" },
-  { t: "New app", h: "/apps/new", c: "Create" },
-  { t: "New repository", h: "/new", c: "Create" },
-  { t: "Migrate a repository", h: "/migrate", c: "Create" },
-  { t: "New organization", h: "/organizations/new", c: "Create" },
-  { t: "Search", h: "/search", c: "Go to" },
-  { t: "Account settings", h: "/settings", c: "Settings" },
-  { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
-  { t: "SSH keys", h: "/settings/keys", c: "Settings" },
-  { t: "Origins", h: "/settings/origins", c: "Settings" },
-];
-
-/**
- * The studio's own verbs: no "New repository" or "New organization" — dev's
- * own way of making one, which would land a studio reader on dev's own form
- * unannounced. "Asks you" goes to `/asks`, the one screen of what needs the viewer.
- */
-const STATIC_PALETTE_STUDIO: PaletteItem[] = [
+/** The palette's own verbs: where to go, what to make, what to set. */
+const STATIC_PALETTE: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
   { t: "Explore", h: "/explore", c: "Go to" },
@@ -316,7 +265,9 @@ const STATIC_PALETTE_STUDIO: PaletteItem[] = [
   { t: "What you asked for", h: "/asked", c: "Go to" },
   { t: "Front page", h: "/front", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
+  { t: "New repository", h: "/new", c: "Create" },
   { t: "Migrate a repository", h: "/migrate", c: "Create" },
+  { t: "New organization", h: "/organizations/new", c: "Create" },
   { t: "Search", h: "/search", c: "Go to" },
   { t: "Account settings", h: "/settings", c: "Settings" },
   { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
@@ -330,22 +281,21 @@ const STATIC_PALETTE_STUDIO: PaletteItem[] = [
  * applies and no nonce is needed — but `</script` must not appear inside it,
  * which escaping `<` guarantees.
  *
- * In the studio the by-name rows are apps, not every repository — the same
- * visibility (`appsOf` is `listReposVisibleTo` underneath), just apps first.
+ * The by-name rows are every repository the viewer can see, apps among them.
  */
 function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
-  const studio = ctx.mode === "studio";
-  const repos = studio
-    ? appsOf(ctx, ctx.auth.user).repos.slice(0, 30)
-    : listReposVisibleTo(ctx.app.db, ctx.auth.user, { limit: 30 });
+  // One forge (#603): a conversation's remote row is built with the
+  // studio's nouns, which answer for every repository.
+  const studio = true;
+  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, { limit: 30 });
   const items: PaletteItem[] = [
     ...extra,
     ...repos.map((r) => ({
       t: `${r.ownerName}/${r.name}`,
       h: `/${r.ownerName}/${r.name}`,
-      c: studio ? "Apps" : "Repositories",
+      c: "Repositories",
     })),
-    ...(studio ? STATIC_PALETTE_STUDIO : STATIC_PALETTE_DEV),
+    ...STATIC_PALETTE,
     ...(sendsForges(ctx) ? [{ t: "New forge", h: "/forges/new", c: "Create" }] : []),
     ...(ctx.auth.user?.isAdmin ? [{ t: "Forges you sent", h: "/forges", c: "Go to" }] : []),
   ];
@@ -467,9 +417,7 @@ function topbar(
       )}
       <span class="spacer"></span>
       <span class="topbar-tools">
-        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${asksLink(ctx)}${modeToggle(
-          ctx,
-        )}${themeMenu(theme)}
+        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${asksLink(ctx)}${themeMenu(theme)}
         ${user
           ? html`<span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
                 ctx,
