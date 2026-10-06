@@ -232,6 +232,26 @@ describe("the studio", () => {
     expect(flipped.status).toBe(404);
   });
 
+  test("the palette lists apps first, then the other repositories (#906)", async () => {
+    // Made after the app, so newest-first alone would list it ahead.
+    const later = await createRepo(app, alice, {
+      name: "palette-later",
+      visibility: "public",
+      description: "",
+    });
+    if (!later.ok) throw new Error(String(later.error));
+    const html = await (await get("/")).text();
+    const block = html.match(
+      /<script type="application\/json" id="palette-index">([\s\S]*?)<\/script>/,
+    )?.[1];
+    if (block === undefined) throw new Error("no palette-index on the home");
+    const rows = (JSON.parse(block) as { items: { t: string; c: string }[] }).items;
+    const at = (t: string) => rows.findIndex((r) => r.t === t);
+    expect(rows[at("alice/notes")]?.c).toBe("Apps");
+    expect(rows[at("alice/palette-later")]?.c).toBe("Repositories");
+    expect(at("alice/notes")).toBeLessThan(at("alice/palette-later"));
+  });
+
   test("a repository with no app record keeps the studio's framing for every viewer: one card, one door to make it one; an app itself never shows the card", async () => {
     const plain = await createRepo(app, alice, {
       name: "plainhome",
