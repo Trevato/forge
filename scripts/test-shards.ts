@@ -111,15 +111,15 @@ const slices =
     ? files.map((file) => [file])
     : splitFiles(files, count.value, weight);
 
-console.log(
-  record
-    ? `test-shards: recording ${files.length} files, ${count.value} at a time`
-    : serialFiles
-      ? `test-shards: ${files.length} files serial (one bun test each; FORGE_CHECK_SHARDS=1), ` +
-        `expected ${files.reduce((sum, file) => sum + weight(file), 0).toFixed(0)}s`
-      : `test-shards: ${files.length} files in ${slices.length} shard${slices.length === 1 ? "" : "s"}, ` +
-        `expected ${slices.map((slice) => slice.reduce((sum, file) => sum + weight(file), 0).toFixed(0) + "s").join(" ")}`,
-);
+const banner = record
+  ? `test-shards: recording ${files.length} files, ${count.value} at a time`
+  : serialFiles
+    ? `test-shards: ${files.length} files serial (one bun test each; FORGE_CHECK_SHARDS=1), ` +
+      `expected ${files.reduce((sum, file) => sum + weight(file), 0).toFixed(0)}s`
+    : `test-shards: ${files.length} files in ${slices.length} shard${slices.length === 1 ? "" : "s"}, ` +
+      `expected ${slices.map((slice) => slice.reduce((sum, file) => sum + weight(file), 0).toFixed(0) + "s").join(" ")}`;
+console.log(banner);
+process.stderr.write(banner + "\n");
 
 const children = new Set<Bun.Subprocess>();
 for (const signal of ["SIGINT", "SIGTERM"] as const)
@@ -144,7 +144,8 @@ async function runShard(slice: string[], index: number): Promise<Timed> {
   const started = performance.now();
   // Print before spawn so a mid-suite cgroup SIGKILL still leaves a breadcrumb
   // (shard stdout is buffered until the child exits).
-  process.stdout.write(
+  // stderr: Actions often block-buffers stdout until exit; an OOM never flushes.
+  process.stderr.write(
     `test-shards: start ${index + 1}/${slices.length} ${slice.join(" ")}\n`,
   );
   // An exact path, never a filter: `test/web.test.ts` alone would also

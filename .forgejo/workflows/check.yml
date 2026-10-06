@@ -14,11 +14,9 @@ jobs:
     runs-on: isolated
     env:
       REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
-      # Do not set NODE_OPTIONS here: a job-wide heap lets Node claim the
-      # check cell and the kernel OOMs (`Killed`, exit 137). forge.json
-      # check.run scopes heap to `node --max-old-space-size=…` for tsc only,
-      # then FORGE_CHECK_SHARDS=1 makes test-shards run one file per process
-      # (serial) so peak RSS stays under the isolated runner cgroup.
+      # Do not set NODE_OPTIONS job-wide: a big heap lets Node claim the
+      # cgroup and the kernel OOMs (`Killed`, exit 137). Heap is scoped to
+      # the typecheck step via `node --max-old-space-size=…` only.
     steps:
       - name: derive owner + app
         run: |
@@ -40,12 +38,22 @@ jobs:
         working-directory: src
         run: bun install --frozen-lockfile
 
-      # The same check the forge runs on its own pulls, read from the same
-      # place, so what is green here is green there and nowhere else decides.
-      - name: check, as the forge itself does
+      # Split the forge.json check.run halves into two steps so a cgroup
+      # SIGKILL shows which side died (typecheck vs gate), instead of one
+      # silent 17m `sh -c` with no breadcrumbs (#386/#388/#390).
+      - name: typecheck (forge.json check.run, first half)
         working-directory: src
         run: |
           set -eu
-          CHECK=$(bun -e 'const f = JSON.parse(await Bun.file("forge.json").text()); console.log(f.check.run)')
-          echo "$ $CHECK"
-          sh -c "$CHECK"
+          echo "$ node --max-old-space-size=1024 ./node_modules/typescript/lib/tsc.js --noEmit"
+          node --max-old-space-size=1024 ./node_modules/typescript/lib/tsc.js --noEmit
+          echo "typecheck ok"
+
+      - name: gate (forge.json check.run, second half)
+        working-directory: src
+        run: |
+          set -eu
+          echo "$ FORGE_CHECK_SHARDS=1 bun scripts/test-shards.ts --timeout 60000 --gate"
+          # stderr for start lines: Actions often fully-buffers piped stdout
+          # until process exit, which an OOM never reaches.
+          FORGE_CHECK_SHARDS=1 bun scripts/test-shards.ts --timeout 60000 --gate
