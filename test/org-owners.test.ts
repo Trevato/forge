@@ -215,6 +215,11 @@ describe("an organization always keeps a person who owns it", () => {
     ]);
     const ddl = migrations.find((m) => m.includes("an agent never owns"));
     expect(ddl).toBeString();
+    const before = (
+      app.db.query("SELECT id FROM event ORDER BY id DESC LIMIT 1").get() as {
+        id: string;
+      }
+    ).id;
     app.db.exec(ddl!);
     expect(members(owners)).not.toContain(bot.id);
     expect(members(owners)).toContain(alice.id);
@@ -228,11 +233,10 @@ describe("an organization always keeps a person who owns it", () => {
       org: "acme",
       user: "bot",
     });
-    // Its id sorts after every event before it, as an outbox id must.
-    const newest = app.db
-      .query("SELECT id FROM event ORDER BY id DESC LIMIT 1")
-      .get() as { id: string };
-    expect(newest.id).toBe(recorded[0]!.id);
+    // Its id is never older than any event before it, as an outbox id must
+    // not be. Within one millisecond two ids order by their random part, so
+    // it is the time the id carries (its first ten characters) that is held.
+    expect(recorded[0]!.id.slice(0, 10) >= before.slice(0, 10)).toBe(true);
     // Run twice, it finds nothing more to do.
     app.db.exec(ddl!);
     expect(

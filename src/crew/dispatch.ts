@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
 import type { App } from "../app.ts";
+import { transact } from "../kernel/db.ts";
 import { announceRun } from "../actions/runs.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import type { ForgeEvent } from "../core/events.ts";
@@ -276,34 +277,40 @@ export function queueAgentRun(
       recordCap(app.db, repo, issue, cap);
     return undefined;
   }
-  const active = activeRunFor(app.db, "agent", issue.id);
-  // A follow-up with nothing new would only read the agent's own reply
-  // and decline. With a run in flight the answer waits for it to end: the
-  // queued run asks again as it starts (`runner.ts`).
-  if (
-    reason === "feedback" &&
-    again === undefined &&
-    active === undefined &&
-    skipsFeedback(app.db, repo, issue, agent)
-  )
-    return undefined;
-  // One queued follow-up is enough: the run that eventually starts reads
-  // the whole conversation since the last one, so nothing is lost. The
-  // queued one may sit behind a running one, so it is looked for by itself.
-  if (
-    active !== undefined &&
-    (reason === "assigned" || hasQueuedRun(app.db, "agent", issue.id))
-  )
-    return undefined;
-  const run = createRun(app.db, {
-    repoId: repo.id,
-    kind: "agent",
-    issueId: issue.id,
-    actorId: agent.user.id,
-    reason,
-    ...again,
+  // Looked for and written in one write transaction: during a roll two
+  // forge processes share this database, and both may react to the same
+  // thing — a run checked for by one and inserted by the other would be the
+  // same work twice (docs/ARCHITECTURE.md, "Two processes at once").
+  const run = transact(app.db, () => {
+    const active = activeRunFor(app.db, "agent", issue.id);
+    // A follow-up with nothing new would only read the agent's own reply
+    // and decline. With a run in flight the answer waits for it to end: the
+    // queued run asks again as it starts (`runner.ts`).
+    if (
+      reason === "feedback" &&
+      again === undefined &&
+      active === undefined &&
+      skipsFeedback(app.db, repo, issue, agent)
+    )
+      return undefined;
+    // One queued follow-up is enough: the run that eventually starts reads
+    // the whole conversation since the last one, so nothing is lost. The
+    // queued one may sit behind a running one, so it is looked for by itself.
+    if (
+      active !== undefined &&
+      (reason === "assigned" || hasQueuedRun(app.db, "agent", issue.id))
+    )
+      return undefined;
+    return createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: agent.user.id,
+      reason,
+      ...again,
+    });
   });
-  announceRun(app, run, actorId);
+  if (run !== undefined) announceRun(app, run, actorId);
   return run;
 }
 

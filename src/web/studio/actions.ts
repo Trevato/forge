@@ -10,7 +10,7 @@
 
 import { mayView } from "../../core/sealed.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
-import { addComment, setIssueStateThrough } from "../../actions/issues.ts";
+import { addComment } from "../../actions/issues.ts";
 import { tell } from "../../actions/tell.ts";
 import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
@@ -21,8 +21,7 @@ import { bringUpToDate } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
-import { flashOrJson, flashTo, redirect } from "../layout.ts";
-import { isMode, modeCookie } from "../mode.ts";
+import { flashOrJson, flashTo } from "../layout.ts";
 import { changeHref } from "./nouns.ts";
 
 /** A merge refusal in a person's words. */
@@ -301,24 +300,3 @@ export async function releaseSubmit(ctx: Ctx): Promise<Response> {
   });
 }
 
-/** Where a form sends a person back: what it said, else the referer, else
- * home — and never off this forge. */
-function backTo(ctx: Ctx, said: string): string {
-  const back = said || ctx.request.headers.get("referer") || "/";
-  return (back.startsWith("/") && !back.startsWith("//")) ||
-    back.startsWith(`${ctx.url.origin}/`)
-    ? back
-    : "/";
-}
-
-/** POST /mode  { mode } — studio or dev, for this browser. */
-export async function modeSubmit(ctx: Ctx): Promise<Response> {
-  const form = await readForm(ctx);
-  if (form instanceof Response) return form;
-  const choice = field(form, "mode");
-  const secure = ctx.url.protocol === "https:";
-  return redirect(
-    backTo(ctx, field(form, "back")),
-    modeCookie(isMode(choice) ? choice : undefined, secure),
-  );
-}
