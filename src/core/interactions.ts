@@ -130,6 +130,26 @@ export function dismissedItems(db: Database, viewerId: string): Set<string> {
 }
 
 /**
+ * When this viewer last opened, from their feed, an item whose id starts
+ * with `prefix`; nothing when they never did.
+ */
+export function lastOpened(
+  db: Database,
+  viewerId: string,
+  prefix: string,
+): string | undefined {
+  return (
+    db
+      .query<{ at: string | null }, [string, string, number]>(
+        `SELECT MAX(created_at) AS at FROM interaction
+          WHERE viewer_id = ?1 AND kind = 'opened'
+            AND substr(item_id, 1, ?3) = ?2`,
+      )
+      .get(viewerId, prefix, prefix.length)?.at ?? undefined
+  );
+}
+
+/**
  * The asks this viewer dismissed, each with when they last did. A dismissed
  * ask is not dismissed forever: it holds until something new happens to it
  * (`web/studio/asks.ts` compares this moment with the ask's own).
