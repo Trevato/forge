@@ -5,6 +5,7 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import {
   closeStreamsOf,
   closeStreamsOfSession,
@@ -149,6 +150,12 @@ import {
 import { tellPage } from "../web/studio/tell.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import { milestonePage, milestonesPage } from "../web/pages/milestones.ts";
+import {
+  limbPreviewPage,
+  limbReceiptPage,
+  limbSubmit,
+  limbUndo,
+} from "../web/pages/limb.ts";
 import {
   modeSubmit,
   saySubmit,
@@ -628,6 +635,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/cloud/write", cloudWrite);
   router.add("POST", "/settings/cloud/audit", cloudAudit);
   router.add("POST", "/settings/cloud/remove", cloudRemove);
+  router.add("GET", "/settings/capacity", capacityPage);
+  router.add("POST", "/settings/capacity", capacitySet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
   router.add("POST", "/settings/backups/destination", backupsDestination);
@@ -864,6 +873,18 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/map", mapPage);
   router.add("GET", "/:owner/:name/milestones", milestonesPage);
   router.add("GET", "/:owner/:name/milestones/:number", milestonePage);
+  router.add("GET", "/:owner/:name/milestones/:number/limb", limbPreviewPage);
+  router.add("POST", "/:owner/:name/milestones/:number/limb", limbSubmit);
+  router.add(
+    "GET",
+    "/:owner/:name/milestones/:number/limb/:op",
+    limbReceiptPage,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/milestones/:number/limb/:op/undo",
+    limbUndo,
+  );
 
   // Pull requests. Same /new-before-/:number ordering discipline.
   // One list of pulls, at `/pulls` and `/changes` alike; one change under
