@@ -1550,10 +1550,12 @@ export async function serve(app: App): Promise<Servers> {
   // An account suspended or removed ends what it has open on this
   // listener: its event streams and the app sockets it was let into. A
   // browser signed out ends the streams it opened.
+  const unclosed = (error: unknown): void =>
+    app.log.warn("something held open did not close", { error: String(error) });
   const endOpen = app.bus.subscribe((event) => {
     if (event.kind === "session.ended") {
       const id = event.payload["sessionId"];
-      if (typeof id === "string") closeStreamsOfSession(id);
+      if (typeof id === "string") closeStreamsOfSession(app.db, id, unclosed);
       return;
     }
     if (event.kind !== "account.suspended" && event.kind !== "account.removed")
@@ -1562,12 +1564,15 @@ export async function serve(app: App): Promise<Servers> {
     const user =
       typeof name === "string" ? getUserByName(app.db, name) : undefined;
     if (user === undefined) return;
-    closeStreamsOf(user.id);
+    closeStreamsOf(app.db, user.id, unclosed);
   });
   // And every process holds what it has open against the database, so a
   // suspension or sign-out another process wrote reaches it too (#846).
   const sweep = setInterval(
-    () => sweepStanding(app.db),
+    () =>
+      sweepStanding(app.db, (error) =>
+        app.log.warn("standing sweep did not finish", { error: String(error) }),
+      ),
     app.config.standingSweepMs ?? 5_000,
   );
   // Who may say who the client is (\`http/peer.ts\`), settled once.
@@ -1730,7 +1735,7 @@ async function answerGet(
   // a stream this request opens is the account's, to end with it.
   if (auth.user !== undefined) {
     noteSignedIn(request);
-    noteCaller(request, auth.user.id, auth.sessionId);
+    noteCaller(request, app.db, auth.user.id, auth.sessionId);
   }
 
   // The two things standing between one runaway agent and everybody

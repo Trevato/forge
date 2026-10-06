@@ -14,6 +14,7 @@
  * directory — so guessing a hostname yields the forge's own "not found".
  */
 
+import type { Database } from "bun:sqlite";
 import { getIssue, type Issue } from "../core/issues.ts";
 import { mayView } from "../core/sealed.ts";
 import { holdOpen } from "../http/caller.ts";
@@ -651,6 +652,8 @@ export interface AppSocket {
   readonly upstream: WebSocket;
   /** The person the grant named, so their suspension can end the socket. */
   readonly userId: string | undefined;
+  /** The forge the socket is held open on. */
+  readonly db: Database;
 }
 
 /**
@@ -728,7 +731,7 @@ async function proxyWebSocket(
     runtime.holdStream(target.app, target.env),
   );
   const upgraded = server.upgrade(request, {
-    data: { upstream, userId: who?.id },
+    data: { upstream, userId: who?.id, db: runtime.app.db },
     // The app's choice of subprotocol is what the browser hears; without
     // one Bun echoes the first the browser offered, which is what the app
     // itself would have done on Bun.
@@ -810,11 +813,11 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
   idleTimeout: WS_IDLE_SECONDS,
 
   open(ws) {
-    const { upstream, userId } = ws.data;
+    const { upstream, userId, db } = ws.data;
     if (userId !== undefined)
       heldSockets.set(
         ws,
-        holdOpen(userId, undefined, () => {
+        holdOpen(db, userId, undefined, () => {
           if (ws.readyState === WebSocket.OPEN)
             closeBoth(ws, 1008, "this account was suspended");
         }),

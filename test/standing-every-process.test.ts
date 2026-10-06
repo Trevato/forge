@@ -5,6 +5,7 @@
  * enforces it, on each request and on its own sweep of what it holds open:
  * event streams, a git transfer under way, an SSH session.
  */
+import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -17,6 +18,7 @@ import { addKey, fingerprint, parseAuthorizedKey } from "../src/core/keys.ts";
 import { createSession, listSessions } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { holdOpen, sweepStanding } from "../src/http/caller.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { forgeSshSession } from "../src/tui/ssh.ts";
 
@@ -171,5 +173,79 @@ describe("a suspension holds in every process serving the forge", () => {
     expect((await suspendAccount(fresh, olive, "sam")).ok).toBe(true);
     expect(await within(transfer)).toBe(true);
     expect(unsuspendAccount(fresh, olive, "sam").ok).toBe(true);
+  });
+});
+
+// The sweep runs on a bare timer in every process: nothing in it may throw.
+describe("the standing sweep never takes the forge down", () => {
+  test("a closer that throws is reported, and the others still close", () => {
+    const db = new Database(":memory:");
+    db.run(
+      "CREATE TABLE user (id TEXT PRIMARY KEY, suspended_at TEXT, removed_at TEXT)",
+    );
+    db.run("CREATE TABLE session (id TEXT PRIMARY KEY, expires_at TEXT)");
+    db.run("INSERT INTO user (id, suspended_at) VALUES ('u1', '2026-10-06')");
+    let closed = 0;
+    holdOpen(db, "u1", undefined, () => {
+      throw new Error("socket already broken");
+    });
+    holdOpen(db, "u1", undefined, () => closed++);
+    const errors: unknown[] = [];
+    expect(() => sweepStanding(db, (e) => errors.push(e))).not.toThrow();
+    expect(closed).toBe(1);
+    expect(errors.length).toBe(1);
+    db.close();
+  });
+
+  test("a closed database is reported, not thrown", () => {
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE user (id TEXT PRIMARY KEY, suspended_at TEXT, removed_at TEXT)");
+    db.run("CREATE TABLE session (id TEXT PRIMARY KEY, expires_at TEXT)");
+    const release = holdOpen(db, "u1", undefined, () => {});
+    db.close();
+    const errors: unknown[] = [];
+    expect(() => sweepStanding(db, (e) => errors.push(e))).not.toThrow();
+    expect(errors.length).toBe(1);
+    release();
+  });
+
+  test("two forges in one process never sweep each other's holds", () => {
+    const schema = (db: Database) => {
+      db.run("CREATE TABLE user (id TEXT PRIMARY KEY, suspended_at TEXT, removed_at TEXT)");
+      db.run("CREATE TABLE session (id TEXT PRIMARY KEY, expires_at TEXT)");
+    };
+    const mine = new Database(":memory:");
+    const theirs = new Database(":memory:");
+    schema(mine);
+    schema(theirs);
+    theirs.run("INSERT INTO user (id) VALUES ('t1')");
+    let closed = false;
+    const release = holdOpen(theirs, "t1", undefined, () => {
+      closed = true;
+    });
+    // `t1` is nobody in this forge: its sweep must not touch the other's.
+    sweepStanding(mine);
+    expect(closed).toBe(false);
+    release();
+    mine.close();
+    theirs.close();
+  });
+
+  test("many held accounts are asked a chunk at a time", () => {
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE user (id TEXT PRIMARY KEY, suspended_at TEXT, removed_at TEXT)");
+    db.run("CREATE TABLE session (id TEXT PRIMARY KEY, expires_at TEXT)");
+    const insert = db.prepare("INSERT INTO user (id) VALUES (?1)");
+    let closed = 0;
+    for (let i = 0; i < 1200; i++) {
+      // Every other one is in good standing; the rest are nobody.
+      if (i % 2 === 0) insert.run(`u${i}`);
+      holdOpen(db, `u${i}`, undefined, () => closed++);
+    }
+    const errors: unknown[] = [];
+    sweepStanding(db, (e) => errors.push(e));
+    expect(errors).toEqual([]);
+    expect(closed).toBe(600);
+    db.close();
   });
 });

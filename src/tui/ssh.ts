@@ -181,7 +181,7 @@ export function endOnSuspension(
     session.writeStderr(`${CRLF}forge: this account was suspended${CRLF}`);
     session.exit(1);
   };
-  const unhold = holdOpen(user.id, undefined, end);
+  const unhold = holdOpen(forge.db, user.id, undefined, end);
   session.onClose(() => {
     stop();
     unhold();
