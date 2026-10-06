@@ -575,7 +575,9 @@ export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
       message:
         added.error === "no_such_user"
           ? `No account called ${username || "that"}.`
-          : "Could not add that member.",
+          : added.error === "agent_cannot_own"
+            ? `${username} is an agent: an agent never administers an organization.`
+            : "Could not add that member.",
     });
   return flashTo(ctx, dest, {
     message: added.value.added
@@ -603,13 +605,14 @@ export async function teamMemberRemove(ctx: Ctx): Promise<Response> {
       message:
         removed.error === "no_such_user"
           ? `No account called ${username || "that"}.`
-          : "Could not remove that member.",
+          : removed.error === "last_owner"
+            ? `${r.team.name} must keep at least one person who owns ${r.org.username}. Make someone else an owner first.`
+            : "Could not remove that member.",
     });
   return flashTo(ctx, dest, {
     message: removed.value.removed
       ? `Removed ${username} from ${r.team.name}.`
-      : `${r.team.name} must keep at least one owner.`,
-    ...(removed.value.removed ? {} : { tone: "danger" as const }),
+      : `${username} was not on ${r.team.name}.`,
   });
 }
 
