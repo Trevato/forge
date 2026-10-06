@@ -3,8 +3,8 @@
  * answers three questions — who has it, what it is waiting on, and what the
  * crew has done with it. Where it stands is `tellWord`, which every studio
  * list of tells reads too, so a tell says the same thing in a row as it does
- * on its own page. Nothing a dev-mode reader needs (labels, milestones, the
- * dependency form) belongs here; `?mode=dev` reads that page, unchanged.
+ * on its own page. The bookkeeping of a plain issue (labels, milestones,
+ * the dependency form) does not belong here.
  */
 
 import { mayEditIssue } from "../../actions/issues.ts";
@@ -233,8 +233,7 @@ async function tellClosingPull(
 
 /**
  * GET /:owner/:name/issues/:number and /tells/:number: one page, two
- * addresses, for every repository and every viewer — `?mode=dev` and the
- * mode cookie change nothing. Same `threadContext` at both, so a reader who
+ * addresses, for every repository and every viewer. Same `threadContext` at both, so a reader who
  * may not see it gets the forge's not-found at either.
  */
 export async function tellPage(ctx: Ctx): Promise<Response> {

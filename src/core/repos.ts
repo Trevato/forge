@@ -315,12 +315,37 @@ export type ForkRepoError =
   | "invalid_name"
   | "name_taken"
   | "already_forked"
-  | "fork_failed";
+  | "fork_failed"
+  /** The owner's forks in the last day reached `perDay` (#888). */
+  | "limit";
+
+const DAY_MS = 86_400_000;
+
+/**
+ * When an owner made each fork since `since`, oldest first — from the
+ * ledger of forks made (`fork_made`), not the forks that still exist: a
+ * deleted copy still counts toward the day it was made in.
+ */
+export function forksSince(db: Database, ownerId: string, since: string): string[] {
+  return db
+    .query<{ made_at: string }, [string, string]>(
+      `SELECT made_at FROM fork_made WHERE owner_id = ?1 AND made_at >= ?2 ORDER BY made_at`,
+    )
+    .all(ownerId, since)
+    .map((r) => r.made_at);
+}
+
+/** A marker the row's transaction throws when the day's forks are made. */
+class OverLimit extends Error {}
 
 /**
  * Fork a repo into another owner. The git objects are shared with the parent
  * via alternates (see forkBareRepo), so this is instant and storage-bounded.
- * The fork inherits the parent's visibility and default branch.
+ * The fork takes the parent's default branch, and its visibility unless a
+ * narrower one is asked for: it is born with it, never public first (#888);
+ * a private parent's fork is private whatever is asked. With `perDay`, the
+ * owner's forks in the last 24 hours are counted in the same transaction
+ * that writes the row, so two forks at once cannot both pass the limit.
  */
 export async function forkRepo(
   db: Database,
@@ -328,14 +353,32 @@ export async function forkRepo(
   parent: Repo,
   ownerId: string,
   name?: string,
-  /**
-   * The private repository the owner works the parent's sealed reports in
-   * (`sealed.ts`): private whatever the parent is, no fork in the graph,
-   * read by the parent's writers and crew. One per owner and parent.
-   */
-  sealed = false,
+  options: {
+    visibility?: "public" | "private";
+    perDay?: number;
+    now?: number;
+    /**
+     * The private repository the owner works the parent's sealed reports in
+     * (`sealed.ts`): private whatever the parent is, no fork in the graph,
+     * read by the parent's writers and crew. One per owner and parent. Not
+     * a fork, so not one the daily limit counts.
+     */
+    sealed?: boolean;
+  } = {},
 ): Promise<Result<Repo, ForkRepoError>> {
+  const sealed = options.sealed === true;
   const forkName = name ?? (sealed ? `${parent.name}-sealed` : parent.name);
+  const visibility =
+    sealed || parent.visibility === "private"
+      ? "private"
+      : (options.visibility ?? parent.visibility);
+  const now = options.now ?? Date.now();
+  const since = new Date(now - DAY_MS).toISOString();
+  const overLimit = (): boolean =>
+    !sealed &&
+    options.perDay !== undefined &&
+    forksSince(db, ownerId, since).length >= options.perDay;
+  if (overLimit()) return err("limit");
   if (!isSafeName(forkName)) return err("invalid_name");
   const owner = db
     .query<
@@ -375,23 +418,36 @@ export async function forkRepo(
   await installHooks(forkDir);
 
   const repoId = id();
-  rowOrUndo(forkDir, () =>
-    db
-      .query(
-        `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id, sealed_for)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
-      )
-      .run(
-        repoId,
-        ownerId,
-        forkName,
-        sealed ? "private" : parent.visibility,
-        parent.description,
-        parent.defaultBranch,
-        sealed ? null : parent.id,
-        sealed ? parent.id : null,
-      ),
-  );
+  try {
+    rowOrUndo(forkDir, () =>
+      db.transaction(() => {
+        // Counted again with the write: the git copy above took a moment,
+        // and another fork may have landed in it.
+        if (overLimit()) throw new OverLimit();
+        db.query(
+          `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id, sealed_for)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+        ).run(
+          repoId,
+          ownerId,
+          forkName,
+          visibility,
+          parent.description,
+          parent.defaultBranch,
+          sealed ? null : parent.id,
+          sealed ? parent.id : null,
+        );
+        if (!sealed)
+          db.query(`INSERT INTO fork_made (owner_id, made_at) VALUES (?1, ?2)`).run(
+            ownerId,
+            new Date(now).toISOString(),
+          );
+      })(),
+    );
+  } catch (error) {
+    if (error instanceof OverLimit) return err("limit");
+    throw error;
+  }
   return ok(getRepoById(db, repoId)!);
 }
 
@@ -537,6 +593,8 @@ export interface ListReposOptions {
   limit?: number;
   /** Resume after this repo id (exclusive) — lists run newest first. */
   cursor?: string;
+  /** Repositories that run an app first, each half newest first (not with `cursor`). */
+  appsFirst?: boolean;
 }
 
 // Visibility in SQL: public, owned, or owned by an org the viewer is on a
@@ -566,7 +624,11 @@ export function listReposVisibleTo(
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+      `${SELECT} WHERE ${where} ORDER BY ${
+        options.appsFirst === true
+          ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, "
+          : ""
+      }repo.id DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRepo);
@@ -600,7 +662,11 @@ export function listReposWritableTo(
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+      `${SELECT} WHERE ${where} ORDER BY ${
+        options.appsFirst === true
+          ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, "
+          : ""
+      }repo.id DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRepo);
@@ -631,7 +697,11 @@ export function listReposByOwner(
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+      `${SELECT} WHERE ${where} ORDER BY ${
+        options.appsFirst === true
+          ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, "
+          : ""
+      }repo.id DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRepo);

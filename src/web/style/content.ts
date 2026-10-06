@@ -447,6 +447,15 @@ form.inline { display: inline; margin-left: auto; }
 .explore-main { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .explore-name { font-weight: 600; }
 .explore-line .input { flex: 1; min-width: 0; }
+/* On a phone the first rows belong on the first screen: one row of chips
+   that scrolls sideways, and a row's verb under its numbers. */
+@media (max-width: 600px) {
+  .explore-filters { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .explore-filters .seg { flex: none; }
+  .explore-row { flex-wrap: wrap; row-gap: 6px; }
+  .explore-row > .explore-main { flex-basis: 100%; }
+  .explore-row > .btn { margin-left: 0; }
+}
 
 /* The featured repository: its picture and its crew at work, side by side
    on a desk, stacked on a phone. */

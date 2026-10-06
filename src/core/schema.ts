@@ -1480,7 +1480,7 @@ export const migrations: readonly string[] = [
   -- base's git or a public fork's before it merges.
   ALTER TABLE repo ADD COLUMN sealed_for TEXT REFERENCES repo(id) ON DELETE CASCADE;
   `,
-  // 67 — a milestone a person watches (#732, `core/watches.ts`): one row per
+  // 66 — a milestone a person watches (#732, `core/watches.ts`): one row per
   // person and issue. Its progress is read from the plan, never stored.
   `
   CREATE TABLE IF NOT EXISTS milestone_watch (
@@ -1490,6 +1490,16 @@ export const migrations: readonly string[] = [
     PRIMARY KEY (user_id, issue_id)
   );
   CREATE INDEX IF NOT EXISTS milestone_watch_issue ON milestone_watch(issue_id);
+  `,
+  // 67 — every fork a person made, kept when the fork is deleted (#888):
+  // the daily limit counts what was made, so deleting a copy does not make
+  // room for another. Nothing but the account's own deletion removes a row.
+  `
+  CREATE TABLE IF NOT EXISTS fork_made (
+    owner_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    made_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX IF NOT EXISTS fork_made_owner ON fork_made(owner_id, made_at);
   `,
   // 68 — the run a comment was said into as it worked (#827): its agent heard
   // it then, so the next run's brief does not tell it again.

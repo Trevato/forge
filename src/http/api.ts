@@ -108,6 +108,7 @@ import {
   deleteLabel,
   deleteRepo,
   deleteWebhook,
+  FORKS_PER_DAY,
   forkRepo,
   updateRepoSettings,
 } from "../actions/repos.ts";
@@ -1640,7 +1641,10 @@ export function apiRoutes(router: Router<Handler>): void {
       parent,
       str(input.name) || undefined,
     );
-    if (!forked.ok) return respondAccess(forked.error, 422);
+    if (!forked.ok)
+      return forked.error === "limit"
+        ? apiError("limit", 429, `at most ${FORKS_PER_DAY} forks a day: try again tomorrow`)
+        : respondAccess(forked.error, 422);
     return json(forked.value, 201);
   });
 
@@ -4528,6 +4532,7 @@ export function apiRoutes(router: Router<Handler>): void {
     for (const issue of issues) {
       const repo = repos.get(issue.repoId);
       if (!repo || !canRead(ctx.app.db, repo, user)) continue;
+      if (!mayView(ctx.app.db, repo, issue, user)) continue;
       items.push({
         ...issue,
         repo: { owner: repo.ownerName, name: repo.name },
