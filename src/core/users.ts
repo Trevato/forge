@@ -77,6 +77,14 @@ function toUser(row: UserRow): User {
 export const isActive = (user: User): boolean =>
   user.suspendedAt === null && user.removedAt === null;
 
+/**
+ * Whether `viewer` finds no account at `user`'s name: a suspended or removed
+ * person is kept, and hidden from everyone but a site admin (#831). Their
+ * name stays on what they wrote in others' threads.
+ */
+export const hiddenFrom = (user: User, viewer: User | undefined): boolean =>
+  user.kind === "user" && !isActive(user) && viewer?.isAdmin !== true;
+
 const MIN_PASSWORD = 10;
 const MAX_EMAIL = 254;
 const MAX_DISPLAY_NAME = 80;

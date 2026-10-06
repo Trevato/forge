@@ -158,7 +158,12 @@ import {
 } from "../core/reviews.ts";
 import { createSession, destroySession } from "../core/sessions.ts";
 import { listTokens } from "../core/tokens.ts";
-import { getUserByName, verifyPassword, type User } from "../core/users.ts";
+import {
+  getUserByName,
+  hiddenFrom,
+  verifyPassword,
+  type User,
+} from "../core/users.ts";
 import { isPinned } from "../core/pins.ts";
 import { listWebhooks } from "../core/webhooks.ts";
 import { diffCommit } from "../git/diff.ts";
@@ -994,12 +999,14 @@ export function apiRoutes(router: Router<Handler>): void {
 
   router.add("GET", "/api/v1/users/:username", (ctx) => {
     const user = getUserByName(ctx.app.db, ctx.params.username!);
-    return user ? json(publicProfile(user)) : notFound();
+    return user && !hiddenFrom(user, ctx.auth.user)
+      ? json(publicProfile(user))
+      : notFound();
   });
 
   router.add("GET", "/api/v1/users/:username/repos", (ctx) => {
     const user = getUserByName(ctx.app.db, ctx.params.username!);
-    if (!user) return notFound();
+    if (!user || hiddenFrom(user, ctx.auth.user)) return notFound();
     const query = repoQuery(ctx);
     const items = listReposByOwner(
       ctx.app.db,

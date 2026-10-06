@@ -5,6 +5,7 @@
  * set the picks and what a stranger may see.
  */
 
+import { PUBLIC_VISIBLE } from "./visibility.ts";
 import type { Database } from "bun:sqlite";
 
 export type FrontPlace = "pinned" | "hidden";
@@ -123,7 +124,7 @@ export function frontSignals(
     .query<{ parent: string; n: number }, string[]>(
       `SELECT repo.fork_parent_id AS parent, COUNT(*) AS n
        FROM repo JOIN user ON user.id = repo.owner_id
-       WHERE user.is_agent = 0 AND repo.visibility = 'public'
+       WHERE user.is_agent = 0 AND ${PUBLIC_VISIBLE}
          AND repo.fork_parent_id IN (${list(0)})
        GROUP BY repo.fork_parent_id`,
     )
