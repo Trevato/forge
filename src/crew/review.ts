@@ -11,8 +11,10 @@
  * Every green head of a pull an agent wrote is sent, whatever the
  * repository's autonomy: the event sends it the moment its checks pass,
  * and the tick sweeps up any head the event missed. A review that does
- * not come back is sent once more; after that it has lapsed, and the pull
- * is not held for it (`reviewStage`).
+ * not come back is sent once more; after that it has lapsed (`reviewStage`).
+ * An agent's pull never ships by lapse, nor in a repository with no
+ * reviewer: it waits for a person, and says so where a person looks
+ * (`waitsForPerson`, the asks). A person's own pull is not held for it.
  */
 
 import type { Database } from "bun:sqlite";
@@ -138,6 +140,39 @@ export function reviewAttempts(
       active: r.state === "queued" || r.state === "running",
     }));
   return { greenAt: since, attempts };
+}
+
+/** Why an agent's green pull waits for a person, and since when. */
+export interface ReviewWait {
+  readonly why: "no reviewer" | "lapsed";
+  /** When review became owed: the head went green, or the pull was let go. */
+  readonly since: string;
+}
+
+/**
+ * Whether this agent's green pull now waits for a person's review: its
+ * crew has no reviewer, or the review it was sent lapsed (asked twice, or
+ * past the lapse). Undefined while a review is out or due, once a verdict
+ * is on the head, while a person holds it, or for a person's own pull —
+ * which is never held for review. One rule for the landing gate and for
+ * what needs you, read from the tables alone.
+ */
+export function waitsForPerson(
+  db: Database,
+  repoId: string,
+  pull: Pull,
+  now = new Date(),
+): ReviewWait | undefined {
+  if (!pull.authorIsAgent || getHold(db, pull.id) !== undefined) return undefined;
+  const seen = reviewSummary(db, pull.id, pull.headOid);
+  if (seen.approvals > 0 || seen.changesRequested > 0) return undefined;
+  const history = reviewAttempts(db, pull);
+  if (history === undefined) return undefined;
+  if (reviewersOf(db, repoId).length === 0)
+    return { why: "no reviewer", since: history.greenAt };
+  return reviewStage(history.greenAt, history.attempts, now) === "lapsed"
+    ? { why: "lapsed", since: history.greenAt }
+    : undefined;
 }
 
 /**
