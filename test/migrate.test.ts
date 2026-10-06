@@ -317,12 +317,15 @@ describe("migrate", () => {
     const count = () =>
       (app.db.query("SELECT COUNT(*) AS n FROM repo").get() as { n: number }).n;
     const before = count();
+    // What a hostile URL would touch if git ever ran it: a path of this
+    // test's own.
+    const canary = join(work, "touched-by-git");
     for (const url of [
       "file:///etc",
-      "ext::sh -c touch% /tmp/pwned",
+      `ext::sh -c touch% ${canary}`,
       "ssh://git@example.com/a/b.git",
       "git@example.com:a/b.git",
-      "--upload-pack=touch /tmp/pwned",
+      `--upload-pack=touch ${canary}`,
       "https://user:secret@example.com/a/b.git",
       "",
     ]) {
@@ -335,6 +338,7 @@ describe("migrate", () => {
       expect(body.error).toBe("invalid_url");
       expect(body.message).toContain("not a URL this forge will clone from");
     }
+    expect(existsSync(canary)).toBe(false);
     // What a person meant is what they get.
     expect(migrateUrl("github.com/a/b")).toBe("https://github.com/a/b");
     expect(migrateUrl("git://example.com/a/b.git")).toBe(
