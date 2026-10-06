@@ -9,7 +9,8 @@
  *   through alternates, so it is instant). What is not: the app's data, its
  *   variables and secrets, its crew, its domains and its pins — those are the
  *   original owner's, and the new app starts empty.
- * - The original is untouched.
+ * - The original is untouched. A private app is copied only by those who may
+ *   enter it as its own (writers, crew); to anyone else it is not there.
  * - Following is what a fork does: while the copy has nothing of its own, it
  *   moves when the original's default branch moves; once it has, it is told
  *   (`fork.diverged`) and takes updates on request.
@@ -25,8 +26,8 @@ import {
   SLUG_MAX,
   type AppRecord,
 } from "../core/apps.ts";
-import { canRead, getRepoById, type Repo } from "../core/repos.ts";
-import type { User } from "../core/users.ts";
+import { canEnterApp, canRead, getRepoById, type Repo } from "../core/repos.ts";
+import { isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { enableApp } from "./apps.ts";
 import { forkRepo } from "./repos.ts";
@@ -87,7 +88,15 @@ export async function makeItYours(
   if (!canRead(app.db, source, actor)) return err({ kind: "not_found" });
   const sourceApp = getAppByRepo(app.db, source.id);
   if (sourceApp === undefined) return err({ kind: "not_found" });
-  if (actor === undefined) return err({ kind: "unauthorized" });
+  // A private app is copied only by someone who may enter it as one of its
+  // own (a writer or its crew); to anyone else it is not there — reading a
+  // public repository's code is not a key to its private app (#620).
+  if (
+    sourceApp.access !== "public" &&
+    !canEnterApp(app.db, source, sourceApp, actor, { named: false })
+  )
+    return err({ kind: "not_found" });
+  if (actor === undefined || !isActive(actor)) return err({ kind: "unauthorized" });
   if (actor.kind === "agent")
     return err({
       kind: "invalid",

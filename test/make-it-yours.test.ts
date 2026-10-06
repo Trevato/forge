@@ -11,13 +11,16 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { suspendAccount } from "../src/actions/accounts.ts";
 import { newApp } from "../src/actions/apps.ts";
+import { createAgent } from "../src/actions/crew.ts";
+import { makeItYours } from "../src/actions/make_it_yours.ts";
 import { envDataDir } from "../src/apps/data.ts";
 import { getAppByRepo, listApps, type AppRecord } from "../src/core/apps.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { createUser, type User } from "../src/core/users.ts";
+import { createUser, getUserById, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -243,5 +246,80 @@ describe("make it yours", () => {
       })
     ).text();
     expect(asAlice).not.toContain("make-it-yours");
+  });
+
+  test("refused, by the action and the API: an agent, an unverified account, a suspended one, a stranger to a private repository, a stranger to a public repository's private app, and the owner", async () => {
+    const mk = async (username: string, trusted = true) => {
+      const r = await createUser(app.db, {
+        trusted,
+        username,
+        email: `${username}@forge.local`,
+        password: "a-good-passphrase",
+      });
+      if (!r.ok) throw new Error(r.error);
+      return r.value;
+    };
+    // A private repository, and a public one whose app is private.
+    const vault = await newApp(app, alice, { name: "vault", visibility: "private" });
+    const lab = await newApp(app, alice, { name: "lab", visibility: "private" });
+    if (!vault.ok || !lab.ok) throw new Error("apps");
+    app.db.query(`UPDATE repo SET visibility = 'public' WHERE id = ?1`).run(lab.value.repo.id);
+    expect(lab.value.app.access).toBe("private");
+    const labRepo = getRepo(app.db, "alice", "lab")!;
+    const vaultRepo = getRepo(app.db, "alice", "vault")!;
+    const carol = await mk("carol");
+    const tokenOf = (u: User) => createToken(app.db, u.id, "rw", "rw").token;
+    const make = (path: string, token: string) =>
+      api(`/api/v1/repos/${path}/make-it-yours`, token, { dryRun: false });
+    const appsBefore = listApps(app.db).length;
+
+    // A stranger to a private repository, and to a public repository's
+    // private app: not there, by the action and the API — even as a plan.
+    for (const repo of [vaultRepo, labRepo]) {
+      for (const dryRun of [true, false]) {
+        const by = await makeItYours(app, carol, repo, { dryRun });
+        expect(by.ok).toBe(false);
+        if (!by.ok) expect(by.error.kind).toBe("not_found");
+      }
+    }
+    expect((await make("alice/vault", tokenOf(carol))).status).toBe(404);
+    expect((await make("alice/lab", tokenOf(carol))).status).toBe(404);
+    expect(
+      (await api("/api/v1/repos/alice/lab/make-it-yours", tokenOf(carol), {})).status,
+    ).toBe(404);
+
+    // An agent does not make apps its own.
+    const agent = await createAgent(app, alice, { username: "helper" });
+    if (!agent.ok) throw new Error(String(agent.error));
+    const byAgent = await makeItYours(app, agent.value.user, garden, { dryRun: false });
+    expect(byAgent.ok).toBe(false);
+    if (!byAgent.ok) expect(byAgent.error.kind).toBe("invalid");
+    expect((await make("alice/garden", tokenOf(agent.value.user))).status).toBe(422);
+
+    // An account whose email is not proven.
+    const dana = await mk("dana", false);
+    const byDana = await makeItYours(app, dana, garden, { dryRun: false });
+    expect(byDana.ok).toBe(false);
+    if (!byDana.ok) expect(byDana.error.kind).toBe("unverified");
+    expect((await make("alice/garden", tokenOf(dana))).status).toBe(403);
+
+    // A suspended account.
+    const erin = await mk("erin");
+    expect((await suspendAccount(app, alice, "erin")).ok).toBe(true);
+    const suspended = getUserById(app.db, erin.id)!;
+    const byErin = await makeItYours(app, suspended, garden, { dryRun: false });
+    expect(byErin.ok).toBe(false);
+    if (!byErin.ok) expect(byErin.error.kind).toBe("unauthorized");
+    expect((await make("alice/garden", tokenOf(erin))).status).toBe(401);
+
+    // The owner already has it.
+    const byOwner = await makeItYours(app, alice, garden, { dryRun: false });
+    expect(byOwner.ok).toBe(false);
+    if (!byOwner.ok) expect(byOwner.error.kind).toBe("own");
+
+    // None of them made anything.
+    expect(listApps(app.db).length).toBe(appsBefore);
+    for (const who of ["carol", "helper", "dana", "erin"])
+      expect(app.db.query(`SELECT COUNT(*) AS n FROM repo JOIN user ON user.id = repo.owner_id WHERE user.username = ?1`).get(who)).toEqual({ n: 0 });
   });
 });

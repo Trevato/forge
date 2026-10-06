@@ -845,6 +845,7 @@ const TOOLS: readonly Tool[] = [
           limit,
           ...(cursor === undefined ? {} : { cursor }),
         }),
+      );
     },
   },
   {
