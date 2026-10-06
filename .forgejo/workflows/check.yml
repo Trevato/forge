@@ -14,9 +14,10 @@ jobs:
     runs-on: isolated
     env:
       REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
-      # Do not set NODE_OPTIONS here to the full check.limits.memory (4096):
-      # that lets Node claim the entire cgroup and the kernel OOMs (`Killed`)
-      # during parallel test shards. Heap for tsc is set in forge.json check.run.
+      # Do not set NODE_OPTIONS here: a job-wide heap lets Node claim the
+      # check cell and the kernel OOMs (`Killed`, exit 137). forge.json
+      # check.run scopes heap to `node --max-old-space-size=…` for tsc only,
+      # then runs one test shard so peak RSS stays under check.limits.memory.
     steps:
       - name: derive owner + app
         run: |

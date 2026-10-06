@@ -141,6 +141,10 @@ async function runShard(slice: string[], index: number): Promise<Timed> {
   );
   const childEnv = { ...process.env };
   delete childEnv["FORGE_CHECK_SHARDS"];
+  // NODE_OPTIONS is for the sequential `node tsc` step only. Never hand it
+  // to bun test shards — a leftover max-old-space-size races the check
+  // cell's memory cgroup and the kernel SIGKILLs the gate (exit 137).
+  delete childEnv["NODE_OPTIONS"];
   const child = Bun.spawn(["bun", "test", ...flags, ...paths], {
     stdin: "ignore",
     stdout: "pipe",
