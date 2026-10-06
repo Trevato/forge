@@ -40,6 +40,7 @@ import {
   type Label,
   type BodyError,
   type TitleError,
+  standsForPerson,
 } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
@@ -267,8 +268,9 @@ function handedToPlanner(
   if (crewRole(app.db, repo.id, actor.id) !== "planner") return false;
   const handed = handedOverAt(app.db, repo, issue.id);
   if (handed === undefined) return false;
-  if (closing.reason === "dropped")
-    return issue.authorIsAgent && issue.originAuthor === null;
+  // Dropped only when no person's ask stands in it — not one the planner
+  // wrote to replace a person's, however many times it was split since.
+  if (closing.reason === "dropped") return !standsForPerson(app.db, issue);
   if (closing.reason !== "split") return false;
   const into = closing.into ?? [];
   if (into.length === 0) return false;

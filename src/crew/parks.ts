@@ -20,6 +20,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { getIssueById, standsForPerson } from "../core/issues.ts";
 import type { Repo } from "../core/repos.ts";
 import { directorsAmong, proposedWork } from "./direct.ts";
 
@@ -167,7 +168,11 @@ export interface ParkedTwice {
   readonly title: string;
   /** Why the crew parked it, each time since the last word, oldest first. */
   readonly reasons: readonly string[];
-  /** Whether an agent wrote it; a person's ask is never the planner's to drop. */
+  /**
+   * Whether it is the crew's own: an agent wrote it, and no person's ask
+   * stands in it through a split (`standsForPerson`). A person's ask is
+   * never the planner's to drop.
+   */
   readonly byAgent: boolean;
   /** When it was last parked: the hand-over, or a park after it. */
   readonly at: string;
@@ -258,9 +263,15 @@ export function parkedTwice(
         );
       }
     }
-    const struck = [...byIssue.values()].filter(
-      (issue) => issue.reasons.length >= PARK_STRIKES,
-    );
+    const struck = [...byIssue.values()]
+      .filter((issue) => issue.reasons.length >= PARK_STRIKES)
+      .map((issue) => {
+        if (!issue.byAgent) return issue;
+        const record = getIssueById(db, issue.issueId);
+        return record !== undefined && standsForPerson(db, record)
+          ? { ...issue, byAgent: false }
+          : issue;
+      });
     if (struck.length === 0) continue;
     // An open pull that would close it is someone's answer already.
     const proposed = proposedWork(db, repo);

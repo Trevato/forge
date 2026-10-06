@@ -960,6 +960,79 @@ describe("an issue parked twice is the planner's", () => {
     expect(set(alice, stand, "closed")).toBe("closed");
   });
 
+  test("refused: a person's ask split into the crew's issue is still the person's — parked twice, it is split again, never dropped", async () => {
+    const token = createToken(app.db, atlas.id, "rw", "rw").token;
+    const patch = async (number: number, body: unknown): Promise<number> =>
+      (
+        await fetch(`${base}/api/v1/repos/alice/engine/issues/${number}`, {
+          method: "PATCH",
+          headers: {
+            authorization: `Bearer ${token}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        })
+      ).status;
+    const handOver = async (on: Issue): Promise<void> => {
+      for (let n = 0; n < 2; n++) {
+        expect(e.ended(on, "nothing to propose")).toBe(true);
+        await tick();
+      }
+      expect(struckOut(app.db, fresh(), [on.id]).has(on.id)).toBe(true);
+    };
+    const opens = (title: string): Issue => {
+      const made = openIssue(app, atlas, e.fresh(), { title });
+      if (!made.ok) throw new Error(String(made.error));
+      return made.value;
+    };
+    // A person's ask, handed over, split by the planner into its own issue.
+    const ask = e.issue("Shadows");
+    await handOver(ask);
+    const x = opens("Shadows: one pass");
+    expect(
+      await patch(ask.number, {
+        state: "closed",
+        reason: "split",
+        into: [x.number],
+      }),
+    ).toBe(200);
+    // The crew parks the replacement twice: it is the planner's again — and
+    // still the person's ask, so the board and the brief say so.
+    await handOver(x);
+    expect(listed()).toContain(x.number);
+    expect(
+      parkedTwice(app.db, [fresh()]).find((i) => i.number === x.number)!.byAgent,
+    ).toBe(false);
+    // Refused: dropping it, by the action and by the planner's token.
+    const dropped = setIssueState(app, atlas, e.fresh(), current(x), "closed", {
+      reason: "dropped",
+    });
+    expect(dropped.ok ? "closed" : dropped.error).toBe("forbidden");
+    expect(await patch(x.number, { state: "closed", reason: "dropped" })).toBe(
+      403,
+    );
+    expect(current(x).state).toBe("open");
+    // Allowed: splitting it again into a fresh issue; and that one, parked
+    // twice in its turn, is still the person's: the chain is followed.
+    const y = opens("Shadows: the one pass, smaller");
+    expect(
+      await patch(x.number, { state: "closed", reason: "split", into: [y.number] }),
+    ).toBe(200);
+    await handOver(y);
+    expect(await patch(y.number, { state: "closed", reason: "dropped" })).toBe(
+      403,
+    );
+    expect(current(y).state).toBe("open");
+    // The crew's own issue, parked twice, is still the planner's to drop.
+    const own = opens("Tidy the shadow pool");
+    await handOver(own);
+    expect(await patch(own.number, { state: "closed", reason: "dropped" })).toBe(
+      200,
+    );
+    // Off the list, for what follows.
+    expect(setIssueState(app, alice, e.fresh(), current(y), "closed").ok).toBe(true);
+  });
+
   test("the planner may defer it behind the Later gate or replace it with a fresh issue, and then it is off the board", async () => {
     expect(laterGate(app.db, repo.id)).toBe(gate.number);
     // Deferred: it waits for the gate, as the planner's own link.

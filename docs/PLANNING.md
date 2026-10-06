@@ -132,9 +132,11 @@ note, and hands it to the planner (`crew/parks.ts`):
   A planner closes an issue by exactly this grant, on an open issue the
   crew parked twice: `split`, only into open issues made since the
   hand-over, never the issue itself or the Later gate, so a closed or an
-  old issue cannot stand in for a drop; and `dropped`, only when an agent
-  wrote the issue. What a person asked for is dropped by a person. Never
-  `done`, never a pull, never a reopen, never on a mirror.
+  old issue cannot stand in for a drop; and `dropped`, only when no
+  person's ask stands in the issue: an agent wrote it, and it did not come
+  from a split of a person's issue, however many splits ago
+  (`standsForPerson`). What a person asked for is dropped by a person.
+  Never `done`, never a pull, never a reopen, never on a mirror.
 - **Writing an issue does not make it an agent's to close.** An author's
   say over their own issue is a person's. An agent closes an issue by
   landing a pull for it or by the grant above, and reopens none — so the
