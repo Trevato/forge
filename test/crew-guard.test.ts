@@ -26,6 +26,7 @@ import {
 } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import {
+  cancelRun,
   claimRun,
   createRun,
   finishRun,
@@ -218,6 +219,37 @@ describe("a follow-up with nothing new is not started", () => {
       agentName: "bot",
     });
     expect(news.comments.map((c) => c.id)).toEqual([unheard.id]);
+  });
+
+  test("a word steered into a run that then failed or was cut short is news again", async () => {
+    for (const ending of ["failed", "cancelled"] as const) {
+      const issue = held(`Paint the fence ${ending}`);
+      const run = createRun(app.db, {
+        repoId: repo.id,
+        kind: "agent",
+        issueId: issue.id,
+        actorId: bot.user.id,
+        reason: "assigned",
+      });
+      claimRun(app.db, run.id);
+      await Bun.sleep(5);
+      const steered = ok(addComment(app, alice, repo, issue, `Blue (${ending}).`));
+      markHeard(app.db, steered.id, run.id);
+      if (ending === "failed")
+        finishRun(app.db, run.id, { state: "failed", summary: "the run failed", costUsd: 0.1 });
+      else cancelRun(app.db, run.id, "interrupted by a restart");
+      const current = getIssueById(app.db, issue.id)!;
+      const queued = queueAgentRun(app, fresh(), current, bot, "feedback", alice.id);
+      expect({ ending, queued: queued?.state }).toEqual({ ending, queued: "queued" });
+      const news = newsSince({
+        comments: listComments(app.db, issue.id, { kind: "comment" }),
+        reviews: [],
+        reviewComments: [],
+        since: feedbackSince(app.db, fresh(), current, bot),
+        agentName: "bot",
+      });
+      expect(news.comments.map((c) => c.id)).toEqual([steered.id]);
+    }
   });
 
   test("a follow-up queued behind a run that answered everything ends as it starts, at no cost", async () => {
