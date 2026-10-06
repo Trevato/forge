@@ -47,6 +47,29 @@ describe("a suspended account's repositories leave every list", () => {
   };
   const text = async (path: string, cookie?: string) =>
     (await get(path, cookie)).text();
+  let ritaToken = "";
+  /** An MCP tool's answer for rita: its value, or its error text. */
+  const tool = async (name: string, args: unknown) => {
+    const res = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${ritaToken}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name, arguments: args },
+      }),
+    });
+    const body = (await res.json()) as {
+      result: { isError?: boolean; content: { text: string }[] };
+    };
+    const said = body.result.content[0]!.text;
+    return body.result.isError === true ? { error: said } : { value: said };
+  };
 
   /** Every place a reader could find sam's repositories, as the reader sees it. */
   const sightings = async (cookie?: string): Promise<string[]> => {
@@ -122,7 +145,7 @@ describe("a suspended account's repositories leave every list", () => {
         access: "public",
       }).ok,
     ).toBe(true);
-    const ritaToken = createToken(app.db, rita.id, "t", "rw").token;
+    ritaToken = createToken(app.db, rita.id, "t", "rw").token;
     const ritaFork = await fetch(`${base}/api/v1/repos/sam/tools/forks`, {
       method: "POST",
       headers: {
@@ -140,6 +163,11 @@ describe("a suspended account's repositories leave every list", () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("before: the MCP's converge follows the parent", async () => {
+    const answer = await tool("converge", { repo: "rita/mine" });
+    expect(answer.error ?? "").not.toContain("not_a_fork");
   });
 
   test("before: the app answers at its host, and the fork proposes to its parent", async () => {
@@ -180,6 +208,11 @@ describe("a suspended account's repositories leave every list", () => {
     expect(resolveAppHostname(app, "apps.test", "samtools.apps.test")).toBe(
       "unknown",
     );
+  });
+
+  test("suspended: the MCP's converge finds no parent to follow", async () => {
+    const answer = await tool("converge", { repo: "rita/mine" });
+    expect(answer.error ?? "").toContain("not_a_fork");
   });
 
   test("suspended: the fork's new-pull page proposes within itself, not to the hidden parent", async () => {

@@ -54,8 +54,8 @@ import { getAppByRepo } from "../core/apps.ts";
 import {
   canRead,
   canWrite,
+  forkParentFor,
   getRepo,
-  getRepoById,
   ownerFactRepoIds,
   type Repo,
 } from "../core/repos.ts";
@@ -734,10 +734,7 @@ const TOOLS: readonly Tool[] = [
     async run(ctx, user, args) {
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
-      const parent =
-        repo.forkParentId === null
-          ? undefined
-          : getRepoById(ctx.app.db, repo.forkParentId);
+      const parent = forkParentFor(ctx.app.db, repo, user);
       if (parent === undefined)
         return bad("not_a_fork", "this repository follows nothing");
       const outcome = await convergeFork(ctx.app, repo, parent, user);
