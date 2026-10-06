@@ -40,7 +40,10 @@ import {
 import { openEnvUrl } from "../../actions/apps.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { previewEnv } from "../../apps/data.ts";
-import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
+import {
+  appsRuntime,
+  type EnvState,
+  type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { getPull, type Pull } from "../../core/pulls.ts";
@@ -92,13 +95,11 @@ import {
   relTime,
   runAsync,
 } from "./common.ts";
-import { envTone } from "./apps.ts";
 import { assignPicker, assignedText } from "./assign.ts";
 import { DiffView, type DiffAnchor, type DiffNote } from "./commits.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
 import { reviewScreen } from "./review.ts";
-import { runScreen } from "./run.ts";
-import { RunList, runTone } from "./runs.ts";
+import { RunList, openRunLog, runTone } from "./runlist.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
 import { local, localRepo, whereRows, whereStrip } from "./where.ts";
 import { openAppTerminal } from "./apptty.ts";
@@ -250,7 +251,9 @@ export function pullScreen(
     preview =
       record === undefined
         ? undefined
-        : appsRuntime(f.app)?.envStatus(record, previewEnv(number));
+        : envsFor(f.app, f.user, record).find(
+            (e) => e.env === previewEnv(number),
+          );
     check =
       row === undefined
         ? NO_CHECK
@@ -716,7 +719,7 @@ export function pullScreen(
       });
       if (tab === 2) {
         crew.render(s, body!, c, ctx, true, (run) => {
-          if (repo !== undefined) ctx.push(runScreen(f, ctx, repo, run.id));
+          if (repo !== undefined) openRunLog(f, ctx, repo, run);
         });
       } else if (tab === 1) {
         // The thread count is a section header, not a badge on the tab: how
@@ -795,7 +798,7 @@ export function pullScreen(
         if (e.key === "enter") {
           const run = crew.selected;
           if (run !== undefined && repo !== undefined)
-            ctx.push(runScreen(f, ctx, repo, run.id));
+            openRunLog(f, ctx, repo, run);
           return true;
         }
       }
@@ -949,6 +952,21 @@ export type MergeState =
   | "ready"
   | "unknown";
 
+/** The tone an environment's state wears; `stopped` and `asleep` wear none. */
+function envTone(state: EnvState): Tone | undefined {
+  switch (state) {
+    case "running":
+      return "success";
+    case "deploying":
+      return "attn";
+    case "failed":
+      return "danger";
+    case "stopped":
+    case "asleep":
+      return undefined;
+  }
+}
+
 /**
  * The preview, in one line: a dot in the environment's tone, the word, the
  * URL as a link, and the error when there is one — never "failed" alone.
@@ -982,7 +1000,11 @@ function drawPreviewLine(
         ? `running${preview.since === undefined ? "" : ` since ${ago(preview.since)}`}`
         : preview.state === "deploying"
           ? `deploying ${preview.commitOid.slice(0, 7)}`
-          : "stopped";
+          : preview.state === "asleep"
+            ? `asleep${preview.since === undefined ? "" : ` since ${ago(preview.since)}`}; wakes on a request`
+            : preview.dormant === undefined
+            ? "stopped"
+            : `asleep since ${ago(preview.dormant.since)}; nobody touched the change since ${ago(preview.dormant.idleSince)}`;
   x = s.text(
     x,
     r.y,

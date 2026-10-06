@@ -8,7 +8,7 @@ import type { Database } from "bun:sqlite";
 import { sha256 } from "../kernel/hash.ts";
 import { id, secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { getUserById, type User } from "./users.ts";
+import { getUserById, isActive, type User } from "./users.ts";
 
 export type TokenScope = "ro" | "rw" | "admin";
 
@@ -86,7 +86,7 @@ export function verifyToken(
   if (row.expires_at !== null && Date.parse(row.expires_at) <= Date.now())
     return err("invalid_token");
   const user = getUserById(db, row.user_id);
-  if (!user) return err("invalid_token");
+  if (!user || !isActive(user)) return err("invalid_token");
   const now = Date.now();
   const seen =
     row.last_used_at === null ? 0 : Date.parse(row.last_used_at) || 0;
@@ -143,5 +143,34 @@ export function deleteToken(
     db
       .query("DELETE FROM token WHERE id = ?1 AND user_id = ?2")
       .run(tokenId, userId).changes > 0
+  );
+}
+
+/**
+ * Remove one token by its id, whoever holds it. For credentials the forge
+ * minted on someone's behalf (an app's, a run's) and so revokes itself;
+ * a person revoking their own goes through `deleteToken`.
+ */
+export function revokeToken(db: Database, tokenId: string): boolean {
+  return db.query("DELETE FROM token WHERE id = ?1").run(tokenId).changes > 0;
+}
+
+/**
+ * Move an expiring token's expiry. A credential held by something that
+ * lives as long as it is wanted — a running app — is kept short and
+ * renewed while it is, so a forge that dies without revoking it leaves a
+ * token that stops working on its own. A token with no expiry is left be.
+ */
+export function renewToken(
+  db: Database,
+  tokenId: string,
+  expiresAt: string,
+): boolean {
+  return (
+    db
+      .query(
+        "UPDATE token SET expires_at = ?1 WHERE id = ?2 AND expires_at IS NOT NULL",
+      )
+      .run(expiresAt, tokenId).changes > 0
   );
 }

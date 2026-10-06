@@ -12,6 +12,11 @@ import type { Database } from "bun:sqlite";
 import { ancestorsOf } from "../../git/merge.ts";
 import type { AppsRuntime, EnvStatus } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
+import { canEnterApp, getRepoById } from "../../core/repos.ts";
+import type { User } from "../../core/users.ts";
+import type { Efficiency } from "../../core/efficiency.ts";
+import type { WindowStanding } from "../../core/standing.ts";
+import { whenText } from "../../crew/limits.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { getPull, pullForBranch, type Pull } from "../../core/pulls.ts";
 import {
@@ -23,6 +28,20 @@ import {
 } from "../../core/runs.ts";
 import { html, type Html } from "../html.ts";
 import { icon } from "../ui.ts";
+
+/**
+ * The empty crew, said once: the shelf's stuck tell, the app page's autonomy
+ * card and the settings card all take it from here.
+ */
+export const NOBODY_ON_CREW = "nobody on the crew";
+
+/** The quiet line under a mode nothing can honour yet. `href` is the crew panel. */
+export function noCrewLine(href: string): Html {
+  return html`<p class="muted small">
+    Mode is a promise with ${NOBODY_ON_CREW} to keep it.
+    <a href="${href}">Put someone on the crew</a>.
+  </p>`;
+}
 
 export type Word =
   | "working"
@@ -65,6 +84,8 @@ export interface WordCtx {
   readonly runtime: AppsRuntime | undefined;
   readonly record: AppRecord | undefined;
   readonly history: ServingHistory;
+  /** Who is reading: a private app's production is theirs only if they may enter it. */
+  readonly viewer: User | undefined;
 }
 
 /**
@@ -172,6 +193,14 @@ export async function pullWord(
     const commitOid = pull.mergedOid ?? pull.headOid;
     if (ctx.runtime === undefined || ctx.record === undefined)
       return { word: "shipped", note: "merged" };
+    // A private app's production — its state, its deploy's error — is for
+    // those who may enter it (`canEnterApp`); anyone else reads "merged".
+    const repo = getRepoById(ctx.db, ctx.record.repoId);
+    if (
+      repo === undefined ||
+      !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer, { named: false })
+    )
+      return { word: "shipped", note: "merged" };
     const production = ctx.runtime
       .status(ctx.record)
       .find((e) => e.env === "production");
@@ -181,7 +210,12 @@ export async function pullWord(
   }
   if (pull.state === "closed")
     return { word: "stopped", note: "closed without shipping" };
-  return checkRunWord(checkSummary(ctx.db, pull.id, pull.headOid));
+  const check = checkSummary(ctx.db, pull.id, pull.headOid);
+  // A repository that is not an app never deploys a head, so it never gets
+  // a look: an open change there waits on a person, and says so.
+  if (ctx.record === undefined && check.state === "none")
+    return { word: "waiting", note: "open — waiting on a person" };
+  return checkRunWord(check);
 }
 
 /**
@@ -329,7 +363,7 @@ const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
  * live script repaints as a run finishes (`studioRunJs`). `cancelled` draws
  * the same quiet, secondary look as `waiting` and `planned` — a restart is
  * never the danger red a real failure earns. */
-export function wordBadge(word: Word, id?: string): Html {
+export function wordBadge(word: Word, id?: string, plain = false): Html {
   const variant =
     word === "look" || word === "shipped" || word === "done"
       ? "success"
@@ -343,6 +377,73 @@ export function wordBadge(word: Word, id?: string): Html {
     data-variant="${variant}"
     data-word="${word}"
     ${id === undefined ? null : html`id="${id}"`}
-    >${word === "working" ? icon("loader") : null}${word}</span
+    >${word === "working" ? icon("loader") : null}${plain && word === "told"
+      ? "open"
+      : word}</span
   >`;
+}
+
+// ---- what a subscription has left, and what a change costs ----
+
+/** One figure as a person reads it, and whether the forge worked it out
+ * (from the usage ledger) rather than the provider saying it. */
+export interface FigureWords {
+  readonly text: string;
+  readonly inferred: boolean;
+}
+
+/** A subscription's window (`core/standing.ts`) in words: what is used,
+ * what is left, when it resets. Money in US dollars of list price. */
+export interface WindowWords {
+  readonly name: string;
+  readonly used: FigureWords;
+  readonly remaining: FigureWords;
+  readonly resets: FigureWords;
+  /** Whole percent of the cap used, 0–100; null while no cap is known. */
+  readonly usedPct: number | null;
+}
+
+const dollars = (n: number): string => `$${n.toFixed(2)}`;
+
+export function windowWords(w: WindowStanding): WindowWords {
+  const full = w.remaining?.source === "read" && w.remaining.value === 0;
+  const usedPct = full
+    ? 100
+    : w.cap === null || w.cap.value <= 0
+      ? null
+      : Math.max(0, Math.min(100, Math.round((w.used.value / w.cap.value) * 100)));
+  return {
+    name: w.window === "5h" ? "5-hour window" : "weekly window",
+    used: {
+      text: `${dollars(w.used.value)} used`,
+      inferred: w.used.source === "inferred",
+    },
+    remaining:
+      w.remaining === null
+        ? { text: "cap not known yet", inferred: false }
+        : full
+          ? { text: "full", inferred: false }
+          : {
+              text: `${dollars(w.remaining.value)} left`,
+              inferred: w.remaining.source === "inferred",
+            },
+    resets:
+      w.resetsAt === null
+        ? { text: "opens on next use", inferred: false }
+        : {
+            text: `resets ${whenText(new Date(w.resetsAt.value))}`,
+            inferred: w.resetsAt.source === "inferred",
+          },
+    usedPct,
+  };
+}
+
+/** An app's spend per shipped change (`core/efficiency.ts`) in a few words:
+ * `$1.37 per shipped change`, or what is true when there is no ratio. */
+export function perShippedWords(e: Efficiency | undefined): string {
+  if (e === undefined || (e.spentUsd === 0 && e.shipped === 0))
+    return "nothing spent or shipped";
+  if (e.perShippedUsd === null)
+    return `${dollars(e.spentUsd)} spent, nothing shipped`;
+  return `${dollars(e.perShippedUsd)} per shipped change`;
 }

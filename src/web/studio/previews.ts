@@ -7,13 +7,13 @@
  * deploy event refreshes (`appStateFragment`) share.
  */
 
+import { sealedScope } from "../../core/sealed.ts";
 import { terminalFor } from "../../actions/apps.ts";
 import { envPull, previewEnv } from "../../apps/data.ts";
 import {
   appsRuntime,
   type AppsRuntime,
-  type EnvStatus,
-} from "../../apps/runtime.ts";
+  type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
 import { listPulls, type Pull } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
@@ -26,15 +26,16 @@ import { fragment } from "../layout.ts";
 import {
   badge,
   btn,
+  dormantNote,
   envActions,
   envFacts,
+  envLine,
   envPhrase,
   icon,
   listCard,
   previewDataNote,
   row,
   terminalLine,
-  time,
 } from "../ui.ts";
 import { lookNow } from "../pages/looks.ts";
 import { LOG_TAIL_CAP, logBox, runVoice } from "./log.ts";
@@ -82,8 +83,17 @@ function previewBadge(env: EnvStatus | undefined): Html {
 
 /**
  * One open pull's preview, as one row: its host is the click, its state is
- * the badge, and a check still running or a check that failed says so right
- * there — the row never hides a preview that is serving.
+ * the badge, and its meta line says what the change page's Preview card
+ * says, in `envLine`'s words — commit, `live Ns after the push`, `up …`,
+ * the deploy run — then any sentence the deployment has of its own. A check
+ * still running or a check that failed says so right there; the row never
+ * hides a preview that is serving.
+ *
+ * Once there is an environment its facts carry links of their own, so the
+ * row is no longer one link — the host is, and `j`/`k` still land on the
+ * row and open it. A writer also gets the preview's Redeploy and Stop
+ * beside the badge. The meta line always starts with `#N title`: the live
+ * client (`live.ts`) keys a row's announcement on it.
  */
 function previewRow(
   base: string,
@@ -91,6 +101,7 @@ function previewRow(
   record: AppRecord,
   pull: Pull,
   env: EnvStatus | undefined,
+  writer: boolean,
 ): Html {
   const href =
     runtime === undefined
@@ -101,14 +112,29 @@ function previewRow(
       ? undefined
       : runtime.urlFor(record, previewEnv(pull.number)).replace(/^https?:\/\//, "");
   const bits: Html[] = [html`#${pull.number} ${pull.title}`];
-  if (env?.commitOid) bits.push(html`${env.commitOid.slice(0, 7)}`);
-  if (env?.since) bits.push(html`up ${time(env.since)}`);
+  if (env !== undefined) bits.push(...envLine(base, env));
   const say = env?.error ?? env?.failedDeploy?.error ?? env?.note;
   if (say) bits.push(html`${say}`);
+  const asleep = env === undefined ? null : dormantNote(env);
+  if (asleep !== null) bits.push(asleep);
   if (env !== undefined) {
     const dataNote = previewDataNote(record.previewData, pull.createdAt);
     if (dataNote !== null) bits.push(dataNote);
   }
+  const meta = bits.reduce((a, b) => html`${a} · ${b}`);
+  if (env !== undefined)
+    return row({
+      ...(href === undefined ? {} : { nav: true }),
+      lead: icon("rocket"),
+      title:
+        host === undefined || href === undefined
+          ? `#${pull.number} ${pull.title}`
+          : html`<a href="${href}" class="mono">${host}</a>`,
+      meta,
+      trail: writer
+        ? html`${previewBadge(env)} ${envActions(base, env, writer)}`
+        : previewBadge(env),
+    });
   return row({
     ...(href === undefined ? {} : { href, nav: true }),
     lead: icon("rocket"),
@@ -116,7 +142,7 @@ function previewRow(
       host === undefined
         ? `#${pull.number} ${pull.title}`
         : html`<span class="mono">${host}</span>`,
-    meta: bits.reduce((a, b) => html`${a} · ${b}`),
+    meta,
     trail: previewBadge(env),
   });
 }
@@ -133,6 +159,7 @@ function previewsPanel(
   record: AppRecord,
   openPulls: readonly Pull[],
   envs: readonly EnvStatus[],
+  writer: boolean,
 ): Html | null {
   if (openPulls.length === 0) return null;
   const byPull = new Map(
@@ -142,7 +169,7 @@ function previewsPanel(
   );
   return listCard(
     openPulls.map((p) =>
-      previewRow(base, runtime, record, p, byPull.get(p.number)),
+      previewRow(base, runtime, record, p, byPull.get(p.number), writer),
     ),
     {
       head: html`${icon("rocket")}
@@ -244,14 +271,14 @@ export function appPanels(
   const db = ctx.app.db;
   const base = repoBase(repo);
   const runtime = appsRuntime(ctx.app);
-  const envs: EnvStatus[] = runtime === undefined ? [] : runtime.status(record);
-  const previews = previewsPanel(base, runtime, record, openPulls, envs);
+  const envs: EnvStatus[] = envsFor(ctx.app, ctx.auth.user, record);
+  const writer = canSeeOwnerFacts(db, repo, ctx.auth.user);
+  const previews = previewsPanel(base, runtime, record, openPulls, envs, writer);
   const production = envs.find((e) => e.env === "production");
   const url = runtime?.urlFor(record, "production");
-  const writer = canSeeOwnerFacts(db, repo, ctx.auth.user);
   const tail = productionTail(ctx, repo, production, writer);
-  // The state in one word, and under it the same facts the App page shows —
-  // why it is not up, and the deploy whose log says the rest.
+  // The state in one word, and under it the facts — why it is not up, and
+  // the deploy whose log says the rest.
   const live = envPhrase(production);
   const head = html`<div class="page-head studio-head">
     <div class="stack stack-tight">
@@ -287,6 +314,9 @@ export function appPanels(
     <span class="spacer"></span>
     ${lookNow(ctx, repo, record)}
     ${openAppBtn(base, production)}
+    ${when(!writer, () =>
+      btn("Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
+    )}
     ${when(production, (env) => envActions(base, env, writer))}
   </div>`;
   return {
@@ -312,6 +342,7 @@ export function appStateFragment(ctx: Ctx): Response {
   const openPulls = listPulls(ctx.app.db, repo.id, {
     state: "open",
     limit: 10,
+    ...sealedScope(ctx.app.db, repo, ctx.auth.user),
   });
   const { head, previews } = appPanels(ctx, repo, record, openPulls);
   return fragment(html`<div id="app-head">${head}</div>

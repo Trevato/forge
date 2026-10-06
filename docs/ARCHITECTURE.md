@@ -146,8 +146,10 @@ curate, never implement.
 
 ## Data & state model
 
-SQLite (`bun:sqlite`), WAL mode, foreign keys on, numbered migrations tracked
-in `user_version`. The schema is deliberately small — tables earn their place:
+SQLite (`bun:sqlite`), WAL mode, foreign keys on, migrations tracked by a
+hash of their text in `schema_migration` (`kernel/migrate.ts`), so a preview
+that keeps its data across a rebase never runs one twice; `user_version`
+still counts them. The schema is deliberately small — tables earn their place:
 
 - `user` (humans and bots; bots are just users with narrower tokens)
 - `session` (cookie auth for the web)
@@ -159,6 +161,18 @@ in `user_version`. The schema is deliberately small — tables earn their place:
 - `webhook` (subscriptions + delivery state with retry bookkeeping)
 - `origin` / `origin_repo` / `origin_cursor` / `origin_app` / `oauth_flow`
   (connected accounts on other forges, and the connects in flight)
+
+**A migration only adds.** During a roll the old process keeps serving on
+the database the new one has just migrated, with the queries it was built
+with. So a migration adds — a table, a column with a default, an index, a
+row — and removing or renaming waits for the release after the last one
+that read it (add now, remove next release; a rename is two releases).
+`notAdditive` (`kernel/migrate.ts`) names a drop, a rename, a rebuild or a
+NOT NULL column without a default, and `test/schema-additive.test.ts`
+refuses one in any migration newer than the two newest releases recorded in
+`src/core/releases.json`, which the release agent bumps when it cuts one.
+An old process that restarts mid-roll refuses a database ahead of it
+(`user_version`), as it always has.
 
 State transitions use compare-and-swap (`UPDATE … WHERE state = ?`), and every
 transition writes its event row in the same transaction. On boot, a
@@ -350,6 +364,57 @@ Paid-for lessons from open-platform-ts, designed in structurally:
    reconciles anything a notification missed.
 5. Config reloads fail closed — a bad config degrades to the last good one,
    never a dead process.
+6. No request has the forge read an unbounded body (`src/http/limits.ts`).
+   The listener's ceiling (`maxRequestBodySize`) is 512 MiB, the largest
+   git push, and the runtime enforces it on a declared length only. Every
+   reader counts the stream itself, declared or chunked: 16 MiB for any JSON
+   or form body, 64 KiB for anything a stranger may send (signing up or in,
+   a report, a client registration), 16 MiB for a git fetch's negotiation
+   (1 MiB as sent when compressed, inflated with its own ceiling), 512 MiB
+   for a push's pack. Past a cap the reader stops keeping bytes and drains
+   at most 1 MiB more, so the connection stays framed and the next request
+   on it is read as itself; past that the connection is closed once
+   answered. A body no route read, of no declared length, is treated the
+   same. A cancelled read is never used: it leaves the rest of the body on
+   the connection to be taken for the next request.
+
+## Two processes at once
+
+A roll runs the new forge beside the old one on the same data directory for
+a while (#875). That is safe because of a contract both sides keep.
+
+**The old process drains.** On SIGTERM (`main.ts`, `shutdown`) it says it is
+not ready, so the platform sends new connections to the new process; it
+ends every open event stream with a resume hint (`retry: 1000`, then
+`event: drain`, `http/sse.ts`), so each browser reconnects — to the new
+process — from the last id it saw; the crew stops taking runs and lets the
+ones it holds finish and land (`crew.stop({ drain: true })`, bounded); a
+check in flight is cut and handed back to the queue for the new process;
+its app processes stop (the new process already runs its own); SSH sessions
+are kept until they leave. Then it exits.
+
+**Anything either process may start, it starts once.** Every place two
+processes could both act is a compare-and-set or a lease, never a read
+followed by a write:
+
+| what | how |
+|---|---|
+| a queued run becomes running (crew, checks) | `claimRun`: `UPDATE … WHERE state = 'queued'` |
+| the crew is queued on an issue | `queueAgentRun`: the look and the insert in one write transaction |
+| a check is queued for a commit | the checks service's `request`: the same |
+| a run a dead process held | leases (`runs/lease.ts`): only a lapsed lease is a death |
+| a webhook delivery is sent | `deliverDue` claims each row (a lease on `next_try_at`) before sending |
+| the day's prompt is fetched | `claimPromptRun`: `last_ran_at` moves only if it has not run today |
+| the index is repaired from git | `core/reconcile.ts` derives; running it twice is running it once |
+
+App environments are each process's own: each runs, sleeps and wakes its
+own app processes over the shared app data (SQLite in WAL, like the forge's
+own, with a busy timeout on every connection). `test/overlap.test.ts` runs
+two real processes on one data directory and holds each shared write path
+to it; the rehearsal on a copy (#873) is the minute-long proof.
+
+**A migration only adds** (see "Data & state model"), so the old process can
+keep serving on the database the new one migrated.
 
 ## The diff viewer
 
@@ -485,6 +550,63 @@ confined to the clone, permissions passed as settings, no prompts, a spend
 budget, a deadline. Containment is the forge's, not the agent's; the agent
 is trusted to work, and the forge is built so that trust costs at most one
 run.
+
+## Where a child body runs
+
+`spawn/placement.ts` is the seam: spawn builds a `SpawnPlan` and hands it to
+a `Placement` — `place(plan) -> { url, bodyId }` and `retire(bodyId)` — and
+never learns where the child runs. Both return a `Result`; refusals carry a
+reason (`children`, `depth`, `exists`, `unknown`). `retire` is idempotent.
+
+The one implementation today is `hostedPlacement`: the child is an app inside
+the parent at `https://<name>.<host>`, with no SSH and one agent at a time.
+Limits: `MAX_CHILDREN` (5) hosted children per forge and `MAX_DEPTH` (2)
+levels of nesting, so a child cannot spawn without bound. Bodies are held
+behind a `BodyStore`; the default is in memory, and persisting it under
+`FORGE_APP_DATA` is left to the wiring that calls spawn.
+
+An external placement (Cloudflare Worker + container, Fly, metal — chosen by
+spike #339) implements the same interface and must provide:
+
+- **create**: `place`, returning the child's URL and a stable `bodyId`;
+  enforcing the same child and depth limits, or stricter.
+- **health**: a way to tell whether a body is up (to be added to the
+  interface when the first external module needs it).
+- **retire**: tear the body down and release everything it held.
+- **bucket and credential per child**: its own storage bucket and its own
+  credential, never shared with the parent or siblings, created in `place`
+  and revoked in `retire`; credentials never appear in a plan or a log.
+
+## The forge's standing
+
+`GET /api/v1/health` answers anyone with `{ ok, version, commit, draining,
+rollout: { state: ok|blocked|held, reason }, incidents, stale, checkedAt }`.
+The MCP `health` tool gives the same answer (`actions/health.ts`).
+
+`version` and `commit` are what is running, as the build stamped it
+(`kernel/version.ts`), and both are on the public route: a monitor with no
+account reads them, as it reads the rollout. The commit of a public
+project is public already; a private forge that must not say which commit
+it runs keeps the route behind its edge, as it does the rest. The stamp: the release workflow passes the tag it is building
+to the image as `VERSION`, the `Dockerfile` turns `VERSION` and `COMMIT`
+into `FORGE_VERSION` and `FORGE_COMMIT`, and the process reads them back.
+No file in the repository carries the number; `package.json` says `0.0.0`,
+like the chart's `appVersion`. A forge run from source says `dev`, and one
+that another forge runs as an app reports the commit it was started from.
+A site admin reads the same line at the foot of every page, and an MCP
+client in the server's `serverInfo`.
+
+The rest is the
+platform's word, read from the read-only `forge-guard` ConfigMap mounted at
+`FORGE_GUARD_DIR` (default `/etc/forge-guard`, `kernel/guard.ts`): a `stuck`
+incident blocks, `held` holds, a view older than ten minutes is stale. A
+site admin, by session or any token scope, also gets `{ needs, disk, memory,
+queue, stuck, apps, at }` (`kernel/vitals.ts`), and the board shows
+`rollout blocked: <reason>` in its status line. `needs` is one sentence per thing off: disk under
+10% free on the `FORGE_DATA` volume, a run running with a lapsed lease (or
+past six hours), a queue whose oldest run has waited over thirty minutes.
+It is a fixed handful of queries however many runs and apps exist, measured
+per request and never cached. `/healthz` stays the orchestrator's answer.
 
 ## Search, and where semantic search would go
 

@@ -10,6 +10,7 @@ import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { reservedName } from "./reserved.ts";
 import { getUserById, getUserByName, type User } from "./users.ts";
 
 export type Permission = "read" | "write" | "admin";
@@ -38,17 +39,26 @@ interface TeamRow {
 
 export const OWNERS_TEAM = "Owners";
 
-export type CreateOrgError = "invalid_name" | "name_taken";
+export type CreateOrgError = "invalid_name" | "name_taken" | "name_reserved";
 
-/** Create an org and its Owners team, with `founderId` as the first owner. */
+/**
+ * Create an org and its Owners team, with `founderId` as the first owner.
+ * An org shares the account namespace, so it is held to the reserved-name
+ * rule here, where orgs are made (#720); `allowReserved` is a seed's named
+ * opt-out (a spawned forge's own org), never a default.
+ */
 export function createOrg(
   db: Database,
   name: string,
   founderId: string,
+  options: { allowReserved?: boolean } = {},
 ): Result<User, CreateOrgError> {
   if (!isSafeName(name)) return err("invalid_name");
   // Users and orgs share one namespace, so any collision is a conflict.
   if (getUserByName(db, name)) return err("name_taken");
+  // Taken is said first; only a name nobody holds can be a reserved one.
+  if (options.allowReserved !== true && reservedName(db, name) !== undefined)
+    return err("name_reserved");
 
   const orgId = id();
   const create = db.transaction(() => {
@@ -157,6 +167,9 @@ export function addTeamMember(
 ): boolean {
   const user = getUserById(db, userId);
   if (!user || user.kind === "org") return false; // can't nest orgs
+  // An agent is never admin (CLAUDE.md, invariant 10): no team that confers
+  // it takes one — the action says why (`agent_cannot_own`).
+  if (user.kind === "agent" && team.permission === "admin") return false;
   return (
     db
       .query(
@@ -166,20 +179,89 @@ export function addTeamMember(
   );
 }
 
-/** Remove a member, refusing to empty the Owners team (an org needs an admin). */
+/**
+ * The people who can administer an organization now: on its Owners team,
+ * never an agent, neither removed nor suspended. An organization must
+ * always keep one.
+ */
+export function personOwners(db: Database, orgId: string): string[] {
+  return (
+    db
+      .query<{ user_id: string }, [string, string]>(
+        `SELECT m.user_id FROM team_member m
+           JOIN team t ON t.id = m.team_id
+           JOIN user u ON u.id = m.user_id
+          WHERE t.org_id = ?1 AND t.name = ?2 AND u.kind = 'user'
+            AND u.is_agent = 0 AND u.removed_at IS NULL
+            AND u.suspended_at IS NULL`,
+      )
+      .all(orgId, OWNERS_TEAM)
+  ).map((r) => r.user_id);
+}
+
+/**
+ * Whether taking `user` off an organization's owners would leave it with no
+ * active person to administer it. Taking an agent off never does.
+ */
+export function isLastOwner(db: Database, orgId: string, user: User): boolean {
+  if (user.kind !== "user") return false;
+  const onOwners =
+    db
+      .query<{ n: number }, [string, string, string]>(
+        `SELECT 1 AS n FROM team_member m JOIN team t ON t.id = m.team_id
+          WHERE t.org_id = ?1 AND t.name = ?2 AND m.user_id = ?3`,
+      )
+      .get(orgId, OWNERS_TEAM, user.id) !== null;
+  return onOwners && personOwners(db, orgId).every((id) => id === user.id);
+}
+
+/**
+ * Organizations no active person owns: every owner left is suspended or
+ * removed. They stay as they are for their members; the forge's owner is
+ * told (`web/pages/accounts.ts`).
+ */
+export function ownerlessOrgs(db: Database): User[] {
+  return db
+    .query<{ id: string }, []>(
+      "SELECT id FROM user WHERE kind = 'org' AND removed_at IS NULL ORDER BY username",
+    )
+    .all()
+    .filter((r) => personOwners(db, r.id).length === 0)
+    .map((r) => getUserById(db, r.id))
+    .filter((u): u is User => u !== undefined);
+}
+
+/** The organizations `userId` is the last active person owning: removing them would orphan these. */
+export function soleOwnedOrgs(db: Database, userId: string): User[] {
+  const user = getUserById(db, userId);
+  if (user === undefined) return [];
+  return (
+    db
+      .query<{ org_id: string }, [string, string]>(
+        `SELECT DISTINCT t.org_id FROM team_member m JOIN team t ON t.id = m.team_id
+          WHERE m.user_id = ?1 AND t.name = ?2`,
+      )
+      .all(userId, OWNERS_TEAM)
+  )
+    .filter((r) => isLastOwner(db, r.org_id, user))
+    .map((r) => getUserById(db, r.org_id))
+    .filter((u): u is User => u !== undefined);
+}
+
+/**
+ * Remove a member, refusing to take the last person off the Owners team: an
+ * organization needs someone who can administer it, and an agent never can.
+ */
 export function removeTeamMember(
   db: Database,
   team: Team,
   userId: string,
 ): boolean {
   if (team.name === OWNERS_TEAM) {
-    const count = db
-      .query<
-        { n: number },
-        [string]
-      >("SELECT COUNT(*) AS n FROM team_member WHERE team_id = ?1")
-      .get(team.id);
-    if ((count?.n ?? 0) <= 1) return false;
+    // Taking an agent off is always allowed; taking off the last active
+    // person is not.
+    const user = getUserById(db, userId);
+    if (user !== undefined && isLastOwner(db, team.orgId, user)) return false;
   }
   return (
     db
@@ -246,6 +328,31 @@ export function orgAccess(
   for (const row of rows)
     if (rank[row.permission] > rank[best]) best = row.permission;
   return best;
+}
+
+/**
+ * `orgAccess` for every org the user is on a team in, in one query: the
+ * lists that must ask "may this viewer write here" of many org-owned repos
+ * at once read this map instead of calling `orgAccess` per row. Site admins
+ * are the caller's to short-circuit; an org missing from the map is "none".
+ */
+export function orgAccessByOrg(
+  db: Database,
+  user: User | undefined,
+): Map<string, Access> {
+  const out = new Map<string, Access>();
+  if (!user) return out;
+  const rows = db
+    .query<{ org_id: string; permission: Permission }, [string]>(
+      `SELECT team.org_id, team.permission FROM team
+       JOIN team_member ON team_member.team_id = team.id
+       WHERE team_member.user_id = ?1`,
+    )
+    .all(user.id);
+  for (const row of rows)
+    if (rank[row.permission] > rank[out.get(row.org_id) ?? "none"])
+      out.set(row.org_id, row.permission);
+  return out;
 }
 
 export function isOrgMember(

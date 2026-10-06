@@ -416,7 +416,7 @@ describe("prompts from Instagram", () => {
       // The test drives the clock; the timer must never run on its own.
       everyMs: 3_600_000,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -424,7 +424,7 @@ describe("prompts from Instagram", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -523,6 +523,12 @@ describe("prompts from Instagram", () => {
     });
     expect("token" in item).toBe(false);
     sourceId = item.id;
+    // The API stamps the real date; the story is told on the test's clock.
+    app.db
+      .query(
+        "UPDATE prompt_source SET token_refreshed_at = ?2, created_at = ?2 WHERE id = ?1",
+      )
+      .run(sourceId, "2026-09-28T14:00:00.000Z");
 
     // Sealed in the row, opened only by its own id, absent from every listing.
     const row = app.db

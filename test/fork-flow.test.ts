@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { listEvents } from "../src/core/events.ts";
+import { firstFetchRetry } from "../src/origins/mirror.ts";
 import { settled } from "../src/origins/jobs.ts";
 import {
   mirrorAndWait,
@@ -14,6 +14,7 @@ import {
   type FakeForge,
   type FakeState,
 } from "./fake-origin.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 /**
  * The fork flow: grab a repository you cannot push to, branch, edit, and
@@ -102,7 +103,7 @@ describe("the fork flow", () => {
       await fetch(`${server.url}/api/v1/tokens`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify({ adminConfirm: true,
           username,
           password: PASSWORD,
           name: "t",
@@ -142,7 +143,6 @@ describe("the fork flow", () => {
   };
 
   const connect = async (fake: FakeForge, kind?: "github"): Promise<string> => {
-    resetConnectLimit();
     const connected = await api("/api/v1/user/origins", {
       method: "POST",
       body: JSON.stringify({
@@ -164,6 +164,7 @@ describe("the fork flow", () => {
     originServers = await serve(originApp);
     await mkAccount(originServers, UPSTREAM_OWNER);
     originToken = await mkAccount(originServers, ORIGIN_LOGIN);
+    proveAll(originApp);
 
     await seedUpstream("gears");
     await seedUpstream("widgets");
@@ -230,6 +231,7 @@ describe("the fork flow", () => {
     base = servers.url;
     aliceToken = await mkAccount(servers, "alice");
     bobToken = await mkAccount(servers, "bob");
+    proveAll(app);
 
     forgejoOrigin = await connect(forgejo);
     githubOrigin = await connect(github, "github");
@@ -788,17 +790,36 @@ describe("the fork flow", () => {
       push: false,
       admin: false,
     });
-    const started = await api(`/api/v1/user/origins/${forgejoOrigin}/mirror`, {
-      method: "POST",
-      body: JSON.stringify({ fullName: `${UPSTREAM_OWNER}/late` }),
-    });
-    expect(started.status).toBe(202);
-    // Seeded well inside the first retry's own wait (`firstFetchRetry.ms`,
-    // `src/origins/mirror.ts`, 2s by default): the immediate first fetch
-    // still finds nothing and fails, same as it would on a slower machine,
-    // but the retry has margin to spare rather than racing it.
-    setTimeout(() => void seedUpstream("late"), 300);
-    const job = await mirrorAndWait(started);
+    // The first fetch must find nothing and the retry must find the whole
+    // repository. Making it is two requests (create, then commit), so a
+    // retry on a timer can land between them and fetch it empty, and a
+    // test that polls for "the first fetch has failed" can miss the
+    // moment (#541). Instead the retry's wait *is* the seeding: the first
+    // fetch runs before anything exists, and the second only once both
+    // requests have answered.
+    const found = { ...firstFetchRetry };
+    let seeded = 0;
+    firstFetchRetry.ms = [0];
+    firstFetchRetry.wait = async () => {
+      seeded++;
+      await seedUpstream("late");
+    };
+    let job: Awaited<ReturnType<typeof mirrorAndWait>>;
+    try {
+      const started = await api(
+        `/api/v1/user/origins/${forgejoOrigin}/mirror`,
+        {
+          method: "POST",
+          body: JSON.stringify({ fullName: `${UPSTREAM_OWNER}/late` }),
+        },
+      );
+      expect(started.status).toBe(202);
+      job = await mirrorAndWait(started);
+    } finally {
+      Object.assign(firstFetchRetry, found);
+    }
+    // Tried twice: once before the repository existed, once after.
+    expect(seeded).toBe(1);
     expect(job?.stage).toBe("done");
     expect(job?.repo?.name).toBe("late");
     const branches = await read<{ name: string }[]>(

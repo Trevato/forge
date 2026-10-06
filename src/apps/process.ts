@@ -13,9 +13,21 @@
 import type { AppManifest } from "./manifest.ts";
 import type { EnvName } from "./data.ts";
 import { envPull } from "./data.ts";
+import { forgeApiUrl } from "./token.ts";
 import { isReservedAppEnvName } from "../core/app_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { stripForgeDirs } from "../runs/paths.ts";
+import { spellings, stripForgeDirs } from "../runs/paths.ts";
+import { seconds } from "./timing.ts";
+import {
+  commandPid,
+  killTree,
+  openCell,
+  resolveLimits,
+  signalTree,
+  STEP_HOSTS,
+  type Cell,
+  type CellSpec,
+} from "./contain.ts";
 
 export interface ProcessHandle {
   readonly pid: number;
@@ -40,14 +52,34 @@ export interface StartInput {
   readonly ssh?: string | undefined;
   /** The operator's variables for this app (`core/app_env.ts`). */
   readonly vars?: Record<string, string> | undefined;
+  /** The process's read-only credential into the forge (`apps/token.ts`). */
+  readonly forgeToken?: string | undefined;
   readonly log: (line: string) => void;
   /** Aborting cancels whatever step is in flight and fails the start. */
   readonly signal: AbortSignal;
+  /**
+   * Where this environment's processes are held (`apps/contain.ts`):
+   * what to hide and where its home is. Unset where the host cannot hold a
+   * cell, and the processes run as plain children.
+   */
+  readonly cell?: CellBase | undefined;
   /**
    * The checkout was installed and tested when it was first built; a warm
    * start — the forge coming back, or an environment waking — only runs it.
    */
   readonly warm?: boolean | undefined;
+}
+
+/** What a caller knows about a cell; the rest comes from the manifest. */
+export interface CellBase {
+  /** The forge's data directory and home: empty inside. */
+  readonly hide: readonly string[];
+  /** The environment's own home: writable, kept across deploys. */
+  readonly home: string;
+  /** Told of an undeclared host reached while egress is only reported. */
+  readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
+  /** The egress mode, as the forge's setting says at this start. */
+  readonly egressMode?: "enforce" | "report" | undefined;
 }
 
 export type StartStage = "install" | "test" | "start" | "ready";
@@ -106,6 +138,8 @@ export function appEnv(input: {
   ssh?: string | undefined;
   /** The operator's variables: an admin password, an API key. */
   vars?: Record<string, string> | undefined;
+  /** A read-only forge token for this process (`apps/token.ts`). */
+  forgeToken?: string | undefined;
 }): Record<string, string> {
   const pull = envPull(input.env);
   // The operator's variables go underneath everything the forge names, so
@@ -123,7 +157,13 @@ export function appEnv(input: {
       FORGE_APP_URL: input.url,
       FORGE_APP_COMMIT: input.commitOid,
       FORGE_URL: input.forgeUrl,
+      FORGE_API_URL: forgeApiUrl(input.forgeUrl),
       FORGE_APP_IDENTITY_KEY: input.identityKey,
+      // Read-only, the owner's, gone when this process is: what a page
+      // inside the app reads the forge with. Never sent to a browser.
+      ...(input.forgeToken === undefined
+        ? {}
+        : { FORGE_TOKEN: input.forgeToken }),
       ...(pull === undefined ? {} : { FORGE_APP_PULL: String(pull) }),
       // Printed verbatim by an app that tells people how to reach its
       // terminal; a guessed form (`you@app.host`) reaches the forge instead.
@@ -200,19 +240,24 @@ export async function runStep(
     log: (line: string) => void;
     signal: AbortSignal;
     timeoutMs?: number;
+    /** Run inside a cell (`apps/contain.ts`) instead of as a plain child. */
+    cell?: CellSpec | undefined;
   },
 ): Promise<Result<void, string>> {
   options.log(`$ ${command}`);
-  const proc = Bun.spawn(["/bin/sh", "-c", command], {
+  const cell: Cell | undefined =
+    options.cell === undefined ? undefined : openCell(options.cell, options.log);
+  const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {
     cwd: options.cwd,
-    env: options.env,
+    env: cell?.env(options.env) ?? options.env,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
   const recent: string[] = [];
+  const dirs = spellings([options.cwd]);
   const scrub = (raw: string): void => {
-    const line = stripForgeDirs([options.cwd], raw);
+    const line = stripForgeDirs(dirs, raw);
     recent.push(line);
     if (recent.length > TAIL_LINES) recent.shift();
     options.log(line);
@@ -235,6 +280,11 @@ export async function runStep(
   };
   if (options.signal.aborted) onAbort();
   else options.signal.addEventListener("abort", onAbort, { once: true });
+  cell?.watch(proc.pid, (breach) => {
+    why = `${name} stopped: it ${breach}`;
+    killTree(proc.pid);
+    stopReading.abort();
+  });
   try {
     const [, , code] = await Promise.all([
       pump(proc.stdout, scrub, stopReading.signal),
@@ -250,7 +300,25 @@ export async function runStep(
   } finally {
     clearTimeout(timer);
     options.signal.removeEventListener("abort", onAbort);
+    cell?.close();
   }
+}
+
+/** The cell a step of this deploy runs in: the checkout and the home, the registry and what the app declared. */
+function stepCell(input: StartInput): CellSpec | undefined {
+  const base = input.cell;
+  if (base === undefined) return undefined;
+  return {
+    dir: input.dir,
+    writable: [],
+    home: base.home,
+    hide: base.hide,
+    egress: [...STEP_HOSTS, ...(input.manifest.egress ?? [])],
+    reach: [input.forgeUrl],
+    limits: resolveLimits("step", undefined),
+    onUndeclared: base.onUndeclared,
+    egressMode: base.egressMode,
+  };
 }
 
 /**
@@ -275,6 +343,7 @@ export async function startProcess(
       env: stepEnv,
       log,
       signal: input.signal,
+      cell: stepCell(input),
     });
     if (!installed.ok)
       return err({ stage: "install", message: installed.error });
@@ -299,13 +368,33 @@ export async function startProcess(
           env: stepEnv,
           log,
           signal: testAbort.signal,
+          cell: stepCell(input),
         });
 
   const port = freePort();
   log(`$ ${manifest.run}  (PORT=${port})`);
-  const proc = Bun.spawn(["/bin/sh", "-c", `exec ${manifest.run}`], {
-    cwd: input.dir,
-    env: appEnv({
+  const spawnedAt = Date.now();
+  let firstOutputAt: number | undefined;
+  const cell: Cell | undefined =
+    input.cell === undefined
+      ? undefined
+      : openCell(
+          {
+            dir: input.dir,
+            writable: [input.dataDir],
+            home: input.cell.home,
+            hide: input.cell.hide,
+            egress: manifest.egress ?? [],
+            reach: [input.forgeUrl],
+            limits: resolveLimits("app", manifest.limits),
+            listen: port,
+            onUndeclared: input.cell.onUndeclared,
+            egressMode: input.cell.egressMode,
+          },
+          log,
+        );
+  const command = `exec ${manifest.run}`;
+  const env = appEnv({
       port,
       dataDir: input.dataDir,
       env: input.env,
@@ -315,15 +404,24 @@ export async function startProcess(
       identityKey: input.identityKey,
       ssh: input.ssh,
       vars: input.vars,
-    }),
+      forgeToken: input.forgeToken,
+  });
+  const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {
+    cwd: input.dir,
+    env: cell?.env(env) ?? env,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
+  // The cell's sockets and watch end with the process, however it ends.
+  void proc.exited.then(() => cell?.close());
+  cell?.watch(proc.pid, () => killTree(proc.pid));
   // Output is pumped for the life of the process, not just the start.
   const recent: string[] = [];
+  const dirs = spellings([input.dir, input.dataDir]);
   const remember = (raw: string): void => {
-    const line = stripForgeDirs([input.dir, input.dataDir], raw);
+    firstOutputAt ??= Date.now();
+    const line = stripForgeDirs(dirs, raw);
     recent.push(line);
     if (recent.length > 20) recent.shift();
     log(line);
@@ -331,19 +429,30 @@ export async function startProcess(
   void pump(proc.stdout, remember);
   void pump(proc.stderr, remember);
 
+  let inner: number | undefined;
   const handle: ProcessHandle = {
-    pid: proc.pid,
+    // In a cell, the app's own pid rather than bubblewrap's: what has
+    // children when the app is busy (`apps/busy.ts`).
+    get pid() {
+      if (cell === undefined) return proc.pid;
+      inner ??= commandPid(proc.pid);
+      return inner ?? proc.pid;
+    },
     port,
     exited: proc.exited,
     stop: async () => {
       if (proc.exitCode !== null || proc.signalCode !== null) return;
-      proc.kill("SIGTERM");
+      // In a cell the pid is bubblewrap's, which passes no signal on: the
+      // app itself is asked, so it shuts down the way it would anywhere.
+      if (cell === undefined) proc.kill("SIGTERM");
+      else signalTree(proc.pid, "SIGTERM");
       const gone = await Promise.race([
         proc.exited.then(() => true),
         Bun.sleep(STOP_GRACE_MS).then(() => false),
       ]);
       if (!gone) {
-        proc.kill("SIGKILL");
+        if (cell === undefined) proc.kill("SIGKILL");
+        else killTree(proc.pid);
         await proc.exited;
       }
     },
@@ -369,6 +478,12 @@ export async function startProcess(
     });
   }
   log(`ready: ${input.url}`);
+  // How the process's own share of the start divides: the time until it
+  // first said anything (the runtime loading the app, the app's own boot
+  // work) and the time until its health path answered.
+  log(
+    `timing: answered ${seconds(Date.now() - spawnedAt)} after the process was started${firstOutputAt === undefined ? "" : ` — its first output after ${seconds(firstOutputAt - spawnedAt)}`}`,
+  );
   return ok({ handle, tested });
 }
 

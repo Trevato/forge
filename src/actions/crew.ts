@@ -6,6 +6,7 @@
  * handled where users are.
  */
 
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
   addCrew as insertCrew,
@@ -13,6 +14,7 @@ import {
   deleteAgent as removeAgent,
   getAgent,
   getAgentByName,
+  isCrew,
   listAgents,
   listCrew as queryCrew,
   listCrewRoles,
@@ -20,18 +22,20 @@ import {
   updateAgent as patchAgent,
   type Agent,
   type AgentPatch,
+  type CrewRole,
   BRIEF_MAX,
   BUDGET_MAX_USD,
   MODEL_MAX,
 } from "../core/agents.ts";
-import type { Issue, TitleError } from "../core/issues.ts";
-import { listRuns } from "../core/runs.ts";
-import type { Repo } from "../core/repos.ts";
-import { createUser, type CreateUserError, type User } from "../core/users.ts";
-import { routeIssue, type Routed } from "../crew/route.ts";
+import { canWrite, type Repo } from "../core/repos.ts";
+import {
+  createUser,
+  getUserByName,
+  type CreateUserError,
+  type User,
+} from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireReader, requireRepoAdmin, requireUser } from "./access.ts";
-import { assignIssue, openIssue, type MirrorError } from "./issues.ts";
 
 export interface CreateAgentInput {
   username: string;
@@ -187,17 +191,64 @@ export function listCrew(
   return ok(queryCrew(app.db, repo.id));
 }
 
+/** One crew member as a viewer may see it: always who and what they do. */
+export interface CrewMember {
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: CrewRole;
+  /**
+   * The owner's configuration of the agent (#946): its brief, model and
+   * budget. Only the repository's writers and its own crew see it; a reader
+   * or a stranger sees the crew's names and roles.
+   */
+  readonly config?: { model: string; brief: string; budgetUsd: number };
+}
+
+/** The crew of a repository, shown as `actor` may see it. */
+export function crewAsSeen(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): Result<CrewMember[], "not_found"> {
+  const reader = requireReader(app, actor, repo);
+  if (!reader.ok) return reader;
+  const configured =
+    actor !== undefined &&
+    (canWrite(app.db, repo, actor) ||
+      (actor.kind === "agent" && isCrew(app.db, repo.id, actor.id)));
+  return ok(
+    listCrewRoles(app.db, repo.id).map(({ agent, role }) => ({
+      username: agent.user.username,
+      displayName: agent.user.displayName,
+      role,
+      ...(configured
+        ? {
+            config: {
+              model: agent.model,
+              brief: agent.brief,
+              budgetUsd: agent.budgetUsd,
+            },
+          }
+        : {}),
+    })),
+  );
+}
+
 /** Put an agent on the crew: it may now read and write this repository. */
 export function addToCrew(
   app: App,
   actor: User | undefined,
   repo: Repo,
   username: string,
-): Result<Agent, "not_found" | "no_such_agent"> {
+): Result<Agent, "not_found" | "no_such_agent" | "not_an_agent" | "unverified"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
+  const proven = requireVerified(app, admin.value);
+  if (!proven.ok) return proven;
   const agent = getAgentByName(app.db, username);
-  if (!agent) return err("no_such_agent");
+  // A person is never on a crew: said plainly, before the database would.
+  if (!agent)
+    return err(getUserByName(app.db, username) ? "not_an_agent" : "no_such_agent");
   if (insertCrew(app.db, repo.id, agent.user.id, admin.value.id)) {
     app.bus.append({
       kind: "crew.added",
@@ -228,46 +279,6 @@ export function removeFromCrew(
     });
   }
   return ok();
-}
-
-export interface TellCrewResult {
-  readonly issue: Issue;
-  /** Who took it, when somebody on the crew builds here. */
-  readonly routed: Routed | undefined;
-}
-
-/**
- * A sentence becomes work: open it as an issue, and hand it to whichever
- * builder on the crew `routeIssue` picks. The one call behind the web's
- * "Tell the crew" box and the terminal's — a repository with nobody on its
- * crew still opens the issue, just with nobody to route it to.
- */
-export async function tellCrew(
-  app: App,
-  actor: User | undefined,
-  repo: Repo,
-  text: string,
-): Promise<
-  Result<TellCrewResult, "not_found" | "unauthorized" | TitleError | "body_too_long" | MirrorError>
-> {
-  const trimmed = text.trim();
-  const firstLine = trimmed.split(/\n/)[0]!.trim();
-  const title =
-    firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;
-  const opened = openIssue(app, actor, repo, {
-    title,
-    body: trimmed === firstLine ? "" : trimmed,
-  });
-  if (!opened.ok) return opened;
-  const crew = listCrewRoles(app.db, repo.id);
-  const inFlight = new Map<string, number>();
-  for (const r of listRuns(app.db, repo.id, { kind: "agent", limit: 50 }))
-    if ((r.state === "running" || r.state === "queued") && r.actorId !== null)
-      inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
-  const routed = await routeIssue(app, repo, opened.value, crew, inFlight);
-  if (routed === undefined) return ok({ issue: opened.value, routed: undefined });
-  assignIssue(app, actor, repo, opened.value, routed.builder.user);
-  return ok({ issue: opened.value, routed });
 }
 
 export { getAgent };

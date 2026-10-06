@@ -67,7 +67,7 @@ describe("the forge over MCP", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -75,7 +75,7 @@ describe("the forge over MCP", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -155,15 +155,46 @@ describe("the forge over MCP", () => {
     const names = listed.body.result.tools.map((t: { name: string }) => t.name);
     expect(names).toEqual([
       "apps",
+      "here",
       "tell",
+      "share",
       "say",
+      "edit",
+      "asks",
+      "asks_act",
+      "seal",
       "now",
       "stop",
+      "health",
       "audit",
+      "outsiders",
       "probe",
       "following",
+      "spawn",
+      "forges",
+      "claim_link",
       "take_updates",
       "converge",
+      "next_steps",
+      "asked",
+      "app_members",
+      "explore",
+      "feed",
+      "make_it_yours",
+      "front_page",
+      "map",
+      "milestones",
+      "watch",
+      "limb",
+      "returns",
+      "spend",
+      "usage",
+      "link",
+      "unlink",
+      "hold",
+      "plan",
+      "capacity",
+      "report",
     ]);
     const byName = new Map<string, any>(
       listed.body.result.tools.map((t: any) => [t.name, t]),
@@ -200,13 +231,6 @@ describe("the forge over MCP", () => {
     expect(
       (await tool(bobRw, "audit", { repo: "alice/game" })).error,
     ).toContain("not_found");
-    // Knocking needs write access, and an app with a contract to compare with.
-    expect((await tool(ro, "probe", { repo: "alice/game" })).error).toContain(
-      "forbidden",
-    );
-    expect((await tool(rw, "probe", { repo: "alice/game" })).error).toMatch(
-      /not_an_app|no_contract/,
-    );
   });
 
   test("a read token may read and not act", async () => {
@@ -338,7 +362,7 @@ describe("the forge over MCP", () => {
     expect(
       (await tool(ro, "following", { repo: "bob/open" })).value.state,
     ).toBe("diverged");
-    const carol = await createUser(app.db, {
+    const carol = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -351,6 +375,153 @@ describe("the forge over MCP", () => {
     expect(
       (await tool(bobRw, "converge", { repo: "bob/open" })).value.kind,
     ).toBe("no_crew");
+  });
+
+  test("probe only reads, yet needs the access the page needs", async () => {
+    const listed = await call(ro, "tools/list");
+    const hints = Object.fromEntries(
+      listed.body.result.tools.map((t: any) => [
+        t.name,
+        t.annotations.readOnlyHint,
+      ]),
+    );
+    expect(hints["probe"]).toBe(true);
+    expect(hints["stop"]).toBe(false);
+    // A repo the token may read, with nothing to compare with: it gets as far
+    // as the app and its contract, read token or not.
+    for (const token of [rw, ro])
+      expect(
+        (await tool(token, "probe", { repo: "alice/game" })).error,
+      ).toMatch(/not_an_app|no_contract/);
+    // One it may not read is no such repository.
+    expect(
+      (await tool(bobRw, "probe", { repo: "alice/game" })).error,
+    ).toContain("not_found");
+    expect(
+      (await tool(rw, "probe", { repo: "alice/nothing" })).error,
+    ).toContain("not_found");
+  });
+
+  test("stop takes a run id from now, and refuses a stale or foreign one", async () => {
+    const run = createRun(app.db, {
+      repoId: game.id,
+      kind: "agent",
+      actorId: alice.id,
+      reason: "assigned",
+    });
+    expect(
+      (await tool(ro, "stop", { repo: "alice/game", run: run.id })).error,
+    ).toContain("forbidden");
+    expect(
+      (await tool(bobRw, "stop", { repo: "alice/game", run: run.id })).error,
+    ).toContain("not_found");
+    expect(
+      (await tool(rw, "stop", { repo: "alice/game", run: "nosuchrun" })).error,
+    ).toContain("not_found");
+    const stopped = await tool(rw, "stop", { repo: "alice/game", run: run.id });
+    expect(stopped.value.says).toBe(`Stopped run ${run.id}.`);
+    const stale = await tool(rw, "stop", { repo: "alice/game", run: run.id });
+    expect(stale.error).toContain("finished");
+    expect(stale.error).toContain("already ended");
+  });
+
+  test("map, link and unlink are the plan's own actions", async () => {
+    const a = (await tool(rw, "tell", { repo: "alice/game", text: "first" }))
+      .value.issue;
+    const b = (await tool(rw, "tell", { repo: "alice/game", text: "second" }))
+      .value.issue;
+    const listed = await call(rw, "tools/list");
+    const hints = Object.fromEntries(
+      listed.body.result.tools.map((t: any) => [
+        t.name,
+        t.annotations.readOnlyHint,
+      ]),
+    );
+    expect([hints.map, hints.link, hints.unlink]).toEqual([true, false, false]);
+
+    expect(
+      (await tool(rw, "link", { app: "alice/game", issue: b, blockedBy: a }))
+        .value.blockedBy,
+    ).toBe(a);
+    const map = (await tool(ro, "map", { app: "alice/game" })).value;
+    expect(map.ready.map((i: any) => i.number)).toContain(a);
+    expect(map.blockedOn.map((i: any) => i.number)).toContain(a);
+    expect(map.issues.find((i: any) => i.number === b).word).toBe("blocked");
+    expect(map.edges).toContainEqual({ issue: b, blockedBy: a });
+
+    // The API's words, for a loop, a stranger issue, and a read token.
+    expect(
+      (await tool(rw, "link", { app: "alice/game", issue: a, blockedBy: b }))
+        .error,
+    ).toBe("cycle: that would make a loop");
+    expect(
+      (await tool(rw, "link", { app: "alice/game", issue: a, blockedBy: 999 }))
+        .error,
+    ).toBe("no_such_issue: no issue #999");
+    expect(
+      (await tool(ro, "link", { app: "alice/game", issue: a, blockedBy: b }))
+        .error,
+    ).toContain("forbidden");
+    // A private app is no such app to someone who cannot read it.
+    expect((await tool(bobRw, "map", { app: "alice/game" })).error).toContain(
+      "not_found",
+    );
+    expect(
+      (await tool(bobRw, "link", { app: "alice/game", issue: b, blockedBy: a }))
+        .error,
+    ).toContain("not_found");
+
+    await tool(rw, "unlink", { app: "alice/game", issue: b, blockedBy: a });
+    const after = (await tool(ro, "map", { app: "alice/game" })).value;
+    expect(after.edges).not.toContainEqual({ issue: b, blockedBy: a });
+    expect(after.ready.map((i: any) => i.number)).toContain(b);
+  });
+
+  test("plan opens linked issues all or none", async () => {
+    const issues = [
+      { key: "a", title: "First" },
+      { key: "b", title: "Second", body: "two" },
+      { key: "c", title: "Third", blockedBy: ["a", "b"] },
+    ];
+    const done = (await tool(rw, "plan", { app: "alice/game", issues })).value;
+    const n = Object.fromEntries(
+      done.opened.map((o: any) => [o.key, o.number]),
+    );
+    expect(done.ready).toEqual(expect.arrayContaining([n.a, n.b]));
+    expect(done.ready).not.toContain(n.c);
+    const map = (await tool(ro, "map", { app: "alice/game" })).value;
+    expect(map.edges).toContainEqual({ issue: n.c, blockedBy: n.a });
+    expect(map.edges).toContainEqual({ issue: n.c, blockedBy: n.b });
+
+    const count = async () =>
+      (await tool(ro, "map", { app: "alice/game" })).value.issues.length;
+    const before = await count();
+    const loop = await tool(rw, "plan", {
+      app: "alice/game",
+      issues: [
+        { key: "x", title: "X", blockedBy: ["y"] },
+        { key: "y", title: "Y", blockedBy: ["x"] },
+      ],
+    });
+    expect(loop.error).toContain("cycle");
+    const unknown = await tool(rw, "plan", {
+      app: "alice/game",
+      issues: [{ key: "x", title: "X", blockedBy: ["nope"] }],
+    });
+    expect(unknown.error).toContain('"nope"');
+    const many = await tool(rw, "plan", {
+      app: "alice/game",
+      issues: Array.from({ length: 13 }, (_, i) => ({
+        key: `k${i}`,
+        title: "t",
+      })),
+    });
+    expect(many.error).toContain("too_many");
+    expect(await count()).toBe(before);
+
+    expect(
+      (await tool(ro, "plan", { app: "alice/game", issues })).error,
+    ).toContain("forbidden");
   });
 
   test("a browser session is not a way in, even signed in", async () => {

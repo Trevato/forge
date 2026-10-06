@@ -4,13 +4,21 @@
  * red run whose tail names every failing test from every shard.
  */
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
+  SECONDS_PER_BYTE_DEFAULT,
   SHARDS_MAX,
+  formatTimes,
+  parseTimes,
   shardCount,
+  splitArgs,
   splitFiles,
   tally,
+  weigher,
   type ShardResult,
 } from "../scripts/shards.ts";
+import { parseCheck } from "../src/apps/manifest.ts";
+import { GATE } from "../scripts/gate.ts";
 
 const files = Array.from({ length: 23 }, (_, i) => `test/f${i}.test.ts`);
 
@@ -43,6 +51,155 @@ describe("splitFiles", () => {
   test("never makes more shards than files, nor fewer than one", () => {
     expect(splitFiles(["only"], 8)).toEqual([["only"]]);
     expect(splitFiles(["a", "b"], 0)).toEqual([["a", "b"]]);
+  });
+});
+
+describe("weighing by measured time", () => {
+  // Four files of one size: bytes cannot tell them apart, the table can.
+  const list = [
+    "test/slow.test.ts",
+    "test/a.test.ts",
+    "test/b.test.ts",
+    "test/c.test.ts",
+  ];
+  const bytes = new Map(list.map((file) => [file, 10_000]));
+
+  test("a known slow file is not stacked with others when a fast one of its size exists", () => {
+    const times = new Map([
+      ["test/slow.test.ts", 50],
+      ["test/a.test.ts", 20],
+      ["test/b.test.ts", 15],
+      ["test/c.test.ts", 14],
+    ]);
+    const slices = splitFiles(list, 2, weigher(list, bytes, times));
+    // Hand count: 50 alone; 20 + 15 + 14 = 49 beside it.
+    expect(slices).toEqual([
+      ["test/slow.test.ts"],
+      ["test/a.test.ts", "test/b.test.ts", "test/c.test.ts"],
+    ]);
+    // By bytes alone the same four split two and two: slow carries a neighbour.
+    const byBytes = splitFiles(list, 2, (file) => bytes.get(file)!);
+    expect(byBytes.find((s) => s.includes("test/slow.test.ts"))!.length).toBe(
+      2,
+    );
+  });
+
+  test("a file missing from the table weighs its bytes at the table's own rate", () => {
+    const sizes = new Map([
+      ["test/slow.test.ts", 10_000],
+      ["test/a.test.ts", 30_000],
+      ["test/new.test.ts", 5_000],
+    ]);
+    const times = new Map([
+      ["test/slow.test.ts", 50],
+      ["test/a.test.ts", 10],
+    ]);
+    const files = [...sizes.keys()];
+    const weight = weigher(files, sizes, times);
+    // 60 s over 40 000 bytes = 0.0015 s/byte; 5 000 bytes → 7.5 s.
+    expect(weight("test/new.test.ts")).toBeCloseTo(7.5, 9);
+    expect(weight("test/slow.test.ts")).toBe(50);
+    expect(weight("./test/slow.test.ts")).toBe(50);
+    const slices = splitFiles(files, 2, weight);
+    expect(slices.flat().sort()).toEqual([...files].sort());
+    expect(slices).toEqual([
+      ["test/slow.test.ts"],
+      ["test/a.test.ts", "test/new.test.ts"],
+    ]);
+  });
+
+  test("with no table at all, bytes at the default rate", () => {
+    const weight = weigher(list, bytes, new Map());
+    expect(weight("test/a.test.ts")).toBeCloseTo(
+      10_000 * SECONDS_PER_BYTE_DEFAULT,
+      9,
+    );
+    expect(weight("test/unknown.test.ts")).toBe(0);
+  });
+
+  test("the same list and the same table give the same split", () => {
+    const times = new Map([["test/slow.test.ts", 50]]);
+    const first = splitFiles(list, 3, weigher(list, bytes, times));
+    for (let i = 0; i < 5; i++)
+      expect(splitFiles(list, 3, weigher(list, bytes, new Map(times)))).toEqual(
+        first,
+      );
+  });
+});
+
+describe("parseTimes", () => {
+  test("reads file to seconds", () => {
+    const parsed = parseTimes(
+      '{ "test/crew.test.ts": 50.1, "./test/a.test.ts": 0 }',
+    );
+    expect(parsed).toEqual({
+      ok: true,
+      value: new Map([
+        ["test/crew.test.ts", 50.1],
+        ["test/a.test.ts", 0],
+      ]),
+    });
+  });
+
+  test("a malformed table is refused whole", () => {
+    for (const bad of [
+      "",
+      "{",
+      "[]",
+      "null",
+      "50",
+      '{ "test/a.test.ts": "50" }',
+      '{ "test/a.test.ts": -1 }',
+      '{ "test/a.test.ts": 1e9 }',
+      '{ "test/a.test.ts": null }',
+      '{ "src/app.ts": 3 }',
+      '{ "test/a.test.ts": 3, "README.md": 1 }',
+    ])
+      expect(parseTimes(bad).ok).toBe(false);
+  });
+
+  test("a refused table still splits, on bytes", () => {
+    const parsed = parseTimes("not json");
+    const times = parsed.ok ? parsed.value : new Map<string, number>();
+    const files = ["test/a.test.ts", "test/b.test.ts", "test/c.test.ts"];
+    const sizes = new Map([
+      ["test/a.test.ts", 300],
+      ["test/b.test.ts", 200],
+      ["test/c.test.ts", 100],
+    ]);
+    expect(splitFiles(files, 2, weigher(files, sizes, times))).toEqual([
+      ["test/a.test.ts"],
+      ["test/b.test.ts", "test/c.test.ts"],
+    ]);
+  });
+
+  test("formatTimes writes what parseTimes reads, sorted, to a tenth", () => {
+    const text = formatTimes(
+      new Map([
+        ["./test/b.test.ts", 1.26],
+        ["test/a.test.ts", 50.04],
+      ]),
+    );
+    expect(text).toBe(
+      '{\n  "test/a.test.ts": 50,\n  "test/b.test.ts": 1.3\n}\n',
+    );
+    expect(parseTimes(text).ok).toBe(true);
+    expect(formatTimes(new Map())).toBe("{}\n");
+  });
+
+  test("the checked-in table is accepted and names only files that exist", () => {
+    const parsed = parseTimes(
+      readFileSync(
+        new URL("../scripts/test-times.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    for (const file of parsed.value.keys())
+      expect(
+        Bun.file(new URL(`../${file}`, import.meta.url)).size,
+      ).toBeGreaterThan(0);
   });
 });
 
@@ -115,5 +272,44 @@ describe("tally", () => {
     expect(ending.lines).toContain(
       "shard 2 exited 1 without naming a test: b c",
     );
+  });
+});
+
+describe("splitArgs", () => {
+  test("after --, a bare name is a file under test/", () => {
+    expect(
+      splitArgs(["--timeout", "60000", "test/x.test.ts", "--", "crew", "fork-flow"]),
+    ).toEqual({
+      ok: true,
+      flags: ["--timeout", "60000"],
+      files: ["test/x.test.ts", "test/crew.test.ts", "test/fork-flow.test.ts"],
+    });
+    expect(splitArgs(["--bail", "test/a.test.ts"])).toEqual({
+      ok: true,
+      flags: ["--bail"],
+      files: ["test/a.test.ts"],
+    });
+  });
+
+  test("a name that could leave test/ or is not a name is refused", () => {
+    for (const name of ["../src/x", "a/b", "", "-x", "Crew", "a.test.ts"])
+      expect(splitArgs(["--", name]).ok).toBe(false);
+  });
+
+  test("forge.json's check fits the manifest and runs only files that exist", async () => {
+    const text = readFileSync(new URL("../forge.json", import.meta.url), "utf8");
+    // The forge's own reading of the manifest, which is what refused it.
+    const check = parseCheck(text, undefined);
+    expect(check.ok).toBe(true);
+    if (!check.ok || check.value === undefined) throw new Error("no check");
+    const run = check.value.run;
+    const args = run.slice(run.indexOf("scripts/test-shards.ts ") + 23).split(" ");
+    const split = splitArgs(args);
+    expect(split.ok).toBe(true);
+    if (!split.ok) return;
+    const files = [...(split.flags.includes("--gate") ? GATE : []), ...split.files];
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files)
+      expect(await Bun.file(new URL(`../${file}`, import.meta.url)).exists()).toBe(true);
   });
 });

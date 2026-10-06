@@ -6,6 +6,9 @@
  * Forgejo left open (#30972).
  */
 
+import { getRepoById } from "./repos.ts";
+import { repoDir } from "../git/repos.ts";
+import { sealedByNumber } from "./sealed.ts";
 import type { Database } from "bun:sqlite";
 import { diffRange, type Diff } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
@@ -118,6 +121,64 @@ export interface CreatePullInput {
   revertsIssueId?: string;
 }
 
+/**
+ * The one way to a pull's objects (#621). An ordinary pull's head is in its
+ * base (`refs/heads/<branch>`, or `refs/pull/N/head` fetched from a fork),
+ * so the base's directory answers every question about it. A sealed pull's
+ * head never enters the base before it merges — the base is read by
+ * everyone, by sha as well as by name — so it lives in the private
+ * repository its crew works in (`repo.sealedFor`), with `refs/pull/N/head`
+ * there too, and that repository answers instead: its base branch is moved
+ * to the base's tip first, so the diff and the merge check are taken
+ * against the base as it is now. The base's objects are already there: a
+ * fork borrows them (`forkBareRepo`).
+ */
+export async function pullDir(
+  db: Database,
+  reposRoot: string,
+  repo: { ownerName: string; name: string },
+  pull: Pick<Pull, "sealed" | "crossRepo" | "headRepoId" | "baseBranch">,
+): Promise<string> {
+  const baseDir = repoDir(reposRoot, repo.ownerName, repo.name);
+  if (!pull.sealed || !pull.crossRepo) return baseDir;
+  const head = getRepoById(db, pull.headRepoId);
+  if (head === undefined || head.sealedFor === null) return baseDir;
+  const headDir = repoDir(reposRoot, head.ownerName, head.name);
+  await followBase(baseDir, headDir, pull.baseBranch);
+  return headDir;
+}
+
+/**
+ * Where a run's commit is: its pull's objects (`pullDir`) when it is about
+ * a pull, else the repository's own.
+ */
+export async function runDir(
+  db: Database,
+  reposRoot: string,
+  repo: { id: string; ownerName: string; name: string },
+  issueId: string | null | undefined,
+): Promise<string> {
+  const issue =
+    issueId === null || issueId === undefined
+      ? undefined
+      : getIssueById(db, issueId);
+  const pull =
+    issue?.kind === "pull" ? getPull(db, repo.id, issue.number) : undefined;
+  return pull === undefined
+    ? repoDir(reposRoot, repo.ownerName, repo.name)
+    : pullDir(db, reposRoot, repo, pull);
+}
+
+/** Move the sealed work's `branch` to the base's tip of it. */
+async function followBase(
+  baseDir: string,
+  headDir: string,
+  branch: string,
+): Promise<void> {
+  const tip = await resolveOid(baseDir, `refs/heads/${branch}`);
+  if (tip !== undefined) await writeRef(headDir, `refs/heads/${branch}`, tip);
+}
+
 export async function createPull(
   db: Database,
   dir: string,
@@ -134,21 +195,39 @@ export async function createPull(
   const baseOid = await resolveOid(dir, `refs/heads/${input.baseBranch}`);
   if (!baseOid) return err("unknown_base");
 
+  // The fix for a sealed report is sealed with it (`sealed.ts`), and its
+  // objects never enter the base before it merges (`pullDir`).
+  const sealed = closesFromBody(input.body ?? "").some((n) =>
+    sealedByNumber(db, input.repoId, n),
+  );
+  const keptApart =
+    sealed &&
+    crossRepo &&
+    getRepoById(db, input.headRepoId!)?.sealedFor === input.repoId;
   // Same-repo: read the head from this repo. Cross-repo: fetch the fork's head
   // branch into the base repo (bringing its objects), and diff/merge in-base.
-  const headOid = crossRepo
-    ? await fetchInto(dir, input.headDir!, `refs/heads/${input.headBranch}`)
-    : await resolveOid(dir, `refs/heads/${input.headBranch}`);
+  // Sealed work: read it where it lives, against the base's tip.
+  if (keptApart)
+    await followBase(dir, input.headDir!, input.baseBranch);
+  const at = keptApart ? input.headDir! : dir;
+  const headOid = keptApart
+    ? await resolveOid(at, `refs/heads/${input.headBranch}`)
+    : crossRepo
+      ? await fetchInto(dir, input.headDir!, `refs/heads/${input.headBranch}`)
+      : await resolveOid(dir, `refs/heads/${input.headBranch}`);
   if (!headOid) return err("unknown_head");
-  if ((await aheadCount(dir, baseOid, headOid)) === 0)
+  if ((await aheadCount(at, baseOid, headOid)) === 0)
     return err("nothing_to_merge");
 
+  // The fix for a sealed report is sealed with it: its diff says where
+  // the hole is (`sealed.ts`).
   const issue = createIssue(db, {
     repoId: input.repoId,
     authorId: input.authorId,
     title: input.title,
     body: input.body ?? "",
     kind: "pull",
+    sealed,
   });
   if (!issue.ok) return err(issue.error);
 
@@ -168,7 +247,7 @@ export async function createPull(
 
   // A durable, fetchable ref for the PR head — the way tooling addresses it,
   // and (for cross-repo) the only place the base repo holds the fork's tip.
-  await writeRef(dir, `refs/pull/${issue.value.number}/head`, headOid);
+  await writeRef(at, `refs/pull/${issue.value.number}/head`, headOid);
 
   return ok(join(db, issue.value)!);
 }
@@ -598,12 +677,44 @@ export async function mergePull(
     message: string;
     actorId: string;
     author: { name: string; email: string };
+    /** Who commits it, when the author is the agent that wrote the change. */
+    committer?: { name: string; email: string };
     /** The review gate. Absent means no review policy applies. */
     gate?: ReviewGate;
+    /**
+     * Where a sealed pull's work is (`pullDir`): asked first, there, and
+     * brought into the base only to land — never before it may.
+     */
+    sealedFrom?: string;
   },
 ): Promise<Result<{ mergeOid: string }, MergePullError>> {
   if (pull.mergedAt !== null) return err("already_merged");
   if (pull.state === "closed") return err("closed");
+
+  if (input.sealedFrom !== undefined) {
+    const there = await pullStatus(input.sealedFrom, pull, input.gate);
+    if (there.reviews !== null && !there.reviews.mergeable)
+      return err("review_required");
+    if (
+      input.gate?.requireChecks === true &&
+      checkSummary(input.gate.db, pull.id, there.headOid).state !== "ok"
+    )
+      return err("checks_required");
+    if (!there.mergeable)
+      return err(
+        there.conflicts.length > 0
+          ? { kind: "conflict", files: there.conflicts }
+          : { kind: "git", message: "nothing to merge" },
+      );
+    const tip = await fetchInto(
+      dir,
+      input.sealedFrom,
+      `refs/pull/${pull.number}/head`,
+    );
+    if (tip === undefined)
+      return err({ kind: "git", message: "the sealed work could not be read" });
+    await writeRef(dir, `refs/pull/${pull.number}/head`, tip);
+  }
 
   // The gate is read from the live head inside the merge, not passed in by a
   // caller: a check computed a request earlier and handed down is a check
@@ -625,6 +736,7 @@ export async function mergePull(
     strategy: input.strategy,
     message: input.message,
     author: input.author,
+    ...(input.committer === undefined ? {} : { committer: input.committer }),
   });
   if (!landed.ok) return landed;
 
@@ -674,8 +786,44 @@ export function openPullsClosing(
   repoId: string,
 ): Map<number, Pull> {
   const out = new Map<number, Pull>();
-  for (const pull of listPulls(db, repoId, { state: "open", limit: 200 }))
+  for (const pull of listPulls(db, repoId, { sealed: true, state: "open", limit: 200 }))
     for (const n of closesFromBody(pull.body))
       if (!out.has(n)) out.set(n, pull);
   return out;
+}
+
+/**
+ * The person whose words a pull answers: the author of the issue it closes
+ * (or continues), when that is a person. Derived from the body and the issue
+ * on every read — no column to drift. Null when it closes nothing, or only
+ * work an agent filed.
+ */
+export function toldBy(db: Database, pull: Pull): string | null {
+  for (const n of closesFromBody(pull.body)) {
+    const issue = getIssue(db, pull.repoId, n);
+    if (issue && !issue.authorIsAgent && issue.originAuthor === null)
+      return issue.authorName;
+  }
+  return null;
+}
+
+/** A trailer value is one line: no control bytes, no angle brackets. */
+function oneLine(s: string): string {
+  return s.replace(/[\u0000-\u001f\u007f<>]/g, "").trim();
+}
+
+/**
+ * The trailers a landed change carries: who asked (`Requested-by`) and who
+ * landed it (`Co-authored-by`), the agent being the commit's author.
+ */
+export function landingTrailers(
+  requester: { name: string; email: string } | null,
+  lander: { name: string; email: string },
+): string {
+  const line = (key: string, who: { name: string; email: string }) =>
+    `${key}: ${oneLine(who.name)} <${oneLine(who.email)}>`;
+  return [
+    ...(requester ? [line("Requested-by", requester)] : []),
+    line("Co-authored-by", lander),
+  ].join("\n");
 }

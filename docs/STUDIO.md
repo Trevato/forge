@@ -1,20 +1,28 @@
 # The studio
 
-Two ways of seeing one forge. **Studio** is the default: apps are the unit,
-and a person does three things to one — tell the crew, look at what it
-made, decide when it asks. **Dev** shows the git underneath — code,
-commits, branches, runs — unchanged. The switch is in the top bar and is a
-cookie on that browser; the URLs are the same in both, so a link works
-whichever way its reader sees.
+One forge, for every viewer (#603). Apps are the unit, and a person does
+three things to one — tell the crew, look at what it made, decide when it
+asks. An app speaks the studio's words (told, changes, shipped); a
+repository that is not an app speaks git's (issues, pulls, commits,
+branches). Every repository's header carries the same depth row — its
+files, its changes, its runs and, where SSH is on, the terminal — so code is
+one tap from any post. The dev/studio mode is gone: no toggle, no cookie, no
+`POST /mode`, and an old `?mode=` address redirects to the same page without
+it. Where the sections below still speak of "dev mode" or `?mode=dev`, they
+describe the split that #625–#636 contracted, one screen at a time.
 
 Finding something never leaves the page you're on. `/` focuses the search
 box in the top bar, unless a field already has focus; `Cmd/Ctrl-K` opens the
 command palette from anywhere, a field included. The box takes its query to
-`/search` (`studioSearchPage`, `src/web/studio/search.ts`): apps first,
-matched by name, owner or description, then every change and tell whose
-title mentions the word, each saying which app it's on — the same
-visibility as the rest of the studio, so a signed-out reader sees only the
-public apps a signed-out reader would. The palette starts from a short local
+`/search` (`searchPage`, `src/web/pages/search.ts`), the one search in
+both faces, server-rendered with no script: every repository the viewer
+can see, matched by name or description, an app saying whether it is live,
+then every tell and change whose title mentions the word, each saying
+which app it's on and linked by the studio's noun — the same `search()`
+the API and the palette ask, so a signed-out reader sees only what a
+signed-out reader would anywhere. The studio's face leaves code to dev's:
+it says _Search the code_, a link to the same page with `?mode=dev`, which
+keeps that face on every link and the form until the reader leaves. The palette starts from a short local
 index — your own apps, then places and actions like Home, Apps, Map, New
 app — and past two characters asks that very same search, folding its apps,
 changes and tells in under their own headings (`rankPalette`,
@@ -89,11 +97,23 @@ current about deployments: a deploy run for the app being viewed refetches
 the head card and previews list in place, so a change serving in its
 preview shows up without a reload. **Redeploy** and **Stop** therefore stay
 where they were pressed — the app's page, or a change's — rather than
-leaving for dev's App page or the deploy's run: the card refreshing in
-place is what shows the result, and the flash says what was done. The page
-to return to is the referer, and only when it is this forge's own origin
-(`safeBack`, `src/http/context.ts`), never a form field; with no referer it
-is the app's own studio page. Dev mode keeps its destinations.
+leaving for the deploy's run: the card refreshing in place is what shows
+the result, and the flash says what was done. The page to return to is the
+referer, and only when it is this forge's own origin (`safeBack`,
+`src/http/context.ts`), never a form field; with no referer it is the
+repository's home. Dev mode's Redeploy still hands over to the run.
+
+This page is the app's only page. Dev's App page folded into it (#395):
+`/:owner/:name/app` answers with a redirect here (`appPage`,
+`src/web/pages/apps.ts`), adding `?mode=studio` for a dev browser — dev's
+repo home is the code — and the same not-found as ever for anyone who
+cannot see the app. What that page had and this one lacked were the
+environment controls, so they moved: each row in the previews list carries
+its own **Redeploy** and **Stop** for a writer, beside its state, with its
+host still the link that opens it; and an admin's footer carries
+_Environment settings_, the way to the app's variables, hostname, access
+and domains (`/:owner/:name/settings/app`). The App tab and the app strip's
+button in dev are links to this page.
 
 **How this app runs itself** (`/:owner/:name/settings`, in studio, on an
 app) is that one place: the crew, each with their role in the studio's
@@ -148,8 +168,17 @@ app's `forge.json` declares no `tty` (`docs/APPS.md`, _A terminal for
 every app_). A pull's own preview card shows its own command the same
 way, since a preview answers to a different login than production's. A
 reader sees none of this. Both surfaces call the one function that knows
-the fact, `terminalFor` (`src/actions/apps.ts`), so the dev App page and
+the fact, `terminalFor` (`src/actions/apps.ts`), so the pull's card and
 the studio page never carry two ideas of what the command is.
+
+**Following** comes first when the app is a fork of another: one sentence on
+where it stands against what it follows — in step, behind, ahead, or diverged
+— and one thing to do about it. Behind, or diverged where git merges cleanly,
+is **Take updates**, a click. Diverged where both sides changed the same file
+is **Converge with the crew**: a builder merges the parent's branch, keeps
+this app's direction where the two cannot both be kept, and the result comes
+back as a change to look at, or lands on its own when the app runs on its
+own. The words are the studio's; the mechanics are `docs/FOLLOWING.md`.
 
 **The box** is the front door. A sentence becomes an issue — the first line
 its title, the rest its body — and the routing decision hands it to a
@@ -201,9 +230,25 @@ header's tabs (`Told`, `Changes`, in place of dev's `Issues`, `Pulls`) link
 to `/tells` and `/changes`; dev's `Commits`/`Branches` stay dev's alone.
 `/runs` has no second noun — the studio and dev share the one address
 there. What a page _posts_ to never moves with the noun: ship, close,
-comment and decide keep posting under `/issues/:number` and
+comment, edit and decide keep posting under `/issues/:number` and
 `/pulls/:number`, which is what `form-action 'self'` and the same-origin
 checks are written against.
+
+The words of an issue or a pull are not fixed at opening. Under the opening
+post, its author or a person who writes the repository finds _Edit_: the
+title and the body as they stand, one Save, posting to `…/edit`. An agent
+edits only what it wrote (`mayEditIssue`, `actions/issues.ts`); a mirror's
+words belong to its origin. An author who may not direct the crew — a
+reader on a public repository, an outside contributor — keeps the right
+only until a person who writes has acted on the words: adopted the issue,
+or reviewed the pull. After that the answer is "a writer has taken this
+up: comment instead", since a rewrite would put new work in the crew's
+hands, or a new `Closes #N` under an approval, unseen. Over the API, `PATCH …/issues/:number` and
+`PATCH …/pulls/:number` take `title` and `body` beside `state`; the MCP
+`edit` tool does the same by number. The edit is an event (`issue.edited`,
+`pull.edited`) that says what changed, never the words, and the timeline
+shows it. What a pull closes and whom it answers are read from the body
+on every read, so they follow.
 
 _Look_ is spoken for by the five-word table above (a pull green and ready
 for a person's own look) and by the picture card on one (`lookCard`,
@@ -220,9 +265,18 @@ production has not caught up to yet, or a run with nothing to show —
 still read as _working_: still moving, not one of the five a list links to
 on its own. Paging is the underlying list's own cursor, unchanged; a word
 filter narrows the page it lands on rather than inventing a second scheme.
-`?mode=dev` on any of the three is dev's list, exactly as it always has
-been; a repository that is not an app renders dev's list here regardless
-of mode, since there is no studio to switch to.
+Told and changes are the only lists of issues and pulls: every repository,
+app or not, and every viewer, whatever the mode, at `/issues` and `/tells`,
+`/pulls` and `/changes` alike (`?mode=dev` changes nothing there). Besides
+the word they narrow by `?label=` (the repository's labels are chips under
+the words), `?assignee=`, `?author=` and `?q=` (a piece of the title), each
+shown as a chip that clears itself; an older `?state=closed|all` address
+still answers with what it asked for. Told carries one verb besides opening
+a row — compose, for a signed-in person; a stranger on a public repository
+gets "Report a problem" instead, and its writers see how many reports from
+outside wait for them. A row wears its labels; a change's
+branches, diff and reviews are one step deeper, on the change. The runs
+list keeps `?mode=dev` to dev's runs until that list is contracted too.
 
 ## A tell, on its own page
 
@@ -280,6 +334,41 @@ page exactly as it always has, deep links and all. Nothing here reads a
 diff or a blob: the page costs a handful of small queries whatever the
 change's size, unlike the page it links to.
 
+## The asks
+
+`/asks` (`asksPage`, `src/web/studio/asks_page.ts`) is the one screen for
+"is everything fine?". It leads with one sentence — _All fine_ when nothing
+asks the viewer, otherwise _N things need you_ — then the decision cards
+(a pull the crew stopped on, a green pull waiting for a look, an app parked
+at its ceiling, an issue the breaker parked, and an autonomous app whose
+planner declined its direction — answered by a comment on the direction
+issue, which is also what the board's line above its regions offers), and, for a site admin only, one card per sentence of the
+forge's health (`needs` in `/api/v1/health`). What counts as an ask is
+defined once, in `src/web/studio/asks.ts`: the header's **Asks** count, the
+page, the dashboard's _Needs you_ link and the phone notifier all read it,
+so the numbers agree. It is server-rendered and every button is a form post,
+so it works without JavaScript.
+
+## What you asked for
+
+`/asked` (`askedPage`, `src/web/studio/asked_page.ts`) is the other
+direction: not what waits on you, but what you and your people asked of the
+crew, and whether it happened. One row per issue a person opened (an
+agent's issue is not an ask; neither is the direction issue) in every
+repository the viewer can write — by default only what has nothing merged
+yet, oldest first, because the path is "open the oldest unmet ask": who
+asked and when, the pull that answers it, when the crew last ran or spoke on
+it, and one word — _Waiting_, _Building_ (a pull is open or the crew
+is running), _Shipped_ (a pull that closes it merged), _Closed_ (closed with
+nothing merged). An ask still waiting after three days carries _Nothing
+built_, in red: no pull for it is open or merged and nobody is on it. One
+whose pull is still open after three days says _Pull open_ and how long the
+pull has been open. `?show=flagged|all` changes the view, `?order=newest` flips it,
+`?repo=owner/name` keeps it to one repository. The rows are derived on read
+in `src/core/asked.ts`, and `/api/v1/asked` and the MCP `asked` tool answer
+the same rows. Each row names its `source` (`issue` today) so thoughts can
+join the same list. It is reached from the feed's header, the board, the asks page and the palette.
+
 ## The home
 
 `/` in the studio: what is on you (issues and pulls a person assigned to
@@ -289,11 +378,10 @@ a _shelf row_ (`src/web/studio/shelf.ts`): one function turns repositories
 into rows, from grouped reads, so every page that lists apps lists them the
 same way and the home only decides the card around them. **New app** is the
 same form either way (`/apps/new`); once the sentence becomes a repository
-it lands on the app's own page, `/:owner/:name/app` (`appPage`,
-`src/web/pages/apps.ts`) — not this shelf, and not the studio's five-word
-home for it. Its first paint carries the flash saying where it's starting,
-each environment as it comes up, the hostname and terminal, the crew, and
-its recent runs. `/?mode=dev` is the repositories list, and — like
+it lands on the repository's home, `/:owner/:name` — in the studio the
+app's own page, not this shelf; in dev the code, wearing the app strip.
+Its first paint carries the flash saying where it's starting.
+`/?mode=dev` is the repositories list, and — like
 the toggle in the top bar — it switches this browser to dev from then on;
 `/?mode=studio` switches it back, the same way.
 
@@ -341,14 +429,47 @@ everything the viewer may see) and works like this:
 Run logs and the crew's transcript stream line by line over their own
 `?follow=1` answers; they are the streamed part of a page, not a region.
 
-Signed out, `/` in the studio is a stranger's front door, not the dev
-pitch: a shelf of the public apps actually serving — name, one line of
-description, live state, and production's own picture, linking straight to
-the app. Sign in and Create an account stay one click away; `/?mode=dev`
-still renders the dev landing, and switches this browser to dev, same as
-the toggle. A forge with no public apps yet —
-most people's first visit — falls back to that same dev landing rather
-than showing an empty shelf.
+Signed out, `/` is a stranger's front door in either mode — the studio's
+door, never a git pitch (`studioDoor` in `studio/home.ts`, decided in
+`actions/front.ts`). One path: the forge, a few live apps, open one or sign
+in.
+
+- **Featured**: the first repository a site admin pinned that a stranger can
+  read (with none, the best-ranked app), shown with what makes a forge
+  different — the crew at work on it right now, by issue — or when it last
+  shipped.
+- **The shelf**: the rest of the pins in order, then the public apps ranked
+  by real signals (forks, merged pulls and use over 30 days, how lately
+  production shipped; likes once they exist), at most two per owner in the
+  top eight. Only apps that are up or wake on a visit, and only those with a
+  picture — the thumb, taken as a stranger sees the app; one without waits
+  for the looks sweep rather than showing an empty box. Twelve tiles, then
+  one link to `/apps`.
+- **The owner's say**: `/front` is the same page for anyone; a site admin
+  there gets pin, hide and move controls and a box to pin any repository (a
+  private pin waits, unshown, until it is public). The studio home links it
+  for admins. The same setting is `GET`/`PUT /api/v1/front` and the MCP tool
+  `front_page`.
+
+What a stranger is shown is decided per request from what a stranger can
+read; only the scores are remembered, for a minute. Sign in and Create an
+account stay one click away, with the forge's ssh command beneath them when
+the terminal is on. A forge with nothing public up yet shows the same door
+with an empty shelf that says so.
+
+## Explore
+
+`/explore` is every app and person the viewer can see, ranked by the front
+page's signals (`core/front.ts`: forks by people, pulls merged this month,
+hours in use, how lately it shipped) with the numbers on each row, and — for
+a site admin — the forges this one spawned. One line narrows it and stays in
+the URL: `kind:app|person|forge`, `sort:score|forks|ships|use|fresh|name`,
+and words to match. An agent's working fork is how the crew builds, not a
+find, and is left out; a private app's hours are told only to those who may
+enter it. Every app row offers **Make it yours** (a fork) to someone signed
+in. The same rows: `GET /api/v1/explore?q=…` and the MCP tool `explore`
+(`actions/explore.ts`). It is in the account menu and the palette, and the
+front page's "All public apps" leads here.
 
 ## The board
 
@@ -357,14 +478,34 @@ than showing an empty shelf.
 theme, four regions that fill the window. **Working now** is one card per
 run in flight — who, which app, what it is on, why, how long, what it has
 cost — ordered by when it started. **Landed** is the last dozen shipped
-changes across your apps, each with the app's production look on a phone.
+changes across your apps, each with the app's production look on a phone;
+for an app with pillars it leads with what merged in the last 7 days by
+pillar, each a link to that pillar's issues (`docs/PLANNING.md`).
 **Decided** is the last dozen entries in the decision ledger: which issue
 next, ship or show, try again — the answer, how sure the decider was, and
 what came of it. **Today** is one row per app that runs on its own: spend
-against the ceiling, runs, shipped, and whether it is paused. Every region
+against the ceiling, runs, shipped, and whether it is paused — plus any
+other app the crew spent on this week — and beneath it the efficiency
+signal: spend per shipped change over the last 7 days (the usage ledger's
+`cost_usd` ÷ pulls merged, `core/efficiency.ts`, every app in one grouped
+query), or "$4.10 spent, nothing shipped" when there is no ratio. Above the
+regions, whoever owns an app gets a line for each thing its crew waits on
+them for: a planner that declined the direction, with a box to answer it,
+and each issue the crew parked twice and handed to its planner, with why
+and a link to the issue where the planner answers — that one stays until
+the issue is split, replaced or deferred (`docs/PLANNING.md`). A site
+admin also gets a strip of the subscriptions above the regions: each
+account's 5-hour and weekly window — used, left, resets — in the words
+`windowWords` (`studio/words.ts`) gives them, with _inferred_ beside every
+figure the provider did not say (`core/standing.ts`; all the accounts in
+three statements, `standings`). Every region
 is live — it swaps itself when a matching event lands, and the dot in the
 corner says whether the stream is connected. `?apps=a,b` narrows it to some
 apps. Keys: `f` fullscreen, `1`–`4` one region full-bleed, `0` all.
+`?wall` is its one wall mode, for a screen across the room that nobody
+touches: the same regions in larger type, no key hints, no pointer. The
+old big view folded into it — `/big` and every address it had land on
+`/board?wall`, keeping `?app=owner/name` as the board's `?apps=`.
 Everything links somewhere; nothing needs a click. The board is a wall for
 apps you can write to: a public app someone else owns can still appear in
 it (`listReposVisibleTo` includes every public repo), but its cost, and

@@ -8,6 +8,9 @@
  * `ui.ts` may not. That is the line between the two files.
  */
 
+import { sshCommand } from "../ssh/command.ts";
+import { mayDirectCrew } from "../crew/direct.ts";
+import { mayReadRuns } from "../actions/runs.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { edgeLoginUrl } from "../http/edge.ts";
 import {
@@ -15,8 +18,7 @@ import {
   canRead,
   forkParentFor,
   getRepo,
-  getRepoById,
-  listForks,
+  visibleForks,
 } from "../core/repos.ts";
 import type { Repo } from "../core/repos.ts";
 import type { Ctx } from "../http/context.ts";
@@ -82,12 +84,16 @@ export const repoNotFound = notFoundPage;
 
 /** Send an anonymous visitor to sign in, and back where they were going. */
 export function signInFirst(ctx: Ctx): Response {
+  return redirect(signInHref(ctx));
+}
+
+/** Where signing in starts, coming back to this page after. */
+export function signInHref(ctx: Ctx): string {
   const next = ctx.url.pathname + ctx.url.search;
   // Behind a platform edge the edge is how people sign in; an account it
   // made has no password here, so the password form would only refuse them.
-  if (ctx.app.config.edgeToken !== undefined)
-    return redirect(edgeLoginUrl(next));
-  return redirect(`/signin?next=${encodeURIComponent(next)}`);
+  if (ctx.app.config.edgeToken !== undefined) return edgeLoginUrl(next);
+  return `/signin?next=${encodeURIComponent(next)}`;
 }
 
 // ---- repo header ----
@@ -101,6 +107,7 @@ export type RepoTab =
   | "commits"
   | "branches"
   | "app"
+  | "runs"
   | "settings";
 
 export interface RepoHeaderOptions {
@@ -160,20 +167,40 @@ export function scopeHeader(
 
   const isApp =
     repo !== undefined && getAppByRepo(ctx.app.db, repo.id) !== undefined;
-  // The studio's tabs for an app: the app itself first, then the map, what
-  // was told and every change. Code, commits and branches are dev mode's.
-  const studio = ctx.mode === "studio" && isApp;
+  // An app speaks the studio's words (told, changes), a plain repository
+  // git's (issues, pulls, commits, branches) — for every viewer (#603).
+  const studio = isApp;
+  // An app's home is the app, for every viewer, and its code is the Files
+  // step one tab over (`repoFiles`); any other repository's home is its code.
   const items: TabItem[] = [
+    ...(isApp
+      ? [
+          {
+            label: studio ? "Studio" : "App",
+            href: base,
+            icon: "rocket" as const,
+            current: active === "app",
+          },
+          {
+            label: "Files",
+            href: `${base}/files`,
+            icon: "repo" as const,
+            current: active === "code",
+            shortcut: "g c",
+          },
+        ]
+      : [
+          {
+            label: "Code",
+            href: base,
+            icon: "repo" as const,
+            current: active === "code",
+            shortcut: "g c",
+          },
+        ]),
     {
-      label: studio ? "Studio" : "Code",
-      href: base,
-      icon: studio ? "rocket" : "repo",
-      current: active === "code",
-      shortcut: "g c",
-    },
-    {
-      // Studio names its own lists — told, not issues; dev's tabs are
-      // unchanged in dev mode and on a repository that is not an app.
+      // Studio names its own lists — told, not issues; a repository that is
+      // not an app keeps git's words.
       label: studio ? "Told" : "Issues",
       href: studio ? tellsHref(base) : `${base}/issues`,
       icon: studio ? "clock" : "issue",
@@ -225,7 +252,8 @@ export function scopeHeader(
   // to the tree — where each fork stands against what it follows. One with
   // neither has no family to show, and the tab stays away.
   if (repo !== undefined) {
-    const forks = listForks(ctx.app.db, repo.id).length;
+    // Only the forks this viewer may read: a private fork is not counted.
+    const forks = visibleForks(ctx.app.db, repo.id, ctx.auth.user).length;
     if (forks > 0 || repo.forkParentId !== null)
       items.splice(3, 0, {
         label: "Forks",
@@ -236,15 +264,23 @@ export function scopeHeader(
         shortcut: "g f",
       });
   }
-  // A repository that runs gets an App tab; one that does not has no such
-  // page, and a tab that 404s is a lie about what is there.
-  if (repo !== undefined && isApp && !studio)
+  // The depth row's last two steps (#603): the runs, for who may read them
+  // (`mayReadRuns`: a private app's are for those who may enter it), and
+  // how to open the terminal (the TUI over SSH) for whoever has keys. A
+  // repository only browsed from elsewhere has no runs here.
+  if (repo !== undefined && mayReadRuns(ctx.app, ctx.auth.user, repo))
     items.push({
-      label: "App",
-      href: `${base}/app`,
-      icon: "rocket",
-      current: active === "app",
-      shortcut: "g a",
+      label: "Runs",
+      href: `${base}/runs`,
+      icon: "activity",
+      current: active === "runs",
+      shortcut: "g r",
+    });
+  if (ctx.auth.user !== undefined && sshCommand(ctx.app) !== undefined)
+    items.push({
+      label: "Terminal",
+      href: "/settings/keys#terminal",
+      icon: "command",
     });
   if (admin)
     items.push({
@@ -322,25 +358,36 @@ export { hostOf };
 export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
   const base = repoBase(repo);
   const name = `${repo.ownerName}/${repo.name}`;
-  const studio =
-    ctx.mode === "studio" && getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  const studio = isApp;
   if (studio) {
     return [
       { t: `${name} — Studio`, h: base, c: "This repo" },
+      { t: `${name} — Files`, h: `${base}/files`, c: "This repo" },
       { t: `${name} — Told`, h: tellsHref(base), c: "This repo" },
       { t: `${name} — Changes`, h: changesHref(base), c: "This repo" },
-      { t: `${name} — Tell the crew`, h: `${base}#tell`, c: "This repo" },
-      { t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" },
+      // Telling the crew is for who may direct it (`mayDirectCrew`: a
+      // writer, or anyone signed in where the owner let outsiders in), so
+      // nobody else is offered a door that leads nowhere.
+      ...(mayDirectCrew(ctx.app.db, repo, ctx.auth.user)
+        ? [{ t: `${name} — Tell the crew`, h: `${base}#tell`, c: "This repo" }]
+        : []),
+      ...(mayReadRuns(ctx.app, ctx.auth.user, repo)
+        ? [{ t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" }]
+        : []),
       { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
     ];
   }
   return [
-    { t: `${name} — Code`, h: base, c: "This repo" },
+    ...(isApp ? [{ t: `${name} — App`, h: base, c: "This repo" }] : []),
+    { t: `${name} — Code`, h: isApp ? `${base}/files` : base, c: "This repo" },
     { t: `${name} — Issues`, h: `${base}/issues`, c: "This repo" },
     { t: `${name} — Pull requests`, h: `${base}/pulls`, c: "This repo" },
     { t: `${name} — Commits`, h: `${base}/commits`, c: "This repo" },
     { t: `${name} — New issue`, h: `${base}/issues/new`, c: "This repo" },
-    { t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" },
+    ...(mayReadRuns(ctx.app, ctx.auth.user, repo)
+      ? [{ t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" }]
+      : []),
     { t: `${name} — Settings`, h: `${base}/settings`, c: "This repo" },
   ];
 }

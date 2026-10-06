@@ -922,4 +922,622 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX prompt_source_repo ON prompt_source(repo_id);
   `,
+
+  // 34 — forge-level secrets: credentials the forge itself needs, sealed
+  // under AAD `secret:<scope>:<name>` and never read back. `scope_id` is ''
+  // for the forge, an org's or a repo's id otherwise.
+  `
+  CREATE TABLE secret (
+    name         TEXT NOT NULL,
+    scope        TEXT NOT NULL CHECK (scope IN ('forge','org','repo')),
+    scope_id     TEXT NOT NULL DEFAULT '',
+    value_enc    TEXT NOT NULL,
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    last_read_at TEXT,
+    PRIMARY KEY (name, scope, scope_id)
+  );
+  `,
+
+  // 35 — what a viewer did with a feed item: opened it, dwelled on it,
+  // dismissed it, muted its app. One row per act; the feed's affinity is
+  // these, counted with a decay. `item_id` is the feed's own id, and
+  // `repo_id`/`actor_id` are what the act says it was about, so a row
+  // outlives the event it named.
+  `
+  CREATE TABLE interaction (
+    id         TEXT PRIMARY KEY,
+    viewer_id  TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    item_id    TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN
+      ('opened','dwelled','steered','told','swiped','shipped','shared','dismissed','muted')),
+    repo_id    TEXT REFERENCES repo(id) ON DELETE CASCADE,
+    actor_id   TEXT REFERENCES user(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX interaction_viewer ON interaction(viewer_id, id);
+  `,
+
+  // 36 — a share: one item, one sender, one recipient. A share is delivered
+  // (it shows in the recipient's feed, boosted), queued (the recipient's
+  // daily budget is spent; it waits and decays) or dropped (it decayed).
+  // One row per item and recipient, ever: that is the dedupe. What the
+  // item was is kept as words, so the row outlives the event it named.
+  `
+  CREATE TABLE share (
+    id           TEXT PRIMARY KEY,
+    item_id      TEXT NOT NULL,
+    sender_id    TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    recipient_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    repo_id      TEXT NOT NULL REFERENCES repo(id) ON DELETE CASCADE,
+    kind         TEXT NOT NULL,
+    link         TEXT NOT NULL,
+    what         TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('delivered','queued','dropped')),
+    created_at   TEXT NOT NULL,
+    delivered_at TEXT,
+    UNIQUE (item_id, recipient_id)
+  );
+  CREATE INDEX share_recipient ON share(recipient_id, state);
+  CREATE INDEX share_sender ON share(sender_id, state);
+  `,
+
+  // 37 — the usage ledger (`core/usage.ts`): what each agent run spent,
+  // attributed to subscription, app, agent and issue. `subscription_id` is
+  // text, not a reference: a removed account's spend stays counted.
+  //
+  // Written to survive one ordering accident: for a while this migration
+  // was numbered 36, and a preview's database migrated then has the ledger
+  // at 36 and never ran `share`. So both are created only if missing —
+  // a no-op everywhere 36 was `share`, the repair where it was not. The
+  // `share` DDL is migration 36's, verbatim.
+  `
+  CREATE TABLE IF NOT EXISTS share (
+    id           TEXT PRIMARY KEY,
+    item_id      TEXT NOT NULL,
+    sender_id    TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    recipient_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    repo_id      TEXT NOT NULL REFERENCES repo(id) ON DELETE CASCADE,
+    kind         TEXT NOT NULL,
+    link         TEXT NOT NULL,
+    what         TEXT NOT NULL,
+    state        TEXT NOT NULL CHECK (state IN ('delivered','queued','dropped')),
+    created_at   TEXT NOT NULL,
+    delivered_at TEXT,
+    UNIQUE (item_id, recipient_id)
+  );
+  CREATE INDEX IF NOT EXISTS share_recipient ON share(recipient_id, state);
+  CREATE INDEX IF NOT EXISTS share_sender ON share(sender_id, state);
+
+  CREATE TABLE IF NOT EXISTS usage (
+    run_id          TEXT PRIMARY KEY REFERENCES run(id) ON DELETE CASCADE,
+    repo_id         TEXT NOT NULL REFERENCES repo(id) ON DELETE CASCADE,
+    issue_id        TEXT,
+    agent_id        TEXT,
+    subscription_id TEXT,
+    tokens_in       INTEGER NOT NULL DEFAULT 0,
+    tokens_out      INTEGER NOT NULL DEFAULT 0,
+    cost_usd        REAL NOT NULL DEFAULT 0,
+    wall_ms         INTEGER NOT NULL DEFAULT 0,
+    outcome         TEXT NOT NULL CHECK (outcome IN ('ok','failed','paused')),
+    at              TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS usage_at ON usage(at);
+  CREATE INDEX IF NOT EXISTS usage_repo ON usage(repo_id, at);
+  CREATE INDEX IF NOT EXISTS usage_subscription ON usage(subscription_id, at);
+  `,
+
+  // 38 — a subscription's standing (`core/standing.ts`): the last time the
+  // provider said each window (5-hour, weekly) was full and when it resets,
+  // and the share of every window the operator keeps for people.
+  `
+  CREATE TABLE subscription_limit (
+    subscription_id TEXT NOT NULL REFERENCES subscription(id) ON DELETE CASCADE,
+    span            TEXT NOT NULL CHECK (span IN ('5h','week')),
+    resets_at       TEXT NOT NULL,
+    observed_at     TEXT NOT NULL,
+    said            TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (subscription_id, span)
+  );
+  ALTER TABLE subscription ADD COLUMN headroom_pct INTEGER NOT NULL DEFAULT 0
+    CHECK (headroom_pct BETWEEN 0 AND 90);
+  `,
+  // 39 — whether the agent's shell was held to the sandbox policy, kept on
+  // the run so an old one can be read honestly. NULL: the run predates this,
+  // or is not an agent's. The note is why it was not, when it was not.
+  `
+  ALTER TABLE run ADD COLUMN sandbox_enforced INTEGER;
+  ALTER TABLE run ADD COLUMN sandbox_note TEXT NOT NULL DEFAULT '';
+  `,
+  // 40 — a fleet operation's receipt (`core/fleet_ops.ts`): who acted, on
+  // which query, with what action, and per row the value before, the value
+  // asked for and what happened. Rows keep the target's words and no
+  // reference, so a receipt outlives a deleted repository. `undone_by`
+  // points at the operation that reversed this one.
+  `
+  CREATE TABLE fleet_operation (
+    id         TEXT PRIMARY KEY,
+    actor_id   TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    query      TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('repo','run','issue')),
+    verb       TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    reversible INTEGER NOT NULL,
+    undo_of    TEXT,
+    undone_by  TEXT,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX fleet_operation_actor ON fleet_operation(actor_id, id);
+  CREATE TABLE fleet_operation_row (
+    operation_id TEXT NOT NULL REFERENCES fleet_operation(id) ON DELETE CASCADE,
+    position     INTEGER NOT NULL,
+    target_id    TEXT NOT NULL,
+    repo_id      TEXT NOT NULL,
+    label        TEXT NOT NULL,
+    before       TEXT NOT NULL,
+    after        TEXT NOT NULL,
+    outcome      TEXT NOT NULL
+      CHECK (outcome IN ('ok','failed','refused','unchanged')),
+    reason       TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (operation_id, position)
+  );
+  `,
+
+  // 41 — the meter (`core/meter.ts`): what an app used, in the two
+  // quantities a forge charges for. `meter` is one row per awake interval
+  // of an environment, `ended` NULL while it runs and `beat_at` the last
+  // instant it was seen running, so a crash is closed there at boot.
+  // `storage` is one row per hourly sample of an app's bytes. `repo_id` is
+  // text, not a reference: removing an app does not erase what it used.
+  `
+  CREATE TABLE meter (
+    id         INTEGER PRIMARY KEY,
+    repo_id    TEXT NOT NULL,
+    env        TEXT NOT NULL,
+    placement  TEXT NOT NULL CHECK (placement IN ('owned','cloud')),
+    started_at TEXT NOT NULL,
+    beat_at    TEXT NOT NULL,
+    ended_at   TEXT
+  );
+  CREATE INDEX meter_repo ON meter(repo_id, started_at);
+  CREATE UNIQUE INDEX meter_open ON meter(repo_id, env) WHERE ended_at IS NULL;
+
+  CREATE TABLE storage (
+    id         INTEGER PRIMARY KEY,
+    repo_id    TEXT NOT NULL,
+    data_bytes INTEGER NOT NULL CHECK (data_bytes >= 0),
+    repo_bytes INTEGER NOT NULL CHECK (repo_bytes >= 0),
+    at         TEXT NOT NULL
+  );
+  CREATE INDEX storage_repo ON storage(repo_id, at);
+  CREATE INDEX storage_at ON storage(at);
+  `,
+  // 42 — every credential is a subscription (`core/subscriptions.ts`): the
+  // forge's own token from its environment becomes the row `platform`, with
+  // no sealed token, so its windows and spend read like any account's. The
+  // ledger's runs on it, once `NULL`, are its. The ledger gains the run's
+  // kind (build, plan, review, check) and a `running` line, written as a
+  // session reports its spend and replaced when it ends. SQLite cannot widen
+  // a CHECK in place, so the ledger is copied into a new table.
+  `
+  INSERT OR IGNORE INTO subscription (id, name, kind, token_enc)
+    VALUES ('platform', 'platform (env)', 'oauth', '');
+  CREATE TABLE usage_next (
+    run_id          TEXT PRIMARY KEY REFERENCES run(id) ON DELETE CASCADE,
+    repo_id         TEXT NOT NULL REFERENCES repo(id) ON DELETE CASCADE,
+    issue_id        TEXT,
+    agent_id        TEXT,
+    subscription_id TEXT,
+    kind            TEXT NOT NULL DEFAULT 'build'
+                    CHECK (kind IN ('build','plan','review','check')),
+    tokens_in       INTEGER NOT NULL DEFAULT 0,
+    tokens_out      INTEGER NOT NULL DEFAULT 0,
+    cost_usd        REAL NOT NULL DEFAULT 0,
+    wall_ms         INTEGER NOT NULL DEFAULT 0,
+    outcome         TEXT NOT NULL CHECK (outcome IN ('ok','failed','paused','running')),
+    at              TEXT NOT NULL
+  );
+  INSERT INTO usage_next
+    SELECT u.run_id, u.repo_id, u.issue_id, u.agent_id,
+           COALESCE(u.subscription_id, 'platform'),
+           CASE r.reason WHEN 'review' THEN 'review'
+                         WHEN 'check_failed' THEN 'check' ELSE 'build' END,
+           u.tokens_in, u.tokens_out, u.cost_usd, u.wall_ms, u.outcome, u.at
+      FROM usage u LEFT JOIN run r ON r.id = u.run_id;
+  DROP TABLE usage;
+  ALTER TABLE usage_next RENAME TO usage;
+  CREATE INDEX usage_at ON usage(at);
+  CREATE INDEX usage_repo ON usage(repo_id, at);
+  CREATE INDEX usage_subscription ON usage(subscription_id, at);
+  UPDATE run SET subscription_id = 'platform'
+   WHERE kind = 'agent' AND subscription_id IS NULL;
+  `,
+  // 43 — an interrupted run is not a park (`crew/interrupted.ts`). Park
+  // notes written for runs the provider's limit, an unreachable API or a
+  // restart ended were strikes against work nobody attempted; they are
+  // reworded so they no longer start with the park note and no longer count.
+  `
+  UPDATE comment
+     SET body = 'Interrupted, not parked: ' || substr(body, 21)
+   WHERE body LIKE 'Parked by the crew: %'
+     AND (body LIKE '%rate limit%' OR body LIKE '%rate-limit%'
+       OR body LIKE '%rate_limit%' OR body LIKE '%session limit%'
+       OR body LIKE '%usage limit%' OR body LIKE '%weekly limit%'
+       OR body LIKE '%hit your % limit%' OR body LIKE '%overloaded%'
+       OR body LIKE '%too many requests%' OR body LIKE '%(api_error)%'
+       OR body LIKE '%may use is resting%' OR body LIKE '%resting —%'
+       OR body LIKE '%ECONNREFUSED%' OR body LIKE '%ECONNRESET%'
+       OR body LIKE '%ENOTFOUND%' OR body LIKE '%ETIMEDOUT%'
+       OR body LIKE '%fetch failed%' OR body LIKE '%unable to connect%'
+       OR body LIKE '%connection error%' OR body LIKE '%unreachable%'
+       OR body LIKE '%without a pull: cancelled'
+       OR body LIKE '%interrupted by a restart%');
+  `,
+  // 44 — why an issue closed (done, dropped, split), and whether a person
+  // has confirmed an edge whose blocker closed for a reason other than done.
+  `
+  ALTER TABLE issue ADD COLUMN close_reason TEXT
+    CHECK (close_reason IN ('done','dropped','split'));
+  ALTER TABLE issue_dependency ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 0;
+  `,
+  // 45 — OAuth clients registered dynamically (RFC 7591); step one of the
+  // MCP's OAuth. IF NOT EXISTS keeps a replay harmless.
+  `
+  CREATE TABLE IF NOT EXISTS oauth_client (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    redirect_uris TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+  );
+  `,
+  // 46 — which address the forge's commits for a person carry (#623). The
+  // default is the no-reply one; the account email is an explicit opt-in.
+  `
+  ALTER TABLE user ADD COLUMN commit_email TEXT NOT NULL DEFAULT 'noreply'
+    CHECK (commit_email IN ('noreply','account'));
+  `,
+  // 47 — a report from outside (`core/reports.ts`): words a stranger left on
+  // a public repository, held apart from issues so nothing that reads issues
+  // (the crew, the feed, search, the MCP) reads them until a person who
+  // writes accepts one, which opens an ordinary issue in that person's name.
+  `
+  CREATE TABLE IF NOT EXISTS report (
+    id           TEXT PRIMARY KEY,
+    repo_id      TEXT NOT NULL REFERENCES repo(id) ON DELETE CASCADE,
+    title        TEXT NOT NULL,
+    body         TEXT NOT NULL,
+    page         TEXT,
+    state        TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (state IN ('pending','accepted','dismissed')),
+    created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    decided_by   TEXT REFERENCES user(id) ON DELETE SET NULL,
+    decided_at   TEXT,
+    issue_number INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS report_waiting ON report(repo_id, state, id);
+  `,
+  // 48 — an account the owner suspended or removed (#660). Columns are added,
+  // never a table rebuilt: a rebuild would drop any trigger on \`user\`.
+  `
+  ALTER TABLE user ADD COLUMN suspended_at TEXT;
+  ALTER TABLE user ADD COLUMN removed_at TEXT;
+  `,
+  // 49 — the asks ledger (`core/ask_ledger.ts`): each time something asked
+  // a person, and how it ended — acted on, dismissed, or gone by itself —
+  // so noise shows up as a number. One row per raising; history, never edited
+  // but to close it.
+  `
+  CREATE TABLE ask_ledger (
+    id         TEXT PRIMARY KEY,
+    viewer_id  TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    ask_id     TEXT NOT NULL,
+    repo_id    TEXT REFERENCES repo(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    raised_at  TEXT NOT NULL,
+    ended_at   TEXT,
+    ended_how  TEXT CHECK (ended_how IN ('acted','dismissed','expired'))
+  );
+  CREATE INDEX ask_ledger_open ON ask_ledger(viewer_id, ended_at);
+  CREATE INDEX ask_ledger_raised ON ask_ledger(viewer_id, raised_at);
+  `,
+  // 50 — "outsiders may trigger the crew" (#619): off, so only people who
+  // can write to a repository start or steer its crew.
+  `
+  ALTER TABLE repo ADD COLUMN crew_outsiders INTEGER NOT NULL DEFAULT 0;
+  `,
+  // 51 — the front page's picks (#686): what a site admin pinned to it, in
+  // order (the first one a stranger can read is featured), and what they
+  // hid from it. Presentation, like a user setting: no event.
+  `
+  CREATE TABLE IF NOT EXISTS front_pick (
+    repo_id  TEXT PRIMARY KEY REFERENCES repo(id) ON DELETE CASCADE,
+    place    TEXT NOT NULL CHECK (place IN ('pinned','hidden')),
+    position INTEGER NOT NULL DEFAULT 0,
+    set_by   TEXT REFERENCES user(id) ON DELETE SET NULL,
+    set_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  `,
+  // 52 — a whole-life budget on a sealed account, in dollars (#601): the
+  // most its runs may ever spend, summed from the run ledger. Null is none.
+  // A spawned child's starter key carries one, so the spawner's money ends
+  // where they said. A locked budget was set by whoever made this forge:
+  // its admin may lower it, never raise or clear it. A run on a budgeted
+  // account reserves what it may spend when it picks the account, so runs
+  // started together are counted together.
+  `
+  ALTER TABLE subscription ADD COLUMN budget_usd REAL
+    CHECK (budget_usd IS NULL OR budget_usd > 0);
+  ALTER TABLE subscription ADD COLUMN budget_locked INTEGER NOT NULL DEFAULT 0
+    CHECK (budget_locked IN (0, 1));
+  ALTER TABLE run ADD COLUMN budget_reserved_usd REAL;
+  `,
+  // 53 — whether an account's email is proven, and its one-time link (#659).
+  // A row is written for every account a public way in makes, unproven; the
+  // accounts here before this migration are proven by it, so verification
+  // holds back newcomers, never the people already here.
+  `
+  CREATE TABLE IF NOT EXISTS email_check (
+    user_id      TEXT PRIMARY KEY REFERENCES user(id) ON DELETE CASCADE,
+    verified_at  TEXT,
+    token_hash   TEXT UNIQUE,
+    expires_at   TEXT,
+    last_sent_at TEXT,
+    sent_to      TEXT,
+    sends_day    TEXT,
+    sends        INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT OR IGNORE INTO email_check (user_id, verified_at)
+    SELECT id, created_at FROM user;
+  `,
+  // 54 — the people a private app names (#752): they may enter it, its
+  // previews and nothing else — no write, no crew, no settings.
+  `
+  CREATE TABLE IF NOT EXISTS app_member (
+    app_id   TEXT NOT NULL REFERENCES app(id) ON DELETE CASCADE,
+    user_id  TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    added_by TEXT REFERENCES user(id) ON DELETE SET NULL,
+    added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (app_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS app_member_user ON app_member(user_id);
+  `,
+  // 55 — a hold on a pull (#773, `core/holds.ts`): a person who writes the
+  // repository says "not this one yet", and while it stands no rule sends
+  // the pull to review or lands it. A release is kept, not deleted: the
+  // review clock starts again from it. At most one hold stands per pull.
+  `
+  CREATE TABLE IF NOT EXISTS pull_hold (
+    id          TEXT PRIMARY KEY,
+    issue_id    TEXT NOT NULL REFERENCES issue(id) ON DELETE CASCADE,
+    held_by     TEXT NOT NULL REFERENCES user(id),
+    why         TEXT NOT NULL,
+    held_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    released_by TEXT REFERENCES user(id),
+    released_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS pull_hold_issue ON pull_hold(issue_id, released_at);
+  CREATE UNIQUE INDEX IF NOT EXISTS pull_hold_standing
+    ON pull_hold(issue_id) WHERE released_at IS NULL;
+  `,
+  // 56 — what an account has spent, in a counter that only grows (#601's
+  // review): summing its runs let a deleted repository (its runs cascade)
+  // refill a budget. A trigger adds every increase in a run's cost to its
+  // account, so no route through the run table can take spend back; the
+  // counter starts from the runs there are today. A run that moves to
+  // another account brings its whole cost along: counted twice, never lost.
+  `
+  ALTER TABLE subscription ADD COLUMN spent_usd REAL NOT NULL DEFAULT 0;
+  UPDATE subscription SET spent_usd = (
+    SELECT COALESCE(SUM(r.cost_usd), 0) FROM run r WHERE r.subscription_id = subscription.id
+  );
+  CREATE TRIGGER IF NOT EXISTS run_spend_to_subscription
+  AFTER UPDATE OF cost_usd, subscription_id ON run
+  WHEN NEW.subscription_id IS NOT NULL
+  BEGIN
+    UPDATE subscription SET spent_usd = spent_usd + (
+      CASE WHEN OLD.subscription_id IS NEW.subscription_id
+           THEN MAX(0, NEW.cost_usd - OLD.cost_usd)
+           ELSE NEW.cost_usd END)
+    WHERE id = NEW.subscription_id;
+  END;
+  CREATE TRIGGER IF NOT EXISTS run_spend_on_insert
+  AFTER INSERT ON run
+  WHEN NEW.subscription_id IS NOT NULL AND NEW.cost_usd > 0
+  BEGIN
+    UPDATE subscription SET spent_usd = spent_usd + NEW.cost_usd WHERE id = NEW.subscription_id;
+  END;
+  `,
+  // 57 — spend reported from outside (`core/outside_spend.ts`): what a
+  // session the forge did not run (a build team, a person's own assistant)
+  // says a change cost it. Shown beside the crew's own runs, never added to
+  // them, and never read by a limit: it is a claim, not a measurement.
+  `
+  CREATE TABLE outside_spend (
+    id          TEXT PRIMARY KEY,
+    repo_id     TEXT NOT NULL REFERENCES repo(id) ON DELETE CASCADE,
+    issue_id    TEXT REFERENCES issue(id) ON DELETE SET NULL,
+    reporter_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    who         TEXT NOT NULL,
+    model       TEXT NOT NULL DEFAULT '',
+    tokens_in   INTEGER NOT NULL DEFAULT 0,
+    tokens_out  INTEGER NOT NULL DEFAULT 0,
+    usd         REAL NOT NULL DEFAULT 0,
+    note        TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX outside_spend_repo ON outside_spend(repo_id, created_at);
+  `,
+  // 58 — a signed-in browser has a name and a last-seen time (#750), so its
+  // person (and the forge's owner) can list them and sign one out. The id
+  // is not the secret: the cookie's hash stays the key.
+  `
+  ALTER TABLE session ADD COLUMN id TEXT;
+  ALTER TABLE session ADD COLUMN last_seen_at TEXT;
+  UPDATE session SET id = lower(hex(randomblob(12))) WHERE id IS NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS session_id ON session(id);
+  `,
+  // 59 — every message the forge sent, by a keyed hash of its recipient (#784): the
+  // per-recipient and forge-wide mail caps count it, across restarts.
+  `
+  CREATE TABLE IF NOT EXISTS mail_sent (
+    id        TEXT PRIMARY KEY,
+    recipient TEXT NOT NULL,
+    at        TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS mail_sent_recipient ON mail_sent(recipient, at);
+  CREATE INDEX IF NOT EXISTS mail_sent_at ON mail_sent(at);
+  `,
+  // 60 — who a picture was taken as (#738): the owner, signed in as an
+  // admin, or nobody. A public app's previews are taken as nobody, and only
+  // a picture taken as nobody is a reader's to see. Every picture before
+  // this was the owner's, which is what the default says.
+  `
+  ALTER TABLE look ADD COLUMN taken_as TEXT NOT NULL DEFAULT 'owner'
+    CHECK (taken_as IN ('owner','nobody'));
+  `,
+  // 61 — an agent never owns an organization (#722, CLAUDE.md invariant 10):
+  // every agent on a team that confers admin is taken off it, and each
+  // removal is told on the outbox as \`team.member_removed\` with its reason.
+  // The event id is a ULID made here — the time now, then randomness — so
+  // it sorts after every event before it, as \`kernel/id.ts\` would make it.
+  `
+  WITH a(c) AS (SELECT '0123456789abcdefghjkmnpqrstvwxyz'),
+       n(ms) AS (SELECT CAST(round((julianday('now') - 2440587.5) * 86400000) AS INTEGER)),
+       gone AS (
+         SELECT t.id AS team_id, u.id AS user_id, u.username AS user, o.username AS org
+           FROM team_member m
+           JOIN team t ON t.id = m.team_id
+           JOIN user u ON u.id = m.user_id
+           JOIN user o ON o.id = t.org_id
+          WHERE t.permission = 'admin' AND u.is_agent = 1
+       )
+  INSERT INTO event (id, kind, payload)
+  SELECT substr(a.c, ((n.ms >> 45) & 31) + 1, 1) || substr(a.c, ((n.ms >> 40) & 31) + 1, 1) || substr(a.c, ((n.ms >> 35) & 31) + 1, 1) || substr(a.c, ((n.ms >> 30) & 31) + 1, 1) || substr(a.c, ((n.ms >> 25) & 31) + 1, 1) || substr(a.c, ((n.ms >> 20) & 31) + 1, 1) || substr(a.c, ((n.ms >> 15) & 31) + 1, 1) || substr(a.c, ((n.ms >> 10) & 31) + 1, 1) || substr(a.c, ((n.ms >> 5) & 31) + 1, 1) || substr(a.c, ((n.ms >> 0) & 31) + 1, 1)
+         || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1),
+         'team.member_removed',
+         json_object('org', g.org, 'teamId', g.team_id, 'user', g.user,
+                     'why', 'an agent never owns an organization (#722)')
+    FROM gone g, a, n;
+  DELETE FROM team_member
+   WHERE (team_id, user_id) IN (
+     SELECT m.team_id, m.user_id FROM team_member m
+       JOIN team t ON t.id = m.team_id JOIN user u ON u.id = m.user_id
+      WHERE t.permission = 'admin' AND u.is_agent = 1);
+  `,
+  // 62 — only an agent is ever on a crew, said by the database itself: every
+  // route that puts someone on one (settings, the API, a migration, crew
+  // from forks, spawn's copy) meets the same refusal, and the SQL write
+  // check (`REPO_WRITABLE`'s crew clause) and `onCrew` can never drift.
+  // A person already there is reported at boot (`peopleOnCrews`), never
+  // removed by a migration.
+  `
+  CREATE TRIGGER repo_crew_agents_only BEFORE INSERT ON repo_crew
+  WHEN NOT EXISTS (SELECT 1 FROM user WHERE id = NEW.user_id AND is_agent = 1)
+  BEGIN
+    SELECT RAISE(ABORT, 'only an agent can be on a crew');
+  END;
+  CREATE TRIGGER repo_crew_agents_only_update BEFORE UPDATE OF user_id ON repo_crew
+  WHEN NOT EXISTS (SELECT 1 FROM user WHERE id = NEW.user_id AND is_agent = 1)
+  BEGIN
+    SELECT RAISE(ABORT, 'only an agent can be on a crew');
+  END;
+  `,
+  // 63 — the forge's capacity, set live by an admin (#874): crew and check
+  // concurrency, shards per check, egress mode. The environment stays the
+  // boot default; a row here overrides it, and every change is kept.
+  `
+  CREATE TABLE IF NOT EXISTS forge_setting (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS forge_setting_change (
+    key        TEXT NOT NULL,
+    from_value TEXT NOT NULL,
+    to_value   TEXT NOT NULL,
+    actor_id   TEXT NOT NULL,
+    at         TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS forge_setting_change_at ON forge_setting_change(at);
+  `,
+  // 64 — the front page's settings beyond its picks (#767): how it ranks,
+  // as one value a site admin sets. Presentation, like the picks: no event.
+  `
+  CREATE TABLE IF NOT EXISTS front_setting (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL,
+    set_by TEXT REFERENCES user(id) ON DELETE SET NULL,
+    set_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  `,
+  // 65 — a sealed issue (#621): a security report, and the pull that fixes
+  // it, seen only by people who can write the repository and its crew until
+  // a writer unseals it (`core/sealed.ts`).
+  `
+  ALTER TABLE issue ADD COLUMN sealed INTEGER NOT NULL DEFAULT 0;
+  -- The crew works a sealed report in a private repository of its own,
+  -- read by the base's writers and crew only, so the fix is never in the
+  -- base's git or a public fork's before it merges.
+  ALTER TABLE repo ADD COLUMN sealed_for TEXT REFERENCES repo(id) ON DELETE CASCADE;
+  `,
+  // 66 — a milestone a person watches (#732, `core/watches.ts`): one row per
+  // person and issue. Its progress is read from the plan, never stored.
+  `
+  CREATE TABLE IF NOT EXISTS milestone_watch (
+    user_id    TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    issue_id   TEXT NOT NULL REFERENCES issue(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (user_id, issue_id)
+  );
+  CREATE INDEX IF NOT EXISTS milestone_watch_issue ON milestone_watch(issue_id);
+  `,
+  // 67 — every fork a person made, kept when the fork is deleted (#888):
+  // the daily limit counts what was made, so deleting a copy does not make
+  // room for another. Nothing but the account's own deletion removes a row.
+  `
+  CREATE TABLE IF NOT EXISTS fork_made (
+    owner_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    made_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX IF NOT EXISTS fork_made_owner ON fork_made(owner_id, made_at);
+  `,
+  // 68 — the run a comment was said into as it worked (#827): its agent heard
+  // it then, so the next run's brief does not tell it again.
+  `
+  ALTER TABLE comment ADD COLUMN heard_in TEXT;
+  `,
+  // 69 — an event's place in the outbox, as a number of its own (#932):
+  // replays resume by it, never by the id, which two processes in a roll
+  // can make out of order. It began as the rowid, which VACUUM may renumber
+  // on a table without an INTEGER PRIMARY KEY; this column it never
+  // touches. Every insert takes the next one, whoever writes it (the app or
+  // a migration's SQL), from the trigger: one writer at a time, so strictly
+  // increasing across every connection.
+  `
+  ALTER TABLE event ADD COLUMN seq INTEGER;
+  UPDATE event SET seq = rowid;
+  CREATE UNIQUE INDEX IF NOT EXISTS event_seq ON event(seq);
+  CREATE INDEX IF NOT EXISTS event_repo_seq ON event(repo_id, seq);
+  CREATE TRIGGER IF NOT EXISTS event_seq_next AFTER INSERT ON event
+  WHEN NEW.seq IS NULL
+  BEGIN
+    UPDATE event SET seq = (SELECT COALESCE(MAX(seq), 0) + 1 FROM event)
+     WHERE rowid = NEW.rowid;
+  END;
+  `,
+  // 70 — a sealed repository is never public, said by the database (#865's
+  // review): the rule lived in `updateRepoSettings`; these triggers hold
+  // it for every writer of `repo.visibility`, now and later.
+  `
+  CREATE TRIGGER repo_sealed_never_public BEFORE UPDATE OF visibility, sealed_for ON repo
+  WHEN NEW.sealed_for IS NOT NULL AND NEW.visibility = 'public'
+  BEGIN
+    SELECT RAISE(ABORT, 'a sealed repository is never public');
+  END;
+  CREATE TRIGGER repo_sealed_never_public_insert BEFORE INSERT ON repo
+  WHEN NEW.sealed_for IS NOT NULL AND NEW.visibility = 'public'
+  BEGIN
+    SELECT RAISE(ABORT, 'a sealed repository is never public');
+  END;
+  `,
 ];

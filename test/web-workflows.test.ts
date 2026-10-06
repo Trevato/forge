@@ -32,7 +32,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { listOrigins, repoForkOf } from "../src/core/origins.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
@@ -41,6 +40,7 @@ import { forgetProviders } from "../src/origins/providers/index.ts";
 import { clearViewCache } from "../src/view/cache.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 quietLogs();
 
@@ -121,6 +121,7 @@ describe("fork at the origin, and propose a change through it", () => {
       }),
       redirect: "manual",
     });
+    proveAll(app);
     return (response.headers.get("set-cookie") ?? "").split(";")[0]!;
   };
 
@@ -135,10 +136,11 @@ describe("fork at the origin, and propose a change through it", () => {
         password: PASSWORD,
       }),
     });
+    proveAll(upApp);
     const made = await fetch(`${upServers.url}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username,
         password: PASSWORD,
         name: "t",
@@ -249,7 +251,6 @@ describe("fork at the origin, and propose a change through it", () => {
     base = servers.url;
     delete process.env.FORGE_GITHUB_CLIENT_ID;
     alice = await signUp("alice");
-    resetConnectLimit();
     forgetProviders(dataDir);
     const connected = await web(alice, "/settings/origins/token", {
       form: { host: fake.url, token: originToken },
@@ -571,10 +572,11 @@ describe("verdicts, threads, and the gate they open", () => {
       redirect: "manual",
     });
     cookies[username] = (signed.headers.get("set-cookie") ?? "").split(";")[0]!;
+    proveAll(app);
     const token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username,
         password: PASSWORD,
         name: "t",
@@ -641,11 +643,14 @@ describe("verdicts, threads, and the gate they open", () => {
   });
 
   const at = (): string => `/acme/lib/pulls/${pullNumber}`;
+  // The review card, the merge box and the diff's threads are the change's
+  // Files step, one tab under the change.
+  const files = (): string => `${at()}/files`;
 
   // ---- the review card ----
 
   test("the pull page carries a review card with the verdicts you may pass", async () => {
-    const forBob = await bodyOf("bob", at());
+    const forBob = await bodyOf("bob", files());
     expect(forBob).toContain(`action="${at()}/review-state"`);
     expect(forBob).toContain(">Approve");
     expect(forBob).toContain(">Request changes");
@@ -653,18 +658,18 @@ describe("verdicts, threads, and the gate they open", () => {
     assertNoScriptDependence(forBob);
 
     // The author never sees Approve — you cannot approve your own change.
-    const forAda = await bodyOf("ada", at());
+    const forAda = await bodyOf("ada", files());
     expect(forAda).not.toContain(">Approve");
     expect(words(forAda)).toContain("cannot approve your own pull request");
 
     // A reader may only comment: a verdict that gates a merge is a writer's.
-    const forCleo = await bodyOf("cleo", at());
+    const forCleo = await bodyOf("cleo", files());
     expect(forCleo).not.toContain(">Approve");
     expect(forCleo).not.toContain(">Request changes");
     expect(forCleo).toContain(">Comment");
 
     // Anonymous is asked to sign in rather than shown a button that 403s.
-    const forNobody = await bodyOf("nobody", at());
+    const forNobody = await bodyOf("nobody", files());
     expect(words(forNobody)).toContain("to review this change");
     expect(forNobody).not.toContain(`action="${at()}/review-state"`);
   });
@@ -705,8 +710,10 @@ describe("verdicts, threads, and the gate they open", () => {
     const page = await bodyOf("ada", at());
     expect(words(page)).toContain("Changes requested");
     expect(page).toContain("the <strong>spec</strong> says 34");
-    // …and the merge box names who is blocking it.
-    expect(words(page)).toContain("changes requested by bob");
+    // …and the merge box, on the Files step, names who is blocking it.
+    expect(words(await bodyOf("ada", files()))).toContain(
+      "changes requested by bob",
+    );
   });
 
   // ---- the gate ----
@@ -730,7 +737,7 @@ describe("verdicts, threads, and the gate they open", () => {
   });
 
   test("with a change requested, the merge button is disabled and says why", async () => {
-    const page = await bodyOf("ada", at());
+    const page = await bodyOf("ada", files());
     expect(words(page)).toContain("Waiting on review");
     expect(words(page)).toContain("bob asked for changes");
     expect(page).toContain("disabled");
@@ -755,7 +762,7 @@ describe("verdicts, threads, and the gate they open", () => {
     });
     expect(approved.status).toBe(303);
 
-    const ready = await bodyOf("ada", at());
+    const ready = await bodyOf("ada", files());
     expect(words(ready)).toContain("Ready to merge");
     expect(words(ready)).toContain("1 approval");
     expect(words(ready)).not.toContain("Waiting on review");
@@ -768,26 +775,31 @@ describe("verdicts, threads, and the gate they open", () => {
     });
     expect(pushed.status).toBe(201);
 
-    const stale = await bodyOf("ada", at());
+    const stale = await bodyOf("ada", files());
     expect(words(stale)).toContain("Waiting on review");
-    expect(words(stale)).toContain("before the latest push");
-    expect(stale).toContain("verdict-stale");
     expect(words(stale)).not.toContain("1 approval");
+    // The dismissed verdict reads as history in the change's conversation.
+    const timeline = await bodyOf("ada", at());
+    expect(words(timeline)).toContain("before the latest push");
+    expect(timeline).toContain("verdict-stale");
   });
 
-  test("the pull list marks where each pull stands", async () => {
+  test("the pull list shows each pull in its word; where it stands on review is one step deeper, on the change", async () => {
+    // One list (#627): a row is the pull's word, never a review badge.
     const list = await bodyOf("ada", "/acme/lib/pulls");
-    expect(words(list)).toContain("Needs review");
-
-    await web("bob", `${at()}/review-state`, { form: { state: "approved" } });
-    expect(words(await bodyOf("ada", "/acme/lib/pulls"))).toContain("1 approval");
+    expect(list).toContain(`href="/acme/lib/changes/${pullNumber}"`);
+    expect(list).toContain("data-word=");
+    expect(words(list)).not.toContain("Needs review");
 
     await web("bob", `${at()}/review-state`, {
       form: { state: "changes_requested" },
     });
-    expect(await bodyOf("ada", "/acme/lib/pulls")).toContain("Changes requested");
+    expect(words(await bodyOf("ada", files()))).toContain(
+      "changes requested by bob",
+    );
     // Put it back so the thread tests below have a sane pull.
     await web("bob", `${at()}/review-state`, { form: { state: "approved" } });
+    expect(words(await bodyOf("ada", files()))).toContain("1 approval");
   });
 
   // ---- threads ----
@@ -798,7 +810,7 @@ describe("verdicts, threads, and the gate they open", () => {
     });
     expect(commented.status).toBe(303);
 
-    const open = await bodyOf("ada", at());
+    const open = await bodyOf("ada", files());
     expect(words(open)).toContain("1 thread · 1 unresolved");
     expect(words(open)).toContain("> Resolve <");
     const anchor = /threads\/([0-9a-f]{16})\/resolve/.exec(open)?.[1];
@@ -809,7 +821,7 @@ describe("verdicts, threads, and the gate they open", () => {
     });
     expect(resolved.status).toBe(303);
 
-    const settledPage = await bodyOf("ada", at());
+    const settledPage = await bodyOf("ada", files());
     expect(words(settledPage)).toContain("1 thread · 0 unresolved");
     expect(settledPage).toContain("resolved by");
     expect(settledPage).toContain("ada");
@@ -823,11 +835,11 @@ describe("verdicts, threads, and the gate they open", () => {
       form: {},
     });
     expect(reopened.status).toBe(303);
-    expect(words(await bodyOf("ada", at()))).toContain("1 thread · 1 unresolved");
+    expect(words(await bodyOf("ada", files()))).toContain("1 thread · 1 unresolved");
   });
 
   test("a stranger cannot settle somebody else's thread", async () => {
-    const page = await bodyOf("ada", at());
+    const page = await bodyOf("ada", files());
     const anchor = /threads\/([0-9a-f]{16})\/resolve/.exec(page)![1]!;
     const refused = await web("cleo", `${at()}/threads/${anchor}/resolve`, {
       form: {},
@@ -840,11 +852,11 @@ describe("verdicts, threads, and the gate they open", () => {
     );
     expect(flash).toContain("Only someone in the thread");
     // And cleo is not even offered the button.
-    expect(await bodyOf("cleo", at())).not.toContain("/resolve");
+    expect(await bodyOf("cleo", files())).not.toContain("/resolve");
   });
 
   test("every new POST refuses a cross-origin form and an anonymous caller", async () => {
-    const page = await bodyOf("ada", at());
+    const page = await bodyOf("ada", files());
     const anchor = /threads\/([0-9a-f]{16})\/resolve/.exec(page)![1]!;
     const routes = [
       `${at()}/review-state`,

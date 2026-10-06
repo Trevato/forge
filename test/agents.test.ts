@@ -27,6 +27,7 @@ import {
   resetSseDroppedCount,
   sseDroppedCount,
 } from "../src/http/sse.ts";
+import { CONNECT_LIMITS } from "../src/actions/origins.ts";
 import { RateLimiter } from "../src/core/ratelimit.ts";
 import { deliveryBusy, runDelivery } from "../src/core/webhooks.ts";
 import { Gate, gitGate, runGit } from "../src/git/env.ts";
@@ -69,16 +70,16 @@ describe("fifty agents at once", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        username: "crew",
-        email: "crew@forge.test",
+        username: "cora",
+        email: "cora@forge.test",
         password: "a-long-crew-password",
       }),
     });
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "crew",
+      body: JSON.stringify({ adminConfirm: true,
+        username: "cora",
         password: "a-long-crew-password",
         name: "fleet",
         scope: "rw",
@@ -87,7 +88,7 @@ describe("fifty agents at once", () => {
       .then((r) => r.json())
       .then((j) => (j as { token: string }).token);
     await write("/api/v1/repos", { name: "swarm", visibility: "public" });
-    await write("/api/v1/repos/crew/swarm/contents", {
+    await write("/api/v1/repos/cora/swarm/contents", {
       message: "init",
       files: [{ path: "README.md", content: "# swarm\n" }],
     });
@@ -106,7 +107,7 @@ describe("fifty agents at once", () => {
 
     const responses = await Promise.all(
       Array.from({ length: WRITERS }, (_, i) =>
-        write("/api/v1/repos/crew/swarm/issues", {
+        write("/api/v1/repos/cora/swarm/issues", {
           title: `parallel issue ${i}`,
           body: "opened by an agent",
         }),
@@ -142,12 +143,12 @@ describe("fifty agents at once", () => {
 
   test("fifty commenters on one thread all land, and all record an event", async () => {
     const created = (await (
-      await write("/api/v1/repos/crew/swarm/issues", { title: "the thread" })
+      await write("/api/v1/repos/cora/swarm/issues", { title: "the thread" })
     ).json()) as { number: number };
 
     const responses = await Promise.all(
       Array.from({ length: WRITERS }, (_, i) =>
-        write(`/api/v1/repos/crew/swarm/issues/${created.number}/comments`, {
+        write(`/api/v1/repos/cora/swarm/issues/${created.number}/comments`, {
           body: `agent ${i} reporting`,
         }),
       ),
@@ -164,13 +165,13 @@ describe("fifty agents at once", () => {
   }, 60_000);
 
   test("fifty pushes to distinct branches all complete over the hook socket", async () => {
-    const dir = repoDir(app.reposRoot, "crew", "swarm");
+    const dir = repoDir(app.reposRoot, "cora", "swarm");
     // Push with plumbing rather than a client: each "push" is an update-ref
     // through the same pre-receive path a real one takes... except that the
     // hook only runs for a transport. So drive real ones, in parallel, over
     // HTTP — the socket's backlog is exactly what is under test.
     const clones = await mkdtemp(join(tmpdir(), "forge-agents-push-"));
-    const remote = `${base.replace("http://", `http://crew:${token}@`)}/crew/swarm.git`;
+    const remote = `${base.replace("http://", `http://cora:${token}@`)}/cora/swarm.git`;
 
     const clone = await Bun.spawn(
       ["git", "clone", "--quiet", remote, join(clones, "work")],
@@ -278,16 +279,16 @@ describe("Idempotency-Key", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        username: "bot",
-        email: "bot@forge.test",
+        username: "mira",
+        email: "mira@forge.test",
         password: "a-long-bot-password",
       }),
     });
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "bot",
+      body: JSON.stringify({ adminConfirm: true,
+        username: "mira",
         password: "a-long-bot-password",
         name: "retries",
         scope: "rw",
@@ -311,9 +312,9 @@ describe("Idempotency-Key", () => {
     const before = issueCount();
     const body = { title: "only once", body: "the network ate the answer" };
 
-    const first = await post("/api/v1/repos/bot/retry/issues", body, "key-one");
+    const first = await post("/api/v1/repos/mira/retry/issues", body, "key-one");
     const second = await post(
-      "/api/v1/repos/bot/retry/issues",
+      "/api/v1/repos/mira/retry/issues",
       body,
       "key-one",
     );
@@ -331,9 +332,9 @@ describe("Idempotency-Key", () => {
     const before = issueCount();
     const body = { title: "raced", body: "both arrived" };
     const [a, b, c] = await Promise.all([
-      post("/api/v1/repos/bot/retry/issues", body, "key-race"),
-      post("/api/v1/repos/bot/retry/issues", body, "key-race"),
-      post("/api/v1/repos/bot/retry/issues", body, "key-race"),
+      post("/api/v1/repos/mira/retry/issues", body, "key-race"),
+      post("/api/v1/repos/mira/retry/issues", body, "key-race"),
+      post("/api/v1/repos/mira/retry/issues", body, "key-race"),
     ]);
     expect([a.status, b.status, c.status]).toEqual([201, 201, 201]);
     const numbers = await Promise.all(
@@ -346,9 +347,9 @@ describe("Idempotency-Key", () => {
   });
 
   test("the same key with a different body is refused, not silently wrong", async () => {
-    await post("/api/v1/repos/bot/retry/issues", { title: "first" }, "key-two");
+    await post("/api/v1/repos/mira/retry/issues", { title: "first" }, "key-two");
     const clash = await post(
-      "/api/v1/repos/bot/retry/issues",
+      "/api/v1/repos/mira/retry/issues",
       { title: "second" },
       "key-two",
     );
@@ -362,8 +363,8 @@ describe("Idempotency-Key", () => {
     const other = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "bot",
+      body: JSON.stringify({ adminConfirm: true,
+        username: "mira",
         password: "a-long-bot-password",
         name: "second-agent",
         scope: "rw",
@@ -374,9 +375,9 @@ describe("Idempotency-Key", () => {
 
     const before = issueCount();
     const body = { title: "shared key name" };
-    const mine = await post("/api/v1/repos/bot/retry/issues", body, "collide");
+    const mine = await post("/api/v1/repos/mira/retry/issues", body, "collide");
     const theirs = await post(
-      "/api/v1/repos/bot/retry/issues",
+      "/api/v1/repos/mira/retry/issues",
       body,
       "collide",
       () => other,
@@ -390,7 +391,7 @@ describe("Idempotency-Key", () => {
 
   test("an over-long key is a 422, not an unbounded row", async () => {
     const refused = await post(
-      "/api/v1/repos/bot/retry/issues",
+      "/api/v1/repos/mira/retry/issues",
       { title: "nope" },
       "k".repeat(500),
     );
@@ -425,7 +426,7 @@ describe("Idempotency-Key", () => {
     resetPruneClock();
     const before = issueCount();
     const response = await post(
-      "/api/v1/repos/bot/retry/issues",
+      "/api/v1/repos/mira/retry/issues",
       { title: "sweeper", body: "" },
       "sweep-key",
     );
@@ -435,7 +436,7 @@ describe("Idempotency-Key", () => {
   });
 
   test("a GET carrying the header is untouched — only mutations replay", async () => {
-    const read = await fetch(`${base}/api/v1/repos/bot/retry/issues`, {
+    const read = await fetch(`${base}/api/v1/repos/mira/retry/issues`, {
       headers: {
         authorization: `Bearer ${token}`,
         "idempotency-key": "key-one",
@@ -470,6 +471,31 @@ describe("per-token rate limits", () => {
     for (let i = 0; i < 20; i++) limiter.take("t", "rw");
     now += 60_001;
     expect(limiter.take("t", "rw").allowed).toBe(true);
+  });
+
+  test("a limit counted over a longer window: the connect cap frees the sixth attempt after a quarter of an hour", () => {
+    // The connect limiter's own settings (`actions/origins.ts`), with the
+    // clock in hand: five pass, the sixth is refused, and once the first is
+    // fifteen minutes old the sixth passes.
+    const first = 1_000_000;
+    let now = first;
+    const limiter = new RateLimiter(CONNECT_LIMITS, () => now);
+    // Five attempts, a second apart.
+    for (let i = 0; i < 5; i++) {
+      expect(limiter.take("alice", "rw").allowed).toBe(true);
+      now += 1_000;
+    }
+    const sixth = limiter.take("alice", "rw");
+    expect(sixth.allowed).toBe(false);
+    expect(sixth.retryAfter).toBe(15 * 60 - 5);
+    // A minute is not enough: this window is not the API's.
+    now += 60_001;
+    expect(limiter.take("alice", "rw").allowed).toBe(false);
+    // The first attempt is a quarter of an hour old: one more passes, and
+    // only one, since the second is still inside the window.
+    now = first + 15 * 60_000 + 1;
+    expect(limiter.take("alice", "rw").allowed).toBe(true);
+    expect(limiter.take("alice", "rw").allowed).toBe(false);
   });
 
   test("one runaway token cannot spend another token's budget", () => {
@@ -551,7 +577,7 @@ describe("rate limits over HTTP", () => {
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "loop",
         password: "a-long-loop-password",
         name: "runaway",
@@ -608,7 +634,7 @@ describe("rate limits over HTTP", () => {
     const fresh = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "loop",
         password: "a-long-loop-password",
         name: "polite",
@@ -835,6 +861,33 @@ describe("git process limits and timeouts", () => {
     held();
     await Promise.all(waiters);
     expect(order).toEqual([1, 2, 3]);
+  });
+
+  test("a `first` waiter goes ahead of the others, and FIFO among its own kind", async () => {
+    const gate = new Gate(1);
+    const order: string[] = [];
+    const held = await gate.acquire();
+    const waiters = (
+      [
+        ["preview-1", false],
+        ["production-a", true],
+        ["preview-2", false],
+        ["production-b", true],
+      ] as const
+    ).map(async ([name, first]) => {
+      const release = await gate.acquire({ first });
+      order.push(name);
+      release();
+    });
+    held();
+    await Promise.all(waiters);
+    expect(order).toEqual([
+      "production-a",
+      "production-b",
+      "preview-1",
+      "preview-2",
+    ]);
+    expect(gate.stats().active).toBe(0);
   });
 
   test("concurrent git reads never exceed the process cap", async () => {

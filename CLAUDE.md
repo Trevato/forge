@@ -48,7 +48,9 @@ canAdmin`), token scope (`readForm` floor + `minScope`), and branch
 11. **A child inherits nothing it was not handed.** App and agent processes
     start from `childEnv` (`apps/process.ts`) — an explicit, short
     environment — never from the forge's own, which carries secrets. A
-    preview's data is a copy of production's, never a path to it.
+    preview's data is a copy of production's, never a path to it. And it
+    runs in a cell (`apps/contain.ts`): never a plain child where the host
+    can hold one.
 
 ## How to work
 
@@ -74,9 +76,27 @@ bun run src/main.ts   # boots on :3000, data in ./data
   the reason is printed so a skip is never read as a pass.
 - **`bun run check` is the gate**, and it reads its command from
   `forge.json`, so what you see is exactly what the push will be judged by.
+  **The forge runs it on every push; a crew run does not.** Before pushing,
+  run `bun x tsc --noEmit` and ONE `bun test` call with the test files of
+  what you touched plus the five cross files that catch crossed merges —
+  `test/reserved-names.test.ts`, `test/studio.test.ts`, `test/shards.test.ts`
+  (the gate list), `test/check-list.test.ts`, `test/hollow.test.ts`. Never
+  `bun scripts/test-shards.ts --gate` inside a run: the check on your push is
+  that same gate, and running both doubles the load on a small machine.
+  It runs the files in `GATE` (`scripts/gate.ts`), not the whole suite; every
+  other test file is in `EXCLUDED` with its reason and owning issue. Add a new
+  test file to `GATE`, or the check goes red.
 - **Every non-trivial change ships with a test.** Prefer protocol-level tests
   that boot a real app (`createApp` + `serve`) over unit mocks. Adversarial
   tests (can this be bypassed?) are worth more than happy-path ones.
+- **Done means reachable.** A new action is called from a route, a page or an
+  MCP tool in the same pull, and a new screen is linked from a page a person
+  can get to. `scripts/hollow.ts` (run by `test/hollow.test.ts` in the gate,
+  or `bun scripts/hollow.ts`) names an exported function in `src/actions/`
+  that nothing that runs reaches (a page function no route names does not
+  count as a caller) and a screen no page links to.
+  `scripts/hollow-allow.ts` is for hollow work an issue already owns, never
+  for new work.
 - **TypeScript is strict**: `noUncheckedIndexedAccess` (index access is `T |
 undefined` — handle it), `exactOptionalPropertyTypes` (don't pass `undefined`
   where a key should be absent), `verbatimModuleSyntax` (`import type`), and
@@ -104,7 +124,9 @@ src/
               (issue|pull, grouped `labelsForIssues`/`commentCounts`), pulls,
               reviews, orgs/teams, webhooks, keys (ssh public keys), search
               (repos/issues/`git grep`, all bounded), events (outbox+bus),
-              reconcile, schema — pure data, no authz, no events
+              reconcile, schema, usage (what each agent run spent: tokens,
+              cost, wall time, by subscription/app/agent/issue) — pure
+              data, no authz, no events
   actions/    one function per platform mutation: authorize (access.ts tiers),
               call core, `bus.append`. API, web, and TUI are adapters over
               these. branches.ts also owns `originPush` — how a mirror's ref
@@ -133,9 +155,12 @@ src/
               pages/{site,repo,issues,pulls,pull,thread,commits,refs,search,
               org,account,settings}, and studio/ — the app-as-the-unit
               surface, one module per concept: words (the vocabulary every
-              page says it in), asks, leans, previews, shelf (an app as one
+              page says it in), asks, previews, shelf (an app as one
               row, for any page that lists apps), home, app, change, tell,
               run, lists, actions, style (the page sheet, assembled)
+  feed/       a viewer's feed (docs/FEED.md): items (candidates read through
+              the access every page uses), affinity (decayed counts), rank,
+              feed (filter, page, cursor)
   ssh/        the SSH server: transport (kex/ciphers), auth (publickey),
               channels (session only), keys, wire — zero deps, no forwarding
   tui/        the terminal UI. term/ is the transport boundary (`Terminal`);
@@ -147,11 +172,19 @@ src/
               fail-closed), checkout (a commit exported with read-tree +
               checkout-index), data (per-environment dirs, copy-on-write
               seeding, SQLite quiesce), process (install/test/start/ready,
-              explicit child env), runtime (environments in memory, rebuilt
+              explicit child env), contain (the cell repository code
+              runs in: bubblewrap, a watch on memory/CPU/disk), egress
+              (the cell's one way out: a proxy to declared hosts) and
+              egress_report (what was reached undeclared, reported), runtime (environments in memory, rebuilt
               on boot, serial deploys per env, crash restarts bounded),
               proxy (Host routing, signed grants for private apps), scaffold
               (the app a new app starts as), tty (`ssh <slug>@forge`: the
               app's own terminal on a pty)
+  fleet/      one action over many rows (docs/FLEET.md): selection (the
+              query line → row ids, only what the viewer reads), verbs (each
+              action as read/next/refuse/write over one row, writing through
+              actions/); actions/fleet.ts plans, applies, keeps the receipt
+              (core/fleet_ops.ts) and undoes
   runs/       log (one file per run, appended live, tailed by listeners)
   crew/       agents as child processes: brief (the system + task prompts:
               the golden path, written down), claude (the headless adapter:
@@ -206,7 +239,9 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   (`notFound`, `noRoute`, `unauthorized`, `forbidden`) or a specific 422 code;
   don't invent a new shape.
 - **Add a schema change:** append a migration to `core/schema.ts` (they run in
-  order, once). Never edit an existing migration — add a new one.
+  order, once each, recognised by a hash of their text in `schema_migration`
+  — see `kernel/migrate.ts`). Never edit an existing migration — an edited
+  one is a new one and runs again. Add a new one.
 - **New git read:** put it in `git/read.ts`; reuse the long-lived `cat-file`
   batch reader rather than spawning per object. Run every rev/path through
   `assertBatchSafe`.
@@ -244,7 +279,8 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
 
 ## Not yet built (deliberately)
 
-A self-describing (OpenAPI) endpoint, containers around app processes,
+A self-describing (OpenAPI) endpoint, container images for app processes
+(they run in a cell — `apps/contain.ts` — not an image),
 custom domains, and a gate that lands a pull on its own once review and
 checks agree. The event outbox and API surface are shaped so these arrive
 as additions, not rewrites. `docs/ARCHITECTURE.md` closes with the

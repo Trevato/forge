@@ -1,8 +1,9 @@
 /**
  * Apps on the web (docs/APPS.md): the list, the golden path's first step
- * (New app), one app's environments with the three things you can do to
- * one — open, redeploy, stop — and the two pieces other pages borrow: the
- * strip a repo home wears when it runs, and the preview card a pull carries.
+ * (New app), the three things you can do to an environment — open,
+ * redeploy, stop — and the two pieces other pages borrow: the strip a repo
+ * home wears when it runs, and the preview card a pull carries. An app's
+ * own page is the studio's (`studio/app.ts`); its old dev URL redirects.
  *
  * Every mutation is an action; a page only puts its answer into words.
  * Opening an environment goes through `openEnvUrl`, which is what makes a
@@ -19,18 +20,16 @@ import {
   stopEnv,
   terminalFor,
 } from "../../actions/apps.ts";
-import { listAllAgents, listCrew } from "../../actions/crew.ts";
+import { listAllAgents } from "../../actions/crew.ts";
 import { planningAvailable } from "../../crew/plan.ts";
 import { appNameJs, deriveAppName } from "./apps-name.ts";
-import { listRepoRuns } from "../../actions/runs.ts";
 import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
-import { appsRuntime, type EnvStatus } from "../../apps/runtime.ts";
+import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { appHostSuffix } from "../../apps/host.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import type { Pull } from "../../core/pulls.ts";
 import {
-  canAdmin,
   canWrite,
   getRepoById,
   listReposVisibleTo,
@@ -40,29 +39,25 @@ import type { User } from "../../core/users.ts";
 import { safeBack, type Ctx } from "../../http/context.ts";
 import { isHostPort, resolveAppHostname } from "../../apps/proxy.ts";
 import {
-  crumbsFor,
   loadRepo,
   notFoundPage,
   pageHead,
   repoBase,
-  repoHeader,
-  repoPalette,
   signInFirst,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
-import { liveClientJs, liveMount } from "../live.ts";
+import { writableAppsOf } from "../studio/asks.ts";
+import { costLine } from "../studio/cost_line.ts";
+import { homeTabs } from "../studio/home_tabs.ts";
 import { shelfRows } from "../studio/shelf.ts";
 import {
   badge,
   btn,
   card,
-  dot,
   empty,
-  envActions,
   envFacts,
-  envPhrase,
   envStateBadge,
   icon,
   listCard,
@@ -72,11 +67,8 @@ import {
   selectField,
   sha,
   terminalLine,
-  time,
-  userLink,
   field as formField,
 } from "../ui.ts";
-import { actorsFor, issuesFor, runRow } from "./runs.ts";
 
 // ---- what the viewer can see ----
 
@@ -108,7 +100,7 @@ function appsForViewer(ctx: Ctx): AppEntry[] {
   for (const repo of repos) {
     const record = records.get(repo.id);
     if (record === undefined) continue;
-    const envs = runtime === undefined ? [] : runtime.status(record);
+    const envs = envsFor(ctx.app, ctx.auth.user, record);
     out.push({
       record,
       repo,
@@ -127,99 +119,7 @@ export function envLabel(env: EnvName): string {
 }
 
 /**
- * One app in a list. The dot is production's state; the title goes to the
- * App page and the URL opens the app — two links, so the row is not itself
- * one (a link inside a link tears the row apart).
- */
-function appRow(entry: AppEntry): Html {
-  const base = repoBase(entry.repo);
-  const name = `${entry.repo.ownerName}/${entry.repo.name}`;
-  return row({
-    nav: true,
-    lead: dot(envPhrase(entry.production).tone),
-    title: html`<a href="${base}/app">${name}</a>`,
-    titleAttr: name,
-    meta: html`${entry.url === undefined
-      ? html`<span>not serving</span>`
-      : html`<a href="${base}/app/production/open" title="Open ${entry.url}"
-          >${entry.url}</a
-        >`}${when(
-      entry.previews > 0,
-      () =>
-        html` · ${entry.previews} preview${entry.previews === 1 ? "" : "s"}`,
-    )}`,
-    trail: html`${when(
-      entry.repo.visibility === "private",
-      () =>
-        html`<span class="badge" data-variant="secondary"
-          >${icon("lock")}Private</span
-        >`,
-    )}`,
-  });
-}
-
-/** The dashboard's Apps card: what runs, and the button that makes one. */
-export function appsCard(ctx: Ctx): Html {
-  const entries = appsForViewer(ctx);
-  const head = html`${icon("rocket")}
-    <h2>Apps</h2>
-    <span class="spacer"></span>
-    ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
-    ${btn("New app", { href: "/apps/new", size: "sm", icon: "plus" })}`;
-  if (entries.length === 0) {
-    return card(
-      html`<p class="muted small">
-        An app is a repository that runs — here, with a URL in seconds and a
-        preview for every pull request.
-      </p>`,
-      { head },
-    );
-  }
-  const shown = entries.slice(0, 8);
-  return listCard(shown.map(appRow), {
-    head,
-    ...(entries.length > shown.length
-      ? {
-          foot: html`<a href="/apps"
-            >All ${entries.length} apps ${icon("chevronRight")}</a
-          >`,
-        }
-      : {}),
-  });
-}
-
-// GET /apps
-export async function appsList(ctx: Ctx): Promise<Response> {
-  // In the studio, the same list a person's home links to is the shelf,
-  // not dev's table — `?mode=dev` still renders what follows, unchanged.
-  if (ctx.mode === "studio") return await studioAppsList(ctx);
-  const entries = appsForViewer(ctx);
-  const create = ctx.auth.user
-    ? btn("New app", {
-        href: "/apps/new",
-        variant: "primary",
-        size: "sm",
-        icon: "plus",
-        shortcut: "c",
-      })
-    : btn("Sign in to make one", { href: "/signin", size: "sm" });
-  const body = html`${pageHead("Apps", {
-    actions: create,
-    sub: "Repositories that run. Production follows the default branch; every open pull request gets a preview.",
-  })}
-  ${entries.length === 0
-    ? empty({
-        icon: "rocket",
-        title: "Nothing runs here yet",
-        note: "A new app is a repository with a small working app in it, served at its own hostname a few seconds later.",
-        action: create,
-      })
-    : listCard(entries.map(appRow))}`;
-  return page({ ctx, title: "Apps", body });
-}
-
-/**
- * GET /apps in the studio: every app the viewer can land, drawn as the
+ * GET /apps: every app the viewer can land, for every viewer, drawn as the
  * shelf (`shelfRows`, `studio/shelf.ts`) — the same row the home's *Your
  * apps* card draws, never a second copy of it. `?live=1` is a link, not a
  * form, narrowing the shelf to what production is actually serving; with
@@ -228,7 +128,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
  * viewer gets the public shelf, and a reader who cannot write to an app
  * never sees its crew or its cost.
  */
-async function studioAppsList(ctx: Ctx): Promise<Response> {
+export async function appsList(ctx: Ctx): Promise<Response> {
   const entries = appsForViewer(ctx);
   const liveCount = entries.filter(
     (e) => e.production?.state === "running",
@@ -269,7 +169,9 @@ async function studioAppsList(ctx: Ctx): Promise<Response> {
     ctx,
     shown.map((e) => e.repo),
   );
-  const body = html`${pageHead("Apps", { actions: create })}
+  const body = html`${when(ctx.auth.user, () => homeTabs("apps"))}
+    ${pageHead("Apps", { actions: create })}
+    ${costLine(ctx.app.db, writableAppsOf(ctx, ctx.auth.user).repos)}
     ${filters}
     ${shown.length === 0
       ? empty({
@@ -532,10 +434,9 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
         : plan
           ? ` ${plan.agent} was picked for #${issue.number} — ${plan.summary}`
           : ` #${issue.number} is assigned to ${issue.assigneeName}.`;
-  // The studio's app page (repoHome, once the record exists) is where this
-  // moment belongs; dev mode keeps the controls' page.
-  const target = ctx.mode === "studio" ? repoBase(repo) : `${repoBase(repo)}/app`;
-  return flashTo(ctx, target, { message: `${first}${second}` });
+  // The repository's home is the app page (repoHome), once the record
+  // exists; the code is its Files step.
+  return flashTo(ctx, repoBase(repo), { message: `${first}${second}` });
 }
 
 // ---- the repo home's strip ----
@@ -543,7 +444,8 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
 /**
  * One line under the repo header, for a repository that runs: production's
  * state, the commit it serves, its URL, how many previews are up, and the
- * way to the App page. Nothing for a repository that is not an app.
+ * way to the app's page in the studio, where its environments are run.
+ * Nothing for a repository that is not an app.
  */
 export function appStrip(ctx: Ctx, repo: Repo): Html {
   const view = appView(ctx.app, ctx.auth.user, repo);
@@ -578,192 +480,30 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
           >${previews} preview${previews === 1 ? "" : "s"}</span
         >`,
     )}
-    <span class="spacer"></span>
-    ${btn("App", {
-      href: `${base}/app`,
-      size: "sm",
-      variant: "ghost",
-      icon: "chevronRight",
-    })}
   </div>`;
 }
 
 // ---- the app page ----
 
-/** One environment: what it is doing, the facts, and the buttons. */
-function envCard(base: string, env: EnvStatus, writer: boolean): Html {
-  const number = envPull(env.env);
-  return card(
-    envFacts(base, env, { url: true }),
-    {
-      extra: "env-card",
-      ...(env.state === "failed" || env.error !== undefined
-        ? { tone: "danger" as const }
-        : env.failedDeploy !== undefined
-          ? { tone: "attn" as const }
-          : {}),
-      head: html`${icon(number === undefined ? "rocket" : "pull")}
-        <h2>
-          ${number === undefined
-            ? "production"
-            : html`preview of <a href="${base}/pulls/${number}">#${number}</a>`}
-        </h2>
-        ${envStateBadge(env.state)}`,
-      foot: html`${btn("Open", {
-        href: `${base}/app/${env.env}/open`,
-        size: "sm",
-        variant: "outline",
-        icon: "external",
-      })}
-      ${envActions(base, env, writer)}`,
-    },
-  );
+/**
+ * Where an app's page is: the studio's (`studio/app.ts`), the repository's
+ * home for every viewer. Its code is one tab deeper, the Files step
+ * (`repoFiles`, `pages/repo.ts`).
+ */
+export function appHref(repo: Repo): string {
+  return repoBase(repo);
 }
 
-// GET /:owner/:name/app
+// GET /:owner/:name/app — dev's App page, folded into the studio's (#395).
+// The old URL keeps answering: a reader of an app is sent to the studio app
+// page; anyone else gets the same not-found the page always gave them.
 export function appPage(ctx: Ctx): Response {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  const view = appView(ctx.app, ctx.auth.user, repo);
-  if (!view.ok) return notFoundPage(ctx);
-  const { app: record, environments, serving } = view.value;
-  const base = repoBase(repo);
-  const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
-  const admin = canAdmin(ctx.app.db, repo, ctx.auth.user);
-  // Production first, then previews by pull number: the runtime's own order.
-  const envs = environments;
-  const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, { limit: 15 });
-  const runs = listed.ok ? listed.value : [];
-  const crew = listCrew(ctx.app, ctx.auth.user, repo);
-  const url = appsRuntime(ctx.app)?.urlFor(record, "production");
-  const production = envs.find((env) => env.env === "production");
-  const ssh = writer
-    ? terminalFor(ctx.app, record, "production", production)
-    : {};
-  // The same rows the runs page draws, from the same two grouped reads: a
-  // table's first column folds into a sliver at phone width, a row does not.
-  const runsHead = html`${icon("activity")}
-    <h2>Recent runs</h2>
-    <span class="spacer"></span>
-    ${btn("All runs", {
-      href: `${base}/runs`,
-      size: "sm",
-      variant: "ghost",
-      icon: "chevronRight",
-    })}`;
-  const actors = actorsFor(ctx, runs);
-  const issues = issuesFor(ctx, runs);
-  const runsCard =
-    runs.length === 0
-      ? card(html`<p class="muted small">No runs yet.</p>`, { head: runsHead })
-      : listCard(
-          runs.map((run) => runRow(base, run, actors, issues)),
-          { head: runsHead },
-        );
-  const environmentsBlock = !serving
-    ? card(
-        html`<p class="muted small">
-          Nothing is serving apps on this forge right now — it was started with
-          <span class="mono">FORGE_APPS=0</span>. The app is still declared;
-          start the forge with apps on and production comes up from the default
-          branch.
-        </p>`,
-        {
-          head: html`${icon("alert")}
-            <h2>Not serving</h2>`,
-        },
-      )
-    : envs.length === 0
-      ? empty({
-          icon: "rocket",
-          title: "Nothing is running yet",
-          note: "Production starts from the default branch; a preview starts when a pull request opens. Give it a moment, or push something.",
-        })
-      : html`<div class="stack">
-          ${envs.map((env) => envCard(base, env, writer))}
-        </div>`;
-
-  const about = card(
-    html`<dl>
-      <dt>Hostname</dt>
-      <dd>
-        ${url === undefined
-          ? html`<span class="muted">not serving</span>`
-          : html`<a href="${base}/app/production/open" class="mono">${url}</a>`}
-      </dd>
-      ${when(
-        writer,
-        () =>
-          html`<dt>Terminal</dt>
-            <dd>${terminalLine(ssh, ctx.app.config.sshHostKey)}</dd>`,
-      )}
-      <dt>Access</dt>
-      <dd>
-        ${record.access === "private"
-          ? "private — only people who can see this repository"
-          : "public — anyone with the link"}
-      </dd>
-      <dt>Preview data</dt>
-      <dd>
-        ${record.previewData === "copy"
-          ? "a copy of production's, taken when the preview starts"
-          : "empty"}
-      </dd>
-    </dl>`,
-    {
-      extra: "about",
-      head: html`${icon("rocket")}
-        <h2>${record.slug}</h2>
-        ${when(
-          admin,
-          () =>
-            html`<span class="spacer"></span> ${btn("Settings", {
-                href: `${base}/settings/app`,
-                size: "sm",
-                variant: "ghost",
-                icon: "settings",
-              })}`,
-        )}`,
-    },
-  );
-
-  const crewCard = when(
-    crew.ok && crew.value.length > 0,
-    () =>
-      html`<div class="mt">
-        ${listCard(
-          (crew.ok ? crew.value : []).map((agent) =>
-            row({
-              lead: icon("bot"),
-              title: html`${userLink(agent.user.username)}`,
-              ...(agent.model === "" ? {} : { meta: html`${agent.model}` }),
-            }),
-          ),
-          {
-            head: html`${icon("bot")}
-              <h2>Crew</h2>`,
-          },
-        )}
-      </div>`,
-  );
-
-  const body = html`${repoHeader(ctx, repo, "app", { compact: true })}
-    <div class="split">
-      <div>
-        ${environmentsBlock}
-        <div class="mt">${runsCard}</div>
-      </div>
-      <aside>${about} ${crewCard}</aside>
-    </div>
-    ${liveMount({ repo: base })}`;
-
-  return page({
-    ctx,
-    title: `App · ${repo.name}`,
-    crumbs: crumbsFor(repo),
-    palette: repoPalette(ctx, repo),
-    body,
-    scriptJs: liveClientJs,
+  if (!appView(ctx.app, ctx.auth.user, repo).ok) return notFoundPage(ctx);
+  return new Response(null, {
+    status: 302,
+    headers: { location: appHref(repo), "cache-control": "no-store" },
   });
 }
 
@@ -779,7 +519,7 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
   );
   const head = html`${icon("rocket")}
     <h2>Preview</h2>
-    ${env === undefined ? null : envStateBadge(env.state)}`;
+    ${env === undefined ? null : envStateBadge(env.state, env.dormant !== undefined)}`;
   if (!view.value.serving)
     return card(
       html`<p class="muted small">Nothing is serving apps on this forge.</p>`,
@@ -808,12 +548,16 @@ export function previewCard(ctx: Ctx, repo: Repo, pull: Pull): Html {
         ),
       )}
       <div class="bar mt">
-        ${btn("Open preview", {
-          href: `${base}/app/${env.env}/open`,
-          size: "sm",
-          variant: "outline",
-          icon: "external",
-        })}
+        ${env.dormant !== undefined && writer
+          ? html`<form method="post" action="${base}/app/${env.env}/redeploy">
+              ${btn("Wake it", { size: "sm", icon: "play" })}
+            </form>`
+          : btn("Open preview", {
+              href: `${base}/app/${env.env}/open`,
+              size: "sm",
+              variant: "outline",
+              icon: "external",
+            })}
       </div>`,
     {
       head,
@@ -866,7 +610,7 @@ export function appOpen(ctx: Ctx): Response {
   if (!link.ok) {
     if (link.error === "unauthorized") return signInFirst(ctx);
     if (link.error === "no_runtime")
-      return flashTo(ctx, `${repoBase(repo)}/app`, {
+      return flashTo(ctx, repoBase(repo), {
         tone: "attn",
         message: "Nothing is serving apps on this forge.",
       });
@@ -891,19 +635,16 @@ async function envForm(
 }
 
 /**
- * Where an environment form sends the person who pressed it. In the studio
- * that is the page the form was on — the app's own page, or a change's —
- * because the head card refreshes itself on the deploy event
- * (`appStateFragment`, `GET /:owner/:name/app/state`), so staying put shows
- * the result better than any page a redirect could pick. The page comes
- * from the referer, and only when the referer is this forge's own origin
- * (`safeBack`), never from a form field; with no referer the fallback is
- * the app's studio page. Dev mode keeps its own App page.
+ * Where an environment form sends the person who pressed it: the page the
+ * form was on — the app's own page, a change's, a pull's — because the head
+ * card refreshes itself on the deploy event (`appStateFragment`,
+ * `GET /:owner/:name/app/state`), so staying put shows the result better
+ * than any page a redirect could pick. The page comes from the referer, and
+ * only when the referer is this forge's own origin (`safeBack`), never from
+ * a form field; with no referer the fallback is the repository's home.
  */
 function envBack(ctx: Ctx, repo: Repo): string {
-  const base = repoBase(repo);
-  if (ctx.mode !== "studio") return `${base}/app`;
-  return safeBack(ctx) ?? base;
+  return safeBack(ctx) ?? repoBase(repo);
 }
 
 function envFailure(ctx: Ctx, repo: Repo, error: string): Response {
@@ -928,18 +669,10 @@ export async function appRedeploy(ctx: Ctx): Promise<Response> {
   const { repo, env, user } = gate;
   const queued = await redeployEnv(ctx.app, user, repo, env);
   if (!queued.ok) return envFailure(ctx, repo, queued.error);
-  const base = repoBase(repo);
   const run = queued.value;
-  // Dev's App page hands the deploy over to its run; the studio stays on the
-  // page that asked for it and watches the head card change there. When
-  // there is no run at all, both fall back to a page that exists.
-  const to =
-    ctx.mode === "studio"
-      ? envBack(ctx, repo)
-      : run === undefined
-        ? `${base}/app`
-        : `${base}/runs/${run.id}`;
-  return redirect(to, {
+  // The page that asked for it stays put and watches the head card change
+  // there (`envBack`); the run itself is one link away on that card.
+  return redirect(envBack(ctx, repo), {
     url: ctx.url,
     flash: {
       message:

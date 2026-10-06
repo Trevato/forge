@@ -13,26 +13,33 @@
  * commit, once.
  */
 
+import { pullDir, runDir } from "../core/pulls.ts";
+import { accountActive } from "../core/accounts.ts";
 import { sshCommand } from "../ssh/command.ts";
 import { appHostSuffix } from "./host.ts";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { getAppByRepo, listApps, type AppRecord } from "../core/apps.ts";
 import { resolveAppEnv } from "../core/app_env.ts";
+import { mintAppToken, renewAppToken, revokeAppToken } from "./token.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { announceRun } from "../actions/runs.ts";
+import { requeueAbandonedChecks } from "../checks/service.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
-import { getRepoById, type Repo } from "../core/repos.ts";
+import { pullMayRun } from "../core/pull_trust.ts";
+import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
+import type { User } from "../core/users.ts";
 import {
   cancelRun,
   listRuns,
   claimRun,
   createRun,
-  CHECK_KINDS,
   failAbandonedRuns,
   finishRun,
   markServing,
+  noteRunProgress,
   STOPPED_SUMMARY,
   type Run,
 } from "../core/runs.ts";
@@ -44,7 +51,21 @@ import type { Result } from "../kernel/result.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { primaryDomain } from "../core/domains.ts";
+import {
+  beatAwake,
+  closeAllAwake,
+  closeAwake,
+  closeOrphans,
+  lastStorageAt,
+  openAwake,
+  recordStorage,
+  SAMPLE_SPAN_MS,
+  type Placement,
+} from "../core/meter.ts";
+import { dirBytes } from "./bytes.ts";
+import { BUSY_WORDS, busyReason, type BusyReason } from "./busy.ts";
 import { exportTree, readFileAt } from "./checkout.ts";
+import { seconds, Stopwatch } from "./timing.ts";
 import type { DomainResolver } from "./domains.ts";
 import {
   appsRoot,
@@ -61,8 +82,12 @@ import {
 } from "./data.ts";
 import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
+import { noteReached } from "./egress_report.ts";
+import { egressSetting } from "../core/capacity.ts";
+import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
 import {
   startProcess,
+  type CellBase,
   type ProcessHandle,
   type StartError,
   type StartInput,
@@ -92,10 +117,26 @@ export interface RuntimeOptions {
   /** How often the runtime looks for environments to put to sleep. */
   readonly sweepEveryMs?: number | undefined;
   /**
+   * How long a pull may go without a push or a comment before its preview
+   * is stopped (not removed: its row, data and pictures stay) and reads as
+   * asleep until someone asks for it. Unset or 0 keeps every preview warm.
+   */
+  readonly idlePullMs?: number | undefined;
+  /**
+   * How long past its idle window a busy environment (`apps/busy.ts`) is
+   * left awake before it sleeps anyway — one crew run's length, so an app
+   * that only claims to be busy cannot stay up forever.
+   */
+  readonly busyGraceMs?: number | undefined;
+  /**
    * What a domain check asks: the system resolver unless a test hands in
    * its own, so proving `app.example.com` needs no network in a test.
    */
   readonly dns?: DomainResolver | undefined;
+  /** Where this forge's processes run, as the meter records it. @default "owned" */
+  readonly placement?: Placement | undefined;
+  /** How often storage is sampled for the meter. @default one hour */
+  readonly storageEveryMs?: number | undefined;
 }
 
 export type EnvState =
@@ -107,6 +148,11 @@ export type EnvState =
 
 const SLEEP_AFTER_MS = { production: 24 * 3_600_000, preview: 30 * 60_000 };
 const SWEEP_EVERY_MS = 60_000;
+const BUSY_GRACE_MS = 45 * 60_000;
+
+/** The sentence a serving environment carries while its tests still run;
+ * the studio reads the same constant to word its badge. */
+export const VERIFYING_NOTE = "serving — still verifying its tests";
 
 export interface EnvStatus {
   readonly env: EnvName;
@@ -163,6 +209,17 @@ export interface EnvStatus {
         readonly error: string;
       }
     | undefined;
+  /**
+   * Why a running environment is still awake past its idle window, in a
+   * person's words (`BUSY_WORDS`) — set only while the sweep is sparing it.
+   */
+  readonly busy?: string | undefined;
+  /**
+   * Set while a preview is stopped because its pull went quiet: when it was
+   * stopped, and the last touch (push, comment, wake) it was measured from.
+   * A stopped preview with this set is asleep, never failed.
+   */
+  readonly dormant?: { readonly since: string; readonly idleSince: string } | undefined;
 }
 
 interface Live {
@@ -184,6 +241,8 @@ interface Live {
   readonly createdAt?: string | undefined;
   /** The deploy run's own start — the reference the deploy log measures from. */
   readonly deployStartedAt?: string | null | undefined;
+  /** This process's forge token (`apps/token.ts`), revoked when it stops. */
+  readonly tokenId?: string | undefined;
 }
 
 /**
@@ -196,8 +255,7 @@ const PUSH_REASONS: readonly string[] = ["push", "opened", "merge"];
 
 /** How long between two instants, in seconds to one decimal place: `3.4s`. */
 function elapsedSeconds(fromIso: string, toIso: string): string {
-  const ms = Math.max(0, Date.parse(toIso) - Date.parse(fromIso));
-  return `${(ms / 1000).toFixed(1)}s`;
+  return seconds(Date.parse(toIso) - Date.parse(fromIso));
 }
 
 /**
@@ -235,6 +293,8 @@ export interface LiveEnv {
   readonly commitOid: string;
   readonly url: string;
   readonly tty: string | null;
+  /** The cell a terminal session runs in, the app's own; unset where cells cannot work. */
+  readonly cell?: CellSpec | undefined;
 }
 
 interface Environment {
@@ -242,10 +302,18 @@ interface Environment {
   readonly env: EnvName;
   live?: Live | undefined;
   asleep?: Asleep | undefined;
+  /** Stopped for want of a push or comment; asked for, it redeploys. */
+  dormant?:
+    | { since: string; idleSince: string; commitOid: string }
+    | undefined;
   /** One wake at a time; every request that arrives meanwhile waits on it. */
   waking?: Promise<void> | undefined;
   /** When something last came through the proxy for this environment. */
   lastRequestAt?: number | undefined;
+  /** Streams the proxy holds open to it: websockets, event streams. */
+  openStreams: number;
+  /** Why the last sweep spared it, while it still is. */
+  keptAwake?: BusyReason | undefined;
   /** The deploy in flight, if one is. */
   deploying?: { run: Run; abort: AbortController } | undefined;
   /** The next deploy, waiting its turn; replaced by a newer request. */
@@ -259,6 +327,14 @@ interface Environment {
   restarts: number[];
 }
 
+/** The deploy reasons that mean a person touched the change. */
+const TOUCH_REASONS: readonly string[] = [
+  "push",
+  "opened",
+  "redeploy",
+  "wake",
+];
+
 const RESTART_WINDOW_MS = 10 * 60_000;
 const RESTART_MAX = 3;
 const RESTART_BACKOFF_MS = [2_000, 10_000, 30_000];
@@ -269,8 +345,36 @@ const runtimes = new WeakMap<App, AppsRuntime>();
 export const appsRuntime = (app: App): AppsRuntime | undefined =>
   runtimes.get(app);
 
+/**
+ * An app's environments as `viewer` may see them. A private app's state,
+ * errors and runs are its writers' and crew's (`canEnterApp`, without the
+ * people it only names, who enter the app and nothing behind it); to
+ * anyone else who can read the repository it shows none — a deploy error
+ * can carry paths and configuration (#620). Every surface that shows a
+ * viewer an app's environments reads them here.
+ */
+export function envsFor(
+  app: App,
+  viewer: User | undefined,
+  record: AppRecord,
+): EnvStatus[] {
+  const runtime = runtimes.get(app);
+  if (runtime === undefined) return [];
+  if (record.access === "private") {
+    const repo = getRepoById(app.db, record.repoId);
+    if (repo === undefined || !canEnterApp(app.db, repo, record, viewer, { named: false }))
+      return [];
+  }
+  return runtime.status(record);
+}
+
 export class AppsRuntime {
   private readonly envs = new Map<string, Environment>();
+  /** Whether this host can hold an app in a cell (`apps/contain.ts`), asked once at start. */
+  private cells: { ok: true } | { ok: false; reason: string } = {
+    ok: false,
+    reason: "not started",
+  };
   private readonly gate: Gate;
   private unsubscribe: (() => void) | undefined;
   private sweeper: ReturnType<typeof setInterval> | undefined;
@@ -411,11 +515,14 @@ export class AppsRuntime {
         ...(state.live.deployStartedAt === null
           ? {}
           : { deployStartedAt: state.live.deployStartedAt }),
-        ...(swapped ? { note: "serving — still verifying its tests" } : {}),
+        ...(swapped ? { note: VERIFYING_NOTE } : {}),
         ...(state.live.testsFailed === undefined
           ? {}
           : { error: `serving · tests failed: ${state.live.testsFailed}` }),
         ...(failedDeploy === undefined ? {} : { failedDeploy }),
+        ...(state.keptAwake === undefined
+          ? {}
+          : { busy: BUSY_WORDS[state.keptAwake] }),
       };
     }
     // Nothing is live and nothing is in flight yet, but a deploy already
@@ -429,6 +536,19 @@ export class AppsRuntime {
         commitOid: state.queued.commitOid,
         url,
         runId: state.queued.id,
+      };
+    }
+    if (state.dormant !== undefined) {
+      return {
+        env: state.env,
+        state: "stopped",
+        commitOid: state.dormant.commitOid,
+        url,
+        runId: state.lastRunId,
+        dormant: {
+          since: state.dormant.since,
+          idleSince: state.dormant.idleSince,
+        },
       };
     }
     if (state.asleep !== undefined) {
@@ -455,14 +575,19 @@ export class AppsRuntime {
 
   /** Rebuild every environment from git and the open pulls, then listen. */
   async start(): Promise<void> {
-    // Deploys and checks: an agent run the last forge left is the crew's,
+    this.cells = await cellsAvailable();
+    if (!this.cells.ok)
+      log.warn("apps run uncontained here", { reason: this.cells.reason });
+    // Deploys are failed; a check the last forge left is queued again while
+    // its commit still heads an open pull; an agent run is the crew's,
     // which queues it again rather than failing it.
-    const abandoned = failAbandonedRuns(
-      this.app.db,
-      STALE_AFTER_MS,
-      CHECK_KINDS,
-    );
-    if (abandoned > 0) log.info("failed abandoned runs", { count: abandoned });
+    const abandoned =
+      failAbandonedRuns(this.app.db, STALE_AFTER_MS, ["deploy"]) +
+      requeueAbandonedChecks(this.app, STALE_AFTER_MS);
+    if (abandoned > 0) log.info("settled abandoned runs", { count: abandoned });
+    // An awake interval the last forge left open ends at its last heartbeat.
+    const orphans = this.metered(() => closeOrphans(this.app.db));
+    if (orphans) log.info("closed open meter intervals", { count: orphans });
     this.unsubscribe = this.app.bus.subscribe((event) => {
       // Never let an event handler's rejection reach the bus.
       this.onEvent(event).catch((error) =>
@@ -472,14 +597,24 @@ export class AppsRuntime {
         }),
       );
     });
+    // Every app's production first, then every app's previews: deploys
+    // take the gate in the order they are asked for, and the environment a
+    // person actually visits must never come back behind someone's preview.
     const known = new Set<string>();
+    const present: { record: AppRecord; repo: Repo }[] = [];
     for (const record of listApps(this.app.db)) {
       known.add(record.id);
       const repo = getRepoById(this.app.db, record.repoId);
-      if (!repo) continue;
-      await this.reconcileApp(record, repo, "boot");
+      // A forge coming back does not restart a suspended owner's apps.
+      if (repo && accountActive(this.app.db, repo.ownerId))
+        present.push({ record, repo });
     }
+    for (const { record, repo } of present)
+      await this.reconcileApp(record, repo, "boot", "production");
+    for (const { record, repo } of present)
+      await this.reconcileApp(record, repo, "boot", "preview");
     this.pruneDirs(known);
+    await this.sampleStorage();
     this.sweeper = setInterval(
       () => void this.sweep(),
       this.options.sweepEveryMs ?? SWEEP_EVERY_MS,
@@ -496,7 +631,10 @@ export class AppsRuntime {
       state.deploying?.abort.abort();
       if (state.queued)
         cancelRun(this.app.db, state.queued.id, STOPPED_SUMMARY);
-      if (state.live) stops.push(state.live.handle.stop());
+      if (state.live) {
+        revokeAppToken(this.app.db, state.live.tokenId);
+        stops.push(state.live.handle.stop());
+      }
       // Abort only cancels the step in flight; the `execute()` continuation
       // chained onto `state.chain` still runs afterwards to record the
       // outcome (`finishRun`, `announceRun`). Wait for it too, or it can
@@ -504,6 +642,7 @@ export class AppsRuntime {
       stops.push(state.chain.catch(() => {}));
     }
     await Promise.all(stops);
+    this.metered(() => closeAllAwake(this.app.db, new Date().toISOString()));
     runtimes.delete(this.app);
   }
 
@@ -523,19 +662,34 @@ export class AppsRuntime {
     if (tip !== undefined && only !== "preview")
       this.requestDeploy(record, repo, "production", tip, reason);
     const open = new Set<EnvName>(["production"]);
-    for (const pull of listPulls(this.app.db, repo.id, {
+    for (const pull of listPulls(this.app.db, repo.id, { sealed: true,
       state: "open",
       limit: 200,
     })) {
       const env = previewEnv(pull.number);
       open.add(env);
-      const head = await this.pullHead(dir, pull);
-      if (head === undefined || only === "production") continue;
+      if (only === "production") continue;
+      const head = await this.pullHead(repo, pull);
+      if (head === undefined) continue;
       // A preview the forge built in an earlier life comes back asleep, not
       // deployed: nobody is looking at it this second, and the first who
       // does wakes it warm. Thirty previews starting at once is what a
       // restart used to cost.
-      if (reason === "boot" && this.settleAsleep(record, env, head)) continue;
+      // One idle past the age stays stopped: a restart never wakes it.
+      if (reason === "boot") {
+        // A preview at a head nobody who can write approved — built before
+        // the gate, or its approval withdrawn — does not come back at all.
+        if (!this.mayRun(record, repo, env, head)) {
+          await this.teardown(record, env);
+          continue;
+        }
+        const idleSince = this.idleSince(repo, pull, env);
+        if (idleSince !== undefined) {
+          this.hibernateAtBoot(record, env, head, idleSince);
+          continue;
+        }
+        if (this.settleAsleep(record, env, head)) continue;
+      }
       this.requestDeploy(record, repo, env, head, reason);
     }
     // Environments on disk for pulls that are no longer open.
@@ -558,7 +712,8 @@ export class AppsRuntime {
     }
   }
 
-  private async pullHead(dir: string, pull: Pull): Promise<string | undefined> {
+  private async pullHead(repo: Repo, pull: Pull): Promise<string | undefined> {
+    const dir = await pullDir(this.app.db, this.app.reposRoot, repo, pull);
     const ref = pull.crossRepo
       ? `refs/pull/${pull.number}/head`
       : `refs/heads/${pull.headBranch}`;
@@ -609,7 +764,7 @@ export class AppsRuntime {
             );
           }
           // Every open pull whose head is this branch previews the new tip.
-          for (const pull of listPulls(this.app.db, repo.id, {
+          for (const pull of listPulls(this.app.db, repo.id, { sealed: true,
             state: "open",
             limit: 200,
           })) {
@@ -647,7 +802,7 @@ export class AppsRuntime {
       case "pull.reopened": {
         const pull = this.pullFromEvent(repo, event);
         if (!pull) return;
-        const head = await this.pullHead(dir, pull);
+        const head = await this.pullHead(repo, pull);
         if (head !== undefined)
           this.requestDeploy(
             record,
@@ -655,6 +810,39 @@ export class AppsRuntime {
             previewEnv(pull.number),
             head,
             "opened",
+            event.actorId ?? undefined,
+          );
+        return;
+      }
+      // An approval is what lets a reader's pull run: deploy its head now.
+      case "pull.reviewed": {
+        // A writer asking for changes may withdraw what let the preview run:
+        // if the code it serves may no longer run, it stops now, not at its
+        // next sleep or restart.
+        if (event.payload["state"] === "changes_requested") {
+          const pull = this.pullFromEvent(repo, event);
+          if (!pull) return;
+          const env = previewEnv(pull.number);
+          const state = this.envs.get(key(record.id, env));
+          const serving =
+            state?.live?.commitOid ??
+            state?.deploying?.run.commitOid ??
+            state?.asleep?.commitOid;
+          if (serving !== undefined && !this.mayRun(record, repo, env, serving))
+            await this.teardown(record, env);
+          return;
+        }
+        if (event.payload["state"] !== "approved") return;
+        const pull = this.pullFromEvent(repo, event);
+        if (!pull || pull.state !== "open") return;
+        const head = await this.pullHead(repo, pull);
+        if (head !== undefined)
+          this.requestDeploy(
+            record,
+            repo,
+            previewEnv(pull.number),
+            head,
+            "approved",
             event.actorId ?? undefined,
           );
         return;
@@ -706,8 +894,12 @@ export class AppsRuntime {
     reason: string,
     actorId?: string,
   ): Run | undefined {
-    if (this.stopped) return undefined;
+    // A suspended or removed owner's app does not deploy.
+    if (this.stopped || !accountActive(this.app.db, repo.ownerId))
+      return undefined;
+    if (!this.mayRun(record, repo, env, commitOid)) return undefined;
     const state = this.envFor(record, env);
+    state.dormant = undefined;
     if (
       (state.live?.commitOid === commitOid ||
         state.asleep?.commitOid === commitOid) &&
@@ -758,7 +950,13 @@ export class AppsRuntime {
     const k = key(record.id, env);
     let state = this.envs.get(k);
     if (state === undefined) {
-      state = { app: record, env, chain: Promise.resolve(), restarts: [] };
+      state = {
+        app: record,
+        env,
+        chain: Promise.resolve(),
+        restarts: [],
+        openStreams: 0,
+      };
       this.envs.set(k, state);
     }
     return state;
@@ -782,10 +980,21 @@ export class AppsRuntime {
       `deploy ${state.env} of ${repo.ownerName}/${repo.name} at ${run.commitOid.slice(0, 7)} (${run.reason})`,
     );
 
+    // The clock starts at the claim, the instant the log calls "the deploy
+    // started"; the first lap is the wait for a permit. Production goes
+    // ahead of previews waiting for one: it is the environment a person
+    // actually visits.
+    const clock = new Stopwatch();
     // A deploy that throws is a failed run, never a fallen forge: the chain
     // this runs on would otherwise reject unhandled and take the process.
     const outcome = await this.gate
-      .run(() => this.bringUp(state, repo, run, write, abort.signal))
+      .run(
+        () => {
+          clock.lap("turn");
+          return this.bringUp(state, repo, run, write, abort.signal, clock);
+        },
+        { first: state.env === "production" },
+      )
       .catch((error: unknown) => ({
         ok: false as const,
         error: `deploy failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -844,6 +1053,7 @@ export class AppsRuntime {
       deployStartedAt,
     };
     state.live = live;
+    this.awake(state, servingAt);
     state.asleep = undefined;
     state.lastRequestAt = Date.now();
     state.lastError = undefined;
@@ -854,6 +1064,7 @@ export class AppsRuntime {
       write(
         `stopping the previous deployment (${previous.commitOid.slice(0, 7)})`,
       );
+      revokeAppToken(this.app.db, previous.tokenId);
       await previous.handle.stop();
       if (previous.dir !== live.dir)
         rmSync(previous.dir, { recursive: true, force: true });
@@ -916,16 +1127,19 @@ export class AppsRuntime {
     run: Run,
     write: (line: string) => void,
     signal: AbortSignal,
+    clock: Stopwatch,
   ): Promise<
     | { ok: true; value: Live; tested: Promise<Result<void, string>> }
     | { ok: false; error: string }
   > {
-    const bare = repoDir(this.app.reposRoot, repo.ownerName, repo.name);
+    // A sealed pull's preview is built from where its work is (`pullDir`).
+    const bare = await runDir(this.app.db, this.app.reposRoot, repo, run.issueId);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, run.commitOid, "forge.json"),
       readFileAt(bare, run.commitOid, "package.json"),
     ]);
     const manifest = parseManifest(forgeJson, packageJson);
+    clock.lap("manifest");
     if (!manifest.ok) {
       return {
         ok: false,
@@ -949,6 +1163,7 @@ export class AppsRuntime {
       const exported = await exportTree(bare, run.commitOid, dir);
       if (!exported.ok) return { ok: false, error: exported.error };
     }
+    clock.lap(warm ? "checkout (warm)" : "checkout");
 
     const seeded = ensureEnvData(
       this.app.config.dataDir,
@@ -965,7 +1180,16 @@ export class AppsRuntime {
       write(`data: ${seeded} from production`);
     else if (seeded === "empty" && state.env !== "production")
       write("data: starting empty");
+    clock.lap("data");
 
+    // The process's own credential; every way out of here without a
+    // process to hold it revokes it.
+    const token = mintAppToken(
+      this.app.db,
+      repo.ownerId,
+      state.app.slug,
+      state.env,
+    );
     const startInput: Omit<StartInput, "signal"> = {
       dir,
       dataDir,
@@ -984,10 +1208,23 @@ export class AppsRuntime {
         state.app.id,
         state.env,
       ),
+      forgeToken: token.token,
       log: write,
       warm,
+      cell: this.cellFor(state.app, state.env),
     };
-    let started = await startProcess({ ...startInput, signal });
+    this.noteCell(run.id, write);
+    clock.lap("setup");
+    write(clock.line("starting the process"));
+    const start = async (): ReturnType<typeof startProcess> => {
+      try {
+        return await startProcess({ ...startInput, signal });
+      } catch (error) {
+        revokeAppToken(this.app.db, token.id);
+        throw error;
+      }
+    };
+    let started = await start();
 
     // The one retry this deploy gets: a preview seeded from production whose
     // process died before it ever answered — schema ahead of what this build
@@ -1004,8 +1241,9 @@ export class AppsRuntime {
         "the copied data was not usable by this build; the preview is starting on empty data",
       );
       reseedEmpty(this.app.config.dataDir, state.app.id, state.env);
-      started = await startProcess({ ...startInput, signal });
+      started = await start();
       if (!started.ok) {
+        revokeAppToken(this.app.db, token.id);
         rmSync(dir, { recursive: true, force: true });
         return {
           ok: false,
@@ -1013,6 +1251,7 @@ export class AppsRuntime {
         };
       }
     } else if (!started.ok) {
+      revokeAppToken(this.app.db, token.id);
       rmSync(dir, { recursive: true, force: true });
       return {
         ok: false,
@@ -1028,9 +1267,39 @@ export class AppsRuntime {
         runId: run.id,
         since: new Date().toISOString(),
         manifest: manifest.value,
+        tokenId: token.id,
       },
       tested: started.value.tested,
     };
+  }
+
+  /**
+   * What an environment's processes are held to: the forge's data and home
+   * hidden, the environment's own home. `undefined` where cells cannot work.
+   */
+  cellFor(record: AppRecord, env: EnvName): CellBase | undefined {
+    if (!this.cells.ok) return undefined;
+    const dataDir = this.app.config.dataDir;
+    return {
+      hide: [dataDir, process.env["HOME"] ?? "", tmpdir()],
+      home: join(envDir(dataDir, record.id, env), "home"),
+      onUndeclared: (host, port) =>
+        noteReached(dataDir, record.repoId, host, port),
+      // Asked at every start: an admin's flip reaches the next cell.
+      egressMode: egressSetting(this.app.db),
+    };
+  }
+
+  /** Say on the run, once, whether its processes were held. */
+  private noteCell(runId: string, write: (line: string) => void): void {
+    noteRunProgress(this.app.db, runId, {
+      sandbox: {
+        enforced: this.cells.ok,
+        note: this.cells.ok ? "" : this.cells.reason,
+      },
+    });
+    if (!this.cells.ok)
+      write(`uncontained here: ${this.cells.reason}; the app's processes run unrestricted`);
   }
 
   /** The running environment a terminal session would attach to, if any. */
@@ -1038,14 +1307,36 @@ export class AppsRuntime {
     const state = this.envs.get(key(record.id, env));
     const live = state?.live;
     if (state === undefined || live === undefined) return undefined;
+    const dataDir = envDataDir(this.app.config.dataDir, record.id, env);
+    const base = this.cellFor(record, env);
     return {
       env,
       dir: live.dir,
-      dataDir: envDataDir(this.app.config.dataDir, record.id, env),
+      dataDir,
       port: live.handle.port,
       commitOid: live.commitOid,
       url: this.urlFor(record, env),
       tty: live.manifest.tty,
+      cell:
+        base === undefined
+          ? undefined
+          : {
+              dir: live.dir,
+              writable: [dataDir],
+              home: base.home,
+              hide: base.hide,
+              egress: live.manifest.egress ?? [],
+              // A terminal is the app's own client: it reaches the app on
+              // its port, as it would beside it.
+              reach: [
+                this.options.forgeUrl,
+                `http://127.0.0.1:${live.handle.port}`,
+              ],
+              limits: resolveLimits("app", live.manifest.limits),
+              terminal: true,
+              onUndeclared: base.onUndeclared,
+              egressMode: base.egressMode,
+            },
     };
   }
 
@@ -1055,6 +1346,8 @@ export class AppsRuntime {
       .then((code) => {
         if (this.stopped || state.live !== live) return; // replaced or stopped on purpose
         state.live = undefined;
+        this.resting(state);
+        revokeAppToken(this.app.db, live.tokenId);
         state.lastError = `exited with code ${code}`;
         appendRunLog(
           this.app.config.dataDir,
@@ -1094,7 +1387,26 @@ export class AppsRuntime {
   /** Something came through the proxy: the environment is wanted. */
   touch(record: AppRecord, env: EnvName): void {
     const state = this.envs.get(key(record.id, env));
-    if (state !== undefined) state.lastRequestAt = Date.now();
+    if (state === undefined) return;
+    state.lastRequestAt = Date.now();
+    state.keptAwake = undefined;
+  }
+
+  /**
+   * A stream through the proxy opened: the environment is busy until the
+   * returned release is called — once; a second call does nothing.
+   */
+  holdStream(record: AppRecord, env: EnvName): () => void {
+    const state = this.envs.get(key(record.id, env));
+    if (state === undefined) return () => {};
+    state.openStreams++;
+    let held = true;
+    return () => {
+      if (!held) return;
+      held = false;
+      state.openStreams--;
+      state.lastRequestAt = Date.now();
+    };
   }
 
   /**
@@ -1102,6 +1414,31 @@ export class AppsRuntime {
    * kept; one start serves every request that arrives while it happens.
    * Returns once it is live, or once it is clear it will not be.
    */
+  /**
+   * A preview runs a pull's code: from someone who cannot write, only once
+   * a writer has approved this exact head (`core/pull_trust.ts`). Asked by
+   * every door that starts one — a deploy and a wake.
+   */
+  private mayRun(
+    record: AppRecord,
+    repo: Repo,
+    env: EnvName,
+    commitOid: string,
+  ): boolean {
+    if (env === "production") return true;
+    const number = envPull(env);
+    const pull =
+      number === undefined ? undefined : getPull(this.app.db, repo.id, number);
+    if (pull !== undefined && pullMayRun(this.app.db, repo, pull, commitOid))
+      return true;
+    log.info("preview waits for a writer's approval", {
+      app: record.slug,
+      env,
+      commit: commitOid.slice(0, 7),
+    });
+    return false;
+  }
+
   async wake(record: AppRecord, env: EnvName): Promise<LiveEnv | undefined> {
     const state = this.envs.get(key(record.id, env));
     if (state === undefined) return undefined;
@@ -1110,13 +1447,23 @@ export class AppsRuntime {
     const asleep = state.asleep;
     if (asleep === undefined || this.stopped) return undefined;
     const repo = getRepoById(this.app.db, record.repoId);
-    if (!repo) return undefined;
+    // Waking runs code without a run row: the owner's standing is asked here.
+    if (!repo || !accountActive(this.app.db, repo.ownerId)) return undefined;
+    // So is whose code it is: a preview asleep at a head nobody who can
+    // write approved — built before the gate, or approved by someone who
+    // can no longer write — is taken down, not woken. Approving the head
+    // deploys it again.
+    if (!this.mayRun(record, repo, env, asleep.commitOid)) {
+      await this.teardown(record, env);
+      return undefined;
+    }
     state.waking = (async () => {
       const write = (line: string): void => {
         if (asleep.runId !== "")
           appendRunLog(this.app.config.dataDir, asleep.runId, line);
       };
       write("waking: a request came");
+      const token = mintAppToken(this.app.db, repo.ownerId, record.slug, env);
       const started = await startProcess({
         dir: asleep.dir,
         dataDir: envDataDir(this.app.config.dataDir, record.id, env),
@@ -1133,10 +1480,17 @@ export class AppsRuntime {
           record.id,
           env,
         ),
+        forgeToken: token.token,
         log: write,
         signal: new AbortController().signal,
         warm: true,
+        cell: this.cellFor(record, env),
+      }).catch((error: unknown) => {
+        revokeAppToken(this.app.db, token.id);
+        throw error;
       });
+      if (state.asleep !== asleep || !started.ok)
+        revokeAppToken(this.app.db, token.id);
       if (state.asleep !== asleep) {
         // Replaced while waking — a deploy landed. What we started is spare.
         if (started.ok) await started.value.handle.stop();
@@ -1157,9 +1511,11 @@ export class AppsRuntime {
         since: now,
         manifest: asleep.manifest,
         servingAt: now,
+        tokenId: token.id,
       };
       state.asleep = undefined;
       state.live = live;
+      this.awake(state, now);
       state.lastRequestAt = Date.now();
       this.watch(state, repo, live);
       write("awake");
@@ -1219,13 +1575,120 @@ export class AppsRuntime {
     return true;
   }
 
+  /**
+   * When a pull was last touched, if that is longer ago than the idle age:
+   * the later of its `updatedAt` (comments, reviews) and the newest deploy
+   * run a person caused — a push, an opening, a press of Redeploy, a wake.
+   * Undefined when the feature is off, the pull was touched within the age,
+   * or someone is deciding it right now (a queued or running run on it).
+   */
+  private idleSince(repo: Repo, pull: Pull, env: EnvName): string | undefined {
+    const age = this.options.idlePullMs ?? 0;
+    if (age <= 0 || pull.state !== "open") return undefined;
+    const now = Date.now();
+    let last = Date.parse(pull.updatedAt);
+    if (now - last < age) return undefined;
+    const runs = listRuns(this.app.db, repo.id, {
+      issueId: pull.id,
+      limit: 50,
+    });
+    if (runs.some((r) => r.state === "queued" || r.state === "running"))
+      return undefined;
+    for (const r of runs) {
+      if (r.kind === "deploy" && r.env === env && TOUCH_REASONS.includes(r.reason))
+        last = Math.max(last, Date.parse(r.createdAt));
+    }
+    return now - last < age ? undefined : new Date(last).toISOString();
+  }
+
+  /** At boot: register a preview idle past the age as stopped, no process. */
+  private hibernateAtBoot(
+    record: AppRecord,
+    env: EnvName,
+    commitOid: string,
+    idleSince: string,
+  ): void {
+    const state = this.envFor(record, env);
+    if (state.live !== undefined || state.deploying !== undefined) return;
+    state.dormant = {
+      since: new Date().toISOString(),
+      idleSince,
+      commitOid,
+    };
+    const built = listRuns(this.app.db, record.repoId, {
+      kind: "deploy",
+      env,
+      limit: 50,
+    }).find((r) => r.state === "ok");
+    state.lastRunId ??= built?.id;
+    log.info("dormant from boot", { app: record.slug, env });
+  }
+
+  /** A dormant preview someone asked for deploys again, the ordinary way. */
+  rouse(record: AppRecord, env: EnvName): void {
+    const state = this.envs.get(key(record.id, env));
+    const dormant = state?.dormant;
+    if (dormant === undefined) return;
+    const repo = getRepoById(this.app.db, record.repoId);
+    if (repo) this.requestDeploy(record, repo, env, dormant.commitOid, "wake");
+  }
+
+  /** Stop the previews whose pulls have gone quiet; keep everything else. */
+  private async hibernate(): Promise<void> {
+    if ((this.options.idlePullMs ?? 0) <= 0) return;
+    for (const state of [...this.envs.values()]) {
+      const number = envPull(state.env);
+      if (
+        number === undefined ||
+        state.dormant !== undefined ||
+        state.deploying !== undefined ||
+        state.queued !== undefined ||
+        state.waking !== undefined ||
+        (state.live === undefined && state.asleep === undefined)
+      )
+        continue;
+      const repo = getRepoById(this.app.db, state.app.repoId);
+      const pull = repo && getPull(this.app.db, repo.id, number);
+      if (!repo || !pull) continue;
+      const idleSince = this.idleSince(repo, pull, state.env);
+      if (idleSince === undefined) continue;
+      const commitOid = state.live?.commitOid ?? state.asleep!.commitOid;
+      const runId = state.live?.runId ?? state.asleep!.runId;
+      await this.stopEnv(state.app, state.env);
+      if (this.stopped || state.live !== undefined || state.queued !== undefined)
+        continue;
+      state.dormant = {
+        since: new Date().toISOString(),
+        idleSince,
+        commitOid,
+      };
+      state.lastError = undefined;
+      state.lastErrorCommitOid = undefined;
+      if (runId !== "")
+        appendRunLog(
+          this.app.config.dataDir,
+          runId,
+          `asleep: nobody pushed to or commented on pull #${number} since ${idleSince}; asking for it, or Redeploy, brings it back`,
+        );
+      log.info("dormant", { app: state.app.slug, env: state.env });
+    }
+  }
+
   /** Stop what nobody has asked for lately, and keep it ready to wake. */
   private async sweep(): Promise<void> {
     if (this.stopped) return;
+    await this.hibernate();
     const after = this.options.sleepAfterMs ?? SLEEP_AFTER_MS;
+    const grace = this.options.busyGraceMs ?? BUSY_GRACE_MS;
     const now = Date.now();
+    this.metered(() => beatAwake(this.app.db, new Date(now).toISOString()));
     for (const state of this.envs.values()) {
       const live = state.live;
+      // Still running: its credential is still wanted for another window.
+      if (live?.tokenId !== undefined)
+        renewAppToken(this.app.db, live.tokenId, now);
+      const spared = state.keptAwake;
+      state.keptAwake = undefined;
       if (
         live === undefined ||
         state.deploying !== undefined ||
@@ -1237,7 +1700,22 @@ export class AppsRuntime {
         state.env === "production" ? after.production : after.preview;
       const last = state.lastRequestAt ?? Date.parse(live.since);
       if (now - last < limit) continue;
+      // Idle by the clock; asked whether it is mid-work, and spared while
+      // it is — but only for one grace past the window, never forever.
+      const busy = busyReason(live.handle.pid, state.openStreams);
+      const overdue = now - last - limit >= grace;
+      if (busy !== undefined && !overdue) {
+        if (spared !== busy && live.runId !== "")
+          appendRunLog(
+            this.app.config.dataDir,
+            live.runId,
+            `kept awake: ${BUSY_WORDS[busy]}`,
+          );
+        state.keptAwake = busy;
+        continue;
+      }
       state.live = undefined;
+      this.resting(state, now);
       state.asleep = {
         commitOid: live.commitOid,
         dir: live.dir,
@@ -1249,10 +1727,95 @@ export class AppsRuntime {
         appendRunLog(
           this.app.config.dataDir,
           live.runId,
-          `asleep: nothing asked for it in ${Math.round(limit / 60_000)} minutes; the next request wakes it`,
+          busy === undefined
+            ? `asleep: nothing asked for it in ${Math.round(limit / 60_000)} minutes; the next request wakes it`
+            : `asleep: still busy ${Math.round(grace / 60_000)} minutes past its idle window, which is as long as busy keeps an app awake; the next request wakes it`,
         );
       log.info("asleep", { app: state.app.slug, env: state.env });
+      revokeAppToken(this.app.db, live.tokenId);
       await live.handle.stop();
+    }
+    await this.sampleStorage();
+  }
+
+  // ---- the meter ----
+
+  /**
+   * Run one write to the meter. What an app used is worth recording, never
+   * worth taking a deploy, a sleep or a shutdown down with it.
+   */
+  private metered<T>(write: () => T): T | undefined {
+    try {
+      return write();
+    } catch (error) {
+      log.error("meter write failed", { error: String(error) });
+      return undefined;
+    }
+  }
+
+  /** The environment began serving: its awake interval opens, if not open. */
+  private awake(state: Environment, at: string): void {
+    this.metered(() =>
+      openAwake(this.app.db, {
+        repoId: state.app.repoId,
+        env: state.env,
+        placement: this.options.placement ?? "owned",
+        at,
+      }),
+    );
+  }
+
+  /** The environment stopped serving: its awake interval closes. */
+  private resting(state: Environment, at: number = Date.now()): void {
+    this.metered(() =>
+      closeAwake(this.app.db, {
+        repoId: state.app.repoId,
+        env: state.env,
+        at: new Date(at).toISOString(),
+      }),
+    );
+  }
+
+  private sampling = false;
+
+  /**
+   * Once per `storageEveryMs`: the bytes of each app's `FORGE_APP_DATA`,
+   * every environment summed, and of its bare repository.
+   */
+  private async sampleStorage(): Promise<void> {
+    if (this.stopped || this.sampling) return;
+    const every = this.options.storageEveryMs ?? SAMPLE_SPAN_MS;
+    const last = this.metered(() => lastStorageAt(this.app.db));
+    if (last !== undefined && Date.now() - Date.parse(last) < every) return;
+    this.sampling = true;
+    try {
+      const at = new Date().toISOString();
+      for (const record of listApps(this.app.db)) {
+        const repo = getRepoById(this.app.db, record.repoId);
+        if (!repo) continue;
+        let dataBytes = 0;
+        const root = join(appsRoot(this.app.config.dataDir), record.id);
+        if (existsSync(root))
+          for (const name of readdirSync(root))
+            if (isEnvName(name))
+              dataBytes += await dirBytes(
+                envDataDir(this.app.config.dataDir, record.id, name),
+              );
+        const repoBytes = await dirBytes(
+          repoDir(this.app.reposRoot, repo.ownerName, repo.name),
+        );
+        if (this.stopped) return;
+        this.metered(() =>
+          recordStorage(this.app.db, {
+            repoId: record.repoId,
+            dataBytes,
+            repoBytes,
+            at,
+          }),
+        );
+      }
+    } finally {
+      this.sampling = false;
     }
   }
 
@@ -1273,6 +1836,8 @@ export class AppsRuntime {
       // after its pull closed, checkout, cloned data and all.
       const live = state.live;
       state.live = undefined;
+      this.resting(state);
+      revokeAppToken(this.app.db, live?.tokenId);
       if (live) await live.handle.stop();
     }
     removeEnv(this.app.config.dataDir, record.id, env);
@@ -1287,6 +1852,14 @@ export class AppsRuntime {
       removeApp(this.app.config.dataDir, state.app.id);
   }
 
+  /** Stop every environment of a repository's app; the data stays. */
+  async stopRepo(repoId: string): Promise<void> {
+    const states = [...this.envs.values()].filter(
+      (s) => s.app.repoId === repoId,
+    );
+    for (const state of states) await this.stopEnv(state.app, state.env);
+  }
+
   /** Stop an environment's process without removing its data. */
   async stopEnv(record: AppRecord, env: EnvName): Promise<void> {
     const state = this.envs.get(key(record.id, env));
@@ -1296,7 +1869,9 @@ export class AppsRuntime {
     await state.chain.catch(() => {});
     const live = state.live;
     state.live = undefined;
+    this.resting(state);
     state.asleep = undefined;
+    revokeAppToken(this.app.db, live?.tokenId);
     if (live) await live.handle.stop();
   }
 }

@@ -37,7 +37,7 @@ import {
   type ProposeTarget,
   type RepoScope,
 } from "../scope.ts";
-import { btn, card, field, icon } from "../ui.ts";
+import { btn, card, field, icon, sizeWithTokens } from "../ui.ts";
 import { pathCrumbs, refSetFrom } from "./refs.ts";
 
 /** What the form is holding, so a refusal can hand every word back. */
@@ -190,6 +190,19 @@ function editorForm(
         pathCrumbs(base, scope.facts.name, draft.ref, draft.path, true),
       )}
       <span class="spacer"></span>
+      ${when(
+        !draft.creating,
+        () =>
+          html`<span
+            class="muted small num"
+            id="editor-size"
+            title="The file as opened, before your changes"
+            >${sizeWithTokens(
+              new TextEncoder().encode(draft.content).byteLength,
+              draft.path,
+            )}</span
+          >`,
+      )}
       ${when(
         isMarkdownPath(draft.path) || draft.creating,
         () =>

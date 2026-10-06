@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "X",
@@ -57,7 +58,7 @@ describe("cross-repo pull requests (fork → upstream)", () => {
     const token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username,
         password: "cross-repo-pass",
         name: "c",
@@ -77,6 +78,7 @@ describe("cross-repo pull requests (fork → upstream)", () => {
     base = servers.url;
     ({ token: aliceToken, cookie: aliceCookie } = await mkUser("alice"));
     ({ token: bobToken, cookie: bobCookie } = await mkUser("bob"));
+    proveAll(app);
 
     // Alice's upstream repo with a seed commit.
     await fetch(`${base}/api/v1/repos`, {
@@ -141,7 +143,7 @@ describe("cross-repo pull requests (fork → upstream)", () => {
 
   test("the PR on the upstream shows the fork's diff and is mergeable", async () => {
     const pr = await (
-      await fetch(`${base}/alice/app/pulls/1`, {
+      await fetch(`${base}/alice/app/pulls/1/files`, {
         headers: { cookie: aliceCookie },
       })
     ).text();

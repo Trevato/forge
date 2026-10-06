@@ -1,29 +1,37 @@
 /**
  * How work reaches the crew. The dispatcher listens to the outbox and
  * sweeps behind it: an issue assigned to an agent becomes a run; a person
- * speaking on an agent's pull — a comment, a verdict, a line comment —
- * becomes a follow-up; a failed deploy of an agent's pull becomes a
+ * who may direct the crew (`direct.ts`) speaking on an agent's pull — a
+ * comment, a verdict, a line comment — becomes a follow-up; a failed deploy of an agent's pull becomes a
  * bounded follow-up. Runs are rows first (`queued`), and a worker tick
  * takes them in order up to the concurrency limit, one per issue at a
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { markHeard } from "../core/issues.ts";
+import { capacityCount, noteBooted } from "../core/capacity.ts";
+import { tmpdir } from "node:os";
+import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
 import type { App } from "../app.ts";
+import { transact } from "../kernel/db.ts";
 import { announceRun } from "../actions/runs.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import {
   getIssue,
   getIssueById,
+  addComment as insertComment,
   listComments,
   type Issue,
 } from "../core/issues.ts";
 import { getPull, type Pull } from "../core/pulls.ts";
 import { resolveOpen } from "../core/decisions.ts";
+import { accountActive } from "../core/accounts.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
+import { greenHead, sendToReview } from "./review.ts";
 import {
   activeRunFor,
   hasQueuedRun,
@@ -41,11 +49,21 @@ import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { followDivergence } from "./converge.ts";
-import { sandboxAvailable } from "./sandbox.ts";
+import { breakerTripped } from "./breaker.ts";
+import {
+  CAP_NOTE,
+  capReached,
+  ISSUE_RUN_CAP,
+  recordCap,
+  skipsFeedback,
+} from "./guard.ts";
+import { dataInTemp, sandboxAvailable, sweepRunTmp } from "./sandbox.ts";
+import { mayDirectCrew } from "./direct.ts";
 import {
   AUTONOMY_TICK_MS,
   autonomyTick,
   landIfGreen,
+  parkForBreaker,
   parkPull,
   settleAgentRun,
   spentToday,
@@ -74,6 +92,8 @@ export interface CrewHandle {
   /** Whether a usable Claude Code was found at start. */
   readonly ready: boolean;
   readonly detail: string;
+  /** Whether agents' shells are held to the sandbox here, and why not when they are not. */
+  readonly sandbox: { readonly enforced: boolean; readonly reason: string };
   /**
    * Stop. Plain, what is in flight is cut short and its task queued again.
    * Draining — a release's old process, with the new one already taking
@@ -112,7 +132,24 @@ export async function startCrew(
     });
   // The shell sandbox is policy, not decoration: where the host cannot
   // hold a run to it, the runs say so instead of warning on every command.
+  // The default the Capacity page shows and goes back to (`core/capacity.ts`).
+  noteBooted(app.db, "crew.concurrency", String(options.concurrency));
   const sandbox = await sandboxAvailable();
+  // Temp directories of runs a stopped forge never finished: old enough
+  // that no forge beside this one (a rollout) can still be using them.
+  try {
+    const swept = sweepRunTmp(app.config.dataDir, options.runTimeoutMs + 60 * 60_000);
+    if (swept > 0) log.info("swept leftover run temp directories", { count: swept });
+  } catch (error) {
+    log.warn("could not sweep run temp directories", { error: String(error) });
+  }
+  // The shell can be denied the machine's temp directory whole only when
+  // the forge's data is not inside it (`crew/sandbox.ts`, `tempDenied`).
+  if (dataInTemp(app.config.dataDir))
+    log.warn(
+      "the data directory is inside the temp directory: agents' shells are denied only the forge's own pieces of it, not all of it",
+      { dataDir: app.config.dataDir, tmpdir: tmpdir() },
+    );
   if (!sandbox.ok)
     log.warn("agent sandbox not available here; runs are unrestricted", {
       reason: sandbox.reason,
@@ -162,6 +199,7 @@ export async function startCrew(
 
   const handle: CrewHandle = {
     ready: detected.ok,
+    sandbox: { enforced: sandbox.ok, reason: sandbox.ok ? "" : sandbox.reason },
     detail: detected.ok ? `Claude Code ${detected.version}` : detected.error,
     stop: async (options = {}) => {
       stopped = true;
@@ -207,6 +245,8 @@ export function queueAgentRun(
   actorId?: string,
   again?: { notBefore: string; attempt: number; summary: string },
 ): Run | undefined {
+  // A suspended or removed owner's repositories run nothing, whoever asks.
+  if (!accountActive(app.db, repo.ownerId)) return undefined;
   // The day's ceiling gates every run the crew starts on its own, not only
   // the picks: a review, a feedback run or a conflict run past the ceiling
   // is money the person did not agree to. A person's own assignment is not
@@ -223,25 +263,98 @@ export function queueAgentRun(
     });
     return undefined;
   }
-  const active = activeRunFor(app.db, "agent", issue.id);
-  // One queued follow-up is enough: the run that eventually starts reads
-  // the whole conversation since the last one, so nothing is lost. The
-  // queued one may sit behind a running one, so it is looked for by itself.
-  if (
-    active !== undefined &&
-    (reason === "assigned" || hasQueuedRun(app.db, "agent", issue.id))
-  )
+  // Three failed or declined runs in an hour: parked, until a person speaks.
+  if (breakerTripped(app.db, repo, issue.id)) {
+    parkForBreaker(app, repo, issue, agent);
     return undefined;
-  const run = createRun(app.db, {
-    repoId: repo.id,
-    kind: "agent",
-    issueId: issue.id,
-    actorId: agent.user.id,
-    reason,
-    ...again,
+  }
+  // A day's share of runs on one issue without a person's word: a loop,
+  // parked once and asked about once (`guard.ts`). A run carrying on after
+  // a pause or a restart is the same start, never a new one.
+  const cap = app.config.issueRunCap ?? ISSUE_RUN_CAP;
+  if (again === undefined && capReached(app.db, repo, issue, cap)) {
+    if (parkForBreaker(app, repo, issue, agent, CAP_NOTE))
+      recordCap(app.db, repo, issue, cap);
+    return undefined;
+  }
+  // Looked for and written in one write transaction: during a roll two
+  // forge processes share this database, and both may react to the same
+  // thing — a run checked for by one and inserted by the other would be the
+  // same work twice (docs/ARCHITECTURE.md, "Two processes at once").
+  const run = transact(app.db, () => {
+    const active = activeRunFor(app.db, "agent", issue.id);
+    // A follow-up with nothing new would only read the agent's own reply
+    // and decline. With a run in flight the answer waits for it to end: the
+    // queued run asks again as it starts (`runner.ts`).
+    if (
+      reason === "feedback" &&
+      again === undefined &&
+      active === undefined &&
+      skipsFeedback(app.db, repo, issue, agent)
+    )
+      return undefined;
+    // One queued follow-up is enough: the run that eventually starts reads
+    // the whole conversation since the last one, so nothing is lost. The
+    // queued one may sit behind a running one, so it is looked for by itself.
+    if (
+      active !== undefined &&
+      (reason === "assigned" || hasQueuedRun(app.db, "agent", issue.id))
+    )
+      return undefined;
+    return createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: agent.user.id,
+      reason,
+      ...again,
+    });
   });
-  announceRun(app, run, actorId);
+  if (run !== undefined) announceRun(app, run, actorId);
   return run;
+}
+
+/**
+ * An issue belongs to one builder: when it is handed to a person, to
+ * nobody, or to another agent, the runs of everyone else on it end — a
+ * queued one is cancelled, a running one is aborted — and one line on the
+ * issue says who took it.
+ */
+function releaseOtherRuns(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  actorId: string | null,
+): void {
+  const released: Run[] = [];
+  for (const live of listActive(app.db, "agent")) {
+    if (live.issueId !== issue.id || live.actorId === issue.assigneeId)
+      continue;
+    const cancelled = cancelRun(
+      app.db,
+      live.id,
+      "the issue was reassigned; this run no longer holds it",
+    );
+    if (!cancelled) continue;
+    announceRun(app, cancelled);
+    if (live.state === "running") abortAgentRun(live.id);
+    released.push(cancelled);
+  }
+  if (released.length === 0 || actorId === null) return;
+  const holder =
+    issue.assigneeId === null
+      ? undefined
+      : getUserById(app.db, issue.assigneeId);
+  const who = holder ? `@${holder.username}` : "nobody";
+  const stopped = released
+    .map((r) => (r.actorId ? getUserById(app.db, r.actorId) : undefined))
+    .filter((u) => u !== undefined)
+    .map((u) => `@${u.username}`);
+  insertComment(app.db, {
+    issueId: issue.id,
+    authorId: actorId,
+    body: `Taken over by ${who}; stopped ${[...new Set(stopped)].join(", ") || "the earlier run"}.`,
+  });
 }
 
 function route(app: App, event: ForgeEvent): void {
@@ -253,12 +366,15 @@ function route(app: App, event: ForgeEvent): void {
   switch (event.kind) {
     case "issue.assigned":
     case "pull.assigned": {
-      if (event.payload["agent"] !== true || typeof number !== "number") return;
+      if (typeof number !== "number") return;
       const issue = getIssue(app.db, repo.id, number);
-      const agent = issue?.assigneeId
+      if (!issue) return;
+      releaseOtherRuns(app, repo, issue, event.actorId);
+      if (event.payload["agent"] !== true) return;
+      const agent = issue.assigneeId
         ? getAgent(app.db, issue.assigneeId)
         : undefined;
-      if (!issue || !agent || issue.state !== "open") return;
+      if (!agent || issue.state !== "open") return;
       queueAgentRun(
         app,
         repo,
@@ -277,30 +393,38 @@ function route(app: App, event: ForgeEvent): void {
       const actor =
         event.actorId === null ? undefined : getUserById(app.db, event.actorId);
       if (!actor) return;
+      // A run costs: an account whose email is unproven starts none by speaking.
+      if (!emailVerified(app.db, actor.id)) return;
       // Agents talking is not feedback — except the crew's reviewer passing
       // a verdict on a pull, which is exactly what a person's review is.
+      // Its line comments ride along with the verdict; the verdict alone
+      // wakes the builder, once.
       const reviewerVerdict =
         actor.kind === "agent" &&
         event.kind === "pull.reviewed" &&
+        typeof event.payload["state"] === "string" &&
         crewRole(app.db, repo.id, actor.id) === "reviewer";
       if (actor.kind === "agent" && !reviewerVerdict) return;
+      // A reader's words stay on the thread and do nothing more: on a
+      // public repository anyone may comment, and a run spends the owner's
+      // budget holding a write token (#619).
+      if (!mayDirectCrew(app.db, repo, actor)) return;
       const issue = getIssue(app.db, repo.id, number);
       if (!issue || issue.state !== "open") return;
       if (
         event.kind === "pull.reviewed" &&
         event.payload["state"] === "approved"
       ) {
-        // The reviewer approved: the pull lands now, not at the next sweep.
-        if (reviewerVerdict) {
-          const pull = getPull(app.db, repo.id, number);
-          if (pull)
-            landIfGreen(app, repo, pull).catch((error) =>
-              log.warn("could not land after the review", {
-                pull: number,
-                error: String(error),
-              }),
-            );
-        }
+        // An approval, a person's or the reviewer's: the pull lands now,
+        // not at the next sweep.
+        const pull = getPull(app.db, repo.id, number);
+        if (pull)
+          landIfGreen(app, repo, pull).catch((error) =>
+            log.warn("could not land after the review", {
+              pull: number,
+              error: String(error),
+            }),
+          );
         return;
       }
       const agent = agentFor(app, issue);
@@ -319,8 +443,14 @@ function route(app: App, event: ForgeEvent): void {
           active.id,
           `${actor.username} on #${issue.number}: ${said.trim()}`,
         )
-      )
+      ) {
+        // Heard now, by the run that works it: the next run's brief does
+        // not tell it again (`news.ts`).
+        const commentId = event.payload["commentId"];
+        if (typeof commentId === "string")
+          markHeard(app.db, commentId, active.id);
         return;
+      }
       queueAgentRun(app, repo, issue, agent, "feedback", actor.id);
       return;
     }
@@ -357,11 +487,21 @@ function route(app: App, event: ForgeEvent): void {
         "retry",
         event.payload["state"] === "ok" ? "green" : "red",
       );
-      // Green, in a repository that ships on green: land it.
+      // Green: an agent's pull goes to the crew's reviewer, and in a
+      // repository that ships on green it lands (behind that review).
       if (event.payload["state"] === "ok") {
-        if (repo.autonomy !== "autonomous") return;
         const pull = getPull(app.db, repo.id, issue.number);
         if (!pull) return;
+        if (repo.autonomy !== "autonomous") {
+          if (pull.authorIsAgent && greenHead(app.db, pull))
+            sendToReview(app, repo, pull).catch((error) =>
+              log.error("sending to review failed", {
+                pull: issue.number,
+                error: String(error),
+              }),
+            );
+          return;
+        }
         landIfGreen(app, repo, pull).catch((error) =>
           log.error("landing on green failed", {
             pull: issue.number,
@@ -552,9 +692,7 @@ function parkedReason(
   const what = kind === "deploy" ? "the preview's deploy" : "the check";
   if (judged.cause !== "environment") {
     const named =
-      judged.failingTest === undefined
-        ? ""
-        : ` ("${judged.failingTest}")`;
+      judged.failingTest === undefined ? "" : ` ("${judged.failingTest}")`;
     return `${what} failed${named} and the decider saw no point in another try`;
   }
   return retriedChecks.has(head)
@@ -566,6 +704,8 @@ export function agentFor(app: App, issue: Issue): Agent | undefined {
   if (issue.assigneeId !== null) {
     const assigned = getAgent(app.db, issue.assigneeId);
     if (assigned) return assigned;
+    // A person holds it: nothing the agent's name is on starts a run.
+    return undefined;
   }
   return issue.kind === "pull" ? getAgent(app.db, issue.authorId) : undefined;
 }
@@ -764,7 +904,7 @@ function resumeLater(app: App, run: Run, pause: Pause): void {
 }
 
 /** The still-open task a run was about, and the reason to queue it under again. */
-function taskOf(
+export function taskOf(
   app: App,
   run: Run,
 ): { issue: Issue; repo: Repo; agent: Agent; reason: RunReason } | undefined {
@@ -822,7 +962,11 @@ function pump(
   const runningIssues = new Set(
     active.filter((r) => r.state === "running").map((r) => r.issueId),
   );
-  let slots = options.concurrency - runningIssues.size;
+  // Read on every pump (`core/capacity.ts`): an admin's change is the next
+  // pick's, not the next boot's. `options.concurrency` is the boot default.
+  let slots =
+    capacityCount(app.db, "crew.concurrency", options.concurrency) -
+    runningIssues.size;
   for (const queued of listQueued(app.db, "agent", 50)) {
     if (slots <= 0) break;
     if (queued.issueId !== null && runningIssues.has(queued.issueId)) continue;

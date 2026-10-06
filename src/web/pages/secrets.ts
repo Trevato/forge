@@ -1,0 +1,213 @@
+/**
+ * Secrets, for a forge admin: the card that holds the operator's own
+ * credentials — a DNS token, a bucket key — at the forge, under an
+ * organization, or on a repository. The same card is drawn in all three
+ * places, so the words stay one set. Values are write-only: set one, and
+ * it is never shown again; the card lists names, when each was set, and
+ * when something last opened it.
+ */
+
+import { listSecrets, putSecret, removeSecret } from "../../actions/secrets.ts";
+import type { Ctx } from "../../http/context.ts";
+import {
+  NAME_MAX,
+  type SecretName,
+  type SecretScope,
+} from "../../core/secret_store.ts";
+import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
+import { field, readForm } from "../form.ts";
+import { html, when, type Html } from "../html.ts";
+import { flashTo, page } from "../layout.ts";
+import { btn, card, icon, row, time } from "../ui.ts";
+import { accountSections } from "./origins.ts";
+
+const ERRORS: Record<string, string> = {
+  invalid_name:
+    "A name is capital letters, digits and underscores, starting with a letter — like CLOUDFLARE_API_TOKEN.",
+  invalid_value: "A value is never empty and stays under 64 KiB.",
+  invalid_scope: "That is not a place a secret can live.",
+  not_found: "No such organization or repository.",
+  no_such_secret: "No secret by that name there.",
+};
+
+/** The page a card sends you back to: derived, never taken from the form. */
+function backTo(scope: string, ref: string): string {
+  if (scope === "org") return `/${encodeURIComponent(ref)}`;
+  if (scope === "repo") {
+    const [owner = "", name = ""] = ref.split("/");
+    return `/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/settings`;
+  }
+  return "/settings/secrets";
+}
+
+const WHERE: Record<SecretScope, string> = {
+  forge: "the whole forge",
+  org: "every repository in this organization",
+  repo: "this repository",
+};
+
+/** The card: names, never values, and a form to set one. */
+export function secretsCard(
+  scope: SecretScope,
+  ref: string,
+  names: SecretName[],
+): Html {
+  const rows = names.map((s) =>
+    row({
+      lead: icon("key"),
+      title: html`<span class="mono">${s.name}</span>`,
+      meta: html`set ${time(s.updatedAt)} ·
+      ${
+        s.lastReadAt === null
+          ? "never used"
+          : html`last used ${time(s.lastReadAt)}`
+      }`,
+      trail: html`<form
+        class="row-actions"
+        method="post"
+        action="/settings/secrets/delete"
+      >
+        <input type="hidden" name="scope" value="${scope}" />
+        <input type="hidden" name="ref" value="${ref}" />
+        <input type="hidden" name="name" value="${s.name}" />
+        ${btn("Remove", {
+          size: "sm",
+          icon: "x",
+          label: `Remove ${s.name}`,
+        })}
+      </form>`,
+    }),
+  );
+  return card(
+    html`<div class="card-body">
+        <p class="muted small">
+          What the forge itself needs and nobody should read back — an API
+          token, a bucket key. Set one for ${WHERE[scope]}; it is sealed, shown
+          to no one, and handed only to the run that asks for it by name. Where
+          the same name is set more than once, the narrowest place wins: a
+          repository over its organization over the forge.
+        </p>
+      </div>
+      ${when(
+        rows.length > 0,
+        () =>
+          html`<ul class="list">
+            ${rows}
+          </ul>`,
+      )}
+      <form class="edit-row" method="post" action="/settings/secrets">
+        <input type="hidden" name="scope" value="${scope}" />
+        <input type="hidden" name="ref" value="${ref}" />
+        <input
+          class="input mono"
+          type="text"
+          name="name"
+          placeholder="NAME"
+          aria-label="Secret name"
+          pattern="[A-Z][A-Z0-9_]*"
+          maxlength="${String(NAME_MAX)}"
+          autocomplete="off"
+          spellcheck="false"
+          required
+        />
+        <input
+          class="input"
+          type="password"
+          name="value"
+          placeholder="Value"
+          aria-label="Value"
+          autocomplete="off"
+          required
+        />
+        ${btn("Seal", { variant: "primary", size: "sm", icon: "plus" })}
+      </form>`,
+    {
+      head: html`${icon("key")}
+        <h2>Secrets</h2>`,
+      pad: false,
+    },
+  );
+}
+
+/** The card for a place, or nothing for anyone who is not a forge admin. */
+export function secretsSection(
+  ctx: Ctx,
+  scope: SecretScope,
+  ref: string,
+): Html | null {
+  const names = listSecrets(ctx.app, ctx.auth.user, scope, ref);
+  return names.ok ? secretsCard(scope, ref, names.value) : null;
+}
+
+function requireAdmin(ctx: Ctx): Response | undefined {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  return undefined;
+}
+
+// GET /settings/secrets
+export function secretsPage(ctx: Ctx): Response {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  return page({
+    ctx,
+    title: "Secrets",
+    body: html`<div class="page-head"><h1>Secrets</h1></div>
+      ${settingsLayout(
+        accountSections("secrets", { admin: true }),
+        secretsSection(ctx, "forge", "")!,
+        "Account settings",
+      )}`,
+  });
+}
+
+// POST /settings/secrets
+export async function secretSet(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const scope = field(form, "scope");
+  const ref = field(form, "ref");
+  const name = field(form, "name").trim();
+  const set = putSecret(
+    ctx.app,
+    ctx.auth.user,
+    scope,
+    ref,
+    name,
+    field(form, "value"),
+  );
+  return flashTo(
+    ctx,
+    backTo(scope, ref),
+    set.ok
+      ? { message: `${name} is sealed.` }
+      : {
+          tone: "danger",
+          message: ERRORS[set.error] ?? "That could not be set.",
+        },
+  );
+}
+
+// POST /settings/secrets/delete
+export async function secretDelete(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const scope = field(form, "scope");
+  const ref = field(form, "ref");
+  const name = field(form, "name");
+  const removed = removeSecret(ctx.app, ctx.auth.user, scope, ref, name);
+  return flashTo(
+    ctx,
+    backTo(scope, ref),
+    removed.ok
+      ? { message: `${name} is removed.` }
+      : {
+          tone: "danger",
+          message: ERRORS[removed.error] ?? "Nothing was removed.",
+        },
+  );
+}

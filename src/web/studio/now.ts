@@ -7,7 +7,9 @@
  * a repaint (`layout.fragment`, `client.liveRegionsJs`).
  */
 
-import { appsRuntime } from "../../apps/runtime.ts";
+import { mayViewId, sealedScope } from "../../core/sealed.ts";
+import { envPull } from "../../apps/data.ts";
+import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
 import { getIssueById, listIssues, type Issue } from "../../core/issues.ts";
@@ -18,10 +20,11 @@ import { getUsersByIds } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { readRunLogTail } from "../../runs/log.ts";
+import { mayReadRuns } from "../../actions/runs.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
-import { avatar, btn, card, icon, listCard, row, time } from "../ui.ts";
+import { avatar, badge, btn, card, icon, listCard, row, time } from "../ui.ts";
 import { changeHref, tellHref } from "./nouns.ts";
 import { LOG_TAIL_CAP, logBox } from "./log.ts";
 import { appPanels } from "./previews.ts";
@@ -72,7 +75,10 @@ export async function nowCard(
   const db = ctx.app.db;
   const base = repoBase(repo);
   const { openPulls, builderCount, ownerFacts, wordCtx, deployTailing } = o;
-  const runs = listRuns(db, repo.id, { kind: "agent", limit: 8 });
+  // A run on a sealed report, and the report, are for who may see it.
+  const runs = listRuns(db, repo.id, { kind: "agent", limit: 8 }).filter((r) =>
+    mayViewId(db, repo, r.issueId, ctx.auth.user),
+  );
   const actors = getUsersByIds(
     db,
     runs.map((r) => r.actorId).filter((id): id is string => id !== null),
@@ -89,6 +95,7 @@ export async function nowCard(
     kind: "issue",
     state: "open",
     limit: 30,
+    ...sealedScope(db, repo, ctx.auth.user),
   });
   const told = openTells.filter(
     (i) => i.assigneeIsAgent && !openByIssue.has(i.number),
@@ -105,7 +112,7 @@ export async function nowCard(
       i.id !== repo.directionIssueId &&
       !openByIssue.has(i.number),
   );
-  // With nobody on the crew to build, `tellCrew` cannot route a tell to
+  // With nobody on the crew to build, `tell` cannot route a tell to
   // anyone — it stays unassigned forever, not merely unpicked-up like
   // `waiting` below. Scoped to that one honest cause (never to a tell a
   // person simply hasn't assigned while builders exist), so widening this
@@ -161,7 +168,8 @@ export async function nowCard(
   const activeRun = rowsNow.find(
     (r) => r.kind === "agent" && r.state === "running",
   );
-  const activeTail = activeRun
+  const activeTail =
+    activeRun && mayReadRuns(ctx.app, ctx.auth.user, repo)
     ? logBox({
         id: "app-run-tail",
         who: voiceFor(runActor(activeRun), ownerFacts),
@@ -204,7 +212,25 @@ export async function nowCard(
       runRows.push(html`<li class="log-tail-row">${activeTail}</li>`);
   }
 
+  // An environment the sleep sweep is sparing because it is mid-work:
+  // that is something going on in the app, and the reason it is awake.
+  const busyRows = envsFor(ctx.app, ctx.auth.user, record).flatMap((env) => {
+    if (env.busy === undefined) return [];
+    const number = envPull(env.env);
+    return [
+      row({
+        href: `${base}#app-head`,
+        nav: true,
+        lead: icon(number === undefined ? "rocket" : "pull"),
+        title: number === undefined ? "production" : `preview of #${number}`,
+        meta: html`${env.busy}; kept awake past its idle window`,
+        trail: badge("busy", { icon: "activity", tone: "attn" }),
+      }),
+    ];
+  });
+
   const nowRows: Html[] = [
+    ...busyRows,
     ...(await Promise.all(
       openPulls.map(async (p) => {
         const { word, note } = await pullWord(wordCtx, p);
@@ -272,9 +298,12 @@ export async function nowCard(
       return row({
         lead: avatar("crew"),
         title: html`<a href="${tellHref(base, i.number)}">${i.title}</a>`,
+        // The invitation is a writer's (the shelf's rule, `ownerFacts`); the
+        // fact — nobody has taken it — stays for everyone.
         meta: html`told ${time(i.createdAt)} ·
-          <span class="muted">nobody on the crew to take it —</span>
-          <a href="${base}/settings">add someone</a>`,
+          <span class="muted">nobody on the crew to take it</span>${ownerFacts
+            ? html` — <a href="${base}/settings">add someone</a>`
+            : null}`,
         trail: wordBadge("told"),
       });
     }),
@@ -308,7 +337,11 @@ export async function appNowFragment(ctx: Ctx): Promise<Response> {
   const db = ctx.app.db;
   const record = getAppByRepo(db, repo.id);
   if (!record) return fragment(html``, { status: 404 });
-  const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
+  const openPulls = listPulls(db, repo.id, {
+    state: "open",
+    limit: 10,
+    ...sealedScope(db, repo, ctx.auth.user),
+  });
   const { card } = await nowCard(ctx, repo, record, {
     openPulls,
     builderCount: listCrewRoles(db, repo.id).filter((c) => c.role === "builder")
@@ -320,6 +353,7 @@ export async function appNowFragment(ctx: Ctx): Promise<Response> {
       runtime: appsRuntime(ctx.app),
       record,
       history: servingHistory(),
+      viewer: ctx.auth.user,
     },
     // The one fact Now borrows from the head card, decided where the head
     // card decides it, so the two never disagree about what is tailing.

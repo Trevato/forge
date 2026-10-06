@@ -5,12 +5,43 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { unsealReleased } from "../actions/sealed.ts";
+import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
+import {
+  closeStreamsOf,
+  closeStreamsOfSession,
+  noteCaller,
+  sweepStanding,
+} from "./caller.ts";
+import {
+  accountAct,
+  accountsPage,
+  personSignInsPage,
+  signInAct,
+} from "../web/pages/accounts.ts";
+import { defect } from "../kernel/error.ts";
+import {
+  armClose,
+  BODY_MAX,
+  carryNotes,
+  mustClose,
+  noteSignedIn,
+  readBounded,
+  REQUEST_MAX,
+  settleBody,
+} from "./limits.ts";
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
-import { sessionUser } from "../core/sessions.ts";
+import { sessionOf } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
-import { ensureEdgeUser, verifyPassword } from "../core/users.ts";
+import { forgeHost } from "../core/commit_identity.ts";
+import {
+  ensureEdgeUser,
+  getUserByName,
+  isActive,
+  verifyPassword,
+} from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
 import { healthResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
@@ -27,8 +58,13 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { sha256 } from "../kernel/hash.ts";
-import { css } from "../web/style.ts";
-import { assetResponse, highlightAsset } from "../web/asset.ts";
+import {
+  assetResponse,
+  highlightAsset,
+  stylesheetAsset,
+  stylesheetRedirect,
+  stylesheetResponse,
+} from "../web/asset.ts";
 import { isThemeName } from "../design/themes.ts";
 import {
   home,
@@ -39,22 +75,41 @@ import {
   signinSubmit,
   signupPage,
   signupSubmit,
+  verifyPage,
   themeSubmit,
 } from "../web/pages/site.ts";
 import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { activityAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
-import { backupsNow, backupsPage } from "../web/pages/backups.ts";
+import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
+import {
+  backupsClear,
+  backupsDestination,
+  backupsNow,
+  backupsPage,
+  backupsTest,
+} from "../web/pages/backups.ts";
+import {
+  cloudAdd,
+  cloudAudit,
+  cloudPage,
+  cloudRemove,
+  cloudVerify,
+  cloudWrite,
+} from "../web/pages/cloud.ts";
 import {
   subscriptionAdd,
   subscriptionDelete,
   subscriptionsPage,
+  subscriptionBudget,
+  subscriptionHeadroom,
   subscriptionWake,
 } from "../web/pages/subscriptions.ts";
 import {
   changePassword,
   iconPng,
+  llmsTxt,
   robotsTxt,
   securityTxt,
   sitemapXml,
@@ -67,6 +122,7 @@ import {
   pathsJson,
   pinSubmit,
   rawBlob,
+  repoFiles,
   repoHome,
   repoSyncSubmit,
   treePage,
@@ -88,32 +144,67 @@ import {
 import { commitPage, commitsPage } from "../web/pages/commits.ts";
 import {
   issueCommentSubmit,
-  issuePage,
-  issuesList,
+  issuePrivateSubmit,
+  issueSealSubmit,
   issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
   newTellPage,
-  tellPage,
 } from "../web/pages/issues.ts";
+import { tellPage } from "../web/studio/tell.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import {
-  modeSubmit,
+  milestonePage,
+  milestonesPage,
+  milestoneWatch,
+} from "../web/pages/milestones.ts";
+import {
+  limbPreviewPage,
+  limbReceiptPage,
+  limbSubmit,
+  limbUndo,
+} from "../web/pages/limb.ts";
+import {
   saySubmit,
   shipSubmit,
   takeBackSubmit,
+  holdSubmit,
+  releaseSubmit,
+  composerSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
-import { liveAppsFragment, liveOnYouFragment } from "../web/studio/home.ts";
+import { everydayCreate, everydayKeep, everydaySwitch } from "../web/pages/everyday.ts";
+import { claimFragmentPage, claimPage, claimSubmit } from "../web/pages/claim.ts";
+import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
+import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
+import { askedPage } from "../web/studio/asked_page.ts";
+import {
+  asksBulkSubmit,
+  asksBulkUndo,
+  asksPage,
+} from "../web/studio/asks_page.ts";
+import { liveFeedFragment } from "../web/studio/feed.ts";
+import { serviceWorker } from "../web/sw.ts";
+import { explorePage } from "../web/studio/explore.ts";
+import {
+  makeItYoursPage,
+  makeItYoursSubmit,
+} from "../web/studio/make_it_yours.ts";
+import {
+  frontUpdate,
+  liveAppsFragment,
+  liveOnYouFragment,
+  studioDoor,
+} from "../web/studio/home.ts";
 import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
-import { DEFAULT_MODE, isMode, modeCookie, type Mode } from "../web/mode.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
 import {
   assigneeSubmit,
   labelsSubmit,
   stateSubmit,
+  wordsSubmit,
 } from "../web/pages/thread.ts";
 import {
   appOpen,
@@ -138,8 +229,13 @@ import {
   runsList,
 } from "../web/pages/runs.ts";
 import { lookImage } from "../web/pages/looks.ts";
-import { boardPage } from "../web/pages/board.ts";
-import { bigPage } from "../web/pages/big.ts";
+import { bigRedirect, boardPage } from "../web/pages/board.ts";
+import { returnsPage } from "../web/pages/returns.ts";
+import {
+  fleetGraphCsv,
+  fleetGraphLive,
+  fleetGraphPage,
+} from "../web/pages/fleet-graph.ts";
 import {
   agentCreate,
   agentDelete,
@@ -147,12 +243,12 @@ import {
   agentUpdate,
   crewPage,
 } from "../web/pages/crew.ts";
-import { newPullPage, newPullSubmit, pullsList } from "../web/pages/pulls.ts";
+import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
+import { changePage, pullPage } from "../web/studio/change.ts";
 import {
-  changePage,
   pullCommentSubmit,
+  pullFilesPage,
   pullMergeSubmit,
-  pullPage,
   pullReviewStateSubmit,
   pullReviewSubmit,
   pullThreadFragment,
@@ -160,6 +256,7 @@ import {
 } from "../web/pages/pull.ts";
 import {
   appDisable,
+  appMembersUpdate,
   appDomainAdd,
   appDomainCheck,
   appDomainDelete,
@@ -203,13 +300,16 @@ import {
 } from "../web/pages/org.ts";
 import {
   accountPage,
+  notifyUpdate,
   accountUpdate,
   keyCreate,
   keyDelete,
   keysPage,
   passwordPage,
+  resendVerifyLink,
   passwordUpdate,
   tokenCreate,
+  sessionDelete,
   tokenDelete,
   tokensPage,
 } from "../web/pages/account.ts";
@@ -251,7 +351,18 @@ import { pushThrough } from "../origins/push-through.ts";
 import { notFoundPage } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
+import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
+import { oauthRoutes } from "./oauth.ts";
+import { carryPeer, clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
+import { parseCidrs } from "../kernel/cidr.ts";
+import {
+  reportAcceptSubmit,
+  reportDismissSubmit,
+  reportPage,
+  reportSubmit,
+  reportsPage,
+} from "../web/pages/reports.ts";
 import {
   cookieValue,
   publicUrl,
@@ -281,7 +392,11 @@ import { sseStream, viewerStream } from "./sse.ts";
 import { Router } from "./router.ts";
 import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
-import { appWebSocket, proxyApp, resolveAppHost } from "../apps/proxy.ts";
+import {
+  appWebSocket,
+  proxyApp,
+  resolveAppHost,
+} from "../apps/proxy.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 
 // ---- auth ----
@@ -293,18 +408,31 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
   // in; its word outranks a cookie of ours.
   const login = edgeIdentity(request, app.config.edgeToken);
   if (login !== undefined) {
-    const host =
-      app.config.url !== undefined
-        ? new URL(app.config.url).hostname
-        : (app.config.host ?? "localhost");
-    const user = await ensureEdgeUser(app.db, login, host);
-    if (user) return { user, scope: "admin", via: "edge" };
+    const existed = getUserByName(app.db, login) !== undefined;
+    const user = await ensureEdgeUser(app.db, login, forgeHost(app.config));
+    if (user) {
+      // An account the edge made is audited like one made at /signup.
+      if (!existed) {
+        app.bus.append({
+          kind: "user.created",
+          actorId: user.id,
+          payload: { via: "edge", address: clientAddress(request) },
+        });
+      }
+      return { user, scope: "admin", via: "edge" };
+    }
   }
 
   const session = cookieValue(request, "forge_session");
   if (session !== undefined) {
-    const user = sessionUser(app.db, session);
-    if (user.ok) return { user: user.value, scope: "admin", via: "session" };
+    const found = sessionOf(app.db, session);
+    if (found.ok)
+      return {
+        user: found.value.user,
+        scope: "admin",
+        via: "session",
+        sessionId: found.value.id,
+      };
   }
 
   const header = request.headers.get("authorization");
@@ -364,29 +492,23 @@ const gitChallenge = () =>
 
 // ---- the public server ----
 
-const CSS_ETAG = `"${sha256(css).slice(0, 16)}"`;
-
-function stylesheet(ctx: Ctx): Response {
-  if (ctx.request.headers.get("if-none-match") === CSS_ETAG) {
-    return new Response(null, { status: 304, headers: { etag: CSS_ETAG } });
-  }
-  return new Response(css, {
-    headers: {
-      "content-type": "text/css; charset=utf-8",
-      etag: CSS_ETAG,
-      "cache-control": "public, max-age=300",
-    },
-  });
-}
-
 export function buildRouter(): Router<Handler> {
   const router = new Router<Handler>();
 
   // Literal-prefix routes come before parameterized repo routes; the router
-  // matches in insertion order.
-  router.add("GET", "/assets/forge.css", stylesheet);
+  // matches in insertion order. The stylesheet and the highlighter bundle are
+  // both content-addressed: a stale hash is a 404 rather than a redirect, the
+  // page that asked for it names the hash it was built with, so a miss means
+  // an old tab, and an old tab should reload. The unhashed name stays only as
+  // a short-lived redirect for pages rendered before the hash existed.
+  router.add("GET", "/assets/:name.css", (ctx) => {
+    if (ctx.params.name === "forge") return stylesheetRedirect();
+    if (ctx.params.name !== stylesheetAsset().name) return notFound();
+    return stylesheetResponse();
+  });
   // What the open web expects of a site, from the forge's own facts.
   router.add("GET", "/.well-known/security.txt", securityTxt);
+  router.add("GET", "/llms.txt", llmsTxt);
   router.add("GET", "/.well-known/change-password", changePassword);
   router.add("GET", "/robots.txt", robotsTxt);
   router.add("GET", "/sitemap.xml", sitemapXml);
@@ -400,18 +522,45 @@ export function buildRouter(): Router<Handler> {
     if (asset === null || ctx.params.name !== asset.name) return notFound();
     return assetResponse(asset);
   });
+  // The service worker: root scope needs a root path, and it must never be
+  // cached by the browser's HTTP cache or an update would wait a day.
+  router.add("GET", "/sw.js", serviceWorker);
   router.add("GET", "/", home);
+  // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
+  router.add("GET", "/claim", claimFragmentPage);
+  router.add("POST", "/claim", claimSubmit);
+  router.add("GET", "/claim/:token", claimPage);
+  // "+ New forge": the spawn door as a page, an admin's only (spawn/door.ts).
+  router.add("GET", "/forges", forgesPage);
+  router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
+  router.add("GET", "/forges/new", newForgePage);
+  router.add("POST", "/forges/new", newForgeSubmit);
+  router.add("POST", "/claim/:token", claimSubmit);
+  // The front page as a stranger sees it, for anyone; a site admin there
+  // also gets the controls that decide it (#686).
+  router.add("GET", "/front", studioDoor);
+  // Apps and people ranked by real numbers, narrowed in one line (#607).
+  router.add("GET", "/explore", explorePage);
+  router.add("POST", "/front", frontUpdate);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
   router.add("GET", "/signup", signupPage);
+  router.add("GET", "/verify", verifyPage);
   router.add("POST", "/signup", signupSubmit);
   router.add("POST", "/logout", logoutSubmit);
   router.add("POST", "/theme", themeSubmit);
-  router.add("POST", "/mode", modeSubmit);
   // The board: a live wall of the crews at work, for a second monitor.
   router.add("GET", "/board", boardPage);
-  // The big view: the whole forge as one keyboard-first frame.
-  router.add("GET", "/big", bigPage);
+  // The board's tokens line, opened: what the spend bought (core/returns.ts).
+  router.add("GET", "/board/returns", returnsPage);
+  // One screen for "is everything fine?": what asks the viewer (docs/STUDIO.md).
+  router.add("GET", "/asks", asksPage);
+  router.add("POST", "/asks/bulk", asksBulkSubmit);
+  router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
+  // What people asked of the crew, and what became of it (core/asked.ts).
+  router.add("GET", "/asked", askedPage);
+  // The big view, folded into the board: every old address lands on its wall mode.
+  router.add("GET", "/big", bigRedirect);
   router.add("GET", "/search", searchPage);
   // The JS-free half of every destructive action. Two literal segments, so it
   // is registered before /:owner/:name can claim the shape.
@@ -435,11 +584,16 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/migrate/jobs/:job", migrationJobPage);
   // Every app on one canvas; a literal route, so it must sit above /:owner.
   router.add("GET", "/map", globalMapPage);
+  // A selection's spend and runs over time; literal, above /:owner.
+  router.add("GET", "/fleet/graph", fleetGraphPage);
+  router.add("GET", "/fleet/graph/live", fleetGraphLive);
+  router.add("GET", "/fleet/graph.csv", fleetGraphCsv);
   // Live regions' own addresses (docs/STUDIO.md, "Live regions"): the
   // home's shelf and its "On you" card answer for themselves, so an event
   // fetches a region and not the page. Literal, above /:owner.
   router.add("GET", "/live/apps", liveAppsFragment);
   router.add("GET", "/live/on-you", liveOnYouFragment);
+  router.add("GET", "/live/feed", liveFeedFragment);
   // Whether a hostname is an app's verified domain — what Caddy's
   // `on_demand_tls { ask … }` asks before it fetches a certificate for a
   // name it has never seen (docs/EXTRACT.md). 200 says yes, 404 says no,
@@ -457,18 +611,69 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/runs/:id", runRedirect);
   router.add("GET", "/settings", accountPage);
   router.add("POST", "/settings", accountUpdate);
+  router.add("POST", "/settings/notify", notifyUpdate);
+  router.add("POST", "/settings/email/verify", resendVerifyLink);
   router.add("GET", "/settings/password", passwordPage);
   router.add("POST", "/settings/password", passwordUpdate);
+  // The everyday account: an admin's daily account, apart from admin (#596).
+  router.add("POST", "/settings/everyday", everydayCreate);
+  router.add("POST", "/settings/everyday/switch", everydaySwitch);
+  router.add("POST", "/settings/everyday/keep", everydayKeep);
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
+  router.add("POST", "/settings/sessions/:id/delete", sessionDelete);
   // The crew: a forge admin's section, hidden from everyone else.
   router.add("GET", "/settings/subscriptions", subscriptionsPage);
   router.add("POST", "/settings/subscriptions", subscriptionAdd);
   router.add("POST", "/settings/subscriptions/:id/delete", subscriptionDelete);
   router.add("POST", "/settings/subscriptions/:id/wake", subscriptionWake);
+  router.add(
+    "POST",
+    "/settings/subscriptions/:id/headroom",
+    subscriptionHeadroom,
+  );
+  router.add("POST", "/settings/subscriptions/:id/budget", subscriptionBudget);
+  router.add("GET", "/settings/secrets", secretsPage);
+  router.add("POST", "/settings/secrets", secretSet);
+  router.add("POST", "/settings/secrets/delete", secretDelete);
+  router.add("GET", "/settings/cloud", cloudPage);
+  router.add("POST", "/settings/cloud", cloudAdd);
+  router.add("POST", "/settings/cloud/verify", cloudVerify);
+  router.add("POST", "/settings/cloud/write", cloudWrite);
+  router.add("POST", "/settings/cloud/audit", cloudAudit);
+  router.add("POST", "/settings/cloud/remove", cloudRemove);
+  router.add("GET", "/settings/capacity", capacityPage);
+  router.add("POST", "/settings/capacity", capacitySet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
+  router.add("POST", "/settings/backups/destination", backupsDestination);
+  router.add("POST", "/settings/backups/test", backupsTest);
+  router.add("POST", "/settings/backups/clear", backupsClear);
+  router.add("GET", "/settings/accounts", accountsPage);
+  router.add("GET", "/settings/accounts/:username", personSignInsPage);
+  router.add(
+    "POST",
+    "/settings/accounts/:username/tokens/:id/delete",
+    signInAct("token"),
+  );
+  router.add(
+    "POST",
+    "/settings/accounts/:username/sessions/:id/delete",
+    signInAct("session"),
+  );
+  router.add(
+    "POST",
+    "/settings/accounts/:username/suspend",
+    accountAct("suspend"),
+  );
+  router.add(
+    "POST",
+    "/settings/accounts/:username/unsuspend",
+    accountAct("unsuspend"),
+  );
+  router.add("POST", "/settings/accounts/:username/remove", accountAct("remove"));
+  router.add("POST", "/settings/accounts/:username/verify", accountAct("verify"));
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew", agentCreate);
   router.add("GET", "/settings/crew/:username", agentPage);
@@ -617,32 +822,41 @@ export function buildRouter(): Router<Handler> {
   // reclaim a path under `/api/`.
   // The forge as an MCP server: the studio's verbs for an assistant.
   mcpRoutes(router);
+  oauthRoutes(router);
 
   // Issues (web). The literal /new is registered before /:number so it can
   // never be captured as a number.
-  router.add("GET", "/:owner/:name/issues", issuesList);
-  // The studio's own nouns for the same list and the same page — everything
-  // told, and one tell. Each is a second door onto the one handler, never a
-  // second copy of the page; `/issues` and `/issues/:number` stay dev's own
-  // canonical addresses and answer exactly as they always have, in both
-  // modes (`tellsList`/`tellPage` redirect there when the studio does not
-  // apply). The literal /tells is registered before /tells/:number for the
-  // same reason /issues/new is.
+  // One list of issues: `/issues` and `/tells` are two addresses for the
+  // same page, for every repository and every viewer.
+  router.add("GET", "/:owner/:name/issues", tellsList);
+  // One issue page, at `/issues/:number` and `/tells/:number` alike, for
+  // every repository and every viewer. The literal /tells is registered
+  // before /tells/:number for the same reason /issues/new is.
   router.add("GET", "/:owner/:name/tells", tellsList);
   router.add("GET", "/:owner/:name/tells/new", newTellPage);
   router.add("GET", "/:owner/:name/tells/:number", tellPage);
+  router.add("GET", "/:owner/:name/report", reportPage);
+  router.add("POST", "/:owner/:name/report", reportSubmit);
+  router.add("GET", "/:owner/:name/reports", reportsPage);
+  router.add("POST", "/:owner/:name/reports/:id/accept", reportAcceptSubmit);
+  router.add("POST", "/:owner/:name/reports/:id/dismiss", reportDismissSubmit);
   router.add("GET", "/:owner/:name/issues/new", newIssuePage);
   router.add("POST", "/:owner/:name/issues/new", newIssueSubmit);
-  router.add("GET", "/:owner/:name/issues/:number", issuePage);
+  router.add("GET", "/:owner/:name/issues/:number", tellPage);
   router.add("GET", "/:owner/:name/issues/:number/thread", issueThreadFragment);
   router.add(
     "POST",
     "/:owner/:name/issues/:number/comments",
     issueCommentSubmit,
   );
+  router.add("POST", "/:owner/:name/issues/:number/seal", issueSealSubmit);
+  router.add("POST", "/:owner/:name/issues/:number/private", issuePrivateSubmit);
   // Close/reopen and labels are their own verbs, not riders on a comment.
   router.add("POST", "/:owner/:name/issues/:number/state", (ctx) =>
     stateSubmit(ctx, "issue"),
+  );
+  router.add("POST", "/:owner/:name/issues/:number/edit", (ctx) =>
+    wordsSubmit(ctx, "issue"),
   );
   router.add("POST", "/:owner/:name/issues/:number/labels", (ctx) =>
     labelsSubmit(ctx, "issue"),
@@ -653,9 +867,13 @@ export function buildRouter(): Router<Handler> {
   // The studio's verbs on an app: tell, ship, say, and — on a shipped
   // change — take it back.
   router.add("POST", "/:owner/:name/tell", tellSubmit);
+  // The home's composer without a script: a tell to the app it names (#599).
+  router.add("POST", "/tell", composerSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   router.add("POST", "/:owner/:name/pulls/:number/take-back", takeBackSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/hold", holdSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/release", releaseSubmit);
   // What an issue waits for: link and unlink, from the issue page.
   router.add(
     "POST",
@@ -663,17 +881,35 @@ export function buildRouter(): Router<Handler> {
     dependencySubmit,
   );
   router.add("GET", "/:owner/:name/map", mapPage);
+  router.add("GET", "/:owner/:name/milestones", milestonesPage);
+  router.add("GET", "/:owner/:name/milestones/:number", milestonePage);
+  router.add("POST", "/:owner/:name/milestones/:number/watch", milestoneWatch);
+  router.add("GET", "/:owner/:name/milestones/:number/limb", limbPreviewPage);
+  router.add("POST", "/:owner/:name/milestones/:number/limb", limbSubmit);
+  router.add(
+    "GET",
+    "/:owner/:name/milestones/:number/limb/:op",
+    limbReceiptPage,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/milestones/:number/limb/:op/undo",
+    limbUndo,
+  );
 
   // Pull requests. Same /new-before-/:number ordering discipline.
-  router.add("GET", "/:owner/:name/pulls", pullsList);
-  // The studio's own nouns for the same list and the same page — every
-  // change, and one change. See the tells above for the rule; the forms
-  // that ship, close and comment keep posting under /pulls/:number.
+  // One list of pulls, at `/pulls` and `/changes` alike; one change under
+  // the studio's own noun. See the tells above for the rule; the forms that
+  // ship, close and comment keep posting under /pulls/:number.
+  router.add("GET", "/:owner/:name/pulls", changesList);
   router.add("GET", "/:owner/:name/changes", changesList);
   router.add("GET", "/:owner/:name/changes/:number", changePage);
   router.add("GET", "/:owner/:name/pulls/new", newPullPage);
   router.add("POST", "/:owner/:name/pulls/new", newPullSubmit);
   router.add("GET", "/:owner/:name/pulls/:number", pullPage);
+  // The change's Files step: the diff, the review threads and the merge
+  // box, one tab under the change itself.
+  router.add("GET", "/:owner/:name/pulls/:number/files", pullFilesPage);
   router.add("GET", "/:owner/:name/pulls/:number/thread", pullThreadFragment);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/review", pullReviewSubmit);
@@ -696,6 +932,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/pulls/:number/merge", pullMergeSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/state", (ctx) =>
     stateSubmit(ctx, "pull"),
+  );
+  router.add("POST", "/:owner/:name/pulls/:number/edit", (ctx) =>
+    wordsSubmit(ctx, "pull"),
   );
   router.add("POST", "/:owner/:name/pulls/:number/labels", (ctx) =>
     labelsSubmit(ctx, "pull"),
@@ -749,6 +988,9 @@ export function buildRouter(): Router<Handler> {
 
   // Parameterized repo pages match last, so they can never shadow a literal.
   router.add("GET", "/:owner/:name", repoHome);
+  // An app's code, one tab under the app (its home); any other repository's
+  // home is already its code, and /files sends it there.
+  router.add("GET", "/:owner/:name/files", repoFiles);
   router.add("GET", "/:owner/:name/tree/:ref", treePage);
   router.add("GET", "/:owner/:name/tree/:ref/*path", treePage);
   router.add("GET", "/:owner/:name/blob/:ref/*path", blobPage);
@@ -782,6 +1024,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);
   router.add("POST", "/:owner/:name/fork", forkSubmit);
+  // Make it yours (#606): a fork with its app, planned, then made.
+  router.add("GET", "/:owner/:name/make-it-yours", makeItYoursPage);
+  router.add("POST", "/:owner/:name/make-it-yours", makeItYoursSubmit);
   // A fork takes what it follows: git's part by itself, the rest by the crew.
   router.add("POST", "/:owner/:name/following", followingSubmit);
   // A mirror pulls on demand; a pin says "keep this on my machine". Both are
@@ -795,6 +1040,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);
+  router.add("POST", "/:owner/:name/settings/app/members", appMembersUpdate);
   router.add("POST", "/:owner/:name/settings/app/env", appEnvSet);
   router.add(
     "POST",
@@ -862,6 +1108,7 @@ export function buildRouter(): Router<Handler> {
 export function buildApiRouter(): Router<Handler> {
   const router = new Router<Handler>();
   apiRoutes(router);
+  feedRoutes(router);
   return router;
 }
 
@@ -964,23 +1211,24 @@ function withRateHeaders(
 }
 
 /**
- * `?mode=studio` or `?mode=dev` on any URL sets the cookie, exactly like the
- * toggle's POST — a link someone is handed must work as a switch by itself,
- * not just for the one page it lands on.
+ * There is one forge, not two (#603): an address carrying the old
+ * `?mode=studio|dev` is the same page without it. A page answers there with
+ * a redirect to its own clean address, and the cookie that used to hold the
+ * choice is let go on the way.
  */
-function withModeCookie(
-  response: Response,
-  mode: Mode | undefined,
-  secure: boolean,
-): Response {
-  if (mode === undefined) return response;
-  try {
-    response.headers.append("set-cookie", modeCookie(mode, secure));
-  } catch {
-    // Same tradeoff as the rate headers: a frozen header set should not
-    // fail the request.
-  }
-  return response;
+function withoutMode(url: URL, request: Request): Response | undefined {
+  if (request.method !== "GET" || !url.searchParams.has("mode")) return undefined;
+  const clean = new URL(url);
+  clean.searchParams.delete("mode");
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  return new Response(null, {
+    status: 303,
+    headers: {
+      location: `${clean.pathname}${clean.search}${clean.hash}`,
+      "set-cookie": `forge_mode=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly${secure}`,
+      "cache-control": "no-store",
+    },
+  });
 }
 
 const REPLAYABLE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -1019,14 +1267,25 @@ async function withIdempotency(
   // Read the body once and hand the handler a request carrying the same
   // bytes. Cloning would work too; this way there is exactly one copy, and
   // exactly one thing that can be hashed.
-  const raw = await request.text();
+  // Counted like any body (\`http/limits.ts\`): a key does not buy a read
+  // past the cap.
+  const bytes = await readBounded(request, BODY_MAX);
+  if (bytes === "too_large")
+    return apiError("too_large", 413, `at most ${BODY_MAX} bytes`);
+  const raw = new TextDecoder().decode(bytes);
   const fingerprint = requestFingerprint(request.method, url.pathname, raw);
-  const replay = (): Request =>
-    new Request(request.url, {
+  const replay = (): Request => {
+    const again = new Request(request.url, {
       method: request.method,
       headers: request.headers,
       ...(raw === "" ? {} : { body: raw }),
     });
+    // The replay is the same caller: limits, the audit and the body caps
+    // still see what was noted of the original.
+    carryPeer(request, again);
+    carryNotes(request, again);
+    return again;
+  };
 
   const stored = lookupIdempotent(app.db, credential, key);
   if (stored !== undefined) {
@@ -1036,7 +1295,10 @@ async function withIdempotency(
   // A retry that arrives while the first attempt is still running joins it
   // rather than starting a second — the duplicate this whole path prevents.
   const racing = joinInFlight(credential, key);
-  if (racing !== undefined) return fromStored(await racing, true);
+  if (racing !== undefined) {
+    const joined = await racing;
+    return fromStored({ ...joined, body: withoutShownOnce(joined.body) }, true);
+  }
 
   const work = (async (): Promise<StoredResponse> => {
     const response = await invoke(replay());
@@ -1046,6 +1308,9 @@ async function withIdempotency(
       body,
       contentType: response.headers.get("content-type") ?? "application/json",
     };
+    // What the table keeps — and backups with it — never holds a secret
+    // shown once; a replay says it was shown instead.
+    const kept: StoredResponse = { ...outcome, body: withoutShownOnce(body) };
     // A 5xx is not an outcome, it is the absence of one. Remembering it
     // would pin the caller to a failure it was right to retry.
     if (response.status < 500) {
@@ -1053,7 +1318,7 @@ async function withIdempotency(
         tokenId: credential,
         key,
         fingerprint,
-        response: outcome,
+        response: kept,
       });
     }
     return outcome;
@@ -1063,6 +1328,27 @@ async function withIdempotency(
   // replay, and telling it otherwise would make the header useless for
   // exactly the reconciliation it exists for.
   return fromStored(await work, false);
+}
+
+/**
+ * Fields of an API answer that are a secret shown once (a spawned child's
+ * claim link): an idempotent replay must not return them, and the
+ * idempotency table must not keep them.
+ */
+const SHOWN_ONCE = ["claimUrl"] as const;
+export const SHOWN_ONCE_NOTE = "shown once, in the first answer";
+
+export function withoutShownOnce(body: string): string {
+  if (!SHOWN_ONCE.some((k) => body.includes(`"${k}"`))) return body;
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return body;
+    const copy: Record<string, unknown> = { ...(parsed as Record<string, unknown>) };
+    for (const k of SHOWN_ONCE) if (k in copy) copy[k] = SHOWN_ONCE_NOTE;
+    return JSON.stringify(copy);
+  } catch {
+    return body;
+  }
 }
 
 const keyReused = (): Response =>
@@ -1098,6 +1384,13 @@ async function handleHook(app: App, request: Request): Promise<Response> {
       // The pull namespace belongs to the forge, never to pushers.
       if (update.ref.startsWith("refs/pull/")) {
         return new Response(`${update.ref}: refs/pull/* is reserved`, {
+          status: 403,
+        });
+      }
+      // A push that began before its account was suspended or removed does
+      // not land: standing is asked again here, at the ref update.
+      if (actor !== undefined && !isActive(actor)) {
+        return new Response("this account is suspended: the push is refused", {
           status: 403,
         });
       }
@@ -1183,6 +1476,19 @@ async function handleHook(app: App, request: Request): Promise<Response> {
     actorId: input.actorId || undefined,
     payload: { updates: input.updates },
   });
+  // A tag that releases a sealed report's fix opens the report
+  // (`actions/sealed.ts`). Off the hook's answer: git need not wait for it.
+  void unsealReleased(
+    app,
+    repo,
+    input.updates,
+    input.actorId ? getUserById(app.db, input.actorId) : undefined,
+  ).catch((error) =>
+    app.log.warn("could not unseal released reports", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      error: String(error),
+    }),
+  );
   return new Response("");
 }
 
@@ -1192,6 +1498,29 @@ export interface Servers {
   readonly url: string;
   readonly port: number;
   stop(): void;
+}
+
+/**
+ * A refusal a database trigger raised (`RAISE(ABORT, '…')`): an operator's
+ * guard saying no, in its own words. It is the answer, not a fault, so the
+ * person sees the reason and a 403 rather than "internal".
+ */
+function refusedByDatabase(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const code = (error as { code?: unknown }).code;
+  return code === "SQLITE_CONSTRAINT_TRIGGER" ? error.message : undefined;
+}
+
+/** A response with one header set, copying it when its headers are frozen. */
+function withHeader(response: Response, name: string, value: string): Response {
+  try {
+    response.headers.set(name, value);
+    return response;
+  } catch {
+    const copy = new Response(response.body, response);
+    copy.headers.set(name, value);
+    return copy;
+  }
 }
 
 /** The hook sockets a data directory may hold: this forge's, and others'. */
@@ -1244,10 +1573,52 @@ export async function serve(app: App): Promise<Servers> {
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
+  // An account suspended or removed ends what it has open on this
+  // listener: its event streams and the app sockets it was let into. A
+  // browser signed out ends the streams it opened.
+  const unclosed = (error: unknown): void =>
+    app.log.warn("something held open did not close", { error: String(error) });
+  const endOpen = app.bus.subscribe((event) => {
+    if (event.kind === "session.ended") {
+      const id = event.payload["sessionId"];
+      if (typeof id === "string") closeStreamsOfSession(app.db, id, unclosed);
+      return;
+    }
+    if (event.kind !== "account.suspended" && event.kind !== "account.removed")
+      return;
+    const name = event.payload["username"];
+    const user =
+      typeof name === "string" ? getUserByName(app.db, name) : undefined;
+    if (user === undefined) return;
+    closeStreamsOf(app.db, user.id, unclosed);
+  });
+  // And every process holds what it has open against the database, so a
+  // suspension or sign-out another process wrote reaches it too (#846).
+  const sweep = setInterval(
+    () =>
+      sweepStanding(app.db, (error) =>
+        app.log.warn("standing sweep did not finish", { error: String(error) }),
+      ),
+    app.config.standingSweepMs ?? 5_000,
+  );
+  // Who may say who the client is (\`http/peer.ts\`), settled once.
+  const proxies = parseCidrs((app.config.trustedProxies ?? []).join(","));
+  if (!proxies.ok)
+    defect("config.trusted_proxies", `not an address or range: ${proxies.error}`);
+  const trust: ProxyTrust = {
+    proxies: proxies.value,
+    ...(app.config.clientIpHeader === undefined
+      ? {}
+      : { header: app.config.clientIpHeader }),
+  };
 
   const web = Bun.serve({
     port: app.config.port ?? 3000,
     idleTimeout: 120,
+    // The largest thing anyone may send — a git push. Every reader below it
+    // keeps its own, smaller cap (\`http/limits.ts\`); the runtime enforces
+    // this one only on a declared length.
+    maxRequestBodySize: REQUEST_MAX,
     // The only sockets the forge holds are an app's, carried through the
     // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
     websocket: appWebSocket,
@@ -1265,13 +1636,27 @@ export async function serve(app: App): Promise<Servers> {
         if (target === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
       }
+      notePeer(request, server.requestIP(request)?.address, trust);
+      // A body refused part-way, or one left unread with no declared length,
+      // ends its connection once answered (`http/limits.ts`).
+      armClose(request, () => server.timeout(request, 1));
       // Everything the forge answers for itself leaves through this one
       // door, so a responder added next year cannot forget the floor.
-      return securityFloor(
+      const response = securityFloor(
         await answer(app, router, apiRouter, limiter, request),
       );
+      await settleBody(request);
+      if (!mustClose(request)) return response;
+      // Said, so no client or proxy reuses it; then done, so none can.
+      server.timeout(request, 1);
+      return withHeader(response, "connection", "close");
     },
     error(error) {
+      const refused = refusedByDatabase(error);
+      if (refused !== undefined) {
+        app.log.warn("refused by the database", { reason: refused });
+        return securityFloor(json({ error: "refused", message: refused }, 403));
+      }
       app.log.error("unhandled request error", { error: String(error) });
       return securityFloor(json({ error: "internal" }, 500));
     },
@@ -1293,6 +1678,8 @@ export async function serve(app: App): Promise<Servers> {
     url: `http://localhost:${port}`,
     port,
     stop() {
+      endOpen();
+      clearInterval(sweep);
       web.stop(true);
       internal.stop(true);
       // Our socket goes with us; a corpse is only ever an unclean exit's.
@@ -1355,7 +1742,6 @@ async function answerGet(
     // even for someone who is.
     if (!isApiPath && prefersHtml(request, url.pathname)) {
       const themeCookie = cookieValue(request, "forge_theme") ?? "";
-      const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
       const anonCtx: Ctx = {
         app,
         request,
@@ -1363,13 +1749,18 @@ async function answerGet(
         params: {},
         auth: { user: undefined, scope: undefined, via: "none" },
         theme: isThemeName(themeCookie) ? themeCookie : undefined,
-        mode: isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE,
       };
       return notFoundPage(anonCtx);
     }
     return noRoute(request.method, url.pathname);
   }
   const auth = await resolveAuth(app, request);
+  // From here a body's cap depends on who is asking (`http/limits.ts`), and
+  // a stream this request opens is the account's, to end with it.
+  if (auth.user !== undefined) {
+    noteSignedIn(request);
+    noteCaller(request, app.db, auth.user.id, auth.sessionId);
+  }
 
   // The two things standing between one runaway agent and everybody
   // else's latency, applied before a handler runs and after auth is
@@ -1384,14 +1775,10 @@ async function answerGet(
   }
 
   const themeCookie = cookieValue(request, "forge_theme") ?? "";
-  const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
-  // `?mode=` on the URL is the escape hatch: a plain link a person is
-  // handed switches the browser by itself, the same way the toggle's
-  // POST does, so it must work in both directions with no form.
-  const modeParam = url.searchParams.get("mode");
-  const modeOverride = isMode(modeParam) ? modeParam : undefined;
-  const mode =
-    modeOverride ?? (isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE);
+  if (!isApiPath) {
+    const clean = withoutMode(url, request);
+    if (clean !== undefined) return clean;
+  }
   const invoke = (into: Request): Response | Promise<Response> =>
     matched.handler({
       app,
@@ -1400,15 +1787,16 @@ async function answerGet(
       params: matched.params,
       auth,
       theme: isThemeName(themeCookie) ? themeCookie : undefined,
-      mode,
     });
 
+  // A signed-in browser's outbox replays by key too (web/outbox.ts): the
+  // key is scoped to the person, like a token's is to the token.
+  const replayAs =
+    credential ??
+    (auth.via === "session" && auth.user ? `user:${auth.user.id}` : undefined);
   const response =
-    credential === undefined
+    replayAs === undefined
       ? await invoke(request)
-      : await withIdempotency(app, request, url, credential, invoke);
-  return withRateHeaders(
-    withModeCookie(response, modeOverride, url.protocol === "https:"),
-    verdict,
-  );
+      : await withIdempotency(app, request, url, replayAs, invoke);
+  return withRateHeaders(response, verdict);
 }

@@ -1,3 +1,5 @@
+import { stylesheetAsset } from "../src/web/asset.ts";
+import { logBox } from "../src/web/studio/log.ts";
 /**
  * The studio: apps as the unit, three verbs, and a switch to dev. The same
  * URLs answer in both modes; the cookie decides which face they show.
@@ -10,7 +12,11 @@ import { dirname, join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { previewEnv, type EnvName } from "../src/apps/data.ts";
-import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
+import {
+  AppsRuntime,
+  type EnvState,
+  type EnvStatus,
+} from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { addTeamMember, createOrg, createTeam } from "../src/actions/orgs.ts";
@@ -18,20 +24,27 @@ import { linkIssue } from "../src/actions/dependencies.ts";
 import {
   assignIssue,
   openIssue,
+  setIssueLabels,
   setIssueState,
 } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import {
   commitToBranch,
+  createLabel,
   createRepo,
   updateRepoSettings,
 } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
 import { recordDecision } from "../src/core/decisions.ts";
 import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
-import { recordLook } from "../src/core/looks.ts";
+import { looksForEnv, recordLook } from "../src/core/looks.ts";
 import { getPull, mergedPullCount, type Pull } from "../src/core/pulls.ts";
-import { setDirectionIssue, type Repo } from "../src/core/repos.ts";
+import {
+  getRepo,
+  getRepoById,
+  setDirectionIssue,
+  type Repo,
+} from "../src/core/repos.ts";
 import {
   agentRunTotals,
   claimRun,
@@ -50,11 +63,12 @@ import type { Decider } from "../src/crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import {
+  NOBODY_ON_CREW,
   pullWord,
   runWord,
   servingHistory,
   type WordCtx,
-} from "../src/web/pages/studio.ts";
+} from "../src/web/studio/words.ts";
 import { servedPhrase } from "../src/web/ui.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { appendRunLog } from "../src/runs/log.ts";
@@ -64,6 +78,38 @@ const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
   "base64",
 );
+
+/**
+ * A runtime registered for `app`, never started, answering every app's
+ * production with `stateOf` (running unless told) — the door shows only
+ * what is up or wakes. The returned function takes it away again.
+ */
+async function serving(
+  app: App,
+  servers: Servers,
+  stateOf: (record: AppRecord) => EnvState = () => "running",
+): Promise<() => Promise<void>> {
+  const runtime = new AppsRuntime(app, {
+    domain: "studio-door.test",
+    scheme: "http",
+    publicPort: servers.port,
+    forgeUrl: servers.url,
+  });
+  const status = spyOn(AppsRuntime.prototype, "status").mockImplementation(
+    (record: AppRecord): EnvStatus[] => [
+      {
+        env: "production",
+        state: stateOf(record),
+        // Serving the commit its newest picture is of.
+        commitOid: looksForEnv(app.db, record.id, "production")[0]?.commitOid ?? "",
+      } as EnvStatus,
+    ],
+  );
+  return async () => {
+    status.mockRestore();
+    await runtime.stop();
+  };
+}
 
 describe("the studio", () => {
   let dataDir: string;
@@ -92,7 +138,7 @@ describe("the studio", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -147,90 +193,66 @@ describe("the studio", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("home is the studio by default with no cookie at all; ?mode= is a link that switches this browser, both ways", async () => {
+  test("there is one forge (#603): no mode toggle, no POST /mode, and a ?mode= address is the same page without it, the old cookie let go", async () => {
     const plainResponse = await fetch(`${base}/`, { headers: { cookie } });
     const plain = await plainResponse.text();
     expect(plain).toContain("Your apps");
-    expect(plain).toContain("notes");
-    expect(plain).not.toContain("<h1>Your repositories</h1>");
+    expect(plain).not.toContain("mode-toggle");
+    expect(plain).not.toContain('action="/mode"');
     expect(plainResponse.headers.get("set-cookie")).toBeNull();
+    // Your repositories are one step away, on your own page.
+    expect(plain).toContain('href="/alice"');
 
-    // `?mode=studio` is a no-op switch here, but it still sets the cookie —
-    // the same link works from a dev-cookied browser too.
-    const toStudio = await fetch(`${base}/?mode=studio`, {
-      headers: { cookie },
-    });
-    expect(toStudio.headers.get("set-cookie")).toContain("forge_mode=studio");
-
-    const devResponse = await fetch(`${base}/?mode=dev`, {
-      headers: { cookie },
-    });
-    const dev = await devResponse.text();
-    expect(dev).toContain("<h1>Your repositories</h1>");
-    expect(dev).not.toContain("Your apps");
-    expect(devResponse.headers.get("set-cookie")).toContain("forge_mode=dev");
-
-    // `?mode=dev` still wins for this browser even once studio's cookie is set.
-    const stillDev = await (
-      await fetch(`${base}/?mode=dev`, {
-        headers: { cookie: `${cookie}; forge_mode=studio` },
+    for (const path of ["/?mode=dev", "/alice/notes/issues?mode=studio&word=told"]) {
+      const res = await fetch(`${base}${path}`, {
+        headers: { cookie: `${cookie}; forge_mode=dev` },
+        redirect: "manual",
+      });
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(
+        path === "/?mode=dev" ? "/" : "/alice/notes/issues?word=told",
+      );
+      expect(res.headers.get("set-cookie")).toContain("forge_mode=; Max-Age=0");
+    }
+    // An old dev cookie changes nothing.
+    const withDev = await (
+      await fetch(`${base}/alice/notes`, {
+        headers: { cookie: `${cookie}; forge_mode=dev` },
       })
     ).text();
-    expect(stillDev).toContain("<h1>Your repositories</h1>");
-
-    // And the link's switch stuck: this browser stays in dev with no query.
-    const devCookie = (devResponse.headers.get("set-cookie") ?? "").split(
-      ";",
-    )[0]!;
-    const asDev = await (
-      await fetch(`${base}/`, {
-        headers: { cookie: `${cookie}; ${devCookie}` },
-      })
-    ).text();
-    expect(asDev).toContain("<h1>Your repositories</h1>");
-
-    // The toggle's own POST still flips it back, cookie and all.
-    const flipped = await post("/mode", { mode: "studio", back: "/" });
-    expect(flipped.status).toBe(303);
-    expect(flipped.headers.get("set-cookie")).toContain("forge_mode=studio");
-    const bad = await post("/mode", { mode: "neither", back: "/" });
-    expect(bad.headers.get("set-cookie")).toContain("forge_mode=;");
+    expect(withDev).toContain("Tell the crew");
+    // The depth row on every repository's header: Files (or Code), Changes
+    // (or Pulls) and Runs; Terminal only where SSH is on, which it is not here.
+    expect(withDev).toContain('href="/alice/notes/files"');
+    expect(withDev).toContain('href="/alice/notes/changes"');
+    expect(withDev).toContain('href="/alice/notes/runs"');
+    expect(withDev).not.toContain('href="/settings/keys#terminal"');
+    // The toggle's POST is gone with it.
+    const flipped = await post("/mode", { mode: "dev", back: "/" });
+    expect(flipped.status).toBe(404);
   });
 
-  /**
-   * The shelf row, byte for byte: whoever draws it (`studio/shelf.ts`) and
-   * from wherever, an app on a shelf is a dot, its name, its one line, what
-   * the crew last did there, the badge for whether it is live, and a link
-   * into it. This pins the rendering so a move of the code cannot quietly
-   * move the page.
-   */
-  test("an app is one row on the shelf: a dot, its name and line, what the crew last did, the way in", async () => {
-    const home = await (await get("/")).text();
-    const at = home.indexOf('href="/alice/notes"');
-    expect(at).toBeGreaterThan(-1);
-    const start = home.lastIndexOf("<li>", at);
-    const shelfRow = home.slice(start, home.indexOf("</li>", at) + 5);
-    // The bytes the home rendered before the row moved into its own
-    // module, escaped so no formatter can reflow them.
-    expect(shelfRow).toBe(
-      '<li>\n    <a href="/alice/notes" class="row"\n  \n  data-nav tabindex="-1"><span class="row-lead"><span\n    class="dot"\n    \n  ></span></span>\n    <span class="row-main">\n      <span\n        class="row-title"\n        title="a place for notes"\n        >notes</span\n      >\n      <span class="row-meta">a place for notes · <span class="muted">quiet — tell the crew something</span></span>\n    </span>\n    <span class="row-trail">\n        <span class="badge" data-tone="default">not running</span></span></a>\n  </li>',
-    );
+  test("the palette lists apps first, then the other repositories (#906)", async () => {
+    // Made after the app, so newest-first alone would list it ahead.
+    const later = await createRepo(app, alice, {
+      name: "palette-later",
+      visibility: "public",
+      description: "",
+    });
+    if (!later.ok) throw new Error(String(later.error));
+    const html = await (await get("/")).text();
+    const block = html.match(
+      /<script type="application\/json" id="palette-index">([\s\S]*?)<\/script>/,
+    )?.[1];
+    if (block === undefined) throw new Error("no palette-index on the home");
+    const rows = (JSON.parse(block) as { items: { t: string; c: string }[] }).items;
+    const at = (t: string) => rows.findIndex((r) => r.t === t);
+    expect(rows[at("alice/notes")]?.c).toBe("Apps");
+    expect(rows[at("alice/palette-later")]?.c).toBe("Repositories");
+    expect(at("alice/notes")).toBeLessThan(at("alice/palette-later"));
   });
 
-  test("an app's home is the app in the studio, and the code in dev", async () => {
-    const studio = await (await get("/alice/notes")).text();
-    expect(studio).toContain("Tell the crew");
-    expect(studio).toContain("<h2>Crew</h2>");
-    expect(studio).toContain(">Studio<");
-    expect(studio).not.toContain(">Commits<");
-    const dev = await (
-      await get("/alice/notes", { cookie: `${cookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).not.toContain("Tell the crew");
-    expect(dev).toContain(">Commits<");
-  });
-
-  test("a repository with no app record keeps the studio's framing: one card, one door to make it one; ?mode=dev is unchanged, and an app itself never shows the card", async () => {
+  test("a repository with no app record keeps the studio's framing for every viewer: one card, one door to make it one; an app itself never shows the card", async () => {
     const plain = await createRepo(app, alice, {
       name: "plainhome",
       visibility: "public",
@@ -248,15 +270,14 @@ describe("the studio", () => {
     expect(studio).toContain(`href="/alice/plainhome/settings/app"`);
     expect(studio).toContain("Run as an app");
 
-    // `?mode=dev` on the very same URL renders exactly what it always has:
-    // the code, no card above it at all.
+    // An old dev cookie changes nothing (#603): the same code page, the
+    // same card, git's own tabs because it is not an app.
     const dev = await (
       await get("/alice/plainhome", { cookie: `${cookie}; forge_mode=dev` })
     ).text();
     expect(dev).toContain("README.md");
     expect(dev).toContain(">Commits<");
-    expect(dev).not.toContain("This repository has no app yet.");
-    expect(dev).not.toContain("Run as an app");
+    expect(dev).toContain("This repository has no app yet.");
 
     // A signed-out reader of the same public repository sees the same
     // sentence but no door it could not walk through.
@@ -281,11 +302,13 @@ describe("the studio", () => {
     // for this request (label colors) is allowed one.
     for (const path of ["/", "/alice/notes", "/apps"]) {
       const html = await (await get(path)).text();
-      expect(html).toContain('<link rel="stylesheet" href="/assets/forge.css"');
+      expect(html).toContain(
+        `<link rel="stylesheet" href="${stylesheetAsset().path}"`,
+      );
       expect(html).not.toContain("<style");
     }
 
-    const sheet = await fetch(`${base}/assets/forge.css`);
+    const sheet = await fetch(`${base}${stylesheetAsset().path}`);
     expect(sheet.headers.get("content-type")).toContain("text/css");
     const css = await sheet.text();
     expect(css).toContain(".studio-tell textarea");
@@ -412,7 +435,7 @@ describe("the studio", () => {
     expect(page).not.toContain("has it");
   });
 
-  test("a pull on an app renders as a studio page — the preview, the look and the decision, no diff; ?mode=dev still renders the diff", async () => {
+  test("a pull on an app renders as one change page — the preview, the look and the decision, no diff; the diff is its Files step, and ?mode=dev changes nothing", async () => {
     const scout = getUserByName(app.db, "scout")!;
     const branch = await commitToBranch(app, alice, repo, {
       branch: "feature/studio-pull",
@@ -453,25 +476,31 @@ describe("the studio", () => {
     expect(studio).toContain('data-word="look"');
     expect(studio).toContain("Ship");
     expect(studio).toContain('id="comment-body"');
-    expect(studio).toContain(
-      `href="/alice/notes/pulls/${pull.number}?mode=dev"`,
-    );
+    expect(studio).toContain(`href="/alice/notes/pulls/${pull.number}/files"`);
+    expect(studio).not.toContain("?mode=dev");
     expect(studio).not.toContain("diff-table");
 
-    // The dev page, either by cookie or by the one-off query, is untouched
-    // and still carries the diff.
-    const devCookie = await (
+    // The Files step carries the diff, under the same head.
+    const files = await (
+      await get(`/alice/notes/pulls/${pull.number}/files`)
+    ).text();
+    expect(files).toContain("Studio pull test");
+    expect(files).toContain("diff-table");
+    expect(files).toContain("STUDIO_PULL.md");
+    expect(files).toContain(`action="/alice/notes/pulls/${pull.number}/merge"`);
+
+    // There is no second page behind the mode: the cookie and the query
+    // both answer the one change.
+    for (const dev of [
       await get(`/alice/notes/pulls/${pull.number}`, {
         cookie: `${cookie}; forge_mode=dev`,
-      })
-    ).text();
-    expect(devCookie).toContain("diff-table");
-    expect(devCookie).toContain("STUDIO_PULL.md");
-
-    const devQuery = await (
-      await get(`/alice/notes/pulls/${pull.number}?mode=dev`)
-    ).text();
-    expect(devQuery).toContain("diff-table");
+      }),
+      await get(`/alice/notes/pulls/${pull.number}`),
+    ]) {
+      const text = await dev.text();
+      expect(text).toContain('data-word="look"');
+      expect(text).not.toContain("diff-table");
+    }
 
     // Ship it, so it stops being an ask on the shared repo's home for the
     // tests that follow.
@@ -632,7 +661,7 @@ describe("the studio", () => {
     expect(merged.ok).toBe(true);
   });
 
-  test("a pull on a repository that is not an app renders exactly what it renders today, even in studio mode", async () => {
+  test("a pull on a repository that is not an app is the same one change page, with the diff and the merge box on its Files step", async () => {
     const plain = await createRepo(app, alice, {
       name: "plainrepo",
       visibility: "private",
@@ -660,15 +689,331 @@ describe("the studio", () => {
     if (!opened.ok) throw new Error(String(opened.error));
     const pull = opened.value;
 
-    const studioCookie = await (
+    const change = await (
       await get(`/alice/plainrepo/pulls/${pull.number}`)
     ).text();
-    expect(studioCookie).toContain("diff-table");
-    expect(studioCookie).toContain("PLAIN.md");
-    expect(studioCookie).toContain("Merge pull request");
+    expect(change).toContain("Plain pull");
+    expect(change).toContain("data-word=");
+    expect(change).not.toContain("diff-table");
+    // No app: no preview and no look, and the decision does not say "app".
+    expect(change).not.toContain("<h2>Preview</h2>");
+    expect(change).toContain("Nothing here waits on a check to ship.");
+
+    const files = await (
+      await get(`/alice/plainrepo/pulls/${pull.number}/files`)
+    ).text();
+    expect(files).toContain("diff-table");
+    expect(files).toContain("PLAIN.md");
+    expect(files).toContain("Merge pull request");
+    expect(files).toContain("feature/plain → main");
   });
 
-  test("a tell on an app renders as a studio page — who has it, its runs, what blocks it, and no label form; ?mode=dev still renders today's page", async () => {
+  test("the Files step is refused to a reader who cannot see the change, exactly as the change is", async () => {
+    const hidden = await createRepo(app, alice, {
+      name: "hiddenfiles",
+      visibility: "private",
+      description: "",
+    });
+    if (!hidden.ok) throw new Error(String(hidden.error));
+    const seeded = await commitToBranch(app, alice, hidden.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const branch = await commitToBranch(app, alice, hidden.value, {
+      branch: "secret",
+      base: "main",
+      message: "Secret",
+      files: [{ path: "SECRET.md", content: "do not show\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, hidden.value, {
+      title: "Hidden",
+      body: "",
+      baseBranch: "main",
+      headBranch: "secret",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const n = opened.value.number;
+
+    for (const path of [
+      `/alice/hiddenfiles/pulls/${n}`,
+      `/alice/hiddenfiles/pulls/${n}/files`,
+      `/alice/hiddenfiles/pulls/${n + 1}/files`,
+    ]) {
+      const anon = await fetch(`${base}${path}`, { redirect: "manual" });
+      expect(anon.status, path).toBe(404);
+      expect(await anon.text()).not.toContain("SECRET.md");
+    }
+  });
+
+  test("the crew's green change in a review-gated app offers no Ship until it is approved, and says why", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/crew-gated",
+      base: "main",
+      message: "Crew gated",
+      files: [{ path: "CREW_GATED.md", content: "a change\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "Crew gated change",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/crew-gated",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "check passed" });
+    const ship = `action="/alice/notes/pulls/${pull.number}/ship"`;
+    const at = `/alice/notes/pulls/${pull.number}`;
+
+    // Green and the crew's: Ship is offered while no review is required…
+    expect(await (await get(at)).text()).toContain(ship);
+    // …and not once this app requires an approving review it lacks.
+    const gate = await updateRepoSettings(app, alice, repo, {
+      requireReview: true,
+    });
+    if (!gate.ok) throw new Error(String(gate.error));
+    try {
+      const gated = await (await get(at)).text();
+      expect(gated).not.toContain(ship);
+      expect(gated).toContain("it waits on an approving review of what it is now");
+    } finally {
+      const off = await updateRepoSettings(app, alice, repo, {
+        requireReview: false,
+      });
+      if (!off.ok) throw new Error(String(off.error));
+    }
+    expect(setIssueState(app, alice, repo, pull, "closed").ok).toBe(true);
+  });
+
+  test("in a review-gated app the crew's change whose check failed still offers its decision, and the reason it gives is the check, not the review", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/crew-failed-gated",
+      base: "main",
+      message: "Crew failed",
+      files: [{ path: "CREW_FAILED.md", content: "a change\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "Crew failed change",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/crew-failed-gated",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const check = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, check.id);
+    finishRun(app.db, check.id, { state: "failed", summary: "tests failed" });
+    // The crew has tried as often as it may: a person decides now.
+    for (let i = 0; i < CHECK_FAILED_LIMIT; i++) {
+      const tryRun = createRun(app.db, {
+        repoId: repo.id,
+        kind: "agent",
+        issueId: pull.id,
+        actorId: scout.id,
+        reason: "check_failed",
+      });
+      claimRun(app.db, tryRun.id);
+      finishRun(app.db, tryRun.id, { state: "failed", summary: "still red" });
+    }
+    const gate = await updateRepoSettings(app, alice, repo, {
+      requireReview: true,
+    });
+    if (!gate.ok) throw new Error(String(gate.error));
+    try {
+      const page = await (await get(`/alice/notes/pulls/${pull.number}`)).text();
+      expect(page).toContain("Tell them");
+      expect(page).not.toContain("it waits on an approving review");
+      expect(page).not.toContain(`action="/alice/notes/pulls/${pull.number}/ship"`);
+    } finally {
+      const off = await updateRepoSettings(app, alice, repo, {
+        requireReview: false,
+      });
+      if (!off.ok) throw new Error(String(off.error));
+    }
+    expect(setIssueState(app, alice, repo, pull, "closed").ok).toBe(true);
+  });
+
+  test("only a change's author or a writer is shown Close: a signed-in stranger on a public change may comment, never close", async () => {
+    const open = await createRepo(app, alice, {
+      name: "publicchange",
+      visibility: "public",
+      description: "",
+    });
+    if (!open.ok) throw new Error(String(open.error));
+    const seeded = await commitToBranch(app, alice, open.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const branch = await commitToBranch(app, alice, open.value, {
+      branch: "a-change",
+      base: "main",
+      message: "A change",
+      files: [{ path: "CHANGE.md", content: "x\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, open.value, {
+      title: "A public change",
+      body: "",
+      baseBranch: "main",
+      headBranch: "a-change",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const at = `/alice/publicchange/pulls/${opened.value.number}`;
+    expect(await (await get(at)).text()).toContain(`action="${at}/state"`);
+
+    const stranger = await createUser(app.db, { trusted: true,
+      username: "changestranger",
+      email: "changestranger@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!stranger.ok) throw new Error(stranger.error);
+    const strangerCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "changestranger",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const seen = await (
+      await fetch(`${base}${at}`, { headers: { cookie: strangerCookie } })
+    ).text();
+    expect(seen).toContain('id="comment-body"');
+    expect(seen).not.toContain(`action="${at}/state"`);
+    expect(seen).not.toContain("Close change");
+  });
+
+  test("a mirrored change offers no Ship: it merges on the origin, from its Files step", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/from-origin",
+      base: "main",
+      message: "From origin",
+      files: [{ path: "FROM_ORIGIN.md", content: "a change\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, repo, {
+      title: "A change from an origin fork",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/from-origin",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "check passed" });
+    // A pull whose head lives at an origin, as a mirror's pulls do:
+    // `mergePull` refuses it ("mirrored"), so the page must not offer it.
+    app.db.run("UPDATE pull SET origin_head_repo = ?1 WHERE issue_id = ?2", [
+      "octo/widgets",
+      pull.id,
+    ]);
+    const page = await (await get(`/alice/notes/pulls/${pull.number}`)).text();
+    expect(page).not.toContain(`action="/alice/notes/pulls/${pull.number}/ship"`);
+    expect(page).toContain("it merges on the origin, from its Files step");
+    expect(setIssueState(app, alice, repo, pull, "closed").ok).toBe(true);
+  });
+
+  test("a change that waits on a review never offers Ship, and the Files step's forms answer back on the Files step", async () => {
+    const gated = await createRepo(app, alice, {
+      name: "gatedchange",
+      visibility: "private",
+      description: "",
+    });
+    if (!gated.ok) throw new Error(String(gated.error));
+    const seeded = await commitToBranch(app, alice, gated.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const on = await updateRepoSettings(app, alice, gated.value, {
+      requireReview: true,
+    });
+    if (!on.ok) throw new Error(String(on.error));
+    const branch = await commitToBranch(app, alice, on.value, {
+      branch: "wants-review",
+      base: "main",
+      message: "Wants review",
+      files: [{ path: "REVIEW.md", content: "look\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, on.value, {
+      title: "Wants a review",
+      body: "",
+      baseBranch: "main",
+      headBranch: "wants-review",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const at = `/alice/gatedchange/pulls/${opened.value.number}`;
+
+    const change = await (await get(at)).text();
+    expect(change).not.toContain(`action="${at}/ship"`);
+    expect(change).toContain("it waits on an approving review");
+
+    // A merge the gate refuses lands back on the Files step, where the
+    // merge box says why.
+    const refused = await fetch(`${base}${at}/merge`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      body: new URLSearchParams({ strategy: "merge" }),
+      redirect: "manual",
+    });
+    expect(refused.status).toBe(303);
+    expect(refused.headers.get("location")).toBe(`${at}/files`);
+    const files = await (await get(`${at}/files`)).text();
+    expect(files).toContain("Waiting on review.");
+
+    // A line comment lands on its own file, on the Files step.
+    const commented = await fetch(`${base}${at}/review`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      body: new URLSearchParams({
+        path: "REVIEW.md",
+        side: "new",
+        line: "1",
+        body: "why?",
+      }),
+      redirect: "manual",
+    });
+    expect(commented.status).toBe(303);
+    expect(commented.headers.get("location")).toStartWith(`${at}/files#`);
+  });
+
+  test("a tell renders as one page — who has it, its runs, what blocks it with its form — and labels and the assignee in a closed Details; ?mode=dev changes nothing", async () => {
     const blocker = openIssue(app, alice, repo, {
       title: "Ground work",
       body: "Do this first.",
@@ -709,20 +1054,48 @@ describe("the studio", () => {
     expect(studio).toContain('data-word="working"');
     expect(studio).toContain("$0.12");
     expect(studio).toContain('id="comment-body"');
-    expect(studio).not.toContain("<h2>Labels</h2>");
-    expect(studio).not.toContain("Apply labels");
-    expect(studio).toContain(
-      `href="/alice/notes/issues/${issue.number}?mode=dev"`,
+    expect(studio).not.toContain("?mode=dev");
+    // Dev's controls, folded in: closed until asked for, never a mode.
+    const details = studio.slice(
+      studio.indexOf('<details class="quiet-details'),
+      studio.indexOf("</details>", studio.indexOf('<details class="quiet-details')),
     );
+    expect(details).toMatch(/^<details class="quiet-details mt">/);
+    expect(details).toContain("<h2>Labels</h2>");
+    expect(details).toContain("<h2>Assignee</h2>");
+    // What it waits for stays in view, with the form beside it.
+    expect(details).not.toContain("/dependencies");
+    expect(studio).toContain(`action="/alice/notes/issues/${issue.number}/dependencies"`);
+    // The close keeps its reasons (done, dropped, split).
+    expect(studio).toContain('name="reason"');
 
-    const dev = await (
+    for (const dev of [
       await get(`/alice/notes/issues/${issue.number}`, {
         cookie: `${cookie}; forge_mode=dev`,
-      })
-    ).text();
-    expect(dev).toContain("<h2>Labels</h2>");
-    expect(dev).toContain("<h2>Assignee</h2>");
-    expect(dev).toContain("<h2>Depends on</h2>");
+      }),
+      await get(`/alice/notes/issues/${issue.number}`),
+    ]) {
+      const text = await dev.text();
+      expect(text).toContain('data-word="working"');
+      expect(text).toContain('<details class="quiet-details mt">');
+    }
+  });
+
+  test("a reader of a public tell sees its Details but none of the forms that change it", async () => {
+    const open = await createRepo(app, alice, {
+      name: "publictell",
+      visibility: "public",
+      description: "",
+    });
+    if (!open.ok) throw new Error(String(open.error));
+    const told = openIssue(app, alice, open.value, { title: "Anyone may read" });
+    if (!told.ok) throw new Error(String(told.error));
+    const at = `/alice/publictell/issues/${told.value.number}`;
+    const anon = await (await fetch(`${base}${at}`)).text();
+    expect(anon).toContain("Anyone may read");
+    expect(anon).toContain('<details class="quiet-details mt">');
+    for (const verb of ["assignee", "labels", "dependencies", "state", "comments"])
+      expect(anon, verb).not.toContain(`action="${at}/${verb}"`);
   });
 
   test("the repository's direction never reads as waiting forever", async () => {
@@ -767,7 +1140,7 @@ describe("the studio", () => {
     expect(studioCookie).toContain("<h2>Depends on</h2>");
   });
 
-  test("everything told is the issue list in the studio's own words; the word filter narrows it, and ?mode=dev renders today's list", async () => {
+  test("everything told is the one issue list, in the studio's own words; the word filter narrows it, and ?mode=dev changes nothing", async () => {
     const told = openIssue(app, alice, repo, {
       title: "List test: not picked up yet",
       body: "waits for the crew",
@@ -787,14 +1160,22 @@ describe("the studio", () => {
     const other = await (await get("/alice/notes/issues?word=shipped")).text();
     expect(other).not.toContain("List test: not picked up yet");
 
-    const dev = await (
-      await get("/alice/notes/issues", { cookie: `${cookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).toContain(`>#${told.value.number} opened`);
-    expect(dev).not.toContain("data-word=");
+    // There is no second list behind the mode: the cookie and the escape
+    // hatch both answer the same rows in the same words.
+    for (const dev of [
+      await get("/alice/notes/issues", { cookie: `${cookie}; forge_mode=dev` }),
+      await get("/alice/notes/issues"),
+    ]) {
+      expect(dev.status).toBe(200);
+      const text = await dev.text();
+      expect(text).toContain("List test: not picked up yet");
+      expect(text).toContain('data-word="told"');
+      expect(text).not.toContain(`>#${told.value.number} opened`);
+      expect(text).not.toContain("See dev's list");
+    }
   });
 
-  test("every change is the pull list in the studio's own words; the word filter narrows it, and ?mode=dev renders today's list", async () => {
+  test("every change is the one pull list, in the studio's own words; the word filter narrows it, and ?mode=dev changes nothing", async () => {
     const branch = await commitToBranch(app, alice, repo, {
       branch: "feature/list-change",
       base: "main",
@@ -832,11 +1213,17 @@ describe("the studio", () => {
     const other = await (await get("/alice/notes/pulls?word=shipped")).text();
     expect(other).not.toContain("List test: a green change");
 
-    const dev = await (
-      await get("/alice/notes/pulls", { cookie: `${cookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).toContain(pull.headBranch);
-    expect(dev).not.toContain("data-word=");
+    for (const dev of [
+      await get("/alice/notes/pulls", { cookie: `${cookie}; forge_mode=dev` }),
+      await get("/alice/notes/pulls"),
+    ]) {
+      expect(dev.status).toBe(200);
+      const text = await dev.text();
+      expect(text).toContain("List test: a green change");
+      expect(text).toContain('data-word="look"');
+      expect(text).not.toContain(pull.headBranch);
+      expect(text).not.toContain("See dev's list");
+    }
     // A green pull left open now asks the front door too (#208) — close it
     // so it does not linger into a later test's own count of asks.
     expect(setIssueState(app, alice, repo, pull, "closed").ok).toBe(true);
@@ -861,32 +1248,68 @@ describe("the studio", () => {
     const other = await (await get("/alice/notes/runs?word=shipped")).text();
     expect(other).not.toContain(`href="/alice/notes/runs/${run.id}"`);
 
+    // One list (#629): the cookie and the query both answer it.
     finishRun(app.db, run.id, { state: "failed", summary: "boom" });
-    const dev = await (
-      await get("/alice/notes/runs", { cookie: `${cookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).toContain("Failed");
-    expect(dev).not.toContain("data-word=");
+    for (const dev of [
+      await get("/alice/notes/runs?word=stopped", {
+        cookie: `${cookie}; forge_mode=dev`,
+      }),
+      await get("/alice/notes/runs?word=stopped"),
+    ]) {
+      const text = await dev.text();
+      expect(text).toContain('data-word="stopped"');
+      expect(text).toContain(`href="/alice/notes/runs/${run.id}"`);
+      expect(text).not.toContain("See dev's list");
+    }
+    // Deploys and checks are one quiet link away, and `?kind=` keeps the
+    // meaning a link to dev's list gave it.
+    expect(page).toContain('href="/alice/notes/runs?kind=deploy"');
+    expect(page).toContain('href="/alice/notes/runs?kind=check"');
+    const deploys = await (await get("/alice/notes/runs?kind=deploy")).text();
+    expect(deploys).not.toContain(`href="/alice/notes/runs/${run.id}"`);
+    expect(deploys).toContain('href="/alice/notes/runs?kind=deploy&amp;word=told"');
   });
 
-  test("issues, pulls and runs on a repository that is not an app render exactly what they render today, even in studio mode", async () => {
+  test("issues, pulls and runs on a repository that is not an app are the same one list", async () => {
     const plain = await createRepo(app, alice, {
       name: "plainlists",
       visibility: "private",
       description: "no app here",
     });
     if (!plain.ok) throw new Error(String(plain.error));
+    const told = openIssue(app, alice, plain.value, {
+      title: "Plain list: an issue",
+      body: "",
+    });
+    if (!told.ok) throw new Error(String(told.error));
 
-    const issues = await (await get("/alice/plainlists/issues")).text();
-    expect(issues).not.toContain(">Told<");
-    expect(issues).not.toContain("See dev's list");
+    for (const mode of ["studio", "dev"]) {
+      const viewer = `${cookie}; forge_mode=${mode}`;
+      const issues = await (
+        await get("/alice/plainlists/issues", { cookie: viewer })
+      ).text();
+      expect(issues).toContain("Plain list: an issue");
+      // A plain repository speaks of issues: an untouched one reads "open",
+      // and neither Told nor Look is a filter there (#683 follow-up).
+      expect(issues).toMatch(/data-word="told"\s*>open</);
+      expect(issues).toContain(`href="/alice/plainlists/issues?word=working"`);
+      expect(issues).not.toContain(`href="/alice/plainlists/issues?word=told"`);
+      expect(issues).not.toContain(`href="/alice/plainlists/issues?word=look"`);
+      expect(issues).toContain(
+        `href="/alice/plainlists/tells/${told.value.number}"`,
+      );
+      expect(issues).not.toContain("See dev's list");
 
-    const pulls = await (await get("/alice/plainlists/pulls")).text();
-    expect(pulls).not.toContain(">Look<");
-    expect(pulls).not.toContain("See dev's list");
+      const pulls = await (
+        await get("/alice/plainlists/pulls", { cookie: viewer })
+      ).text();
+      expect(pulls).toContain(`href="/alice/plainlists/pulls?word=working"`);
+      expect(pulls).not.toContain(`href="/alice/plainlists/pulls?word=look"`);
+      expect(pulls).not.toContain("See dev's list");
+    }
 
     const runs = await (await get("/alice/plainlists/runs")).text();
-    expect(runs).not.toContain(">Working<");
+    expect(runs).toContain(`href="/alice/plainlists/runs?word=working"`);
     expect(runs).not.toContain("See dev's list");
   });
 
@@ -958,30 +1381,7 @@ describe("the studio", () => {
     expect(setIssueState(app, alice, repo, doorPull, "closed").ok).toBe(true);
   });
 
-  test("/tells and /changes send a dev-mode viewer, or ?mode=dev, on to /issues and /pulls — the one canonical dev address", async () => {
-    const devTells = await get("/alice/notes/tells", {
-      cookie: `${cookie}; forge_mode=dev`,
-    });
-    expect(devTells.status).toBe(303);
-    expect(devTells.headers.get("location")).toBe("/alice/notes/issues");
-
-    const devChanges = await get("/alice/notes/changes", {
-      cookie: `${cookie}; forge_mode=dev`,
-    });
-    expect(devChanges.status).toBe(303);
-    expect(devChanges.headers.get("location")).toBe("/alice/notes/pulls");
-
-    const escapeTells = await fetch(`${base}/alice/notes/tells?mode=dev`, {
-      headers: { cookie: `${cookie}; forge_mode=studio` },
-      redirect: "manual",
-    });
-    expect(escapeTells.status).toBe(303);
-    expect(escapeTells.headers.get("location")).toBe(
-      "/alice/notes/issues?mode=dev",
-    );
-  });
-
-  test("/tells and /changes on a repository that is not an app send a studio viewer on to /issues and /pulls too", async () => {
+  test("/tells and /changes answer a dev-mode viewer, ?mode=dev, and a repository that is not an app with the same list, never a bounce", async () => {
     const plain = await createRepo(app, alice, {
       name: "doorlists",
       visibility: "private",
@@ -989,13 +1389,189 @@ describe("the studio", () => {
     });
     if (!plain.ok) throw new Error(String(plain.error));
 
-    const tells = await get("/alice/doorlists/tells");
-    expect(tells.status).toBe(303);
-    expect(tells.headers.get("location")).toBe("/alice/doorlists/issues");
+    for (const [path, viewer] of [
+      ["/alice/notes/tells", `${cookie}; forge_mode=dev`],
+      ["/alice/notes/changes", `${cookie}; forge_mode=dev`],
+      ["/alice/notes/tells", `${cookie}; forge_mode=studio`],
+      ["/alice/doorlists/tells", cookie],
+      ["/alice/doorlists/changes", cookie],
+    ] as const) {
+      const res = await get(path, { cookie: viewer });
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).toContain(`href="${path.split("?")[0]}?word=`);
+    }
+  });
 
-    const changes = await get("/alice/doorlists/changes");
-    expect(changes.status).toBe(303);
-    expect(changes.headers.get("location")).toBe("/alice/doorlists/pulls");
+  test("the one list keeps what dev's list could narrow by: labels as chips, and who has it, who opened it, a piece of the title, and the older ?state= address", async () => {
+    const shelf = await createRepo(app, alice, {
+      name: "facetlists",
+      visibility: "private",
+      description: "labels and narrowings",
+    });
+    if (!shelf.ok) throw new Error(String(shelf.error));
+    const r = shelf.value;
+    const bug = createLabel(app, alice, r, "bug", "d73a4a");
+    if (!bug.ok) throw new Error(String(bug.error));
+    const a = openIssue(app, alice, r, { title: "Facet: a broken thing", body: "" });
+    const b = openIssue(app, alice, r, { title: "Facet: a wish", body: "" });
+    const c = openIssue(app, alice, r, { title: "Facet: long done", body: "" });
+    if (!a.ok || !b.ok || !c.ok) throw new Error("open failed");
+    expect(setIssueLabels(app, alice, r, a.value, ["bug"]).ok).toBe(true);
+    expect(assignIssue(app, alice, r, b.value, alice).ok).toBe(true);
+    expect(setIssueState(app, alice, r, c.value, "closed").ok).toBe(true);
+
+    const list = await (await get("/alice/facetlists/issues")).text();
+    // The row wears its label, and the repository's labels narrow the list.
+    expect(list).toContain('class="label lc-d73a4a">bug</span>');
+    expect(list).toContain(`href="/alice/facetlists/issues?label=bug"`);
+    expect(list).toContain(".lc-d73a4a{--label:#d73a4a}");
+    expect(list).not.toContain("Facet: long done");
+
+    const labelled = await (await get("/alice/facetlists/issues?label=bug")).text();
+    expect(labelled).toContain("Facet: a broken thing");
+    expect(labelled).not.toContain("Facet: a wish");
+    // The chip in force clears itself, and a word keeps the label.
+    expect(labelled).toMatch(
+      /href="\/alice\/facetlists\/issues"\s+aria-current="true"/,
+    );
+    expect(labelled).toContain(`href="/alice/facetlists/issues?word=working&amp;label=bug"`);
+
+    const mine = await (await get("/alice/facetlists/issues?assignee=alice")).text();
+    expect(mine).toContain("Facet: a wish");
+    expect(mine).not.toContain("Facet: a broken thing");
+    expect(mine).toContain("alice has it ✕");
+
+    const titled = await (await get("/alice/facetlists/issues?q=wish")).text();
+    expect(titled).toContain("Facet: a wish");
+    expect(titled).not.toContain("Facet: a broken thing");
+    expect(titled).toContain("wish in the title ✕");
+
+    const bySomeone = await (await get("/alice/facetlists/issues?author=nobody")).text();
+    expect(bySomeone).not.toContain("Facet: a wish");
+    expect(bySomeone).toContain("nobody opened it ✕");
+
+    // `?state=closed` from an older link still means what it said.
+    const closed = await (await get("/alice/facetlists/issues?state=closed")).text();
+    expect(closed).toContain("Facet: long done");
+    expect(closed).not.toContain("Facet: a wish");
+    // The older address's narrowing is shown, and clears itself.
+    expect(closed).toContain("closed ✕");
+    expect(closed).toMatch(/href="\/alice\/facetlists\/issues"\s+aria-current="true"/);
+    expect(
+      await (await get("/alice/facetlists/issues?state=all")).text(),
+    ).toContain("open and closed ✕");
+    // Closed with nothing merged is not dropped from the list: it reads
+    // done, under shipped, where whoever closed it would look.
+    const shipped = await (await get("/alice/facetlists/issues?word=shipped")).text();
+    expect(shipped).toContain("Facet: long done");
+    expect(shipped).toContain('data-word="done"');
+    const all = await (await get("/alice/facetlists/issues?state=all")).text();
+    expect(all).toContain("Facet: long done");
+    expect(all).toContain("Facet: a wish");
+  });
+
+  test("a plain repository's pages promise no deploy and say issue: an open change waits on a person, an issue closes as an issue, and only its author or a writer may close it", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "plainwords",
+      visibility: "public",
+      description: "",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const seeded = await commitToBranch(app, alice, plain.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const branch = await commitToBranch(app, alice, plain.value, {
+      branch: "plain-change",
+      base: "main",
+      message: "Plain change",
+      files: [{ path: "PLAIN.md", content: "x\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, plain.value, {
+      title: "A plain change",
+      body: "",
+      baseBranch: "main",
+      headBranch: "plain-change",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const changes = await (await get("/alice/plainwords/pulls")).text();
+    expect(changes).toContain("open — waiting on a person");
+    expect(changes).not.toContain("no deploy of this head yet");
+
+    const told = openIssue(app, alice, plain.value, { title: "A plain issue" });
+    if (!told.ok) throw new Error(String(told.error));
+    const at = `/alice/plainwords/issues/${told.value.number}`;
+    const own = await (await get(at)).text();
+    expect(own).toContain("Close issue");
+    expect(own).not.toContain("Close tell");
+    expect(own).toContain(`action="${at}/state"`);
+
+    // A signed-in stranger may comment on a public issue, never close it.
+    const stranger = await createUser(app.db, { trusted: true,
+      username: "plainstranger",
+      email: "plainstranger@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!stranger.ok) throw new Error(stranger.error);
+    const strangerCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "plainstranger",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const seen = await (
+      await fetch(`${base}${at}`, { headers: { cookie: strangerCookie } })
+    ).text();
+    expect(seen).toContain('id="comment-body"');
+    expect(seen).not.toContain(`action="${at}/state"`);
+    expect(seen).not.toContain("Close issue");
+
+    // Signed out on a public repository: the way in is offered.
+    const anon = await (
+      await fetch(`${base}/alice/plainwords/issues`, { redirect: "manual" })
+    ).text();
+    expect(anon).toContain("Sign in to open an issue");
+    expect(anon).toContain("Report a problem</a");
+  });
+
+  test("the list's one verb besides opening a row is compose, for a signed-in person only, in the repository's own words", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "composelists",
+      visibility: "public",
+      description: "no app here",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+
+    const signedIn = await (await get("/alice/composelists/issues")).text();
+    expect(signedIn).toContain('href="/alice/composelists/issues/new"');
+    expect(signedIn).toContain("New issue");
+    const app_ = await (await get("/alice/notes/issues")).text();
+    expect(app_).toContain('href="/alice/notes/issues/new"');
+    expect(app_).toContain("Tell the crew");
+
+    const anon = await (
+      await fetch(`${base}/alice/composelists/issues`, { redirect: "manual" })
+    ).text();
+    expect(anon).not.toContain('href="/alice/composelists/issues/new"');
+    // A stranger on a public repository can still report a problem.
+    expect(anon).toContain('href="/alice/composelists/report"');
+    // Someone signed in composes instead: no visible report link (the page's
+    // head still names the report path for agents that read it).
+    expect(signedIn).not.toMatch(
+      /<a\b[^>]*href="\/alice\/composelists\/report"/,
+    );
+    // The pull list has no compose of its own: a change starts from a branch.
+    const pulls = await (await get("/alice/composelists/pulls")).text();
+    expect(pulls).not.toContain('href="/alice/composelists/pulls/new"');
   });
 
   test("a reader without access gets the forge's not-found on /tells and /changes, exactly as /issues and /pulls", async () => {
@@ -1024,18 +1600,16 @@ describe("the studio", () => {
     expect(viaTell.status).toBe(200);
     const tellHtml = await viaTell.text();
     const viaIssue = await (await get(`/alice/notes/issues/${n}`)).text();
-    // The same page: the studio's tell, never dev's labels or dependency
-    // form, and never a second copy of the markup.
+    // The same page, never a second copy of the markup.
     expect(tellHtml).toContain("Door test: one tell");
     expect(tellHtml).toContain('data-word="told"');
     // Still waiting, nobody assigned: the one case the line is true (#214).
     expect(tellHtml).toContain("nobody has it yet");
-    expect(tellHtml).not.toContain("<h2>Labels</h2>");
     expect(viaIssue).toContain('data-word="told"');
     // The write surface does not move with the noun: the reply, the close
-    // and the escape to dev all still point at /issues/:number.
+    // and every Details form still point at /issues/:number.
     expect(tellHtml).toContain(`action="/alice/notes/issues/${n}/comments"`);
-    expect(tellHtml).toContain(`href="/alice/notes/issues/${n}?mode=dev"`);
+    expect(tellHtml).toContain(`action="/alice/notes/issues/${n}/assignee"`);
     // An anchor into the conversation still lands — the composer is on the
     // page either door was used.
     expect(tellHtml).toContain('id="comment-body"');
@@ -1063,7 +1637,7 @@ describe("the studio", () => {
     // The studio's change, not dev's diff.
     expect(changeHtml).not.toContain("diff-table");
     expect(changeHtml).toContain(`action="/alice/notes/pulls/${p}/comments"`);
-    expect(changeHtml).toContain(`href="/alice/notes/pulls/${p}?mode=dev"`);
+    expect(changeHtml).toContain(`href="/alice/notes/pulls/${p}/files"`);
     expect(changeHtml).toContain('id="comment-body"');
 
     // Dev's own addresses answer the studio's pages where they stand — a
@@ -1089,22 +1663,20 @@ describe("the studio", () => {
     expect(appPage).toContain('"studio":true');
   });
 
-  test("/tells/:number and /changes/:number send a dev-mode viewer, ?mode=dev, and a repository that is not an app on to /issues/:number and /pulls/:number", async () => {
+  test("/tells/:number answers a dev-mode viewer, ?mode=dev, and a repository that is not an app with the same page, never a bounce", async () => {
     const told = openIssue(app, alice, repo, { title: "Door test: dev's way" });
     if (!told.ok) throw new Error(String(told.error));
     const n = told.value.number;
 
-    const devTell = await get(`/alice/notes/tells/${n}`, {
-      cookie: `${cookie}; forge_mode=dev`,
-    });
-    expect(devTell.status).toBe(303);
-    expect(devTell.headers.get("location")).toBe(`/alice/notes/issues/${n}`);
-
-    const escape = await get(`/alice/notes/tells/${n}?mode=dev`);
-    expect(escape.status).toBe(303);
-    expect(escape.headers.get("location")).toBe(
-      `/alice/notes/issues/${n}?mode=dev`,
-    );
+    for (const res of [
+      await get(`/alice/notes/tells/${n}`, {
+        cookie: `${cookie}; forge_mode=dev`,
+      }),
+      await get(`/alice/notes/tells/${n}`),
+    ]) {
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("Door test: dev");
+    }
 
     const plain = await createRepo(app, alice, {
       name: "doorpages",
@@ -1119,10 +1691,8 @@ describe("the studio", () => {
     const plainTell = await get(
       `/alice/doorpages/tells/${plainTold.value.number}`,
     );
-    expect(plainTell.status).toBe(303);
-    expect(plainTell.headers.get("location")).toBe(
-      `/alice/doorpages/issues/${plainTold.value.number}`,
-    );
+    expect(plainTell.status).toBe(200);
+    expect(await plainTell.text()).toContain("Not an app");
   });
 
   test("a reader without access gets the forge's not-found on /tells/:number and /changes/:number, exactly as /issues/:number and /pulls/:number", async () => {
@@ -1163,7 +1733,7 @@ describe("the studio", () => {
   });
 
   test("/apps in the studio is the shelf, not dev's table: an app the viewer can land, never one they cannot, and no dev table markup; ?mode=dev is unchanged", async () => {
-    const bob = await createUser(app.db, {
+    const bob = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -1221,16 +1791,20 @@ describe("the studio", () => {
     expect(studio).not.toContain("not serving");
     expect(studio).toContain('href="/apps?live=1"');
 
-    const dev = await (
-      await bobGet("/apps", { cookie: `${bobCookie}; forge_mode=dev` })
-    ).text();
-    expect(dev).toContain(
-      "Repositories that run. Production follows the default branch",
-    );
-    expect(dev).not.toContain('href="/apps?live=1"');
+    // One list (#630): dev's table is gone, and the cookie and the query
+    // both answer the shelf.
+    for (const dev of [
+      await bobGet("/apps", { cookie: `${bobCookie}; forge_mode=dev` }),
+      await bobGet("/apps"),
+    ]) {
+      const text = await dev.text();
+      expect(text).toContain('href="/apps?live=1"');
+      expect(text).not.toContain('href="/alice/notes"');
+      expect(text).not.toContain("Repositories that run.");
+    }
   });
 
-  test("clicking your own name in the studio lands on /:owner, which leads with your apps on the shelf and New app as the primary action; dev mode is unchanged, and a stranger never sees a private one", async () => {
+  test("clicking your own name lands on /:owner, which leads with your apps on the shelf and New app as the primary action, in every mode; a stranger never sees a private one", async () => {
     const studio = await (await get("/alice")).text();
     expect(studio).toContain("<h2>Apps</h2>");
     expect(studio).toContain('href="/alice/notes"');
@@ -1243,11 +1817,12 @@ describe("the studio", () => {
     const dev = await (
       await get("/alice", { cookie: `${cookie}; forge_mode=dev` })
     ).text();
-    expect(dev).not.toContain("<h2>Apps</h2>");
-    expect(dev).not.toContain('href="/apps/new?owner=alice"');
-    expect(dev).not.toContain("not running");
+    // One owner page (#633): the cookie changes nothing.
+    expect(dev).toContain("<h2>Apps</h2>");
+    expect(dev).toContain('href="/apps/new?owner=alice"');
+    expect(dev).toContain("not running");
 
-    const carol = await createUser(app.db, {
+    const carol = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -1272,7 +1847,8 @@ describe("the studio", () => {
       })
     ).text();
     expect(stranger).not.toContain('href="/alice/notes"');
-    expect(stranger).toContain("No apps yet");
+    // Nothing to see is shown as nothing: no empty apps card for a visitor.
+    expect(stranger).not.toContain("No apps yet");
     expect(stranger).not.toContain('href="/apps/new?owner=alice"');
   });
 
@@ -1310,7 +1886,7 @@ describe("the studio", () => {
     // A look for each app's production, so the picture route has something
     // real to answer for and refuse.
     const dropLook = (appId: string, env: "production", commit: string) => {
-      const rel = join("looks", appId, `${env}-desktop.png`);
+      const rel = join("looks", appId, `${env}-thumb.png`);
       const abs = join(app.config.dataDir, rel);
       mkdirSync(dirname(abs), { recursive: true });
       writeFileSync(abs, PNG);
@@ -1318,7 +1894,7 @@ describe("the studio", () => {
         appId,
         env,
         commitOid: commit,
-        kind: "desktop",
+        kind: "thumb",
         path: rel,
       });
     };
@@ -1329,13 +1905,14 @@ describe("the studio", () => {
 
     // Signed out, with the studio cookie: the public app's name, its look,
     // and Sign in / Create an account — never the private one.
+    const done = await serving(app, servers);
     const anon = await (
       await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
     ).text();
     expect(anon).toContain("beacon");
     expect(anon).toContain("a lighthouse in the fog");
     expect(anon).toContain(
-      `/looks/production/${seededPublic.value.commitOid}/desktop.png`,
+      `/looks/production/${seededPublic.value.commitOid}/thumb.png`,
     );
     expect(anon).toContain('href="/signin"');
     expect(anon).toContain('href="/signup"');
@@ -1344,24 +1921,28 @@ describe("the studio", () => {
 
     // The private app's picture 404s for a stranger — asserted, not assumed.
     const privateLook = await fetch(
-      `${base}/alice/notes/looks/production/${"0".repeat(40)}/desktop.png`,
+      `${base}/alice/notes/looks/production/${"0".repeat(40)}/thumb.png`,
       { headers: { cookie: "forge_mode=studio" } },
     );
     expect(privateLook.status).toBe(404);
     // The public one's does not.
     const publicLook = await fetch(
-      `${base}/alice/beacon/looks/production/${seededPublic.value.commitOid}/desktop.png`,
+      `${base}/alice/beacon/looks/production/${seededPublic.value.commitOid}/thumb.png`,
       { headers: { cookie: "forge_mode=studio" } },
     );
     expect(publicLook.status).toBe(200);
 
-    // `?mode=dev` still renders the dev landing, unchanged, for a stranger.
+    // `?mode=dev` answers a stranger with the same door: the dev landing
+    // folded into it (#396).
     const dev = await (
       await fetch(`${base}/?mode=dev`, {
         headers: { cookie: "forge_mode=studio" },
       })
     ).text();
-    expect(dev).toContain("Your code, your machine");
+    expect(dev).toContain("<h1>Apps, live.</h1>");
+    expect(dev).toContain("a lighthouse in the fog");
+    expect(dev).not.toContain("<h1>Your code, your machine.</h1>");
+    await done();
   });
 
   test("the front door's tile is the thumb, not the full desktop picture, when both exist (#287)", async () => {
@@ -1409,9 +1990,11 @@ describe("the studio", () => {
     drop("desktop");
     drop("thumb");
 
+    const done = await serving(app, servers);
     const anon = await (
       await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
     ).text();
+    await done();
     const tile = anon
       .split("<img")
       .find((chunk) =>
@@ -1421,65 +2004,8 @@ describe("the studio", () => {
       );
     expect(tile).toBeDefined();
     expect(tile).toContain(`/looks/production/${commit}/thumb.png`);
-    expect(tile).toContain('width="200"');
-    expect(tile).toContain('height="125"');
-  });
-
-  test("the front door's tile still renders at desktop's size for a commit from before thumbs existed (#287)", async () => {
-    const created = await createRepo(app, alice, {
-      name: "oldtile",
-      visibility: "public",
-      description: "no thumb yet",
-    });
-    if (!created.ok) throw new Error(String(created.error));
-    const seeded = await commitToBranch(app, alice, created.value, {
-      message: "Start",
-      files: [
-        {
-          path: "package.json",
-          content:
-            '{"name":"oldtile","scripts":{"start":"bun run server.ts"}}\n',
-        },
-        {
-          path: "server.ts",
-          content:
-            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
-        },
-      ],
-    });
-    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    const enabled = await enableApp(app, alice, created.value, {
-      slug: "oldtile",
-    });
-    if (!enabled.ok) throw new Error(String(enabled.error));
-    const record = getAppByRepo(app.db, created.value.id)!;
-    const commit = seeded.value.commitOid;
-    const rel = join("looks", record.id, "production-desktop.png");
-    const abs = join(app.config.dataDir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, PNG);
-    recordLook(app.db, {
-      appId: record.id,
-      env: "production",
-      commitOid: commit,
-      kind: "desktop",
-      path: rel,
-    });
-
-    const anon = await (
-      await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
-    ).text();
-    const tile = anon
-      .split("<img")
-      .find((chunk) =>
-        chunk.includes(
-          `/${created.value.ownerName}/${created.value.name}/looks/`,
-        ),
-      );
-    expect(tile).toBeDefined();
-    expect(tile).toContain(`/looks/production/${commit}/desktop.png`);
-    expect(tile).toContain('width="1280"');
-    expect(tile).toContain('height="800"');
+    expect(tile).toContain('width="640"');
+    expect(tile).toContain('height="400"');
   });
 
   test("the front door leads with apps the viewer can write, never a stranger's public one — but /apps still lists it, owner named", async () => {
@@ -1515,7 +2041,7 @@ describe("the studio", () => {
 
     // Erin just signed up: no apps of her own, but the forge already has a
     // public one.
-    const erin = await createUser(app.db, {
+    const erin = await createUser(app.db, { trusted: true,
       username: "erin",
       email: "erin@forge.local",
       password: "a-good-passphrase",
@@ -1544,6 +2070,8 @@ describe("the studio", () => {
     const erinHome = await (await erinGet("/")).text();
     expect(erinHome).toContain("No apps yet");
     expect(erinHome).toContain('href="/apps/new"');
+    expect(erinHome).toContain('href="/erin"');
+    expect(erinHome).not.toContain("/?mode=dev");
     expect(erinHome).not.toContain('href="/alice/lighthouse"');
     expect(erinHome).not.toContain("tell the crew something");
 
@@ -1563,21 +2091,169 @@ describe("the studio", () => {
     expect(aliceApps).toContain('href="/alice/lighthouse"');
   });
 
-  test("a forge with no public apps falls back to the dev landing, signed out in studio", async () => {
+  test("a forge with no public apps opens on the studio's door with an empty shelf, never dev's git pitch — at every old landing URL (#396)", async () => {
     const dataDir2 = await mkdtemp(join(tmpdir(), "forge-studio-empty-"));
     const app2 = createApp({ dataDir: dataDir2, port: 0 });
     const servers2 = await serve(app2);
     try {
-      const body = await (
-        await fetch(`${servers2.url}/`, {
-          headers: { cookie: "forge_mode=studio" },
-        })
-      ).text();
-      expect(body).toContain("Your code, your machine");
+      // A public repository that is not an app is not on the shelf.
+      const owner = await createUser(app2.db, { trusted: true,
+        username: "olga",
+        email: "olga@forge.local",
+        password: "a-good-passphrase",
+      });
+      if (!owner.ok) throw new Error(owner.error);
+      const plain = await createRepo(app2, owner.value, {
+        name: "just-code",
+        visibility: "public",
+      });
+      if (!plain.ok) throw new Error(String(plain.error));
+      // The landing's old addresses: the default, each mode's cookie, and
+      // the `?mode=dev` escape hatch.
+      for (const [path, cookie] of [
+        ["/", ""],
+        ["/", "forge_mode=studio"],
+        ["/", "forge_mode=dev"],
+        ["/", ""],
+        ["/", "forge_mode=dev"],
+      ] as const) {
+        const response = await fetch(`${servers2.url}${path}`, {
+          headers: { cookie },
+          redirect: "manual",
+        });
+        expect(response.status).toBe(200);
+        const body = await response.text();
+        expect(body).toContain("<h1>Apps, live.</h1>");
+        expect(body).toContain("Nothing public is up yet");
+        expect(body).toContain('href="/signup"');
+        expect(body).toContain('href="/signin"');
+        expect(body).not.toContain("<h1>Your code, your machine.</h1>");
+        expect(body).not.toContain("Public repositories");
+        expect(body).not.toContain(`href="/olga/just-code"`);
+      }
     } finally {
       servers2.stop();
       app2.close();
       await rm(dataDir2, { recursive: true, force: true });
+    }
+  });
+
+  test("the door reads public apps, not a window of the newest repositories, and shows only the live ones (#288, #686)", async () => {
+    const dataDir2 = await mkdtemp(join(tmpdir(), "forge-studio-door-"));
+    const app2 = createApp({ dataDir: dataDir2, port: 0 });
+    const servers2 = await serve(app2);
+    try {
+      const made = await createUser(app2.db, { trusted: true,
+        username: "pia",
+        email: "pia@forge.local",
+        password: "a-good-passphrase",
+      });
+      if (!made.ok) throw new Error(made.error);
+      const pia = made.value;
+      const appOf = async (name: string) => {
+        const created = await createRepo(app2, pia, {
+          name,
+          visibility: "public",
+        });
+        if (!created.ok) throw new Error(String(created.error));
+        const enabled = await enableApp(app2, pia, created.value, {
+          slug: name,
+        });
+        if (!enabled.ok) throw new Error(String(enabled.error));
+        return getAppByRepo(app2.db, created.value.id)!;
+      };
+      const older = await appOf("older");
+      const quiet = await appOf("quiet");
+      // More public plain repositories than the old window held, all newer
+      // than the apps.
+      for (let n = 0; n < 25; n++) {
+        const r = await createRepo(app2, pia, {
+          name: `plain-${n}`,
+          visibility: "public",
+        });
+        if (!r.ok) throw new Error(String(r.error));
+      }
+      // Each with a picture, so only liveness decides.
+      for (const record of [older, quiet]) {
+        mkdirSync(join(dataDir2, "looks", record.id), { recursive: true });
+        writeFileSync(join(dataDir2, "looks", record.id, "thumb.png"), PNG);
+        recordLook(app2.db, {
+          appId: record.id,
+          env: "production",
+          commitOid: "0".repeat(40),
+          kind: "thumb",
+          path: `looks/${record.id}/thumb.png`,
+        });
+      }
+      // `older` is serving, `quiet` is stopped: a stranger is shown what is
+      // up, never what is down.
+      const done = await serving(app2, servers2, (record) =>
+        record.id === older.id ? "running" : "stopped",
+      );
+      try {
+        const body = await (await fetch(`${servers2.url}/`)).text();
+        expect(body).toContain('href="/pia/older"');
+        expect(body).not.toContain('href="/pia/quiet"');
+        expect(body).not.toContain('href="/pia/plain-0"');
+      } finally {
+        await done();
+      }
+    } finally {
+      servers2.stop();
+      app2.close();
+      await rm(dataDir2, { recursive: true, force: true });
+    }
+  });
+  test("a change on <crew>/<number>-<slug> links the tell it answers, and says so when that tell is closed; other branches show no tell", async () => {
+    const told = openIssue(app, alice, repo, {
+      title: "Answered tell",
+      body: "",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+    const n = told.value.number;
+    const open = async (branch: string, title: string) => {
+      const c = await commitToBranch(app, alice, repo, {
+        branch,
+        base: "main",
+        message: title,
+        files: [{ path: `${branch.replace(/\//g, "_")}.md`, content: "x\n" }],
+      });
+      if (!c.ok) throw new Error(JSON.stringify(c.error));
+      const o = await openPull(app, alice, repo, {
+        title,
+        body: "",
+        baseBranch: "main",
+        headBranch: branch,
+      });
+      if (!o.ok) throw new Error(String(o.error));
+      return o.value;
+    };
+    const answering = await open(`scout/${n}-answer-it`, "Answers the tell");
+    const stray = await open("scout/99999-nothing", "Answers nothing");
+    const own = await open("revert-22", "A person's branch");
+
+    const list = await (await get("/alice/notes/changes")).text();
+    const rowOf = (title: string) => {
+      const at = list.indexOf(title);
+      return list.slice(at, list.indexOf("</a>", at + 400) + 4);
+    };
+    expect(rowOf("Answers the tell")).toContain(`href="/alice/notes/tells/${n}"`);
+    expect(rowOf("Answers the tell")).not.toContain("already done");
+    expect(rowOf("Answers nothing")).not.toContain("for tell");
+    expect(rowOf("A person's branch")).not.toContain("for tell");
+
+    setIssueState(app, alice, repo, told.value, "closed");
+    const closedList = await (await get("/alice/notes/changes")).text();
+    expect(closedList).toContain("its tell is already done");
+    const page = await (
+      await get(`/alice/notes/changes/${answering.number}`)
+    ).text();
+    expect(page).toContain(`href="/alice/notes/tells/${n}"`);
+    expect(page).toContain("its tell is already done");
+    for (const p of [stray, own]) {
+      const res = await get(`/alice/notes/changes/${p.number}`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).not.toContain("for tell");
     }
   });
 });
@@ -1615,8 +2291,8 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
   const occurrences = (haystack: string, needle: string): number =>
     haystack.split(needle).length - 1;
 
-  test("a person with one app and one plain repository renders each once in the studio, and both together in one list in dev mode", async () => {
-    const dan = await createUser(app.db, {
+  test("a person with one app and one plain repository renders each once, in every mode; one with no app shows a visitor no apps card at all", async () => {
+    const dan = await createUser(app.db, { trusted: true,
       username: "dan",
       email: "dan@forge.local",
       password: "a-good-passphrase",
@@ -1671,12 +2347,36 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
     ).text();
     expect(occurrences(dev, 'href="/dan/beacon"')).toBe(1);
     expect(occurrences(dev, 'href="/dan/scratch"')).toBe(1);
-    expect(dev).not.toContain("<h2>Apps</h2>");
-    expect(dev).not.toContain("<h2>Other repositories</h2>");
+    expect(dev).toContain("<h2>Apps</h2>");
+    expect(dev).toContain("<h2>Other repositories</h2>");
+
+    // Someone with repositories and no app: a visitor is not shown an empty
+    // apps card, and the list is simply their repositories.
+    const gus = await createUser(app.db, { trusted: true,
+      username: "gus",
+      email: "gus@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!gus.ok) throw new Error(gus.error);
+    const plainOnly = await createRepo(app, gus.value, {
+      name: "notebook",
+      visibility: "public",
+      description: "",
+    });
+    if (!plainOnly.ok) throw new Error(String(plainOnly.error));
+    const visit = await (
+      await fetch(`${base}/gus`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+        redirect: "manual",
+      })
+    ).text();
+    expect(visit).not.toContain("No apps yet");
+    expect(visit).toContain("<h2>Repositories</h2>");
+    expect(visit).toContain('href="/gus/notebook"');
   });
 
   test("an owner whose only repository is an app reads the empty list below as no other repositories, not as a bug", async () => {
-    const eve = await createUser(app.db, {
+    const eve = await createUser(app.db, { trusted: true,
       username: "eve",
       email: "eve@forge.local",
       password: "a-good-passphrase",
@@ -1710,8 +2410,57 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
     expect(studio).not.toContain("<h2>Other repositories</h2>");
   });
 
+  test("a private app on a public repository shows its state only to its writers: a visitor gets a plain row", async () => {
+    const hal = await createUser(app.db, { trusted: true,
+      username: "hal",
+      email: "hal@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!hal.ok) throw new Error(hal.error);
+    const ownerCookie = await signIn("hal", "a-good-passphrase");
+    const made = await createRepo(app, hal.value, {
+      name: "ledger",
+      visibility: "public",
+      description: "the books",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const seeded = await commitToBranch(app, hal.value, made.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "hi\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, hal.value, made.value, {
+      slug: "hal-ledger",
+      access: "private",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const ivy = await createUser(app.db, { trusted: true,
+      username: "ivy",
+      email: "ivy@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!ivy.ok) throw new Error(ivy.error);
+    const strangerCookie = await signIn("ivy", "a-good-passphrase");
+
+    const visit = (cookie?: string) =>
+      fetch(`${base}/hal`, {
+        headers: cookie === undefined ? {} : { cookie },
+        redirect: "manual",
+      }).then((r) => r.text());
+    for (const page of [await visit(), await visit(strangerCookie)]) {
+      // The repository is public, so it is listed — once, plainly.
+      expect(occurrences(page, 'href="/hal/ledger"')).toBe(1);
+      expect(page).toContain("the books");
+      expect(page).not.toContain("not running");
+      expect(page).not.toContain("quiet");
+      expect(page).not.toContain('class="studio-word"');
+    }
+    const own = await visit(ownerCookie);
+    expect(own).toContain("not running");
+  });
+
   test("an org's page draws the same way: its app once, its plain repository once, and Members/Teams unmoved", async () => {
-    const fay = await createUser(app.db, {
+    const fay = await createUser(app.db, { trusted: true,
       username: "fay",
       email: "fay@forge.local",
       password: "a-good-passphrase",
@@ -1759,7 +2508,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
     expect(occurrences(studio, 'href="/vega/anvil"')).toBe(1);
     expect(occurrences(studio, 'href="/vega/ledger"')).toBe(1);
     expect(studio).toContain('<h2 class="mt">Members</h2>');
-    expect(studio).toContain('<h2 class="mt">Teams</h2>');
+    expect(studio).toContain('<h2 class="mt" id="teams">Teams</h2>');
 
     const dev = await (
       await fetch(`${base}/vega`, {
@@ -1800,7 +2549,7 @@ describe("every open pull's preview on the studio page", () => {
       concurrency: 1,
     });
     await runtime.start();
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1960,7 +2709,7 @@ describe("the studio home keeps itself current", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -2090,14 +2839,20 @@ describe("the studio home keeps itself current", () => {
   });
 
   test("a card leaves On you once its issue closes", async () => {
-    const before = await (await get()).text();
+    // The On you region alone: the timeline still tells of the issue, as a
+    // post does after it is done (#599).
+    const onYou = () =>
+      fetch(`${base}/live/on-you`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+      }).then((r) => r.text());
+    const before = await onYou();
     expect(before).toContain("Write the README");
 
     const merged = await mergePull(app, alice, repo, pull, "squash");
     expect(merged.ok).toBe(true);
     expect(setIssueState(app, alice, repo, readme, "closed").ok).toBe(true);
 
-    const after = await (await get()).text();
+    const after = await onYou();
     expect(after).not.toContain("Write the README");
   });
 });
@@ -2125,9 +2880,10 @@ describe("the studio head says why the app is not up", () => {
     }).then((r) => r.text());
 
   /** The home's own shelf row for this app — the badge issue #201 is about. */
+  // The shelf's rows are `/apps` (#599: home is the feed).
   const shelfBadge = async (cookie: string): Promise<string> => {
     const home = await (
-      await fetch(`${base}/`, {
+      await fetch(`${base}/apps`, {
         headers: { cookie: `${cookie}; forge_mode=studio` },
         redirect: "manual",
       })
@@ -2196,14 +2952,14 @@ describe("the studio head says why the app is not up", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -2461,14 +3217,14 @@ describe("the studio app page's terminal", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -2614,14 +3370,14 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
-    const c = await createUser(app.db, {
+    const c = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -2993,6 +3749,150 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(serving).toContain(">live<");
     expect(serving).toContain(link);
   });
+  test("a preview row says how fast it got there in envFacts' own words, links its deploy run, and keeps its link and sentence while deploying or after its tests failed", async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/fast",
+      base: repo.defaultBranch,
+      message: "Add F",
+      files: [{ path: "F.md", content: "f\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Add F",
+      body: "",
+      baseBranch: repo.defaultBranch,
+      headBranch: "feature/fast",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const env = previewEnv(pull.number);
+    const open = `href="/alice/vault/app/${env}/open"`;
+    const label = `#${pull.number} Add F`;
+    const deployRun = createRun(app.db, {
+      repoId: repo.id,
+      kind: "deploy",
+      env,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    const runLink = `href="/alice/vault/runs/${deployRun.id}"`;
+    // This pull's own row out of the previews panel, so nothing the head
+    // card or another pull's row says can pass for it.
+    const rowOf = (text: string): string => {
+      const panel = text.slice(text.indexOf('id="app-previews"'));
+      const at = panel.indexOf(label);
+      expect(at).toBeGreaterThan(-1);
+      return panel.slice(panel.lastIndexOf("<li>", at), panel.indexOf("</li>", at));
+    };
+
+    claimRun(app.db, deployRun.id);
+    putEnv(env, {
+      deploying: {
+        run: { id: deployRun.id, commitOid: pull.headOid },
+        abort: new AbortController(),
+      },
+    });
+    const deploying = rowOf(
+      await (await get("/alice/vault/app/state", owner)).text(),
+    );
+    expect(deploying).toContain(open);
+    expect(deploying).toContain(runLink);
+    expect(deploying).toContain("deploy in progress");
+    expect(deploying).not.toContain("after the push");
+    expect(deploying).not.toContain("0.0s");
+
+    finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
+    const createdAt = new Date(Date.now() - 60_000).toISOString();
+    const servingAt = new Date(Date.parse(createdAt) + 3_400).toISOString();
+    putEnv(env, {
+      live: {
+        commitOid: pull.headOid,
+        handle: { port: 4324 },
+        runId: deployRun.id,
+        since: servingAt,
+        servingAt,
+        createdAt,
+        deployStartedAt: createdAt,
+        manifest: { tty: null },
+      },
+    });
+    const live = rowOf(await (await get("/alice/vault/app/state", owner)).text());
+    expect(live).toContain(open);
+    expect(live).toContain("live 3.4s after the push");
+    expect(live).toContain(pull.headOid.slice(0, 7));
+    expect(live).toContain(runLink);
+    expect(live).toContain(">live<");
+    // The live client keys its announcement on the meta line's first words.
+    expect(live).toMatch(new RegExp(`class="row-meta">#${pull.number} Add F ·`));
+    // The page's first paint draws the same row.
+    expect(await (await get("/alice/vault", owner)).text()).toContain(
+      "live 3.4s after the push",
+    );
+
+    putEnv(env, {
+      live: {
+        commitOid: pull.headOid,
+        handle: { port: 4324 },
+        runId: deployRun.id,
+        since: servingAt,
+        servingAt,
+        createdAt,
+        deployStartedAt: createdAt,
+        testsFailed: "2 failing",
+        manifest: { tty: null },
+      },
+    });
+    const red = rowOf(await (await get("/alice/vault/app/state", owner)).text());
+    expect(red).toContain(open);
+    expect(red).toContain(runLink);
+    expect(red).toContain("serving · tests failed: 2 failing");
+    expect(red).toContain("live 3.4s after the push");
+    // One badge, not green, and the row still links to the preview.
+    expect(red).toMatch(/data-variant="attn"[^]*?serving · tests failed<\/span/);
+    expect(red).not.toContain('data-variant="success"');
+    expect(red).not.toContain(">live<");
+
+    putEnv(env, {
+      deploying: {
+        run: { id: deployRun.id, commitOid: pull.headOid },
+        abort: new AbortController(),
+      },
+      live: {
+        commitOid: pull.headOid,
+        handle: { port: 4324 },
+        runId: deployRun.id,
+        since: servingAt,
+        servingAt,
+        createdAt,
+        deployStartedAt: createdAt,
+        manifest: { tty: null },
+      },
+    });
+    const verifying = rowOf(
+      await (await get("/alice/vault/app/state", owner)).text(),
+    );
+    expect(verifying).toContain(open);
+    expect(verifying).toContain("serving · verifying</span");
+    expect(verifying).not.toContain('data-variant="success"');
+    expect(verifying).not.toContain('data-variant="attn"');
+
+    putEnv(env, {
+      live: {
+        commitOid: pull.headOid,
+        handle: { port: 4324 },
+        runId: deployRun.id,
+        since: servingAt,
+        manifest: { tty: null },
+      },
+    });
+    const unmeasured = rowOf(
+      await (await get("/alice/vault/app/state", owner)).text(),
+    );
+    expect(unmeasured).toContain(open);
+    expect(unmeasured).not.toContain("after the");
+    expect(unmeasured).not.toContain("0.0s");
+  });
 });
 
 /**
@@ -3011,7 +3911,7 @@ describe("the studio's slot count", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -3150,7 +4050,7 @@ describe("words come from facts, not from run.summary", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -3180,6 +4080,8 @@ describe("words come from facts, not from run.summary", () => {
       runtime,
       record,
       history: servingHistory(),
+      // The owner reads it: production's facts are theirs to see.
+      viewer: alice,
     };
   });
 
@@ -3385,7 +4287,7 @@ describe("working: a run's own page in the studio", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -3393,7 +4295,7 @@ describe("working: a run's own page in the studio", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -3456,9 +4358,41 @@ describe("working: a run's own page in the studio", () => {
     expect(page).toContain('id="run-steer"');
     expect(page).toContain("Steer scout");
     expect(page).toContain('id="run-stop"');
-    // The transcript is on the page, and dev's own reading is one click away.
+    // The transcript is on the page, and there is no second reading of it.
     expect(page).toContain('id="run-log"');
-    expect(page).toContain(`href="/alice/engine/runs/${run.id}?mode=dev"`);
+    expect(page).not.toContain("?mode=dev");
+  });
+
+  test("a long transcript holds its last window, and the whole of it is one step deeper at ?all=1", async () => {
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    for (let n = 0; n < 450; n++)
+      appendRunLog(app.config.dataDir, run.id, `line number ${n}`);
+    finishRun(app.db, run.id, { state: "ok", summary: "done" });
+
+    const page = await (
+      await get(`/alice/engine/runs/${run.id}`, writerCookie)
+    ).text();
+    expect(page).not.toContain("line number 0<");
+    expect(page).toContain("line number 449");
+    expect(page).toContain(`href="/alice/engine/runs/${run.id}?all=1"`);
+
+    const all = await (
+      await get(`/alice/engine/runs/${run.id}?all=1`, writerCookie)
+    ).text();
+    expect(all).toContain("line number 0<");
+    expect(all).toContain("line number 449");
+
+    // The depth step is refused exactly as the run is.
+    const anon = await fetch(`${base}/alice/engine/runs/${run.id}?all=1`, {
+      redirect: "manual",
+    });
+    expect(anon.status).toBe(404);
   });
 
   test("a reader without access gets the forge's not-found, exactly as dev", async () => {
@@ -3611,7 +4545,7 @@ describe("the app's page tails the crew's log while it works", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -3619,7 +4553,7 @@ describe("the app's page tails the crew's log while it works", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -3807,7 +4741,7 @@ describe("the app's page tails the deploy that is bringing it alive", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -4014,14 +4948,14 @@ describe("the app's page tails production's own output while it runs (#284)", ()
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
-    const c = await createUser(app.db, {
+    const c = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -4197,7 +5131,7 @@ describe(`"Now" while production is coming up and nothing else is`, () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -4276,7 +5210,7 @@ describe(`"Now" while production is coming up and nothing else is`, () => {
 });
 
 /**
- * Issue #183: `tellCrew` cannot route a tell to anyone with nobody on the
+ * Issue #183: `tell` cannot route a tell to anyone with nobody on the
  * crew — the issue it opens stays unassigned forever, not merely
  * unpicked-up like an agent-held tell. Both surfaces that used to call this
  * "quiet" or "nothing yet" must say the honest reason instead, and both
@@ -4309,7 +5243,7 @@ describe('a tell nobody on the crew can take is not "quiet"', () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -4343,7 +5277,7 @@ describe('a tell nobody on the crew can take is not "quiet"', () => {
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
     const enabled = await enableApp(app, alice, repo, { slug: "pad" });
     if (!enabled.ok) throw new Error(String(enabled.error));
-    // No crew at all — the exact state `tellCrew` cannot route out of.
+    // No crew at all — the exact state `tell` cannot route out of.
   });
 
   afterAll(async () => {
@@ -4366,13 +5300,50 @@ describe('a tell nobody on the crew can take is not "quiet"', () => {
   });
 
   test('the shelf row for that app is not "quiet"', async () => {
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const at = home.indexOf('href="/alice/pad"');
     expect(at).toBeGreaterThan(-1);
     const start = home.lastIndexOf("<li>", at);
     const shelfRow = home.slice(start, home.indexOf("</li>", at) + 5);
     expect(shelfRow).not.toContain("quiet — tell the crew something");
     expect(shelfRow).toContain("nobody on the crew to take it");
+  });
+
+  test("a reader of the public app sees the fact, not the owner's invitation or a link to settings", async () => {
+    app.db.run("UPDATE repo SET visibility = 'public' WHERE id = ?", [
+      repo.id,
+    ]);
+    const b = await createUser(app.db, { trusted: true,
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    const bobCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "bob",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const read = await (
+      await fetch(`${base}/alice/pad`, {
+        headers: { cookie: `${bobCookie}; forge_mode=studio` },
+      })
+    ).text();
+    expect(read).toContain("Add a dark mode toggle.");
+    expect(read).toContain("nobody on the crew to take it");
+    expect(read).not.toContain("add someone");
+    expect(read).not.toContain(`href="/alice/pad/settings"`);
+    // The writer still gets the invitation, link included.
+    const write = await (await get("/alice/pad")).text();
+    expect(write).toContain("add someone");
+    expect(write).toContain(`href="/alice/pad/settings"`);
   });
 });
 
@@ -4405,7 +5376,7 @@ describe("a tell held by a person still shows on the front door (#226)", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -4504,7 +5475,7 @@ describe("an open change is never quiet on the front door", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -4593,7 +5564,7 @@ describe("an open change is never quiet on the front door", () => {
   });
 
   test("the shelf row carries the change's own word, its badge and dot kept", async () => {
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const at = home.indexOf('href="/alice/pad"');
     expect(at).toBeGreaterThan(-1);
     const start = home.lastIndexOf("<li>", at);
@@ -4605,7 +5576,7 @@ describe("an open change is never quiet on the front door", () => {
   });
 
   test("an app with nothing open still reads quiet", async () => {
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const at = home.indexOf('href="/alice/quiet"');
     expect(at).toBeGreaterThan(-1);
     const start = home.lastIndexOf("<li>", at);
@@ -4684,7 +5655,7 @@ describe("a deploy that just landed is news on the front door", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -4773,7 +5744,7 @@ describe("a deploy that just landed is news on the front door", () => {
   });
 
   test("the shelf row reads shipped, with who and when, not quiet", async () => {
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const shelfRow = shelfRowFor(home, "/alice/sap");
     expect(shelfRow).not.toContain("quiet — tell the crew something");
     expect(shelfRow).toContain('data-word="shipped"');
@@ -4781,7 +5752,7 @@ describe("a deploy that just landed is news on the front door", () => {
   });
 
   test("an app with no recent deploy still reads quiet", async () => {
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const shelfRow = shelfRowFor(home, `/alice/${quietRepo.name}`);
     expect(shelfRow).toContain("quiet — tell the crew something");
   });
@@ -4800,7 +5771,7 @@ describe("a deploy that just landed is news on the front door", () => {
         manifest: { tty: null },
       },
     });
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const shelfRow = shelfRowFor(home, "/alice/sap");
     expect(shelfRow).not.toContain('data-word="shipped"');
     expect(shelfRow).toContain("quiet — tell the crew something");
@@ -4819,7 +5790,7 @@ describe("a deploy that just landed is news on the front door", () => {
         manifest: { tty: null },
       },
     });
-    const home = await (await get("/")).text();
+    const home = await (await get("/apps")).text();
     const shelfRow = shelfRowFor(home, "/alice/sap");
     expect(shelfRow).not.toContain('data-word="shipped"');
     expect(shelfRow).toContain("quiet — tell the crew something");
@@ -4873,7 +5844,7 @@ describe("a stranger sees the app, not the owner's books", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -4881,7 +5852,7 @@ describe("a stranger sees the app, not the owner's books", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const c = await createUser(app.db, {
+    const c = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -5088,10 +6059,10 @@ describe("a stranger sees the app, not the owner's books", () => {
   });
 
   test("the studio home names the crew for the owner, but only 'the crew' for a signed-in reader of the same public app", async () => {
-    const asStranger = await (await get("/", strangerCookie)).text();
+    const asStranger = await (await get("/apps", strangerCookie)).text();
     expect(asStranger).not.toContain("keeper");
     expect(asStranger).toContain("beacon");
-    const asOwner = await (await get("/", ownerCookie)).text();
+    const asOwner = await (await get("/apps", ownerCookie)).text();
     expect(asOwner).toContain("keeper");
     expect(asOwner).toContain("beacon");
   });
@@ -5107,6 +6078,43 @@ describe("a stranger sees the app, not the owner's books", () => {
       redirect: "manual",
     });
 
+  test("an autonomous app with nobody on its crew says so beside the mode, and stops saying it once a builder joins", async () => {
+    const made = await createRepo(app, alice, { name: "lamp", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const lamp = made.value;
+    const seeded = await commitToBranch(app, alice, lamp, {
+      message: "Start",
+      files: [{ path: "README.md", content: "lamp\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, lamp, { slug: "lamp" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const on = await updateRepoSettings(app, alice, lamp, {
+      autonomy: "autonomous",
+      autonomyDirection: "",
+      autonomyCeilingUsd: 5,
+      autonomySlots: 1,
+      autonomyBy: alice.id,
+    });
+    expect(on.ok).toBe(true);
+
+    const empty = await (await get("/alice/lamp", ownerCookie)).text();
+    expect(empty).toContain("Autonomous");
+    expect(empty).toContain("nobody on the crew");
+    expect(empty).toContain('href="/alice/lamp/settings">Put someone on the crew');
+    // The shelf's stuck word and this card share one phrase.
+    expect(NOBODY_ON_CREW).toBe("nobody on the crew");
+
+    const crewed = await (await get("/alice/beacon", ownerCookie)).text();
+    expect(crewed).not.toContain("nobody on the crew");
+
+    const agent = await createAgent(app, alice, { username: "wick" });
+    if (!agent.ok) throw new Error(String(agent.error));
+    expect(addToCrew(app, alice, lamp, "wick").ok).toBe(true);
+    const joined = await (await get("/alice/lamp", ownerCookie)).text();
+    expect(joined).not.toContain("nobody on the crew");
+  });
+
   test("the studio's settings page renders the crew and the ceiling for a writer, with the same numbers the app page shows", async () => {
     const owner = await (
       await get("/alice/beacon/settings", ownerCookie)
@@ -5117,7 +6125,13 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(owner).toMatch(/\$42\.50\s+of\s+\$25/);
     expect(owner).toContain("Remove");
     expect(owner).toContain("Save");
-    expect(owner).toContain("The rest of the settings");
+    // The rest is beneath, on the same page and in the same frame.
+    expect(owner).toContain("<h2>Branch and gates</h2>");
+    expect(owner.indexOf(">On its own<")).toBeLessThan(
+      owner.indexOf("<h2>Branch and gates</h2>"),
+    );
+    expect(owner).toContain('href="/alice/beacon/settings/labels"');
+    expect(owner).not.toContain("?mode=dev");
   });
 
   test("a reader without write sees no crew and no controls on the settings page; one who cannot read gets not-found", async () => {
@@ -5147,6 +6161,56 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(refused.status).toBe(404);
   });
 
+  test("each settings card saves only its own fields: About never turns a gate or the outsiders switch off, and Branch and gates never touches the words", async () => {
+    const before = getRepo(app.db, "alice", "beacon")!;
+    const on = await post(
+      "/alice/beacon/settings",
+      {
+        card: "gates",
+        defaultBranch: before.defaultBranch,
+        protect: "on",
+        requireReview: "on",
+        // The settings page sends this marker beside the switch; without it a
+        // save leaves the switch as it is (#822).
+        crewOutsidersShown: "1",
+        crewOutsiders: "on",
+      },
+      ownerCookie,
+    );
+    expect(on.status).toBe(303);
+    let now = getRepo(app.db, "alice", "beacon")!;
+    expect(now.crewOutsiders).toBe(true);
+    expect(now.description).toBe(before.description);
+
+    const about = await post(
+      "/alice/beacon/settings",
+      { card: "about", description: "a lamp", visibility: now.visibility },
+      ownerCookie,
+    );
+    expect(about.status).toBe(303);
+    now = getRepo(app.db, "alice", "beacon")!;
+    expect(now.description).toBe("a lamp");
+    expect(now.crewOutsiders).toBe(true);
+    expect(now.protectDefault).toBe(true);
+    expect(now.requireReview).toBe(true);
+
+    // Put it back for the tests that follow.
+    await post(
+      "/alice/beacon/settings",
+      {
+        card: "gates",
+        defaultBranch: before.defaultBranch,
+        crewOutsidersShown: "1",
+      },
+      ownerCookie,
+    );
+    await post(
+      "/alice/beacon/settings",
+      { card: "about", description: before.description, visibility: before.visibility },
+      ownerCookie,
+    );
+  });
+
   test("a role change made from the studio settings page lands exactly as dev's page does", async () => {
     const roleChange = await post(
       "/alice/beacon/settings/crew/keeper/role",
@@ -5155,7 +6219,7 @@ describe("a stranger sees the app, not the owner's books", () => {
     );
     expect(roleChange.status).toBe(303);
     expect(roleChange.headers.get("location")).toBe(
-      "/alice/beacon/settings/crew",
+      "/alice/beacon/settings#crew",
     );
     const after = await (
       await get("/alice/beacon/settings", ownerCookie)
@@ -5163,13 +6227,27 @@ describe("a stranger sees the app, not the owner's books", () => {
     expect(after).toContain("reviews");
   });
 
-  test("?mode=dev on the settings route still renders dev's settings pages", async () => {
+  test("?mode=dev on the settings route is the same one page; dev's Crew and Autonomy addresses land on its cards", async () => {
     const dev = await (
-      await get("/alice/beacon/settings?mode=dev", ownerCookie)
+      await get("/alice/beacon/settings", ownerCookie)
     ).text();
     expect(dev).toContain(">General<");
+    expect(dev).toContain(">Crew<");
     expect(dev).toContain("Description");
-    expect(dev).not.toContain("Add to crew");
+    expect(dev).toContain("<h2>Branch and gates</h2>");
+    expect(dev).toContain('id="f-direction"');
+
+    for (const [old, to] of [
+      ["/alice/beacon/settings/crew", "/alice/beacon/settings#crew"],
+      ["/alice/beacon/settings/autonomy", "/alice/beacon/settings#autonomy"],
+    ]) {
+      const res = await get(old!, ownerCookie);
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(to!);
+    }
+    // A reader who cannot see the repository gets not-found, not a hint.
+    const hidden = await get("/alice/no-such-app/settings/crew", ownerCookie);
+    expect(hidden.status).toBe(404);
   });
 });
 
@@ -5219,7 +6297,7 @@ describe("a person's own change ships from its own studio page", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -5227,7 +6305,7 @@ describe("a person's own change ships from its own studio page", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const r = await createUser(app.db, {
+    const r = await createUser(app.db, { trusted: true,
       username: "eve",
       email: "eve@forge.local",
       password: "a-good-passphrase",
@@ -5447,7 +6525,7 @@ describe("take it back: the studio's verb on a shipped change", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -5455,7 +6533,7 @@ describe("take it back: the studio's verb on a shipped change", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const r = await createUser(app.db, {
+    const r = await createUser(app.db, { trusted: true,
       username: "eve",
       email: "eve@forge.local",
       password: "a-good-passphrase",
@@ -5644,7 +6722,7 @@ describe("the studio's crew panel on a forge with no agents yet", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -5652,7 +6730,7 @@ describe("the studio's crew panel on a forge with no agents yet", () => {
     });
     if (!a.ok) throw new Error(a.error);
     const alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -5841,7 +6919,7 @@ describe("previewLatency: the median seconds from push to serving", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-preview-latency-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -6112,7 +7190,7 @@ describe("the studio's own words for how fast a change reaches its preview", () 
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -6289,7 +7367,7 @@ describe("a low deploy count never reads as a failure ratio (#274)", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -6390,7 +7468,7 @@ describe("this week's runs and spend are counted by the database, not read off a
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -6560,7 +7638,7 @@ describe("this week's shipping is counted by the database, not read off a page o
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -6695,7 +7773,7 @@ describe("a one-minute-old app's front door does not lead with a week of zeros (
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -6803,7 +7881,7 @@ describe("finding things in the studio: /search", () => {
     servers = await serve(app);
     base = servers.url;
 
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -6863,7 +7941,7 @@ describe("finding things in the studio: /search", () => {
 
     // A private app, another owner's — never in alice's or a stranger's
     // results, however much its description matches.
-    const bob = await createUser(app.db, {
+    const bob = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -6945,10 +8023,121 @@ describe("finding things in the studio: /search", () => {
     expect(html).not.toContain("secret");
   });
 
-  test("?mode=dev on the same route still answers in dev's own words", async () => {
-    const html = await (await asAlice("/search?q=chess&mode=dev")).text();
-    expect(html).toContain("Repositories");
-    expect(html).toContain("Issues and pull requests");
+  test("?mode=dev on the same route answers the same one page", async () => {
+    for (const html of [
+      await (await asAlice("/search?q=chess")).text(),
+      await (
+        await fetch(`${base}/search?q=chess`, {
+          headers: { cookie: `${aliceCookie}; forge_mode=dev` },
+        })
+      ).text(),
+    ]) {
+      expect(html).toContain("Apps and repositories");
+      expect(html).toContain("Tells and changes");
+      expect(html).toContain(`/alice/widgets/tells/${tellNumber}`);
+      expect(mainOf(html)).not.toContain('name="mode"');
+    }
+  });
+
+  // #397, carrying #241's rule: the one search finds every repository the
+  // viewer can see, not only apps — and a tell on it links where it lives.
+  test("a repository that is not an app is found by its name and its description, and stays its owner's alone", async () => {
+    const plain = await createRepo(app, alice, {
+      name: "project-notes",
+      visibility: "private",
+      description: "notes about a project",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const told = openIssue(app, alice, plain.value, {
+      title: "Sort the project notes",
+      body: "",
+    });
+    if (!told.ok) throw new Error(String(told.error));
+
+    const byName = mainOf(await (await asAlice("/search?q=notes")).text());
+    expect(byName).toContain('href="/alice/project-notes"');
+    expect(byName).toContain(
+      `href="/alice/project-notes/issues/${told.value.number}"`,
+    );
+    expect(byName).not.toContain("Nothing matched");
+    const byDescription = mainOf(
+      await (await asAlice("/search?q=about+a+project")).text(),
+    );
+    expect(byDescription).toContain('href="/alice/project-notes"');
+
+    const stranger = mainOf(await (await anonymous("/search?q=notes")).text());
+    expect(stranger).not.toContain("project-notes");
+  });
+
+  test("a private app on a public repository: its state reaches only its writers, and anyone else sees a plain repository row", async () => {
+    const made = await createRepo(app, alice, {
+      name: "abacus",
+      visibility: "public",
+      description: "an abacus for chess clocks",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const seeded = await commitToBranch(app, alice, made.value, {
+      message: "Start",
+      files: [{ path: "README.md", content: "start\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, made.value, {
+      slug: "abacus",
+      access: "private",
+    });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    const carol = await createUser(app.db, { trusted: true,
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!carol.ok) throw new Error(carol.error);
+    const carolCookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "carol",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+    const rowOf = (html: string): string => {
+      const at = html.indexOf('href="/alice/abacus"');
+      return at === -1 ? "" : html.slice(at, html.indexOf("</a>", at));
+    };
+    for (const cookie of ["", `${carolCookie}; forge_mode=studio`]) {
+      const html = mainOf(
+        await (
+          await fetch(`${base}/search?q=abacus`, {
+            headers: cookie === "" ? {} : { cookie },
+          })
+        ).text(),
+      );
+      const row = rowOf(html);
+      expect(row).not.toBe("");
+      expect(row).not.toContain("not running");
+      expect(row).not.toContain('class="dot"');
+    }
+    expect(rowOf(mainOf(await (await asAlice("/search?q=abacus")).text()))).toContain(
+      "not running",
+    );
+  });
+
+  test("code is a section of the same page, and narrowing to it is a chip, never a mode", async () => {
+    const all = mainOf(await (await asAlice("/search?q=chess")).text());
+    expect(all).toContain('id="repos"');
+    expect(all).toContain('id="issues"');
+    expect(all).toContain('id="code"');
+    expect(all).toContain("/search?q=chess&amp;kind=code");
+    expect(all).not.toContain("mode=dev");
+    expect(all).not.toContain("Search the code");
+
+    const code = mainOf(await (await asAlice("/search?q=chess&kind=code")).text());
+    expect(code).toContain('id="code"');
+    expect(code).not.toContain('id="repos"');
   });
 });
 
@@ -6980,8 +8169,9 @@ describe("the studio home says what the crew cost you today", () => {
       ).headers.get("set-cookie") ?? ""
     ).split(";")[0]!;
 
+  // The cost line is the apps list's (#599: home is the feed).
   const home = (cookie: string) =>
-    fetch(`${base}/`, {
+    fetch(`${base}/apps`, {
       headers: { cookie: `${cookie}; forge_mode=studio` },
       redirect: "manual",
     }).then((r) => r.text());
@@ -6991,7 +8181,7 @@ describe("the studio home says what the crew cost you today", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -6999,7 +8189,7 @@ describe("the studio home says what the crew cost you today", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const c = await createUser(app.db, {
+    const c = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -7137,7 +8327,7 @@ describe("every studio page's headings form one outline", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -7227,7 +8417,7 @@ describe("every studio page's headings form one outline", () => {
     const outline = headingOutline(html);
     expect(outline.levels.filter((l) => l === 1).length).toBe(1);
     expect(outline.ok).toBe(true);
-    expect(html).toMatch(/<h1 class="sr-only">Studio<\/h1>/);
+    expect(html).toMatch(/<h1 class="sr-only">Home<\/h1>/);
   });
 
   test("the app page, the three lists, a tell, a change and a run each have one outline with no skipped level", async () => {
@@ -7259,9 +8449,9 @@ describe("every studio page's headings form one outline", () => {
  * to leave the studio — Stop for dev's App page, Redeploy for the deploy's
  * run page. Both now come back to the page the form was pressed on, because
  * the card refreshes itself on the deploy event and staying put shows the
- * result. Dev mode keeps its own destinations, and the page is taken from
- * the referer only when it is this forge's own (`safeBack`), never from the
- * form.
+ * result. Dev mode's Redeploy still hands over to the run, and the page is
+ * taken from the referer only when it is this forge's own (`safeBack`),
+ * never from the form.
  */
 describe("the studio's Stop and Redeploy come back to the page they were pressed on", () => {
   let dataDir: string;
@@ -7336,7 +8526,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -7466,17 +8656,98 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     ).toBeGreaterThan(0);
   });
 
-  test("dev mode keeps its destinations: Stop to the App page, Redeploy to the run", async () => {
-    const stopped = await press("stop", "dev", `${base}/alice/notes`);
+  test("dev mode is the same: Stop and Redeploy both come back to the page they were pressed on", async () => {
+    const stopped = await press("stop", "dev", `${base}/alice/notes/pulls/1`);
     expect(stopped.status).toBe(303);
-    expect(stopped.headers.get("location")).toBe("/alice/notes/app");
+    expect(stopped.headers.get("location")).toBe("/alice/notes/pulls/1");
     expect(flashOf(stopped)).toContain("Stopped production.");
 
     const queued = await press("redeploy", "dev", `${base}/alice/notes`);
     expect(queued.status).toBe(303);
-    const run = listRuns(app.db, repo.id, { kind: "deploy", limit: 1 })[0];
-    expect(queued.headers.get("location")).toBe(`/alice/notes/runs/${run?.id}`);
+    expect(queued.headers.get("location")).toBe("/alice/notes");
     expect(flashOf(queued)).toContain("Redeploying production.");
+  });
+
+  // Issue #395: dev's App page folded into this one. Its URL keeps
+  // answering — a redirect to the studio app page — and the environment
+  // controls it carried (each preview's Redeploy and Stop, the way to the
+  // environment settings) are drawn here instead.
+  test("GET /:owner/:name/app redirects to the app page, for a dev browser too", async () => {
+    const asStudio = await fetch(`${base}/alice/notes/app`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    });
+    expect(asStudio.status).toBe(302);
+    expect(asStudio.headers.get("location")).toBe("/alice/notes");
+
+    const asDev = await fetch(`${base}/alice/notes/app`, {
+      headers: { cookie: `${cookie}; forge_mode=dev` },
+      redirect: "manual",
+    });
+    expect(asDev.status).toBe(302);
+    expect(asDev.headers.get("location")).toBe("/alice/notes");
+    const landed = await fetch(`${base}/alice/notes`, {
+      headers: { cookie: `${cookie}; forge_mode=dev` },
+      redirect: "manual",
+    });
+    expect(landed.status).toBe(200);
+    expect(await landed.text()).toContain('id="app-head"');
+
+    // A public app's page is anyone's; the redirect is too.
+    const anonymous = await fetch(`${base}/alice/notes/app`, {
+      redirect: "manual",
+    });
+    expect(anonymous.status).toBe(302);
+    expect(anonymous.headers.get("location")).toBe("/alice/notes");
+  });
+
+  test("GET /:owner/:name/app is still not found for a repository that is not an app, or not there", async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    const plain = await createRepo(app, alice, {
+      name: "plain-notes",
+      visibility: "public",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    for (const path of ["/alice/plain-notes/app", "/alice/nowhere/app"]) {
+      const response = await fetch(`${base}${path}`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+        redirect: "manual",
+      });
+      expect(`${path} → ${response.status}`).toBe(`${path} → 404`);
+    }
+  });
+
+  test("the studio app page carries each preview's Redeploy and Stop, and the environment settings, for a writer only", async () => {
+    const record = getAppByRepo(app.db, repo.id)!;
+    const env = previewEnv(1);
+    (
+      runtime as unknown as { envs: Map<string, Record<string, unknown>> }
+    ).envs.set(`${record.id}/${env}`, {
+      app: record,
+      env,
+      chain: Promise.resolve(),
+      restarts: [],
+      live: {
+        commitOid: "b".repeat(40),
+        handle: { port: 4322, stop: async () => {} },
+        runId: "fake-preview",
+        since: new Date().toISOString(),
+        manifest: { tty: null },
+      },
+    });
+    const owner = await studioPage();
+    expect(owner).toContain(`action="/alice/notes/app/${env}/redeploy"`);
+    expect(owner).toContain(`action="/alice/notes/app/${env}/stop"`);
+    expect(owner).toContain(`href="/alice/notes/app/${env}/open"`);
+    expect(owner).toContain('href="/alice/notes/settings/app"');
+
+    const stranger = await (
+      await fetch(`${base}/alice/notes`, { redirect: "manual" })
+    ).text();
+    expect(stranger).toContain(`href="/alice/notes/app/${env}/open"`);
+    expect(stranger).not.toContain("/redeploy");
+    expect(stranger).not.toContain("/stop");
+    expect(stranger).not.toContain('href="/alice/notes/settings/app"');
   });
 });
 
@@ -7572,7 +8843,7 @@ describe("the studio names a person on the app's page, and the crew only for the
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "ivy",
       email: "ivy@forge.local",
       password: "a-good-passphrase",
@@ -7695,5 +8966,280 @@ describe("the studio names a person on the app's page, and the crew only for the
     expect(rowWith(appPage, `/changes/${agentPull.number}`)).toContain("quill");
     expect(rowWith(appPage, `/runs/${agentRun.id}`)).toContain("quill");
     expect(rowWith(appPage, `/changes/${personPull.number}`)).toContain("ivy");
+  });
+});
+
+describe("the studio's empty lists", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let cookie: string;
+
+  const get = (path: string) =>
+    fetch(`${base}${path}`, {
+      headers: { cookie: `${cookie}; forge_mode=studio` },
+      redirect: "manual",
+    }).then((r) => r.text());
+
+  const setup = async (name: string) => {
+    const made = await createRepo(app, alice, {
+      name,
+      visibility: "private",
+      description: "",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const seeded = await commitToBranch(app, alice, made.value, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content: '{"name":"x","scripts":{"start":"bun run server.ts"}}\n',
+        },
+        { path: "server.ts", content: "export {};\n" },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, made.value, { slug: name });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    return made.value;
+  };
+  let alice: User;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-empty-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const a = await createUser(app.db, { trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    cookie = (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username: "alice",
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a repository with nothing in it says what to do, and blames no filter", async () => {
+    await setup("blank");
+    for (const [path, words] of [
+      ["issues", "Tell the crew what you want"],
+      ["pulls", "A change is the crew"],
+      ["runs", "A run is one go"],
+    ] as const) {
+      const page = await get(`/alice/blank/${path}`);
+      expect(page).toContain("Nothing here");
+      expect(page).toContain(words);
+      expect(page).not.toContain("this filter");
+    }
+  });
+
+  test("a filter that hides every row is named", async () => {
+    const repo = await setup("busy");
+    const told = openIssue(app, alice, repo, { title: "Add a tab", body: "" });
+    if (!told.ok) throw new Error(String(told.error));
+    const issues = await get("/alice/busy/issues?word=shipped");
+    expect(issues).toContain("Nothing told is shipped yet.");
+    expect(issues).not.toContain("Tell the crew what you want");
+    const pulls = await get("/alice/busy/pulls?word=look");
+    expect(pulls).toContain("No change is look yet.");
+    const runs = await get("/alice/busy/runs?word=stopped");
+    expect(runs).toContain("No run is stopped yet.");
+  });
+});
+
+/**
+ * Issue #230: the studio's settings page can change the two facts it
+ * prints most about an app — description and visibility — by posting to
+ * the very same `/:owner/:name/settings` route dev's General page uses.
+ */
+describe("the studio can change what an app says it is (#230)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let repo: Repo;
+  let ownerCookie: string;
+  let readerCookie: string;
+
+  const signIn = async (username: string): Promise<string> =>
+    (
+      (
+        await fetch(`${base}/signin`, {
+          method: "POST",
+          body: new URLSearchParams({
+            username,
+            password: "a-good-passphrase",
+          }),
+          redirect: "manual",
+        })
+      ).headers.get("set-cookie") ?? ""
+    ).split(";")[0]!;
+
+  const get = (path: string, cookie?: string) =>
+    fetch(`${base}${path}`, {
+      headers: {
+        cookie:
+          cookie === undefined
+            ? "forge_mode=studio"
+            : `${cookie}; forge_mode=studio`,
+      },
+      redirect: "manual",
+    });
+
+  const post = (path: string, body: Record<string, string>, cookie: string) =>
+    fetch(`${base}${path}`, {
+      method: "POST",
+      headers: {
+        cookie: `${cookie}; forge_mode=studio`,
+        origin: base,
+      },
+      body: new URLSearchParams(body),
+      redirect: "manual",
+    });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-about-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const alice = await createUser(app.db, { trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!alice.ok) throw new Error(alice.error);
+    const carol = await createUser(app.db, { trusted: true,
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!carol.ok) throw new Error(carol.error);
+    ownerCookie = await signIn("alice");
+    readerCookie = await signIn("carol");
+    const made = await createRepo(app, alice.value, {
+      name: "lamp",
+      visibility: "public",
+      description: "lights the hallway",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "lamp\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    // Branch protection is on and unexposed by the studio's form — proof
+    // that saving from here does not silently turn it off.
+    const protectedOn = await updateRepoSettings(app, alice.value, repo, {
+      protectDefault: true,
+      requireReview: true,
+      requireChecks: true,
+    });
+    if (!protectedOn.ok) throw new Error(String(protectedOn.error));
+    repo = protectedOn.value;
+    const enabled = await enableApp(app, alice.value, repo, { slug: "lamp" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a writer changes the description and visibility from the studio, and the app's page and the shelf row show it", async () => {
+    // The About card names itself (`card=about`), so a real submit of it —
+    // exactly what's posted here — changes its own fields and cannot touch
+    // the branch protection it never shows.
+    const before = await (
+      await get("/alice/lamp/settings", ownerCookie)
+    ).text();
+    expect(before).toContain('<input type="hidden" name="card" value="about"');
+
+    const saved = await post(
+      "/alice/lamp/settings",
+      {
+        card: "about",
+        description: "a lamp that stays lit all night",
+        visibility: "private",
+      },
+      ownerCookie,
+    );
+    expect(saved.status).toBe(303);
+    expect(saved.headers.get("location")).toBe("/alice/lamp/settings");
+
+    const ownPage = await (
+      await get("/alice/lamp", ownerCookie)
+    ).text();
+    expect(ownPage).toContain("a lamp that stays lit all night");
+    expect(ownPage).toContain("Private");
+
+    // `/app` has been a redirect to the studio app page since the dev app
+    // page was folded into it (#433): the head to read is that page's.
+    const moved = await get("/alice/lamp/app", ownerCookie);
+    expect(moved.status).toBe(302);
+    expect(moved.headers.get("location")).toBe("/alice/lamp");
+    const appHead = await (await get("/alice/lamp", ownerCookie)).text();
+    expect(appHead).toContain("Private");
+
+    const shelf = await (await get("/apps", ownerCookie)).text();
+    expect(shelf).toContain("a lamp that stays lit all night");
+
+    const list = await (await get("/apps", ownerCookie)).text();
+    expect(list).toContain("a lamp that stays lit all night");
+
+    // Branch protection, never shown on this form, is exactly as it was.
+    const dbRepo = getRepoById(app.db, repo.id);
+    expect(dbRepo?.protectDefault).toBe(true);
+    expect(dbRepo?.requireReview).toBe(true);
+    expect(dbRepo?.requireChecks).toBe(true);
+  });
+
+  test("a reader gets neither control: no form on the settings page, and the post is refused", async () => {
+    const settings = await (
+      await get("/alice/lamp/settings", readerCookie)
+    ).text();
+    expect(settings).not.toContain('action="/alice/lamp/settings"');
+    expect(settings).not.toContain("<textarea");
+
+    const refused = await post(
+      "/alice/lamp/settings",
+      { description: "carol was here", visibility: "public" },
+      readerCookie,
+    );
+    expect(refused.status).toBe(404);
+    const dbRepo = getRepoById(app.db, repo.id);
+    expect(dbRepo?.description).not.toBe("carol was here");
+  });
+});
+
+describe("a run's transcript window", () => {
+  test("a log already cut to its tail offers the last N, never all of the run", () => {
+    const lines = ["one", "two", "three"];
+    const cut = logBox({ id: "log", who: "scout", cap: 2, lines, allHref: "/x?all=1", truncated: true }).text;
+    expect(cut).toContain("read the last");
+    expect(cut).not.toContain("read all");
+    const whole = logBox({ id: "log", who: "scout", cap: 2, lines, allHref: "/x?all=1" }).text;
+    expect(whole).toContain("read all");
   });
 });

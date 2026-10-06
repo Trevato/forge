@@ -1,0 +1,494 @@
+/**
+ * Spawn: make the child a plan describes. A new forge instance placed by the
+ * placement seam, an org in it, the chosen apps as repositories with their
+ * whole history, the crew's briefs, and one `parent.json` pointing back —
+ * the upstream URL and nothing secret. Owner-only, same-origin, and the plan
+ * is validated again here: the dry-run is a preview, never a permit.
+ *
+ * Everything the copy writes lives under the child's own data directory
+ * (`<data>/children/<bodyId>`). The parent keeps one ledger line per child
+ * (`<data>/spawn/<name>.json`) written before the first copy, so a retry
+ * finds the half-made child and resumes it — every step below is
+ * idempotent — and a finished one is answered, not made twice.
+ */
+
+import { mkdir, readdir, rename } from "node:fs/promises";
+import { join } from "node:path";
+import { createApp, type App } from "../app.ts";
+import {
+  addCrew,
+  BRIEF_MAX,
+  createAgentRow,
+  getAgentByName,
+  listCrewRoles,
+  setCrewRole,
+  updateAgent,
+} from "../core/agents.ts";
+import { createOrg, getOrg } from "../core/orgs.ts";
+import {
+  canRead,
+  createRepo,
+  getRepo,
+  updateRepoSettings,
+  type Repo,
+} from "../core/repos.ts";
+import { createUser, getUserByName, type User } from "../core/users.ts";
+import { runGit } from "../git/env.ts";
+import { repoDir } from "../git/repos.ts";
+import { sha256 } from "../kernel/hash.ts";
+import { secret } from "../kernel/id.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
+import { crossOrigin } from "../http/context.ts";
+import {
+  addSubscription,
+  getSubscriptionByName,
+  lockBudget,
+  setGrants,
+  subscriptionAad,
+} from "../core/subscriptions.ts";
+import { Database } from "bun:sqlite";
+import { loadKey, open } from "../kernel/secret.ts";
+import { loadOrCreateHostKey } from "../ssh/keys.ts";
+import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
+import type { Placement } from "../spawn/placement.ts";
+import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
+import { requireUser } from "./access.ts";
+
+export interface Spawned {
+  readonly name: string;
+  readonly org: string;
+  readonly url: string;
+  readonly bodyId: string;
+  /** True when this call found the child already made and changed nothing. */
+  readonly existed: boolean;
+  /**
+   * The link that hands the child to its person: shown once, here, when
+   * the child is made. Absent when the child already existed; the child
+   * keeps only its hash (`spawn/claim.ts`).
+   */
+  readonly claimUrl?: string;
+}
+
+export type SpawnError =
+  | { readonly kind: "unauthorized" | "forbidden" | "cross_origin" }
+  | { readonly kind: "invalid"; readonly field: string; readonly reason: string }
+  | { readonly kind: "refused"; readonly reason: string; readonly message: string }
+  | { readonly kind: "exists"; readonly message: string }
+  | { readonly kind: "failed"; readonly message: string };
+
+export interface SpawnDeps {
+  readonly placement: Placement;
+  /** The request that asked, for the same-origin check on this mutation. */
+  readonly request: Request;
+  readonly url: URL;
+  /**
+   * The child's own model key, when the spawner gives it one: an API-billed
+   * key (never a person's subscription token), sealed in the child with the
+   * child's own `secret.key`, granted to its organisation, and never shown
+   * again or kept by the parent. Its whole-life budget is the plan's
+   * `budgetUsd`, locked in the child.
+   */
+  readonly modelKey?: string;
+}
+
+interface Ledger {
+  readonly name: string;
+  readonly bodyId: string;
+  readonly url: string;
+  readonly planHash: string;
+  done: boolean;
+  /** For the client list (#776); absent on a ledger written before it. */
+  readonly forWhom?: string;
+  readonly apps?: readonly string[];
+  readonly createdAt?: string;
+  /**
+   * What the parent shows the child to learn its private facts (when anything
+   * last happened); the child keeps only its hash. Never in an answer.
+   */
+  statusToken?: string;
+}
+
+const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
+/** The name the child's sealed model key goes by. */
+export const STARTER_KEY = "starter";
+const inFlight = new Set<string>();
+
+const fail = (message: string) => err<SpawnError>({ kind: "failed", message });
+
+export const childDirOf = (app: App, bodyId: string): string =>
+  join(app.config.dataDir, "children", bodyId);
+const ledgerPath = (app: App, name: string): string =>
+  join(app.config.dataDir, "spawn", `${name}.json`);
+
+async function readLedger(app: App, name: string): Promise<Ledger | undefined> {
+  const file = Bun.file(ledgerPath(app, name));
+  if (!(await file.exists())) return undefined;
+  try {
+    return (await file.json()) as Ledger;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeLedger(app: App, ledger: Ledger): Promise<void> {
+  await mkdir(join(app.config.dataDir, "spawn"), { recursive: true });
+  const path = ledgerPath(app, ledger.name);
+  await Bun.write(`${path}.tmp`, JSON.stringify(ledger));
+  await rename(`${path}.tmp`, path);
+}
+
+export async function spawnForge(
+  app: App,
+  actor: User | undefined,
+  input: SpawnInput,
+  source: SpawnSource,
+  deps: SpawnDeps,
+): Promise<Result<Spawned, SpawnError>> {
+  if (crossOrigin(deps.request, deps.url, app.log)) return err({ kind: "cross_origin" });
+  const user = requireUser(actor);
+  if (!user.ok) return err({ kind: "unauthorized" });
+  if (!user.value.isAdmin) return err({ kind: "forbidden" });
+  const owner = user.value;
+
+  // The dry-run is not trusted: the plan is made again, here.
+  const planned = planSpawn(input, source);
+  if (!planned.ok) return err({ kind: "invalid", ...planned.error });
+  const plan = planned.value;
+
+  const names = new Set<string>();
+  for (const a of plan.apps) {
+    const name = a.ref.split("/")[1]!;
+    if (names.has(name.toLowerCase()))
+      return err({ kind: "invalid", field: "apps", reason: `two apps are named ${name}` });
+    names.add(name.toLowerCase());
+    const [o, n] = a.ref.split("/") as [string, string];
+    const repo = getRepo(app.db, o, n);
+    if (!repo || !canRead(app.db, repo, owner))
+      return err({ kind: "invalid", field: "apps", reason: `${a.ref} is not readable by you` });
+  }
+  for (const b of plan.briefs) {
+    if (b.text.length > BRIEF_MAX)
+      return err({ kind: "invalid", field: "briefs", reason: `a brief is at most ${BRIEF_MAX} characters` });
+  }
+
+  if (inFlight.has(plan.name)) return err({ kind: "exists", message: "that child is being made" });
+  inFlight.add(plan.name);
+  try {
+    return await make(app, owner, plan, deps);
+  } finally {
+    inFlight.delete(plan.name);
+  }
+}
+
+async function make(
+  app: App,
+  owner: User,
+  plan: SpawnPlan,
+  deps: SpawnDeps,
+): Promise<Result<Spawned, SpawnError>> {
+  const planHash = sha256(JSON.stringify(plan));
+  let ledger = await readLedger(app, plan.name);
+  if (ledger) {
+    if (ledger.planHash !== planHash)
+      return err({ kind: "exists", message: `a different child named ${plan.name} already exists` });
+    // The plan names that there is a key, never which: a retry with another
+    // key is refused plainly rather than quietly keeping the first.
+    if (deps.modelKey !== undefined) {
+      const held = heldKey(childDirOf(app, ledger.bodyId));
+      if (held !== undefined && held !== deps.modelKey)
+        return err({
+          kind: "exists",
+          message: `${plan.name} was already given a different model key; a key is given once`,
+        });
+    }
+    if (ledger.done)
+      return ok({ name: plan.name, org: plan.org, url: ledger.url, bodyId: ledger.bodyId, existed: true });
+    if (ledger.statusToken === undefined) {
+      ledger.statusToken = secret();
+      await writeLedger(app, ledger);
+    }
+  } else {
+    const placed = await deps.placement.place(plan);
+    if (!placed.ok) return err({ kind: "refused", ...placed.error });
+    if (!SAFE_ID.test(placed.value.bodyId)) {
+      await deps.placement.retire(placed.value.bodyId);
+      return fail("placement returned an unusable body id");
+    }
+    ledger = {
+      name: plan.name,
+      bodyId: placed.value.bodyId,
+      url: placed.value.url,
+      planHash,
+      done: false,
+      ...(plan.forWhom === undefined ? {} : { forWhom: plan.forWhom }),
+      apps: plan.apps.map((a) => a.ref),
+      createdAt: new Date().toISOString(),
+      statusToken: secret(),
+    };
+    await writeLedger(app, ledger);
+  }
+
+  const copied = await copyInto(app, owner, plan, ledger, deps.modelKey);
+  if (!copied.ok) return fail(copied.error);
+  const claimUrl = claimLink(ledger.url, copied.value);
+
+  ledger.done = true;
+  await writeLedger(app, ledger);
+  app.bus.append({
+    kind: "forge.spawned",
+    actorId: owner.id,
+    payload: { name: plan.name, org: plan.org, url: ledger.url, apps: plan.apps.map((a) => a.ref) },
+  });
+  return ok({
+    name: plan.name,
+    org: plan.org,
+    url: ledger.url,
+    bodyId: ledger.bodyId,
+    existed: false,
+    claimUrl,
+  });
+}
+
+/**
+ * Every step skips what is already there, so a resumed child is finished,
+ * not doubled. Answers the child's claim token, minted afresh each time.
+ */
+async function copyInto(
+  app: App,
+  owner: User,
+  plan: SpawnPlan,
+  ledger: Ledger,
+  modelKey: string | undefined,
+): Promise<Result<string, string>> {
+  const dir = childDirOf(app, ledger.bodyId);
+  await mkdir(dir, { recursive: true });
+  const child = createApp({ dataDir: dir });
+  try {
+    // The founder is a name only: no password, no email worth mailing. The
+    // child's first boot hands the account to a person (#422).
+    const founder =
+      getUserByName(child.db, owner.username) ??
+      (await (async () => {
+        const made = await createUser(child.db, {
+          username: owner.username,
+          email: `${owner.username}@spawn.forge.invalid`,
+          // Seeded by the parent's owner, who is proven there, under the
+          // name they already hold there.
+          trusted: true,
+          allowReserved: true,
+        });
+        return made.ok ? made.value : undefined;
+      })());
+    if (!founder) return err("could not make the child's founder");
+
+    let org = getOrg(child.db, plan.org);
+    if (!org) {
+      // Named by the spawner, who was held to the rule on the parent.
+      const made = createOrg(child.db, plan.org, founder.id, { allowReserved: true });
+      if (!made.ok) return err(`could not make org ${plan.org}: ${made.error}`);
+      org = made.value;
+    }
+
+    const copiedRepos: { parent: Repo; child: Repo }[] = [];
+    for (const a of plan.apps) {
+      const [o, n] = a.ref.split("/") as [string, string];
+      const parent = getRepo(app.db, o, n);
+      if (!parent) return err(`${a.ref} is gone`);
+      let repo = getRepo(child.db, org.username, n);
+      if (!repo) {
+        const made = await createRepo(child.db, child.reposRoot, {
+          ownerId: org.id,
+          name: n,
+          visibility: parent.visibility,
+          description: parent.description,
+          defaultBranch: parent.defaultBranch,
+        });
+        if (!made.ok) return err(`could not make ${a.ref}: ${made.error}`);
+        repo = made.value;
+      }
+      // Branches and tags with every commit behind them; re-running only tops up.
+      const fetched = await runGit(
+        [
+          "fetch",
+          "--no-write-fetch-head",
+          repoDir(app.reposRoot, o, n),
+          "+refs/heads/*:refs/heads/*",
+          "+refs/tags/*:refs/tags/*",
+        ],
+        { cwd: repoDir(child.reposRoot, org.username, n), timeoutMs: 600_000 },
+      );
+      if (!fetched.ok) return err(`could not copy ${a.ref}: ${fetched.error.stderr}`);
+      // The spawner's words are each app's direction; the child's first
+      // boot opens the direction issue from them (`spawn/first-boot.ts`).
+      if (plan.direction !== "" && repo.autonomyDirection !== plan.direction)
+        repo = updateRepoSettings(child.db, repo, { autonomyDirection: plan.direction });
+      copiedRepos.push({ parent, child: repo });
+    }
+
+    for (const b of plan.briefs) {
+      const existing = getAgentByName(child.db, b.agent);
+      if (existing) {
+        updateAgent(child.db, existing.user.id, { brief: b.text });
+        continue;
+      }
+      const made = await createUser(child.db, {
+        username: b.agent,
+        email: `${b.agent}@agents.spawn.forge.invalid`,
+        agent: true,
+      });
+      if (!made.ok) return err(`could not make crew member ${b.agent}: ${made.error}`);
+      createAgentRow(child.db, { userId: made.value.id, brief: b.text, createdBy: founder.id });
+    }
+
+    // A carried crew member keeps its place on each app: the role it had on
+    // the parent's copy (planner, builder, reviewer), so the child's planner
+    // is known before its first boot.
+    for (const { parent, child: repo } of copiedRepos)
+      for (const { agent, role } of listCrewRoles(app.db, parent.id)) {
+        if (!plan.briefs.some((b) => b.agent === agent.user.username)) continue;
+        const theirs = getAgentByName(child.db, agent.user.username);
+        if (!theirs) continue;
+        addCrew(child.db, repo.id, theirs.user.id, founder.id);
+        setCrewRole(child.db, repo.id, theirs.user.id, role);
+      }
+
+    // The child's own keys, made in its own directory now, so they exist
+    // before its first boot and are provably not the parent's: the key that
+    // seals its secrets, and its SSH host key.
+    loadKey(dir);
+    loadOrCreateHostKey(join(dir, "ssh"));
+
+    // A model key the spawner handed over: sealed with the child's key,
+    // offered to its organisation's crew, and bound to a whole-life budget
+    // the child cannot raise — enforced where every run picks its account,
+    // whoever started the run and on whichever repository.
+    if (modelKey !== undefined && plan.budgetUsd !== null) {
+      const sealed =
+        getSubscriptionByName(child.db, STARTER_KEY) ??
+        (() => {
+          const added = addSubscription(child.db, dir, {
+            name: STARTER_KEY,
+            token: modelKey,
+            createdBy: founder.id,
+          });
+          return added.ok ? added.value : undefined;
+        })();
+      if (!sealed) return err("could not seal the child's model key");
+      setGrants(child.db, org.id, "", [sealed.id]);
+      if (!lockBudget(child.db, sealed.id, plan.budgetUsd))
+        return err("could not set the key's budget");
+    }
+
+    const upstream = app.config.url ?? `http://${app.config.host ?? "localhost"}`;
+    await Bun.write(
+      join(dir, "parent.json"),
+      JSON.stringify({
+        upstream,
+        name: plan.name,
+        org: plan.org,
+        // The child's own address, from the placement: <name>.<parent's host>.
+        url: ledger.url,
+        keepAccess: plan.keepAccess,
+        // Only the hash: the parent alone holds what it answers to.
+        ...(ledger.statusToken === undefined ? {} : { statusHash: sha256(ledger.statusToken) }),
+      }),
+    );
+    return ok(mintClaim(child.db, org.id));
+  } finally {
+    child.close();
+  }
+}
+
+/**
+ * The model key a child already holds, opened with the child's own key; or
+ * undefined when it has none yet (or the child's database is not there).
+ */
+function heldKey(dir: string): string | undefined {
+  let db: Database | undefined;
+  try {
+    db = new Database(join(dir, "forge.db"), { readonly: true });
+    const row = db
+      .query<{ id: string; token_enc: string }, [string]>(
+        "SELECT id, token_enc FROM subscription WHERE name = ?1",
+      )
+      .get(STARTER_KEY);
+    if (!row) return undefined;
+    const opened = open(dir, row.token_enc, subscriptionAad(row.id));
+    return opened.ok ? opened.value : "";
+  } catch {
+    return undefined;
+  } finally {
+    db?.close();
+  }
+}
+
+/**
+ * A new claim link for a child nobody has claimed yet (#729): the spawner's
+ * — an admin of this forge — when the first went unused or was lost. The
+ * child keeps one claim row, so minting replaces it and the old link dies
+ * at once. A claimed child (one with a person as admin) is refused.
+ */
+export async function reissueClaim(
+  app: App,
+  actor: User | undefined,
+  name: string,
+  deps: { readonly request: Request; readonly url: URL },
+): Promise<Result<{ readonly name: string; readonly claimUrl: string }, SpawnError | { readonly kind: "not_found" }>> {
+  if (crossOrigin(deps.request, deps.url, app.log)) return err({ kind: "cross_origin" });
+  const user = requireUser(actor);
+  if (!user.ok) return err({ kind: "unauthorized" });
+  if (!user.value.isAdmin) return err({ kind: "forbidden" });
+  const ledger = /^[a-z0-9-]{1,39}$/.test(name) ? await readLedger(app, name) : undefined;
+  if (!ledger || !ledger.done) return err({ kind: "not_found" });
+  const child = createApp({ dataDir: childDirOf(app, ledger.bodyId) });
+  try {
+    const spawned = await spawnedOrg(child);
+    if (!spawned) return fail("the child has no organisation to claim");
+    if (hasAdmin(child.db))
+      return err({ kind: "refused", reason: "claimed", message: `${name} is already claimed; ask its owner to invite you` });
+    const token = mintClaim(child.db, spawned.org.id);
+    app.bus.append({ kind: "forge.claim_reissued", actorId: user.value.id, payload: { name } });
+    return ok({ name, claimUrl: claimLink(ledger.url, token) });
+  } finally {
+    child.close();
+  }
+}
+
+/** What this forge shows a child it made to learn its private facts; undefined for an older child. */
+export async function statusTokenOf(app: App, name: string): Promise<string | undefined> {
+  return (await readLedger(app, name))?.statusToken;
+}
+
+/** One child, as the ledger keeps it. */
+export interface Child {
+  readonly name: string;
+  readonly url: string;
+  readonly bodyId: string;
+  readonly done: boolean;
+  /** Whom it is for; null when unsaid. */
+  readonly for: string | null;
+  readonly apps: readonly string[];
+  /** When it was begun; null on a ledger older than the client list. */
+  readonly createdAt: string | null;
+}
+
+/** The children this forge has made or begun, from its ledger, by name. */
+export async function listChildren(app: App): Promise<Child[]> {
+  const dir = join(app.config.dataDir, "spawn");
+  const files = await readdir(dir).catch(() => [] as string[]);
+  const out: Child[] = [];
+  for (const f of files.filter((f) => f.endsWith(".json")).sort()) {
+    const ledger = await readLedger(app, f.slice(0, -".json".length));
+    if (ledger)
+      out.push({
+        name: ledger.name,
+        url: ledger.url,
+        bodyId: ledger.bodyId,
+        done: ledger.done,
+        for: ledger.forWhom ?? null,
+        apps: ledger.apps ?? [],
+        createdAt: ledger.createdAt ?? null,
+      });
+  }
+  return out;
+}

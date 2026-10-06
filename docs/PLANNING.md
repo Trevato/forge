@@ -22,6 +22,7 @@ _Holds up 3_, with each issue linked and a field to add one. Over the API:
 GET    /api/v1/repos/:owner/:name/issues/:n/dependencies   → { blockedBy, blocks }
 POST   /api/v1/repos/:owner/:name/issues/:n/dependencies   { "blockedBy": m }
 DELETE /api/v1/repos/:owner/:name/issues/:n/dependencies/:m
+POST   /api/v1/repos/:owner/:name/issues/:n/dependencies/:m/confirm
 ```
 
 A refused link says why: `self`, `cycle`, `cross_repo`, `not_an_issue`.
@@ -51,13 +52,19 @@ someone is, and one word:
   accent ring. Nothing on the map animates on its own: an animation inside
   a large inline SVG repaints the whole drawing every frame.
 - _blocked_ — open, waiting for something open.
+- _deferred_ — put off on purpose, and never ready: it waits behind the
+  Later gate, it is filed under Later, or only deferred work needs it. The
+  card, the data (`deferredBecause`) and the issue's own page say which, in
+  the same words: "behind the Later gate", "filed under Later", or "only
+  deferred work needs it: #12 One interface", naming the deferred limbs
+  above it. A dashed, quiet card.
 - _waiting_ — an open pull would close it: proposed, not landed.
-- _parked_ — the last word on it is the crew parking it; a quiet warning
-  tint, for the planner's next pass.
+- _parked_ — the crew parked it twice since someone who directs the crew
+  last spoke on it; a quiet warning tint. It is the planner's now (below).
 - _done_ — closed, still on an edge; it recedes.
 
-Working outranks waiting, waiting outranks parked, and the rest is what
-the graph says. Under the drawing, one line counts them.
+Working outranks waiting, waiting outranks parked, parked outranks deferred,
+and the rest is what the graph says. Under the drawing, one line counts them.
 
 **Fit, pan, zoom.** The drawing fits its container's width on load and
 never overflows the page sideways. Drag pans it; ⌘ or Ctrl and scroll (a
@@ -86,7 +93,8 @@ which is what an agent reads before it starts and what a repository in
 autonomous mode reads to pick the next thing. Both carry where the crew
 is: an issue with an agent run in flight is marked _working_ on the
 drawing and listed under `working` in the data; every issue in the data
-carries its `word`, and `counts` sums them.
+carries its `word`, and `counts` sums them. `parkedTwice` lists each issue
+the crew handed to the planner — its number, title and every reason.
 
 ### The global map
 
@@ -108,6 +116,45 @@ same, one entry per repository, each the repository's map data plus
 `autonomy`, `spentTodayUsd`, `ceilingUsd`, `inFlight`, `workers` and
 `idle`.
 
+## Parked twice
+
+An issue the crew parked twice since someone who may direct the crew last
+spoke on it is struck out: the clock no longer dispatches it. A reader's
+comment does not start the count again, and neither does the planner's. A
+park is the crew's own note, written in the name of someone who directs
+it or by one of the repository's agents; a comment that only reads like one
+strikes nothing. A struck-out issue is not dropped. The second park says every reason on the issue, in the one
+note, and hands it to the planner (`crew/parks.ts`):
+
+- **The planner's next pass is owed it.** A hand-over newer than the last
+  planning run asks the planner once — with a full map, and even when the
+  planner declined the direction and no person has spoken. Its task lists
+  _Parked twice: #n_ with every reason.
+- **The planner leaves it in one of three states**: split (closed as
+  `split` into its parts), replaced (a fresh issue, the old one closed as
+  split into it with "replaced by #m"), or deferred (linked to wait for the
+  Later gate — the open issue whose title starts _Later gate_, which the
+  owner closes to let deferred work start — with the reasons in a comment).
+  A planner closes an issue by exactly this grant, on an open issue the
+  crew parked twice: `split`, only into open issues made since the
+  hand-over, never the issue itself or the Later gate, so a closed or an
+  old issue cannot stand in for a drop; and `dropped`, only when no
+  person's ask stands in the issue: an agent wrote it, and it did not come
+  from a split of a person's issue, however many splits ago
+  (`standsForPerson`). What a person asked for is dropped by a person.
+  Never `done`, never a pull, never a reopen, never on a mirror.
+- **Writing an issue does not make it an agent's to close.** An author's
+  say over their own issue is a person's. An agent closes an issue by
+  landing a pull for it or by the grant above, and reopens none — so the
+  issue a planner opened to replace a person's ask is not the planner's to
+  close, and the ask cannot be lost that way (#724).
+- **Until then it is listed**: on the board, above its regions, for
+  whoever owns the app, with its reasons and a link to the issue; and under
+  `parkedTwice` in the map's data and the MCP's `map`. A comment from the
+  planner or a builder does not take it off. What does: it is closed, it
+  waits for something open, someone takes it up (a run in flight, or an
+  open pull that would close it), or a person says on it what to try.
+
 ## Planning by the crew
 
 An agent's brief says how: open issues each small enough for one run, link
@@ -116,6 +163,171 @@ on this forge — turns a direction into a map that way; a builder that finds
 a task too big for one run splits it into linked issues instead of leaving
 half of it. Either way the plan is where everyone can see it, and closing
 an issue is what frees the next.
+
+## Pillars and the Later gate
+
+A direction can name what the work is for. Each such _pillar_ is an open
+umbrella issue whose title starts with its name — `P0 Trust: …` — and an
+issue serves the pillar whose umbrella waits for it; nothing else records
+it (`src/core/pillars.ts`). A title alone does not make one: the umbrella,
+the gate and the Later umbrella count only when a person who writes the
+repository opened them here — not an agent, not a reader, not an issue
+imported from an origin — so on a public repository a stranger's "P0 …"
+makes no pillar and their "Later gate: …" holds nothing. Work that serves no pillar is not dropped and
+is not ready either: it waits behind the _Later gate_, the open issue whose
+title starts `Later gate:`, opens with one sentence that says why it waits,
+and stands under the `Later: …` umbrella where the repository keeps one.
+The owner moves an item out by unlinking it from the gate, or opens them
+all by closing the gate.
+
+A plan says which it is for every issue. The planner's brief tells it to
+link each issue it opens under its pillar or behind the gate, and the MCP
+`plan` tool refuses an item that says neither. A repository with no
+umbrella issues has no pillars, and plans as it always did.
+
+The umbrellas, the Later umbrella and the gate are the plan's own, not
+work. None of them is ever _ready_, so the crew never picks one and the map
+never lists one under _Ready now_; one with nothing open in front of it
+reads _parked_, "the plan's own: a person closes it, the crew never picks
+it". An agent does not close one, whatever access it holds, and a merged
+pull does not either, whatever its body says it closes: a person who writes
+the repository closes an umbrella when its pillar is done, and closing the
+gate opens everything behind it.
+
+Membership is direct: an issue the umbrella itself waits for. Under two
+umbrellas an issue serves the first, and a pillar outranks _Later_, which
+is what waits behind the gate or stands under the Later umbrella.
+Umbrellas and the gate are the plan's furniture: one umbrella waiting for
+another is an order between pillars, not membership.
+
+**What a person sees** (#610). `core/pillars.ts` is the one reader of all
+this; three surfaces show what it reads.
+
+- **The label.** An issue carries the label of the pillar it serves —
+  `Later` for deferred work — made the first time it is needed, and no
+  other pillar's. `actions/pillars.ts` writes it where the edges change (a
+  link or an unlink, a `plan`, a split, where each umbrella that waited for
+  the whole now waits for its parts) and at boot for what was linked
+  before. The label only says what the edges say: it is never read back,
+  and one set by hand does not survive the next boot. That holds for a
+  label the repository already had under a pillar's name: at boot it is
+  taken off every issue that does not serve that pillar. A mirrored
+  repository's labels are its origin's, so none is written there.
+- **The map by pillar.** Beside the drawing, _By pillar_ lists each pillar
+  and _Later_ — a link to its issues, the list narrowed to its label — with
+  what is open, ready and blocked, then _no pillar_ with the issues that
+  serve none, each a link, since they are the ones to file. In the data
+  every issue carries `pillar` (null for none), `pillars` is the same
+  rows, and `mergedByPillar` is `{ days: 7, counts: [{ pillar, merged }] }`:
+  the pulls merged in the last 7 days, each counted under the pillar of the
+  first issue it closes that serves one.
+- **The board by pillar.** _Landed_ leads with the same seven days for
+  each app that has pillars: every pillar and its count, zero or not, each
+  a link to its issues.
+
+## Milestones
+
+How far each thing asked for is, read from the dependency tree
+(`core/milestones.ts`); nothing is stored. A _milestone_ is an issue that
+waits for others, and what is beneath it is everything it waits for,
+directly or through others. The plan's furniture is beneath nothing: one
+pillar's umbrella waiting for another is an order between pillars.
+
+`/:owner/:name/milestones` is the plan as a handful of _limbs_ — the
+pillars and Later, or, in a repository with no pillars, the issues that
+wait for others and that nothing waits for. Each is one line with its
+weight: done of total, open beneath it, how many are building, pulls merged
+in the last 7 days, its last movement and, for whoever may see owner facts,
+what it cost. The work counted is what is open and what closed as done;
+dropped and split issues are neither.
+
+`/:owner/:name/milestones/:number` is one milestone opened: who is building
+what, what is blocked and on what, what merged this week, and a plain
+estimate — the open issues at the pace of the last 7 days, or a sentence
+saying there is no pace to estimate from. What it waits for directly shows
+as limbs where a child brings a tree of its own, and as leaves where it
+brings none (one that only waits for its siblings is a leaf in an order).
+Leaves show only on the limb they are under, and each issue shows once:
+what is under _Building now_ or _Blocked_ is not listed again under
+_Issues_. Later's milestone counts what the map's Later row counts: what
+the Later umbrella waits for, and what waits behind the gate whether or
+not the umbrella waits for it.
+
+A limb is flagged _a candidate to trim_ when it has open work, nothing
+landed in 7 days and it has been here that long, or when it has eight or
+more open issues and nobody building. Later is deferred on purpose and is
+never flagged.
+
+It is one tap away: each pillar in the map's _By pillar_ and in the board's
+7-day line opens its milestone, the map names the page, and the issue page
+of anything that waits for others says _see how far it is_. The same
+numbers are data at `GET /api/v1/repos/:owner/:name/milestones` and
+`…/milestones/:number`, and in the MCP's `milestones`: `building` is the
+count on a limb and on a milestone alike, and `buildingNow` lists who is on
+what. An agent's name and the spend are the owner's to see: a reader gets
+"the crew" and no cost.
+### Trimming at a limb
+
+Whoever administers the repository acts on a whole limb from its milestone,
+not on each leaf (#733). Each action is one fleet operation
+(`docs/FLEET.md`): a preview that lists every row it writes and every
+issue it takes along, nothing written until it is confirmed, a receipt, and
+one undo.
+
+- **Defer** files every open issue that is the limb's own for later, the
+  limb first: out from under its pillar, under Later, behind the Later
+  gate — one row for each, so nothing is put off that the preview did not
+  show. (On a plan where every issue is linked under its pillar, moving the
+  limb alone would leave its leaves ready.) What other work outside the
+  limb still waits for stays pickable and is listed as staying; an
+  umbrella's wait is membership, not need. Anything linked beneath a
+  deferred issue afterwards follows by the graph's own rule — an open issue
+  that only deferred work waits for is deferred too, and is never ready.
+  An issue nothing waits for at all is not touched by the rule. Each
+  deferred issue reads _deferred_ wherever it is shown, with why: on the
+  map, in its data and the MCP's `map`, on its own page, and on the
+  milestone.
+- **Resume** is the reverse, leaves first: what was filed for later comes
+  back under the pillar named, or under none; an issue of the limb that was
+  not filed for later is left as it is.
+- **Close as not doing** closes every open issue that is the limb's own,
+  the limb included, as `dropped`, with the reason said on each. What other
+  work outside the limb also waits for is not the limb's to close.
+
+An umbrella or the gate is the plan's own and is not filed. A leaf beneath
+a limb that is not deferred cannot be deferred alone: defer the limb. A
+candidate to trim offers Defer first. Raising and lowering a limb against
+its siblings is #760; handing one to the planner is #761.
+
+The same is `POST /api/v1/repos/:owner/:name/milestones/:number/limb`
+`{ "action": "defer" | "resume" | "close", "reason"?, "pillar"?, "dryRun"? }`
+and the MCP's `limb`, both a dry run unless `dryRun` is false. Applying and
+undoing take an admin token of a person who administers the repository; an
+agent may look and never apply.
+
+### Watching a milestone
+
+A person who is signed in presses **Watch** on a milestone, once (#732);
+pressing it again stops. A watch is theirs alone: one row per person and
+issue (`core/watches.ts`), no event, nobody else told. What it says is read
+from the plan each time, as that person:
+
+- **In the feed**, one item for each milestone they watch, and only when
+  there is something new: how far it is and what merged since they last
+  opened it from the feed, or began to watch. The item is renamed as the
+  milestone moves, so it is one item however many pulls merge, and a
+  dismissal holds only until the next one does. Muting the app does not
+  mute it.
+- **On the phone**, one line when it lands, with a link to the milestone,
+  through the notify URL (`crew/notify.ts`). Landed means its issue closed
+  as done, or the last open issue beneath it closed. Progress never pages,
+  and neither does a milestone that was dropped or split: the feed says
+  that it will not land as written.
+
+A watch on a repository the person can no longer read says nothing, in the
+feed or on the phone. An agent does not watch. The same is `PUT` and
+`DELETE /api/v1/repos/:owner/:name/milestones/:number/watch` with a write
+token, `watching` on the milestone's read, and the MCP's `watch`.
 
 ## A repository on its own
 
@@ -133,16 +345,30 @@ asked, under **Settings → Autonomy**:
   about a green pull reaches a person: first, a pull that no longer merges
   because `main` moved under it sends its agent one run (`conflict`, naming
   the files) to merge `main` into the branch, one waiting at a time, up to
-  the same limit a failing check has; then the decider reads the pull
-  against the direction and either lands it or hands it to the crew's
-  _reviewer_ (`review` run: the diff, the preview, the pictures the forge
-  took), whose approval lands it and whose change request goes back to the
-  builder as feedback; a crew with no reviewer lands it. Nothing waits for a
+  the same limit a failing check has; then the green head goes to the
+  crew's _reviewer_ (`review` run: the diff, the preview, the pictures the
+  forge took), whose approval lands it and whose change request goes back
+  to the builder as feedback; a crew with no reviewer lands it. With two
+  reviewers, a change to sign-in, tokens, secrets, the sandbox or the HTTP
+  edge goes to the one whose brief says it reads for security, and every
+  other change to the other (`crew/review.ts`). Every green pull an agent
+  wrote is sent this way in any repository with a reviewer, autonomous or
+  not; a review run is `ok` when it posted a verdict, since a reviewer
+  pushes nothing. A review that does not come back — the run ends without
+  a verdict, or is still out after 20 minutes — is sent once more; after
+  the second, or an hour green with no verdict however the runs went, the
+  review has lapsed and the pull lands on green with a note saying so. A
+  missing reviewer never holds a pull silently. An agent's verdict stands
+  only while the agent is a reviewer on the crew, and the reviewer gets two
+  rounds of changes on a pull — a round is a head it asked changes on;
+  past them its request is advice. A builder's run that answers a change
+  request without pushing parks the pull. A review run never resumes an
+  earlier session, and the same verdict sent twice on one head is one. Nothing waits for a
   person: a pull whose check stays red past its tries, or whose branch
   could not be brought up to date, is _parked_ — closed with the reason,
   its issue put back on the map unassigned with the same note — and the
   crew moves on; the planner's next pass splits or rewrites a parked
-  issue, and one parked twice is left to the direction. A dry map is
+  issue, and one parked twice is handed to the planner (below). A dry map is
   planned again within twenty minutes, and the planner is told the
   direction is never finished: when what it names is built, it proposes
   the next increment and leaves at least three ready issues. The reviewer
@@ -194,6 +420,33 @@ and after the same bounded number of tries the crew stops and waits for a
 person: autonomy re-queues nothing a person must decide. The map page says
 how it stands: _Autonomous · $12.40 of $40 today · 1 of 2 slots_, and why
 it is paused when it is.
+
+## Holding a pull
+
+A person who writes the repository can say "not this one yet" about any
+open pull, with one line that says why (`src/core/holds.ts`,
+`src/actions/holds.ts`). While the hold stands, no rule touches the pull:
+it is not sent to the crew's reviewer, not landed on green or on an
+approval, not brought up to date by the crew, and not parked (parking
+would close it and hand its issue back to be built again). A person's own
+merge still works; the hold is on the rules, not on people. One word that
+ships many changes at once is the exception: a batch from the asks leaves
+a held pull where it is and says who holds it and why, since whoever sent
+the batch may never have seen the hold. They ship it from its own page, or
+release it first. An agent cannot hold or release, on the crew or not,
+and neither can a reader.
+
+Releasing starts the review clock again: review is owed from when the head
+went green or from when the pull was last let go, whichever is later, so a
+pull held past the hour and then released goes to the reviewer like any
+newly green one and is never landed as lapsed.
+
+The hold shows on the change page and the pull's own page with who and
+why, and on the map the issue the pull answers says _held_. It is set and
+lifted from the change page, with `PUT` and `DELETE
+/api/v1/repos/:owner/:name/pulls/:number/hold`, or with the MCP `hold`
+tool, which plans unless told `dryRun: false`. A held pull asks nothing of
+the person who holds it.
 
 ## The decider
 
@@ -263,3 +516,15 @@ material: whether the decider beats the rule is a query, not an opinion.
 Every answer a decider gives is a log line — `decided by=typesafe ms=270
 answers=builder=mason@0.99 size=tiny@0.58 …` — so what it said and how
 long it took are always in the forge's log.
+
+## Closing takes a reason
+
+`PATCH …/issues/:n { "state": "closed", "reason": "done"|"dropped"|"split", "into": [m, …] }`.
+No reason means done. Done frees what waited. Dropped or split closes the
+issue but holds its dependents as _parked_, the map saying why ("#4 was
+dropped"), until a writer relinks them or confirms the edge
+(`POST …/dependencies/:m/confirm`, the page's "Still holds"); the crew may
+not confirm its own plan. Split also moves the parent's blocked-by edges to
+the issues named in `into` (a child that would make a loop is skipped), and
+the parent waits for nothing. Reopening clears the reason. Closes that
+predate reasons count as done.

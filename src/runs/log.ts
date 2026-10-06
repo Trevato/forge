@@ -4,7 +4,8 @@
  * it — and the in-process listeners are the optimisation that makes a log
  * line appear the moment it is written, on both surfaces, without a poll.
  *
- * Every line passes through `redactSecrets` on the way in. A run's token
+ * Every line passes through `redactHeld` on the way in: credential shapes,
+ * and the exact values a run was granted. A run's token
  * is in its environment, a curl in the agent's transcript may echo a
  * header, and a log page is read by people the token was never meant for.
  */
@@ -19,7 +20,7 @@ import {
   closeSync,
 } from "node:fs";
 import { join } from "node:path";
-import { redactSecrets } from "../kernel/log.ts";
+import { redactHeld } from "../kernel/log.ts";
 
 export const runsRoot = (dataDir: string): string => join(dataDir, "runs");
 
@@ -39,7 +40,7 @@ export function appendRunLog(
   runId: string,
   line: string,
 ): void {
-  const clean = redactSecrets(line.replace(/\r?\n/g, " ")).slice(0, MAX_LINE);
+  const clean = redactHeld(line.replace(/\r?\n/g, " ")).slice(0, MAX_LINE);
   mkdirSync(runsRoot(dataDir), { recursive: true });
   appendFileSync(runLogPath(dataDir, runId), `${clean}\n`);
   const watching = listeners.get(runId);

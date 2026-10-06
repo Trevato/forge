@@ -13,6 +13,8 @@ const outcome = (over: Partial<ClaudeOutcome>): ClaudeOutcome => ({
   result: "",
   costUsd: 0,
   turns: 1,
+  tokensIn: 0,
+  tokensOut: 0,
   reason: "error",
   ...over,
 });

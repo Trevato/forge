@@ -68,8 +68,12 @@ export type AccountSection =
   | "keys"
   | "origins"
   | "crew"
+  | "accounts"
   | "subscriptions"
-  | "backups";
+  | "backups"
+  | "secrets"
+  | "capacity"
+  | "cloud";
 
 /**
  * The settings sidebar, with Origins on it. Kept here so the account pages
@@ -85,6 +89,12 @@ export function accountSections(
     ...(o.admin
       ? [
           {
+            label: "Accounts",
+            href: "/settings/accounts",
+            icon: "users" as const,
+            current: current === "accounts",
+          },
+          {
             label: "Crew",
             href: "/settings/crew",
             icon: "bot" as const,
@@ -95,6 +105,24 @@ export function accountSections(
             href: "/settings/subscriptions",
             icon: "key" as const,
             current: current === "subscriptions",
+          },
+          {
+            label: "Secrets",
+            href: "/settings/secrets",
+            icon: "lock" as const,
+            current: current === "secrets",
+          },
+          {
+            label: "Cloud accounts",
+            href: "/settings/cloud",
+            icon: "key" as const,
+            current: current === "cloud",
+          },
+          {
+            label: "Capacity",
+            href: "/settings/capacity",
+            icon: "activity" as const,
+            current: current === "capacity",
           },
           {
             label: "Backups",

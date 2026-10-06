@@ -7,6 +7,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,6 +17,7 @@ import { createSession, pruneSessions } from "../src/core/sessions.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "A",
@@ -98,7 +100,7 @@ describe("parity: full control through actions and the API", () => {
   const mint = async (user: string, scope: string) =>
     (
       await call("POST", "/api/v1/tokens", {
-        body: { username: user, password: PASS, name: scope, scope },
+        body: { adminConfirm: true, username: user, password: PASS, name: scope, scope },
       })
     ).json.token as string;
 
@@ -120,6 +122,7 @@ describe("parity: full control through actions and the API", () => {
       });
       expect(res.status).toBe(201);
     }
+    proveAll(app);
     aliceRw = await mint("alice", "rw");
     aliceAdmin = await mint("alice", "admin");
     aliceRo = await mint("alice", "ro");
@@ -285,7 +288,7 @@ describe("parity: full control through actions and the API", () => {
     expect(listed.list.every((t) => t.token === undefined)).toBe(true);
 
     const throwaway = await call("POST", "/api/v1/tokens", {
-      body: { username: "alice", password: PASS, name: "tmp", scope: "ro" },
+      body: { adminConfirm: true, username: "alice", password: PASS, name: "tmp", scope: "ro" },
     });
     const id = throwaway.json.id as string;
     expect(
@@ -321,14 +324,16 @@ describe("parity: full control through actions and the API", () => {
     });
     expect(bad.status).toBe(422);
     expect(bad.json.error).toBe("unknown_branch");
+    const canary = join(work, "written-by-git");
     expect(
       (
         await call("PATCH", "/api/v1/repos/alice/pub", {
           token: aliceAdmin,
-          body: { defaultBranch: "--output=/tmp/x" },
+          body: { defaultBranch: `--output=${canary}` },
         })
       ).status,
     ).toBe(422);
+    expect(existsSync(canary)).toBe(false);
 
     const moved = await call("PATCH", "/api/v1/repos/alice/pub", {
       token: aliceAdmin,
@@ -741,6 +746,8 @@ describe("parity: full control through actions and the API", () => {
   // ── orgs & teams ─────────────────────────────────────────────────────
 
   test("orgs and teams: what each caller may see and do", async () => {
+    // Alice changed her email above; the new address is taken as proven.
+    proveAll(app);
     expect(
       (
         await call("POST", "/api/v1/orgs", {

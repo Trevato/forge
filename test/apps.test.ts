@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
+import { seconds, Stopwatch } from "../src/apps/timing.ts";
 import { envDataDir, envDir, previewEnv } from "../src/apps/data.ts";
 import { childEnv, runStep, startProcess } from "../src/apps/process.ts";
 import type { AppManifest } from "../src/apps/manifest.ts";
@@ -39,7 +40,7 @@ import {
 import type { AppRecord } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
-import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { getRepo, getRepoById, type Repo } from "../src/core/repos.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
 import {
@@ -150,7 +151,7 @@ describe("apps: production, previews, data, gates, crew", () => {
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -528,7 +529,7 @@ describe("apps: production, previews, data, gates, crew", () => {
             {
               app: {
                 run: "bun run src/server.ts",
-                test: "sleep 3 && bun test",
+                test: "sleep 8 && bun test",
                 tty: "bun run src/tty.ts",
               },
             },
@@ -562,8 +563,9 @@ describe("apps: production, previews, data, gates, crew", () => {
       await Bun.sleep(50);
     }
     expect(answered).toBe(true);
-    // It answered well inside the test step's own sleep.
-    expect(Date.now() - start).toBeLessThan(3_000);
+    // It answered well inside the test step's own sleep — with seconds to
+    // spare, so a loaded machine cannot turn the margin into a race.
+    expect(Date.now() - start).toBeLessThan(6_000);
 
     const status = runtime.envStatus(record, `pull-${opened.value.number}`);
     expect(status?.state).toBe("running");
@@ -1002,7 +1004,7 @@ describe("a preview whose copied data the build cannot read starts fresh (issue 
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1220,7 +1222,7 @@ describe("a start failure is said in the app's own terms, not the forge's paths 
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1315,7 +1317,7 @@ describe("New app: turn the sentence into a plan and pick the crew", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-plan-"));
     app = createApp({ dataDir, port: 0 });
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1371,6 +1373,15 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build a notes app\
     expect(made.value.issue?.body).toContain("Build a notes app");
     expect(made.value.issue?.body).toContain("- [ ] Set up storage");
     expect(made.value.issue?.body).toContain("- [ ] Add a form");
+  });
+
+  test("a slug already in use is refused before any repository exists", async () => {
+    const first = await newApp(app, alice, { name: "held-x" });
+    expect(first.ok).toBe(true);
+    const second = await newApp(app, alice, { name: "held_x" });
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.error).toBe("slug_taken");
+    expect(getRepo(app.db, alice.username, "held_x")).toBeUndefined();
   });
 
   test("a plan naming an agent not on the forge is refused; the sentence still opens unassigned", async () => {
@@ -1465,7 +1476,7 @@ describe("New app on a forge with no agents at all: the sentence still opens", (
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-noagents-"));
     app = createApp({ dataDir, port: 0 });
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1506,7 +1517,7 @@ describe("New app: the form asks for the sentence, and names it (issue #60)", ()
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "nadia",
       email: "nadia@forge.local",
       password: "a-good-passphrase",
@@ -1630,7 +1641,7 @@ describe("New app lands on the app's page, not the flash (issue #133)", () => {
       concurrency: 1,
     });
     await runtime.start();
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "priya",
       email: "priya@forge.local",
       password: "a-good-passphrase",
@@ -1691,7 +1702,7 @@ describe("New app lands on the app's page, not the flash (issue #133)", () => {
     expect(html).toContain("#1 is assigned to bot.");
   });
 
-  test("in dev mode, POST /apps/new redirects to dev's app page, chosen from ctx.mode", async () => {
+  test("in dev mode, POST /apps/new redirects to the repository's home, its strip carrying the URL", async () => {
     const submitted = await fetch(`${base}/apps/new`, {
       method: "POST",
       headers: { cookie: `${cookie}; forge_mode=dev`, origin: base },
@@ -1705,7 +1716,7 @@ describe("New app lands on the app's page, not the flash (issue #133)", () => {
       redirect: "manual",
     });
     expect(submitted.status).toBe(303);
-    expect(submitted.headers.get("location")).toBe("/priya/tracker/app");
+    expect(submitted.headers.get("location")).toBe("/priya/tracker");
     const flash = (submitted.headers.get("set-cookie") ?? "").split(";")[0]!;
     expect(flash).toStartWith("forge_flash=");
 
@@ -1800,7 +1811,7 @@ describe("the App page's terminal line survives an email-scanning edge (issue #2
       concurrency: 1,
     });
     await runtime.start();
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "priya",
       email: "priya@forge.local",
       password: "a-good-passphrase",
@@ -1873,7 +1884,7 @@ describe("the forge's own restart never reads as this deploy's failure (issue #2
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1960,6 +1971,7 @@ describe("the forge's own restart never reads as this deploy's failure (issue #2
         runtime: undefined,
         record: undefined,
         history: servingHistory(),
+        viewer: undefined,
       },
       finished!,
     );
@@ -2007,6 +2019,7 @@ describe("a start that fails reports the message, not its last line (issue #270)
     health: "/",
     ready: 2,
     tty: null,
+    service: null,
     looks: ["/"],
   };
 
@@ -2113,4 +2126,159 @@ Bun v1.3.14 (Linux x64 baseline)`;
       await rm(dir, { recursive: true, force: true });
     }
   }, 20_000);
+});
+
+// ---- the boot (issue #296) ----
+/**
+ * A restart brings production back first, and says where each deploy's
+ * time went (issue #296): every app's production is reconciled before any
+ * preview, and the log names the wait for a turn, the manifest, the
+ * checkout, the data and the process's own start, each with its seconds.
+ */
+describe("the stopwatch a deploy's log reads from", () => {
+  test("each lap is the time since the one before, in order, on one line", () => {
+    let now = 1_000;
+    const clock = new Stopwatch(() => now);
+    now += 0; // no wait for a turn
+    clock.lap("turn");
+    now += 340;
+    clock.lap("checkout");
+    now += 20_060;
+    clock.lap("data");
+    expect(clock.elapsed()).toBe(20_400);
+    expect(clock.line("starting the process")).toBe(
+      "timing: starting the process 20.4s after the deploy started — turn 0.0s · checkout 0.3s · data 20.1s",
+    );
+  });
+
+  test("seconds never go negative, and round to a tenth", () => {
+    expect(seconds(-5)).toBe("0.0s");
+    expect(seconds(1_250)).toBe("1.3s");
+  });
+});
+
+describe("a restart brings every app's production up before any preview", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+  let alice: User;
+  const DOMAIN = "boot.test";
+  const repos: Repo[] = [];
+  const previews: string[] = [];
+
+  // No package.json, so a checkout is never warm and a preview is never
+  // put back to sleep at boot: every environment deploys again.
+  const FORGE_JSON = JSON.stringify({
+    app: { run: "sh run.sh", install: "", health: "/", ready: 10 },
+  });
+  const RUN_SH = `exec bun -e "Bun.serve({port:Number(process.env.PORT),hostname:'127.0.0.1',fetch:()=>new Response('ok')})"\n`;
+
+  const runtimeFor = (): AppsRuntime =>
+    new AppsRuntime(app, {
+      domain: DOMAIN,
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      // One permit: the order the gate hands them out is the order the
+      // environments come up, and that order is the assertion.
+      concurrency: 1,
+    });
+
+  async function settledAll(
+    where: (run: Run) => boolean,
+    count: number,
+  ): Promise<Run[]> {
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      const runs = repos
+        .flatMap((r) => listRuns(app.db, r.id, { kind: "deploy", limit: 50 }))
+        .filter(where);
+      if (
+        runs.length >= count &&
+        runs.every((r) => r.state === "ok" || r.state === "failed")
+      )
+        return runs;
+      await Bun.sleep(50);
+    }
+    throw new Error("runs did not settle in time");
+  }
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-boot-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    runtime = runtimeFor();
+    await runtime.start();
+    const created = await createUser(app.db, { trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!created.ok) throw new Error(created.error);
+    alice = created.value;
+    for (const name of ["first", "second"]) {
+      const made = await createRepo(app, alice, {
+        name,
+        visibility: "public",
+      });
+      if (!made.ok) throw new Error(String(made.error));
+      const repo = made.value;
+      repos.push(repo);
+      const committed = await commitToBranch(app, alice, repo, {
+        message: "An app",
+        files: [
+          { path: "forge.json", content: FORGE_JSON },
+          { path: "run.sh", content: RUN_SH },
+        ],
+      });
+      if (!committed.ok) throw new Error(JSON.stringify(committed.error));
+      const enabled = enableApp(app, alice, repo, {});
+      if (!enabled.ok) throw new Error(String(enabled.error));
+      const branch = await commitToBranch(app, alice, repo, {
+        branch: "note",
+        base: repo.defaultBranch,
+        message: "A note",
+        files: [{ path: "NOTE.md", content: "hi\n" }],
+      });
+      if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+      const opened = await openPull(app, alice, repo, {
+        title: "A note",
+        baseBranch: repo.defaultBranch,
+        headBranch: "note",
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      previews.push(`pull-${opened.value.number}`);
+    }
+    await settledAll(() => true, 4);
+  }, 90_000);
+
+  afterAll(async () => {
+    await runtime.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("both productions answer before either preview, and the log says where the time went", async () => {
+    await runtime.stop();
+    runtime = runtimeFor();
+    await runtime.start();
+    const boot = await settledAll((r) => r.reason === "boot", 4);
+    expect(boot.every((r) => r.state === "ok")).toBe(true);
+    const order = [...boot]
+      .sort((a, b) => Date.parse(a.servingAt!) - Date.parse(b.servingAt!))
+      .map((r) => (r.env === "production" ? "production" : "preview"));
+    expect(order).toEqual(["production", "production", "preview", "preview"]);
+
+    const production = boot.find((r) => r.env === "production")!;
+    const text = readRunLog(dataDir, production.id).lines.join("\n");
+    expect(text).toMatch(
+      /timing: starting the process \d+\.\ds after the deploy started — turn \d+\.\ds · manifest \d+\.\ds · checkout \d+\.\ds · data \d+\.\ds · setup \d+\.\ds/,
+    );
+    expect(text).toMatch(
+      /timing: answered \d+\.\ds after the process was started/,
+    );
+  }, 90_000);
 });

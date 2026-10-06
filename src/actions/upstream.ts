@@ -10,7 +10,10 @@
 
 import type { App } from "../app.ts";
 import { forkRelation } from "../core/following.ts";
-import { getRepoById, type Repo } from "../core/repos.ts";
+import {
+  forkParentFor,
+  type Repo,
+} from "../core/repos.ts";
 import { listPulls, mergedPullsForRepos, type Pull } from "../core/pulls.ts";
 import type { User } from "../core/users.ts";
 import { aheadOids } from "../git/merge.ts";
@@ -39,7 +42,7 @@ export function openProposal(
   fork: Repo,
   parent: Repo,
 ): Pull | undefined {
-  return listPulls(app.db, parent.id, { state: "open", limit: 200 }).find(
+  return listPulls(app.db, parent.id, { sealed: true, state: "open", limit: 200 }).find(
     (p) => p.headRepoId === fork.id && p.headBranch === fork.defaultBranch,
   );
 }
@@ -51,10 +54,7 @@ export async function proposeUpstream(
 ): Promise<Result<Proposal, ProposeUpstreamError>> {
   const writer = requireWriter(app, actor, fork);
   if (!writer.ok) return writer;
-  const parent =
-    fork.forkParentId === null
-      ? undefined
-      : getRepoById(app.db, fork.forkParentId);
+  const parent = forkParentFor(app.db, fork, actor);
   if (parent === undefined) return err("not_a_fork");
   const already = openProposal(app, fork, parent);
   if (already !== undefined)
@@ -69,7 +69,7 @@ export async function proposeUpstream(
   // reached upstream some other way (a push, a release) does not propose it
   // twice; without this, a first proposal once listed forty changes for one
   // commit ahead.
-  const lastProposal = listPulls(app.db, parent.id, {
+  const lastProposal = listPulls(app.db, parent.id, { sealed: true,
     state: "closed",
     limit: 200,
   })

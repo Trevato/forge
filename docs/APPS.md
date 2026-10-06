@@ -60,6 +60,11 @@ around it. None is advisory.
    Pushed: redeployed at the new head. Closed or merged: stopped, and its
    data deleted. There is no orphan state; the sweep on boot rebuilds the
    set of previews from the set of open pulls.
+   A pull from someone who cannot write the repository is the exception:
+   its preview and its check run nothing until a person who can write
+   approves that exact head, and each new push waits for a new approval
+   (`core/pull_trust.ts`). A writer's own fork, and the crew's, run as
+   before; an approval by the crew does not count.
 3. **Preview data is a copy, never a window.** When a preview is created its
    data directory is cloned from production's at that moment (copy-on-write
    where the filesystem offers it — APFS, XFS, btrfs — a plain copy
@@ -91,16 +96,34 @@ around it. None is advisory.
    line stays measured from `startedAt` and says `after the deploy
 started`; a deploy no push asked for — a redeploy someone pressed, a
    boot reconcile — is worded the same way and never claims a push.
+   Where that time went is in the log too, step by step
+   (`apps/timing.ts`): a `timing:` line before the process starts splits
+   the wait for a permit (`turn`), reading the manifest, the checkout, the
+   data and the setup, and one after it answers says how long the process
+   took and when it first said anything. A restart brings every app's
+   production back before any preview, and a production deploy waiting
+   for a permit goes ahead of the previews waiting for one.
 5. **A private app answers only to someone the forge vouches for.** An app's
    `access` is `public` or `private` (defaulting to the repository's
    visibility), and it is set apart from the repository's own: the code can
    be private while the app is public, or the other way round. A private
    environment sets no cookie of its own; a person arriving by its link is
-   sent to the forge to sign in, which checks `canRead` on the repository
-   and returns them with a signed, short-lived grant for the page they
-   wanted. Someone who cannot see the repository, and anything that is not
-   a person navigating, gets the forge's own "not found". Guessing the
-   hostname yields the same.
+   sent to the forge to sign in, which checks `canEnterApp` — the
+   repository's writers, its crew, and the people the app names (its
+   settings' **Who may enter**, `app_members` over MCP), never everyone who
+   can read it — and
+   returns them with a signed, short-lived grant for the page they wanted;
+   the proxy asks the same question again on every request, so a grant
+   stops working the moment its holder may no longer enter. Anyone else,
+   and anything that is not a person navigating, gets the forge's own "not
+   found". Guessing the hostname yields the same. Previews follow the app;
+   the terminal stays its writers' and crew's. Making the repository public
+   changes nobody's way in. A person the app names enters it and its
+   previews and gets nothing else: no code of a private repository, no
+   crew, no settings, no owner facts. What the app says about itself
+   follows the same rule: its environments' state and errors (`envsFor`),
+   its runs and their logs (`mayReadRuns`) and its run and serving events
+   reach only those who may enter it.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never
@@ -115,6 +138,40 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    agent processes are started with an explicit environment — `PATH`,
    `HOME`, a locale, and the variables this document names — never the
    forge's.
+9. **Repository code runs in a cell of its own.** An app, its previews,
+   its terminal, and every install, test and check step run inside
+   bubblewrap (`apps/contain.ts`), the tool that already holds the crew's
+   shell. In a cell the machine is read-only; the forge's data directory
+   and home are empty; `/tmp` is the cell's own; the only writable places
+   are its own checkout, its environment's data and a home kept beside it.
+   It has a pid namespace of its own, so no other process's environment or
+   memory is visible, and a network namespace of its own with loopback and
+   nothing else: the way out is the forge's proxy (`apps/egress.ts`), which
+   reaches the forge and the hosts `forge.json` declares in `egress` (on
+   ports 80 and 443, unless an entry names its port), and refuses anything
+   else with a 403 that names the host and port. A declared name that
+   resolves to a private, loopback or link-local address (the cluster, the
+   node's metadata service, another pod) is refused too. Every mount that
+   may carry a secret is empty inside: `/run/secrets`, `/var/run/secrets`,
+   and every tmpfs the machine mounts outside `/dev`, `/proc` and `/sys`
+   (how Kubernetes mounts a secret or a service-account token) — and a pod
+   that runs the forge should set `automountServiceAccountToken: false`
+   all the same, since the forge never talks to the cluster. Inside
+   Kubernetes a cell goes further and sees an allow-list of mounts: none
+   of the pod's but the root, its own /dev, /proc and /sys,
+   `/etc/hosts`, `/etc/hostname`, `/etc/resolv.conf`, and the mounts the
+   runtime and its tools live on — so a ConfigMap, hostPath, PVC or CSI
+   volume mounted for the forge is empty inside. Elsewhere (a developer's
+   machine, whose system is itself mounts: `/nix/store`, a home) the rule
+   is the machine's mounts minus the secret-bearing ones above.
+   `FORGE_CELL_MOUNTS=allow-list|deny-list` chooses either, and
+   `FORGE_CELL_MOUNTS_KEEP` (`:`-separated) names a read-only system mount
+   the allow-list must keep. Memory, CPU
+   (averaged over 30 seconds) and disk are watched from outside; a cell
+   over a limit is stopped, and the reason is the step's error or the
+   app's last log line. Where the host cannot hold a cell (no bubblewrap,
+   no user namespaces — macOS), the code runs as before and every deploy
+   and check says so on its run page: "Uncontained", with the reason.
 
 ## The golden path
 
@@ -168,6 +225,36 @@ that before the deploy fails; `tty` is the app's terminal interface (below);
 file is read from the commit being deployed, never from the database — a
 pull that changes how the app runs is previewed the way it will run.
 
+Two more fields say what the app's code may use (rule 9):
+
+```json
+{
+  "egress": ["api.stripe.com", "*.cdn.example.com"],
+  "app": { "run": "bun run src/server.ts", "limits": { "memory": 1024, "cpus": 1, "disk": 2048 } },
+  "check": { "run": "bun test", "limits": { "memory": 4096 } }
+}
+```
+
+`egress`, at the top level, is shared by the app and its check: exact host
+names, or `*.` for every name below one, at most 32, each reachable on 80
+and 443 — `db.example.com:5432` names one other port instead. Without it an app
+reaches the forge and nothing else; install, test and check steps also
+reach `registry.npmjs.org`. `limits` (MiB, cores, MiB) default to 512 MiB,
+1 core and 1 GiB for an app and 2 GiB, 2 cores and 4 GiB for a step, and
+are capped by the machine (`FORGE_CELL_MEMORY_MAX_MIB`, default 4096; the
+number of cores; `FORGE_CELL_DISK_MAX_MIB`, default 16384). A cell's `/tmp`
+holds at most 256 MiB.
+
+A release that turns egress on must not break an app whose writers have
+not declared what it uses yet, so the operator can start it reported:
+`FORGE_CELLS_EGRESS=report` lets an undeclared public host through (on 80
+and 443 only) and
+counts it per repository (`<data>/egress/<repo id>.json`, under the
+forge's data where no cell sees it), and the app's page tells its writers
+which hosts it reached and the `egress` line to add. The default,
+`enforce`, refuses them. Files, processes and private addresses are held
+the same in both modes.
+
 The forge starts the app with:
 
 | variable           | value                                                                    |
@@ -181,6 +268,8 @@ The forge starts the app with:
 | `FORGE_APP_PULL`   | the pull number, on a preview                                            |
 | `FORGE_APP_SSH`    | the exact `ssh …` that opens this environment's terminal, when SSH is on |
 | `FORGE_URL`        | the forge's own base URL                                                 |
+| `FORGE_API_URL`    | the forge's JSON API, `FORGE_URL` + `/api/v1`                            |
+| `FORGE_TOKEN`      | a read-only token of the repository owner's, this process's alone        |
 
 That last one is for the app to call the forge back on, not to run the forge
 software itself — a shell that already has it set (a crew workspace does)
@@ -188,7 +277,31 @@ will make a locally-run forge refuse browser form posts as cross-site; see
 `README.md`'s "Run it".
 
 A terminal session (`tty`) gets the same variables plus `FORGE_APP_TTY=1`
-and `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest.
+and `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest
+— but no `FORGE_TOKEN`: a guest at the keyboard is not the owner.
+
+### Live UI into the forge
+
+`FORGE_TOKEN` is how a page an agent builds inside an app reads the forge
+it runs on: `POST $FORGE_URL/mcp` (`now`, `map`, `apps`, `usage` — every tool that
+does not write), the JSON API, and `GET $FORGE_URL/events`, the live stream
+of everything the owner may see, with `Authorization: Bearer $FORGE_TOKEN`.
+`examples/forge-live` is the worked example, and the acceptance test
+(`test/apps-token.test.ts`) deploys it.
+
+The token (`src/apps/token.ts`) is minted when a process starts — a deploy,
+a crash restart, a wake — and revoked when that process stops for any
+reason: replaced by the next deploy, asleep, stopped, torn down. It is
+named `app:<slug>/<env>` among the owner's tokens and expires a day out;
+the runtime's sweep pushes that forward while the process runs, so a forge
+that dies without revoking it leaves a token that stops working by itself.
+
+It is read-only on purpose. An app's pages are served to whoever its
+`access` lets in, and a token that could act would let every one of them
+act as the owner. Keep the token on the app's server — relay what a page
+needs, never the token or the raw events — and keep a page that shows the
+owner's forge behind `access: private` unless that is meant to be public.
+Steering the crew (`say`, `tell`) stays the person's own act, on the forge.
 
 An app that keeps its state under `FORGE_APP_DATA` gets production and
 preview data for free. The scaffold does exactly that with `bun:sqlite`.
@@ -250,6 +363,39 @@ only, or `preview` only — the select beside the value, or `"scope"` in the
 each scope, and where two apply the narrower one wins: a test key for
 previews, the live one for production, and neither process ever holds the
 other's. Every preview is one scope, whichever pull it serves.
+
+### Forge secrets
+
+A credential the forge itself needs (a DNS token to spawn forges, a bucket
+key for tofu state) is not an app's variable and never enters one. A forge
+admin seals it under **Settings → Secrets**, or on an organization's page or
+a repository's settings, or with `PUT /api/v1/secrets/:scope/:name`
+(`{ "value", "ref" }`; `ref` is an org name or `owner/name`; scope is `forge`,
+`org` or `repo`). Values are write-only; the list carries names, `updatedAt`
+and `lastReadAt`. The only read path is `resolveSecrets` in
+`core/secret_store.ts`: the narrowest scope wins, and each open appends a
+`secret.read` event (actor, run, name, scope — never the value). Rows are
+sealed under AAD `secret:<scope>:<name>`. Like every sealed row, they sit
+beside the key in the data directory and so in a snapshot.
+
+**A crew run's secrets.** An agent's brief, or an issue body written by someone
+with write access, declares what a run may hold in front-matter at the top:
+
+    ---
+    secrets: CLOUDFLARE_API_TOKEN@api.cloudflare.com, TF_BUCKET_KEY
+    ---
+
+Only declared names are resolved (`crew/grant.ts`); malformed names and names
+that would shadow the run's environment (`FORGE_*`, `GIT_*`, `PATH`, …) are
+refused in the run's log. Values go into the run's env beside `FORGE_TOKEN`,
+and `@host` widens the shell sandbox's egress for that run only. From the
+moment they are opened the values are redacted (plain, base64, URL-encoded)
+from the run log, the agent's last message and every event payload; before
+the forge commits for the agent it scrubs them from the tree, and a branch
+whose commits hold one is not pushed (`crew/leak.ts`). The names held are
+recorded in `run_secret` and shown on the run page; the grant is dropped when
+the run ends, and a sweep closes a crash's. A model that pushes by itself
+cannot be stopped from pushing a value it transformed beyond those encodings.
 
 A process reads its environment once, at start, so setting or removing a
 variable redeploys what reads it, at its current commit, and nothing else:
@@ -343,14 +489,25 @@ exactly this).
 
 Behind the headers is the grant. A person who opens an app through the
 forge — the app's link, or the app's own **Sign in** — is sent to
-`/apps/open`, which vouches for them if they can see the repository and
-sends them back with a signed grant in a cookie naming them (twelve hours,
+`/apps/open`, which vouches for them if they may enter the app (anyone,
+for a public app; a writer, the crew or a person it names, for a private
+one) and sends them
+back with a signed grant in a cookie naming them (twelve hours,
 HttpOnly, SameSite=Lax). The forge answers two paths on every app's host:
 `/__forge/signin?to=<path>` starts that round trip, and
 `/__forge/signout?to=<path>` drops the grant. A private app admits nobody
 without a grant; a public app admits everyone, and names those who have one.
 An app of a forge hosted here (a nested hostname) routes both paths through
 to that forge, which speaks for its own apps.
+
+A third path, `/__forge/report?from=<path>`, is for a public app of a public
+repository: it sends anyone, with no account, to the repository's report
+form (STANDARDS.md, "Reports from outside") with the page they came from,
+and is answered without waking the app, since the app being down is the
+usual reason to ask. Such an app's HTML responses, and the forge's own "not
+running" page for it, carry `Link: </__forge/report>; rel="help"`, and the
+template's footer links to it. A private app or repository offers none of
+this.
 
 What each of them may do is a table, not code: the app's `contract.json`,
 decided by the forge's own evaluator carried into the app. See
@@ -366,8 +523,8 @@ variables (`FORGE_APP_DATA` and the rest, plus `FORGE_APP_TTY=1` and
 `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest).
 `notes--12@forge` is the preview of pull 12's. The key still decides who
 you are: a private app's terminal answers only to a key the forge knows
-that can read the repository; a public app's answers to anyone, as its web
-page does. Resizes pass through; closing the connection sends the program
+that can write the repository, or the crew's; a public app's answers to
+anyone, as its web page does. Resizes pass through; closing the connection sends the program
 `SIGHUP`.
 
 The scaffold ships a small one (`src/tty.ts`, plain ANSI, no dependencies)
@@ -578,10 +735,14 @@ slot used to load, so nothing goes blank. Pictures are served at
 `/:owner/:name/looks/<env>/<commit>/<page>-<kind>.png` for another, with the
 repository's own read access, cached by commit.
 
-The picture is what the repository's owner would see: headless Chromium is
-pointed at the forge's own listener with the app's hostname resolved to
-loopback, through the grant door, so the app renders for a signed-in admin
-exactly as when the owner opens it. It is taken as the page loads — what an
+The phone and desktop pictures are what the repository's owner would see:
+headless Chromium is pointed at the forge's own listener with the app's
+hostname resolved to loopback, through the grant door, so the app renders for
+a signed-in admin exactly as when the owner opens it — and they are its
+writers' alone. The thumb is taken as nobody, for the tiles strangers see. A
+public app on a public repository is the world's to see, so all three of its
+pictures are taken as nobody, and a reader of its pulls sees the Look card
+too; each row records who it was `taken_as` (#727, #738). It is taken as the page loads — what an
 app draws after that is not in it — and one at a time, forge-wide, bounded
 in time and memory. A look is best-effort: it never blocks a check or fails
 a run; one that could not be taken is recorded with its reason, and the
@@ -652,6 +813,31 @@ it named none). The run that starts then resumes the same session in that
 clone and is told to carry on. A task is paused at most six times before
 the forge stops waiting on it.
 
+Each subscription keeps a _standing_ (`core/standing.ts`): where it is in
+its 5-hour and weekly windows — started, resets, cap, used, remaining, in
+US dollars of list price. When the provider turns a run away, the window
+it named and its reset are kept as _read_; everything else is _inferred_
+from the usage ledger — a window opens at the first run after the last one
+closed, and the cap is what the crew had spent when the provider last
+called the window full (a person's own use is not in the ledger, so it is
+a floor). An operator keeps a share of every window for people
+(Settings → Subscriptions, 0–90%); `crewRemaining` is what is left after
+it. Both read on `GET /api/v1/repos/:owner/:name/usage` and the MCP
+`usage` tool, under `standing`.
+
+Across repositories, the _fleet graph_ (`GET /fleet/graph`) draws a
+selection's spend and runs from the same ledger: the last 24 hours by UTC
+hour and the last 14 days by UTC day, stacked per repository, with the
+numbers as a table beside it. The selection is `?repo=owner/name`,
+repeated; absent, it is every repository you can write that spent in the
+last 14 days. A run counts in the bucket it ended in. Past eight
+repositories the smallest spenders share one grey series, "N others".
+The page redraws every 30 seconds while it is open, and at once on a
+`forge:fleet-op` event, so an operation's effect shows within a minute.
+The same numbers are `GET /fleet/graph.csv` and `GET /api/v1/fleet/graph`;
+spend is the owner's fact, so a repository you cannot write is dropped
+and counted with the names that do not exist, never told apart.
+
 The agent runs Claude Code headless in its clone, with a prompt the forge
 composes: who it is, what the task is, how to finish, and what will be
 refused. Permissions are the forge's, passed as settings: file tools
@@ -680,6 +866,14 @@ works the crew page says so, in words, before anyone assigns anything.
 
 ### Asleep
 
+A preview whose pull has had no push and no comment for three days is
+stopped and shown as _asleep_ with when and why — its row, data and pictures
+stay. It is not failed, and a restart leaves it stopped. Asking for it (a
+request to its host, or **Wake it** on the change's page) deploys it again
+on the ordinary deploy path. Production, and a pull with a run queued or
+running on it, are never put to sleep this way. `FORGE_PREVIEW_IDLE_DAYS`
+sets the age; `0` keeps every preview warm.
+
 An environment nobody asks for does not keep a process. A preview that has
 served no request for thirty minutes, or production for a day, is stopped
 and marked _asleep_, its checkout kept whole; the next request through the
@@ -689,6 +883,31 @@ coming back does the same: production starts warm from the checkout it kept,
 and every preview comes back asleep until someone looks. A restart used to
 mean thirty installs and test suites at once; now it means starting what
 people are using.
+
+Quiet is not the same as idle. Before it sleeps an environment the sweep
+asks whether it is _busy_ (`apps/busy.ts`): a child process of the app's
+still alive — a build, a crew run inside a hosted forge — or a websocket or
+event stream the proxy holds open to it. A busy environment is left awake,
+the app page and the Now card say _busy_ and why, and its deploy log says
+it was kept awake. Busy buys one crew run's length past the idle window
+(`FORGE_CREW_TIMEOUT_MIN`, 45 minutes by default) and no more, so an app
+that keeps a child forever still rests.
+
+### The meter
+
+Awake and asleep are also what an app costs, so the runtime writes them
+down (`core/meter.ts`). Every stretch an environment serves is one row in
+`meter` — repository, environment, placement (`owned` or `cloud`), started,
+ended — opened when a deploy or a wake starts serving (a redeploy keeps the
+same row open) and closed when it sleeps, stops, crashes, is torn down or
+the forge shuts down. Each sweep is a heartbeat on the open rows; a row the
+last forge left open is closed at boot at its last heartbeat, never left
+running. Once an hour the runtime samples each app's bytes — every
+environment's `FORGE_APP_DATA` and its bare repository, files only, links
+not followed (`apps/bytes.ts`) — into `storage`. `usageBetween` reads both
+for a `[from, to)` range: awake seconds per app (by placement too) and
+GB-hours, bytes × hours / 1e9, each sample standing for the hour after it
+or until the next one.
 
 ### Subscriptions
 
@@ -781,6 +1000,30 @@ of your own:
 issue; it is for the repository's admins, like everything else about its
 settings.
 
+## Something that needs you reaches your phone
+
+Under Settings → Profile a person may set one **notify URL**: an `https:`
+address that takes a POST of plain text (an [ntfy](https://ntfy.sh) topic
+does). When the forge's events change what asks them — a pull the crew
+stopped on, a green pull waiting for a look, a repository at its ceiling —
+one line and a link to the asks screen is posted there (`src/crew/notify.ts`).
+A milestone the person watches says one line too, once, when it lands, with
+a link to the milestone (`docs/PLANNING.md`); its progress never does.
+
+- *New only.* What asks a person is read as that person, the way the asks
+  panel reads it, so a private repository's titles never go to someone who
+  cannot read it. An ask is told once; it is new again only after it went
+  away and came back. A restart, or saving the URL, starts from what asks now.
+- *Bounded.* Ten an hour per person. A failing endpoint pauses that person's
+  notifications for a minute, doubling to an hour; what could not be sent is
+  dropped, never retried or queued. Nothing blocks the event stream.
+- *The URL is a secret* (a topic name is a password). It is `https:` only,
+  without credentials, at most 200 characters, and refuses loopback, private,
+  link-local, `.local`, `.internal` and bare hosts. The name is resolved and
+  judged again at send time and redirects are not followed. It is kept in the
+  user's settings, never logged, and the account page shows only its host.
+- Not here yet: a health problem for an admin has no event to ride.
+
 ## Configuration
 
 | variable                  | default                         | meaning                                           |
@@ -788,7 +1031,11 @@ settings.
 | `FORGE_APPS`              | `1`                             | `0` runs no apps and no crew                      |
 | `FORGE_APP_DOMAIN`        | the host in `FORGE_URL`/`_HOST` | what app hostnames attach to (`example` or `--x`) |
 | `FORGE_APPS_CONCURRENCY`  | `2`                             | deploys running their heavy steps at once         |
-| `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once                                |
+| `FORGE_PREVIEW_IDLE_DAYS` | `3`                             | days a pull may sit untouched before its preview sleeps; `0` = never |
+| `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once (live: Settings → Capacity)    |
+| `FORGE_CHECKS_CONCURRENCY` | `1`                            | checks at once (live: Settings → Capacity)        |
+| `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
+| `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |
 | `FORGE_CREW_BUDGET_USD`   | `5`                             | spend per run unless the agent says otherwise     |
 | `FORGE_CREW_TIMEOUT_MIN`  | `45`                            | wall-clock limit of one agent run                 |
 | `FORGE_CREW_ALLOW_HOSTS`  | —                               | hosts an agent's shell may reach, comma-separated |
@@ -809,12 +1056,33 @@ the data directory `FORGE_APP_DATA`, and the defaults become
 `FORGE_SSH_PORT=0`, `FORGE_CREW_CONCURRENCY=1` and
 `FORGE_APP_DOMAIN=--<its own host>`.
 
+Four of these are the forge's capacity and change while it runs: crew runs
+at once, checks at once, shards per check, and the cells' egress mode. A
+forge admin sets them under **Settings → Capacity**, through
+`PUT /api/v1/admin/capacity/:key` (`{"value": "1"}`, `null` for the
+default) or the `capacity` MCP tool; the next crew run, check or cell
+honours the change, never a restart. The variable stays the boot default
+until a value is set, and every change is listed on that page with who
+made it, when, and from what to what (`core/capacity.ts`). The shard count
+reaches a check's commands and an agent's shell as `FORGE_CHECK_SHARDS`,
+from the setting, never from the forge's own environment.
+
 ## What is deliberately not here
 
-Containers. An app runs as the forge's own user, in its own directory, and
-nothing more separates it from the host than that. On the machine one
-person owns this is the honest, fast answer; a sandboxed runtime is the
-next layer, and the process boundary here is where it will attach. TLS
+Containers. A cell (rule 9) is namespaces and a watch, not an image: an
+app runs the machine's own `bun` and tools, read-only, and its limits are
+enforced by stopping it, not by throttling it — a container cannot create
+the cgroups that would throttle. TLS
 termination and an approve-and-land gate are additions of the same kind:
 the shapes above hold, and a new column or listener carries each of them —
 as one column carried a domain of the app's own.
+
+## The `service` kind
+
+`app.kind: "service"` in `forge.json` declares a long-running app that is not
+an HTTP child: `ports` (TCP, 1024–65535, required), `always_on` (true; false is
+refused), `placement` (`"metal"` or `"cloud"`, optional) and `volumes`
+(`{ "path": "world", "sync": 300 }`, a relative path under the app's data and a
+sync cadence in seconds, 10–86400). `src/apps/service.ts` validates it; the
+manifest carries it as `service`, `null` for a web app. Running it, exposing
+the ports and syncing volumes are not built yet (issue #391).

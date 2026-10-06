@@ -14,11 +14,22 @@
  * directory — so guessing a hostname yields the forge's own "not found".
  */
 
+import type { Database } from "bun:sqlite";
+import { getIssue, type Issue } from "../core/issues.ts";
+import { mayView } from "../core/sealed.ts";
+import { holdOpen } from "../http/caller.ts";
 import { appHostSuffix } from "./host.ts";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
 import { getAppById, getAppBySlug, type AppRecord } from "../core/apps.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
+import {
+  canEnterApp,
+  canRead,
+  getRepoById,
+  ownerInStanding,
+} from "../core/repos.ts";
+import { getUserById, isActive } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
@@ -102,9 +113,18 @@ export function resolveAppHostname(
   const parsed = parseAppHost(host, domain);
   if (parsed === undefined) return ownDomain(app, host);
   const record = getAppBySlug(app.db, parsed.slug);
-  return record
+  return record && shown(app, record)
     ? { app: record, env: parsed.env, nested: parsed.nested }
     : "unknown";
+}
+
+/**
+ * An app whose repository's owner is suspended or removed has no host: it
+ * answers as a name nobody holds, not as an app that is stopped (#831).
+ */
+function shown(app: App, record: AppRecord): boolean {
+  const repo = getRepoById(app.db, record.repoId);
+  return repo !== undefined && ownerInStanding(app.db, repo);
 }
 
 /**
@@ -118,7 +138,7 @@ function ownDomain(app: App, host: string): AppTarget | undefined {
   const domain = getVerifiedDomain(app.db, host.replace(/:\d+$/, ""));
   if (domain === undefined) return undefined;
   const record = getAppById(app.db, domain.appId);
-  return record === undefined
+  return record === undefined || !shown(app, record)
     ? undefined
     : { app: record, env: domain.env, nested: false };
 }
@@ -310,6 +330,37 @@ const HOP_BY_HOP = [
 ];
 
 /**
+ * The sealed pull a preview serves, when it serves one (`core/sealed.ts`):
+ * a sealed report's fix, which only those who may see the report may open,
+ * on a public app as on a private one.
+ */
+function sealedPull(runtime: AppsRuntime, target: AppTarget): Issue | undefined {
+  const number = /^pull-(\d+)$/.exec(target.env)?.[1];
+  if (number === undefined) return undefined;
+  const pull = getIssue(runtime.app.db, target.app.repoId, Number(number));
+  return pull?.sealed === true ? pull : undefined;
+}
+
+/** Whether the person a grant names may enter this app now. */
+function stillEntitled(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  grant: Grant,
+): boolean {
+  if (grant.who === undefined) return false;
+  const repo = getRepoById(runtime.app.db, target.app.repoId);
+  const user = getUserById(runtime.app.db, grant.who.id);
+  const sealed = sealedPull(runtime, target);
+  return (
+    repo !== undefined &&
+    user !== undefined &&
+    isActive(user) &&
+    canEnterApp(runtime.app.db, repo, target.app, user) &&
+    (sealed === undefined || mayView(runtime.app.db, repo, sealed, user))
+  );
+}
+
+/**
  * What a request addressed to an app must pass before anything is served:
  * a private app's grant, then a live port. One gate for both the request
  * that is fetched and the one that becomes a socket — the answer when a
@@ -321,14 +372,35 @@ function admit(
   target: AppTarget,
 ): Result<{ status: EnvStatus; port: number; grant?: Grant }, Response> {
   const cookie = cookieValue(request, grantCookieName(target));
-  const grant =
+  const signed =
     cookie === undefined
       ? undefined
       : readGrant(runtime.app.config.dataDir, cookie, target);
-  if (target.app.access === "private") {
+  // A private app's grant is asked again on every request whether the
+  // person it names may still enter: a grant outlives a change of heart —
+  // a writer removed, the app made private — by up to twelve hours, and
+  // reading the repository was never enough (#620).
+  // A grant names a person only while they are in good standing: a
+  // suspended or removed account is no one to a public app, and nothing to
+  // a private one.
+  const named =
+    signed?.who === undefined
+      ? undefined
+      : getUserById(runtime.app.db, signed.who.id);
+  // A sealed pull's preview is held like a private app's, whatever the
+  // app's own access: asked on every request.
+  const guarded =
+    target.app.access === "private" ||
+    sealedPull(runtime, target) !== undefined;
+  const lapsed =
+    signed !== undefined &&
+    ((guarded && !stillEntitled(runtime, target, signed)) ||
+      (named !== undefined && !isActive(named)));
+  const grant = lapsed ? undefined : signed;
+  if (guarded) {
     if (grant === undefined) {
       // A person arriving by link is sent to the forge to sign in; it vouches
-      // for them if they can see the repository and sends them back with the
+      // for them if they may enter the app and sends them back with the
       // grant, and otherwise gives the answer a private repository gives.
       // Anything that is not a person navigating — a script, an API call —
       // gets that answer here.
@@ -352,6 +424,10 @@ function admit(
       return err(new Response("not found", { status: 404 }));
     }
   }
+  // A preview stopped for want of attention is asked for: it deploys again
+  // the ordinary way, and this request sees "starting" until it answers.
+  if (runtime.envStatus(target.app, target.env)?.dormant !== undefined)
+    runtime.rouse(target.app, target.env);
   const status = runtime.envStatus(target.app, target.env);
   if (status === undefined || status.port === undefined) {
     return err(unavailable(runtime, target, status));
@@ -362,6 +438,29 @@ function admit(
       : { status, port: status.port, grant },
   );
 }
+
+/**
+ * Where a stranger reports a problem with this app: its repository's report
+ * form (`actions/reports.ts`), when both the app and the repository are
+ * public. A private one offers nothing, and a nested host is its guest's.
+ */
+function reportUrl(runtime: AppsRuntime, target: AppTarget): URL | undefined {
+  if (target.nested || target.app.access !== "public") return undefined;
+  const repo = getRepoById(runtime.app.db, target.app.repoId);
+  if (repo === undefined || !canRead(runtime.app.db, repo, undefined))
+    return undefined;
+  return new URL(
+    `/${repo.ownerName}/${repo.name}/report`,
+    runtime.options.forgeUrl,
+  );
+}
+
+/** The link relation a public app's pages carry to `/__forge/report`. */
+const REPORT_LINK =
+  '</__forge/report>; rel="help"; title="Report a problem (no account needed)"';
+
+const isHtml = (headers: Headers): boolean =>
+  (headers.get("content-type") ?? "").toLowerCase().startsWith("text/html");
 
 /**
  * Serve a request addressed to an app. `undefined` means the request became
@@ -411,6 +510,23 @@ export async function proxyApp(
       },
     });
   }
+  // The third door: a problem report, answered without waking or even
+  // reaching the app — the app being down is the usual reason to ask. The
+  // forge's form is told which page it came from.
+  if (url.pathname === "/__forge/report") {
+    const report = reportUrl(runtime, target);
+    if (report !== undefined) {
+      report.searchParams.set(
+        "from",
+        originFor(runtime, target, request.headers.get("host") ?? undefined) +
+          safePath(url.searchParams.get("from")),
+      );
+      return new Response(null, {
+        status: 303,
+        headers: { location: report.toString(), "cache-control": "no-store" },
+      });
+    }
+  }
   // An environment asleep wakes for the request that wants it, and the
   // request waits the second that takes rather than seeing a closed door.
   if (runtime.envStatus(target.app, target.env)?.state === "asleep")
@@ -443,6 +559,7 @@ export async function proxyApp(
       status,
       upstream,
       headers,
+      vouched?.who,
     );
   }
 
@@ -465,10 +582,62 @@ export async function proxyApp(
   }
   const out = new Headers(response.headers);
   for (const name of HOP_BY_HOP) out.delete(name);
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: out,
+  // An agent reading a public app's page learns where to report a problem
+  // without the app having to say so.
+  if (isHtml(out) && reportUrl(runtime, target) !== undefined)
+    out.append("link", REPORT_LINK);
+  const eventStream =
+    response.body !== null &&
+    (response.headers.get("content-type") ?? "")
+      .toLowerCase()
+      .startsWith("text/event-stream");
+  return new Response(
+    eventStream ? held(runtime, target, response.body!) : response.body,
+    {
+      status: response.status,
+      statusText: response.statusText,
+      headers: out,
+    },
+  );
+}
+
+/**
+ * An event stream, passed through untouched while it keeps the environment
+ * busy: held from its first byte until it ends, fails, or the browser
+ * goes away.
+ */
+export function held(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  body: ReadableStream<Uint8Array>,
+): ReadableStream<Uint8Array> {
+  const release = runtime.holdStream(target.app, target.env);
+  const reader = body.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          release();
+          controller.close();
+        } else controller.enqueue(value);
+      } catch {
+        // The app went away under it — replaced by a deploy, asleep,
+        // stopped. For an event stream that is its end, not an error to
+        // raise into a connection nobody may be reading: the browser's
+        // EventSource reconnects to whatever serves now.
+        release();
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
+      }
+    },
+    cancel(reason) {
+      release();
+      return reader.cancel(reason);
+    },
   });
 }
 
@@ -481,7 +650,18 @@ export async function proxyApp(
  */
 export interface AppSocket {
   readonly upstream: WebSocket;
+  /** The person the grant named, so their suspension can end the socket. */
+  readonly userId: string | undefined;
+  /** The forge the socket is held open on. */
+  readonly db: Database;
 }
+
+/**
+ * A proxied socket that names a person is held open under their account
+ * (\`http/caller.ts\`): their suspension, seen by this process or swept
+ * from the database, closes it.
+ */
+const heldSockets = new WeakMap<Bun.ServerWebSocket<AppSocket>, () => void>();
 
 /**
  * The most one frame may carry, in either direction. The browser's side is
@@ -529,6 +709,7 @@ async function proxyWebSocket(
   status: EnvStatus,
   upstreamUrl: URL,
   forwarded: Headers,
+  who: GrantWho | undefined,
 ): Promise<Response | undefined> {
   const url = new URL(upstreamUrl);
   url.protocol = "ws:";
@@ -543,8 +724,14 @@ async function proxyWebSocket(
     return unavailable(runtime, target, status, opened.error);
   }
   const upstream = opened.value;
+  // Open, the socket keeps the environment busy; its close — from either
+  // side, or a failed upgrade below — lets it rest again.
+  upstream.addEventListener(
+    "close",
+    runtime.holdStream(target.app, target.env),
+  );
   const upgraded = server.upgrade(request, {
-    data: { upstream },
+    data: { upstream, userId: who?.id, db: runtime.app.db },
     // The app's choice of subprotocol is what the browser hears; without
     // one Bun echoes the first the browser offered, which is what the app
     // itself would have done on Bun.
@@ -626,7 +813,15 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
   idleTimeout: WS_IDLE_SECONDS,
 
   open(ws) {
-    const { upstream } = ws.data;
+    const { upstream, userId, db } = ws.data;
+    if (userId !== undefined)
+      heldSockets.set(
+        ws,
+        holdOpen(db, userId, undefined, () => {
+          if (ws.readyState === WebSocket.OPEN)
+            closeBoth(ws, 1008, "this account was suspended");
+        }),
+      );
     // No frame from the app can get here first. Its `open` event resolved
     // `connectUpstream`, and the microtask checkpoint after that callback
     // runs `proxyWebSocket` to completion — `server.upgrade` calls this
@@ -676,6 +871,8 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
 
   close(ws, code, reason) {
     const { upstream } = ws.data;
+    heldSockets.get(ws)?.();
+    heldSockets.delete(ws);
     if (upstream.readyState === WebSocket.CLOSED) return;
     // 1006 here is the browser gone without a close frame.
     if (code === 1006) upstream.close(1001, "the browser went away");
@@ -761,6 +958,7 @@ function unavailable(
         : gone
           ? "This preview is gone: its pull was closed, and its data with it."
           : "Nothing is running here yet.");
+  const report = reportUrl(runtime, target) !== undefined;
   const runLink =
     status?.runId === undefined
       ? ""
@@ -781,6 +979,7 @@ ${deploying ? '<meta http-equiv="refresh" content="3">' : ""}
 <p>This is ${escape(where)}. ${escape(message)}</p>
 ${deploying ? "<p>This page refreshes on its own.</p>" : ""}
 ${runLink}
+${report ? '<p><a href="/__forge/report">Report a problem</a> to the people who keep it; no account needed.</p>' : ""}
 `;
   return new Response(html, {
     status: deploying ? 503 : gone ? 404 : 502,
@@ -788,6 +987,7 @@ ${runLink}
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
       ...(deploying ? { "retry-after": "3" } : {}),
+      ...(report ? { link: REPORT_LINK } : {}),
     },
   });
 }

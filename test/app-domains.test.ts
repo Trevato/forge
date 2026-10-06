@@ -301,7 +301,7 @@ describe("an app gets its own domain", () => {
       dns,
     });
     await runtime.start();
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -309,7 +309,7 @@ describe("an app gets its own domain", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -553,10 +553,12 @@ describe("an app gets its own domain", () => {
     expect(new URL(canonical.headers.get("location") ?? "").host).toBe(
       `notes.${DOMAIN}:${servers.port}`,
     );
-    // A stranger to the repository gets what a private repository gives.
+    // Bob can read this public repository but not write it, and a private
+    // app answers only to its writers and crew (#620, #743): reading is not
+    // a key to the app, so he gets the stranger's answer, not a grant.
     expect(
       (await web(bobCookie, `${open.pathname}${open.search}`)).status,
-    ).toBe(302);
+    ).toBe(404);
     expect(updateAppSettings(app, alice, repo, { access: "public" }).ok).toBe(
       true,
     );

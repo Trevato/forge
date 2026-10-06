@@ -1,11 +1,11 @@
 /**
  * The terminal UI lays itself out for the terminal it is in.
  *
- * Four screens at four sizes, against a real forge: every frame fills its
+ * Three screens at four sizes, against a real forge: every frame fills its
  * grid and nothing crosses the right edge; a list beside its detail pane
- * stacks below `TWO_PANE_COLS`; a resize mid-session keeps the selected row
- * and the reader's place in a log; the app's pty hears the new size while it
- * has the terminal; and under the floor one line says so.
+ * stacks below `TWO_PANE_COLS`; a resize mid-session keeps the selected
+ * row; the app's pty hears the new size while it has the terminal; and
+ * under the floor one line says so.
  *
  * The cell buffer cannot overflow by construction, so the width assertions
  * are made against the *replayed* bytes as well — the virtual terminal that
@@ -21,15 +21,12 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
-import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import type { User } from "../src/core/users.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { appendRunLog } from "../src/runs/log.ts";
 import type { App, Screen } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { issuesScreen } from "../src/tui/screens/issues.ts";
-import { runScreen } from "../src/tui/screens/run.ts";
-import { runsScreen } from "../src/tui/screens/runs.ts";
+import { repoScreen } from "../src/tui/screens/repo.ts";
 import { local } from "../src/tui/screens/where.ts";
 import type { Session } from "../src/tui/session.ts";
 import { Screen as Surface } from "../src/tui/term/screen.ts";
@@ -58,10 +55,6 @@ const SIZES: readonly [number, number][] = [
   [200, 60],
 ];
 
-/** A log line that is one row at 120 columns and two at 60. */
-const LOG_LINE = (n: number): string =>
-  `line ${n}: cloning the repository and installing what it needs takes a moment`;
-
 interface Harness {
   app: App;
   session: Session;
@@ -78,7 +71,6 @@ describe("the terminal lays out for the terminal it is in", () => {
   let forge: Forge;
   let alice: User;
   let repo: Repo;
-  let runId: string;
 
   const boot = async (cols: number, rows: number): Promise<Harness> => {
     const terminal = headlessTerminal(cols, rows);
@@ -119,17 +111,14 @@ describe("the terminal lays out for the terminal it is in", () => {
   };
 
   const dashboard = async (h: Harness): Promise<void> => undefined;
-  const runs = (h: Harness): Promise<void> =>
-    h.push((s, ctx) => runsScreen(s, ctx, repo));
-  const run = (h: Harness): Promise<void> =>
-    h.push((s, ctx) => runScreen(s, ctx, repo, runId));
+  const workspace = (h: Harness): Promise<void> =>
+    h.push((s, ctx) => repoScreen(s, ctx, local(s, repo)));
   const issues = (h: Harness): Promise<void> =>
     h.push((s, ctx) => issuesScreen(s, ctx, local(s, repo), "issue"));
   /** Each screen, and the content that proves it drew its rows. */
   const SCREENS = {
     dashboard: { open: dashboard, shows: "alice/lighthouse", cursor: true },
-    runs: { open: runs, shows: "deploy production", cursor: true },
-    run: { open: run, shows: LOG_LINE(39).slice(-13), cursor: false },
+    workspace: { open: workspace, shows: "README.md", cursor: false },
     issues: { open: issues, shows: "Lamp 30", cursor: true },
   } as const;
 
@@ -160,23 +149,6 @@ describe("the terminal lays out for the terminal it is in", () => {
         title: `Lamp ${i} flickers at dusk and nobody knows why it does that`,
         body: "",
       });
-    for (let i = 0; i < 20; i++) {
-      const made = createRun(forge.db, {
-        repoId: repo.id,
-        kind: "deploy",
-        env: i % 2 === 0 ? "production" : "pull-3",
-        reason: "push to main",
-        commitOid: "abcdef0123456789",
-      });
-      claimRun(forge.db, made.id);
-      for (let l = 0; l < 40; l++) appendRunLog(dataDir, made.id, LOG_LINE(l));
-      finishRun(forge.db, made.id, {
-        state: i % 3 === 0 ? "failed" : "ok",
-        summary: `built and started in ${i} seconds`,
-        costUsd: 0,
-      });
-      runId = made.id;
-    }
   });
 
   afterAll(async () => {
@@ -212,31 +184,29 @@ describe("the terminal lays out for the terminal it is in", () => {
         }
       });
 
-  test("the dashboard's feed sits beside the repositories at two columns and under them below", async () => {
+  test("what is on you sits beside the repositories at two columns and under them below", async () => {
     const h = await boot(TWO_PANE_COLS, 40);
     try {
       const at = (what: string): number =>
         h.lines().findIndex((line) => line.includes(what));
-      expect(at("Recent activity")).toBe(at("filter repositories"));
-      expect(at("Organizations")).toBeGreaterThan(-1);
+      expect(at("On you")).toBe(at("find a repository"));
+      expect(at("On your machine")).toBeGreaterThan(-1);
 
       await h.resize(TWO_PANE_COLS - 1, 40);
-      // Stacked: the feed is a card under the list, and the three small
-      // cards wait for a wider window rather than crowd a column.
-      expect(at("Recent activity")).toBeGreaterThan(at("alice/lighthouse"));
-      expect(at("Organizations")).toBe(-1);
-      // And `tab` reaches exactly what is drawn: the feed, then back.
+      // Stacked: what is on you is a card under the list, and the machine
+      // card waits for a wider window rather than crowd a column.
+      expect(at("On you")).toBeGreaterThan(at("alice/lighthouse"));
+      expect(at("On your machine")).toBe(-1);
+      // And `tab` reaches exactly what is drawn: on you, then back.
       const c = theme("dark").c;
       await h.press("tab");
-      expect(h.app.screen.styleAt(0, at("Recent activity")).fg).toBe(c.accent);
+      expect(h.app.screen.styleAt(0, at("On you")).fg).toBe(c.accent);
       await h.press("tab");
-      expect(h.app.screen.styleAt(0, at("Recent activity")).fg).not.toBe(
-        c.accent,
-      );
+      expect(h.app.screen.styleAt(0, at("On you")).fg).not.toBe(c.accent);
 
       // Too short to stack: the repositories have the whole body.
       await h.resize(80, 12);
-      expect(at("Recent activity")).toBe(-1);
+      expect(at("On you")).toBe(-1);
       expect(at("alice/lighthouse")).toBeGreaterThan(-1);
     } finally {
       h.stop();
@@ -266,52 +236,6 @@ describe("the terminal lays out for the terminal it is in", () => {
       await h.press("G");
       await h.resize(60, 14);
       expect(selected(h.lines())).toContain("#1 ");
-    } finally {
-      h.stop();
-    }
-  });
-
-  test("the runs list keeps its cursor across a resize too", async () => {
-    const h = await boot(200, 60);
-    try {
-      await runs(h);
-      await h.press("j", "j", "j", "j", "j", "j", "j");
-      const before = selected(h.lines());
-      expect(before).toBeDefined();
-      await h.resize(60, 20);
-      // Same run: the same state word and summary on the caret row.
-      expect(selected(h.lines())?.slice(0, 40)).toBe(before?.slice(0, 40));
-    } finally {
-      h.stop();
-    }
-  });
-
-  test("a run's log wraps to the width and keeps the reader's line across a resize", async () => {
-    const h = await boot(120, 40);
-    try {
-      await run(h);
-      const text = h.app.screen.toText();
-      expect(text).toContain(LOG_LINE(39));
-      // Scroll up: following stops, and the top row names a line.
-      await h.press("k", "k", "k", "k");
-      const top = h.lines()[6] ?? "";
-      const at = /^line (\d+):/.exec(top);
-      expect(at).not.toBeNull();
-
-      await h.resize(60, 20);
-      const narrow = h.app.screen.toText();
-      // Every word of a long line is somewhere on screen: the tail that a
-      // clipped log would have lost is drawn on the next row.
-      expect(narrow).toContain("takes a moment");
-      for (const line of narrow.split("\n"))
-        expect(displayWidth(line)).toBeLessThanOrEqual(60);
-      // The line that was at the top is still at the top, now two rows tall.
-      expect(h.lines()[6]).toStartWith(`line ${at![1]}:`);
-
-      // `G` follows the end again, and the last row is the last line's tail.
-      await h.press("G");
-      const rows = h.lines();
-      expect(rows[rows.length - 2]).toContain("takes a moment");
     } finally {
       h.stop();
     }

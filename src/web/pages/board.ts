@@ -1,37 +1,83 @@
 /**
  * The board: a live wall of the crews at work, for a second monitor. Four
  * regions — what is being worked on now, what landed, what the decider
- * decided, and today's spend against each app's ceiling — each a live
- * region that swaps itself when a matching event lands. Nothing on it
+ * decided, and today's spend against each app's ceiling with what a shipped
+ * change cost over the week — each a live region that swaps itself when a
+ * matching event lands. A site admin also gets two strips above them: the
+ * forge's health, and each subscription's windows; whoever owns an app gets
+ * a line for each thing its crew waits on them for. Nothing on it
  * needs a click, and everything on it links somewhere. It reads the same
  * tables as the studio and adds no state of its own.
+ *
+ * `?wall` is its one wall mode, for a screen across the room that nobody
+ * touches: the same regions in larger type, without the key hints or a
+ * pointer. The old big view (`/big`, every address it had) lands here.
  */
 
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
+import { askMeasure } from "../../core/ask_ledger.ts";
+import { reviewersOf, waitsForPerson } from "../../crew/review.ts";
+import { tokenReturns } from "../../core/returns.ts";
+import { returnsRepos } from "../../actions/returns.ts";
 import {
   listDecisionsForRepos,
   type Decision,
   type DecisionKind,
 } from "../../core/decisions.ts";
+import { appsRuntime } from "../../apps/runtime.ts";
+import { efficiencyForRepos } from "../../core/efficiency.ts";
+import { reviewStats, type ReviewStats } from "../../core/review-stats.ts";
+import { standings, WINDOW_MS } from "../../core/standing.ts";
+import {
+  listCredentials,
+  PLATFORM,
+  scopesOf,
+  type Subscription,
+} from "../../core/subscriptions.ts";
+import { readSpend } from "../../actions/spend.ts";
+import { spendView } from "./spend.ts";
+import { listApps } from "../../core/apps.ts";
+import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
+import { vitals, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
-import { listPulls, mergedPullsForRepos, type Pull } from "../../core/pulls.ts";
 import {
-  canSeeOwnerFacts,
+  LATER,
+  NO_PILLAR,
+  PILLAR_DAYS,
+  pillarView,
+  reposWithUmbrellas,
+} from "../../core/pillars.ts";
+import { joinMany, listPulls, mergedPullsForRepos, toldBy, type Pull } from "../../core/pulls.ts";
+import {
   listReposVisibleTo,
+  ownerFactRepoIds,
   type Repo,
 } from "../../core/repos.ts";
 import { listActiveRuns, listRuns, type Run } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
-import { autonomyStatus, startOfTodayUtc } from "../../crew/autonomy.ts";
+import {
+  autonomyStatus,
+  plannerDeclines,
+  startOfTodayUtc,
+  truncateAtWord,
+} from "../../crew/autonomy.ts";
+import { parkedTwice } from "../../crew/parks.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { boardJs, liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
-import { page } from "../layout.ts";
-import { avatar, icon, time } from "../ui.ts";
+import { page, redirect } from "../layout.ts";
+import { avatar, icon, time, tokenCount } from "../ui.ts";
 import { voiceFor } from "../studio/voice.ts";
-import { lookUrl, thumbLook } from "./looks.ts";
+import {
+  perShippedWords,
+  windowWords,
+  type FigureWords,
+} from "../studio/words.ts";
+import { lookUrl } from "../../core/looks.ts";
+import { thumbLook } from "./looks.ts";
+import { milestoneHref } from "./milestones.ts";
 
 // ---- words ----
 
@@ -67,16 +113,38 @@ const KIND_WORDS: Record<DecisionKind, string> = {
   land: "ship or show",
   retry: "try again",
   lean: "which way",
+  // Never listed (`listDecisionsForRepos` leaves guards out); named for the type.
+  guard: "not started",
 };
 
 const money = (n: number): string => `$${n.toFixed(2)}`;
+
+/** A wait, in the unit a person reads it in. */
+function waitWords(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  return `${Math.round(minutes / 60)}h`;
+}
+
+/** How review is keeping up on one app today, or null when there is nothing to say. */
+function reviewWords(stats: ReviewStats): string | null {
+  const parts: string[] = [];
+  if (stats.awaiting > 0) parts.push(`${stats.awaiting} awaiting review`);
+  if (stats.latencyMs !== null)
+    parts.push(`${waitWords(stats.latencyMs)} from green to a verdict`);
+  if (stats.byReviewer.length > 0)
+    parts.push(
+      stats.byReviewer.map((r) => `${r.name} ${r.count}`).join(", "),
+    );
+  return parts.length === 0 ? null : parts.join(" · ");
+}
 
 /** A whole percentage, for the width rules in `boardCss`. */
 const pct = (n: number): number =>
   Math.max(0, Math.min(100, Math.round(n * 100)));
 
 /** The apps on the board: every one the viewer can see, or the named few. */
-export interface BoardScope {
+interface BoardScope {
   readonly repos: readonly Repo[];
   readonly ids: readonly string[];
   readonly byId: ReadonlyMap<string, Repo>;
@@ -87,42 +155,25 @@ export interface BoardScope {
   readonly ownerFacts: ReadonlySet<string>;
 }
 
-/** The scope for some app repositories: the board's, or the big view's. */
-export function boardScope(ctx: Ctx, repos: readonly Repo[]): BoardScope {
-  const records = appsForRepos(
-    ctx.app.db,
-    repos.map((r) => r.id),
-  );
+/** The scope for some repositories: the ones among them that are apps. */
+function boardScope(
+  ctx: Ctx,
+  repos: readonly Repo[],
+  records: ReadonlyMap<string, AppRecord>,
+): BoardScope {
   const kept = repos.filter((r) => records.has(r.id));
   return {
     repos: kept,
     ids: kept.map((r) => r.id),
     byId: new Map(kept.map((r) => [r.id, r])),
     records,
-    ownerFacts: new Set(
-      kept
-        .filter((r) => canSeeOwnerFacts(ctx.app.db, r, ctx.auth.user))
-        .map((r) => r.id),
-    ),
-  };
-}
-
-/** The four regions, for a page that frames them its own way. */
-export function boardRegions(
-  ctx: Ctx,
-  scope: BoardScope,
-): { working: Html; landed: Html; decided: Html; today: Html } {
-  return {
-    working: working(ctx, scope),
-    landed: landed(ctx, scope),
-    decided: decided(ctx, scope),
-    today: today(ctx, scope),
+    ownerFacts: ownerFactRepoIds(ctx.app.db, kept, ctx.auth.user),
   };
 }
 
 // ---- the page ----
 
-/** GET /board — signed in; every app the viewer can see, or `?apps=` some. */
+/** GET /board — signed in; every app the viewer can see, or `?apps=` some; `?wall` for the wall mode. */
 export function boardPage(ctx: Ctx): Response {
   const user = ctx.auth.user;
   if (!user) return signInFirst(ctx);
@@ -142,22 +193,26 @@ export function boardPage(ctx: Ctx): Response {
     ctx,
     visible.filter(
       (r) =>
-        records.has(r.id) &&
-        (wanted.size === 0 ||
-          wanted.has(r.name.toLowerCase()) ||
-          wanted.has(`${r.ownerName}/${r.name}`.toLowerCase())),
+        wanted.size === 0 ||
+        wanted.has(r.name.toLowerCase()) ||
+        wanted.has(`${r.ownerName}/${r.name}`.toLowerCase()),
     ),
+    records,
   );
   const repos = scope.repos;
+  const wall = ctx.url.searchParams.has("wall");
 
-  const body = html`<div class="board">
+  const body = html`<div class="board" ${wall ? html`data-wall=""` : null}>
     <header class="board-top">
       <a class="board-brand" href="/"><span class="mark"></span>forge</a>
       <span class="board-scope"
-        >${repos.length === 1
-          ? repos[0]!.name
-          : `${repos.length} app${repos.length === 1 ? "" : "s"}`}</span
+        >${
+          repos.length === 1
+            ? repos[0]!.name
+            : `${repos.length} app${repos.length === 1 ? "" : "s"}`
+        }</span
       >
+      <a class="board-asked" href="/asked">What you asked for</a>
       <span class="spacer"></span>
       <span class="board-keys" aria-hidden="true"
         ><kbd>f</kbd> fullscreen <kbd>1</kbd>–<kbd>4</kbd> one region
@@ -172,6 +227,10 @@ export function boardPage(ctx: Ctx): Response {
       ></span>
       <time class="board-clock" id="board-clock"></time>
     </header>
+    ${forgeStrip(ctx)} ${declinedStrip(ctx, scope)} ${reviewStrip(ctx, scope)}
+    ${asksStrip(ctx)}
+    ${returnsStrip(ctx, scope)}
+    ${windowsStrip(ctx)}
     <div class="board-grid">
       ${working(ctx, scope)} ${landed(ctx, scope)} ${decided(ctx, scope)}
       ${today(ctx, scope)}
@@ -187,7 +246,10 @@ export function boardPage(ctx: Ctx): Response {
   });
 }
 
-/** One region: a heading with its key and count, then the list or a quiet line. */
+/**
+ * One region: a heading with its key and count, then the list or a quiet
+ * line; `lead`, when a region has one, is a line of its own above them.
+ */
 function region(
   id: string,
   key: string,
@@ -195,6 +257,7 @@ function region(
   live: string,
   rows: Html[],
   quiet: string,
+  lead: Html | null = null,
 ): Html {
   return html`<section
     class="board-region"
@@ -209,12 +272,361 @@ function region(
         () => html`<span class="board-count">${rows.length}</span>`,
       )}
     </h2>
-    ${rows.length === 0
-      ? html`<p class="board-quiet">${quiet}</p>`
-      : html`<ul class="board-list">
-          ${rows}
-        </ul>`}
+    ${lead}
+    ${
+      rows.length === 0
+        ? html`<p class="board-quiet">${quiet}</p>`
+        : html`<ul class="board-list">
+            ${rows}
+          </ul>`
+    }
   </section>`;
+}
+
+/** An app's address as the big view wrote it: `owner/name`, nothing else. */
+const APP_SLUG = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
+
+/**
+ * GET /big — the big view, folded into the board. Every address it had
+ * (`?app=`, `&list=`, `?run=`, `?view=board|map`) lands on the wall mode;
+ * an app it named stays the scope, as `?apps=`. The board decides what the
+ * viewer may see, so this reads nothing and says nothing about what exists.
+ */
+export function bigRedirect(ctx: Ctx): Response {
+  const app = ctx.url.searchParams.get("app") ?? "";
+  return redirect(
+    APP_SLUG.test(app)
+      ? `/board?apps=${encodeURIComponent(app)}&wall`
+      : "/board?wall",
+  );
+}
+
+// ---- the forge ----
+
+/** Where a need can be acted on, when it can: a stuck run's page. */
+function needHref(need: string, v: Vitals): string | undefined {
+  if (/ stuck\.$/.test(need) && v.stuck[0] !== undefined)
+    return `/${v.stuck[0].repo}/runs/${v.stuck[0].runId}`;
+  return undefined;
+}
+
+/**
+ * The forge's health as one line, for a site admin only: *All fine*, or
+ * each thing that needs them. A live region of its own; nobody else gets
+ * the element or pays for the reads.
+ */
+function forgeStrip(ctx: Ctx): Html | null {
+  if (!ctx.auth.user?.isAdmin) return null;
+  const app = ctx.app;
+  const runtime = appsRuntime(app);
+  const v = vitals({
+    db: app.db,
+    dataDir: app.config.dataDir,
+    envs: runtime
+      ? listApps(app.db).flatMap((record) => runtime.status(record))
+      : [],
+  });
+  const fh = forgeHealth();
+  const rollout = rolloutLine(fh);
+  const others = fh.incidents.filter(
+    (i) => i.key !== "stuck" && i.key !== "held",
+  );
+  const ok = v.ok && fh.ok;
+  return html`<div
+    class="board-forge"
+    id="forge"
+    data-live="run.*,app.*"
+    data-ok="${ok ? "yes" : "no"}"
+    data-rollout="${fh.rollout.state}"
+    role="status"
+  >
+    ${rollout === null ? "" : html`<span class="board-forge-need">${rollout}</span>`}
+    ${others.map((i) => html`<span class="board-forge-need">${i.key}: ${i.message}</span>`)}
+    ${
+      ok
+        ? html`<span class="board-forge-ok">All fine</span>`
+        : v.needs.map((need) => {
+            const href = needHref(need, v);
+            return href === undefined
+              ? html`<span class="board-forge-need">${need}</span>`
+              : html`<a class="board-forge-need" href="${href}">${need}</a>`;
+          })
+    }
+  </div>`;
+}
+
+// ---- agent pulls that wait for a person's review ----
+
+/**
+ * One line per autonomous app whose agent pulls wait for a person's review
+ * (#597): "No reviewer: agent pulls wait for you" when its crew has none,
+ * and how many wait and since when — a lapsed review or no reviewer, never
+ * a silent hold. Owner facts only; absent when nothing waits and every
+ * autonomous app has its reviewer.
+ */
+function reviewStrip(ctx: Ctx, scope: BoardScope): Html | null {
+  const db = ctx.app.db;
+  const repos = scope.repos.filter(
+    (r) => scope.ownerFacts.has(r.id) && r.autonomy === "autonomous",
+  );
+  if (repos.length === 0) return null;
+  const ids = db
+    .query<{ id: string }, string[]>(
+      `SELECT issue.id AS id FROM issue JOIN user ON user.id = issue.author_id
+       WHERE issue.kind = 'pull' AND issue.state = 'open' AND user.is_agent = 1
+         AND issue.repo_id IN (${repos.map((_, i) => `?${i + 1}`).join(",")})`,
+    )
+    .all(...repos.map((r) => r.id))
+    .map((r) => r.id);
+  const pulls = joinMany(db, [...getIssuesByIds(db, ids).values()]);
+  const lines = repos.flatMap((repo) => {
+    const waits = pulls
+      .filter((p) => p.repoId === repo.id)
+      .flatMap((p) => {
+        const w = waitsForPerson(db, repo.id, p);
+        return w === undefined ? [] : [w];
+      });
+    const none = reviewersOf(db, repo.id).length === 0;
+    if (!none && waits.length === 0) return [];
+    const oldest = waits.map((w) => w.since).sort()[0];
+    return [
+      html`<a class="board-asks" href="/#needs-you"
+        ><b>${repo.name}</b>: ${none ? "No reviewer: agent pulls wait for you" : "agent pulls wait for your review"}${waits.length === 0
+          ? null
+          : html` · <b>${waits.length}</b> waiting since ${oldest!.slice(0, 10)}`}</a
+      >`,
+    ];
+  });
+  return lines.length === 0 ? null : html`<div id="review-waits">${lines}</div>`;
+}
+
+// ---- what asked you, and what came of it ----
+
+/** The window the asks measure covers. */
+export const ASKS_WINDOW_DAYS = 7;
+
+/**
+ * The viewer's asks over the last week, as four figures: raised, acted on,
+ * dismissed, and gone by themselves. Many dismissed against few acted on
+ * is noise, shown as a number (`core/ask_ledger.ts`). Absent before
+ * anything has asked.
+ */
+function asksStrip(ctx: Ctx): Html | null {
+  const user = ctx.auth.user;
+  if (!user) return null;
+  const since = new Date(Date.now() - ASKS_WINDOW_DAYS * 86_400_000).toISOString();
+  const m = askMeasure(ctx.app.db, user.id, since);
+  if (m.raised + m.acted + m.dismissed + m.expired === 0) return null;
+  return html`<a class="board-asks" id="asks-measure" href="/#needs-you"
+    >Asks, ${ASKS_WINDOW_DAYS} days: <b>${m.raised}</b> raised · <b>${m.acted}</b> acted
+    on · <b>${m.dismissed}</b> dismissed · <b>${m.expired}</b> went by themselves</a
+  >`;
+}
+
+// ---- what the tokens bought ----
+
+/** Dollars as the board writes them: cents under ten, whole above. */
+export const usd = (n: number): string => `$${n < 10 ? n.toFixed(2) : n.toFixed(0)}`;
+
+/**
+ * The week's spend against what it landed, in one line, owner facts only:
+ * dollars spent, changes landed, what a landed change cost, and what did
+ * not land, split in two: closed with nothing merged (spent, and gone) and
+ * still open (not yet an answer) — one tap to the breakdown
+ * (`/board/returns`). Where "Spend by credential…" says where the money
+ * went, this says what it bought. Absent when the
+ * viewer holds no owner facts here or nothing ran.
+ */
+function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
+  const user = ctx.auth.user;
+  if (!user) return null;
+  // The crew spends on every repository, app or not: the whole of the
+  // viewer's own unless `?apps=` narrows the board.
+  const apps = ctx.url.searchParams.get("apps");
+  const ids = apps
+    ? scope.repos.filter((r) => scope.ownerFacts.has(r.id)).map((r) => r.id)
+    : returnsRepos(ctx.app, user).map((r) => r.id);
+  if (ids.length === 0) return null;
+  const now = Date.now();
+  const r = tokenReturns(ctx.app.db, ids, {
+    since: new Date(now - ASKS_WINDOW_DAYS * 86_400_000).toISOString(),
+    until: new Date(now).toISOString(),
+  });
+  if (r.spent.runs === 0) return null;
+  const href = `/board/returns${apps ? `?apps=${encodeURIComponent(apps)}` : ""}`;
+  return html`<a class="board-asks" id="returns-line" href="${href}"
+    >Tokens, ${ASKS_WINDOW_DAYS} days: <b>${usd(r.spent.usd)}</b> → <b>${r.landed}</b> landed
+    ${r.onLanded.perChange.changes === 0
+      ? null
+      : html`· <b>${usd(r.onLanded.perChange.median)}</b> a landed change`}
+    · <b>${usd(r.landedNothing.closed.usd)}</b> closed with nothing
+    · <b>${usd(r.landedNothing.open.usd)}</b> still open</a
+  >`;
+}
+
+// ---- the planner, waiting for a person ----
+
+/** An issue's title and a park's reason on the board: one clause each, cut at a word. */
+const TITLE_MAX = 64;
+const REASON_MAX = 96;
+
+/**
+ * One line per app whose planner declined the direction: its last words
+ * and a box to answer them, which is a comment on the direction issue —
+ * the word `planIfThin` waits for. And one line per issue a crew parked
+ * twice and handed to its planner (`crew/parks.ts`): why, and a link to
+ * the issue, where the planner answers; it stays until the issue is split,
+ * replaced or deferred. Only for apps whose owner facts the viewer may
+ * see; nothing at all when no planner is waiting and none holds an issue.
+ */
+function declinedStrip(ctx: Ctx, scope: BoardScope): Html | null {
+  const owned = scope.repos.filter((r) => scope.ownerFacts.has(r.id));
+  const declines = plannerDeclines(ctx.app.db, owned);
+  const parked = parkedTwice(ctx.app.db, owned);
+  if (declines.length === 0 && parked.length === 0) return null;
+  return html`<div
+    class="board-declined"
+    id="declined"
+    data-live="run.*,issue.*,pull.*"
+    role="status"
+  >
+    ${declines.map((d) => {
+      const base = `/${d.repo.ownerName}/${d.repo.name}`;
+      return html`<form
+        class="board-declined-row"
+        method="post"
+        action="${base}/issues/${d.issue.number}/comments"
+      >
+        <span class="board-declined-says"
+          ><b>${d.repo.name}</b>: the planner declined the direction and waits
+          for you. <q>${d.words}</q></span
+        >
+        <input type="hidden" name="back" value="board" />
+        <input
+          class="input"
+          name="body"
+          required
+          aria-label="Answer the planner on #${d.issue.number}"
+          placeholder="Answer the planner"
+        />
+        <button class="btn" data-variant="primary" type="submit">Answer</button>
+      </form>`;
+    })}
+    ${parked.map((issue) => {
+      const repo = scope.byId.get(issue.repoId)!;
+      return html`<div class="board-declined-row board-parked-row">
+        <span class="board-declined-says"
+          ><b>${repo.name}</b>: the crew parked #${issue.number} twice and
+          handed it to the planner —
+          ${truncateAtWord(issue.title, TITLE_MAX)}.
+          ${issue.reasons.map(
+            (reason) => html`<q>${truncateAtWord(reason, REASON_MAX)}</q> `,
+          )}</span
+        >
+        <a class="btn" href="${repoBase(repo)}/issues/${issue.number}">Open</a>
+      </div>`;
+    })}
+  </div>`;
+}
+
+// ---- the subscriptions' windows ----
+
+/** Figures in a row, `inferred` said once when every one is, else on each. */
+function figures(parts: readonly FigureWords[]): Html {
+  const all = parts.every((p) => p.inferred);
+  const tag = html`<i class="board-inferred">inferred</i>`;
+  return html`${parts.map(
+    (p, n) =>
+      html`${n > 0 ? " · " : null}<span
+          >${p.text}${when(!all && p.inferred, () => html` ${tag}`)}</span
+        >`,
+  )}${when(all, () => html` ${tag}`)}`;
+}
+
+/**
+ * Each credential's 5-hour and weekly window — used, left, resets — and the
+ * crew's spend broken down, for a site admin only: the pool is theirs
+ * (`/settings/subscriptions`). The platform's token leads: it is the crew's.
+ * Then the accounts with a scope, then those with none — a person's own
+ * plan, never offered to the crew, its numbers kept apart so they never
+ * read as idle crew capacity. A fixed number of statements however many
+ * accounts (`standings`, `scopesOf`). A live region of its own.
+ */
+function windowsStrip(ctx: Ctx): Html | null {
+  if (!ctx.auth.user?.isAdmin) return null;
+  const db = ctx.app.db;
+  const pool = listCredentials(db);
+  if (pool.length === 0) return null;
+  const now = new Date();
+  const all = standings(
+    db,
+    pool.map((s) => s.id),
+    now,
+  );
+  const scopes = scopesOf(db);
+  const scopeWords = (id: string): string =>
+    id === PLATFORM
+      ? "every app no subscription is granted to"
+      : (scopes.get(id) ?? []).join(", ");
+  const card = (s: Subscription): Html | null => {
+    const st = all.get(s.id);
+    if (st === undefined) return null;
+    return html`<a
+      class="board-sub"
+      href="/settings/subscriptions"
+      data-key="sub:${s.id}"
+    >
+      <span class="board-sub-name">${s.name}</span>
+      ${st.windows.map((w) => {
+        const words = windowWords(w);
+        return html`<span class="board-window" data-window="${w.window}"
+          ><span class="board-window-name">${words.name}</span>
+          ${
+            words.usedPct === null
+              ? null
+              : html`<span class="board-bar"
+                  ><span class="board-fill" data-w="${words.usedPct}"></span
+                ></span>`
+          }
+          <span class="board-window-nums"
+            >${figures([words.used, words.remaining, words.resets])}${when(
+              w.tokensIn + w.tokensOut > 0,
+              () => html` · ${tokenCount(w.tokensIn + w.tokensOut, "counted")}`,
+            )}</span
+          ></span
+        >`;
+      })}
+      ${when(
+        scopeWords(s.id) !== "",
+        () => html`<span class="board-sub-scope">for ${scopeWords(s.id)}</span>`,
+      )}
+    </a>`;
+  };
+  const crew = pool.filter((s) => s.id === PLATFORM || scopes.has(s.id));
+  const apart = pool.filter((s) => s.id !== PLATFORM && !scopes.has(s.id));
+  return html`<div
+    class="board-windows"
+    id="windows"
+    data-live="run.*,usage.*"
+    aria-label="Subscription windows"
+  >
+    <div class="board-subs" data-group="crew">
+      <span class="board-group">The crew's</span>${crew.map(card)}
+    </div>
+    ${when(
+      apart.length > 0,
+      () =>
+        html`<div class="board-subs" data-group="apart">
+          <span class="board-group">Not offered to the crew</span>${apart.map(
+            card,
+          )}
+        </div>`,
+    )}
+    <details class="board-spend-detail" id="spend-detail">
+      <summary>Spend by credential, app, agent, issue and kind</summary>
+      ${spendView(readSpend(ctx.app, now))}
+    </details>
+  </div>`;
 }
 
 // ---- working now ----
@@ -268,9 +680,9 @@ function working(ctx: Ctx, scope: BoardScope): Html {
         <span class="board-run-meta">
           <span class="board-state">${word}</span>
           <span
-            >${word === "paused"
-              ? "resumes soon"
-              : reasonWords(run.reason)}</span
+            >${
+              word === "paused" ? "resumes soon" : reasonWords(run.reason)
+            }</span
           >
           ${when(
             run.costUsd > 0 && scope.ownerFacts.has(repo.id),
@@ -308,17 +720,14 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
     const record = scope.records.get(repo.id);
     if (record === undefined) return undefined;
     const look = thumbLook(
+      ctx,
+      repo,
+      record,
       looks.filter((l) => l.appId === record.id && l.env === "production"),
     );
     return (
       look &&
-      lookUrl(
-        repoBase(repo),
-        "production",
-        look.commitOid,
-        look.page,
-        look.kind,
-      )
+      lookUrl(repoBase(repo), look)
     );
   };
   const rows = pulls.map((pull: Pull) => {
@@ -328,6 +737,7 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
       { name: pull.authorName, isAgent: pull.authorIsAgent },
       scope.ownerFacts.has(repo.id),
     );
+    const told = toldBy(db, pull);
     return html`<li>
       <a
         class="board-card board-landed"
@@ -335,19 +745,21 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
         href="${repoBase(repo)}/pulls/${pull.number}"
       >
         <span class="board-thumb"
-          >${picture === undefined
-            ? icon("merge")
-            : html`<img
-                src="${picture}"
-                width="34"
-                height="46"
-                alt=""
-                loading="lazy"
-              />`}</span
+          >${
+            picture === undefined
+              ? icon("merge")
+              : html`<img
+                  src="${picture}"
+                  width="34"
+                  height="46"
+                  alt=""
+                  loading="lazy"
+                />`
+          }</span
         >
         <span class="board-landed-title">${pull.title}</span>
         <span class="board-when">${time(pull.mergedAt ?? pull.createdAt)}</span>
-        <span class="board-landed-meta">${repo.name} · ${author}</span>
+        <span class="board-landed-meta">${repo.name} · ${author}${told === null ? "" : html` · told by ${told}`}</span>
       </a>
     </li>`;
   });
@@ -358,7 +770,56 @@ function landed(ctx: Ctx, scope: BoardScope): Html {
     "pull.merged,run.finished",
     rows,
     scope.repos.length === 0 ? "No apps to watch." : "Nothing has shipped yet.",
+    byPillar(ctx, scope),
   );
+}
+
+/**
+ * What merged in the last 7 days, by pillar, for each app that has
+ * pillars: is the crew building what was asked. Every pillar is named,
+ * zero or not — a pillar nothing merged for is the answer too — and each
+ * is a link to its issues. Nothing for a board whose apps have no pillars.
+ */
+function byPillar(ctx: Ctx, scope: BoardScope): Html | null {
+  const db = ctx.app.db;
+  const having = reposWithUmbrellas(db, scope.ids);
+  const lines = scope.repos.flatMap((repo) => {
+    if (!having.has(repo.id)) return [];
+    const view = pillarView(db, repo);
+    if (view === undefined) return [];
+    const base = repoBase(repo);
+    // One tap to how far a pillar is: its umbrella's milestone.
+    const umbrella = new Map<string, number>(
+      view.set.pillars.map((p) => [p.name, p.umbrella.number]),
+    );
+    if (view.set.later !== undefined)
+      umbrella.set(LATER, view.set.later.number);
+    const hrefOf = (name: string): string =>
+      umbrella.has(name)
+        ? milestoneHref(base, umbrella.get(name)!)
+        : `${base}/issues?label=${encodeURIComponent(name)}`;
+    return [
+      html`<p class="board-pillars" data-app="${repo.name}">
+        <span class="board-pillars-h"
+          >${scope.repos.length === 1 ? "" : `${repo.name} · `}merged in
+          ${PILLAR_DAYS} days</span
+        >
+        ${view.merged.map((count) =>
+          count.pillar === null
+            ? html`<span class="board-pillar" data-zero="no"
+                >${NO_PILLAR} <b>${count.merged}</b></span
+              >`
+            : html`<a
+                class="board-pillar"
+                data-zero="${count.merged === 0 ? "yes" : "no"}"
+                href="${hrefOf(count.pillar)}"
+                >${count.pillar} <b>${count.merged}</b></a
+              >`,
+        )}
+      </p>`,
+    ];
+  });
+  return lines.length === 0 ? null : html`${lines}`;
 }
 
 // ---- decided ----
@@ -432,10 +893,21 @@ function decided(ctx: Ctx, scope: BoardScope): Html {
 
 function today(ctx: Ctx, scope: BoardScope): Html {
   const db = ctx.app.db;
-  const since = startOfTodayUtc(new Date()).toISOString();
-  // Today's spend against the ceiling is the owner's own dashboard.
+  const now = new Date();
+  const since = startOfTodayUtc(now).toISOString();
+  // Spend per shipped change over the weekly window, every app in one read.
+  const week = efficiencyForRepos(
+    db,
+    [...scope.ownerFacts],
+    new Date(now.getTime() - WINDOW_MS.week).toISOString(),
+  );
+  // Today's spend against the ceiling is the owner's own dashboard: each
+  // app that runs on its own, and any other the crew spent on this week.
   const rows = scope.repos
-    .filter((r) => r.autonomy !== "off" && scope.ownerFacts.has(r.id))
+    .filter(
+      (r) =>
+        scope.ownerFacts.has(r.id) && (r.autonomy !== "off" || week.has(r.id)),
+    )
     .map((repo) => {
       const s = autonomyStatus(ctx.app, repo);
       const runs = listRuns(db, repo.id, { kind: "agent", limit: 200 }).filter(
@@ -446,6 +918,7 @@ function today(ctx: Ctx, scope: BoardScope): Html {
         limit: 100,
       }).filter((p) => p.mergedAt !== null && p.mergedAt >= since).length;
       const share = s.ceilingUsd > 0 ? s.spentTodayUsd / s.ceilingUsd : 0;
+      const review = reviewWords(reviewStats(db, repo.id, since));
       const note =
         s.paused === "ceiling"
           ? "at its ceiling until 00:00 UTC"
@@ -472,6 +945,15 @@ function today(ctx: Ctx, scope: BoardScope): Html {
             <span><b>${runs}</b> run${runs === 1 ? "" : "s"}</span>
             <span><b>${shipped}</b> shipped</span>
           </span>
+          <span class="board-app-week"
+            >${perShippedWords(week.get(repo.id))} this week</span
+          >
+          ${when(
+            review !== null,
+            () => html`<span class="board-app-week board-app-review"
+              >${review}</span
+            >`,
+          )}
           <span class="board-spend"
             ><span class="board-fill" data-w="${pct(share)}"></span
           ></span>
@@ -519,6 +1001,19 @@ export const boardCss = /* css */ `
 .board-live[data-state="open"] .board-dot { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent); }
 .board-live[data-state="reconnecting"] .board-dot { background: var(--attn); }
 .board-clock { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; color: var(--muted-fg); min-width: 5ch; text-align: right; }
+.board-asked { font-size: 13px; color: var(--muted-fg); text-decoration: none; }
+.board-asked:hover { color: var(--fg); }
+.board-forge { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; min-height: 28px; padding: 6px var(--pad) 0; font-size: 13px; color: var(--faint); }
+.board-forge[data-ok="no"] { color: var(--attn); }
+.board-asks { display: block; padding: 6px var(--pad) 0; font-size: 13px; color: var(--faint); text-decoration: none; }
+.board-asks b { color: var(--fg); font-weight: 600; }
+.board-declined { display: flex; flex-direction: column; gap: 8px; padding: 10px var(--pad) 0; }
+.board-declined-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12em, 22em) auto; gap: 10px; align-items: center; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--attn) 45%, var(--border)); border-radius: var(--radius, 10px); }
+.board-parked-row { grid-template-columns: minmax(0, 1fr) auto; }
+.board-declined-says { color: var(--attn); line-height: 1.35; }
+.board-declined-says q { color: var(--fg); }
+.board[data-wall] .board-declined-row .input, .board[data-wall] .board-declined-row .btn { display: none; }
+a.board-forge-need { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .board-grid { flex: 1; display: grid; gap: var(--pad); padding: 12px var(--pad) var(--pad); min-height: 0; }
 .board-region { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .board-h {
@@ -531,6 +1026,11 @@ export const boardCss = /* css */ `
 .board-region[data-fresh] .board-h { color: var(--accent); }
 .board-list { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .board-quiet { margin: 2px 0 0; color: var(--faint); font-size: 1em; }
+.board-pillars { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 12px; font-size: 13px; color: var(--muted-fg); }
+.board-pillars-h { color: var(--faint); }
+.board-pillar b { color: var(--fg); font-variant-numeric: tabular-nums; }
+.board-pillar[data-zero="yes"], .board-pillar[data-zero="yes"] b { color: var(--faint); }
+a.board-pillar:hover { color: var(--fg); }
 .board-card {
   display: grid; padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--card); color: inherit; transition: border-color 140ms var(--ease);
@@ -593,6 +1093,27 @@ ${widths}
 .board-spend { grid-column: 1 / -1; display: block; height: 6px; border-radius: 999px; background: var(--muted); overflow: hidden; }
 .board-app[data-paused="ceiling"] .board-fill { background: var(--attn); }
 
+/* Windows: each subscription's 5-hour and weekly window, admin only. */
+.board-windows { display: flex; flex-wrap: wrap; gap: 8px 12px; padding: 8px var(--pad) 0; font-size: 13px; }
+.board-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); color: var(--muted-fg); }
+.board-sub:hover { border-color: var(--border-strong); color: var(--muted-fg); }
+.board-sub-name { font-weight: 600; color: var(--fg); }
+.board-subs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.board-group { font-size: .85em; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; }
+.board-subs[data-group="apart"] .board-sub { border-style: dashed; }
+.board-sub-scope { color: var(--faint); }
+.board-spend-detail { flex-basis: 100%; }
+.board-spend-detail summary { cursor: pointer; color: var(--muted-fg); }
+.spend-table { margin-top: 8px; }
+.spend-table caption { text-align: left; color: var(--muted-fg); }
+.spend-totals { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; }
+.board-window { display: inline-flex; align-items: center; gap: 8px; font-variant-numeric: tabular-nums; }
+.board-window-name { color: var(--faint); }
+.board-window .board-bar { width: 56px; }
+.board-window[data-window] .board-fill[data-w="100"] { background: var(--attn); }
+.board-inferred { font-style: normal; font-size: .85em; color: var(--faint); border: 1px dashed var(--border); border-radius: 4px; padding: 0 4px; }
+.board-app-week { grid-column: 1 / -1; font-size: .875em; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+
 /* Wide: four regions fill the window, each scrolling on its own. */
 @media (min-width: 1100px) {
   .board { flex: none; height: 100dvh; min-height: 0; }
@@ -617,9 +1138,15 @@ ${widths}
   .board-decision .board-when { grid-column: 2; grid-row: 3; }
   .board-app-nums { flex-wrap: wrap; white-space: normal; gap: 6px 12px; }
   .board-scope { display: none; }
+  .board-declined-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .board-declined-says { grid-column: 1 / -1; }
 }
 /* One region, full bleed. */
 .board[data-focus] .board-region { display: none; }
+/* The wall mode: read from across the room, and nobody at the keys. */
+.board[data-wall] { font-size: 20px; cursor: none; }
+.board[data-wall] .board-keys { display: none; }
+@media (min-width: 1600px) { .board[data-wall] { font-size: 23px; } }
 .board[data-focus="working"] #working, .board[data-focus="landed"] #landed,
 .board[data-focus="decided"] #decided, .board[data-focus="today"] #today { display: flex; }
 }

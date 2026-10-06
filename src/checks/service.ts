@@ -11,12 +11,15 @@
  * is that command's business.
  */
 
+import { pullDir, runDir } from "../core/pulls.ts";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { announceRun } from "../actions/runs.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
+import { issueMayRun } from "../core/pull_trust.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
   cancelRun,
@@ -25,17 +28,36 @@ import {
   createRun,
   finishRun,
   listActive,
+  noteRunProgress,
+  requeueCheck,
+  REQUEUED_SUMMARY,
+  sweepAbandonedChecks,
   type Run,
 } from "../core/runs.ts";
 import { Gate } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { transact } from "../kernel/db.ts";
 import { createLog } from "../kernel/log.ts";
 import { holdLease } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
+import { accountActive } from "../core/accounts.ts";
 import { childEnv, runStep } from "../apps/process.ts";
+import { noteReached } from "../apps/egress_report.ts";
+import {
+  capacityCount,
+  noteBooted,
+  capacityEnv,
+  egressSetting,
+} from "../core/capacity.ts";
+import {
+  cellsAvailable,
+  resolveLimits,
+  STEP_HOSTS,
+  type CellSpec,
+} from "../apps/contain.ts";
 import { summariseCheckFailure } from "./summary.ts";
 import type { CheckDetail } from "../core/runs.ts";
 
@@ -102,6 +124,29 @@ export function pickNext(
   return newest;
 }
 
+/**
+ * Settle the checks a dead forge left running, and say so on the bus: a
+ * check whose commit still heads an open pull is queued again for whichever
+ * checks service is up to run, so the change keeps reading *working*.
+ * Called on boot and on the way by whichever forge is alive. A cancelled
+ * check is not announced, as a superseded one is not: `run.finished` reads
+ * as a verdict on the change, and the forge dying is none.
+ */
+export function requeueAbandonedChecks(app: App, staleMs: number): number {
+  const swept = sweepAbandonedChecks(app.db, staleMs);
+  for (const { cancelled, again } of swept.requeued) {
+    appendRunLog(app.config.dataDir, cancelled.id, REQUEUED_SUMMARY);
+    announceRun(app, again, again.actorId ?? undefined);
+  }
+  for (const run of swept.cancelled)
+    appendRunLog(app.config.dataDir, run.id, run.summary);
+  for (const run of swept.failed) {
+    appendRunLog(app.config.dataDir, run.id, run.summary);
+    announceRun(app, run);
+  }
+  return swept.requeued.length + swept.failed.length + swept.cancelled.length;
+}
+
 /** Where a check's checkout lives while it runs. */
 const checksRoot = (dataDir: string): string => join(dataDir, "checks");
 
@@ -112,8 +157,12 @@ export const checksFor = (app: App): ChecksHandle | undefined =>
   handles.get(app);
 
 export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
-  const capacity = options.concurrency ?? 1;
-  const gate = new Gate(capacity);
+  // Read on every pick (`core/capacity.ts`): an admin's change is honoured
+  // by the next check, not the next boot. `concurrency` is the boot default.
+  noteBooted(app.db, "checks.concurrency", String(options.concurrency ?? 1));
+  const capacity = (): number =>
+    capacityCount(app.db, "checks.concurrency", options.concurrency ?? 1);
+  const gate = new Gate(capacity());
   const inFlight = new Map<
     string,
     { promise: Promise<void>; abort: AbortController }
@@ -131,8 +180,20 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     issueId?: string,
     actorId?: string,
   ): Promise<Run | undefined> {
-    if (stopped) return undefined;
-    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    // A suspended or removed owner's code is not run, not even to check it.
+    if (stopped || !accountActive(app.db, repo.ownerId)) return undefined;
+    // A pull from someone who cannot write runs nothing until a writer
+    // approves this exact head (`core/pull_trust.ts`).
+    if (!issueMayRun(app.db, repo, issueId, commitOid)) {
+      log.info("check waits for a writer's approval", {
+        repo: `${repo.ownerName}/${repo.name}`,
+        env,
+        commit: commitOid.slice(0, 7),
+      });
+      return undefined;
+    }
+    // A sealed pull's commit is where its work is, never in the base (`pullDir`).
+    const bare = await runDir(app.db, app.reposRoot, repo, issueId);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, commitOid, "forge.json"),
       readFileAt(bare, commitOid, "package.json"),
@@ -140,22 +201,28 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const declared = parseCheck(forgeJson, packageJson);
     if (declared.ok && declared.value === undefined) return undefined;
     // One check per environment at a time: a newer commit supersedes what
-    // is still waiting, and the same commit is not checked twice.
-    for (const run of listActive(app.db, "check")) {
-      if (run.repoId !== repo.id || run.env !== env) continue;
-      if (run.commitOid === commitOid) return run;
-      if (run.state === "queued")
-        cancelRun(app.db, run.id, `superseded by ${commitOid.slice(0, 7)}`);
-    }
-    const run = createRun(app.db, {
-      repoId: repo.id,
-      kind: "check",
-      env,
-      commitOid,
-      reason,
-      ...(issueId === undefined ? {} : { issueId }),
-      ...(actorId === undefined ? {} : { actorId }),
+    // is still waiting, and the same commit is not checked twice. Looked for
+    // and written in one write transaction, so a second forge process over
+    // this database (a roll) cannot queue the same check beside it.
+    const { run, fresh } = transact(app.db, () => {
+      for (const active of listActive(app.db, "check")) {
+        if (active.repoId !== repo.id || active.env !== env) continue;
+        if (active.commitOid === commitOid) return { run: active, fresh: false };
+        if (active.state === "queued")
+          cancelRun(app.db, active.id, `superseded by ${commitOid.slice(0, 7)}`);
+      }
+      const created = createRun(app.db, {
+        repoId: repo.id,
+        kind: "check",
+        env,
+        commitOid,
+        reason,
+        ...(issueId === undefined ? {} : { issueId }),
+        ...(actorId === undefined ? {} : { actorId }),
+      });
+      return { run: created, fresh: true };
     });
+    if (!fresh) return run;
     announceRun(app, run, actorId);
     schedule();
     return run;
@@ -190,7 +257,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
    */
   function schedule(): void {
     if (stopped) return;
-    while (inFlight.size < capacity) {
+    const limit = capacity();
+    gate.resize(limit);
+    while (inFlight.size < limit) {
       const queued = listActive(app.db, "check").filter(
         (run) => run.state === "queued" && !inFlight.has(run.id),
       );
@@ -253,6 +322,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       // A slot that opens while this forge is stopping is not taken: the run
       // stays queued for the forge that carries on.
       if (stopped) return;
+      // Asked again as it starts: a check queued before a rule changed, or
+      // handed back by a forge that stopped, runs only what may run now.
+      if (!issueMayRun(app.db, repo, run.issueId, run.commitOid)) {
+        cancelRun(app.db, run.id, "waiting for a writer to approve this head");
+        return;
+      }
       const claimed = claimRun(app.db, run.id);
       if (!claimed) return;
       const lease = holdLease(app.db, run.id);
@@ -264,20 +339,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       if (!outcome.ok && stopped && signal.aborted) {
         // Cut off by this forge stopping, not by the check: the same check
         // goes back on the queue, and the forge that carries on runs it.
-        const why = "interrupted by a restart; queued again";
-        cancelRun(app.db, run.id, why);
-        write(why);
-        const again = createRun(app.db, {
-          repoId: run.repoId,
-          kind: "check",
-          env: run.env,
-          commitOid: run.commitOid,
-          reason: run.reason,
-          attempt: run.attempt + 1,
-          ...(run.issueId === null ? {} : { issueId: run.issueId }),
-          ...(run.actorId === null ? {} : { actorId: run.actorId }),
-        });
-        announceRun(app, again, run.actorId ?? undefined);
+        const moved = requeueCheck(app.db, run.id);
+        if (!moved) return;
+        write(REQUEUED_SUMMARY);
+        announceRun(app, moved.again, run.actorId ?? undefined);
         return;
       }
       const seconds = Math.round((Date.now() - started) / 1000);
@@ -306,7 +371,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     | { ok: true }
     | { ok: false; error: string; detail?: CheckDetail | undefined }
   > {
-    const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const bare = await runDir(app.db, app.reposRoot, repo, run.issueId);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, run.commitOid, "forge.json"),
       readFileAt(bare, run.commitOid, "package.json"),
@@ -328,8 +393,34 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     write(`checking out ${run.commitOid.slice(0, 7)}`);
     const exported = await exportTree(bare, run.commitOid, dir);
     if (!exported.ok) return { ok: false, error: exported.error };
+    // The check is repository code: it runs in a cell of its own
+    // (`apps/contain.ts`), its checkout and a home its only places to write,
+    // the forge, the registry and what it declared its only way out.
+    const cells = await cellsAvailable();
+    noteRunProgress(app.db, run.id, {
+      sandbox: { enforced: cells.ok, note: cells.ok ? "" : cells.reason },
+    });
+    if (!cells.ok)
+      write(`uncontained here: ${cells.reason}; the check runs unrestricted`);
+    const home = `${dir}.home`;
+    const cell: CellSpec | undefined = cells.ok
+      ? {
+          dir,
+          writable: [],
+          home,
+          hide: [app.config.dataDir, process.env["HOME"] ?? "", tmpdir()],
+          egress: [...STEP_HOSTS, ...manifest.egress],
+          reach: [options.forgeUrl],
+          limits: resolveLimits("step", manifest.limits),
+          onUndeclared: (host, port) =>
+            noteReached(app.config.dataDir, repo.id, host, port),
+          egressMode: egressSetting(app.db),
+        }
+      : undefined;
     try {
       const env = childEnv({
+        // The shard count an admin set (`core/capacity.ts`), never the pod's.
+        ...capacityEnv(app.db),
         CI: "1",
         FORGE_URL: options.forgeUrl,
         FORGE_CHECK: run.id,
@@ -342,6 +433,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           log: write,
           signal,
           timeoutMs: manifest.timeout * 1000,
+          cell,
         });
         if (!installed.ok) return { ok: false, error: installed.error };
       }
@@ -362,6 +454,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         },
         signal,
         timeoutMs: manifest.timeout * 1000,
+        cell,
       });
       if (!ran.ok) {
         const { summary, detail } = summariseCheckFailure(
@@ -373,6 +466,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       return { ok: true };
     } finally {
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
     }
   }
 
@@ -427,7 +521,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
               undefined,
               actor,
             );
-          for (const pull of listPulls(app.db, repo.id, {
+          for (const pull of listPulls(app.db, repo.id, { sealed: true,
             state: "open",
             limit: 200,
           })) {
@@ -478,13 +572,32 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         );
         return;
       }
+      // An approval is what lets a reader's pull run: check its head now.
+      case "pull.reviewed": {
+        const number = event.payload["number"];
+        if (typeof number !== "number" || event.payload["state"] !== "approved")
+          return;
+        const pull = getPull(app.db, repo.id, number);
+        if (!pull || pull.state !== "open") return;
+        const head = await headOf(repo, pull);
+        if (head !== undefined)
+          await request(
+            repo,
+            `pull-${pull.number}`,
+            head,
+            "approved",
+            pull.id,
+            actor,
+          );
+        return;
+      }
       default:
         return;
     }
   }
 
   async function headOf(repo: Repo, pull: Pull): Promise<string | undefined> {
-    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const dir = await pullDir(app.db, app.reposRoot, repo, pull);
     const ref = pull.crossRepo
       ? `refs/pull/${pull.number}/head`
       : `refs/heads/${pull.headBranch}`;

@@ -107,7 +107,7 @@ export function listProbes(db: Database, appId: string, limit = 30): ProbeRow[] 
 
 /** The open issue a mismatch keeps, if there is one. */
 export function probeIssue(app: App, repo: Repo) {
-  return listIssues(app.db, repo.id, { state: "open", limit: 200 }).find(
+  return listIssues(app.db, repo.id, { sealed: true, state: "open", limit: 200 }).find(
     (i) => i.title === PROBE_ISSUE_TITLE,
   );
 }

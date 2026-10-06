@@ -71,6 +71,10 @@ export interface Run {
   readonly heartbeatAt: string | null;
   /** For an agent run: how many turns the model took. */
   readonly turns: number;
+  /** For an agent run: whether its shell was held to the sandbox; null when unrecorded. */
+  readonly sandboxEnforced: boolean | null;
+  /** Why it was not, when it was not. */
+  readonly sandboxNote: string;
   /** A failed check's own detail, when its output was recognised; null otherwise. */
   readonly checkDetail: CheckDetail | null;
   readonly createdAt: string;
@@ -98,6 +102,8 @@ interface RunRow {
   attempt: number;
   heartbeat_at: string | null;
   turns: number;
+  sandbox_enforced: number | null;
+  sandbox_note: string;
   check_detail: string;
   created_at: string;
   started_at: string | null;
@@ -123,6 +129,9 @@ const toRun = (r: RunRow): Run => ({
   attempt: r.attempt,
   heartbeatAt: r.heartbeat_at,
   turns: r.turns,
+  sandboxEnforced:
+    r.sandbox_enforced === null ? null : r.sandbox_enforced !== 0,
+  sandboxNote: r.sandbox_note,
   checkDetail: r.check_detail ? (JSON.parse(r.check_detail) as CheckDetail) : null,
   createdAt: r.created_at,
   startedAt: r.started_at,
@@ -295,11 +304,15 @@ export function noteRunProgress(
     branch?: string | undefined;
     /** The subscription the run works on, once picked. */
     subscriptionId?: string | undefined;
+    /** Whether the shell is held to the sandbox, and why not when it is not. */
+    sandbox?: { enforced: boolean; note: string } | undefined;
   },
 ): void {
   db.query(
     `UPDATE run SET session_id = COALESCE(?2, session_id), cost_usd = COALESCE(?3, cost_usd),
-       branch = COALESCE(?4, branch), subscription_id = COALESCE(?5, subscription_id)
+       branch = COALESCE(?4, branch), subscription_id = COALESCE(?5, subscription_id),
+       sandbox_enforced = COALESCE(?6, sandbox_enforced),
+       sandbox_note = COALESCE(?7, sandbox_note)
      WHERE id = ?1`,
   ).run(
     runId,
@@ -307,6 +320,8 @@ export function noteRunProgress(
     progress.costUsd ?? null,
     progress.branch ?? null,
     progress.subscriptionId ?? null,
+    progress.sandbox === undefined ? null : progress.sandbox.enforced ? 1 : 0,
+    progress.sandbox?.note.slice(0, 300) ?? null,
   );
 }
 
@@ -359,6 +374,129 @@ export function failAbandonedRuns(
          AND kind IN (SELECT value FROM json_each(?2))`,
     )
     .run(cutoff, JSON.stringify(kinds)).changes;
+}
+
+/** What a check the forge's own restart cut off says as it is queued again. */
+export const REQUEUED_SUMMARY = "interrupted by a restart; queued again";
+
+/**
+ * How many times one check may be cut off by its forge going away and be
+ * queued again. Past it the check fails once, saying so: a check that kills
+ * its forge must not loop forever.
+ */
+export const CHECK_RESTART_LIMIT = 3;
+
+/**
+ * Cancel a check the forge's own going-away cut off and queue the same
+ * check again, `attempt + 1` — the one way a check is retried, from a
+ * graceful stop or a lapsed lease alike. Only a run still `running` is
+ * moved, and `lapsedBefore`, when given, must still be true of its lease:
+ * the UPDATE's WHERE is what decides between two forges, so only one of
+ * them ever queues the retry. Returns the cancelled run and its retry, or
+ * undefined when another worker got there first.
+ */
+export function requeueCheck(
+  db: Database,
+  runId: string,
+  lapsedBefore?: string,
+): { cancelled: Run; again: Run } | undefined {
+  return db.transaction(() => {
+    const changes = db
+      .query(
+        `UPDATE run SET state = 'cancelled', summary = ?2,
+           finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id = ?1 AND kind = 'check' AND state = 'running'
+           AND (?3 IS NULL OR heartbeat_at IS NULL OR heartbeat_at < ?3)`,
+      )
+      .run(runId, REQUEUED_SUMMARY, lapsedBefore ?? null).changes;
+    if (changes === 0) return undefined;
+    const cancelled = getRun(db, runId)!;
+    const again = createRun(db, {
+      repoId: cancelled.repoId,
+      kind: "check",
+      env: cancelled.env,
+      commitOid: cancelled.commitOid,
+      reason: cancelled.reason,
+      attempt: cancelled.attempt + 1,
+      ...(cancelled.issueId === null ? {} : { issueId: cancelled.issueId }),
+      ...(cancelled.actorId === null ? {} : { actorId: cancelled.actorId }),
+    });
+    return { cancelled, again };
+  })();
+}
+
+/** What a sweep of abandoned checks did, run by run. */
+export interface AbandonedChecks {
+  /** Cancelled and queued again: the cancelled run and its retry. */
+  readonly requeued: readonly { cancelled: Run; again: Run }[];
+  /** Past `CHECK_RESTART_LIMIT`: failed once, saying the forge kept dying. */
+  readonly failed: readonly Run[];
+  /** No longer any open pull's head: cancelled, not retried. */
+  readonly cancelled: readonly Run[];
+}
+
+/**
+ * Checks whose lease lapsed — their forge died under them, which is never
+ * the commit's fault. One whose commit is still the head of an open pull is
+ * queued again (`requeueCheck`) until `CHECK_RESTART_LIMIT`, then failed
+ * once with a summary that says why; one whose commit no longer heads any
+ * open pull is cancelled and says so. Every move is a compare-and-swap on
+ * the lapsed lease, so two forges sweeping at once move each run once.
+ */
+export function sweepAbandonedChecks(
+  db: Database,
+  staleMs: number,
+): AbandonedChecks {
+  const cutoff = new Date(Date.now() - staleMs).toISOString();
+  const rows = db
+    .query<RunRow & { live: number }, [string]>(
+      `SELECT run.*, EXISTS (
+           SELECT 1 FROM pull JOIN issue ON issue.id = pull.issue_id
+            WHERE pull.issue_id = run.issue_id AND issue.state = 'open'
+              AND pull.merged_at IS NULL AND pull.head_oid = run.commit_oid
+         ) AS live
+         FROM run
+        WHERE kind = 'check' AND state = 'running'
+          AND (heartbeat_at IS NULL OR heartbeat_at < ?1)`,
+    )
+    .all(cutoff);
+  const out = {
+    requeued: [] as { cancelled: Run; again: Run }[],
+    failed: [] as Run[],
+    cancelled: [] as Run[],
+  };
+  const settle = (runId: string, state: string, summary: string) =>
+    db
+      .query(
+        `UPDATE run SET state = ?2, summary = ?3,
+           finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id = ?1 AND state = 'running'
+           AND (heartbeat_at IS NULL OR heartbeat_at < ?4)`,
+      )
+      .run(runId, state, summary, cutoff).changes > 0
+      ? getRun(db, runId)
+      : undefined;
+  for (const row of rows) {
+    if (row.live === 0) {
+      const done = settle(
+        row.id,
+        "cancelled",
+        "the forge went away, and this commit no longer heads an open pull",
+      );
+      if (done) out.cancelled.push(done);
+    } else if (row.attempt >= CHECK_RESTART_LIMIT) {
+      const done = settle(
+        row.id,
+        "failed",
+        `the forge kept going away under this check (${row.attempt + 1} times); not trying again`,
+      );
+      if (done) out.failed.push(done);
+    } else {
+      const moved = requeueCheck(db, row.id, cutoff);
+      if (moved) out.requeued.push(moved);
+    }
+  }
+  return out;
 }
 
 /** Whether a running run's lease has lapsed. */
@@ -487,6 +625,24 @@ export function checksForHead(
     >("SELECT * FROM run WHERE kind IN ('deploy','check') AND issue_id = ?1 AND commit_oid = ?2 ORDER BY id DESC")
     .all(issueId, headOid)
     .map(toRun);
+}
+
+/**
+ * What this head says now: the newest run of each kind (and environment)
+ * at it. A re-run on the same commit supersedes the red it was run for, so
+ * "does this head pass" is whether every row here is `ok`.
+ */
+export function verdictForHead(
+  db: Database,
+  issueId: string,
+  headOid: string,
+): Run[] {
+  const newest = new Map<string, Run>();
+  for (const run of checksForHead(db, issueId, headOid)) {
+    const key = `${run.kind}:${run.env}`;
+    if (!newest.has(key)) newest.set(key, run);
+  }
+  return [...newest.values()];
 }
 
 export interface CheckSummary {
@@ -788,4 +944,41 @@ export function listActiveRuns(
     )
     .all(...unique.slice(0, 400))
     .map(toRun);
+}
+
+/** What is waiting to start, by kind: one grouped query, however many runs there are. */
+export function queueDepth(
+  db: Database,
+  now = Date.now(),
+): { kind: RunKind; queued: number; oldest: string }[] {
+  return db
+    .query<{ kind: RunKind; queued: number; oldest: string }, [string]>(
+      `SELECT kind, COUNT(*) AS queued, MIN(created_at) AS oldest
+       FROM run
+       WHERE state = 'queued' AND (not_before IS NULL OR not_before <= ?1)
+       GROUP BY kind`,
+    )
+    .all(new Date(now).toISOString());
+}
+
+/** Every running run with the repository and issue number it is about, in one query. */
+export function listRunning(
+  db: Database,
+): { run: Run; repo: string; issue: number | null }[] {
+  const rows = db
+    .query<RunRow & { slug: string; issue_number: number | null }, []>(
+      `SELECT run.*, user.username || '/' || repo.name AS slug,
+              issue.number AS issue_number
+       FROM run
+       JOIN repo ON repo.id = run.repo_id
+       JOIN user ON user.id = repo.owner_id
+       LEFT JOIN issue ON issue.id = run.issue_id
+       WHERE run.state = 'running'`,
+    )
+    .all();
+  return rows.map((r) => ({
+    run: toRun(r),
+    repo: r.slug,
+    issue: r.issue_number,
+  }));
 }

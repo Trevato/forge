@@ -63,12 +63,19 @@ export interface MirrorResult {
 export const FIRST_FETCH_RETRY_MS: readonly number[] = [2_000, 5_000, 10_000];
 
 /**
- * How long to wait between tries of a new mirror's first fetch. Mutable so a
- * test that wants a failure now can have it now; the forge keeps the default,
- * and a test that lowers it puts back what it found.
+ * How long to wait between tries of a new mirror's first fetch, and how the
+ * wait is spent. Mutable so a test that wants a failure now can have it now,
+ * and so a test can make the wait the thing it is waiting for (the origin
+ * finishing the repository) instead of racing a clock against it (#541); the
+ * forge keeps the defaults, and a test that changes them puts back what it
+ * found.
  */
-export const firstFetchRetry = {
+export const firstFetchRetry: {
+  ms: readonly number[];
+  wait: (ms: number) => Promise<void>;
+} = {
   ms: FIRST_FETCH_RETRY_MS,
+  wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
 export async function mirrorRepo(
@@ -171,7 +178,7 @@ export async function mirrorRepo(
       stage: "fetching",
       detail: `the origin has not finished making it; trying again in ${Math.round(wait / 1000)}s`,
     });
-    await new Promise((resolve) => setTimeout(resolve, wait));
+    await firstFetchRetry.wait(wait);
     report = await sync();
   }
 

@@ -7,8 +7,9 @@
  *
  *   **lossless** — the token texts of a line concatenate back to the line, so
  *   nothing a file contains can be dropped or duplicated on the way to a page;
- *   **linear** — a 10,000-character line scans in well under a frame, which is
- *   what lets the editor re-highlight on every keystroke;
+ *   **linear** — scanning a line eight times longer takes about eight times
+ *   as long, never sixty-four, which is what lets the editor re-highlight a
+ *   long line on every keystroke;
  *   **total** — random bytes in any language never throw.
  *
  * On top of that, one fixture per language, snapshotted, so a change to a rule
@@ -30,6 +31,46 @@ import {
 import { renderTokens, tokenClasses } from "../src/web/highlight-html.ts";
 import { THEMES, THEME_NAMES } from "../src/design/themes.ts";
 import { css } from "../src/web/style.ts";
+
+/**
+ * How `work`'s cost grows with its input, as the exponent k in time ∝ size^k:
+ * timed at `small` and at `GROWTH` times that, in this run on this machine,
+ * small and large interleaved so load lands on both, best of three each.
+ *
+ * Linearity is asserted as this exponent, never as milliseconds. A wall-clock
+ * bound is a claim about the machine (10ms passed on one box and took 25ms on
+ * a crew machine, #294); a ratio cancels the machine out. A linear scanner
+ * measures k ≈ 1 (a little above under GC and allocation as the token array
+ * grows), a quadratic one k ≈ 2 — the regression these tests exist for — so
+ * `LINEAR_BOUND` sits halfway. Growth is 16× rather than 2× so the two are
+ * 64× against 256× in time, far apart enough for a loaded machine's noise
+ * not to bridge them. A spike can still land on one measurement, so an
+ * exponent over the bound is measured again, up to three times, and the best
+ * is returned: noise does not repeat, quadratic does.
+ */
+const GROWTH = 16;
+const LINEAR_BOUND = 1.5;
+
+function growth(work: (size: number) => void, small: number): number {
+  const time = (size: number) => {
+    const t0 = process.cpuUsage();
+    work(size);
+    const { user, system } = process.cpuUsage(t0);
+    return user + system;
+  };
+  work(small); // warm the JIT so no sample pays for compiling
+  let k = Infinity;
+  for (let attempt = 0; attempt < 3 && k >= LINEAR_BOUND; attempt++) {
+    let lo = Infinity;
+    let hi = Infinity;
+    for (let i = 0; i < 3; i++) {
+      lo = Math.min(lo, time(small));
+      hi = Math.min(hi, time(small * GROWTH));
+    }
+    k = Math.min(k, Math.log(Math.max(hi, 1) / Math.max(lo, 1)) / Math.log(GROWTH));
+  }
+  return k;
+}
 
 function join(code: string, lang: Language): string {
   return highlightLines(code, lang)
@@ -467,34 +508,50 @@ describe("every language snapshots", () => {
 });
 
 describe("resilience", () => {
-  test("a 10,000-character line scans in under 10ms in every language", () => {
+  test("the growth measure tells linear from quadratic", () => {
+    // The yardstick, checked against itself: a scanner that re-reads the
+    // line for every character must land above the bound, or the two tests
+    // below could never fail.
+    const quadratic = (size: number) => {
+      const line = "x".repeat(size);
+      let sum = 0;
+      for (let i = 0; i < size; i++)
+        for (let j = i; j < size; j++) sum += line.charCodeAt(j);
+      return sum;
+    };
+    expect(growth(quadratic, 250)).toBeGreaterThan(LINEAR_BOUND);
+  }, 30_000);
+
+  test("a long line scans in linear time in every language", () => {
     const unit =
       "const x = { a: 1, b: `t${y}`, c: /re/g, d: 'str', e: [1,2,3] }; // n ";
-    const line = unit.repeat(200).slice(0, 10_000);
+    const line = (size: number) => unit.repeat(Math.ceil(size / unit.length)).slice(0, size);
     for (const lang of LANGUAGES) {
-      const t0 = Bun.nanoseconds();
-      const rows = highlightLines(line, lang);
-      const ms = (Bun.nanoseconds() - t0) / 1e6;
-      expect(rows.length).toBe(1);
-      expect(ms).toBeLessThan(10);
+      expect(highlightLines(line(10_000), lang).length).toBe(1);
+      const k = growth((size) => highlightLines(line(size), lang), 500);
+      expect({ lang, linear: k < LINEAR_BOUND }).toEqual({ lang, linear: true });
     }
-  });
+  }, 30_000);
 
   test("pathological delimiter runs stay linear", () => {
-    for (const junk of [
-      "`".repeat(4000),
-      "/".repeat(4000),
-      "${".repeat(2000),
-      "<".repeat(4000),
-      '"'.repeat(4000),
-      "#[".repeat(2000),
-      "[[".repeat(2000),
-    ]) {
-      const t0 = Bun.nanoseconds();
-      for (const lang of LANGUAGES) expect(join(junk, lang)).toBe(junk);
-      expect((Bun.nanoseconds() - t0) / 1e6).toBeLessThan(120);
+    for (const [unit, label] of [
+      ["`", "backticks"],
+      ["/", "slashes"],
+      ["${", "interpolations"],
+      ["<", "angles"],
+      ['"', "quotes"],
+      ["#[", "attributes"],
+      ["[[", "long brackets"],
+    ] as const) {
+      const junk = (size: number) => unit.repeat(size / unit.length);
+      for (const lang of LANGUAGES) expect(join(junk(4_000), lang)).toBe(junk(4_000));
+      const k = growth((size) => {
+        const text = junk(size);
+        for (const lang of LANGUAGES) highlightLines(text, lang);
+      }, 250);
+      expect({ label, linear: k < LINEAR_BOUND }).toEqual({ label, linear: true });
     }
-  });
+  }, 30_000);
 
   test("random bytes never throw, in any language", () => {
     // Deterministic: a seeded generator, so a failure is reproducible.

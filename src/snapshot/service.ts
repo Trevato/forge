@@ -25,13 +25,18 @@ const log = createLog("snapshots");
 const NIGHTLY_HOUR_UTC = 8;
 
 export interface SnapshotsHandle {
-  readonly store: Store;
+  /** The store in effect now; undefined when the forge has been given none. */
+  readonly store: Store | undefined;
+  /** Whether snapshots carry the key, wrapped under a passphrase. */
+  readonly wraps: boolean;
   /** Take one now; waits for any in flight. */
   readonly now: () => Promise<Manifest>;
   /** The newest first, from the store. */
   readonly list: () => Promise<Manifest[]>;
   /** The last one taken by this process, and what it said. */
   readonly last: () => { manifest?: Manifest; error?: string; at?: string };
+  /** Forget the resolved store; the next use resolves again (a new destination was saved). */
+  readonly forget: () => void;
   readonly stop: () => Promise<void>;
 }
 
@@ -48,23 +53,41 @@ export function untilNightly(now = Date.now()): number {
 
 export function startSnapshots(
   app: App,
-  store: Store,
-  options: { readonly version: string; readonly nightly?: boolean } = {
+  destination: Store | (() => Store | undefined),
+  options: {
+    readonly version: string;
+    readonly nightly?: boolean;
+    readonly passphrase?: string | undefined;
+  } = {
     version: "0",
   },
 ): SnapshotsHandle {
+  // Resolving opens sealed secrets, which is audited: do it once per change,
+  // not once per page view.
+  let resolved: { store: Store | undefined } | undefined;
+  const current = (): Store | undefined => {
+    if (typeof destination !== "function") return destination;
+    resolved ??= { store: destination() };
+    return resolved.store;
+  };
   let stopped = false;
   let inFlight: Promise<Manifest> | undefined;
   let last: { manifest?: Manifest; error?: string; at?: string } = {};
 
   const take = (): Promise<Manifest> => {
     const run = (inFlight ?? Promise.resolve()).then(async () => {
+      // Resolved per run, so a destination saved on the Backups page is the
+      // very next snapshot's.
+      const store = current();
+      if (store === undefined)
+        throw new Error("this forge has nowhere to put a snapshot");
       const manifest = await takeSnapshot(
         {
           db: app.db,
           dataDir: app.config.dataDir,
           reposRoot: app.reposRoot,
           version: options.version,
+          passphrase: options.passphrase,
         },
         store,
       );
@@ -97,10 +120,19 @@ export function startSnapshots(
   schedule();
 
   const handle: SnapshotsHandle = {
-    store,
+    get store() {
+      return current();
+    },
+    wraps: !!options.passphrase,
     now: take,
-    list: () => listSnapshots(store),
+    list: async () => {
+      const store = current();
+      return store === undefined ? [] : listSnapshots(store);
+    },
     last: () => last,
+    forget: () => {
+      resolved = undefined;
+    },
     stop: async () => {
       stopped = true;
       if (timer !== undefined) clearTimeout(timer);
@@ -109,6 +141,10 @@ export function startSnapshots(
     },
   };
   handles.set(app, handle);
-  log.info("snapshots on", { where: store.where, keep: KEEP });
+  log.info("snapshots on", {
+    where: current()?.where ?? "nowhere",
+    keep: KEEP,
+    key: options.passphrase ? "wrapped" : "none",
+  });
   return handle;
 }

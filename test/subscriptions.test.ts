@@ -1,3 +1,4 @@
+import { getHeadroom } from "../src/core/standing.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -192,6 +193,8 @@ describe("the provider's reset time", () => {
         result: "You've hit your weekly limit · resets Sep 26 at 9pm (UTC)",
         costUsd: 0,
         turns: 0,
+        tokensIn: 0,
+        tokensOut: 0,
         reason: "error_during_execution",
       }),
     ).toBe(true);
@@ -249,7 +252,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       budgetUsd: 2,
       runTimeoutMs: 60_000,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -336,6 +339,16 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(refused).toBeDefined();
     expect(refused.state).toBe("cancelled");
     expect(refused.summary).toContain("work takes over");
+    // The refused run named the real reason, not a generic pause.
+    expect(refused.summary).toMatch(/personal's (weekly|5-hour) window is full until \d\d:\d\d UTC/);
+    // Stickiness: the run never changed account mid-flight; the successor did.
+    const first = app.db
+      .query<{ subscription_id: string | null }, [string]>(
+        "SELECT subscription_id FROM run WHERE id = ?1",
+      )
+      .get(refused.id)!;
+    expect(first.subscription_id).toBe(personal.value.id);
+    expect(done.id).not.toBe(refused.id);
     const spent = app.db
       .query<
         { subscription_id: string | null },
@@ -503,6 +516,36 @@ describe("the pages", () => {
     expect(html).toContain("@acme");
   });
 
+  test("an admin keeps a share of each window for people, and sees each window", async () => {
+    const work = listSubscriptions(app.db)[0]!;
+    let html = await get("/settings/subscriptions");
+    expect(html).toContain(`action="/settings/subscriptions/${work.id}/headroom"`);
+    expect(html).toContain("5-hour: ~$0.00 used · opens on next use");
+    const kept = await post(`/settings/subscriptions/${work.id}/headroom`, {
+      headroom: "25",
+    });
+    expect(kept.status).toBe(303);
+    expect(getHeadroom(app.db, work.id)).toBe(25);
+    for (const bad of ["91", "-5", "ten", ""]) {
+      const refused = await post(`/settings/subscriptions/${work.id}/headroom`, {
+        headroom: bad,
+      });
+      expect(refused.status).toBe(303);
+    }
+    expect(getHeadroom(app.db, work.id)).toBe(25);
+    html = await get("/settings/subscriptions");
+    expect(html).toContain('value="25"');
+    // Without the page's own origin, nothing changes.
+    const forged = await fetch(`${base}/settings/subscriptions/${work.id}/headroom`, {
+      method: "POST",
+      headers: { cookie, origin: "https://elsewhere.example" },
+      body: new URLSearchParams({ headroom: "0" }),
+      redirect: "manual",
+    });
+    expect(forged.status).toBe(403);
+    expect(getHeadroom(app.db, work.id)).toBe(25);
+  });
+
   test("nobody but an admin reaches the pool", async () => {
     const signed = await fetch(`${base}/signup`, {
       method: "POST",
@@ -526,5 +569,14 @@ describe("the pages", () => {
     });
     expect(posted.status).toBe(404);
     expect(listSubscriptions(app.db)).toHaveLength(1);
+    const work = listSubscriptions(app.db)[0]!;
+    const headroom = await fetch(`${base}/settings/subscriptions/${work.id}/headroom`, {
+      method: "POST",
+      headers: { cookie: guest, origin: base },
+      body: new URLSearchParams({ headroom: "0" }),
+      redirect: "manual",
+    });
+    expect(headroom.status).toBe(404);
+    expect(getHeadroom(app.db, work.id)).toBe(25);
   });
 });

@@ -84,6 +84,7 @@ export const HOOK_RELAY_TIMEOUT_MS = 120_000;
 export async function runHookClient(hook: HookName): Promise<never> {
   const socket = process.env.FORGE_SOCKET;
   if (!socket) {
+    // Hook stderr is shown to the pusher by git; it must be stderr.
     console.error("forge hook: FORGE_SOCKET unset");
     process.exit(1);
   }
@@ -115,10 +116,12 @@ export async function runHookClient(hook: HookName): Promise<never> {
       }),
     });
     const text = await response.text();
+    // The relayed refusal text, for the pusher to read.
     if (text !== "") console.error(text);
     process.exit(response.ok ? 0 : 1);
   } catch (error) {
     // pre-receive fails closed: an unreachable forge must not admit a push.
+    // Hook stderr is shown to the pusher by git.
     console.error(`forge: hook relay failed (${String(error)})`);
     process.exit(hook === "pre-receive" ? 1 : 0);
   }

@@ -49,12 +49,14 @@ function paperIssue(n: number, state: "open" | "closed" = "open"): Issue {
     createdAt: `2026-01-01T00:00:${String(n).padStart(2, "0")}Z`,
     updatedAt: "2026-01-01T00:00:00Z",
     closedAt: null,
+    closeReason: null,
     originAuthor: null,
     originUrl: null,
     assigneeId: null,
     assigneeName: null,
     assigneeIsAgent: false,
     authorIsAgent: false,
+    sealed: false,
   };
 }
 
@@ -66,6 +68,10 @@ function paperGraph(n: number, edges: [number, number][]): Graph {
       issueId: `i${issue}`,
       blockedById: `i${blockedBy}`,
     })),
+    held: [],
+    deferred: new Map(),
+    unadopted: new Set(),
+    structural: new Set(),
   };
 }
 
@@ -184,7 +190,7 @@ describe("the map, per app and across the forge", () => {
       ).headers.get("set-cookie") ?? ""
     ).split(";")[0]!;
   const person = async (username: string, admin = false): Promise<User> => {
-    const made = await createUser(app.db, {
+    const made = await createUser(app.db, { trusted: true,
       username,
       email: `${username}@forge.local`,
       password: "a-good-passphrase",
@@ -207,13 +213,17 @@ describe("the map, per app and across the forge", () => {
     });
     return { repo: made.value, issues };
   };
+  // Struck out: parked twice since anyone re-planned it, the rule that
+  // stops dispatch (`crew/parks.ts`).
   const park = (by: User, issue: Issue): void => {
-    const said = addComment(app.db, {
-      issueId: issue.id,
-      authorId: by.id,
-      body: "Parked by the crew: the check stayed red past its tries.",
-    });
-    if (!said.ok) throw new Error(said.error);
+    for (let n = 0; n < 2; n++) {
+      const said = addComment(app.db, {
+        issueId: issue.id,
+        authorId: by.id,
+        body: "Parked by the crew: the check stayed red past its tries.",
+      });
+      if (!said.ok) throw new Error(said.error);
+    }
   };
 
   beforeAll(async () => {
@@ -511,9 +521,11 @@ describe("the map, per app and across the forge", () => {
       ready: 2,
       working: 1,
       blocked: 1,
+      deferred: 0,
       done: 1,
       parked: 1,
       waiting: 1,
+      held: 0,
     });
     expect(lane.workers).toEqual(["scout"]);
     expect(lane.idle).toBe(false);

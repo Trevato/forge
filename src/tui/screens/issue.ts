@@ -45,8 +45,7 @@ import {
 } from "./common.ts";
 import { assignPicker, assignedText } from "./assign.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
-import { runScreen } from "./run.ts";
-import { RunList } from "./runs.ts";
+import { RunList, openRunLog } from "./runlist.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
 import { local, localRepo, whereRows, whereStrip } from "./where.ts";
 
@@ -110,7 +109,7 @@ export function issueScreen(
   const openRun = (): void => {
     const run = crew.selected;
     if (run !== undefined && repo !== undefined)
-      ctx.push(runScreen(f, ctx, repo, run.id));
+      openRunLog(f, ctx, repo, run);
   };
 
   /** The core row a write needs. Only ever reached on a local source. */
@@ -282,7 +281,7 @@ export function issueScreen(
         });
         crew.render(s, inner, c, ctx, focus === "crew", (run) => {
           focus = "crew";
-          if (repo !== undefined) ctx.push(runScreen(f, ctx, repo, run.id));
+          if (repo !== undefined) openRunLog(f, ctx, repo, run);
         });
       }
 

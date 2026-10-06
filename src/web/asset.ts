@@ -18,6 +18,7 @@
 
 import { sha256 } from "../kernel/hash.ts";
 import { createLog } from "../kernel/log.ts";
+import { css } from "./style.ts";
 
 const log = createLog("web");
 
@@ -65,6 +66,47 @@ export function assetResponse(asset: BuiltAsset): Response {
     headers: {
       "content-type": "text/javascript; charset=utf-8",
       "cache-control": "public, max-age=31536000, immutable",
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
+/** The stylesheet, content-addressed the same way. Hashed once per process. */
+export interface CssAsset {
+  /** The URL path it is served from, content-hashed. */
+  path: string;
+  /** The `:name` the route matches, i.e. the path's basename without `.css`. */
+  name: string;
+}
+
+let cssAsset: CssAsset | null = null;
+
+export function stylesheetAsset(): CssAsset {
+  if (cssAsset === null) {
+    const name = `forge-${sha256(css).slice(0, 16)}`;
+    cssAsset = { path: `/assets/${name}.css`, name };
+  }
+  return cssAsset;
+}
+
+/** The response for a hit on the stylesheet: immutable, because it is. */
+export function stylesheetResponse(): Response {
+  return new Response(css, {
+    headers: {
+      "content-type": "text/css; charset=utf-8",
+      "cache-control": "public, max-age=31536000, immutable",
+      "x-content-type-options": "nosniff",
+    },
+  });
+}
+
+/** `/assets/forge.css` for pages rendered before the hash: send them to the current sheet, never cached long. */
+export function stylesheetRedirect(): Response {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: stylesheetAsset().path,
+      "cache-control": "no-cache",
       "x-content-type-options": "nosniff",
     },
   });

@@ -685,7 +685,7 @@ describe("rule 6: a run token dies with the run, and only with the run", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tokens-"));
     app = createApp({ dataDir, port: 0 });
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -716,12 +716,14 @@ describe("rule 6: a run token dies with the run, and only with the run", () => {
   });
 
   test("a token expiring one millisecond from now is refused once that instant passes", async () => {
-    const soon = new Date(Date.now() + 5).toISOString();
+    // Half a second, not a few milliseconds: on a loaded test shard the
+    // first verify could otherwise land after the instant and read red.
+    const soon = new Date(Date.now() + 500).toISOString();
     const minted = createToken(app.db, alice.id, "soon", "rw", {
       expiresAt: soon,
     });
     expect(verifyToken(app.db, minted.token).ok).toBe(true);
-    await Bun.sleep(30);
+    await Bun.sleep(600);
     expect(verifyToken(app.db, minted.token).ok).toBe(false);
   });
 });
@@ -740,7 +742,7 @@ describe("rule 6, end to end: the crew's per-run token", () => {
     work = await mkdtemp(join(tmpdir(), "forge-crew-token-work-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -858,7 +860,7 @@ describe("rule 7: CHECK_FAILED_LIMIT bounds automatic follow-ups", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-bound-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1104,7 +1106,7 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1474,7 +1476,7 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     // anonymous" from "you're signed in but still can't see it" — both
     // must read `not_found`, or an anonymous prober could tell the two
     // apart and learn something about a repo they cannot see.
-    const strangerCreated = await createUser(app.db, {
+    const strangerCreated = await createUser(app.db, { trusted: true,
       username: "stranger",
       email: "stranger@forge.local",
       password: "a-good-passphrase",
@@ -1499,10 +1501,9 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
     // `unauthorized` is reachable only through the other combination: a
     // *public* repository (so `canRead` already passes for anyone) whose
     // app access is explicitly overridden to "private". There, an
-    // anonymous visitor has nothing to be vouched with, but any signed-in
-    // account — even a stranger's — can read the (public) code, so it gets
-    // a working grant. That is the documented contract (`canRead` plus
-    // "the forge can name you"), not a bypass of crew/collaborator status.
+    // anonymous visitor has nothing to be vouched with, and a signed-in
+    // stranger who can read the public code is still not let in: a private
+    // app answers to its writers and crew only (#620).
     const overrideMade = await newApp(app, alice, {
       name: "publicwithprivateapp",
       visibility: "public",
@@ -1528,7 +1529,9 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
       overrideMade.value.repo,
       "production",
     );
-    expect(strangerOnPublicRepo.ok).toBe(true);
+    expect(strangerOnPublicRepo.ok).toBe(false);
+    if (!strangerOnPublicRepo.ok)
+      expect(strangerOnPublicRepo.error).toBe("not_found");
   }, 60_000);
 
   test("the proxy: hop-by-hop headers are stripped, an upstream that dies mid-request yields a clean error, a claimed upgrade is a request", async () => {
@@ -1827,7 +1830,7 @@ describe("apps adversarial: teardown races, grants, the proxy, and rule 1/4", ()
 
     const tokenResp = await api("/api/v1/tokens", {
       method: "POST",
-      body: JSON.stringify({ name: "x", scope: "admin" }),
+      body: JSON.stringify({ adminConfirm: true, name: "x", scope: "admin" }),
     });
     // Neither via-session nor via-password: falls through to bad credentials.
     expect(tokenResp.status).toBe(401);
@@ -2064,7 +2067,7 @@ describe("boot: a forge addressed by IP hands every app a host that works (issue
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, {
+    const created = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -2103,4 +2106,48 @@ describe("boot: a forge addressed by IP hands every app a host that works (issue
     expect(page.status).toBe(200);
     expect(await page.text()).toContain("<h1>ip-forge</h1>");
   }, 90_000);
+});
+
+describe("manifest: service kind", () => {
+  const svc = (app: object) =>
+    parseManifest(
+      JSON.stringify({ app: { kind: "service", run: "x", ...app } }),
+      undefined,
+    );
+  test("a service declares ports, placement and volumes", () => {
+    const r = svc({
+      ports: [25565],
+      placement: "metal",
+      volumes: [{ path: "world", sync: 60 }],
+    });
+    expect(r.ok && r.value.service).toEqual({
+      ports: [{ port: 25565, protocol: "tcp" }],
+      alwaysOn: true,
+      placement: "metal",
+      volumes: [{ path: "world", sync: 60 }],
+    });
+  });
+  test("a web app has no service", () => {
+    const r = parseManifest(JSON.stringify({ app: { run: "x" } }), undefined);
+    expect(r.ok && r.value.service).toBeNull();
+  });
+  test("bad declarations fail closed", () => {
+    for (const bad of [
+      {},
+      { ports: [] },
+      { ports: [80] },
+      { ports: [25565, 25565] },
+      { ports: ["25565"] },
+      { ports: [25565], always_on: false },
+      { ports: [25565], placement: "moon" },
+      { ports: [25565], volumes: [{ path: "../etc" }] },
+      { ports: [25565], volumes: [{ path: "/abs" }] },
+      { ports: [25565], volumes: [{ path: "w", sync: 1 }] },
+    ])
+      expect(svc(bad).ok).toBe(false);
+    expect(
+      parseManifest(JSON.stringify({ app: { run: "x", kind: "vm" } }), undefined)
+        .ok,
+    ).toBe(false);
+  });
 });

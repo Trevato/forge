@@ -31,7 +31,7 @@ feeling on a foundation sized for one person.
 
 ```sh
 bun install          # dev-only: types + tsc, no runtime deps
-bun run src/main.ts  # web on :3000, ssh on :2222
+bun run src/main.ts  # web on :3000, ssh on :2222 (FORGE_SSH_PORT=0 turns it off; a taken port turns it off with one warning)
 ```
 
 If your shell already has `FORGE_URL` set — a crew workspace sets it to the
@@ -58,6 +58,12 @@ curl -sX POST localhost:3000/api/v1/repos -H "authorization: Bearer $TOKEN" \
 git clone "http://you:$TOKEN@localhost:3000/you/hello.git"
 ```
 
+The commits the forge writes for you — merges, squashes, reverts, web edits —
+carry `you@users.noreply.<forge host>`, never your account email. Choosing your
+real address is an opt-in under **Commit email** in `/settings` (or
+`PATCH /api/v1/user` with `{"commitEmail":"account"}`); commits you push
+yourself carry whatever your own git says.
+
 ## Live in the terminal
 
 `ssh` into the forge and you get the whole thing — repositories, code, issues,
@@ -81,14 +87,29 @@ convenience and exists only there: over SSH, the key decides who you are and
 nothing else can.
 
 Configuration is environment variables, all with defaults: `FORGE_DATA`
-(`data/`), `PORT` (`3000`), `FORGE_SSH_PORT` (`2222`; `0` turns SSH off), and
+(`data/`; the forge refuses to boot when it is the checkout itself or a path
+inside it that git does not ignore), `PORT` (`3000`), `FORGE_SSH_PORT` (`2222`; `0` turns SSH off), and
 `FORGE_HOST` (`localhost`, the hostname in clone URLs). Connecting origins
 adds `FORGE_URL` (the canonical public base URL, needed for OAuth callbacks),
 `FORGE_GITHUB_CLIENT_ID` / `FORGE_GITHUB_CLIENT_SECRET`, and
 `FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN). Behind a
 platform edge that signs people in for every app it serves, `FORGE_EDGE_TOKEN`
 is the edge's secret: a request carrying it and `X-Plat-User` is that person,
-signed in by the platform, with an account made on first sight. Everything a forge
+signed in by the platform, with an account made on first sight. Mail out
+(the link that proves a newcomer's email) is SMTP submission over TLS,
+configured by the forge-level secrets `MAIL_SMTP_URL`
+(`smtps://user:pass@host:465`) and `MAIL_FROM`, set live under Settings →
+Secrets, or at boot by `FORGE_SMTP_URL` / `FORGE_MAIL_FROM`. With neither, no
+mail is sent and a newcomer waits for the owner to verify them. Behind a
+proxy, `FORGE_TRUSTED_PROXIES` (comma-separated CIDR ranges, e.g.
+`10.42.0.0/16` for a k3s ingress) names the proxies allowed to say who the
+client is; limits for strangers and the signup audit then see each outside
+client, read from `X-Forwarded-For` right to left past the trusted hops, or
+from `FORGE_CLIENT_IP_HEADER` when the edge sets one (`cf-connecting-ip`
+behind a Cloudflare tunnel, where the ingress rewrites `X-Forwarded-For`;
+read only from a listed proxy). Once set, only the listed ranges are proxies:
+this machine is not one unless listed, since every app runs beside the forge.
+Unset, only this machine may say so, and the named header is never read. Everything a forge
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 
@@ -266,6 +287,11 @@ no `claude` on `PATH` — either way **Pick for me** stops being offered and
 
 ## The crew
 
+In a preview (`FORGE_APP_ENV=preview`, which the platform sets) the crew is
+off: no autonomy tick, no dispatch, no spend; checks still run and everything
+can still be read. The boot log and the studio's crew card say so. Set
+`FORGE_CREW_IN_PREVIEW=1` to run it anyway.
+
 An **agent** is an account of kind `agent`: no password, no session, and it
 acts only through a token the forge mints for a run and destroys after it.
 An admin creates one (**Settings → Crew**, or `POST /api/v1/agents`) with a
@@ -289,12 +315,25 @@ forge's environment is handed to runs; the machine's own Claude Code login
 works when there is none). `FORGE_CREW_CONCURRENCY` (2) and
 `FORGE_CREW_BUDGET_USD` (5) bound it; `FORGE_CREW_CEILING_USD` caps what the
 crew may spend across every repository in a UTC day, whatever each
-repository's own ceiling says; `FORGE_APPS=0` turns apps and crew off.
+repository's own ceiling says; `FORGE_APPS=0` turns apps and crew off. A preview whose pull nobody has
+pushed to or commented on for `FORGE_PREVIEW_IDLE_DAYS` (default 3; `0` keeps
+every preview warm) is stopped and reads as asleep, and asking for it wakes it.
 An admin with more than one Claude account keeps them under Settings →
 Subscriptions, sealed, and grants each to a repository (Settings → Crew) or
 an organization (its page), down to one crew member: a work plan pays for
 the work repositories and nothing else. Two on one grant take turns, and
 one the provider rests hands its runs to the other until the reset.
+**Sandbox.** An agent's shell is held to a policy — the network is the forge
+and the package registry, writes stay in the clone, the forge's data and the
+operator's credentials are unreadable — by bubblewrap and socat on Linux
+(both are in the image). A host that forbids unprivileged user namespaces
+(many container platforms' seccomp profiles) cannot hold it, and the policy is
+then switched off rather than faked. To tell which a deployment is in: the
+boot log carries `agent sandbox not available here` with the reason, Settings →
+Crew shows **Unsandboxed** with it, and every agent run's page says
+"Sandboxed" or "Unsandboxed" from what it was actually started with (runs
+from before this record say nothing).
+
 `docs/APPS.md` is the contract: the vocabulary, and the rules that are
 mechanical rather than advisory.
 
@@ -313,6 +352,9 @@ crosses.
 `docs/FOLLOWING.md` is a fork that keeps up with its parent: where it
 stands, taking updates, and the crew's part when both sides moved.
 
+`docs/FLEET.md` is one change across many repositories, runs or issues: a
+query, a dry-run plan of every row before → after, a receipt, and undo.
+
 `docs/MCP.md` is the forge as a connector, and `docs/STANDARDS.md` is what
 it answers by default: `.well-known`, feeds, cards, the manifest.
 
@@ -323,23 +365,63 @@ holds, where it goes, and the one command that restores it.
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.
 
+## Cloud accounts
+
+**Settings → Cloud accounts** (admins) holds provider keys — Cloudflare,
+DigitalOcean, AWS, Azure, Fly, Backblaze — sealed and write-only. Pasting one
+makes the forge check it with read-only calls (listed in the header of
+`src/cloud/providers.ts`) and say what it can see; a key the provider rejects
+is not stored. It is sealed at forge scope as `CLOUD_<PROVIDER>_<NAME>` (secret
+names are capitals, so `cloudflare/main` is `CLOUD_CLOUDFLARE_MAIN`). The page
+lists names, the last check, and which run last opened each key; "Every read"
+lists each open, and a run's page lists the secrets it held. A run gets a key
+by declaring it like any secret. **Write allowed** is off by default: a run
+that adds `writes: yes` to its front-matter and declares a cloud key whose
+switch is off fails with that reason. The switch gates the forge's hand-out,
+not the key — a provider key that can write still can, so paste read-only keys.
+**Audit** reads one account and opens one `[audit]` issue per finding (unattached
+volumes, powered-off droplets, unassociated IPs, never-active zones) with a
+monthly saving estimate, skipping findings already open. It runs in the forge,
+not as a crew run; AWS audits look at us-east-1 only; over-provisioned
+droplets and forgotten DNS records need metrics or resolution and are not
+attempted; Backblaze audits find nothing yet. No dependency was added.
+
 ## Develop
 
 ```sh
 bun test              # protocol-level + adversarial suite
 bun x tsc --noEmit    # zero type errors is the standard
 bun run check         # exactly what the forge runs against every push
+bun run check:record  # the same, and rewrites scripts/test-times.json
 ```
 
 `bun run check` is the gate: the same command `forge.json` declares, so what
 it says here is what the deploy will say. It type-checks once, then runs the
-test files named in `check.run` as parallel `bun test` shards
+test files `scripts/gate.ts` lists in `GATE` as parallel `bun test` shards
 (`scripts/test-shards.ts`): one per CPU the process may use, at most eight,
 and `FORGE_CHECK_SHARDS=2` turns that down on a small or busy host. Each
 shard's output is written whole as it finishes; the log ends with every
 failing test from every shard, or on green with one line — how many tests,
-across how many files, in how long. Every file is independent (its own forge,
-its own database, port 0), so a test that fails only beside another is a bug
+across how many files, in how long, then the slowest and fastest shard.
+
+Files go to shards by how long they take, not how big they are: longest
+first onto the least-loaded shard, weighed from `scripts/test-times.json`
+(file → seconds, from one recorded run). A file the table does not name
+weighs its bytes at the table's own seconds-per-byte. If the table is
+malformed, the log says it was refused and the split falls back to bytes.
+A stale table only makes the split less even; it never drops a file.
+Refresh it with one command after adding a slow test file, or when the
+log's slowest shard is well over 1.5× its fastest:
+
+```sh
+bun run check:record  # the gate's own command, with test-shards.ts --record
+```
+
+`--record` runs each file as its own `bun test`, with as many running at
+once as the gate runs shards. It rewrites the table only when every file
+is green. Files it did not run keep their old times.
+
+Every file is independent (its own forge, its own database, port 0), so a test that fails only beside another is a bug
 in that test. Two things it will not do:
 
 - **It never borrows your git configuration.** A test drives a real `git`
@@ -352,6 +434,23 @@ in that test. Two things it will not do:
   tests need `ssh` and `ssh-keygen`; without them the log says `SKIPPING:`
   and names the tool (`test/helpers/tools.ts`). Install OpenSSH and they run
   again — the skip is conditional on the binary, never on anything else.
+
+Every `test/*.test.ts` is either in `GATE` or in `EXCLUDED` with a one-line
+reason and the issue that owns admitting it; `test/check-list.test.ts` goes
+red on a file in neither, in both, or named without existing, so a new test
+file never sits outside the gate silently. A file joins the gate by moving
+from `EXCLUDED` to `GATE` in a pull whose check is green — that pull is the
+proof it passes.
+
+The gate also refuses hollow work. `test/hollow.test.ts` runs
+`scripts/hollow.ts`, which names an exported function in `src/actions/` that
+nothing that runs reaches — no route's handler, MCP tool, crew worker, CLI
+command or terminal screen, followed from where the program starts — and a
+screen — a GET path with no parameter that draws a page — that no reachable
+page links to. `scripts/hollow-allow.ts` lists what main
+carries today, each entry under the issue that owns it; an entry that is no
+longer hollow turns the check red, so the list only shrinks.
+`bun scripts/hollow.ts` prints the same lines on their own.
 
 ## Shape
 

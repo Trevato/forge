@@ -6,8 +6,12 @@
  * the repository may look at it and open its environments.
  */
 
+import { pullDir } from "../core/pulls.ts";
+import { getIssue } from "../core/issues.ts";
+import { mayView } from "../core/sealed.ts";
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
-import { appsRuntime, type EnvStatus } from "../apps/runtime.ts";
+import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
 import { grantUrl, originFor } from "../apps/proxy.ts";
 import { scaffoldFiles } from "../apps/scaffold.ts";
 import {
@@ -20,6 +24,7 @@ import {
   createApp as insertApp,
   deleteApp as removeApp,
   getAppByRepo,
+  getAppBySlug,
   slugFor,
   updateApp as patchApp,
   type AppAccess,
@@ -41,12 +46,11 @@ import { listAllAgents } from "./crew.ts";
 import { plan, planIssueBody, planningAvailable } from "../crew/plan.ts";
 import type { Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
-import { canWrite, type Repo } from "../core/repos.ts";
+import { canEnterApp, canWrite, getRepo, type Repo } from "../core/repos.ts";
 import type { Run } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
-import { sshCommand } from "../ssh/command.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import {
   requireReader,
@@ -59,6 +63,7 @@ import { assignIssue, openIssue } from "./issues.ts";
 import {
   commitToBranch,
   createRepo,
+  deleteRepo,
   type CreateRepoActionError,
 } from "./repos.ts";
 
@@ -74,9 +79,11 @@ export function enableApp(
   actor: User | undefined,
   repo: Repo,
   input: AppSettingsInput = {},
-): Result<AppRecord, "not_found" | CreateAppError> {
+): Result<AppRecord, "not_found" | CreateAppError | "unverified"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
+  const proven = requireVerified(app, admin.value);
+  if (!proven.ok) return proven;
   const created = insertApp(app.db, {
     repoId: repo.id,
     slug: input.slug ?? slugFor(repo.name),
@@ -275,14 +282,24 @@ export async function newApp(
   app: App,
   actor: User | undefined,
   input: NewAppInput,
-): Promise<Result<NewAppResult, NewAppError>> {
+): Promise<Result<NewAppResult, NewAppError | "unverified">> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  const proven = requireVerified(app, user.value);
+  if (!proven.ok) return proven;
   const agent =
     input.agent === undefined || input.agent === ""
       ? undefined
       : getAgentByName(app.db, input.agent);
   if (input.agent && !agent) return err("no_such_agent");
+
+  // Refuse a taken slug before anything exists to take back.
+  // A name the owner already has stays `name_taken`, which createRepo says.
+  if (
+    getAppBySlug(app.db, slugFor(input.name)) &&
+    !getRepo(app.db, input.owner || user.value.username, input.name)
+  )
+    return err("slug_taken");
 
   const repo = await createRepo(app, user.value, {
     name: input.name,
@@ -298,12 +315,17 @@ export async function newApp(
       description: input.description ?? "",
     }),
   });
-  if (!committed.ok) return err("scaffold_failed");
+  if (!committed.ok) {
+    await deleteRepo(app, user.value, repo.value);
+    return err("scaffold_failed");
+  }
   const record = enableApp(app, user.value, repo.value, {});
   // The creator administers the repository they just made, so `not_found`
   // here can only mean the row vanished under us — a failed scaffold.
-  if (!record.ok)
+  if (!record.ok) {
+    await deleteRepo(app, user.value, repo.value);
     return err(record.error === "not_found" ? "scaffold_failed" : record.error);
+  }
 
   const description = (input.description ?? "").trim();
   let chosen = agent;
@@ -423,7 +445,8 @@ export function terminalFor(
   if (status?.tty === null) return { reason: "no_tty" };
   const command = sshCommandFor(app, record, env);
   if (command !== undefined) return { command };
-  return sshCommand(app) === undefined ? { reason: "no_listener" } : {};
+  const port = app.config.sshPort;
+  return port === undefined || port <= 0 ? { reason: "no_listener" } : {};
 }
 
 /** What is running, for anyone who can see the repository. */
@@ -439,7 +462,7 @@ export function appView(
   const runtime = appsRuntime(app);
   return ok({
     app: record,
-    environments: runtime === undefined ? [] : runtime.status(record),
+    environments: envsFor(app, actor, record),
     serving: runtime !== undefined,
   });
 }
@@ -456,11 +479,35 @@ export function openEnvUrl(
   /** The hostname the visitor asked for, when it is one of this app's. */
   host?: string,
 ): Result<string, EnvError | "unauthorized"> {
-  const reader = requireReader(app, actor, repo);
-  if (!reader.ok) return reader;
   const record = getAppByRepo(app.db, repo.id);
+  // A person a private app names may enter it without reading the
+  // repository (#752); everyone else needs to read it first.
+  const named =
+    record !== undefined &&
+    record.access === "private" &&
+    actor !== undefined &&
+    canEnterApp(app.db, repo, record, actor);
+  if (!named) {
+    const reader = requireReader(app, actor, repo);
+    if (!reader.ok) return reader;
+  }
   if (!record) return err("not_found");
   if (!isEnvName(env)) return err("no_such_env");
+  // A private app is for its writers, its crew and the people it names;
+  // anyone else who can read the repository gets the answer a stranger
+  // gets, and nobody is told why.
+  if (record.access === "private" && actor !== undefined)
+    if (!canEnterApp(app.db, repo, record, actor))
+      return err("not_found");
+  // A sealed pull's preview is its report's: for those who may see it, and
+  // through a grant only (`core/sealed.ts`).
+  const sealedNumber = /^pull-(\d+)$/.exec(env)?.[1];
+  const sealed =
+    sealedNumber === undefined
+      ? undefined
+      : getIssue(app.db, repo.id, Number(sealedNumber));
+  if (sealed?.sealed === true && !mayView(app.db, repo, sealed, actor))
+    return err("not_found");
   const runtime = appsRuntime(app);
   if (runtime === undefined) return err("no_runtime");
   // A grant names a person, so the app hears who they are: a signed-in
@@ -488,10 +535,12 @@ export async function redeployEnv(
   repo: Repo,
   env: string,
 ): Promise<
-  Result<Run | undefined, AccessError | EnvError | "nothing_to_deploy">
+  Result<Run | undefined, AccessError | EnvError | "nothing_to_deploy" | "unverified">
 > {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
+  const proven = requireVerified(app, writer.value);
+  if (!proven.ok) return proven;
   const record = getAppByRepo(app.db, repo.id);
   if (!record) return err("not_found");
   if (!isEnvName(env)) return err("no_such_env");
@@ -548,7 +597,8 @@ async function commitFor(
   const ref = pull.crossRepo
     ? `refs/pull/${pull.number}/head`
     : `refs/heads/${pull.headBranch}`;
-  return (await resolveOid(dir, ref)) ?? (pull.headOid || undefined);
+  const at = await pullDir(app.db, app.reposRoot, repo, pull);
+  return (await resolveOid(at, ref)) ?? (pull.headOid || undefined);
 }
 
 export { previewEnv };

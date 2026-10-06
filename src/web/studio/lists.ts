@@ -1,18 +1,29 @@
 /**
- * The studio's three lists — everything told, every change, every run — and
+ * The forge's three lists — everything told, every change, every run — and
  * the one filter bar they share: five words, each a link carrying `?word=`,
  * so what a person is looking at lives in the address and can be shared. A
  * row is the same word, note and time the thing's own page shows, because
  * every one of them is read through `tellWord`/`pullWord`/`runWord`. Each
- * list is bounded to one page; `?mode=dev` reads dev's list, unchanged.
+ * list is bounded to one page. Told and changes are the only lists of
+ * issues and pulls there are: every repository, every viewer, at `/issues`
+ * and `/tells`, `/pulls` and `/changes` alike.
  */
 
+import { sealedScope } from "../../core/sealed.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
-import type { AppRecord } from "../../core/apps.ts";
-import { listIssues, type Issue } from "../../core/issues.ts";
+import { getAppByRepo } from "../../core/apps.ts";
+import {
+  labelsForIssues,
+  listIssues,
+  listLabels,
+  type Issue,
+  type Label,
+} from "../../core/issues.ts";
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
-import type { Repo } from "../../core/repos.ts";
-import { listRuns } from "../../core/runs.ts";
+import { canRead, type Repo } from "../../core/repos.ts";
+import { waitingCount } from "../../actions/reports.ts";
+
+import { listRepoRuns } from "../../actions/runs.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -22,27 +33,29 @@ import {
   repoBase,
   repoHeader,
   repoPalette,
+  signInHref,
 } from "../chrome.ts";
-import { html, type Html } from "../html.ts";
-import { page, redirect } from "../layout.ts";
+import { html, when, type Html } from "../html.ts";
+import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
   avatar,
+  btn,
   empty,
   icon,
+  labelChip,
+  labelCss,
   listCard,
+  originTag,
   pager,
   row,
   seg,
   time,
 } from "../ui.ts";
 import { actorsFor, issuesFor, runTitleFrom } from "../pages/runs.ts";
-import {
-  changeHref,
-  pageTitle,
-  studioRecord,
-  tellHref,
-} from "./nouns.ts";
+import { originGlyph } from "../pages/thread.ts";
+import { changeHref, PAGE_TITLES, pageTitle, tellHref } from "./nouns.ts";
+import { tellLine, tellsAnswered } from "./branch_tell.ts";
 import { tellWord } from "./tell.ts";
 import {
   pullWord,
@@ -94,21 +107,45 @@ function inWordFilter(word: Word, filter: WordFilter | undefined): boolean {
     : bucket === filter;
 }
 
+/** The empty card's one line. A filter that is set is named, so the way out
+ * is visible; none set is not the filter's fault, so it says what to do. */
+function emptyNote(
+  filter: WordFilter | undefined,
+  subject: string,
+  starter: string,
+): string {
+  if (filter === undefined) return starter;
+  return `${subject} is ${filter} yet.`;
+}
+
 /** A filter bar of five words, each a link carrying `?word=` — never a
  * form, so the filter lives in the address and can be shared. No filter
- * reads as "Open": what is open and moving. */
-function wordFilterBar(base: string, current: WordFilter | undefined): Html {
+ * reads as "Open": what is open and moving. `trail` sits at the bar's far
+ * end — the one verb a list offers besides opening a row. */
+function wordFilterBar(
+  href: (word: WordFilter | undefined) => string,
+  current: WordFilter | undefined,
+  open: boolean,
+  trail?: Html,
+  words: readonly WordFilter[] = WORD_FILTERS,
+): Html {
   return html`<div class="filters mb">
     ${seg([
-      { label: "Open", href: base, current: current === undefined },
-      ...WORD_FILTERS.map((w) => ({
+      { label: "Open", href: href(undefined), current: open },
+      ...words.map((w) => ({
         label: w[0]!.toUpperCase() + w.slice(1),
-        href: `${base}?word=${w}`,
+        href: href(w),
         current: current === w,
       })),
     ])}
+    ${when(trail, (t) => html`<span class="spacer"></span>${t}`)}
   </div>`;
 }
+
+/** The words a repository that is not an app can reach: nothing there is
+ * told to a crew apart from being open, and no head is ever deployed for a
+ * look — so those two are not offered as filters there. */
+const PLAIN_FILTERS: readonly WordFilter[] = ["working", "shipped", "stopped"];
 
 const LIST_PAGE = 25;
 
@@ -118,58 +155,221 @@ function pagedHref(base: string, filter: WordFilter | undefined, cursor: string)
 }
 
 /**
- * GET /:owner/:name/issues in the studio: everything told, one row per
- * issue in its studio word — who has it, when it last moved, and the tell
- * itself as the row's own link. No labels, no milestones. `?word=` narrows
- * it; `?mode=dev` reads dev's list, unchanged. Bounded to one page: `tellWord`
- * costs a few small reads per row, the trade the pull list already makes
- * for its own check summaries (`verdictsFor`, pulls.ts).
+ * What a list of tells or changes is narrowed by, read once from the
+ * address: the word, and the narrowings that are not words — a label, who
+ * has it, who opened it, a piece of the title. `state` is the older
+ * address's `?state=closed|all`, still answered so a link written to it
+ * keeps meaning what it said.
  */
-export async function studioTells(
-  ctx: Ctx,
-  repo: Repo,
-  record: AppRecord,
-): Promise<Response> {
-  const db = ctx.app.db;
-  const base = repoBase(repo);
-  const filter = readWordFilter(ctx);
-  const state = filter === "shipped" || filter === "stopped" ? "closed" : "open";
+interface ListFacets {
+  word: WordFilter | undefined;
+  state: "open" | "closed" | "all";
+  label: string;
+  assignee: string;
+  author: string;
+  q: string;
+}
+
+type FacetName = "label" | "assignee" | "author" | "q";
+
+function readFacets(ctx: Ctx): ListFacets {
+  const params = ctx.url.searchParams;
+  const state = params.get("state");
+  return {
+    word: readWordFilter(ctx),
+    state: state === "closed" || state === "all" ? state : "open",
+    label: params.get("label") ?? "",
+    assignee: params.get("assignee") ?? "",
+    author: params.get("author") ?? "",
+    q: params.get("q") ?? "",
+  };
+}
+
+/** The list's own address with one thing changed — narrowings compose
+ * instead of replacing each other, and a word always starts from open. */
+function facetHref(
+  base: string,
+  f: ListFacets,
+  patch: Partial<Pick<ListFacets, FacetName>> & {
+    word?: WordFilter | undefined;
+  },
+  cursor?: number,
+): string {
+  const params = new URLSearchParams();
+  const word = "word" in patch ? patch.word : f.word;
+  if (word !== undefined) params.set("word", word);
+  else if (!("word" in patch) && f.state !== "open")
+    params.set("state", f.state);
+  for (const name of ["label", "assignee", "author", "q"] as const) {
+    const value = patch[name] ?? f[name];
+    if (value !== "") params.set(name, value);
+  }
+  if (cursor !== undefined) params.set("cursor", String(cursor));
+  const text = params.toString();
+  return text === "" ? base : `${base}?${text}`;
+}
+
+/** The issue state to fetch for these facets: a word that has finished
+ * reads closed rows, any other word open ones, and no word what `state`
+ * says. */
+function fetchState(f: ListFacets): "open" | "closed" | "all" {
+  if (f.word === "shipped" || f.word === "stopped") return "closed";
+  return f.word === undefined ? f.state : "open";
+}
+
+/** Whether a row's word belongs on the page: the word asked for, else open
+ * and moving — or, on an older `?state=` address, everything it fetched. */
+function shown(word: Word, f: ListFacets): boolean {
+  return f.word === undefined && f.state !== "open"
+    ? true
+    : inWordFilter(word, f.word);
+}
+
+/** The narrowings in force as chips, each ✕ clearing itself, then the
+ * repository's labels to narrow by. Nothing at all when there is neither. */
+function facetChips(base: string, f: ListFacets, labels: readonly Label[]): Html {
+  const active = (
+    [
+      ["assignee", "has it"],
+      ["author", "opened it"],
+      ["q", "in the title"],
+    ] as const
+  ).filter(([name]) => f[name] !== "");
+  // An older `?state=closed|all` address narrows the list without a word;
+  // it shows as a chip like any other narrowing, so it can be seen and
+  // cleared.
+  const state =
+    f.word === undefined && f.state !== "open"
+      ? html`<a
+          class="label"
+          href="${facetHref(base, { ...f, state: "open" }, {})}"
+          aria-current="true"
+          title="Remove this filter"
+          >${f.state === "closed" ? "closed" : "open and closed"} ✕</a
+        >`
+      : null;
+  if (active.length === 0 && labels.length === 0 && state === null)
+    return html``;
+  return html`<div class="bar mb">
+    ${state}
+    ${active.map(
+      ([name, says]) =>
+        html`<a
+          class="label"
+          href="${facetHref(base, f, { [name]: "" })}"
+          aria-current="true"
+          title="Remove this filter"
+          >${f[name]} ${says} ✕</a
+        >`,
+    )}
+    ${labels.map((l) =>
+      f.label.toLowerCase() === l.name.toLowerCase()
+        ? html`<a
+            class="label lc-${l.color}"
+            href="${facetHref(base, f, { label: "" })}"
+            aria-current="true"
+            title="Remove this filter"
+            >${l.name} ✕</a
+          >`
+        : labelChip(l, facetHref(base, f, { label: l.name })),
+    )}
+  </div>`;
+}
+
+/** The word for a tell closed with nothing merged to shut it — `tellWord`
+ * has none, and a list must not drop the row: closed as done is *done*, and
+ * dropped or split is *cancelled*, so it is found under shipped or stopped
+ * exactly where the person who closed it would look. */
+function closedWord(issue: Issue): { word: Word; note: string } {
+  return issue.closeReason === "dropped"
+    ? { word: "cancelled", note: "dropped" }
+    : issue.closeReason === "split"
+      ? { word: "cancelled", note: "split into others" }
+      : { word: "done", note: "closed as done" };
+}
+
+/** A row's title with its label chips after it. */
+function titled(title: string, labels: readonly Label[] | undefined): Html {
+  return html`${title}${(labels ?? []).map((l) => html` ${labelChip(l)}`)}`;
+}
+
+/** What every list read here shares: the facets as `listIssues` options,
+ * the word context and the cursor. The app record is the repository's own,
+ * not the viewer's mode — the words a row wears are the same for everyone. */
+function listRead(ctx: Ctx, repo: Repo, f: ListFacets) {
   const rawCursor = Number(ctx.url.searchParams.get("cursor"));
   const cursor =
     Number.isSafeInteger(rawCursor) && rawCursor > 0 ? rawCursor : undefined;
-
-  const fetched = listIssues(db, repo.id, {
-    kind: "issue",
-    state,
+  const options = {
+    state: fetchState(f),
     limit: LIST_PAGE,
+    ...(f.label !== "" ? { label: f.label } : {}),
+    ...(f.assignee !== "" ? { assignee: f.assignee } : {}),
+    ...(f.author !== "" ? { author: f.author } : {}),
+    ...(f.q.trim() !== "" ? { query: f.q } : {}),
     ...(cursor !== undefined ? { cursor } : {}),
-  }).filter((issue) => issue.id !== repo.directionIssueId);
+  };
+  const record = getAppByRepo(ctx.app.db, repo.id);
   const wordCtx: WordCtx = {
-    db,
+    db: ctx.app.db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
     runtime: appsRuntime(ctx.app),
     record,
     history: servingHistory(),
+    viewer: ctx.auth.user,
   };
+  return { options, record, wordCtx };
+}
+
+/**
+ * GET /:owner/:name/issues, and /tells: everything told, for every
+ * repository and every viewer — one row per issue in its studio word, who
+ * has it, its labels, when it last moved, and the tell itself as the row's
+ * own link. `?word=` narrows it, and so do `?label=`, `?assignee=`,
+ * `?author=` and `?q=`. Bounded to one page: `tellWord` costs a few small
+ * reads per row.
+ */
+export async function tellsList(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  const db = ctx.app.db;
+  const base = repoBase(repo);
+  const f = readFacets(ctx);
+  const { options, record, wordCtx } = listRead(ctx, repo, f);
+
+  const fetched = listIssues(db, repo.id, {
+    ...options,
+    kind: "issue",
+    ...sealedScope(db, repo, ctx.auth.user),
+  }).filter(
+    (issue) => issue.id !== repo.directionIssueId,
+  );
   const closingPulls = openPullsClosing(db, repo.id);
   const words = await Promise.all(
-    fetched.map((issue) =>
-      tellWord(wordCtx, repo, issue, closingPulls.get(issue.number)),
+    fetched.map(
+      async (issue) =>
+        (await tellWord(wordCtx, repo, issue, closingPulls.get(issue.number))) ??
+        closedWord(issue),
     ),
   );
+  const labels = labelsForIssues(db, fetched.map((issue) => issue.id));
+  const repoLabels = listLabels(db, repo.id);
   const rows = fetched
-    .map((issue, i) => ({ issue, info: words[i] }))
-    .filter(
-      (r): r is { issue: Issue; info: { word: Word; note: string } } =>
-        r.info !== undefined && inWordFilter(r.info.word, filter),
-    );
+    .map((issue, i) => ({ issue, info: words[i]! }))
+    .filter((r) => shown(r.info.word, f));
 
   const list =
     rows.length === 0
       ? empty({
           icon: "issue",
           title: "Nothing here",
-          note: "Nothing told matches this filter yet.",
+          note: emptyNote(
+            f.word,
+            record === undefined ? "No issue" : "Nothing told",
+            record === undefined
+              ? "Nothing open."
+              : "Nothing open. Tell the crew what you want and it shows up here.",
+          ),
         })
       : listCard(
           rows.map(({ issue, info }) =>
@@ -177,89 +377,132 @@ export async function studioTells(
               href: tellHref(base, issue.number),
               nav: true,
               lead: avatar(issue.assigneeName ?? "crew"),
-              title: issue.title,
-              meta: html`${issue.assigneeName
+              title: titled(issue.title, labels.get(issue.id)),
+              titleAttr: issue.title,
+              meta: html`${when(
+                issue.originAuthor,
+                (login) => html`${originTag(login, originGlyph(repo))} · `,
+              )}${issue.assigneeName
                 ? html`${issue.assigneeName} · `
                 : null}${info.note} · ${time(issue.updatedAt)}`,
-              trail: wordBadge(info.word),
+              trail: wordBadge(info.word, undefined, record === undefined),
             }),
           ),
         );
   const lastNumber = fetched[fetched.length - 1]?.number;
-  // Self-links follow whichever noun reached this page — `/tells` from the
-  // studio's own door, `/issues` when a dev URL is asked for in studio mode
-  // — so paging never jumps a reader to the other address mid-list.
+  // Self-links follow whichever noun reached this page — `/tells` or
+  // `/issues` — so paging never jumps a reader to the other address.
   const listBase = ctx.url.pathname;
+  // The one verb besides opening a row: say what you want. It posts from
+  // `/issues/new`, the compose page, in the words the repository has.
+  const compose = when(ctx.auth.user, () =>
+    btn(PAGE_TITLES.compose[record === undefined ? "dev" : "studio"], {
+      href: `${base}/issues/new`,
+      size: "sm",
+      variant: "outline",
+      icon: "plus",
+      shortcut: "c",
+    }),
+  );
+  // A stranger can still say something is wrong on a public repository;
+  // its writers see how many such reports wait for them.
+  const outside =
+    ctx.auth.user === undefined && canRead(db, repo, undefined)
+      ? btn("Report a problem", {
+          href: `${base}/report`,
+          size: "sm",
+          variant: "ghost",
+        })
+      : undefined;
+  const waiting = waitingCount(ctx.app, ctx.auth.user, repo);
+  const reports =
+    waiting > 0
+      ? btn(`${waiting} from outside`, { href: `${base}/reports`, size: "sm" })
+      : undefined;
+  // Signed out, the way in: sign in to open one, or report a problem
+  // without an account where the repository is public.
+  const signIn = when(ctx.auth.user === undefined && outside !== undefined, () =>
+    btn("Sign in to open an issue", {
+      href: signInHref(ctx),
+      size: "sm",
+      variant: "ghost",
+    }),
+  );
+  const verbs =
+    ctx.auth.user === undefined && outside === undefined
+      ? undefined
+      : html`${reports ?? null} ${compose} ${outside ?? null} ${signIn}`;
 
   const body = html`${repoHeader(ctx, repo, "issues")}
     <div class="mt">
-      ${wordFilterBar(listBase, filter)} ${list}
+      ${wordFilterBar(
+        (word) => facetHref(listBase, f, { word }),
+        f.word,
+        f.word === undefined && f.state === "open",
+        verbs,
+        record === undefined ? PLAIN_FILTERS : WORD_FILTERS,
+      )}
+      ${facetChips(listBase, f, repoLabels)} ${list}
       ${pager(
         fetched.length === LIST_PAGE && lastNumber !== undefined
-          ? { next: pagedHref(listBase, filter, String(lastNumber)) }
+          ? { next: facetHref(listBase, f, {}, lastNumber) }
           : {},
       )}
     </div>
-    <p class="muted small mt">
-      <a href="${base}/issues?mode=dev">${icon("code")}See dev's list</a> —
-      labels, milestones and the dependency form, dev's own way.
-    </p>
     ${liveMount({ repo: base })}`;
 
   return page({
     ctx,
-    title: pageTitle("tells", repo, true),
+    title: pageTitle("tells", repo, record !== undefined),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
+    styleCss: labelCss([...repoLabels, ...[...labels.values()].flat()]),
     scriptJs: liveClientJs,
   });
 }
 
 /**
- * GET /:owner/:name/pulls in the studio: every change, one row per pull in
- * its studio word — who made it, when it last moved, and the change itself
- * as the row's own link. No branch names, no diff. `?word=` narrows it;
- * `?mode=dev` reads dev's list, unchanged.
+ * GET /:owner/:name/pulls, and /changes: every change, for every
+ * repository and every viewer — one row per pull in its studio word, who
+ * made it, its labels, when it last moved, and the change itself as the
+ * row's own link. Where a change lives, its diff and its reviews are one
+ * step deeper, on the change. Narrowed as `tellsList` is.
  */
-export async function studioChanges(
-  ctx: Ctx,
-  repo: Repo,
-  record: AppRecord,
-): Promise<Response> {
+export async function changesList(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
   const db = ctx.app.db;
   const base = repoBase(repo);
-  const filter = readWordFilter(ctx);
-  const state = filter === "shipped" || filter === "stopped" ? "closed" : "open";
-  const rawCursor = Number(ctx.url.searchParams.get("cursor"));
-  const cursor =
-    Number.isSafeInteger(rawCursor) && rawCursor > 0 ? rawCursor : undefined;
+  const f = readFacets(ctx);
+  const { options, record, wordCtx } = listRead(ctx, repo, f);
 
   const fetched = listPulls(db, repo.id, {
-    state,
-    limit: LIST_PAGE,
-    ...(cursor !== undefined ? { cursor } : {}),
+    ...options,
+    ...sealedScope(db, repo, ctx.auth.user),
   });
-  const wordCtx: WordCtx = {
-    db,
-    dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
-    runtime: appsRuntime(ctx.app),
-    record,
-    history: servingHistory(),
-  };
   const words = await Promise.all(
     fetched.map((pull) => pullWord(wordCtx, pull)),
   );
+  const answered = tellsAnswered(db, repo.id, fetched);
+  const labels = labelsForIssues(db, fetched.map((pull) => pull.id));
+  const repoLabels = listLabels(db, repo.id);
   const rows = fetched
     .map((pull, i) => ({ pull, info: words[i]! }))
-    .filter((r) => inWordFilter(r.info.word, filter));
+    .filter((r) => shown(r.info.word, f));
 
   const list =
     rows.length === 0
       ? empty({
           icon: "pull",
           title: "Nothing here",
-          note: "Nothing matches this filter yet.",
+          note: emptyNote(
+            f.word,
+            "No change",
+            record === undefined
+              ? "Nothing open."
+              : "Nothing open. A change is the crew's proposed edit to your app; the crew opens them as it works.",
+          ),
         })
       : listCard(
           rows.map(({ pull, info }) =>
@@ -267,100 +510,110 @@ export async function studioChanges(
               href: changeHref(base, pull.number),
               nav: true,
               lead: avatar(pull.authorName),
-              title: pull.title,
-              meta: html`${pull.authorName} · ${info.note} ·
-              ${time(pull.updatedAt)}`,
-              trail: wordBadge(info.word),
+              title: titled(pull.title, labels.get(pull.id)),
+              titleAttr: pull.title,
+              meta: html`${pull.originAuthor
+                ? originTag(pull.originAuthor, originGlyph(repo))
+                : pull.authorName} · ${info.note} ·
+              ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
+              trail: wordBadge(info.word, undefined, record === undefined),
             }),
           ),
         );
   const lastNumber = fetched[fetched.length - 1]?.number;
-  // Self-links follow whichever noun reached this page — `/changes` from the
-  // studio's own door, `/pulls` when a dev URL is asked for in studio mode
-  // — so paging never jumps a reader to the other address mid-list.
+  // See `tellsList`: `/changes` or `/pulls`, whichever reached this page.
   const listBase = ctx.url.pathname;
 
   const body = html`${repoHeader(ctx, repo, "pulls")}
     <div class="mt">
-      ${wordFilterBar(listBase, filter)} ${list}
+      ${wordFilterBar(
+        (word) => facetHref(listBase, f, { word }),
+        f.word,
+        f.word === undefined && f.state === "open",
+        undefined,
+        record === undefined ? PLAIN_FILTERS : WORD_FILTERS,
+      )}
+      ${facetChips(listBase, f, repoLabels)} ${list}
       ${pager(
         fetched.length === LIST_PAGE && lastNumber !== undefined
-          ? { next: pagedHref(listBase, filter, String(lastNumber)) }
+          ? { next: facetHref(listBase, f, {}, lastNumber) }
           : {},
       )}
     </div>
-    <p class="muted small mt">
-      <a href="${base}/pulls?mode=dev">${icon("code")}See dev's list</a> —
-      where each change lives and its diff, dev's own way.
-    </p>
     ${liveMount({ repo: base })}`;
 
   return page({
     ctx,
-    title: pageTitle("changes", repo, true),
+    title: pageTitle("changes", repo, record !== undefined),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
+    styleCss: labelCss([...repoLabels, ...[...labels.values()].flat()]),
     scriptJs: liveClientJs,
   });
 }
 
-/**
- * GET /:owner/:name/tells — the studio's own door onto the same list
- * `/issues` reaches: `issuesList` and this route both resolve through
- * `studioRecord`/`studioTells`, so there is exactly one page, never a
- * second copy of it. A viewer for whom the studio's own list does not apply
- * (dev mode, `?mode=dev`, or a repository that is not an app) is sent to
- * `/issues` — dev's own address is the one canonical URL for dev's own list,
- * so this noun never grows a second, dev-flavoured address of its own.
- */
-export async function tellsList(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  const record = studioRecord(ctx, repo);
-  if (record === undefined)
-    return redirect(`${repoBase(repo)}/issues${ctx.url.search}`);
-  return await studioTells(ctx, repo, record);
+/** Which runs a list shows: the crew's by default, or the deploys or the
+ * checks that `?kind=` asks for — the narrowing dev's list offered, kept
+ * so a link written to it keeps meaning what it said. */
+type RunsKind = "agent" | "deploy" | "check";
+
+function readRunsKind(ctx: Ctx): RunsKind {
+  const raw = ctx.url.searchParams.get("kind");
+  return raw === "deploy" || raw === "check" ? raw : "agent";
 }
 
-/** GET /:owner/:name/changes — the studio's own door onto the same list
- * `/pulls` reaches. See `tellsList` for the rule. */
-export async function changesList(ctx: Ctx): Promise<Response> {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  const record = studioRecord(ctx, repo);
-  if (record === undefined)
-    return redirect(`${repoBase(repo)}/pulls${ctx.url.search}`);
-  return await studioChanges(ctx, repo, record);
+/** The runs list's own address with a word, a kind and a cursor. */
+function runsHref(
+  base: string,
+  kind: RunsKind,
+  word: WordFilter | undefined,
+  cursor?: string,
+): string {
+  const params = new URLSearchParams();
+  if (kind !== "agent") params.set("kind", kind);
+  if (word !== undefined) params.set("word", word);
+  if (cursor !== undefined) params.set("cursor", cursor);
+  const text = params.toString();
+  return text === "" ? `${base}/runs` : `${base}/runs?${text}`;
 }
 
+const RUNS_KIND_WORDS: Record<RunsKind, string> = {
+  agent: "the crew's runs",
+  deploy: "deploys",
+  check: "checks",
+};
+
 /**
- * GET /:owner/:name/runs in the studio: every run, one row per run in its
- * studio word — who ran it, when it last moved, and the transcript as the
- * row's own link. `?word=` narrows it; `?mode=dev` reads dev's list,
- * unchanged.
+ * GET /:owner/:name/runs: every run, for every repository and every viewer,
+ * one row per run in its studio word — who ran it, when it last moved, and
+ * the transcript as the row's own link. The crew's runs by default;
+ * `?kind=deploy|check` reads the deploys or the checks instead, from one
+ * quiet line under the list. `?word=` narrows any of them.
  */
-export async function studioRuns(
-  ctx: Ctx,
-  repo: Repo,
-  record: AppRecord,
-): Promise<Response> {
+export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
   const filter = readWordFilter(ctx);
+  const kind = readRunsKind(ctx);
   const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
 
-  const fetched = listRuns(db, repo.id, {
-    kind: "agent",
+  // A private app's runs are for those who may enter it, and a sealed
+  // report's for those who may see it (`listRepoRuns`).
+  const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
+    kind,
     limit: LIST_PAGE,
     ...(cursor ? { cursor } : {}),
   });
+  const fetched = listed.ok ? listed.value : [];
+  const record = getAppByRepo(db, repo.id);
   const wordCtx: WordCtx = {
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
     runtime: appsRuntime(ctx.app),
     record,
     history: servingHistory(),
+    viewer: ctx.auth.user,
   };
   const actors = actorsFor(ctx, fetched);
   const issues = issuesFor(ctx, fetched);
@@ -374,7 +627,13 @@ export async function studioRuns(
       ? empty({
           icon: "bot",
           title: "Nothing here",
-          note: "Nothing matches this filter yet.",
+          note: emptyNote(
+            filter,
+            "No run",
+            kind === "agent"
+              ? "Nothing open. A run is one go the crew takes at a job; each one shows up here."
+              : `Nothing open. Every ${kind === "deploy" ? "deploy" : "check"} shows up here while it runs.`,
+          ),
         })
       : listCard(
           rows.map(({ run, info }) => {
@@ -385,28 +644,43 @@ export async function studioRuns(
             return row({
               href: `${base}/runs/${run.id}`,
               nav: true,
-              lead: avatar(who),
+              lead:
+                run.kind === "agent"
+                  ? avatar(who)
+                  : icon(run.kind === "check" ? "check" : "rocket"),
               title: runTitleFrom(run, actors, issues),
-              meta: html`${who} · ${info.note} ·
-              ${time(run.finishedAt ?? run.createdAt)}`,
-              trail: wordBadge(info.word),
+              meta: html`${run.kind === "agent" ? html`${who} · ` : null}${info.note}
+              · ${time(run.finishedAt ?? run.createdAt)}`,
+              trail: wordBadge(info.word, undefined, record === undefined),
             });
           }),
         );
   const last = fetched[fetched.length - 1];
+  const others = (["agent", "deploy", "check"] as const).filter(
+    (k) => k !== kind,
+  );
 
-  const body = html`${repoHeader(ctx, repo, "app", { compact: true })}
+  const body = html`${repoHeader(ctx, repo, "runs", { compact: true })}
     <div class="mt">
-      ${wordFilterBar(`${base}/runs`, filter)} ${list}
+      ${wordFilterBar(
+        (word) => runsHref(base, kind, word),
+        filter,
+        filter === undefined,
+      )}
+      ${list}
       ${pager(
         fetched.length === LIST_PAGE && last !== undefined
-          ? { next: pagedHref(`${base}/runs`, filter, last.id) }
+          ? { next: runsHref(base, kind, filter, last.id) }
           : {},
       )}
     </div>
     <p class="muted small mt">
-      <a href="${base}/runs?mode=dev">${icon("code")}See dev's list</a> —
-      deploys and checks alongside the crew's runs, dev's own way.
+      Also ${others.map(
+        (k, i) =>
+          html`${i > 0 ? " · " : ""}<a href="${runsHref(base, k, undefined)}"
+              >${RUNS_KIND_WORDS[k]}</a
+            >`,
+      )}
     </p>
     ${liveMount({ repo: base })}`;
 

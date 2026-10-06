@@ -13,7 +13,7 @@
  */
 
 import { childEnv, pump } from "../apps/process.ts";
-import { stripForgeDirs } from "../runs/paths.ts";
+import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import type { SandboxPolicy } from "./sandbox.ts";
 
 export interface ClaudeInput {
@@ -36,6 +36,37 @@ export interface ClaudeInput {
    * send after the session ended returns false.
    */
   readonly onSteer?: ((send: (text: string) => boolean) => void) | undefined;
+  /**
+   * The session's spend so far, each time it reports some: tokens as each
+   * assistant message's `usage` arrives, the cost once the result names it
+   * (Claude Code reports `total_cost_usd` only at the end). Running totals
+   * for this invocation, never deltas.
+   */
+  readonly onUsage?: ((spent: Spent) => void) | undefined;
+  /**
+   * How long a session may stay silent after a result while its input is
+   * still open (a steer was pending) before it is closed and settled as
+   * done. A steer folded into the turn it interrupted leaves a result owed
+   * that never comes. Default `IDLE_AFTER_RESULT_MS`.
+   */
+  readonly idleMs?: number | undefined;
+  /**
+   * How long the process has to exit once its input is closed after the
+   * final result. Past it the process group is stopped and the run settles
+   * on the result it already gave. Default `SETTLE_MS`.
+   */
+  readonly settleMs?: number | undefined;
+}
+
+/** The idle guard's default: five minutes of silence after a result. */
+export const IDLE_AFTER_RESULT_MS = 5 * 60_000;
+/** The grace a finished session has to exit on its own. */
+export const SETTLE_MS = 5_000;
+
+export interface Spent {
+  readonly tokensIn: number;
+  readonly tokensOut: number;
+  readonly costUsd: number;
 }
 
 export interface ClaudeOutcome {
@@ -46,6 +77,12 @@ export interface ClaudeOutcome {
   readonly result: string;
   readonly costUsd: number;
   readonly turns: number;
+  /**
+   * Tokens the model read (fresh input, cache writes and cache reads) and
+   * wrote, from the result's `usage`; 0 when the run reported none.
+   */
+  readonly tokensIn: number;
+  readonly tokensOut: number;
   /** `completed`, `max_budget_reached`, `timeout`, `cancelled`, `error`, `exit <n>`. */
   readonly reason: string;
 }
@@ -186,12 +223,59 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
   let result = "";
   let costUsd = 0;
   let turns = 0;
+  let tokensIn = 0;
+  let tokensOut = 0;
   let reason = "";
   let ok = false;
   let sawResult = false;
+  // A message's usage repeats on every content block of it, growing; the
+  // last word per message id is the message's spend.
+  const perMessage = new Map<string, { tokensIn: number; tokensOut: number }>();
 
+  // The reads end on their own when the process exits — unless something it
+  // spawned still holds the pipe. Aborting them is how a settled session
+  // stops waiting on a server the agent left running.
+  const stopReading = new AbortController();
+  const idleMs = input.idleMs ?? IDLE_AFTER_RESULT_MS;
+  const settleMs = input.settleMs ?? SETTLE_MS;
+  let idle: ReturnType<typeof setTimeout> | undefined;
+  let settle: ReturnType<typeof setTimeout> | undefined;
+  let finished = false;
+  // After a result with a steer pending, the session owes another turn; any
+  // line it writes is that turn going. Silence past `idleMs` means it is not.
+  const armIdle = (): void => {
+    clearTimeout(idle);
+    idle = setTimeout(() => {
+      input.log(
+        `session: no output for ${Math.round(idleMs / 1000)}s after its last result; closing it`,
+      );
+      finish();
+    }, idleMs);
+  };
+  // The work is over: close the input and give the process `settleMs` to
+  // go. One that lingers is stopped, and the result it gave stands.
+  const finish = (): void => {
+    if (finished) return;
+    finished = true;
+    clearTimeout(idle);
+    closeInput();
+    settle = setTimeout(() => {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        input.log(
+          `session: still open ${Math.round(settleMs / 1000)}s after its result; stopping it`,
+        );
+        stopChild();
+      }
+      stopReading.abort();
+    }, settleMs);
+  };
+
+  // The workdir as the forge named it and as the agent's process reports
+  // it: a tool line reads `CREW.md` under either spelling.
+  const workdir = spellings([input.cwd]);
   const onLine = (line: string): void => {
     if (line.trim() === "") return;
+    if (sawResult && !finished) armIdle();
     let event: unknown;
     try {
       event = JSON.parse(line);
@@ -210,7 +294,22 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       return;
     }
     if (type === "assistant") {
-      for (const text of assistantLines(e, input.cwd)) input.log(text);
+      for (const text of assistantLines(e, workdir)) input.log(text);
+      const message = e["message"];
+      if (input.onUsage && typeof message === "object" && message !== null) {
+        const m = message as Record<string, unknown>;
+        if (typeof m["usage"] === "object" && m["usage"] !== null) {
+          const key = typeof m["id"] === "string" ? m["id"] : `#${perMessage.size}`;
+          perMessage.set(key, tokensOf(m["usage"]));
+          let tokensIn = 0;
+          let tokensOut = 0;
+          for (const t of perMessage.values()) {
+            tokensIn += t.tokensIn;
+            tokensOut += t.tokensOut;
+          }
+          input.onUsage({ tokensIn, tokensOut, costUsd: 0 });
+        }
+      }
       return;
     }
     if (type === "result") {
@@ -220,6 +319,8 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       costUsd =
         typeof e["total_cost_usd"] === "number" ? e["total_cost_usd"] : 0;
       turns = typeof e["num_turns"] === "number" ? e["num_turns"] : 0;
+      ({ tokensIn, tokensOut } = tokensOf(e["usage"]));
+      input.onUsage?.({ tokensIn, tokensOut, costUsd });
       const terminal = e["terminal_reason"];
       // Claude Code names the budget ending twice (`error_max_budget_usd`
       // as the subtype, `budget_exhausted` as the terminal reason); the
@@ -241,8 +342,10 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       }
       // A turn is over. Something said meanwhile is the next turn; nothing
       // said means the session is done, and closing stdin lets it end.
-      if (pending > 0 && ok) pending--;
-      else closeInput();
+      if (pending > 0 && ok) {
+        pending--;
+        armIdle();
+      } else finish();
       return;
     }
     // `user` records are tool results: long and mostly file contents.
@@ -265,7 +368,8 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     setTimeout(() => {
       if (proc.exitCode === null && proc.signalCode === null)
         signalGroup("SIGKILL");
-    }, 5_000);
+      stopReading.abort();
+    }, 5_000).unref();
   };
   const timer = setTimeout(() => {
     why = "timeout";
@@ -280,20 +384,35 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
 
   const stderr: string[] = [];
   const [, , code] = await Promise.all([
-    pump(proc.stdout, onLine),
-    pump(proc.stderr, (line) => {
-      stderr.push(line);
-      if (stderr.length > 50) stderr.shift();
-      input.log(`! ${line}`);
-    }),
+    pump(proc.stdout, onLine, stopReading.signal),
+    pump(
+      proc.stderr,
+      (line) => {
+        stderr.push(line);
+        if (stderr.length > 50) stderr.shift();
+        input.log(`! ${line}`);
+      },
+      stopReading.signal,
+    ),
     proc.exited,
   ]);
   clearTimeout(timer);
+  clearTimeout(idle);
+  clearTimeout(settle);
   closeInput();
   input.signal.removeEventListener("abort", onAbort);
 
   if (why !== undefined) {
-    return { ok: false, sessionId, result, costUsd, turns, reason: why };
+    return {
+      ok: false,
+      sessionId,
+      result,
+      costUsd,
+      turns,
+      tokensIn,
+      tokensOut,
+      reason: why,
+    };
   }
   if (!sawResult) {
     const tail = stderr.slice(-3).join(" | ");
@@ -303,14 +422,47 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       result: tail,
       costUsd,
       turns,
+      tokensIn,
+      tokensOut,
       reason: `exit ${code}`,
     };
   }
-  return { ok, sessionId, result, costUsd, turns, reason };
+  return { ok, sessionId, result, costUsd, turns, tokensIn, tokensOut, reason };
+}
+
+/**
+ * The token counts of a result's `usage` object. Input is every token the
+ * model read: `input_tokens + cache_creation_input_tokens +
+ * cache_read_input_tokens`; output is `output_tokens`. A missing or odd
+ * field counts 0, never NaN.
+ */
+export function tokensOf(usage: unknown): {
+  tokensIn: number;
+  tokensOut: number;
+} {
+  if (typeof usage !== "object" || usage === null)
+    return { tokensIn: 0, tokensOut: 0 };
+  const u = usage as Record<string, unknown>;
+  const n = (key: string): number => {
+    const v = u[key];
+    return typeof v === "number" && Number.isFinite(v) && v > 0
+      ? Math.round(v)
+      : 0;
+  };
+  return {
+    tokensIn:
+      n("input_tokens") +
+      n("cache_creation_input_tokens") +
+      n("cache_read_input_tokens"),
+    tokensOut: n("output_tokens"),
+  };
 }
 
 /** The lines a person wants from an assistant turn: its words and its tool calls. */
-function assistantLines(e: Record<string, unknown>, cwd: string): string[] {
+function assistantLines(
+  e: Record<string, unknown>,
+  workdir: readonly string[],
+): string[] {
   const message = e["message"];
   if (typeof message !== "object" || message === null) return [];
   const content = (message as Record<string, unknown>)["content"];
@@ -322,14 +474,18 @@ function assistantLines(e: Record<string, unknown>, cwd: string): string[] {
         if (line.trim() !== "") out.push(line);
     } else if (block["type"] === "tool_use") {
       out.push(
-        `→ ${describeTool(String(block["name"] ?? "tool"), block["input"], cwd)}`,
+        `→ ${describeTool(String(block["name"] ?? "tool"), block["input"], workdir)}`,
       );
     }
   }
   return out;
 }
 
-function describeTool(name: string, input: unknown, cwd: string): string {
+function describeTool(
+  name: string,
+  input: unknown,
+  workdir: readonly string[],
+): string {
   const args =
     typeof input === "object" && input !== null
       ? (input as Record<string, unknown>)
@@ -342,7 +498,7 @@ function describeTool(name: string, input: unknown, cwd: string): string {
     return "";
   };
   const detail = stripForgeDirs(
-    [cwd],
+    workdir,
     first([
       "command",
       "file_path",

@@ -10,6 +10,7 @@
  * until then lines render as escaped plain text, which degrades cleanly.
  */
 
+import type { Mark } from "../core/marks.ts";
 import type { Diff, DiffLine, FileDiff, Hunk } from "../git/diff.ts";
 import {
   anchorKey,
@@ -56,11 +57,16 @@ export interface DiffViewOptions {
   comments?: Map<string, ReviewComment[]>;
   /** Thread state, under the same key as `comments`. */
   threads?: Map<string, ThreadView>;
+  /** Who each reviewer is, by username (`core/marks.ts`). */
+  marks?: ReadonlyMap<string, Mark>;
   /** Render an inline comment form at this anchor (from a `?rc=` link). */
   active?: { path: string; side: Side; line: number };
   /** Base path for comment forms and "+" links, e.g. `/owner/repo/pulls/3`.
    * When set, lines become commentable. */
   reviewBase?: string;
+  /** The page the diff is read on, for the "+" links and Cancel, when it
+   * is not `reviewBase` itself — e.g. `/owner/repo/pulls/3/files`. */
+  reviewPage?: string;
   /** Base path for a stubbed file's "View file" link, e.g.
    * `/owner/repo/blob/<oid>` — the file's path is appended. Omit to render
    * the stub without a link (a live/origin diff has no local blob route). */
@@ -251,7 +257,7 @@ function renderRow(row: Row, ctx: RowCtx): Html {
     if (n === null) return html`<td class="dn"></td>`;
     if (!opts.reviewBase || !isAnchorSide)
       return html`<td class="dn">${n}</td>`;
-    const href = `${opts.reviewBase}?rc=${encodeURIComponent(path)}~${side}~${n}#rc`;
+    const href = `${opts.reviewPage ?? opts.reviewBase}?rc=${encodeURIComponent(path)}~${side}~${n}#rc`;
     return html`<td class="dn">
       <a class="dn-comment" href="${href}" title="Comment on this line">${n}</a>
     </td>`;
@@ -305,7 +311,8 @@ function reviewRows(
     const outdated = c.lineHash !== currentHash;
     return html`<div class="rc">
       <div class="rc-head">
-        ${userLink(c.authorName)} ${time(c.createdAt)}
+        ${userLink(c.authorName, { mark: opts.marks?.get(c.authorName) })}
+        ${time(c.createdAt)}
         ${when(
           outdated,
           () => html`<span class="badge rc-outdated">outdated</span>`,
@@ -349,7 +356,7 @@ function reviewRows(
             class="btn"
             data-size="sm"
             data-variant="ghost"
-            href="${opts.reviewBase}"
+            href="${opts.reviewPage ?? opts.reviewBase}"
             >Cancel</a
           >
         </div>
@@ -367,7 +374,10 @@ function reviewRows(
             >${icon("check")}
             resolved${state.resolvedBy === null
               ? null
-              : html` by ${userLink(state.resolvedBy)}`}
+              : html` by
+                  ${userLink(state.resolvedBy, {
+                    mark: opts.marks?.get(state.resolvedBy),
+                  })}`}
             · ${time(state.resolvedAt)}</span
           >
           ${threadToggle(opts, state, false)}

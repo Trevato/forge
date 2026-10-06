@@ -22,6 +22,7 @@ import { audienceFilter, eventAudience } from "../src/core/event_audience.ts";
 import { listEvents } from "../src/core/events.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
+import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -43,7 +44,7 @@ describe("who an event is for", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -51,7 +52,7 @@ describe("who an event is for", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -156,6 +157,22 @@ describe("who an event is for", () => {
     }).then((r) => r.text());
     expect(page).not.toContain("hooks.example.test");
     expect(page).not.toContain("STRIPE_SECRET_KEY");
+  });
+
+  test("the home, in dev mode too, says nothing of it to a signed-in stranger either", async () => {
+    const as = (user: User) =>
+      fetch(`${base}/?mode=dev`, {
+        headers: {
+          accept: "text/html",
+          cookie: `forge_session=${createSession(app.db, user.id).token}`,
+        },
+      }).then((r) => r.text());
+    // One home (#625): the feed, whatever the mode; the dev dashboard's
+    // activity rail is gone, and the feed holds the same line back.
+    const strangers = await as(bob);
+    expect(strangers).toContain("Your apps");
+    expect(strangers).not.toContain("hooks.example.test");
+    expect(strangers).not.toContain("STRIPE_SECRET_KEY");
   });
 
   test("the streams hold configuration back from a reader as it happens", async () => {

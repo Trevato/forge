@@ -4,35 +4,48 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { parseCidrs } from "./kernel/cidr.ts";
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
+import { syncAllPillars } from "./actions/pillars.ts";
+import { firstBoot } from "./spawn/first-boot.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
+import { drainStreams } from "./http/sse.ts";
 import { serve } from "./http/server.ts";
 import { runSync } from "./origins/sync.ts";
-import { serveForgeSsh } from "./tui/ssh.ts";
+import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { resolveAppDomain } from "./apps/host.ts";
-import { startChecks } from "./checks/service.ts";
+import { requeueAbandonedChecks, startChecks } from "./checks/service.ts";
 import { startLooks } from "./looks/service.ts";
 import { startProbes } from "./contract/probes.ts";
 import { startSnapshots } from "./snapshot/service.ts";
-import { dirStore, s3FromEnv, s3Store } from "./snapshot/store.ts";
-import { CHECK_KINDS, failAbandonedRuns } from "./core/runs.ts";
+import { resolveDestination } from "./snapshot/destination.ts";
+import { releaseOrphans } from "./core/run_secret.ts";
+import { failAbandonedRuns } from "./core/runs.ts";
 import { health } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
+import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
 import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
+import { peopleOnCrews } from "./core/agents.ts";
+import { startNotifier } from "./crew/notify.ts";
+import { sweepStaleAsks } from "./crew/stale_asks.ts";
+import { recordAskLedger } from "./web/studio/asks.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
 import { pruneTokens } from "./core/tokens.ts";
+import { dataHomeRefusal } from "./kernel/data_home.ts";
+import { running } from "./kernel/version.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
 if (process.argv[2] === "hook") {
   const name = process.argv[3];
   if (!isHookName(name)) {
+    // CLI message on stderr for the person at the terminal.
     console.error(`forge: unknown hook ${name}`);
     process.exit(1);
   }
@@ -59,24 +72,79 @@ const canonicalUrl = hosted ? hostedAt : (process.env.FORGE_URL ?? "").trim();
 // identity headers sign people in; without it they are ignored.
 const edgeToken = (process.env.FORGE_EDGE_TOKEN ?? "").trim();
 
+const dataDir =
+  process.env.FORGE_DATA ??
+  (hosted ? process.env.FORGE_APP_DATA : undefined) ??
+  "data";
+// State never lands in the tree the forge runs from (#622): a database or a
+// host key there is one `git add -A` from every clone.
+const refusal = dataHomeRefusal(dataDir, import.meta.dir);
+if (refusal !== null) {
+  console.error(refusal);
+  process.exit(1);
+}
+
+// FORGE_TRUSTED_PROXIES is checked here so a typo fails the boot, not a
+// limit that quietly counts every stranger as one.
+const trustedProxies = (process.env.FORGE_TRUSTED_PROXIES ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter((s) => s !== "");
+{
+  const parsed = parseCidrs(trustedProxies.join(","));
+  if (!parsed.ok) {
+    console.error(`FORGE_TRUSTED_PROXIES: "${parsed.error}" is not an address or range`);
+    process.exit(1);
+  }
+}
+
 const app = createApp({
-  dataDir:
-    process.env.FORGE_DATA ??
-    (hosted ? process.env.FORGE_APP_DATA : undefined) ??
-    "data",
+  dataDir,
   port: Number(process.env.PORT ?? 3000),
   ...(process.env.FORGE_HOST === undefined
     ? {}
     : { host: process.env.FORGE_HOST }),
   ...(canonicalUrl === "" ? {} : { url: new URL(canonicalUrl).origin }),
   ...(edgeToken === "" ? {} : { edgeToken }),
+  // Hosted, the host says how this forge's terminal is reached; printed
+  // verbatim wherever the forge tells people how to connect.
+  ...(hosted && (process.env.FORGE_APP_SSH ?? "").trim() !== ""
+    ? { appSsh: (process.env.FORGE_APP_SSH ?? "").trim() }
+    : {}),
   // The one knob on the crew's bill: FORGE_CREW_CEILING_USD, dollars a day
   // across every repository. Unset is no forge-wide ceiling.
   ...(process.env.FORGE_MIGRATE_PRIVATE_HOSTS === "1"
     ? { migrateFromPrivateHosts: true }
     : {}),
+  // Mail out (email verification): SMTP submission, both or neither.
+  ...((process.env.FORGE_SMTP_URL ?? "").trim() !== "" &&
+  (process.env.FORGE_MAIL_FROM ?? "").trim() !== ""
+    ? {
+        mail: {
+          url: process.env.FORGE_SMTP_URL!.trim(),
+          from: process.env.FORGE_MAIL_FROM!.trim(),
+        },
+      }
+    : {}),
+  // FORGE_MAIL_DAILY: the most messages the forge sends in a day, to
+  // everyone together (`actions/mail.ts`).
+  ...(Number.isInteger(Number(process.env.FORGE_MAIL_DAILY)) &&
+  Number(process.env.FORGE_MAIL_DAILY) > 0
+    ? { mailDailyCap: Number(process.env.FORGE_MAIL_DAILY) }
+    : {}),
+  // Who may say who the client is: the ingress in front of a hosted forge.
+  ...(trustedProxies.length > 0 ? { trustedProxies } : {}),
+  ...((process.env.FORGE_CLIENT_IP_HEADER ?? "").trim() !== ""
+    ? { clientIpHeader: process.env.FORGE_CLIENT_IP_HEADER!.trim().toLowerCase() }
+    : {}),
   ...(Number(process.env.FORGE_CREW_CEILING_USD) > 0
     ? { crewCeilingUsd: Number(process.env.FORGE_CREW_CEILING_USD) }
+    : {}),
+  // FORGE_CREW_ISSUE_RUNS: runs one issue may start in a day before it is
+  // parked for a person (`crew/guard.ts`).
+  ...(Number.isInteger(Number(process.env.FORGE_CREW_ISSUE_RUNS)) &&
+  Number(process.env.FORGE_CREW_ISSUE_RUNS) > 0
+    ? { issueRunCap: Number(process.env.FORGE_CREW_ISSUE_RUNS) }
     : {}),
   ...((process.env.FORGE_EDGE_NAME ?? "").trim() === ""
     ? {}
@@ -96,9 +164,19 @@ const app = createApp({
 });
 
 await reconcile(app);
+// Issues linked under a pillar's umbrella before pillars had labels.
+const labelled = syncAllPillars(app);
+if (labelled > 0) app.log.info("pillars labelled", { issues: labelled });
 const servers = await serve(app);
-const ssh =
-  sshPort > 0 ? await serveForgeSsh(app, { port: sshPort }) : undefined;
+const sshStarted =
+  sshPort > 0 ? await startForgeSsh(app, { port: sshPort }) : undefined;
+if (sshStarted && !sshStarted.ok)
+  app.log.warn("ssh is off: the terminal could not start", {
+    port: sshPort,
+    reason: sshStarted.error.message,
+    code: (sshStarted.error as { code?: string }).code,
+  });
+const ssh = sshStarted?.ok ? sshStarted.value : undefined;
 
 // Apps and the crew (docs/APPS.md). Both are on unless FORGE_APPS=0: an app
 // is served by Host on the same port, and the crew runs agents as child
@@ -124,6 +202,9 @@ const appDomain = appsOn
 if (appDomain?.ok === false) app.log.error(appDomain.reason);
 if (appDomain?.ok === true && appDomain.note !== undefined)
   app.log.warn(appDomain.note);
+// One crew run's length: what a run takes, and how long past its idle
+// window an app busy with one is left awake.
+const crewRunMs = positive(process.env.FORGE_CREW_TIMEOUT_MIN, 45) * 60_000;
 const apps = appDomain?.ok
   ? new AppsRuntime(app, {
       domain: appDomain.domain,
@@ -136,6 +217,10 @@ const apps = appDomain?.ok
           : Number(publicUrl.port),
       forgeUrl,
       concurrency: positive(process.env.FORGE_APPS_CONCURRENCY, 2),
+      busyGraceMs: crewRunMs,
+      // Days a pull may sit untouched before its preview sleeps; 0 keeps
+      // every preview warm.
+      idlePullMs: nonNegative(process.env.FORGE_PREVIEW_IDLE_DAYS, 3) * 86_400_000,
     })
   : undefined;
 await apps?.start();
@@ -153,26 +238,35 @@ const looks = appsOn ? startLooks(app, { localUrl: servers.url }) : undefined;
 // Is it so: the forge knocks on every door of an app with a contract after
 // each production deploy and once a night, and compares with the table.
 const probes = apps === undefined ? undefined : startProbes(app, apps);
-// The snapshot: everything that cannot be rebuilt, nightly, to the bucket the
-// platform gave this app (`S3_*`) or to a directory (`FORGE_SNAPSHOT_DIR`).
-// A forge given neither takes none, and its settings page says so.
-const VERSION =
-  ((await import("../package.json")) as { version?: string }).version ?? "0";
-const snapshotDir = process.env["FORGE_SNAPSHOT_DIR"]?.trim();
-const s3 = s3FromEnv();
-const snapshots = snapshotDir
-  ? startSnapshots(app, dirStore(snapshotDir), { version: VERSION })
-  : s3
-    ? startSnapshots(app, s3Store(s3), { version: VERSION })
-    : undefined;
-const crew = appsOn
+// The snapshot: everything that cannot be rebuilt, nightly, to what an
+// operator sealed on the Backups page, else the platform's (`S3_*`) or a
+// directory (`FORGE_SNAPSHOT_DIR`). A forge given none says so on that page.
+const snapshots = startSnapshots(
+  app,
+  () =>
+    resolveDestination({
+      db: app.db,
+      dataDir: app.config.dataDir,
+      bus: app.bus,
+    })?.store,
+  {
+    version: running().version,
+    passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
+  },
+);
+const crewHeldOff = crewOffInPreview();
+if (appsOn && crewHeldOff)
+  app.log.info(CREW_OFF_IN_PREVIEW, {
+    why: "FORGE_APP_ENV=preview; set FORGE_CREW_IN_PREVIEW=1 to run it",
+  });
+const crew = appsOn && !crewHeldOff
   ? await startCrew(app, {
       forgeUrl,
       localUrl: servers.url,
       binary: process.env.FORGE_CLAUDE ?? "claude",
       concurrency: positive(process.env.FORGE_CREW_CONCURRENCY, hosted ? 1 : 2),
       budgetUsd: Number(process.env.FORGE_CREW_BUDGET_USD) || 5,
-      runTimeoutMs: positive(process.env.FORGE_CREW_TIMEOUT_MIN, 45) * 60_000,
+      runTimeoutMs: crewRunMs,
       allowHosts: (process.env.FORGE_CREW_ALLOW_HOSTS ?? "")
         .split(",")
         .map((h) => h.trim())
@@ -182,10 +276,15 @@ const crew = appsOn
         : { configDir: process.env.FORGE_CLAUDE_CONFIG_DIR }),
     })
   : undefined;
+// A spawned child's first boot: its direction, opened once for its planner
+// (spawn/first-boot.ts). A forge that was not spawned is untouched.
+await firstBoot(app);
 // Prompts from Instagram (docs/APPS.md): once a day, for each repository
 // that connected an account, the top comment on its latest Reel is told to
 // the crew. A minute's clock; nothing leaves the box until a source exists.
 const prompts = startPromptRoutine(app, { client: graphInstagram() });
+// What newly asks a person reaches the phone they chose (docs/APPS.md).
+const notifier = startNotifier(app, { forgeUrl });
 
 // The webhook delivery worker: poll the outbox for due deliveries. The event
 // row is the source of truth, so a missed tick only delays delivery, never
@@ -201,6 +300,11 @@ runDelivery(app.db, app.log); // sweep anything queued while we were down
 pruneSessions(app.db);
 pruneTokens(app.db);
 
+function nonNegative(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function positive(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
@@ -213,7 +317,31 @@ function positive(value: string | undefined, fallback: number): number {
 const syncTimer = setInterval(() => runSync(app), 60_000);
 runSync(app); // one pass on boot: a forge that was down has fetching to do
 
+// Which green pulls no longer merge as they stand, so the asks can leave
+// them out (`crew/stale_asks.ts`): git answers, off the request path, and an
+// unchanged pull costs two ref reads. Never throws into the timer.
+// The asks ledger rides the same tick, after the sweep has said what
+// expired: what asked each person, and how it ended.
+const tickAsks = async (): Promise<void> => {
+  await sweepStaleAsks(app);
+  try {
+    recordAskLedger(app.db);
+  } catch (error) {
+    app.log.error("asks ledger failed", { error: String(error) });
+  }
+};
+const staleTimer = setInterval(() => void tickAsks(), 120_000);
+void tickAsks();
+
 app.log.info("forge is up", { url: servers.url, data: app.config.dataDir });
+// Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
+// put on one before that is reported here for the owner to take off — the
+// forge never removes it on its own.
+for (const p of peopleOnCrews(app.db))
+  app.log.warn("a person is on a crew; only agents belong there", {
+    repo: p.repoId,
+    user: p.username,
+  });
 if (apps)
   app.log.info("apps are up", {
     domain: apps.options.domain,
@@ -236,18 +364,20 @@ if (ssh)
 
 // A run whose forge died is noticed by whichever forge is up, on boot and
 // on the way: an old process finishing beside a new one keeps its runs alive
-// by renewing their leases, so only a lapsed lease is a death. Deploys and
-// checks are failed; agent runs are the crew's to queue again, unless there
-// is no crew here to do it.
-const leaseTimer = setInterval(
-  () =>
-    failAbandonedRuns(
-      app.db,
-      STALE_AFTER_MS,
-      crew === undefined ? undefined : CHECK_KINDS,
-    ),
-  30_000,
-);
+// by renewing their leases, so only a lapsed lease is a death. Deploys are
+// failed; checks are queued again while their commit heads an open pull;
+// agent runs are the crew's to queue again, unless there is no crew here to
+// do it.
+const leaseTimer = setInterval(() => {
+  failAbandonedRuns(
+    app.db,
+    STALE_AFTER_MS,
+    crew === undefined ? ["deploy", "agent"] : ["deploy"],
+  );
+  requeueAbandonedChecks(app, STALE_AFTER_MS);
+  // A grant whose run is no longer running is a crash's leftover: close it.
+  releaseOrphans(app.db);
+}, 30_000);
 
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
@@ -265,19 +395,24 @@ function shutdown(): void {
   if (draining) return;
   draining = true;
   health.draining = true;
+  // Streams end now, with a resume hint: their browsers reconnect to the
+  // process that replaced this one, not to this one while it finishes.
+  drainStreams();
   const sessions = ssh?.sessions() ?? 0;
   app.log.info("forge draining", { sshSessions: sessions });
   clearInterval(deliveryTimer);
   clearInterval(syncTimer);
+  clearInterval(staleTimer);
   clearInterval(leaseTimer);
   Promise.all([
     prompts.stop(),
+    notifier.stop(),
     crew?.stop({ drain: true }),
     apps?.stop(),
     checks?.stop(),
     looks?.stop(),
     probes?.stop(),
-    snapshots?.stop(),
+    snapshots.stop(),
   ])
     .catch(() => {})
     .then(() => {

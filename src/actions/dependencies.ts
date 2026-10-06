@@ -9,6 +9,7 @@ import type { App } from "../app.ts";
 import { isCrew } from "../core/agents.ts";
 import {
   addDependency,
+  confirmDependency,
   removeDependency,
   type DependencyError,
 } from "../core/dependencies.ts";
@@ -17,6 +18,15 @@ import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { AccessError } from "./access.ts";
+import { followLink } from "./pillars.ts";
+
+/** What a refused link says, in the words the API and the MCP share. */
+export const dependencyWords: Record<string, string> = {
+  self: "an issue cannot wait for itself",
+  cycle: "that would make a loop",
+  cross_repo: "dependencies stay inside one repository",
+  not_an_issue: "only issues can depend on issues",
+};
 
 function requirePlanner(
   app: App,
@@ -42,7 +52,13 @@ export function linkIssue(
   if (!who.ok) return who;
   if (issue.repoId !== repo.id || blocker.repoId !== repo.id)
     return err("not_found");
-  const linked = addDependency(app.db, issue, blocker, who.value.id);
+  const linked = addDependency(
+    app.db,
+    issue,
+    blocker,
+    who.value.id,
+    canWrite(app.db, repo, who.value),
+  );
   if (!linked.ok) return linked;
   app.bus.append({
     kind: "issue.blocked",
@@ -50,6 +66,8 @@ export function linkIssue(
     actorId: who.value.id,
     payload: { number: issue.number, blockedBy: blocker.number },
   });
+  // Under a pillar's umbrella, or behind the gate, the label follows.
+  followLink(app, who.value, repo, issue, blocker);
   return ok(undefined);
 }
 
@@ -69,6 +87,33 @@ export function unlinkIssue(
     kind: "issue.unblocked",
     repoId: repo.id,
     actorId: who.value.id,
+    payload: { number: issue.number, blockedBy: blocker.number },
+  });
+  followLink(app, who.value, repo, issue, blocker);
+  return ok(undefined);
+}
+
+/**
+ * A person says `issue` may go ahead although `blocker` closed as dropped or
+ * split. Writers only: the crew parked it, and the crew may not unpark itself.
+ */
+export function confirmIssue(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  issue: Issue,
+  blocker: Issue,
+): Result<void, AccessError> {
+  if (!canRead(app.db, repo, actor)) return err("not_found");
+  if (!actor) return err("unauthorized");
+  if (!canWrite(app.db, repo, actor) || isCrew(app.db, repo.id, actor.id))
+    return err("forbidden");
+  if (issue.repoId !== repo.id) return err("not_found");
+  if (!confirmDependency(app.db, issue.id, blocker.id)) return ok(undefined);
+  app.bus.append({
+    kind: "issue.confirmed",
+    repoId: repo.id,
+    actorId: actor.id,
     payload: { number: issue.number, blockedBy: blocker.number },
   });
   return ok(undefined);

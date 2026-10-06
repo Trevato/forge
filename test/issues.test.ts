@@ -13,7 +13,7 @@ describe("issue core", () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-iss-core-"));
     const app = createApp({ dataDir, port: 0 });
     try {
-      const user = await createUser(app.db, {
+      const user = await createUser(app.db, { trusted: true,
         username: "n",
         email: "n@f.dev",
         password: "numbers-please",
@@ -121,7 +121,7 @@ describe("issue pages end to end", () => {
 
     const list = await (await fetch(`${base}/mel/proj/issues`)).text();
     expect(list).toContain("First bug");
-    expect(list).toContain("#1");
+    expect(list).toContain('href="/mel/proj/tells/1"');
 
     const detail = await (await fetch(`${base}/mel/proj/issues/1`)).text();
     expect(detail).toContain("<strong>broken</strong>");
@@ -153,7 +153,7 @@ describe("issue pages end to end", () => {
     expect(detail).toContain('data-state="closed"');
     // Default list (open) no longer shows it; closed filter does.
     expect(await (await fetch(`${base}/mel/proj/issues`)).text()).toContain(
-      "No open issues",
+      "Nothing open.",
     );
     expect(
       await (await fetch(`${base}/mel/proj/issues?state=closed`)).text(),
@@ -166,7 +166,9 @@ describe("issue pages end to end", () => {
       redirect: "manual",
     });
     detail = await (await fetch(`${base}/mel/proj/issues/1`)).text();
-    expect(detail).toContain('data-state="open"');
+    // Open again, the tell reads in its word: said, nobody has it yet.
+    expect(detail).toContain('data-word="told"');
+    expect(detail).not.toContain('data-state="closed"');
   });
 
   test("cross-origin issue post is refused (CSRF)", async () => {
@@ -207,7 +209,7 @@ describe("issue pages end to end", () => {
     const minted = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "mel",
         password: "issue-tracker-pass",
         name: "bot",
@@ -257,7 +259,7 @@ describe("issue pages end to end", () => {
     const minted = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "mel",
         password: "issue-tracker-pass",
         name: "ro",

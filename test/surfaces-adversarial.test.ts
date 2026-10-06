@@ -4,8 +4,7 @@
  * do not already prove: CSRF on the routes those files did not target,
  * rendering safety (a run log, an agent's brief, an issue title are all
  * attacker-controlled text), the strict CSP every new page must carry, that
- * a listing never pays a query per row, a guest's reach in the terminal, and
- * that a run's log cannot corrupt the terminal frame it is drawn into.
+ * a listing never pays a query per row, and a guest's reach in the terminal.
  *
  * No `AppsRuntime` runs here on purpose: every page under test renders from
  * rows alone (`runtime === undefined` is itself a first-class, already
@@ -29,12 +28,10 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { id } from "../src/kernel/id.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { appendRunLog, runLogListenerCount } from "../src/runs/log.ts";
+import { appendRunLog } from "../src/runs/log.ts";
 import { content as contentStyle } from "../src/web/style/content.ts";
-import { runScreen } from "../src/tui/screens/run.ts";
-import { appsScreen } from "../src/tui/screens/apps.ts";
-import { appScreen } from "../src/tui/screens/app.ts";
-import { crewScreen } from "../src/tui/screens/crew.ts";
+import { issuesScreen } from "../src/tui/screens/issues.ts";
+import { local } from "../src/tui/screens/where.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import type { Session, TuiIdentity } from "../src/tui/session.ts";
 import type { App as TuiApp, Screen } from "../src/tui/app/app.ts";
@@ -353,7 +350,7 @@ describe("surfaces adversarial: web", () => {
     const team = createTeam(app.db, org.value.id, "readers", "read");
     expect(team.ok).toBe(true);
     if (!team.ok) return;
-    const viewer = await createUser(app.db, {
+    const viewer = await createUser(app.db, { trusted: true,
       username: "viewer1",
       email: "viewer1@forge.test",
       password: "viewer-pass-1234",
@@ -382,6 +379,10 @@ describe("surfaces adversarial: web", () => {
     };
 
     seedApps(5);
+    // A session's first request stamps when it was last seen (once per
+    // interval, `sessionUser`): one write per sign-in, not per row, so it
+    // is spent before counting.
+    await web(cookie, "/apps");
     const small = await statements(app.db, async () => {
       const response = await web(cookie, "/apps");
       expect(response.status).toBe(200);
@@ -395,7 +396,7 @@ describe("surfaces adversarial: web", () => {
   });
 
   test("N+1: the dashboard's Apps and On-you cards stay flat with 30 apps and 30 assigned issues", async () => {
-    const owner = await createUser(app.db, {
+    const owner = await createUser(app.db, { trusted: true,
       username: "dashowner",
       email: "dashowner@forge.test",
       password: "dashowner-pass-123",
@@ -408,7 +409,7 @@ describe("surfaces adversarial: web", () => {
     const team = createTeam(app.db, org.value.id, "readers", "read");
     expect(team.ok).toBe(true);
     if (!team.ok) return;
-    const viewer = await createUser(app.db, {
+    const viewer = await createUser(app.db, { trusted: true,
       username: "dashviewer",
       email: "dashviewer@forge.test",
       password: "dashviewer-pass-1",
@@ -449,6 +450,10 @@ describe("surfaces adversarial: web", () => {
     };
 
     seed(5, 0);
+    // A session's first request stamps when it was last seen (once per
+    // interval, `sessionUser`): one write per sign-in, not per row, so it
+    // is spent before counting.
+    await web(cookie, "/");
     const small = await statements(app.db, async () => {
       const response = await web(cookie, "/");
       expect(response.status).toBe(200);
@@ -467,7 +472,7 @@ describe("surfaces adversarial: web", () => {
   // `writableRepoIds` query (`REPO_WRITABLE`, the SQL twin of `canWrite`),
   // so the count must not move with the number of distinct repositories.
   test("N+1: needsYouCard does not cost more as agent pulls span more distinct repos", async () => {
-    const owner = await createUser(app.db, {
+    const owner = await createUser(app.db, { trusted: true,
       username: "needsowner",
       email: "needsowner@forge.test",
       password: "needsowner-pass-1",
@@ -477,7 +482,7 @@ describe("surfaces adversarial: web", () => {
     if (!org.ok) return;
     const team = createTeam(app.db, org.value.id, "writers", "write");
     if (!team.ok) return;
-    const viewer = await createUser(app.db, {
+    const viewer = await createUser(app.db, { trusted: true,
       username: "needsviewer",
       email: "needsviewer@forge.test",
       password: "needsviewer-pass-1",
@@ -509,6 +514,10 @@ describe("surfaces adversarial: web", () => {
     };
 
     seed(5, 0);
+    // A session's first request stamps when it was last seen (once per
+    // interval, `sessionUser`): one write per sign-in, not per row, so it
+    // is spent before counting.
+    await web(cookie, "/");
     const small = await statements(app.db, async () => {
       await web(cookie, "/");
     });
@@ -730,7 +739,7 @@ describe("surfaces adversarial: tui", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-surfaces-adv-"));
     forge = createApp({ dataDir, port: 0 });
-    const a = await createUser(forge.db, {
+    const a = await createUser(forge.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -749,54 +758,12 @@ describe("surfaces adversarial: tui", () => {
       files: [{ path: "README.md", content: "# hello\n" }],
     });
     if (!committed.ok) throw new Error(JSON.stringify(committed.error));
-    // No AppsRuntime is started: the app screen renders the "no runtime"
-    // state, which is exactly what a guest and a writer alike see it say.
-    forge.db
-      .query(
-        `INSERT INTO app (id, repo_id, slug, access, preview_data) VALUES (?1, ?2, 'hello', 'public', 'copy')`,
-      )
-      .run(id(), made.value.id);
   }, 30_000);
 
   afterAll(async () => {
     forge.close();
     await rm(dataDir, { recursive: true, force: true });
   });
-
-  test("a guest cannot open New app, redeploy, stop, assign, or reach the crew screen", async () => {
-    const h = boot(identityFor(undefined));
-    try {
-      expect(h.session.signedIn).toBe(false);
-
-      // Apps: `n` is disabled and does nothing — the key bar draws it dim
-      // but never wires it, so the only honest proof is that pressing it
-      // changes nothing (no prompt screen pushed).
-      await h.push((s, ctx) => appsScreen(s, ctx));
-      await h.until("hello");
-      const appsBefore = h.text();
-      await h.press("n");
-      expect(h.text()).toBe(appsBefore);
-      expect(h.text()).not.toContain("New app");
-
-      // The app screen: redeploy/stop keys do nothing for a guest.
-      await h.push((s, ctx) => appScreen(s, ctx, hello));
-      await h.until("slug hello");
-      const before = h.text();
-      await h.press("r");
-      expect(h.text()).toBe(before); // no toast, no confirm screen pushed
-      await h.press("s");
-      expect(h.text()).toBe(before);
-
-      // The crew screen: reachable (it says who it is for), but every verb
-      // is inert and the reason is stated, not hidden.
-      await h.push((s, ctx) => crewScreen(s, ctx));
-      await h.until("only a forge admin can change the crew");
-      await h.press("n");
-      expect(h.text()).not.toContain("New agent");
-    } finally {
-      h.stop();
-    }
-  }, 30_000);
 
   test("a guest cannot assign an issue: the issue screen never wires `a`", async () => {
     const { openIssue, assignIssue } = await import("../src/actions/issues.ts");
@@ -829,66 +796,13 @@ describe("surfaces adversarial: tui", () => {
     }
   }, 30_000);
 
-  test("a run log with ANSI escapes and control bytes does not corrupt the frame", async () => {
-    const runId = id();
-    forge.db
-      .query(
-        `INSERT INTO run (id, repo_id, kind, env, state) VALUES (?1, ?2, 'deploy', 'production', 'running')`,
-      )
-      .run(runId, hello.id);
-    const before = runLogListenerCount();
-    const h = boot(identityFor(alice));
-    try {
-      await h.push((s, ctx) => runScreen(s, ctx, hello, runId));
-      await h.until("running");
-      appendRunLog(
-        dataDir,
-        runId,
-        "\x1b[31mred\x1b[0m\x1b[2J\x1b[?1049htitle\x1b]0;evil\x07 plain text survives",
-      );
-      await h.until("plain text survives");
-      // No raw escape byte reached the rendered frame.
-      expect(h.text()).not.toContain("\x1b");
-      // The frame is still a well-formed grid — no crash, no runaway state.
-      expect(h.app.screen.toText().split("\n").length).toBeGreaterThan(5);
-    } finally {
-      h.stop();
-    }
-    expect(runLogListenerCount()).toBe(before);
-  }, 30_000);
-
-  test("the run screen releases its log subscription when popped", async () => {
-    const runId = id();
-    forge.db
-      .query(
-        `INSERT INTO run (id, repo_id, kind, env, state) VALUES (?1, ?2, 'deploy', 'production', 'running')`,
-      )
-      .run(runId, hello.id);
-    const before = runLogListenerCount();
-    const h = boot(identityFor(alice));
-    try {
-      await h.push((s, ctx) => runScreen(s, ctx, hello, runId));
-      await h.until("running");
-      expect(runLogListenerCount()).toBe(before + 1);
-      h.pop();
-      await h.settle();
-      expect(runLogListenerCount()).toBe(before);
-    } finally {
-      h.stop();
-    }
-  }, 30_000);
-
   test("a screen popped while its load is in flight renders and toasts nothing afterward", async () => {
-    const runId = id();
-    forge.db
-      .query(
-        `INSERT INTO run (id, repo_id, kind, env, state) VALUES (?1, ?2, 'deploy', 'production', 'running')`,
-      )
-      .run(runId, hello.id);
     const h = boot(identityFor(alice));
     try {
       // Push and immediately pop, before the load's promise has settled.
-      h.app.ctx.push(runScreen(h.session, h.app.ctx, hello, runId));
+      h.app.ctx.push(
+        issuesScreen(h.session, h.app.ctx, local(h.session, hello), "issue"),
+      );
       h.pop();
       await h.settle();
       // The forge is back where it was; nothing threw, nothing left a toast

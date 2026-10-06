@@ -1,9 +1,12 @@
+import { stylesheetAsset } from "../src/web/asset.ts";
 /**
  * The board: a live wall of the crews at work. Signed in, four live
  * regions; a run in flight and a merged pull on it; `?apps=` narrows it;
+ * `?wall` is its wall mode, where every old `/big` address lands;
  * anonymous is sent to sign in.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +21,8 @@ import { recordDecision } from "../src/core/decisions.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { updateRepoSettings, type Repo } from "../src/core/repos.ts";
-import { claimRun, createRun } from "../src/core/runs.ts";
+import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { submitReview } from "../src/core/reviews.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -67,7 +71,7 @@ describe("the board", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -141,7 +145,9 @@ describe("the board", () => {
     // A wall left open all day fetches its 13 KB of rules once, with the rest
     // of the design, instead of carrying them inline on every reload.
     expect(html).not.toContain("<style");
-    expect(html).toContain('<link rel="stylesheet" href="/assets/forge.css"');
+    expect(html).toContain(
+        `<link rel="stylesheet" href="${stylesheetAsset().path}"`,
+      );
     // A viewer who chose a theme keeps it.
     const paper = await (
       await get("/board", { cookie: `${cookie}; forge_theme=paper` })
@@ -243,7 +249,7 @@ describe("the board", () => {
     expect(landed).toContain("notes · scout");
     expect(landed).toContain(`/alice/notes/pulls/${pull.number}`);
     expect(landed).toContain(
-      `src="/alice/notes/looks/production/${pull.headOid}/thumb.png"`,
+      `src="/alice/notes/looks/production/${pull.headOid}/thumb.png?v=`,
     );
     // Decided: kind in words, the answer, how sure, the pick's issue.
     const decided = html.slice(
@@ -272,11 +278,195 @@ describe("the board", () => {
     expect(byOwner).not.toContain("on the cart");
   });
 
+  test("review on an app's card: pulls awaiting it, the wait for a verdict, verdicts per reviewer", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const branch = await commitToBranch(app, alice, notes, {
+      branch: "feature/review-me",
+      base: "main",
+      message: "Review me",
+      files: [{ path: "REVIEW.md", content: "review me\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, scout, notes, {
+      title: "Review me",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/review-me",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const check = createRun(app.db, {
+      repoId: notes.id,
+      kind: "check",
+      issueId: opened.value.id,
+      env: `pull-${opened.value.number}`,
+      commitOid: opened.value.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, check.id);
+    finishRun(app.db, check.id, { state: "ok", summary: "check passed" });
+    expect(await (await get("/board")).text()).toContain("1 awaiting review");
+
+    const juniper = await createAgent(app, alice, { username: "juniper" });
+    if (!juniper.ok) throw new Error(String(juniper.error));
+    submitReview(app.db, {
+      issueId: opened.value.id,
+      authorId: juniper.value.user.id,
+      state: "changes_requested",
+      commitOid: opened.value.headOid,
+    });
+    const html = await (await get("/board")).text();
+    expect(html).not.toContain("awaiting review");
+    expect(html).toMatch(/\d+m from green to a verdict · juniper 1/);
+  });
+
   test("the home's shelf opens the board", async () => {
     const home = await (
       await get("/", { cookie: `${cookie}; forge_mode=studio` })
     ).text();
     expect(home).toContain('href="/board"');
     expect(home).toContain("Board");
+  });
+
+  test("?wall is the wall mode: the same live regions, marked for the far screen", async () => {
+    const plain = await (await get("/board")).text();
+    expect(plain).not.toContain("data-wall");
+    const res = await get("/board?apps=alice/notes&wall");
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toMatch(/<div class="board"\s+data-wall="">/);
+    expect(html).toMatch(/id="working"\s+data-live="run\.\*"/);
+    expect(html).toMatch(/class="board-scope"\s*>notes</);
+  });
+
+  // The big view's every address, each its own test: all land on the wall mode.
+  const oldRoutes: [string, string][] = [
+    ["/big", "/board?wall"],
+    ["/big?view=board", "/board?wall"],
+    ["/big?view=map", "/board?wall"],
+    ["/big?app=alice/notes", "/board?apps=alice%2Fnotes&wall"],
+    ["/big?app=alice%2Fnotes&list=runs", "/board?apps=alice%2Fnotes&wall"],
+    ["/big?app=alice/notes&list=issues", "/board?apps=alice%2Fnotes&wall"],
+    ["/big?app=alice/notes&list=pulls", "/board?apps=alice%2Fnotes&wall"],
+    ["/big?app=alice/notes&list=map", "/board?apps=alice%2Fnotes&wall"],
+    ["/big?run=0123456789abcdef", "/board?wall"],
+    // An address that was never an app keeps no scope.
+    ["/big?app=../../etc", "/board?wall"],
+    ["/big?app=%22%3E%3Cscript%3E", "/board?wall"],
+  ];
+  for (const [from, to] of oldRoutes)
+    test(`${from} lands on ${to}`, async () => {
+      const res = await get(from);
+      expect(res.status).toBe(303);
+      expect(res.headers.get("location")).toBe(to);
+      const landed = await get(to);
+      expect(landed.status).toBe(200);
+      expect(await landed.text()).toContain("data-wall");
+    });
+
+  test("anonymous at /big reaches the sign-in by way of the wall", async () => {
+    const res = await fetch(`${base}/big?app=alice/notes`, {
+      redirect: "manual",
+    });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/board?apps=alice%2Fnotes&wall");
+    const next = await fetch(`${base}/board?wall`, { redirect: "manual" });
+    expect(next.headers.get("location")).toMatch(/^\/signin\?next=/);
+  });
+});
+
+describe("the board's forge strip", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let admin: User;
+  let cookies: Record<string, string> = {};
+
+  async function signIn(name: string): Promise<string> {
+    const res = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({
+        username: name,
+        password: "a-good-passphrase",
+      }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") ?? "").split(";")[0]!;
+  }
+  const board = async (who: string) =>
+    (
+      await fetch(`${servers.url}/board`, {
+        headers: { cookie: cookies[who]! },
+      })
+    ).text();
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-board-strip-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    for (const [username, adminIfFirst] of [
+      ["root", true],
+      ["bob", false],
+    ] as const) {
+      const u = await createUser(app.db, { trusted: true,
+        username,
+        // Fixtures may name an account after a reserved word on purpose.
+        allowReserved: true,
+        email: `${username}@forge.local`,
+        password: "a-good-passphrase",
+        adminIfFirst,
+      });
+      if (!u.ok) throw new Error(u.error);
+      if (username === "root") admin = u.value;
+      cookies[username] = await signIn(username);
+    }
+  }, 30_000);
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("an admin reads All fine; a stuck run becomes a linked sentence; a non-admin sees nothing", async () => {
+    const fine = await board("root");
+    expect(fine).toMatch(/id="forge"\s+data-live="run\.\*,app\.\*"/);
+    expect(fine).toContain("All fine");
+
+    const made = await createRepo(app, admin, { name: "stuck" });
+    if (!made.ok) throw new Error(String(made.error));
+    const run = createRun(app.db, { repoId: made.value.id, kind: "agent" });
+    claimRun(app.db, run.id);
+    // Its last heartbeat is long past: the lease has lapsed.
+    app.db
+      .query("UPDATE run SET heartbeat_at = ?1 WHERE id = ?2")
+      .run("2020-01-01T00:00:00.000Z", run.id);
+    const stuck = await board("root");
+    expect(stuck).not.toContain("All fine");
+    expect(stuck).toContain("1 run is stuck.");
+    expect(stuck).toContain(`href="/root/stuck/runs/${run.id}"`);
+
+    const other = await board("bob");
+    expect(other).not.toContain('id="forge"');
+    expect(other).not.toContain("All fine");
+    expect(other).not.toContain("stuck.");
+  });
+
+  test("a blocked rollout shows in the status line, escaped, for an admin only", async () => {
+    const guard = mkdtempSync(join(tmpdir(), "forge-board-guard-"));
+    process.env["FORGE_GUARD_DIR"] = guard;
+    try {
+      writeFileSync(
+        join(guard, "status.json"),
+        JSON.stringify({ incidents: { stuck: "quota refused <i>8Gi</i>" } }),
+      );
+      writeFileSync(join(guard, "checkedAt"), new Date().toISOString());
+      const blocked = await board("root");
+      expect(blocked).toContain("rollout blocked: quota refused &lt;i&gt;8Gi&lt;/i&gt;");
+      expect(blocked).not.toContain("<i>8Gi</i>");
+      expect(await board("bob")).not.toContain("rollout blocked");
+    } finally {
+      delete process.env["FORGE_GUARD_DIR"];
+      rmSync(guard, { recursive: true, force: true });
+    }
   });
 });

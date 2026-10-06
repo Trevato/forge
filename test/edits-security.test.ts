@@ -10,7 +10,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { createApp, type App } from "../src/app.ts";
 import { runGitCapture } from "../src/git/env.ts";
 import { listBranches } from "../src/git/branches.ts";
@@ -98,7 +97,7 @@ describe("edits: refusals that must leave nothing behind", () => {
         await fetch(`${base}/api/v1/tokens`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
+          body: JSON.stringify({ adminConfirm: true,
             username: "alice",
             password: "alice-password-1",
             name: "rw",
@@ -253,6 +252,7 @@ describe("edits: refusals that must leave nothing behind", () => {
     expect(await refs()).toEqual([...before, "refs/heads/proposal"].sort());
   });
 
+  // The actor's, at the address they publish — the no-reply one by default.
   test("commit identity is the actor's, whatever the body claims", async () => {
     const r = await edit({
       author: { name: "Mallory", email: "mallory@evil.test" },
@@ -263,7 +263,9 @@ describe("edits: refusals that must leave nothing behind", () => {
     const who = (
       await git(["log", "-1", "--format=%an <%ae>|%cn <%ce>", "main"])
     ).stdout.trim();
-    expect(who).toBe("alice <alice@forge.test>|alice <alice@forge.test>");
+    expect(who).toBe(
+      "alice <alice@users.noreply.localhost>|alice <alice@users.noreply.localhost>",
+    );
   });
 
   test("racing edits to one branch: exactly one lands, the rest hear branch_moved", async () => {
@@ -468,7 +470,6 @@ describe("edits on a mirror: the origin's refusal is final", () => {
         password: ALICE_PASSWORD,
       }),
     });
-    resetConnectLimit();
 
     const connected = await read<{ id: string }>(
       await api("/api/v1/user/origins", {

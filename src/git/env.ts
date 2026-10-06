@@ -87,16 +87,44 @@ export function trustedCaBundle(
  * FIFO on purpose: LIFO would be marginally better for cache locality and
  * catastrophically worse for fairness, which is the entire point — the
  * request that has waited longest goes next, so a burst degrades everyone's
- * latency a little rather than starving somebody forever.
+ * latency a little rather than starving somebody forever. The one
+ * exception is asked for by name (`first`), and is FIFO among itself.
  */
 export class Gate {
   private active = 0;
-  private readonly waiting: (() => void)[] = [];
+  private readonly waiting: { wake: () => void; first: boolean }[] = [];
   private peak = 0;
 
-  constructor(readonly limit: number) {}
+  constructor(private max: number) {}
 
-  async acquire(): Promise<() => void> {
+  /** How many permits may be held at once. */
+  get limit(): number {
+    return this.max;
+  }
+
+  /**
+   * Change the limit while permits are held (`core/capacity.ts`: an admin
+   * lowers or raises a concurrency live). Raised, waiters go at once up to
+   * the new limit; lowered, nobody holding a permit is touched — releases
+   * stop handing permits on until the count is under it.
+   */
+  resize(limit: number): void {
+    this.max = Math.max(1, Math.floor(limit));
+    while (this.active < this.limit) {
+      const next = this.waiting.shift();
+      if (next === undefined) break;
+      this.active++;
+      next.wake();
+    }
+  }
+
+  /**
+   * Take a permit, waiting for one if none is free. `first` waits ahead of
+   * everyone who is not — still FIFO among its own kind, so it can jump a
+   * queue but never starve another `first` — which is how a production
+   * deploy gets the next permit while previews are waiting.
+   */
+  async acquire(options: { first?: boolean } = {}): Promise<() => void> {
     if (this.active < this.limit) {
       this.active++;
     } else {
@@ -105,7 +133,12 @@ export class Gate {
       // changes owner. Decrementing first would open a window in which a
       // caller arriving synchronously slips in ahead of the queue and the
       // limit is briefly exceeded — a semaphore that is only usually one.
-      await new Promise<void>((resolve) => this.waiting.push(resolve));
+      const first = options.first === true;
+      await new Promise<void>((wake) => {
+        const behind = first ? this.waiting.findIndex((w) => !w.first) : -1;
+        if (behind === -1) this.waiting.push({ wake, first });
+        else this.waiting.splice(behind, 0, { wake, first });
+      });
     }
     if (this.active > this.peak) this.peak = this.active;
     let released = false;
@@ -114,15 +147,19 @@ export class Gate {
       // it never held, which is how a semaphore quietly stops being one.
       if (released) return;
       released = true;
-      const next = this.waiting.shift();
-      if (next !== undefined) next();
+      // Over the limit (it was lowered), the permit is returned, not handed on.
+      const next = this.active <= this.limit ? this.waiting.shift() : undefined;
+      if (next !== undefined) next.wake();
       else this.active--;
     };
   }
 
   /** Run `work` holding one permit, released however it ends. */
-  async run<T>(work: () => Promise<T>): Promise<T> {
-    const release = await this.acquire();
+  async run<T>(
+    work: () => Promise<T>,
+    options: { first?: boolean } = {},
+  ): Promise<T> {
+    const release = await this.acquire(options);
     try {
       return await work();
     } finally {

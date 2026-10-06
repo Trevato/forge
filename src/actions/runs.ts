@@ -1,16 +1,21 @@
 /**
- * Run actions: look at a repository's runs and their logs, cancel one, and
- * — for the workers that produce runs — announce a run's state on the
+ * Run actions: look at a repository's runs and their logs, cancel one,
+ * queue a finished agent run's task again, and — for the workers that produce runs — announce a run's state on the
  * outbox. Reading follows the repository's visibility (a run's log is as
- * private as the code it ran); cancelling takes write access; announcing
- * is the system's own voice and takes no actor.
+ * private as the code it ran), and a private app's runs follow the app: a
+ * deploy log carries the app's own output, so only someone who may enter
+ * the app reads them (#620). Cancelling takes write access; announcing is
+ * the system's own voice and takes no actor.
  */
 
+import { mayViewId } from "../core/sealed.ts";
+import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { steerRun } from "../crew/runner.ts";
 import { getIssueById } from "../core/issues.ts";
 import { addComment } from "./issues.ts";
-import type { Repo } from "../core/repos.ts";
+import { getAppByRepo } from "../core/apps.ts";
+import { canEnterApp, type Repo } from "../core/repos.ts";
 import {
   cancelRun as markCancelled,
   getRun,
@@ -20,6 +25,7 @@ import {
 } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { abortAgentRun } from "../crew/running.ts";
+import { queueAgentRun, taskOf } from "../crew/dispatch.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { readRunLog, runLogPath } from "../runs/log.ts";
 import { requireReader, requireWriter, type AccessError } from "./access.ts";
@@ -59,6 +65,23 @@ export function announceRun(app: App, run: Run, actorId?: string): void {
   });
 }
 
+/**
+ * Whether `actor` may read this repository's runs: anyone who can read it,
+ * unless it runs a private app — then only someone who may enter the app.
+ */
+export function mayReadRuns(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): boolean {
+  if (!requireReader(app, actor, repo).ok) return false;
+  const record = getAppByRepo(app.db, repo.id);
+  return (
+    record === undefined ||
+    canEnterApp(app.db, repo, record, actor, { named: false })
+  );
+}
+
 export function listRepoRuns(
   app: App,
   actor: User | undefined,
@@ -67,7 +90,13 @@ export function listRepoRuns(
 ): Result<Run[], "not_found"> {
   const reader = requireReader(app, actor, repo);
   if (!reader.ok) return reader;
-  return ok(queryRuns(app.db, repo.id, options));
+  if (!mayReadRuns(app, actor, repo)) return ok([]);
+  // A run on a sealed report, or its fix, is the report's (`core/sealed.ts`).
+  return ok(
+    queryRuns(app.db, repo.id, options).filter((r) =>
+      mayViewId(app.db, repo, r.issueId, actor),
+    ),
+  );
 }
 
 /** A run by id, only if it belongs to a repository the actor can see. */
@@ -77,10 +106,10 @@ export function getRepoRun(
   repo: Repo,
   runId: string,
 ): Result<Run, "not_found"> {
-  const reader = requireReader(app, actor, repo);
-  if (!reader.ok) return reader;
+  if (!mayReadRuns(app, actor, repo)) return err("not_found");
   const run = getRun(app.db, runId);
   if (!run || run.repoId !== repo.id) return err("not_found");
+  if (!mayViewId(app.db, repo, run.issueId, actor)) return err("not_found");
   return ok(run);
 }
 
@@ -134,6 +163,42 @@ export function cancelRepoRun(
   return ok(cancelled);
 }
 
+/**
+ * Queue a cancelled or failed agent run's task again: the same agent, the
+ * same issue, the same reason. The run that starts reads the whole
+ * conversation, so it carries on rather than starting over. Refused when
+ * the issue is closed or the agent is gone (`no_task`), and when the crew
+ * would not take it now — a run already waiting, the breaker tripped, the
+ * day's ceiling reached (`not_queued`).
+ */
+export function requeueRepoRun(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  runId: string,
+): Result<Run, AccessError | "not_agent" | "not_finished" | "no_task" | "not_queued"> {
+  const writer = requireWriter(app, actor, repo);
+  if (!writer.ok) return writer;
+  // A run costs money; like assigning, queueing one is a person's call.
+  if (writer.value.kind === "agent") return err("forbidden");
+  const run = getRun(app.db, runId);
+  if (!run || run.repoId !== repo.id) return err("not_found");
+  if (run.kind !== "agent") return err("not_agent");
+  if (run.state !== "cancelled" && run.state !== "failed")
+    return err("not_finished");
+  const task = taskOf(app, run);
+  if (task === undefined) return err("no_task");
+  const queued = queueAgentRun(
+    app,
+    task.repo,
+    task.issue,
+    task.agent,
+    task.reason,
+    writer.value.id,
+  );
+  return queued ? ok(queued) : err("not_queued");
+}
+
 export type SteerOutcome =
   /** The agent hears it at its next step. */
   | "sent"
@@ -152,9 +217,13 @@ export function steerRepoRun(
   repo: Repo,
   runId: string,
   text: string,
-): Result<SteerOutcome, AccessError | "empty" | "not_agent"> {
+): Result<SteerOutcome, AccessError | "empty" | "not_agent" | "unverified"> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
+  const proven = requireVerified(app, writer.value);
+  if (!proven.ok) return proven;
+  // A run costs money; like assigning, queueing one is a person's call.
+  if (writer.value.kind === "agent") return err("forbidden");
   const run = getRun(app.db, runId);
   if (!run || run.repoId !== repo.id) return err("not_found");
   if (run.kind !== "agent") return err("not_agent");

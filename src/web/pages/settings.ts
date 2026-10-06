@@ -37,20 +37,8 @@ import {
   type AppEnvName,
   type AppEnvScope,
 } from "../../core/app_env.ts";
-import {
-  addToCrew,
-  listAllAgents,
-  listCrew,
-  removeFromCrew,
-} from "../../actions/crew.ts";
-import { autonomyStatus } from "../../crew/autonomy.ts";
-import {
-  CREW_ROLES,
-  getAgentByName,
-  isCrewRole,
-  listCrewRoles,
-  setCrewRole,
-} from "../../core/agents.ts";
+import { addToCrew, listCrew, removeFromCrew } from "../../actions/crew.ts";
+import { getAgentByName, isCrewRole, setCrewRole } from "../../core/agents.ts";
 import { isAutonomy } from "../../core/repos.ts";
 import {
   createLabel,
@@ -71,6 +59,10 @@ import {
   type AppRecord,
 } from "../../core/apps.ts";
 import { listLabels, type Label } from "../../core/issues.ts";
+import {
+  readAppMembers,
+  setAppMembersThrough,
+} from "../../actions/app_members.ts";
 import { canAdmin, type Repo } from "../../core/repos.ts";
 import { listWebhooks, recentDeliveries } from "../../core/webhooks.ts";
 import { listRefs } from "../../git/read.ts";
@@ -85,11 +77,13 @@ import {
   repoPalette,
   settingsLayout,
 } from "../chrome.ts";
-import { studioCrewSettings } from "../studio/crew.ts";
+import { settingsLead } from "../studio/crew.ts";
+import { pageTitle } from "../studio/nouns.ts";
+import { appHref } from "./apps.ts";
 import { field, readForm, type Form } from "../form.ts";
-import { html, raw, when, type Html } from "../html.ts";
+import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
-import { flashTo, page } from "../layout.ts";
+import { flashTo, page, redirect } from "../layout.ts";
 import type { Flash } from "../flash.ts";
 import {
   badge,
@@ -101,22 +95,18 @@ import {
   field as formField,
   labelChip,
   labelCss,
-  listCard,
   row,
   selectField,
   time,
   timeAgo,
-  userLink,
 } from "../ui.ts";
-import { crewReadiness } from "./crew.ts";
-import { grantsSection, saveGrants } from "./subscriptions.ts";
+import { secretsSection } from "./secrets.ts";
+import { saveGrants } from "./subscriptions.ts";
 
 type Section =
   | "general"
   | "app"
-  | "crew"
   | "prompts"
-  | "autonomy"
   | "labels"
   | "hooks"
   | "danger";
@@ -144,22 +134,10 @@ function sections(base: string, active: Section) {
       current: active === "app",
     },
     {
-      label: "Crew",
-      href: `${base}/settings/crew`,
-      icon: "bot" as const,
-      current: active === "crew",
-    },
-    {
       label: "Prompts",
       href: `${base}/settings/prompts`,
       icon: "comment" as const,
       current: active === "prompts",
-    },
-    {
-      label: "Autonomy",
-      href: `${base}/settings/autonomy`,
-      icon: "play" as const,
-      current: active === "autonomy",
     },
     {
       label: "Labels",
@@ -219,20 +197,28 @@ async function adminForm(
 
 // ---- general ----
 
+/**
+ * GET /:owner/:name/settings — the one settings page, for every repository
+ * and every viewer who can read it. It leads with what the repository says
+ * it is, its crew and how far it may go on its own (`settingsLead`,
+ * `studio/crew.ts`); beneath, for an admin, the default branch and its
+ * gates and the secrets, with the rest — the app, prompts, labels,
+ * webhooks, the danger zone — one quiet section over in the same frame.
+ */
 export async function settingsPage(ctx: Ctx): Promise<Response> {
-  // In the studio, the app's head leads to one page for the crew and the
-  // ceiling — the two decisions that are the studio's own story — rather
-  // than dev's full settings shell. `?mode=dev` is the way to the rest.
-  const studio =
-    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
-  if (studio) {
-    const readable = loadRepo(ctx);
-    if (!readable) return repoNotFound(ctx);
-    const record = getAppByRepo(ctx.app.db, readable.id);
-    if (record !== undefined) return studioCrewSettings(ctx, readable, record);
-  }
+  const readable = loadRepo(ctx);
+  if (!readable) return repoNotFound(ctx);
+  const lead = settingsLead(ctx, readable);
   const repo = loadAdminRepo(ctx);
-  if (!repo) return repoNotFound(ctx);
+  if (!repo)
+    return page({
+      ctx,
+      title: pageTitle("settings", readable, true),
+      crumbs: crumbsFor(readable),
+      palette: repoPalette(ctx, readable),
+      body: html`${repoHeader(ctx, readable, "settings", { compact: true })}
+      ${lead}`,
+    });
   const base = repoBase(repo);
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
   const refs = await listRefs(dir, "refs/heads/");
@@ -242,31 +228,11 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
   if (!branches.includes(repo.defaultBranch))
     branches.unshift(repo.defaultBranch);
 
+  // The lead's About card owns the description and visibility; this form
+  // sends them back unchanged, as that one does the gates below.
   const body = card(
     html`<form method="post" action="${base}/settings">
-      ${formField({
-        label: "Description",
-        name: "description",
-        value: repo.description,
-        hint: "One line, shown wherever this repository is listed.",
-      })}
-      ${selectField({
-        label: "Visibility",
-        name: "visibility",
-        hint: "A private repository and a repository that does not exist look identical to anyone else.",
-        options: [
-          {
-            value: "private",
-            label: "Private",
-            selected: repo.visibility === "private",
-          },
-          {
-            value: "public",
-            label: "Public",
-            selected: repo.visibility === "public",
-          },
-        ],
-      })}
+      <input type="hidden" name="card" value="gates" />
       ${selectField({
         label: "Default branch",
         name: "defaultBranch",
@@ -318,13 +284,39 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
           >
         </label>
       </div>
+      <div class="field">
+        <input type="hidden" name="crewOutsidersShown" value="1" />
+        <label class="check">
+          <input
+            type="checkbox"
+            name="crewOutsiders"
+            ${repo.crewOutsiders ? html`checked` : null}
+          />
+          <span
+            >Outsiders may trigger the crew — anyone signed in who can read
+            this repository starts and steers runs by commenting, on your
+            budget. Off, only people who can write here direct the crew;
+            anyone else's words stay on the thread. Turning it on or off is
+            recorded in the activity.</span
+          >
+        </label>
+      </div>
       <div class="form-actions">
         ${btn("Save changes", { variant: "primary" })}
       </div>
     </form>`,
-    { head: html`<h2>General</h2>` },
+    { head: html`${icon("branch")}<h2>Branch and gates</h2>` },
   );
-  return settingsPageResponse(ctx, repo, "general", "Settings", body);
+  const secrets = secretsSection(ctx, "repo", `${repo.ownerName}/${repo.name}`);
+  return settingsPageResponse(
+    ctx,
+    repo,
+    "general",
+    "Settings",
+    html`${lead}<div class="mt">${body}</div>${secrets
+      ? html`<div class="mt">${secrets}</div>`
+      : null}`,
+  );
 }
 
 export async function settingsUpdate(ctx: Ctx): Promise<Response> {
@@ -334,14 +326,37 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
   const base = repoBase(repo);
   const branch = field(form, "defaultBranch");
 
-  const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
+  // The page has two forms over this one route, and each changes only its
+  // own fields: About its words and visibility, Branch and gates the rest.
+  // A form that names no card (an older client) sends them all, as before.
+  // A checkbox that is off sends nothing, so a card that never drew it must
+  // never read its absence as "off".
+  const card = field(form, "card");
+  const about = {
     description: field(form, "description"),
-    visibility: field(form, "visibility") === "public" ? "public" : "private",
+    visibility:
+      field(form, "visibility") === "public"
+        ? ("public" as const)
+        : ("private" as const),
+  };
+  const gates = {
     protectDefault: form.get("protect") !== null,
     requireReview: form.get("requireReview") !== null,
     requireChecks: form.get("requireChecks") !== null,
+    // Who directs the crew changes only from a form that shows the switch:
+    // a form without it (the studio's About card) never turns it off by
+    // leaving it out.
+    ...(form.get("crewOutsidersShown") !== null
+      ? { crewOutsiders: form.get("crewOutsiders") !== null }
+      : {}),
     ...(branch !== "" ? { defaultBranch: branch } : {}),
-  });
+  };
+  const updated = await updateRepoSettings(
+    ctx.app,
+    ctx.auth.user,
+    repo,
+    card === "about" ? about : card === "gates" ? gates : { ...about, ...gates },
+  );
   const flash: Flash = updated.ok
     ? { message: "Settings saved." }
     : {
@@ -384,6 +399,11 @@ function appSettingsView(
   const base = repoBase(repo);
   const runtime = appsRuntime(ctx.app);
   const domain = runtime?.options.domain;
+  const listed =
+    record === undefined
+      ? undefined
+      : readAppMembers(ctx.app, ctx.auth.user, repo);
+  const named = listed?.ok === true ? listed.value.members : [];
   const form = card(
     html`${when(
         record === undefined,
@@ -416,11 +436,11 @@ function appSettingsView(
           hint:
             values.access === "public"
               ? `Right now anyone with the link can open it, signed in or not. The code stays as ${repo.visibility} as the repository is: the two are set separately.`
-              : `Right now a visitor is asked to sign in and let through only if they can see this repository${repo.visibility === "private" ? " — its collaborators, since the repository is private" : " — anyone signed in, since the repository is public"}. Everyone else sees not found. Choose Public to share it with people who cannot see the code.`,
+              : `Right now a visitor is asked to sign in and let through only if they can write this repository, are on its crew, or are named under Who may enter (${named.length === 0 ? "nobody is" : named.join(", ")}); reading the code is not enough, so it stays this way if the repository is made public. Everyone else sees not found. Choose Public to share it with anyone.`,
           options: [
             {
               value: "private",
-              label: "Private — people who can see this repository",
+              label: "Private — people who can write this repository",
               selected: values.access === "private",
             },
             {
@@ -454,7 +474,7 @@ function appSettingsView(
           })}
           ${when(record !== undefined, () =>
             btn("Environments", {
-              href: `${base}/app`,
+              href: appHref(repo),
               variant: "ghost",
               icon: "rocket",
             }),
@@ -469,6 +489,7 @@ function appSettingsView(
   if (record === undefined) return form;
   const domains = listAppDomains(ctx.app, ctx.auth.user, repo);
   return html`${form}
+    ${when(listed?.ok === true, () => html`<div class="mt">${appMembersView(base, values.access, named)}</div>`)}
     <div class="mt">
       ${appEnvView(base, listAppEnvNames(ctx.app.db, record.id))}
     </div>
@@ -590,6 +611,46 @@ function appEnvView(base: string, names: AppEnvName[]): Html {
  * `undefined` is a forge where nothing serves apps: a domain would have
  * nowhere to point, so the card says so and offers no form.
  */
+/**
+ * Who may enter a private app beyond its writers and crew (#752): one
+ * username a line. Being named opens the app and its previews and nothing
+ * else — no code, no crew, no settings, no terminal.
+ */
+function appMembersView(
+  base: string,
+  access: AppAccess,
+  named: readonly string[],
+): Html {
+  return card(
+    html`<form method="post" action="${base}/settings/app/members">
+      <div class="field">
+        <label for="f-members">People</label>
+        <textarea
+          class="input mono"
+          id="f-members"
+          name="members"
+          rows="${Math.min(10, Math.max(3, named.length + 1))}"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="one username a line"
+        >
+${named.join("\n")}</textarea
+        >
+        <p class="hint">
+          ${access === "private"
+            ? "They may open the app and its previews, and nothing else: not the code, the crew, the settings or the terminal. Removing a name shuts them out at once. What the app itself shows them is the app's to decide: it runs with your read-only token, so anything it shows visitors from the forge, they see too."
+            : "The app is public, so anyone may open it now; these names matter once it is private."}
+        </p>
+      </div>
+      <div class="form-actions">${btn("Save people", { variant: "primary" })}</div>
+    </form>`,
+    {
+      head: html`${icon("users")}
+        <h2>Who may enter</h2>`,
+    },
+  );
+}
+
 function appDomainsView(
   base: string,
   domains: AppDomainView[] | undefined,
@@ -750,7 +811,7 @@ export async function appSettingsUpdate(ctx: Ctx): Promise<Response> {
   return flashTo(
     ctx,
     record === undefined
-      ? `${repoBase(repo)}/app`
+      ? appHref(repo)
       : `${repoBase(repo)}/settings/app`,
     {
       message:
@@ -761,6 +822,39 @@ export async function appSettingsUpdate(ctx: Ctx): Promise<Response> {
             : `${repo.name} is starting at ${url}.`,
     },
   );
+}
+
+// POST /:owner/:name/settings/app/members — the whole list, one a line.
+export async function appMembersUpdate(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const members = field(form, "members").split(/[\s,]+/).filter((n) => n !== "");
+  const set = setAppMembersThrough(ctx.app, ctx.auth.user, repo, {
+    members,
+    dryRun: false,
+  });
+  const to = `${repoBase(repo)}/settings/app`;
+  if (!set.ok)
+    return flashTo(ctx, to, {
+      tone: "danger",
+      message:
+        set.error.kind === "invalid"
+          ? set.error.message
+          : "Only a person who can write here chooses who may enter.",
+    });
+  const { added, removed } = set.value;
+  return flashTo(ctx, to, {
+    message:
+      added.length === 0 && removed.length === 0
+        ? "Nobody changed."
+        : [
+            added.length > 0 ? `${added.join(", ")} may enter` : "",
+            removed.length > 0 ? `${removed.join(", ")} no longer may` : "",
+          ]
+            .filter((s) => s !== "")
+            .join("; ") + ".",
+  });
 }
 
 // POST /:owner/:name/settings/app/disable
@@ -1168,139 +1262,9 @@ export async function promptSourceDelete(ctx: Ctx): Promise<Response> {
 
 // GET /:owner/:name/settings/crew
 export function crewSettingsPage(ctx: Ctx): Response {
-  const repo = loadAdminRepo(ctx);
+  const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
-  const base = repoBase(repo);
-  const crewListed = listCrew(ctx.app, ctx.auth.user, repo);
-  const crew = crewListed.ok ? crewListed.value : [];
-  const allListed = listAllAgents(ctx.app, ctx.auth.user);
-  const all = allListed.ok ? allListed.value : [];
-  const onCrew = new Set(crew.map((agent) => agent.user.id));
-  const roles = new Map(
-    listCrewRoles(ctx.app.db, repo.id).map((c) => [c.agent.user.id, c.role]),
-  );
-  const available = all.filter((agent) => !onCrew.has(agent.user.id));
-  const admin = ctx.auth.user?.isAdmin === true;
-
-  const list =
-    crew.length === 0
-      ? empty({
-          icon: "bot",
-          title: "No crew yet",
-          note: "An agent on the crew can read and write this repository, and starts working the moment an issue is assigned to it. It proposes through pull requests; a person merges.",
-        })
-      : listCard(
-          crew.map((agent) =>
-            row({
-              lead: icon("bot"),
-              title: html`${userLink(agent.user.username)}`,
-              meta: html`<span title="${agent.brief}"
-                >${agent.model === ""
-                  ? "default model"
-                  : agent.model}${agent.brief === ""
-                  ? ""
-                  : ` · ${agent.brief}`}</span
-              >`,
-              trail: html`<form
-                  class="row-actions"
-                  method="post"
-                  action="${base}/settings/crew/${encodeURIComponent(
-                    agent.user.username,
-                  )}/role"
-                >
-                  <label class="sr-only" for="f-role-${agent.user.username}"
-                    >Role of ${agent.user.username}</label
-                  >
-                  <select
-                    class="input input-sm"
-                    id="f-role-${agent.user.username}"
-                    name="role"
-                  >
-                    ${CREW_ROLES.map(
-                      (r) =>
-                        html`<option
-                          value="${r}"
-                          ${(roles.get(agent.user.id) ?? "builder") === r
-                            ? raw("selected")
-                            : null}
-                        >
-                          ${r}
-                        </option>`,
-                    )}
-                  </select>
-                  ${btn("Set", { size: "sm" })}
-                </form>
-                <form
-                  class="row-actions"
-                  method="post"
-                  action="${base}/settings/crew/${encodeURIComponent(
-                    agent.user.username,
-                  )}/remove"
-                >
-                  ${btn("Remove", { size: "sm", icon: "x" })}
-                </form>`,
-            }),
-          ),
-        );
-
-  const add =
-    available.length > 0
-      ? card(
-          html`<form
-            class="edit-row"
-            method="post"
-            action="${base}/settings/crew"
-          >
-            <label class="sr-only" for="f-agent">Agent</label>
-            <select class="input" id="f-agent" name="agent">
-              ${available.map(
-                (agent) =>
-                  html`<option value="${agent.user.username}">
-                    ${agent.user.username}${agent.model === ""
-                      ? ""
-                      : ` — ${agent.model}`}
-                  </option>`,
-              )}
-            </select>
-            ${btn("Add to crew", {
-              variant: "primary",
-              size: "sm",
-              icon: "plus",
-            })}
-          </form>`,
-          { head: html`<h2>Add an agent</h2>`, pad: false },
-        )
-      : card(
-          all.length === 0
-            ? html`<p class="muted small">
-                No agents on this forge yet.
-                ${admin
-                  ? html`Create one under
-                      <a href="/settings/crew">Settings → Crew</a>, then add it
-                      here.`
-                  : html`An admin can create one under account settings → Crew.`}
-              </p>`
-            : html`<p class="muted small">
-                Every agent on this forge is already on this crew.
-              </p>`,
-          { head: html`<h2>Add an agent</h2>` },
-        );
-
-  // Whose money the crew spends here is the forge admin's to say.
-  const grants = admin
-    ? html`<div class="mt">
-        ${grantsSection(ctx, {
-          scopeId: repo.id,
-          agents: crew,
-          action: `${base}/settings/crew/subscriptions`,
-          wider: "the owner's grant, or the forge's own token",
-        })}
-      </div>`
-    : null;
-  const body = html`${crewReadiness(ctx)} ${list}
-    <div class="mt">${add}</div>
-    ${grants}`;
-  return settingsPageResponse(ctx, repo, "crew", "Crew", body);
+  return redirect(`${repoBase(repo)}/settings#crew`);
 }
 
 // POST /:owner/:name/settings/crew/subscriptions
@@ -1311,7 +1275,7 @@ export async function crewSubscriptionsSave(ctx: Ctx): Promise<Response> {
   if (ctx.auth.user?.isAdmin !== true) return repoNotFound(ctx);
   const crew = listCrew(ctx.app, ctx.auth.user, repo);
   saveGrants(ctx, form, repo.id, crew.ok ? crew.value : []);
-  return flashTo(ctx, `${repoBase(repo)}/settings/crew`, {
+  return flashTo(ctx, `${repoBase(repo)}/settings#crew`, {
     message: "Saved. The next run here works on what is ticked.",
   });
 }
@@ -1324,12 +1288,18 @@ export async function crewAdd(ctx: Ctx): Promise<Response> {
   const added = addToCrew(ctx.app, ctx.auth.user, repo, field(form, "agent"));
   return flashTo(
     ctx,
-    `${repoBase(repo)}/settings/crew`,
+    `${repoBase(repo)}/settings#crew`,
     added.ok
       ? {
           message: `${added.value.user.username} is on the crew. Assign it an issue and it starts.`,
         }
-      : { tone: "danger", message: "No such agent on this forge." },
+      : {
+          tone: "danger",
+          message:
+            added.error === "not_an_agent"
+              ? "Only an agent can be on a crew; a person is given access through an organization's team."
+              : "No such agent on this forge.",
+        },
   );
 }
 
@@ -1342,7 +1312,7 @@ export async function crewRemove(ctx: Ctx): Promise<Response> {
   const removed = removeFromCrew(ctx.app, ctx.auth.user, repo, username);
   return flashTo(
     ctx,
-    `${repoBase(repo)}/settings/crew`,
+    `${repoBase(repo)}/settings#crew`,
     removed.ok
       ? { message: `${username} is off the crew.` }
       : { tone: "danger", message: "No such agent on this forge." },
@@ -1747,12 +1717,12 @@ export async function crewRoleUpdate(ctx: Ctx): Promise<Response> {
   const agent = getAgentByName(ctx.app.db, ctx.params.username ?? "");
   const role = field(form, "role");
   if (!agent || !isCrewRole(role))
-    return flashTo(ctx, `${base}/settings/crew`, {
+    return flashTo(ctx, `${base}/settings#crew`, {
       tone: "danger",
       message: "That role could not be set.",
     });
   setCrewRole(ctx.app.db, repo.id, agent.user.id, role);
-  return flashTo(ctx, `${base}/settings/crew`, {
+  return flashTo(ctx, `${base}/settings#crew`, {
     message: `${agent.user.username} is a ${role} here.`,
   });
 }
@@ -1760,96 +1730,11 @@ export async function crewRoleUpdate(ctx: Ctx): Promise<Response> {
 // ---- autonomy ----
 
 /** GET /:owner/:name/settings/autonomy */
+// GET /:owner/:name/settings/autonomy — the settings page's own card now.
 export function autonomySettingsPage(ctx: Ctx): Response {
-  const repo = loadAdminRepo(ctx);
+  const repo = loadRepo(ctx);
   if (!repo) return repoNotFound(ctx);
-  const base = repoBase(repo);
-  const status = autonomyStatus(ctx.app, repo);
-  const crew = listCrewRoles(ctx.app.db, repo.id);
-  const builders = crew.filter((c) => c.role === "builder").length;
-  const planner = crew.find((c) => c.role === "planner");
-  const state =
-    repo.autonomy === "off"
-      ? html`<p class="muted small">
-          Off. Every run starts because a person assigned, commented, or a check
-          failed.
-        </p>`
-      : html`<p class="small">
-          ${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"} ·
-          $${status.spentTodayUsd.toFixed(2)} of
-          $${status.ceilingUsd.toFixed(0)} today · ${status.active} of
-          ${status.slots} slots in use
-          ${status.paused === "ceiling"
-            ? html`· <strong>paused at the ceiling</strong>, resumes at 00:00
-                UTC`
-            : status.paused === "forge ceiling"
-              ? html`· <strong>paused at the forge's ceiling</strong>, resumes
-                  at 00:00 UTC`
-              : status.paused === "no crew"
-                ? html`· <strong>paused: no crew</strong>`
-                : status.paused === "nobody"
-                  ? html`· <strong>paused: nobody to act as</strong>`
-                  : null}
-        </p>`;
-  const form = html`<form method="post" action="${base}/settings/autonomy">
-    ${selectField({
-      label: "Mode",
-      name: "autonomy",
-      hint: "Assisted: the crew works what is ready and every green change waits for your look. Autonomous: green ships, and when the map runs dry the planner is given the direction.",
-      options: [
-        { value: "off", label: "Off", selected: repo.autonomy === "off" },
-        {
-          value: "assisted",
-          label: "Assisted",
-          selected: repo.autonomy === "assisted",
-        },
-        {
-          value: "autonomous",
-          label: "Autonomous",
-          selected: repo.autonomy === "autonomous",
-        },
-      ],
-    })}
-    <div class="field">
-      <label for="f-direction">Direction</label>
-      <textarea
-        class="input"
-        id="f-direction"
-        name="direction"
-        rows="3"
-        placeholder="Pull the engine out of the game so a second game can use it."
-      >
-${repo.autonomyDirection}</textarea
-      >
-      <p class="hint">
-        One or two sentences. The planner turns this into issues and links them
-        when nothing is left to build.
-        ${planner
-          ? html`Planner here: ${userLink(planner.agent.user.username)}.`
-          : html`No planner on the crew yet — set one under Crew, or the map is
-            only what people write.`}
-      </p>
-    </div>
-    ${formField({
-      label: "Ceiling per day",
-      name: "ceiling",
-      value: String(repo.autonomyCeilingUsd),
-      type: "number",
-      hint: "Dollars of agent spend on this repository per UTC day. At the ceiling the crew stops picking until midnight; nothing in flight is cut.",
-    })}
-    ${formField({
-      label: "Slots",
-      name: "slots",
-      value: String(repo.autonomySlots),
-      type: "number",
-      hint: `Agent runs at once here. This is the WIP limit; ${builders} builder${builders === 1 ? "" : "s"} on the crew now.`,
-    })}
-    <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
-  </form>`;
-  const body = card(html`${state}${form}`, {
-    head: html`<h2>Autonomy</h2>`,
-  });
-  return settingsPageResponse(ctx, repo, "autonomy", "Autonomy", body);
+  return redirect(`${repoBase(repo)}/settings#autonomy`);
 }
 
 // POST /:owner/:name/settings/autonomy
@@ -1869,7 +1754,7 @@ export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
     slots < 1 ||
     slots > 8
   )
-    return flashTo(ctx, `${base}/settings/autonomy`, {
+    return flashTo(ctx, `${base}/settings#autonomy`, {
       tone: "danger",
       message:
         "Mode is off, assisted or autonomous; the ceiling is a number of dollars; slots are 1 to 8.",
@@ -1881,7 +1766,7 @@ export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
     autonomySlots: slots,
     autonomyBy: mode === "off" ? null : (ctx.auth.user?.id ?? null),
   });
-  return flashTo(ctx, `${base}/settings/autonomy`, {
+  return flashTo(ctx, `${base}/settings#autonomy`, {
     ...(updated.ok
       ? {
           message:

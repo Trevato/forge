@@ -11,12 +11,13 @@
  * what the forge has.
  */
 
+import { capacityEnv } from "../core/capacity.ts";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { addComment } from "../actions/issues.ts";
 import { openPull } from "../actions/pulls.ts";
-import { forkRepo } from "../actions/repos.ts";
+import { forkRepo, sealedForkFor } from "../actions/repos.ts";
 import { announceRun } from "../actions/runs.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
@@ -25,12 +26,24 @@ import { getAppByRepo, type AppRecord } from "../core/apps.ts";
 import {
   getIssue,
   getIssueById,
+  labelsForIssues,
   listComments,
   type Issue,
 } from "../core/issues.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
-import { getForkOf, getRepoById, type Repo } from "../core/repos.ts";
-import { listReviewComments, listReviews } from "../core/reviews.ts";
+import {
+  canWrite,
+  forkParentFor,
+  getForkOf,
+  getRepoById,
+  type Repo,
+} from "../core/repos.ts";
+import { getUserById } from "../core/users.ts";
+import {
+  listReviewComments,
+  listReviews,
+  type Review,
+} from "../core/reviews.ts";
 import {
   cancelRun,
   checkSummary,
@@ -47,7 +60,7 @@ import { runGitCapture } from "../git/env.ts";
 import { looksForEnv } from "../core/looks.ts";
 import { aheadCount, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
-import { createLog } from "../kernel/log.ts";
+import { createLog, redactValues } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { holdLease } from "../runs/lease.ts";
 import { appendRunLog, readRunLog } from "../runs/log.ts";
@@ -60,16 +73,38 @@ import {
   type RunReason,
 } from "./brief.ts";
 import { policyBrief } from "../contract/audit.ts";
-import { BUDGET_REACHED, runClaude } from "./claude.ts";
-import { isRateLimited, MAX_PAUSES, resumeAt, whenText } from "./limits.ts";
+import { BUDGET_REACHED, runClaude, type ClaudeOutcome } from "./claude.ts";
+import {
+  isRateLimited,
+  limitOf,
+  MAX_PAUSES,
+  resumeAt,
+  whenText,
+} from "./limits.ts";
+import { interruptedSummary } from "./interrupted.ts";
+import { laterGate } from "./later.ts";
+import { parkedTwice } from "./parks.ts";
+import { noteLimit } from "../core/standing.ts";
+import { pauseReason } from "./pacing.ts";
 import {
   pickSubscription,
+  PLATFORM,
   restSubscription,
   type Pick,
 } from "../core/subscriptions.ts";
+import {
+  recordUsage,
+  type UsageKind,
+  type UsageOutcome,
+} from "../core/usage.ts";
 import { trackAgentRun, untrackAgentRun } from "./running.ts";
 import { sandboxPolicy } from "./sandbox.ts";
+import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
+import { historyHolds, scrubTree } from "./leak.ts";
 import { workdirFor } from "./workdir.ts";
+import { readersAmong, voiceOf } from "./direct.ts";
+import { feedbackSince } from "./news.ts";
+import { SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
 
 const log = createLog("crew");
 
@@ -177,6 +212,29 @@ export function wrapUpReserve(budgetUsd: number): number {
 }
 
 /**
+ * How a review run ends, read from the verdicts on the pull: `ok` when the
+ * reviewer passed one since the run began, or stands by one on the head it
+ * was given (the same verdict sent again is the one already there);
+ * `failed` when it did neither. A reviewer pushes nothing by design, so
+ * what it pushed never decides it.
+ */
+export function settleReview(
+  reviews: readonly Review[],
+  reviewerId: string,
+  since: string,
+  headOid: string,
+): { state: "ok" | "failed"; summary: string } {
+  const verdict = reviews.findLast(
+    (r) =>
+      r.authorId === reviewerId &&
+      (r.createdAt >= since || r.commitOid === headOid),
+  );
+  return verdict === undefined
+    ? { state: "failed", summary: "reviewed: no verdict was posted" }
+    : { state: "ok", summary: `reviewed: ${verdict.state.replace("_", " ")}` };
+}
+
+/**
  * Claim and execute a queued agent run. Never throws. A run the provider
  * turned away ends cancelled with a `paused:` summary and returns when its
  * task should be queued again; every other run returns nothing.
@@ -186,6 +244,18 @@ export async function executeAgentRun(
   run: Run,
   options: CrewOptions,
 ): Promise<Pause | undefined> {
+  // A follow-up queued behind a run that has since answered everything:
+  // nothing new to act on, so nothing starts (`guard.ts`).
+  if (
+    run.reason === "feedback" &&
+    run.attempt === 0 &&
+    run.startedAt === null &&
+    skipsQueued(app, run)
+  ) {
+    const skipped = cancelRun(app.db, run.id, SKIP_SUMMARY);
+    if (skipped) announceRun(app, skipped);
+    return undefined;
+  }
   const claimed = claimRun(app.db, run.id);
   if (!claimed) return undefined;
   const lease = holdLease(app.db, run.id);
@@ -194,9 +264,18 @@ export async function executeAgentRun(
   const write = (line: string): void =>
     appendRunLog(app.config.dataDir, run.id, line);
   announceRun(app, claimed);
+  const started = Date.now();
+  const meter: Meter = {
+    tokensIn: 0,
+    tokensOut: 0,
+    costUsd: 0,
+    subscriptionId: null,
+    kind: usageKind(app, claimed),
+    reportedAt: 0,
+  };
   let outcome: Outcome;
   try {
-    outcome = await work(app, claimed, options, write, controller.signal);
+    outcome = await work(app, claimed, options, write, controller.signal, meter);
   } catch (error) {
     log.error("agent run threw", { run: run.id, error: String(error) });
     outcome = {
@@ -213,6 +292,7 @@ export async function executeAgentRun(
   // forge does the tidying, by the directory the process is working in.
   await reapOrphans(app, run, write);
   forgetLandedClone(app, run);
+  meterUsage(app, claimed, outcome, meter, started);
   if (outcome.state === "paused") {
     write(outcome.summary);
     noteRunProgress(app.db, run.id, {
@@ -223,20 +303,39 @@ export async function executeAgentRun(
     if (paused) announceRun(app, paused);
     return { resumeAt: outcome.resumeAt, attempt: run.attempt + 1 };
   }
+  // A run the provider or a restart cut short says so, and when it goes
+  // on: interrupted, never a park (`interrupted.ts`).
+  const summary =
+    outcome.state === "failed"
+      ? interruptedSummary(outcome.summary, outcome.resumesAt)
+      : outcome.summary;
   write(
-    outcome.state === "ok"
-      ? `done: ${outcome.summary}`
-      : `failed: ${outcome.summary}`,
+    outcome.state === "ok" ? `done: ${summary}` : `failed: ${summary}`,
   );
   const done = finishRun(app.db, run.id, {
     state: outcome.state,
-    summary: outcome.summary,
+    summary,
     sessionId: outcome.sessionId,
     costUsd: outcome.costUsd,
     turns: outcome.turns,
   });
   if (done) announceRun(app, done);
   return undefined;
+}
+
+/** Whether a queued follow-up would find nothing new (`news.ts`): recorded as a skip. */
+function skipsQueued(app: App, run: Run): boolean {
+  const repo = getRepoById(app.db, run.repoId);
+  const issue =
+    run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
+  const agent =
+    run.actorId === null ? undefined : getAgent(app.db, run.actorId);
+  return (
+    repo !== undefined &&
+    issue !== undefined &&
+    agent !== undefined &&
+    skipsFeedback(app.db, repo, issue, agent)
+  );
 }
 
 /**
@@ -256,7 +355,7 @@ function forgetLandedClone(app: App, run: Run): void {
   const pull =
     issue.kind === "pull"
       ? getPull(app.db, repo.id, issue.number)
-      : listPulls(app.db, repo.id, { state: "closed" }).find(
+      : listPulls(app.db, repo.id, { sealed: true, state: "closed" }).find(
           (p) => p.headBranch === run.branch,
         );
   if (pull === undefined || (pull.state === "open" && pull.mergedAt === null))
@@ -317,6 +416,8 @@ type Outcome =
   | {
       readonly state: "ok" | "failed";
       readonly summary: string;
+      /** When a run the provider cut short can go on (`interrupted.ts`). */
+      readonly resumesAt?: Date | undefined;
       readonly sessionId?: string | undefined;
       readonly costUsd?: number | undefined;
       readonly turns?: number | undefined;
@@ -330,6 +431,112 @@ type Outcome =
       readonly costUsd: number;
     };
 
+/**
+ * What a run spent that its outcome does not carry: the tokens of every
+ * model invocation it made, and the account it made them on. Filled by
+ * `work` as it goes, read once the run ends.
+ */
+interface Meter {
+  tokensIn: number;
+  tokensOut: number;
+  /** US dollars reported by invocations that have ended. */
+  costUsd: number;
+  subscriptionId: string | null;
+  kind: UsageKind;
+  /** When a `running` line was last written (epoch ms); 0 for never. */
+  reportedAt: number;
+}
+
+/** What a run is for, as the ledger sums it: its reason, or its agent's role. */
+function usageKind(app: App, run: Run): UsageKind {
+  if (run.reason === "review") return "review";
+  if (run.reason === "check_failed") return "check";
+  if (
+    run.actorId !== null &&
+    crewRole(app.db, run.repoId, run.actorId) === "planner"
+  )
+    return "plan";
+  return "build";
+}
+
+/** How often a running session's spend is written and announced, at most. */
+const LIVE_MS = 2_000;
+
+/**
+ * A running session's spend so far, as its `running` line in the ledger,
+ * and a `usage.delta` on the outbox so the board and the Subscriptions page
+ * move within seconds. At most once per `LIVE_MS` unless `force`; the
+ * event carries only the run's id — spend is the owner's fact, and a
+ * reader who may see it reads it from the page.
+ */
+function meterLive(
+  app: App,
+  run: Run,
+  meter: Meter,
+  live: { tokensIn: number; tokensOut: number; costUsd: number },
+  started: number,
+  force: boolean,
+): void {
+  const now = Date.now();
+  if (!force && now - meter.reportedAt < LIVE_MS) return;
+  meter.reportedAt = now;
+  try {
+    recordUsage(app.db, {
+      runId: run.id,
+      repoId: run.repoId,
+      issueId: run.issueId,
+      agentId: run.actorId,
+      subscriptionId: meter.subscriptionId,
+      kind: meter.kind,
+      tokensIn: live.tokensIn,
+      tokensOut: live.tokensOut,
+      costUsd: live.costUsd,
+      wallMs: now - started,
+      outcome: "running",
+      at: new Date(now).toISOString(),
+    });
+    app.bus.append({
+      kind: "usage.delta",
+      repoId: run.repoId,
+      payload: { runId: run.id },
+    });
+  } catch (error) {
+    log.warn("live usage not recorded", { run: run.id, error: String(error) });
+  }
+}
+
+/** The run's line in the usage ledger (`core/usage.ts`), written once it ends. */
+function meterUsage(
+  app: App,
+  run: Run,
+  outcome: Outcome,
+  meter: Meter,
+  started: number,
+): void {
+  const ended = new Date();
+  const result: UsageOutcome = outcome.state;
+  // The ledger is bookkeeping: a line it cannot write (the repository
+  // deleted under the run) is logged, never the run's failure.
+  try {
+    recordUsage(app.db, {
+    runId: run.id,
+    repoId: run.repoId,
+    issueId: run.issueId,
+    agentId: run.actorId,
+    subscriptionId: meter.subscriptionId,
+    kind: meter.kind,
+    tokensIn: meter.tokensIn,
+    tokensOut: meter.tokensOut,
+    costUsd: outcome.costUsd ?? 0,
+    wallMs: ended.getTime() - started,
+    outcome: result,
+    at: ended.toISOString(),
+    });
+  } catch (error) {
+    log.warn("usage not recorded", { run: run.id, error: String(error) });
+  }
+}
+
 /** What a paused run hands back: when its task may start again, and the count. */
 export interface Pause {
   readonly resumeAt: string;
@@ -342,7 +549,9 @@ async function work(
   options: CrewOptions,
   write: (line: string) => void,
   signal: AbortSignal,
+  meter: Meter,
 ): Promise<Outcome> {
+  const began = new Date().toISOString();
   const repo = getRepoById(app.db, run.repoId);
   const issue =
     run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
@@ -366,7 +575,15 @@ async function work(
   // and writes only its own copy of it: the branch lives there, and the
   // pull proposes it back. A pull whose branch lives anywhere else is not
   // the agent's to move.
-  const fork = await forkFor(app, agent, repo, write);
+  // A sealed report's work lives where only the base's writers and crew
+  // can read it, never in the agent's public fork (`core/sealed.ts`).
+  const fork = await forkFor(
+    app,
+    agent,
+    repo,
+    write,
+    issue.sealed || pull?.sealed === true,
+  );
   if (!fork.ok) return { state: "failed", summary: fork.error };
   // A reviewer reads a pull it did not write: the diff comes to it in the
   // brief, its clone is its own fork at a scratch branch, and it pushes
@@ -432,7 +649,36 @@ async function work(
     GIT_COMMITTER_EMAIL: agent.user.email,
   };
 
+  let grant: Grant | undefined;
+  let runTmp: string | undefined;
   try {
+    // The secrets this run declared, for this run only: opened now, held for
+    // redaction from this moment, dropped in the `finally` below — a crash
+    // included.
+    const author = getUserById(app.db, issue.authorId);
+    const declared = parseDeclaration(
+      agent.brief,
+      author !== undefined && canWrite(app.db, repo, author) ? issue.body : "",
+    );
+    grant = grantSecrets(app.db, app.config.dataDir, app.bus, declared, {
+      id: run.id,
+      repoId: repo.id,
+      ownerId: repo.ownerId,
+      actorId: agent.user.id,
+    });
+    for (const why of declared.refused) write(`secret refused: ${why}`);
+    if (grant.writeRefused.length > 0) {
+      const names = grant.writeRefused.join(", ");
+      write(`refused: this run needs writes and ${names} is not write allowed`);
+      return {
+        state: "failed",
+        summary: `refused: ${names} is not write allowed (Settings → Cloud accounts)`,
+      };
+    }
+    if (grant.names.length > 0)
+      write(`secrets: holding ${grant.names.join(", ")} for this run`);
+    for (const name of grant.missing) write(`secret not set: ${name}`);
+    for (const host of grant.hosts) write(`egress: +${host} for this run`);
     const bare = repoDir(app.reposRoot, repo.ownerName, repo.name);
     const forkBare = repoDir(
       app.reposRoot,
@@ -464,7 +710,7 @@ async function work(
       (taskIssue === undefined
         ? undefined
         : lastAgentRun(app.db, taskIssue.id, agent.user.id));
-    const since = previous?.finishedAt ?? issue.createdAt;
+    const since = feedbackSince(app.db, repo, issue, agent);
     const record = getAppByRepo(app.db, repo.id);
     const runtime = appsRuntime(app);
     const previewUrl =
@@ -483,7 +729,12 @@ async function work(
       isApp: record !== undefined,
       previewUrl,
       policy,
-      resuming: previous?.sessionId !== undefined && previous.sessionId !== "",
+      // A review reads one head afresh: a resumed session would carry an
+      // older head's diff and preview into the verdict on this one.
+      resuming:
+        !reviewing &&
+        previous?.sessionId !== undefined &&
+        previous.sessionId !== "",
       role: crewRole(app.db, repo.id, agent.user.id),
     };
     const failedCheck =
@@ -495,13 +746,33 @@ async function work(
               pull.headOid,
           )
         : undefined;
+    // Imported words speak as their origin author (`voiceOf`), so the
+    // brief marks a stranger's as a reader's, not the connecting user's.
+    const comments = listComments(app.db, issue.id, { kind: "comment" }).map(
+      voiceOf,
+    );
+    const reviews = pull ? listReviews(app.db, pull.id).map(voiceOf) : [];
+    const reviewComments = pull
+      ? listReviewComments(app.db, pull.id).map(voiceOf)
+      : [];
     const prompt = taskPrompt({
       ...brief,
+      issue: voiceOf(brief.issue),
       reason,
       paused: run.attempt > 0,
-      comments: listComments(app.db, issue.id, { kind: "comment" }),
-      reviews: pull ? listReviews(app.db, pull.id) : [],
-      reviewComments: pull ? listReviewComments(app.db, pull.id) : [],
+      comments,
+      labels: (labelsForIssues(app.db, [issue.id]).get(issue.id) ?? []).map(
+        (label) => label.name,
+      ),
+      reviews,
+      reviewComments,
+      readers: readersAmong(
+        app.db,
+        repo,
+        [voiceOf(issue), ...comments, ...reviews, ...reviewComments].map(
+          (c) => c.authorName,
+        ),
+      ),
       since,
       checkSummary: failedCheck?.run?.summary,
       conflictFiles:
@@ -512,9 +783,10 @@ async function work(
               .filter((f) => f !== "")
           : undefined,
       following:
-        reason === "converge" && repo.forkParentId !== null
+        reason === "converge"
           ? (() => {
-              const parent = getRepoById(app.db, repo.forkParentId);
+              // Only a parent the agent may read is put in its brief.
+              const parent = forkParentFor(app.db, repo, agent.user);
               return parent === undefined
                 ? undefined
                 : {
@@ -525,6 +797,13 @@ async function work(
           : undefined,
       ...(reason === "review" && pull
         ? await reviewInputs(app, repo, pull, record, bare)
+        : {}),
+      // A planning run is given what the crew handed over (`parks.ts`).
+      ...(brief.role === "planner" && issue.id === repo.directionIssueId
+        ? {
+            parkedTwice: parkedTwice(app.db, [repo]),
+            laterGate: laterGate(app.db, repo.id),
+          }
         : {}),
       checkKind:
         failedCheck?.run?.kind === "check" ||
@@ -548,11 +827,15 @@ async function work(
       ownerId: repo.ownerId,
       agentId: agent.user.id,
     };
+    // What this run may spend at most; on a budgeted account the pick
+    // reserves it (or what is left, if less) against the account's budget.
+    const ownBudget = agent.budgetUsd > 0 ? agent.budgetUsd : options.budgetUsd;
     const picked = pickSubscription(
       app.db,
       app.config.dataDir,
       scope,
       new Date(),
+      { runId: run.id, usd: ownBudget },
     );
     if (picked.kind === "resting") {
       const names = picked.names.join(", ");
@@ -570,6 +853,7 @@ async function work(
       return {
         state: "failed",
         summary: `every subscription this repository may use is resting (${picked.said})`,
+        resumesAt: new Date(picked.until),
       };
     }
     if (picked.kind === "ready") {
@@ -577,13 +861,23 @@ async function work(
       noteRunProgress(app.db, run.id, {
         subscriptionId: picked.subscription.id,
       });
+      meter.subscriptionId = picked.subscription.id;
+    } else {
+      write("subscription: platform (env)");
+      noteRunProgress(app.db, run.id, { subscriptionId: PLATFORM });
+      meter.subscriptionId = PLATFORM;
     }
+    const started = Date.now();
     const env: Record<string, string> = {
+      // The shard count an admin set (`core/capacity.ts`), for the checks an
+      // agent runs in its clone; never the pod's environment.
+      ...capacityEnv(app.db),
       ...gitAuth,
       ...identity,
       FORGE_URL: options.forgeUrl,
       FORGE_TOKEN: token.token,
       ...credentialEnv(picked),
+      ...grant.env,
       ...(options.configDir === undefined
         ? {}
         : { CLAUDE_CONFIG_DIR: options.configDir }),
@@ -591,24 +885,44 @@ async function work(
     // The budget in two parts: the work, and a reserve for landing it. An
     // agent cut off mid-task otherwise leaves a tree the forge commits blind
     // and a pull whose description is the error.
-    const budget = agent.budgetUsd > 0 ? agent.budgetUsd : options.budgetUsd;
+    const budget =
+      picked.kind === "ready" && picked.capUsd !== undefined
+        ? Math.min(ownBudget, picked.capUsd)
+        : ownBudget;
     const reserve = wrapUpReserve(budget);
-    const sandbox = sandboxPolicy({
-      dataDir: app.config.dataDir,
-      agentName: agent.user.username,
-      urls: [options.localUrl, options.forgeUrl],
-      extraHosts: options.allowHosts,
-      enforced: options.sandboxEnforced,
-    });
+    // Asked again for every invocation (`crew/sandbox.ts`): an agent made
+    // since the last one is denied from this one on.
+    const hosts = grant.hosts;
+    const shellPolicy = () =>
+      sandboxPolicy({
+        dataDir: app.config.dataDir,
+        agentName: agent.user.username,
+        urls: [options.localUrl, options.forgeUrl],
+        extraHosts: [...(options.allowHosts ?? []), ...hosts],
+        enforced: options.sandboxEnforced,
+        runId: run.id,
+      });
+    const sandbox = shellPolicy();
+    // The run's own temp directory, never the machine's shared one; it goes
+    // when the run does (the `finally` below). Both names: Claude Code's
+    // sandbox reads CLAUDE_CODE_TMPDIR, but its shell still binds
+    // `<TMPDIR>/claude-<uid>` writable, so TMPDIR has to say the same.
+    runTmp = sandbox.tmpDir;
+    if (runTmp !== undefined) {
+      mkdirSync(runTmp, { recursive: true });
+      env["CLAUDE_CODE_TMPDIR"] = runTmp;
+      env["TMPDIR"] = runTmp;
+    }
     // One deadline for the run, whatever it takes to get there: the token
     // dies ten minutes after it, so a second invocation gets what is left.
     const deadline = Date.now() + options.runTimeoutMs;
-    const invoke = (
+    const invoke = async (
       prompt: string,
       budgetUsd: number,
       resume: string | undefined,
-    ) =>
-      runClaude({
+    ): Promise<ClaudeOutcome> => {
+      const spent = redactResult(
+        await runClaude({
         binary: options.binary,
         cwd: dir,
         prompt,
@@ -617,15 +931,40 @@ async function work(
         budgetUsd,
         resume,
         env,
-        sandbox,
+        sandbox: shellPolicy(),
         timeoutMs: Math.max(deadline - Date.now(), 0),
         log: write,
         signal,
         onSteer: (send) => steering.set(run.id, send),
-      });
+        onUsage: (so) =>
+          meterLive(
+            app,
+            run,
+            meter,
+            {
+              tokensIn: meter.tokensIn + so.tokensIn,
+              tokensOut: meter.tokensOut + so.tokensOut,
+              costUsd: meter.costUsd + so.costUsd,
+            },
+            started,
+            so.costUsd > 0,
+          ),
+        }),
+      );
+      meter.tokensIn += spent.tokensIn;
+      meter.tokensOut += spent.tokensOut;
+      meter.costUsd += spent.costUsd;
+      return spent;
+    };
     write(
       `claude: budget $${budget.toFixed(2)}, $${reserve.toFixed(2)} of it kept for the wrap-up${brief.resuming ? `, resuming ${previous?.sessionId}` : ""}`,
     );
+    noteRunProgress(app.db, run.id, {
+      sandbox: {
+        enforced: sandbox.enforced,
+        note: options.sandboxNote ?? "",
+      },
+    });
     if (!sandbox.enforced)
       write(
         `sandbox: off here${options.sandboxNote === undefined ? "" : ` — ${options.sandboxNote}`}; the shell runs unrestricted`,
@@ -657,6 +996,7 @@ async function work(
     // The provider's refusal, not the agent's failure: the run pauses with
     // its clone and session as they are, and goes on when the limit lifts.
     // A limit that never lifts is not waited on forever.
+    let limitLifts: Date | undefined;
     if (isRateLimited(result) && !signal.aborted) {
       const said = (
         result.result.split("\n").find((l) => l.trim() !== "") ?? result.reason
@@ -664,13 +1004,26 @@ async function work(
       // The account rests until the provider's time; another on the same
       // grant, if one is awake, takes the run straight away.
       if (picked.kind === "ready") {
-        const until = resumeAt(result.result, new Date());
+        const now = new Date();
+        const until = resumeAt(result.result, now);
+        // Which window is full and when it resets, in the provider's own
+        // words, for the account's standing (`core/standing.ts`).
+        const limit = limitOf(result.result, now);
+        if (limit !== undefined)
+          noteLimit(app.db, picked.subscription.id, {
+            window: limit.window,
+            resetsAt: limit.resetsAt.toISOString(),
+            observedAt: now.toISOString(),
+            said,
+          });
         restSubscription(
           app.db,
           picked.subscription.id,
           until.toISOString(),
           said,
         );
+        // Only a look at who could take over: no reservation is made here.
+        // The run pauses, and on resume it picks again with its reserve.
         const next = pickSubscription(
           app.db,
           app.config.dataDir,
@@ -686,24 +1039,37 @@ async function work(
           );
           return {
             state: "paused",
-            summary: `paused: ${said}; ${next.subscription.name} takes over`,
+            summary: `paused: ${pauseReason(picked.subscription.name, limit, said)}; ${next.subscription.name} takes over`,
             resumeAt: new Date().toISOString(),
             sessionId: result.sessionId,
             costUsd: result.costUsd,
           };
         }
+      } else {
+        // The platform's token is not rested — nothing else would take the
+        // run — but its window is noted, so its standing reads true.
+        const now = new Date();
+        const limit = limitOf(result.result, now);
+        if (limit !== undefined)
+          noteLimit(app.db, PLATFORM, {
+            window: limit.window,
+            resetsAt: limit.resetsAt.toISOString(),
+            observedAt: now.toISOString(),
+            said,
+          });
       }
       if (run.attempt < MAX_PAUSES) {
         const at = resumeAt(result.result, new Date());
         return {
           state: "paused",
-          summary: `paused: ${said}; resumes ${whenText(at)}`,
+          summary: `paused: ${pauseReason(picked.kind === "ready" ? picked.subscription.name : undefined, limitOf(result.result, new Date()), said)}; resumes ${whenText(at)}`,
           resumeAt: at.toISOString(),
           sessionId: result.sessionId,
           costUsd: result.costUsd,
         };
       }
       write(`paused ${MAX_PAUSES} times already; not waiting again`);
+      limitLifts = resumeAt(result.result, new Date());
     }
 
     // The reserve: the same session gets one more turn, to land what exists
@@ -745,17 +1111,31 @@ async function work(
     if (declined) {
       const why = result.result.replace(/^\s*DECLINED:?\s*/i, "").trim();
       write(`declined: ${why.split("\n")[0] ?? ""}`);
-      const target = pull ?? issue;
-      addComment(
-        app,
-        agent.user,
-        repo,
-        target,
-        `Declined: ${why || "no reason given"}`,
-      );
+      // The reason lives on the run record (its summary) and the ledger
+      // line, never as a comment: a comment on an assigned issue is the
+      // thing that starts the next run.
       return {
         state: "failed",
         summary: `declined: ${(why.split("\n")[0] ?? "").slice(0, 200)}`,
+        sessionId: result.sessionId,
+        costUsd: result.costUsd,
+        turns: result.turns,
+      };
+    }
+
+    // A reviewer's work is its verdict, posted through the API; it pushes
+    // nothing and has nothing to land. The run is judged by whether the
+    // verdict is there, not by what the session said about itself.
+    if (reviewing && pull !== undefined) {
+      const settled = settleReview(
+        listReviews(app.db, pull.id),
+        agent.user.id,
+        began,
+        pull.headOid,
+      );
+      write(settled.summary);
+      return {
+        ...settled,
         sessionId: result.sessionId,
         costUsd: result.costUsd,
         turns: result.turns,
@@ -781,16 +1161,20 @@ async function work(
         ? undefined
         : `Budget reached at $${stoppedAt.toFixed(2)}; this is where it stopped.`,
       write,
+      Object.values(grant.env),
     );
     return {
       state: result.ok || landed.pushed ? "ok" : "failed",
       summary: landed.summary + (result.ok ? "" : ` (${result.reason})`),
+      resumesAt: limitLifts,
       sessionId: result.sessionId,
       costUsd: result.costUsd,
       turns: result.turns,
     };
   } finally {
+    grant?.release();
     deleteToken(app.db, agent.user.id, token.id);
+    if (runTmp !== undefined) rmSync(runTmp, { recursive: true, force: true });
   }
 }
 
@@ -799,12 +1183,22 @@ async function work(
  * One fork per agent per repository; a name already taken by something
  * else of the agent's gets the owner's name in front.
  */
-async function forkFor(
+export async function forkFor(
   app: App,
   agent: Agent,
   repo: Repo,
   write: (line: string) => void,
+  /** The task is a sealed report: its work goes in a private repository (`core/sealed.ts`). */
+  sealed = false,
 ): Promise<Result<Repo, string>> {
+  if (sealed) {
+    const made = await sealedForkFor(app, agent.user, repo);
+    if (!made.ok)
+      return err(
+        `could not make a private place for ${repo.ownerName}/${repo.name}'s sealed work: ${made.error}`,
+      );
+    return ok(made.value);
+  }
   const existing = getForkOf(app.db, agent.user.id, repo.id);
   if (existing !== undefined) return ok(existing);
   let made = await forkRepo(app, agent.user, repo);
@@ -958,7 +1352,14 @@ async function landWork(
   message: string,
   note: string | undefined,
   write: (line: string) => void,
+  granted: readonly string[] = [],
 ): Promise<{ pushed: boolean; summary: string }> {
+  // A model may echo a granted value into a file; the tree is scrubbed
+  // before the forge commits it, and the agent's own commits are searched
+  // before anything is pushed.
+  const scrubbed = await scrubTree(dir, granted, env);
+  if (scrubbed.length > 0)
+    write(`scrubbed a granted secret value from ${scrubbed.join(", ")}`);
   // Work left in the tree is committed on the agent's behalf: a proposal a
   // person can read beats an edit nobody sees. The summary says it happened.
   const status = await runGit(["status", "--porcelain"], { cwd: dir, env });
@@ -1003,6 +1404,22 @@ async function landWork(
     const against = remote ?? base;
     const ahead =
       against === undefined ? 1 : await aheadCount(dir, against, local);
+    if (
+      ahead > 0 &&
+      (await historyHolds(
+        dir,
+        against === undefined ? "HEAD" : `${against}..HEAD`,
+        granted,
+        env,
+      ))
+    ) {
+      write("refused: a granted secret value is in the commits; not pushed");
+      return {
+        pushed: false,
+        summary:
+          "refused to push: a secret this run held is in its commits; nothing pushed",
+      };
+    }
     if (ahead > 0) {
       write(
         `pushing ${branch} (${ahead} commit${ahead === 1 ? "" : "s"} the agent did not push)`,
@@ -1046,7 +1463,7 @@ async function landWork(
 
   const existing =
     pull ??
-    listPulls(app.db, repo.id, { state: "open", limit: 200 }).find(
+    listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 200 }).find(
       (p) => p.headRepoId === fork.id && p.headBranch === branch,
     );
   if (existing !== undefined) {
@@ -1082,6 +1499,11 @@ async function landWork(
     pushed: true,
     summary: `opened pull #${opened.value.number}${committedForIt ? ", committing its leftover changes" : ""}`,
   };
+}
+
+/** What the agent said, with every held secret value taken out of it. */
+function redactResult<T extends { result: string }>(r: T): T {
+  return { ...r, result: redactValues(r.result) };
 }
 
 /**

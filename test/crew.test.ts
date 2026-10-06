@@ -7,7 +7,15 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +38,8 @@ import {
 } from "../src/crew/dispatch.ts";
 import { workdirFor } from "../src/crew/runner.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
-import { getAgentByName } from "../src/core/agents.ts";
+import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
+import { listReviews } from "../src/core/reviews.ts";
 import { getIssue, listComments } from "../src/core/issues.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
@@ -40,7 +49,7 @@ import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
-import { stripForgeDirs } from "../src/runs/paths.ts";
+import { spellings, stripForgeDirs } from "../src/runs/paths.ts";
 
 describe("stripForgeDirs", () => {
   test("strips a known directory, leaves the rest of the path", () => {
@@ -57,6 +66,73 @@ describe("stripForgeDirs", () => {
 
   test("an empty directory is dropped, not used as a prefix", () => {
     expect(stripForgeDirs([""], "/usr/bin/ssh")).toBe("/usr/bin/ssh");
+  });
+
+  test("the directory alone reads as here, wherever it stands in the line", () => {
+    const dir = "/data/crew/bot/1/2";
+    expect(stripForgeDirs([dir], `cd ${dir} && ls ${dir}/src`)).toBe(
+      "cd . && ls src",
+    );
+    expect(stripForgeDirs([dir], `at "${dir}/a.ts":3 (${dir})`)).toBe(
+      'at "a.ts":3 (.)',
+    );
+  });
+
+  test("its text inside a longer path is left whole, never a path that was not there", () => {
+    const dir = "/var/folders/x/work";
+    // The same directory through a symlink the forge did not resolve.
+    expect(stripForgeDirs([dir], `/private${dir}/CREW.md`)).toBe(
+      `/private${dir}/CREW.md`,
+    );
+    // A sibling whose name begins the same way.
+    expect(stripForgeDirs(["/data/1/2"], "/data/1/23/a.ts /data/1/2.bak")).toBe(
+      "/data/1/23/a.ts /data/1/2.bak",
+    );
+    // And the whole one beside them still goes.
+    expect(
+      stripForgeDirs(["/data/1/2"], "/data/1/23/a.ts /data/1/2/a.ts"),
+    ).toBe("/data/1/23/a.ts a.ts");
+  });
+
+  test("a directory before a full stop that punctuates goes, and the stop stays", () => {
+    const dir = "/var/folders/x/work";
+    expect(stripForgeDirs([dir], `wrote to ${dir}.`)).toBe("wrote to .");
+    expect(stripForgeDirs([dir], `${dir}. Then ${dir}/a.ts`)).toBe(
+      ". Then a.ts",
+    );
+    // Inside brackets or quotes, before a comma, and in an ellipsis.
+    expect(stripForgeDirs([dir], `(see ${dir}.)`)).toBe("(see .)");
+    expect(stripForgeDirs([dir], `"${dir}.", it said`)).toBe('".", it said');
+    expect(stripForgeDirs([dir], `${dir}...`)).toBe("...");
+    // A name that goes on after the dot is a sibling, left whole — after
+    // one dot or two.
+    expect(stripForgeDirs([dir], `${dir}.bak is kept`)).toBe(
+      `${dir}.bak is kept`,
+    );
+    expect(stripForgeDirs([dir], `${dir}..bak is kept`)).toBe(
+      `${dir}..bak is kept`,
+    );
+  });
+
+  test("a directory reached through a symlink reads relative under either spelling", async () => {
+    const root = realpathSync(await mkdtemp(join(tmpdir(), "forge-paths-")));
+    try {
+      const real = join(root, "real");
+      const link = join(root, "link");
+      mkdirSync(real);
+      symlinkSync(real, link);
+      // The forge named the link; a child process reports the real path.
+      const dirs = spellings([link]);
+      expect(dirs).toEqual([link, real].sort((a, b) => b.length - a.length));
+      expect(stripForgeDirs(dirs, `${real}/CREW.md`)).toBe("CREW.md");
+      expect(stripForgeDirs(dirs, `${link}/CREW.md`)).toBe("CREW.md");
+      // A directory that is not there yet keeps its own spelling.
+      expect(spellings([join(root, "later"), ""])).toEqual([
+        join(root, "later"),
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -120,6 +196,12 @@ if grep -q DECLINE-ME "${promptFile}"; then
   echo '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: this is out of scope for me.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-2","terminal_reason":"completed"}'
   exit 0
 fi
+if grep -q "You are the reviewer on this crew" "${promptFile}"; then
+  path=$(grep -o 'api/v1/repos/[^"\\]*/review-states' "${promptFile}" | head -1)
+  curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "\${FORGE_URL%/}/$path" -d '{"state":"changes_requested","body":"Name the fence."}' > "${dataDir}/review.out"
+  echo '{"type":"result","subtype":"success","is_error":false,"result":"Reviewed.","total_cost_usd":0.004,"num_turns":1,"session_id":"fake-3","terminal_reason":"completed"}'
+  exit 0
+fi
 if grep -q "The check on your pull" "${promptFile}"; then echo "daffodils" >> CREW.md; fi
 echo "work by the crew $(date +%s%N)" >> CREW.md
 git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
@@ -137,7 +219,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       budgetUsd: 1,
       runTimeoutMs: 60_000,
     });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -335,7 +417,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     ).toBe(tip);
   }, 60_000);
 
-  test("an agent may decline: nothing lands, the reason is posted", async () => {
+  test("an agent may decline: nothing lands, the reason is on the run, not a comment", async () => {
     const issue = openIssue(app, alice, repo, {
       title: "Do something shady",
       body: "DECLINE-ME",
@@ -355,9 +437,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     );
     expect(tip).toBeUndefined();
     const comments = listComments(app.db, issue.value.id);
-    expect(comments.map((c) => `${c.authorName}: ${c.body}`)).toContain(
-      "bot: Declined: this is out of scope for me.",
-    );
+    expect(comments.some((c) => c.authorName === "bot")).toBe(false);
   }, 60_000);
 
   test("closing the pull removes the clone; a closed issue starts nothing", async () => {
@@ -402,6 +482,13 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     // default branch, in the same session, and lands as a pull of its own.
     const pullIssue = getIssue(app.db, repo.id, pull.number)!;
     const agent = getAgentByName(app.db, "bot")!;
+    // The word that queued it, said after the run that opened the pull.
+    await Bun.sleep(5);
+    app.db
+      .query(
+        "INSERT INTO comment (id, issue_id, author_id, body) VALUES (?1, ?2, ?3, 'Shorter, please.')",
+      )
+      .run(`c-${pull.number}`, pullIssue.id, alice.id);
     const queued = queueAgentRun(
       app,
       repo,
@@ -479,7 +566,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       (r) => r.issueId === issue.value.id && r.attempt === 0,
     );
     expect(paused.state).toBe("cancelled");
-    expect(paused.summary).toMatch(/^paused: You.ve hit your session limit/);
+    expect(paused.summary).toMatch(/^paused: the 5-hour window is full until 07:20 UTC; resumes 07:21 UTC/);
     expect(paused.summary).toContain("resumes 07:21 UTC");
     expect(paused.sessionId).toBe("fake-1");
     // Nothing landed: no branch pushed, no pull.
@@ -598,4 +685,47 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     );
     expect(passed.summary).toMatch(/^check passed/);
   }, 120_000);
+
+  test("a reviewer's run that posts its verdict is ok, though it pushes nothing", async () => {
+    const made = await createAgent(app, alice, { username: "rev" });
+    if (!made.ok) throw new Error(String(made.error));
+    expect(addToCrew(app, alice, repo, "rev").ok).toBe(true);
+    setCrewRole(app.db, repo.id, made.value.user.id, "reviewer");
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "fence",
+      base: "main",
+      message: "A fence",
+      files: [{ path: "FENCE.md", content: "a fence\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "A fence",
+      baseBranch: "main",
+      headBranch: "fence",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const issue = getIssue(app.db, repo.id, opened.value.number)!;
+    expect(queueAgentRun(app, repo, issue, made.value, "review")).toBeDefined();
+
+    const run = await settled(
+      (r) => r.reason === "review" && r.issueId === issue.id,
+    );
+    expect(run.state).toBe("ok");
+    expect(run.summary).toBe("reviewed: changes requested");
+    expect(
+      listReviews(app.db, issue.id).map((r) => [r.authorId, r.state]),
+    ).toEqual([[made.value.user.id, "changes_requested"]]);
+    // Nothing pushed and nothing said on the pull: the verdict is the word.
+    expect(listComments(app.db, issue.id)).toHaveLength(0);
+
+    // A second pass reads afresh: no earlier session carries an older
+    // head into it, and the same verdict again is not a second review.
+    expect(queueAgentRun(app, repo, issue, made.value, "review")).toBeDefined();
+    const again = await settled(
+      (r) => r.reason === "review" && r.issueId === issue.id && r.id !== run.id,
+    );
+    expect(again.state).toBe("ok");
+    expect(readFileSync(argsFile, "utf8")).not.toContain("--resume");
+    expect(listReviews(app.db, issue.id)).toHaveLength(1);
+  }, 60_000);
 });

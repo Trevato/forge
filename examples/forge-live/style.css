@@ -1,0 +1,9 @@
+body { font: 16px/1.5 system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem; color: #222; }
+h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
+p.note { color: #666; margin: 0 0 1.5rem; }
+ul { list-style: none; padding: 0; }
+li { border-top: 1px solid #ddd; padding: .6rem 0; }
+.who { font-weight: 600; }
+.meta { color: #666; font-size: .9rem; }
+a.say { float: right; }
+@media print { a.say { display: none; } }

@@ -25,6 +25,8 @@ export interface ReviewComment {
   readonly side: Side;
   readonly commitOid: string;
   readonly lineHash: string;
+  /** The origin's login when the line comment was imported; its `authorName` is then the connecting user. */
+  readonly originAuthor: string | null;
 }
 
 /** A stable short hash of a line's exact content, for re-anchoring. */
@@ -83,6 +85,7 @@ export function addReviewComment(
     side: input.side,
     commitOid: input.commitOid,
     lineHash: input.lineHash,
+    originAuthor: null,
   });
 }
 
@@ -96,6 +99,7 @@ interface ReviewRow {
   side: Side;
   commit_oid: string;
   line_hash: string;
+  origin_author: string | null;
 }
 
 export function listReviewComments(
@@ -105,7 +109,8 @@ export function listReviewComments(
   const rows = db
     .query<ReviewRow, [string]>(
       `SELECT comment.id, user.username AS author_name, comment.body, comment.created_at,
-              comment.path, comment.line, comment.side, comment.commit_oid, comment.line_hash
+              comment.path, comment.line, comment.side, comment.commit_oid, comment.line_hash,
+              comment.origin_author
        FROM comment JOIN user ON user.id = comment.author_id
        WHERE comment.issue_id = ?1 AND comment.kind = 'review'
        ORDER BY comment.id`,
@@ -121,6 +126,7 @@ export function listReviewComments(
     side: r.side,
     commitOid: r.commit_oid,
     lineHash: r.line_hash,
+    originAuthor: r.origin_author,
   }));
 }
 
@@ -358,6 +364,7 @@ export function reviewSummary(
   issueId: string,
   headOid: string,
 ): ReviewSummary {
+  const agents = agentVerdicts(db, issueId);
   let approvals = 0;
   let changesRequested = 0;
   let commented = 0;
@@ -367,11 +374,70 @@ export function reviewSummary(
       if (review.state !== "commented") stale++;
       continue;
     }
+    const agent = agents.authors.get(review.authorId);
+    // An agent's verdict is its role's, not its own: it stands only while
+    // the agent is a reviewer on this crew, so one taken off the crew stops
+    // gating the pulls it judged.
+    if (agent !== undefined && !agent.reviewer) {
+      commented++;
+      continue;
+    }
+    // The crew's reviewer gets REVIEW_ROUNDS rounds of changes on a pull;
+    // past them, what it still asks is advice, and the pull lands as it is.
+    if (
+      agent !== undefined &&
+      review.state === "changes_requested" &&
+      agents.earlierRounds(headOid) >= REVIEW_ROUNDS
+    ) {
+      commented++;
+      continue;
+    }
     if (review.state === "approved") approvals++;
     else if (review.state === "changes_requested") changesRequested++;
     else commented++;
   }
   return { approvals, changesRequested, commented, stale };
+}
+
+/** Rounds of changes the crew's reviewer may ask for on one pull: a round is a head it asked changes on. */
+export const REVIEW_ROUNDS = 2;
+
+/**
+ * What the gate needs to know about the agents who passed verdicts on a
+ * pull: whether each is a reviewer on the pull's crew now, and on how many
+ * heads other than a given one an agent asked for changes.
+ */
+function agentVerdicts(
+  db: Database,
+  issueId: string,
+): {
+  authors: Map<string, { reviewer: boolean }>;
+  earlierRounds: (headOid: string) => number;
+} {
+  const rows = db
+    .query<
+      { author_id: string; role: string | null; commit_oid: string; state: string },
+      [string]
+    >(
+      `SELECT review.author_id, repo_crew.role, review.commit_oid, review.state
+       FROM review
+       JOIN issue ON issue.id = review.issue_id
+       JOIN user ON user.id = review.author_id AND user.is_agent = 1
+       LEFT JOIN repo_crew ON repo_crew.repo_id = issue.repo_id
+                          AND repo_crew.user_id = review.author_id
+       WHERE review.issue_id = ?1`,
+    )
+    .all(issueId);
+  const authors = new Map(
+    rows.map((r) => [r.author_id, { reviewer: r.role === "reviewer" }]),
+  );
+  const asked = new Set(
+    rows.filter((r) => r.state === "changes_requested").map((r) => r.commit_oid),
+  );
+  return {
+    authors,
+    earlierRounds: (headOid) => [...asked].filter((oid) => oid !== headOid).length,
+  };
 }
 
 // ---- threads ----

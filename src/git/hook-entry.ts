@@ -10,6 +10,7 @@ import { isHookName, runHookClient } from "./hooks.ts";
 
 const name = process.argv[process.argv.length - 1];
 if (!isHookName(name)) {
+  // Git relays a hook's stderr to the pusher; it must be stderr.
   console.error(`forge: unknown hook ${name}`);
   process.exit(1);
 }

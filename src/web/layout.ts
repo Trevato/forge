@@ -7,7 +7,8 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
-import { appsOf } from "./studio/asks.ts";
+import { askCountFor } from "./studio/asks.ts";
+import { appsForRepos } from "../core/apps.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
@@ -15,12 +16,15 @@ import { edgeLoginUrl, edgeLogoutUrl } from "../http/edge.ts";
 import { json } from "../http/respond.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { secret } from "../kernel/id.ts";
+import { runningLine } from "../kernel/version.ts";
 import {
   metaThemeColor,
   THEME_NAMES,
   THEMES,
   type ThemeName,
 } from "../design/themes.ts";
+import { stylesheetAsset } from "./asset.ts";
+import { linkHeader, pageLinks } from "./standards.ts";
 import { shellJs } from "./client.ts";
 import {
   clearFlashCookie,
@@ -30,8 +34,9 @@ import {
 } from "./flash.ts";
 import { prefersJson } from "./form.ts";
 import { html, raw, when, type Html } from "./html.ts";
+import { noRoom } from "../spawn/door.ts";
 import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
-import { btn, iconBtn, kbd, menu, pill, type MenuItem } from "./ui.ts";
+import { btn, kbd, menu, pill, type MenuItem } from "./ui.ts";
 
 /** One row of the command palette: title, href, category. */
 export interface PaletteItem {
@@ -136,41 +141,35 @@ function themeMenu(active: ThemeName | undefined): Html {
 }
 
 /**
- * Studio or dev, for this browser. Two buttons, one form each, so the
- * choice is a POST like the theme's and never a query parameter that
- * leaks into links.
+ * The way to what needs you, with how many things ask the viewer — the very
+ * count the home's pinned section leads with (`askCountFor`).
  */
-function modeToggle(ctx: Ctx): Html {
+function asksLink(ctx: Ctx): Html {
   if (!ctx.auth.user) return html``;
-  const back = ctx.url.pathname + ctx.url.search;
-  const one = (mode: "studio" | "dev", label: string) =>
-    html`<form method="post" action="/mode">
-      <input type="hidden" name="mode" value="${mode}" />
-      <input type="hidden" name="back" value="${back}" />
-      <button
-        type="submit"
-        aria-pressed="${ctx.mode === mode ? "true" : "false"}"
-        aria-label="${label}"
-        title="${mode === "studio"
-          ? "Apps, the crew, what is on you"
-          : "Code, commits, branches, runs"}"
-      >
-        ${icon(mode === "studio" ? "rocket" : "code")}<span class="hide-sm"
-          >${label}</span
-        >
-      </button>
-    </form>`;
-  return html`<span class="mode-toggle" role="group" aria-label="Studio or dev">
-    ${one("studio", "studio")}${one("dev", "dev")}
-  </span>`;
+  const count = askCountFor(ctx, ctx.auth.user);
+  return html`<a
+    class="btn"
+    data-size="sm"
+    href="/#needs-you"
+    title="${count === 0 ? "All fine" : `${count} need you`}"
+    >Asks${count === 0 ? null : pill(count, "accent")}</a
+  >`;
 }
 
-function newMenu(): Html {
+/** A whole forge for someone (`/forges/new`): an admin's verb only. */
+const NEW_FORGE: MenuItem = { label: "New forge", href: "/forges/new", icon: "fork" };
+
+/** The door shows only to an admin, and only while a child still fits here. */
+const sendsForges = (ctx: Ctx): boolean =>
+  ctx.auth.user?.isAdmin === true && noRoom(ctx.app) === undefined;
+
+function newMenu(ctx: Ctx): Html {
   const items: MenuItem[] = [
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
     { label: "New organization", href: "/organizations/new", icon: "users" },
+    ...(sendsForges(ctx) ? [NEW_FORGE] : []),
   ];
   return menu({
     trigger: icon("plus"),
@@ -181,11 +180,12 @@ function newMenu(): Html {
   });
 }
 
-function userMenu(user: User, signOut: MenuItem): Html {
+function userMenu(ctx: Ctx, user: User, signOut: MenuItem): Html {
   const items: MenuItem[] = [
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
     { label: "Your repositories", href: "/", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
+    { label: "Explore", href: "/explore", icon: "search" },
     { label: "Map", href: "/map", icon: "map" },
     { separator: true, label: "" },
     // The "+" menu is hidden on a phone to keep the topbar inside the
@@ -193,6 +193,7 @@ function userMenu(user: User, signOut: MenuItem): Html {
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
+    ...(sendsForges(ctx) ? [NEW_FORGE] : []),
     { separator: true, label: "" },
     { label: "Settings", href: "/settings", icon: "settings" },
     { label: "Access tokens", href: "/settings/tokens", icon: "key" },
@@ -255,33 +256,19 @@ function helpButton(): Html {
 
 // ---- palette index ----
 
-const STATIC_PALETTE_DEV: PaletteItem[] = [
+/** The palette's own verbs: where to go, what to make, what to set. */
+const STATIC_PALETTE: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
+  { t: "Explore", h: "/explore", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
+  { t: "Asks you", h: "/#needs-you", c: "Go to" },
+  { t: "What you asked for", h: "/asked", c: "Go to" },
+  { t: "Front page", h: "/front", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
   { t: "New repository", h: "/new", c: "Create" },
   { t: "Migrate a repository", h: "/migrate", c: "Create" },
   { t: "New organization", h: "/organizations/new", c: "Create" },
-  { t: "Search", h: "/search", c: "Go to" },
-  { t: "Account settings", h: "/settings", c: "Settings" },
-  { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
-  { t: "SSH keys", h: "/settings/keys", c: "Settings" },
-  { t: "Origins", h: "/settings/origins", c: "Settings" },
-];
-
-/**
- * The studio's own verbs: no "New repository" or "New organization" — dev's
- * own way of making one, which would land a studio reader on dev's own form
- * unannounced. "Asks you" goes to the home, where the asks panel lives.
- */
-const STATIC_PALETTE_STUDIO: PaletteItem[] = [
-  { t: "Home", h: "/", c: "Go to" },
-  { t: "Apps", h: "/apps", c: "Go to" },
-  { t: "Map", h: "/map", c: "Go to" },
-  { t: "Asks you", h: "/", c: "Go to" },
-  { t: "New app", h: "/apps/new", c: "Create" },
-  { t: "Migrate a repository", h: "/migrate", c: "Create" },
   { t: "Search", h: "/search", c: "Go to" },
   { t: "Account settings", h: "/settings", c: "Settings" },
   { t: "Access tokens", h: "/settings/tokens", c: "Settings" },
@@ -295,22 +282,28 @@ const STATIC_PALETTE_STUDIO: PaletteItem[] = [
  * applies and no nonce is needed — but `</script` must not appear inside it,
  * which escaping `<` guarantees.
  *
- * In the studio the by-name rows are apps, not every repository — the same
- * visibility (`appsOf` is `listReposVisibleTo` underneath), just apps first.
+ * The by-name rows are every repository the viewer can see, apps among them.
  */
 function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
-  const studio = ctx.mode === "studio";
-  const repos = studio
-    ? appsOf(ctx, ctx.auth.user).repos.slice(0, 30)
-    : listReposVisibleTo(ctx.app.db, ctx.auth.user, { limit: 30 });
+  // One forge (#603): a conversation's remote row is built with the
+  // studio's nouns, which answer for every repository.
+  const studio = true;
+  // Apps first, then the other repositories, thirty in all.
+  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, {
+    limit: 30,
+    appsFirst: true,
+  });
+  const apps = appsForRepos(ctx.app.db, repos.map((r) => r.id));
   const items: PaletteItem[] = [
     ...extra,
     ...repos.map((r) => ({
       t: `${r.ownerName}/${r.name}`,
       h: `/${r.ownerName}/${r.name}`,
-      c: studio ? "Apps" : "Repositories",
+      c: apps.has(r.id) ? "Apps" : "Repositories",
     })),
-    ...(studio ? STATIC_PALETTE_STUDIO : STATIC_PALETTE_DEV),
+    ...STATIC_PALETTE,
+    ...(sendsForges(ctx) ? [{ t: "New forge", h: "/forges/new", c: "Create" }] : []),
+    ...(ctx.auth.user?.isAdmin ? [{ t: "Forges you sent", h: "/forges", c: "Go to" }] : []),
   ];
   // `studio` rides along so the palette's *remote* rows — what the search
   // API found, folded in the browser — build the same addresses the server
@@ -430,11 +423,10 @@ function topbar(
       )}
       <span class="spacer"></span>
       <span class="topbar-tools">
-        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${modeToggle(
-          ctx,
-        )}${themeMenu(theme)}
+        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${asksLink(ctx)}${themeMenu(theme)}
         ${user
-          ? html`<span class="hide-sm">${newMenu()}</span>${userMenu(
+          ? html`<span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
+                ctx,
                 user,
                 ctx.auth.via === "edge"
                   ? {
@@ -454,10 +446,20 @@ function topbar(
     </header>`;
 }
 
-function footer(): Html {
+/**
+ * The foot of every page. A site admin reads what is running there, as the
+ * build stamped it (`kernel/version.ts`), in place of the line everyone
+ * else gets: the one person who is asked "which version is this?".
+ */
+function footer(ctx: Ctx): Html {
   return html`<footer class="foot">
     <span class="mark"></span>
-    <span>forge — your code, your machine</span>
+    <span
+      >forge
+      ${ctx.auth.user?.isAdmin === true
+        ? runningLine()
+        : "— your code, your machine"}</span
+    >
     <span class="spacer"></span>
     <button
       class="btn js-only"
@@ -488,6 +490,7 @@ export function page(options: PageOptions, status = 200): Response {
   const { ctx } = options;
   const theme = ctx.theme ?? options.theme;
   const flash = readFlash(ctx.request);
+  const links = pageLinks(ctx);
   const scriptJs = options.scriptJs
     ? `${shellJs}\n${options.scriptJs}`
     : shellJs;
@@ -507,7 +510,7 @@ export function page(options: PageOptions, status = 200): Response {
     >
       ${flash ? flashToast(flash) : null}${options.body}
     </main>
-    ${options.bare ? null : footer()} ${overlays()}
+    ${options.bare ? null : footer(ctx)} ${overlays()}
     ${paletteIndex(ctx, options.palette ?? [])}`;
 
   const doc = html`<!doctype html>
@@ -541,6 +544,15 @@ export function page(options: PageOptions, status = 200): Response {
         />
         <meta name="twitter:card" content="summary" />
         <link rel="manifest" href="/manifest.webmanifest" />
+        ${links.map(
+          (l) =>
+            html`<link
+              rel="${l.rel}"
+              href="${l.href}"
+              ${l.title === undefined ? null : html`title="${l.title}"`}
+              ${l.type === undefined ? null : html`type="${l.type}"`}
+            />`,
+        )}
         <link rel="apple-touch-icon" href="/icons/forge-180.png" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-title" content="forge" />
@@ -580,7 +592,7 @@ export function page(options: PageOptions, status = 200): Response {
           rel="icon"
           href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%232563eb'/%3E%3Cstop offset='1' stop-color='%237c3aed'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='3' y='3' width='26' height='26' rx='8' fill='url(%23g)'/%3E%3C/svg%3E"
         />
-        <link rel="stylesheet" href="/assets/forge.css" />
+        <link rel="stylesheet" href="${stylesheetAsset().path}" />
         ${when(
           options.scriptAsset,
           (src) => html`<script type="module" src="${src}"></script>`,
@@ -600,9 +612,13 @@ export function page(options: PageOptions, status = 200): Response {
     // The external stylesheet plus this page's own nonce'd <style>/<script>
     // are the only resources allowed; connect-src 'self' lets the live
     // event stream (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}; connect-src 'self'; manifest-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}; connect-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
+    // Markup is revalidated every time; only the hashed assets it names are
+    // cached, so no cache can pair new HTML with an old stylesheet.
+    "cache-control": "no-cache",
+    link: linkHeader(links),
   });
   // A flash is shown exactly once: rendering it is also what clears it.
   if (flash) headers.append("set-cookie", clearFlashCookie(ctx.url));

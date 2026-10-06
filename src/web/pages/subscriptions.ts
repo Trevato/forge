@@ -8,16 +8,30 @@
 import { listAgents, type Agent } from "../../core/agents.ts";
 import {
   addSubscription,
+  BUDGET_MAX_USD,
+  budgetsOf,
   deleteSubscription,
   EVERYONE,
   listGrantPlaces,
   listGrants,
+  listCredentials,
   listSubscriptions,
   NAME_MAX,
+  PLATFORM,
+  scopesOf,
+  setBudget,
   setGrants,
   wakeSubscription,
   type Subscription,
 } from "../../core/subscriptions.ts";
+import {
+  HEADROOM_MAX,
+  headroomPct,
+  setHeadroom,
+  standings,
+  type Figure,
+  type WindowStanding,
+} from "../../core/standing.ts";
 import { getUserById } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
@@ -35,10 +49,15 @@ import {
   row,
   time,
   timeAgo,
+  tokenCount,
   userLink,
 } from "../ui.ts";
 import { whenText } from "../../crew/limits.ts";
 import { accountSections } from "./origins.ts";
+import { readSpend } from "../../actions/spend.ts";
+import { liveRegionsJs } from "../client.ts";
+import { spendView } from "./spend.ts";
+import { markOf } from "../../core/marks.ts";
 
 const POOL = "/settings/subscriptions";
 
@@ -49,7 +68,44 @@ function requireAdmin(ctx: Ctx): Response | undefined {
 }
 
 const kindText = (s: Subscription): string =>
-  s.kind === "oauth" ? "Claude subscription" : "API key";
+  s.id === PLATFORM
+    ? "The forge's own token, from its environment"
+    : s.kind === "oauth"
+      ? "Claude subscription"
+      : "API key";
+
+const usd = (n: number): string => `$${n.toFixed(2)}`;
+const mark = (f: Figure<unknown>): string => (f.source === "read" ? "" : "~");
+
+/**
+ * `5-hour: ~$3.20 used of ~$10.00 (32%) · 1.2M tok · resets 12:04 UTC` — one
+ * window, plainly: the dollars, the share of the cap when it is known, and
+ * beside them the tokens the crew's runs read and wrote in it, so the money
+ * and the context intuitions meet in one line.
+ */
+function windowText(w: WindowStanding): Html {
+  const name = w.window === "5h" ? "5-hour" : "weekly";
+  const used = `${mark(w.used)}${usd(w.used.value)} used`;
+  const of =
+    w.cap === null
+      ? ""
+      : ` of ${mark(w.cap)}${usd(w.cap.value)}${
+          w.cap.value > 0
+            ? ` (${Math.min(100, Math.round((w.used.value / w.cap.value) * 100))}%)`
+            : ""
+        }`;
+  const full =
+    w.remaining?.source === "read" && w.remaining.value === 0 ? " · full" : "";
+  const resets =
+    w.resetsAt === null
+      ? " · opens on next use"
+      : ` · resets ${w.resetsAt.source === "read" ? "" : "~"}${whenText(new Date(w.resetsAt.value))}`;
+  const tokens = w.tokensIn + w.tokensOut;
+  return html`${name}: ${used}${of}${when(
+    tokens > 0,
+    () => html` · ${tokenCount(tokens, "counted")}`,
+  )}${full}${resets}`;
+}
 
 const resting = (s: Subscription, now: Date): boolean =>
   s.restingUntil !== null && s.restingUntil > now.toISOString();
@@ -64,6 +120,7 @@ function shell(ctx: Ctx, body: Html): Response {
         body,
         "Account settings",
       )}`,
+    scriptJs: liveRegionsJs,
   });
 }
 
@@ -72,9 +129,31 @@ export function subscriptionsPage(ctx: Ctx): Response {
   const denied = requireAdmin(ctx);
   if (denied) return denied;
   const now = new Date();
-  const pool = listSubscriptions(ctx.app.db);
+  const pool = listCredentials(ctx.app.db);
   const places = listGrantPlaces(ctx.app.db);
+  const scopes = scopesOf(ctx.app.db);
+  const scopeText = (s: Subscription): string =>
+    s.id === PLATFORM
+      ? "the crew's: every app no subscription is granted to"
+      : scopes.has(s.id)
+        ? `for ${scopes.get(s.id)!.join(", ")}`
+        : "not offered to the crew — granted nowhere";
+  const budgets = budgetsOf(ctx.app.db);
+  const standingOf = standings(
+    ctx.app.db,
+    pool.map((s) => s.id),
+    now,
+  );
 
+  const sealed = pool.filter((s) => s.id !== PLATFORM);
+  const none =
+    sealed.length > 0
+      ? null
+      : empty({
+          icon: "key",
+          title: "The crew works on the forge's own token",
+          note: "Add a subscription here and grant it to a repository or an organization; its runs spend that account instead. One granted nowhere is never offered to the crew.",
+        });
   const list =
     pool.length === 0
       ? empty({
@@ -85,6 +164,8 @@ export function subscriptionsPage(ctx: Ctx): Response {
       : listCard(
           pool.map((s) => {
             const rests = resting(s, now);
+            const st = standingOf.get(s.id);
+            const budget = budgets.get(s.id);
             const by =
               s.createdBy === null
                 ? undefined
@@ -98,9 +179,10 @@ export function subscriptionsPage(ctx: Ctx): Response {
                   icon: "clock",
                 }),
               )}`,
-              meta: html`${kindText(s)} · added
-              ${time(s.createdAt)}${by
-                ? html` by ${userLink(by.username)}`
+              meta: html`${kindText(s)} · ${scopeText(s)}${s.id === PLATFORM
+                ? null
+                : html` · added ${time(s.createdAt)}`}${by
+                ? html` by ${userLink(by.username, { mark: markOf(by) })}`
                 : null}
               ·
               ${s.lastUsedAt === null
@@ -108,8 +190,72 @@ export function subscriptionsPage(ctx: Ctx): Response {
                 : html`last used ${timeAgo(s.lastUsedAt)}`}${when(
                 rests && s.restingSaid !== "",
                 () => html` · ${s.restingSaid}`,
+              )}${when(
+                budget?.budgetUsd != null,
+                () =>
+                  html`<br /><span class="budget-line"
+                      >spent ${dollars(budget!.spentUsd)} of a
+                      ${dollars(budget!.budgetUsd!)} budget${budget!.locked
+                        ? " set by whoever made this forge; add your own key to spend more"
+                        : ""}</span
+                    >`,
+              )}${when(
+                st !== undefined,
+                () =>
+                  html`<br />${st!.windows.map((w, i) =>
+                    i === 0 ? windowText(w) : html` · ${windowText(w)}`,
+                  )}`,
               )}`,
               trail: html`${when(
+                st !== undefined,
+                () =>
+                  html`<form
+                    class="headroom row-actions"
+                    method="post"
+                    action="${POOL}/${s.id}/headroom"
+                  >
+                    <label for="h-${s.id}" class="small muted"
+                      >kept for people, %</label
+                    >
+                    <input
+                      class="input"
+                      id="h-${s.id}"
+                      name="headroom"
+                      type="number"
+                      min="0"
+                      max="${HEADROOM_MAX}"
+                      step="1"
+                      value="${st!.headroomPct}"
+                    />
+                    ${btn("Keep", { size: "sm" })}
+                  </form>`,
+              )}
+              ${when(
+                s.id !== PLATFORM,
+                () =>
+                  html`<form
+                    class="headroom row-actions"
+                    method="post"
+                    action="${POOL}/${s.id}/budget"
+                  >
+                    <label for="b-${s.id}" class="small muted"
+                      >budget, $</label
+                    >
+                    <input
+                      class="input"
+                      id="b-${s.id}"
+                      name="budget"
+                      type="number"
+                      min="1"
+                      max="${budget?.locked ? budget.budgetUsd : BUDGET_MAX_USD}"
+                      step="1"
+                      placeholder="none"
+                      value="${budget?.budgetUsd ?? ""}"
+                    />
+                    ${btn("Set", { size: "sm" })}
+                  </form>`,
+              )}
+              ${when(
                 rests,
                 () =>
                   html`<form
@@ -120,11 +266,13 @@ export function subscriptionsPage(ctx: Ctx): Response {
                     ${btn("Use again now", { size: "sm", icon: "play" })}
                   </form>`,
               )}
-              ${confirmAction({
-                action: `${POOL}/${s.id}/delete`,
-                verb: "Remove",
-                size: "sm",
-              })}`,
+              ${when(s.id !== PLATFORM, () =>
+                confirmAction({
+                  action: `${POOL}/${s.id}/delete`,
+                  verb: "Remove",
+                  size: "sm",
+                }),
+              )}`,
             });
           }),
         );
@@ -201,7 +349,31 @@ export function subscriptionsPage(ctx: Ctx): Response {
 
   return shell(
     ctx,
-    html`${list}
+    html`${list} ${none === null ? null : html`<div class="mt">${none}</div>`}
+      ${when(
+        pool.length > 0,
+        () =>
+          html`<p class="muted small mt">
+            Windows in US dollars of list price. A figure marked ~ is inferred
+            from what the crew's runs spent; the rest the provider said. The
+            cap is learned the first time the provider calls a window full,
+            and the share kept for people is never spent by the crew. Tokens
+            are what the crew's runs read and wrote in the window, counted by
+            Claude's tokenizer.
+          </p>`,
+      )}
+      <div class="mt" id="spend" data-live="run.*,usage.*">
+        ${card(
+          html`<details id="spend-detail" open>
+            <summary>By credential, app, agent, issue and run kind</summary>
+            ${spendView(readSpend(ctx.app, now))}
+          </details>`,
+          {
+            head: html`${icon("clock")}
+              <h2>Spend</h2>`,
+          },
+        )}
+      </div>
       <div class="mt">${add}</div>
       ${used === null ? null : html`<div class="mt">${used}</div>`}`,
   );
@@ -263,6 +435,58 @@ export async function subscriptionWake(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   wakeSubscription(ctx.app.db, ctx.params.id ?? "");
   return flashTo(ctx, POOL, { message: "In use again." });
+}
+
+// POST /settings/subscriptions/:id/budget — the account's whole-life
+// budget in dollars; empty clears it.
+export async function subscriptionBudget(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const raw = field(form, "budget").trim();
+  const usd = raw === "" ? null : Number(raw);
+  const held = budgetsOf(ctx.app.db).get(ctx.params.id ?? "");
+  if (held?.locked && (usd === null || !(usd < (held.budgetUsd ?? 0))))
+    return flashTo(ctx, POOL, {
+      tone: "danger",
+      message:
+        "This budget was set by whoever made this forge: it can be lowered here, never raised or cleared. Add your own key to spend more.",
+    });
+  const saved = usd !== null && !Number.isFinite(usd) ? false : setBudget(ctx.app.db, ctx.params.id ?? "", usd);
+  return flashTo(
+    ctx,
+    POOL,
+    saved
+      ? { message: usd === null ? "No budget: this account spends until you stop it." : `Budget set: ${dollars(usd)} in all.` }
+      : { tone: "danger", message: `A budget is dollars from 1 to ${BUDGET_MAX_USD}, or empty for none.` },
+  );
+}
+
+const dollars = (n: number): string => `$${n < 10 ? n.toFixed(2) : n.toFixed(0)}`;
+
+// POST /settings/subscriptions/:id/headroom
+export async function subscriptionHeadroom(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const pct = headroomPct(field(form, "headroom"));
+  if (pct === undefined)
+    return flashTo(ctx, POOL, {
+      tone: "danger",
+      message: `Headroom is a whole percent from 0 to ${HEADROOM_MAX}.`,
+    });
+  const saved = setHeadroom(ctx.app.db, ctx.params.id ?? "", pct);
+  return flashTo(
+    ctx,
+    POOL,
+    saved
+      ? {
+          message: `The crew now leaves ${pct}% of each window for people.`,
+        }
+      : { tone: "danger", message: "No such subscription." },
+  );
 }
 
 // ---- grants, on a repository's Crew settings and an organization's page ----

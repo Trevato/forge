@@ -267,6 +267,7 @@ export class TerminalSession {
     const fatal = (e: unknown): void => {
       this.leave();
       // The terminal is restored; now let the error be seen normally.
+      // Terminal is restored; the crash goes to the user's own stderr.
       console.error(e);
       process.exit(1);
     };

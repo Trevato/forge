@@ -1,11 +1,17 @@
 /**
  * The app in the studio: one page per app, and the front door a person acts
  * from — the box they tell the crew in, what asks them, and Now, one row per
- * thing the crew has in hand in the studio's own words. Money, the crew
- * roster, autonomy and the decision ledger are the owner's facts and render
- * only for a viewer who can write here; a stranger sees the app.
+ * thing the crew has in hand in the studio's own words — with every
+ * environment's controls: production's and each preview's Redeploy and Stop
+ * (`previews.ts`), and the way to the app's environment settings. Dev's old
+ * App URL (`GET /:owner/:name/app`) lands here. Money, the crew roster,
+ * autonomy and the decision ledger are the owner's facts and render only
+ * for a viewer who can write here; a stranger sees the app.
  */
 
+import { sealedScope } from "../../core/sealed.ts";
+import { egressSetting } from "../../core/capacity.ts";
+import { egressNote } from "./egress.ts";
 import { audit } from "../../contract/audit.ts";
 import { latestProbes } from "../../contract/probes.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
@@ -13,7 +19,7 @@ import { listCrewRoles } from "../../core/agents.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { decisionStats, type DecisionStat } from "../../core/decisions.ts";
 import { listPulls, mergedPullCount } from "../../core/pulls.ts";
-import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import {
   agentRunTotals,
   previewLatency,
@@ -27,6 +33,7 @@ import { appTailJs, liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
+import { followingCard, followingOf } from "../pages/following.ts";
 import {
   avatar,
   btn,
@@ -40,7 +47,9 @@ import {
 import { changesHref, tellsHref } from "./nouns.ts";
 import { nowCard, nowRegion } from "./now.ts";
 import { appPanels } from "./previews.ts";
-import { servingHistory, type WordCtx } from "./words.ts";
+import { noCrewLine, servingHistory, type WordCtx } from "./words.ts";
+import { crewKeyNote } from "./crew.ts";
+import { noteAppOpened } from "../../core/next-steps.ts";
 
 /**
  * The week's decisions in one line: how many, how many the decider took
@@ -191,16 +200,27 @@ export async function studioApp(
   // owner's facts, not the app's — a viewer who cannot write here reads this
   // page as a stranger, whatever else they can see of the repository.
   const ownerFacts = canSeeOwnerFacts(db, repo, ctx.auth.user);
+  // The owner of a spawned forge (or their everyday account) opening an
+  // app: their second first step. A write during a GET, on purpose: opening
+  // the app IS the step, and a beacon would miss a person without
+  // JavaScript. It is one user_setting row, written once, only on a spawned
+  // forge, only for its owner, and changes nothing anyone else sees.
+  await noteAppOpened(ctx.app, ctx.auth.user);
   const wordCtx: WordCtx = {
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
     runtime: appsRuntime(ctx.app),
     record,
     history: servingHistory(),
+    viewer: ctx.auth.user,
   };
   const crew = listCrewRoles(db, repo.id);
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
-  const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
+  const openPulls = listPulls(db, repo.id, {
+    state: "open",
+    limit: 10,
+    ...sealedScope(db, repo, ctx.auth.user),
+  });
   const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
   // What landed this week, counted by the database like the runs and the
   // spend below — a page of closed pulls would stop at a hundred and the
@@ -397,7 +417,8 @@ export async function studioApp(
                         : autonomy.paused}
                     </dd>`
                 : null}
-            </dl>`,
+            </dl>
+            ${when(crew.length === 0, () => noCrewLine(`${base}/settings`))}`,
         {
           head: html`${icon("play")}
             <h2>On its own</h2>
@@ -406,18 +427,35 @@ export async function studioApp(
           extra: "about",
         },
       );
+  // The rest of the app's environment — its variables, hostname, access and
+  // domains — is the admin's, on the app's settings page.
   const more = html`<p class="muted small">
     <a href="${base}/map">The map</a> ·
     <a href="${tellsHref(base)}">Everything told</a> ·
-    <a href="${changesHref(base)}">Every change</a>
+    <a href="${changesHref(base)}">Every change</a>${when(
+      canAdmin(db, repo, ctx.auth.user),
+      () => html` · <a href="${base}/settings/app">Environment settings</a>`,
+    )}
   </p>`;
 
-  const body = html`${repoHeader(ctx, repo, "code", {
+  // An app that follows another says so before anything else: whether it
+  // is in step is the first thing its owner wants to know.
+  const following = await followingOf(ctx, repo);
+  const body = html`${repoHeader(ctx, repo, "app", {
       compact: true,
       ownTitle: true,
     })}
+    ${following === undefined ? "" : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
-    ${await policyLine(ctx, repo, record)}
+    ${await policyLine(ctx, repo, record)} ${ownerFacts ? crewKeyNote(ctx) : null}
+    ${ownerFacts
+      ? egressNote(
+          ctx.app.config.dataDir,
+          repo.id,
+          appsRuntime(ctx.app)?.liveFor(record, "production")?.cell?.egress ?? [],
+          egressSetting(ctx.app.db),
+        )
+      : null}
     <div class="dash">
       <div class="dash-main stack">
         ${tell}

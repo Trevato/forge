@@ -158,6 +158,37 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .connect-more[open] > summary::before { transform: rotate(90deg); }
 .connect-more > summary:hover { color: var(--accent); }
 .connect-more > p { margin: 6px 0 4px; }
+/* A page's quiet Details: what a person sometimes changes, closed until
+   asked for, the same disclosure as the one above. */
+.quiet-details > summary {
+  cursor: pointer; font-weight: 560; list-style: none; color: var(--muted-fg);
+  display: flex; align-items: center; gap: 6px; padding: 6px 0;
+}
+.quiet-details > summary::-webkit-details-marker { display: none; }
+.quiet-details > summary::before {
+  content: "›"; display: inline-block; color: var(--faint);
+  transition: transform 120ms var(--ease);
+}
+.quiet-details[open] > summary::before { transform: rotate(90deg); }
+.quiet-details > summary:hover { color: var(--accent); }
+/* Why an issue closes, beside the button that closes it. */
+.form-actions .close-reason { width: auto; min-height: 32px; padding-block: 0; }
+.form-actions .close-into { display: none; width: 7em; min-height: 32px; }
+.form-actions:has(.close-reason option[value="split"]:checked) .close-into { display: inline-block; }
+/* On a phone the Markdown hint takes its own line, so the reason, Close and
+   Comment stay together on the next one instead of Comment wrapping alone. */
+@media (max-width: 480px) {
+  .comment-form .form-actions > .muted.small { flex-basis: 100%; }
+  .comment-form .form-actions > .spacer { display: none; }
+  .comment-form .form-actions > :last-child { margin-left: auto; }
+  /* The reason select, Close and Comment must fit 332 px with room to
+     spare: a tighter gap and a narrower select. */
+  .comment-form .form-actions { gap: 6px; }
+  .comment-form .form-actions .close-reason { padding-inline: 8px 24px; max-width: 84px; }
+  /* Words carry the buttons here; their icons give back the width a 360 px
+     row needs for "Close issue", and the buttons keep their full height. */
+  .comment-form .form-actions .btn .ico { display: none; }
+}
 .connect-more .connect-path { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
 .connect-path h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .connect-path h3 .ico { color: var(--muted-fg); }
@@ -198,6 +229,10 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   .repo-layout { grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; }
   .repo-layout > .about { position: sticky; top: calc(var(--topbar-h) + 16px); }
 }
+/* Make it yours: what is copied and what is not, read before saying yes. */
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin: 0; }
+.kv dt { color: var(--muted-fg); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
 .about dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; margin: 0; }
 .about dt { color: var(--muted-fg); }
 .about dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
@@ -213,6 +248,8 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .tree-row { padding: 8px 14px; min-height: 36px; }
 .tree-row .ico { color: var(--faint); }
 .tree-row[data-kind="tree"] .ico { color: var(--accent); }
+.tree-total { margin: 6px 2px 0; text-align: right; }
+.tok { white-space: nowrap; }
 
 /* The file's location stays on screen while its contents scroll past. Opaque
    on purpose: code sliding under a blur is noise, not depth. */
@@ -227,6 +264,10 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .filters form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .filters .search { min-width: 180px; flex: 1; max-width: 320px; }
+/* A list's six words fit a phone without pushing the page sideways: a
+   little less padding there, and a scroll inside the bar as the last resort. */
+.filters .seg { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+@media (max-width: 420px) { .filters .seg > a { padding: 0 8px; } }
 
 .merge-box { margin-top: 14px; }
 .merge-box .card-body { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
@@ -294,7 +335,55 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .grants th[scope="row"] { text-align: left; font-weight: 500; white-space: nowrap; }
 .grants input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
 .grants-foot { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-top: 1px solid var(--border); }
+/* A subscription's headroom for people: a small number beside its windows. */
+.headroom { display: flex; align-items: center; gap: 6px; }
+.headroom .input { width: 5em; }
+/* A spawned forge's first steps (#600): three rows, the next one leading. */
+.next-crew { margin: 0 0 12px 1.1em; }
+.next-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.next-step { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); gap: 8px; align-items: start; }
+.next-step-mark { color: var(--faint); padding-top: 2px; }
+.next-step[data-done="yes"] .next-step-mark { color: var(--success, var(--accent)); }
+.next-step[data-done="yes"] .next-step-title { color: var(--muted-fg); text-decoration: line-through; }
+.next-step[data-primary] .next-step-title { font-weight: 600; }
+.next-step-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 36rem; }
+.next-step-apps { display: flex; flex-wrap: wrap; gap: 6px; }
+/* The everyday-account ask on the home: a form's width, not the page's. */
+.everyday-ask { max-width: 34rem; margin-bottom: 16px; }
+/* On a phone an account's controls go under its name, not over it. */
+@media (max-width: 640px) {
+  .row:has(.headroom) { flex-wrap: wrap; }
+  .row:has(.headroom) .row-trail { flex-basis: 100%; flex-wrap: wrap; }
+}
 .backups-now { margin-top: 12px; }
+/* The fleet graph: a selection's spend and runs, hour by hour and day by day.
+   Series colours are Okabe–Ito (told apart with common colour-vision
+   deficiencies); the eighth, the folded "others", is grey. */
+.fleet-pick { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+.fleet-pick input { flex: 1 1 24em; min-width: 0; font-family: var(--mono); font-size: 13px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.fleet-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 12px; padding: 0; list-style: none; font-size: 13px; }
+.fleet-legend li { display: inline-flex; align-items: center; gap: 6px; }
+.fleet-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: currentColor; vertical-align: middle; flex: none; }
+.fleet-windows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; margin: 0 0 16px; }
+.fleet-window { margin: 0; }
+.fleet-window figcaption { font-size: 13px; font-weight: 600; margin: 0 0 4px; display: flex; gap: 8px; align-items: baseline; }
+.fleet-svg { display: block; width: 100%; height: auto; aspect-ratio: 600 / 230; }
+.fleet-grid line { stroke: var(--border); stroke-width: 1; }
+.fleet-ticks text { fill: var(--muted-fg); font-size: 10px; text-anchor: end; font-family: var(--mono); }
+.fleet-axis text { fill: var(--muted-fg); font-size: 10px; text-anchor: middle; font-family: var(--mono); }
+.fleet-panel-name text { fill: var(--faint); font-size: 10px; }
+.fleet-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.fleet-table th[scope="row"] { font-weight: 500; white-space: nowrap; text-align: left; }
+.fleet-assume { margin-top: 8px; }
+.fg-s0 { fill: #0072b2; color: #0072b2; }
+.fg-s1 { fill: #e69f00; color: #e69f00; }
+.fg-s2 { fill: #009e73; color: #009e73; }
+.fg-s3 { fill: #cc79a7; color: #cc79a7; }
+.fg-s4 { fill: #56b4e9; color: #56b4e9; }
+.fg-s5 { fill: #d55e00; color: #d55e00; }
+.fg-s6 { fill: #c9b800; color: #c9b800; }
+.fg-s7 { fill: #8a8a8a; color: #8a8a8a; }
+@media print { .fleet-pick { display: none; } }
 .backups-error { display: flex; align-items: center; gap: 8px; color: var(--danger); }
 .backups-restore { margin: 8px 0 0; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; word-break: break-all; background: var(--muted); border-radius: var(--radius); }
 /* The records a domain waits on: type, name, value — as a zone file reads. */
@@ -337,14 +426,8 @@ form.inline { display: inline; margin-left: auto; }
 .hero-terminal .mono { font-size: 15px; }
 .terminal-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; }
 .hero .bar { justify-content: center; }
-.hero-points {
-  display: grid; gap: 12px; margin-top: 40px; text-align: left;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-}
-.hero-points .card-body { font-size: 13px; color: var(--muted-fg); }
-.hero-points strong { display: block; color: var(--fg); font-size: 14px; margin-bottom: 3px; }
 
-/* The studio's front door: the public apps that are serving, as pictures. */
+/* The studio's front door: the public apps, live first, as pictures. */
 .app-shelf {
   display: grid; gap: 16px; max-width: 1040px; margin-inline: auto;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -355,19 +438,82 @@ form.inline { display: inline; margin-left: auto; }
 }
 .app-tile:hover { border-color: var(--accent); }
 .app-tile-look { display: block; width: 100%; height: auto; background: var(--muted); }
-.app-tile-blank {
-  display: flex; align-items: center; justify-content: center;
-  aspect-ratio: 1280 / 800; background: var(--muted); color: var(--muted-fg);
-}
 .app-tile-body { display: grid; gap: 6px; padding: 10px 12px; }
 .app-tile-name { font-weight: 600; font-size: 14px; }
 .app-tile-desc { color: var(--muted-fg); font-size: 12.5px; }
+
+/* Explore (#607): a row is a name, a line, its numbers, and one verb. */
+.explore-row { gap: 12px; }
+.explore-main { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.explore-name { font-weight: 600; }
+.explore-line .input { flex: 1; min-width: 0; }
+/* On a phone the first rows belong on the first screen: one row of chips
+   that scrolls sideways, and a row's verb under its numbers. The chips fade
+   at the right edge, so a cut one says there is more; where the browser
+   ties an animation to scrolling, the fade lifts at the end. */
+@property --chip-fade { syntax: "<length>"; inherits: false; initial-value: 32px; }
+@keyframes chip-fade { 90% { --chip-fade: 32px; } to { --chip-fade: 0px; } }
+@media (max-width: 600px) {
+  .explore-filters {
+    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 calc(100% - var(--chip-fade)), transparent);
+  }
+  @supports (animation-timeline: scroll()) {
+    .explore-filters { animation: chip-fade linear both; animation-timeline: scroll(self inline); }
+  }
+  .explore-filters .seg { flex: none; }
+  .explore-row { flex-wrap: wrap; row-gap: 6px; }
+  .explore-row > .explore-main { flex-basis: 100%; }
+  .explore-row > .btn { margin-left: 0; }
+}
+
+/* The featured repository: its picture and its crew at work, side by side
+   on a desk, stacked on a phone. */
+.front-featured {
+  display: grid; gap: 0; max-width: 1040px; margin-inline: auto;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  overflow: hidden; background: var(--card);
+}
+.front-featured-look img { display: block; width: 100%; height: auto; background: var(--muted); }
+.front-featured-body { display: grid; align-content: center; gap: 8px; padding: 20px 24px; min-width: 0; }
+.front-featured-body > * { min-width: 0; }
+.front-featured-body h2 { font-size: 20px; letter-spacing: -0.02em; }
+.front-featured-body h2 a { color: inherit; text-decoration: none; }
+.front-featured-body p { color: var(--muted-fg); text-wrap: pretty; }
+.front-featured:not(:has(.front-featured-look)) { grid-template-columns: 1fr; }
+.front-crew { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.front-live {
+  width: 8px; height: 8px; border-radius: 50%; background: var(--success);
+  animation: run-pulse 1.6s ease-in-out infinite;
+}
+.front-issues { display: grid; gap: 4px; font-size: 13.5px; list-style: none; padding: 0; margin: 0; }
+.front-issues li { min-width: 0; }
+.front-issues a { color: inherit; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.front-more { text-align: center; }
+.front-admin { max-width: 1040px; margin-inline: auto; }
+.front-pick { gap: 8px; }
+.front-pick form.inline { margin-left: 0; }
+.front-pin-any { padding: 12px 16px; flex-wrap: nowrap; }
+.front-weights { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 0 16px 12px; }
+.front-weights .input { width: 4.5em; margin-left: 4px; }
+.front-pin-any .input { flex: 1; min-width: 0; }
+.front-controls .small { padding: 0 16px 14px; }
+@media (max-width: 520px) {
+  /* Two to a row on a phone: a few live apps in one screen, not a scroll. */
+  .app-shelf { gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .app-tile-body { padding: 8px 10px; }
+}
+@media (max-width: 720px) {
+  .front-featured { grid-template-columns: 1fr; }
+  .front-featured-body { padding: 16px; }
+}
 
 /* Every page grid, in one rule: a grid item's automatic minimum size is its
    *content*, so a column with a long unbreakable line pushes the page wider
    than the phone rather than letting its own ellipsis do the work. A zero
    min-width is what makes truncation inside a grid actually truncate. */
-.dash > *, .split > *, .repo-layout > *, .hero-points > * { min-width: 0; }
+.dash > *, .split > *, .repo-layout > * { min-width: 0; }
 
 /* The generic two-column page: content, then a sidebar that sticks. */
 .split { display: grid; gap: 16px; margin-top: 16px; align-items: start; }
@@ -646,15 +792,13 @@ form.inline { display: inline; margin-left: auto; }
 }
 .app-strip .spacer { flex: 1; }
 /* One environment: name and state in the head, the facts and the reason it
-   failed in the body, its buttons in the foot. A card rather than a row so a
-   deploy error has a whole line to be read on. The facts and the error read
-   the same wherever they are shown — the App page's card, a pull's preview,
-   the studio head — so they are not scoped to the card. */
+   failed in the body. A card rather than a row so a deploy error has a whole
+   line to be read on. The facts and the error read the same wherever they
+   are shown — a pull's preview, the studio head — so they are not scoped to
+   the card. */
 .env-card .card-head { gap: 10px; }
 .env-facts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; color: var(--muted-fg); }
 .env-error { color: var(--danger); font-size: 13px; margin-top: 6px; overflow-wrap: anywhere; text-wrap: pretty; }
-.env-card .card-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.env-card .card-foot form { display: inline-flex; }
 /* The look: a phone beside a desktop, each in a hairline frame. The phone
    keeps a phone's narrowness; the desktop takes what is left, never more
    than its own size. A thumbnail shows the top of the phone picture; the
@@ -1013,6 +1157,44 @@ textarea.editor:focus { outline: none; }
   border: 1px dashed var(--border); border-radius: var(--radius);
 }
 .no-hits .ico { color: var(--faint); flex: none; }
+/* The client list (#776): whom a forge is for is the point of the row, so
+   its line wraps rather than being cut off on a phone. */
+.forges-sent .row-meta { white-space: normal; }
+.forges-sent .row-trail { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.forges-sent .row-trail form { margin: 0; }
+.forges-sent a.row-title { color: var(--fg); }
+@media (max-width: 560px) {
+  .forges-sent .row { flex-wrap: wrap; }
+  .forges-sent .row-trail { flex-basis: 100%; justify-content: flex-start; }
+}
+/* "+ New forge" (#426): the claim link, shown once, impossible to miss. */
+.claim-link-box {
+  margin: 0; padding: 12px 14px; font-size: 15px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--muted); overflow-wrap: anywhere;
+}
 
 }
+/* What needs you, pinned on the home: the bulk step's select as wide as
+   its words, not the column. */
+.needs-you #asks-bulk select { width: auto; }
+/* A phone shows the top asks and one "N more" that opens in place to all
+   of them; a wider screen shows ASKS_SHOWN and its own "N more" past that.
+   Only where a details element can be held open: elsewhere both summaries
+   stay, so every ask is still a tap away. */
+@supports selector(::details-content) {
+  @media (max-width: 480px) {
+    .needs-you #asks-more > summary { display: none; }
+    .needs-you #asks-more::details-content { content-visibility: visible; }
+    .needs-you #asks-more > .stack { margin-top: 0; }
+  }
+  @media (min-width: 481px) {
+    .needs-you #asks-phone-more > summary { display: none; }
+    .needs-you #asks-phone-more::details-content { content-visibility: visible; }
+    .needs-you #asks-phone-more > .stack { margin-top: 0; }
+    .needs-you .ask-group > summary { display: none; }
+    .needs-you .ask-group::details-content { content-visibility: visible; }
+  }
+}
+.needs-you .ask-group > summary { padding: 10px 14px; cursor: pointer; }
 `;

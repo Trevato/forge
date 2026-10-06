@@ -8,8 +8,7 @@
  * `components` layer, last, which is where an inline block's rules used to
  * win from: nothing else in the sheet styles a `.studio-*` selector, and the
  * few rules that reach a shared class (`.badge`, `.row-lead`, `.env-facts`)
- * set properties those components do not. `bulkCss` is not written here at
- * all: it is derived from the same table the bulk route enforces (`asks.ts`).
+ * set properties those components do not.
  *
  * `shell` and `rail` hold rules nothing in this directory draws any more,
  * and `rows` all but two of them. They are kept exactly as they were because
@@ -68,6 +67,9 @@ const rows = part(/* css */ `
 .studio-list li svg { vertical-align: -3px; }
 .studio-who { font-weight: 600; }
 .studio-word { font-family: var(--mono); font-size: 11.5px; opacity: .8; white-space: nowrap; }
+.shelf-meta { display: flex; gap: 0 4px; min-width: 0; }
+.shelf-desc { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shelf-facts { flex: 0 0 auto; max-width: 100%; }
 .row-meta .studio-word { font-family: inherit; font-size: inherit; opacity: 1; font-weight: 560; }
 .studio-list li[data-word="working"] .studio-word { color: var(--accent); opacity: 1; }
 .studio-list li[data-word="look"] .studio-word { color: var(--merged); opacity: 1; }
@@ -89,6 +91,30 @@ const rail = part(/* css */ `
 .studio-crew li span { opacity: .85; }
 `);
 
+/** The phone: one document, narrower. Each rule belongs to a component above
+ * and only ever applies at 600px and under, so nothing changes on a desktop. */
+const phone = part(/* css */ `
+@media (max-width: 600px) {
+  .studio-head { flex-wrap: wrap; }
+  .studio-head h1 { flex: 1 1 100%; flex-wrap: wrap; overflow-wrap: anywhere; }
+  .studio-head .env-facts { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
+  .studio-head form, .studio-head form .btn { flex: 1 1 auto; }
+  .studio-tell .bar { flex-wrap: wrap; }
+  .studio-tell .bar .btn, .studio-ask-actions .btn { min-height: 44px; }
+  .fcard-acts .btn, .fcard-form .btn { min-height: 44px; }
+  .studio-ask-actions { display: flex; flex-direction: column; align-items: stretch; white-space: normal; width: 100%; }
+  .studio-list li { grid-template-columns: 18px minmax(0, 1fr); row-gap: 2px; }
+  .studio-list li > :nth-child(n+3) { grid-column: 2; }
+  .studio-word { white-space: normal; }
+  .studio .row-meta, .studio-list .row-meta { white-space: normal; overflow-wrap: anywhere; }
+  .shelf-meta { flex-wrap: wrap; }
+  .shelf-desc { flex: 1 1 100%; }
+  .studio-tell textarea, .studio-tell .input { font-size: 16px; }
+}
+`);
+
+import { feedCss } from "./feed_style.ts";
+
 export const studioCss = `@layer components {\n${[
   shell,
   tellBox,
@@ -98,4 +124,6 @@ export const studioCss = `@layer components {\n${[
   rows,
   rowActions,
   rail,
+  part(feedCss),
+  phone,
 ].join("\n\n")}\n}`;

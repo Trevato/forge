@@ -200,7 +200,9 @@ verifies the signature (\`src/who.ts\`); nothing else is trusted. Three tiers:
 - **admin** — able to write this repository. Removes any note.
 
 "Sign in" is \`/__forge/signin?to=<path>\` and "Sign out" is
-\`/__forge/signout\`; the forge answers both on the app's own host.
+\`/__forge/signout\`; the forge answers both on the app's own host, and
+\`/__forge/report\` too: it sends anyone, with no account, to report a
+problem on this app's repository, if that repository is public.
 
 ## Any interface
 
@@ -1401,6 +1403,7 @@ export function layout(body: string, who: Who, path = "/"): string {
   <footer class="muted">
     \${ssh === undefined ? "" : \`<p>Terminal: <code>\${escape(ssh)}</code></p>\`}
     <p>Also at <a href="/api/notes">/api/notes</a> (<a href="/openapi.json">described</a>) and <code>POST /mcp</code>, with the same rules.</p>
+    <p>Something wrong? <a href="/__forge/report">Report a problem</a>, no account needed.</p>
   </footer>
 </div>
 </body>
@@ -1985,6 +1988,7 @@ export function serve(options: ServeOptions) {
     // own error page, which carries source and paths, and never without
     // the headers. The detail goes to the log, where it belongs.
     error(error) {
+      // Inside the generated app, which has no forge log module.
       console.error(error);
       return html("<h1>Something went wrong</h1>", 500);
     },
@@ -2731,6 +2735,7 @@ test("the page knows who you are and offers the right door", async () => {
   const guest = await (await fetch(base + "/")).text();
   expect(guest).toContain("<h1>");
   expect(guest).toContain("/__forge/signin?to=/");
+  expect(guest).toContain('href="/__forge/report"');
   expect(guest).not.toContain('action="/notes"');
   const signed = await (await api("/", {}, alice)).text();
   expect(signed).toContain("<b>alice</b>");
@@ -3304,6 +3309,7 @@ export function lint(root: string): string[] {
 
 if (import.meta.main) {
   const problems = lint(join(import.meta.dir, ".."));
+  // Generated app's lint CLI: stderr is its output.
   for (const problem of problems) console.error(problem);
   process.exit(problems.length === 0 ? 0 : 1);
 }
@@ -3390,6 +3396,7 @@ export function record(db: Database, attempt: Attempt): void {
       Number(lastInsertRowid) - KEEP,
     );
   } catch (error) {
+    // Generated app: one JSON line to stderr, its own log.
     console.error(
       JSON.stringify({
         audit: row,
@@ -4220,6 +4227,7 @@ test("contract/openapi.json is what the routes say now (else: bun run contract:e
   const now = JSON.parse(emit());
   const stale = !Bun.deepEquals(JSON.parse(committed), now);
   if (stale)
+    // Generated app's contract CLI: stderr is its output.
     console.error(
       "contract/openapi.json is stale: run \`bun run contract:emit\` and commit it",
     );

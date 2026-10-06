@@ -24,18 +24,20 @@ import {
   listTeamMembers,
   listTeams,
   orgAccess,
+  personOwners,
   type Permission,
   type Team,
 } from "../../core/orgs.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
-import { getUserByName, type User } from "../../core/users.ts";
+import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page } from "../layout.ts";
+import { secretsSection } from "./secrets.ts";
 import { agentsOnForge, grantsSection, saveGrants } from "./subscriptions.ts";
 import { shelfRows } from "../studio/shelf.ts";
 import {
@@ -59,15 +61,20 @@ const PER_PAGE = 20;
 // ---- profile ----
 
 /**
- * The repo list, filtered by the box above it and paged by repo id. In the
- * studio, apps are drawn once, by `appsSection` above — so this list omits
+ * The repo list, filtered by the box above it and paged by repo id. Apps
+ * are drawn once, by `appsSection` above — so this list omits
  * whatever page of results already showed there, and says so when that
  * leaves it with nothing: "no other repositories" reads as the true state
  * of the world, not as a bug. Pagination still walks the raw, unfiltered
  * rows (the cursor is a repo id), so leaving apps out of what is *shown*
  * never skips or repeats a plain repository across pages.
  */
-function repoSection(ctx: Ctx, owner: User, isSelf: boolean, studio: boolean): Html {
+function repoSection(
+  ctx: Ctx,
+  owner: User,
+  isSelf: boolean,
+  anyApps: boolean,
+): Html {
   const query = (ctx.url.searchParams.get("q") ?? "").slice(0, 100);
   const cursor = ctx.url.searchParams.get("cursor") ?? "";
   const repos = listReposByOwner(ctx.app.db, owner.username, ctx.auth.user, {
@@ -81,18 +88,16 @@ function repoSection(ctx: Ctx, owner: User, isSelf: boolean, studio: boolean): H
   if (query !== "") nextParams.set("q", query);
   if (last) nextParams.set("cursor", last.id);
 
-  const apps = studio
-    ? appsForRepos(
-        ctx.app.db,
-        page.map((r) => r.id),
-      )
-    : undefined;
-  const shown = apps ? page.filter((repo) => !apps.has(repo.id)) : page;
+  const apps = appsForRepos(
+    ctx.app.db,
+    page.map((r) => r.id),
+  );
+  const shown = page.filter((repo) => !apps.has(repo.id));
 
   const lead = (repo: Repo) =>
     icon(repo.forkParentId !== null ? "fork" : "repo");
 
-  return html`<div class="filters">
+  return html`<div class="filters mt">
       <form method="get" action="/${owner.username}" role="search">
         <input
           class="input search"
@@ -112,13 +117,13 @@ function repoSection(ctx: Ctx, owner: User, isSelf: boolean, studio: boolean): H
           title:
             query !== ""
               ? "No matches"
-              : studio
+              : anyApps
                 ? "No other repositories"
                 : "No repositories yet",
           note:
             query !== ""
               ? "Try a different search."
-              : studio
+              : anyApps
                 ? `Every repository ${owner.username} has is already listed as an app above.`
                 : `${owner.username} has not published anything you can see.`,
           ...(isSelf && query === ""
@@ -148,9 +153,10 @@ function repoSection(ctx: Ctx, owner: User, isSelf: boolean, studio: boolean): H
                 : badge("Public", { variant: "secondary" })}`,
             }),
           ),
-          studio
-            ? { head: html`${icon("repo")}<h2>Other repositories</h2>` }
-            : {},
+          {
+            head: html`${icon("repo")}
+              <h2>${anyApps ? "Other repositories" : "Repositories"}</h2>`,
+          },
         )}
     ${pager(
       repos.length > PER_PAGE && last
@@ -160,13 +166,18 @@ function repoSection(ctx: Ctx, owner: User, isSelf: boolean, studio: boolean): H
 }
 
 /**
- * The owner's apps in the studio, one shelf row each — the same row the
- * studio home's *Your apps* card draws (`shelfRows`, `studio/shelf.ts`),
- * never a second copy of it. Visibility is `listReposByOwner`'s own, the
- * same rule the repository list below uses, so a stranger never sees a
- * private app here either.
+ * The owner's apps, one shelf row each — the same row the home's *Your
+ * apps* card draws (`shelfRows`, `studio/shelf.ts`), never a second copy of
+ * it. Visibility is `listReposByOwner`'s own, the same rule the repository
+ * list below uses, so a stranger never sees a private app here either. An
+ * owner with no app a visitor can see shows the visitor nothing here; the
+ * owner themselves is offered the first one.
  */
-async function appsSection(ctx: Ctx, owner: User, isSelf: boolean): Promise<Html> {
+async function appsSection(
+  ctx: Ctx,
+  owner: User,
+  isSelf: boolean,
+): Promise<{ html: Html; count: number }> {
   const repos = listReposByOwner(ctx.app.db, owner.username, ctx.auth.user, {
     limit: 200,
   });
@@ -178,19 +189,20 @@ async function appsSection(ctx: Ctx, owner: User, isSelf: boolean): Promise<Html
   const newAppHref = `/apps/new?owner=${owner.username}`;
 
   if (appRepos.length === 0)
-    return empty({
-      icon: "rocket",
-      title: "No apps yet",
-      note: isSelf
-        ? "Make one, tell the crew what it is, and watch it come up."
-        : `${owner.username} has no apps you can see.`,
-      ...(isSelf
-        ? { action: btn("New app", { href: newAppHref, variant: "primary" }) }
-        : {}),
-    });
+    return {
+      count: 0,
+      html: when(isSelf, () =>
+        empty({
+          icon: "rocket",
+          title: "No apps yet",
+          note: "Make one, tell the crew what it is, and watch it come up.",
+          action: btn("New app", { href: newAppHref, variant: "primary" }),
+        }),
+      ),
+    };
 
   const rows = await shelfRows(ctx, appRepos);
-  return listCard(rows, {
+  return { count: appRepos.length, html: listCard(rows, {
     head: html`${icon("rocket")}
       <h2>Apps</h2>
       ${when(
@@ -202,7 +214,7 @@ async function appsSection(ctx: Ctx, owner: User, isSelf: boolean): Promise<Html
               icon: "plus",
             })}`,
       )}`,
-  });
+  }) };
 }
 
 /** Everyone on any of the org's teams, once each. */
@@ -239,7 +251,7 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
           ),
         )}
 
-    <h2 class="mt">Teams</h2>
+    <h2 class="mt" id="teams">Teams</h2>
     ${listCard(
       teams.map((t) =>
         row({
@@ -282,13 +294,12 @@ function teamsSection(ctx: Ctx, org: User, canManage: boolean): Html {
     )}`;
 }
 
-// GET /:owner — a person or an org, with their repos. In the studio this
-// leads with the owner's apps, drawn by the same shelf the studio's own
-// home draws its *Your apps* card from; dev mode is byte-identical to what
-// this page has always rendered.
+// GET /:owner — a person or an org, for every viewer: their apps first,
+// drawn by the same shelf the home draws its *Your apps* card from, then
+// their other repositories, then — for an org — its members and teams.
 export async function ownerProfile(ctx: Ctx): Promise<Response> {
   const owner = getUserByName(ctx.app.db, ctx.params.owner ?? "");
-  if (!owner) return notFoundPage(ctx);
+  if (!owner || hiddenFrom(owner, ctx.auth.user)) return notFoundPage(ctx);
 
   const isOrg = owner.kind === "org";
   const access = isOrg
@@ -297,9 +308,10 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
   const canManage = isOrg && accessAllows(access, "admin");
   const isSelf =
     ctx.auth.user !== undefined && (ctx.auth.user.id === owner.id || canManage);
-  const studio = ctx.mode === "studio";
-
-  const apps = studio ? await appsSection(ctx, owner, isSelf) : null;
+  const apps = await appsSection(ctx, owner, isSelf);
+  // Said to the people it concerns: its members and the forge's owner.
+  const ownerless =
+    isOrg && access !== "none" && personOwners(ctx.app.db, owner.id).length === 0;
 
   const body = html`<div class="page-head">
       ${avatar(owner.username, "lg")}
@@ -313,14 +325,25 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
       ${when(isSelf, () =>
         btn("New repository", {
           href: `/new?owner=${owner.username}`,
-          variant: studio ? "ghost" : "primary",
+          variant: "ghost",
           size: "sm",
           icon: "plus",
         }),
       )}
     </div>
-    ${apps}
-    ${repoSection(ctx, owner, isSelf, studio)}
+    ${ownerless
+      ? card(
+          html`<p>
+            Nobody can administer this organization right now: everyone on
+            its Owners team is suspended or removed. What it holds stays as
+            it is; the forge's owner can unsuspend an owner or
+            <a href="/${owner.username}/-/teams/${OWNERS_TEAM}">add one</a>.
+          </p>`,
+          { tone: "attn" },
+        )
+      : null}
+    ${apps.html}
+    ${repoSection(ctx, owner, isSelf, apps.count > 0)}
     ${when(isOrg && accessAllows(access, "read"), () =>
       teamsSection(ctx, owner, canManage),
     )}
@@ -336,9 +359,15 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
             title: "Subscriptions for every repository here",
           })}
         </div>`,
-    )}`;
+    )}
+    ${isOrg ? orgSecrets(ctx, owner.username) : null}`;
 
   return page({ ctx, title: owner.username, body });
+}
+
+function orgSecrets(ctx: Ctx, name: string): Html | null {
+  const secrets = secretsSection(ctx, "org", name);
+  return secrets ? html`<div class="mt">${secrets}</div>` : null;
 }
 
 // POST /:owner/-/subscriptions
@@ -405,6 +434,7 @@ export async function newOrgSubmit(ctx: Ctx): Promise<Response> {
   if (!created.ok) {
     const messages: Record<string, string> = {
       name_taken: "That name is already taken.",
+      name_reserved: "That name is reserved.",
       invalid_name: "Letters, digits, dots and dashes only.",
       unauthorized: "Sign in to create an organization.",
     };
@@ -560,7 +590,9 @@ export async function teamMemberAdd(ctx: Ctx): Promise<Response> {
       message:
         added.error === "no_such_user"
           ? `No account called ${username || "that"}.`
-          : "Could not add that member.",
+          : added.error === "agent_cannot_own"
+            ? `${username} is an agent: an agent never administers an organization.`
+            : "Could not add that member.",
     });
   return flashTo(ctx, dest, {
     message: added.value.added
@@ -588,13 +620,14 @@ export async function teamMemberRemove(ctx: Ctx): Promise<Response> {
       message:
         removed.error === "no_such_user"
           ? `No account called ${username || "that"}.`
-          : "Could not remove that member.",
+          : removed.error === "last_owner"
+            ? `${r.team.name} must keep at least one person who owns ${r.org.username}. Make someone else an owner first.`
+            : "Could not remove that member.",
     });
   return flashTo(ctx, dest, {
     message: removed.value.removed
       ? `Removed ${username} from ${r.team.name}.`
-      : `${r.team.name} must keep at least one owner.`,
-    ...(removed.value.removed ? {} : { tone: "danger" as const }),
+      : `${username} was not on ${r.team.name}.`,
   });
 }
 

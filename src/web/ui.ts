@@ -10,9 +10,17 @@
  * reaches for an inline `style` attribute, because the CSP forbids it.
  */
 
-import type { EnvState, EnvStatus } from "../apps/runtime.ts";
+import { VERIFYING_NOTE, type EnvState, type EnvStatus } from "../apps/runtime.ts";
 import type { PreviewData } from "../apps/data.ts";
+import type { Mark } from "../core/marks.ts";
 import type { RunKind, RunState } from "../core/runs.ts";
+import {
+  estimateTokens,
+  formatTokens,
+  textKind,
+  tokenNote,
+  type TokenBasis,
+} from "../kernel/tokens-format.ts";
 import { icon, type IconName } from "./icons.ts";
 import { Html, html, raw, when } from "./html.ts";
 
@@ -112,6 +120,29 @@ export function fileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * A token count as a size: `~1.2k tok`, with the tokenizer and whether it is
+ * an estimate in the tooltip (`kernel/tokens-format.ts`). Only ever placed
+ * beside a byte size, a cost or a percentage — never as a badge of its own.
+ */
+export function tokenCount(
+  n: number,
+  basis: TokenBasis,
+  kind?: "prose" | "code" | "data",
+): Html {
+  return html`<span class="tok" title="${tokenNote(n, basis, kind)}"
+    >${formatTokens(n, basis)}</span
+  >`;
+}
+
+/** A file's byte size and, when it is text, its estimated tokens beside it. */
+export function sizeWithTokens(bytes: number, path: string): Html {
+  const tokens = estimateTokens(bytes, path);
+  return tokens === undefined
+    ? html`${fileSize(bytes)}`
+    : html`${fileSize(bytes)} · ${tokenCount(tokens, "estimated", textKind(path))}`;
 }
 
 // ---- buttons ----
@@ -282,9 +313,10 @@ export function runStateBadge(state: RunState, kind: RunKind = "deploy"): Html {
 }
 
 /** An environment's state: what production, or a preview, is doing now. */
-export function envStateBadge(state: EnvState): Html {
+export function envStateBadge(state: EnvState, dormant = false): Html {
   switch (state) {
     case "stopped":
+      if (dormant) return badge("Asleep", { icon: "clock", variant: "outline" });
       return badge("Stopped", { icon: "square", variant: "outline" });
     case "deploying":
       return badge("Deploying", { icon: "loader", tone: "attn" });
@@ -295,6 +327,17 @@ export function envStateBadge(state: EnvState): Html {
     case "failed":
       return badge("Failed", { icon: "alert", tone: "danger" });
   }
+}
+
+/**
+ * Why a preview is stopped, when it is only asleep: when, and what it was
+ * waiting for. Never a failure's words — nothing broke.
+ */
+export function dormantNote(env: EnvStatus): Html | null {
+  const d = env.dormant;
+  if (d === undefined) return null;
+  return html`asleep ${time(d.since)} — nobody pushed or commented since
+  ${time(d.idleSince)}; its data and pictures are kept`;
 }
 
 /** The tone an environment's state gives a `dot()` — a list's one-glance answer. */
@@ -315,12 +358,15 @@ export function envTone(state: EnvState | undefined): Tone {
  * it came up belongs to `envFacts`, which sits under this and says it once.
  *
  * A serving app is never called down because its tests are red: the words
- * say the tests failed, the tone stays the tone of something that answers.
+ * say the tests failed, and the tone is not green: it answers, but not
+ * verified. While they still run it reads `serving · verifying`, neither
+ * green nor failed.
  */
 export function envPhrase(env: EnvStatus | undefined): {
   word: string;
   tone: Tone;
 } {
+  if (env?.dormant !== undefined) return { word: "asleep", tone: "default" };
   if (env === undefined || env.state === "stopped")
     return { word: "not running", tone: "default" };
   if (env.state === "failed") return { word: "not up", tone: "danger" };
@@ -329,16 +375,54 @@ export function envPhrase(env: EnvStatus | undefined): {
   // behind it, so it is not plain green either.
   if (env.failedDeploy !== undefined)
     return { word: "live · a newer push failed", tone: "attn" };
-  return {
-    word: env.error === undefined ? "live" : "serving · tests failed",
-    tone: "success",
-  };
+  if (env.error !== undefined)
+    return { word: "serving · tests failed", tone: "attn" };
+  if (env.note === VERIFYING_NOTE)
+    return { word: "serving · verifying", tone: "default" };
+  return { word: "live", tone: "success" };
 }
 
 export interface EnvFactsOptions {
   /** Name the environment's address in full — a card has room for it, a
    * head that already links the app does not. */
   readonly url?: boolean;
+}
+
+/**
+ * An environment's one line of facts, piece by piece: the commit it runs,
+ * how fast it came up (`live 3.4s after the push`, only once it serves),
+ * how long it has been up, and a link to the deploy that produced it. Each
+ * piece is empty when there is nothing to say. `envFacts` sets them in a
+ * card; `envLine` strings them into a list row — the same words either way.
+ */
+function envLinePieces(base: string, env: EnvStatus): readonly Html[] {
+  return [
+    when(env.commitOid !== "", () =>
+      sha(env.commitOid, `${base}/commit/${env.commitOid}`),
+    ),
+    when(servedPhrase(env), (phrase) => html`<span>live ${phrase}</span>`),
+    when(env.since, (since) => html`<span>up ${time(since)}</span>`),
+    when(
+      env.runId,
+      (id) =>
+        html`<a href="${base}/runs/${id}"
+            >${env.state === "deploying"
+              ? "deploy in progress"
+              : env.note !== undefined
+                ? "verifying tests"
+                : "last deploy"}</a
+          >`,
+    ),
+  ];
+}
+
+/**
+ * `envFacts`' line as the non-empty pieces alone, for a row's meta to join
+ * with its own separator: a row is one line, so it takes the facts without
+ * the card's block box around them.
+ */
+export function envLine(base: string, env: EnvStatus): Html[] {
+  return envLinePieces(base, env).filter((p) => p.text !== "");
 }
 
 /**
@@ -354,23 +438,12 @@ export function envFacts(
   env: EnvStatus,
   o: EnvFactsOptions = {},
 ): Html {
+  const [commit, served, up, deploy] = envLinePieces(base, env);
   return html`<div class="env-facts">
-      ${when(env.commitOid !== "", () =>
-        sha(env.commitOid, `${base}/commit/${env.commitOid}`),
-      )}
-      ${when(servedPhrase(env), (phrase) => html`<span>live ${phrase}</span>`)}
-      ${when(env.since, (since) => html`<span>up ${time(since)}</span>`)}
-      ${when(
-        env.runId,
-        (id) =>
-          html`<a href="${base}/runs/${id}"
-            >${env.state === "deploying"
-              ? "deploy in progress"
-              : env.note !== undefined
-                ? "verifying tests"
-                : "last deploy"}</a
-          >`,
-      )}
+      ${commit}
+      ${served}
+      ${up}
+      ${deploy}
     </div>
     ${when(
       o.url === true,
@@ -380,6 +453,14 @@ export function envFacts(
         </p>`,
     )}
     ${when(env.note, (note) => html`<p class="muted small">${note}</p>`)}
+    ${when(dormantNote(env), (note) => html`<p class="muted small" data-dormant>${note}</p>`)}
+    ${when(
+      env.busy,
+      (busy) =>
+        html`<p class="muted small" data-busy>
+          ${busy}; kept awake past its idle window
+        </p>`,
+    )}
     ${when(env.error, (error) => html`<p class="env-error">${error}</p>`)}
     ${when(
       env.failedDeploy,
@@ -523,7 +604,7 @@ export function labelCss(labels: Iterable<LabelLike | string>): string {
  * a column of rows lines up.
  *
  * This is the only place a count gets drawn, which is what makes a repository
- * row on the dashboard, a profile, the landing page, the search results and
+ * row on the dashboard, a profile, the search results and
  * the origin picker all say the same thing in the same shape.
  */
 export function counts(
@@ -628,11 +709,14 @@ export function avatar(name: string, size?: "md" | "lg"): Html {
  * after it as a sibling, which silently tears the row apart. So a linked row
  * gets the name as text, and the row's own href carries the navigation.
  */
-export function userTag(username: string, o: { avatar?: boolean } = {}): Html {
+export function userTag(
+  username: string,
+  o: { avatar?: boolean; mark?: Mark | undefined } = {},
+): Html {
   return html`<span class="byline"
     >${o.avatar === false ? null : avatar(username)}<span class="byline-name"
       >${username}</span
-    ></span
+    >${nameMark(o.mark)}</span
   >`;
 }
 
@@ -648,15 +732,30 @@ export function originTag(login: string, kind: IconName): Html {
   >`;
 }
 
-/** An author: avatar plus a link to their profile. Never bare text. */
+/**
+ * The mark beside a name that says who it is: the owner's, the crew's
+ * (`core/marks.ts`). Drawn by the forge from the account, never from a
+ * display name; the `data-mark` attribute is what a typed name cannot make.
+ */
+export function nameMark(mark: Mark | undefined): Html | null {
+  if (mark === undefined) return null;
+  return html`<span
+    class="name-mark"
+    data-mark="${mark}"
+    title="${mark === "owner" ? "The owner of this forge" : "An agent on the crew"}"
+    >${mark}</span
+  >`;
+}
+
+/** An author: avatar plus a link to their profile, and their mark. Never bare text. */
 export function userLink(
   username: string,
-  o: { avatar?: boolean; display?: string } = {},
+  o: { avatar?: boolean; display?: string; mark?: Mark | undefined } = {},
 ): Html {
   return html`<span class="byline"
     >${o.avatar === false ? null : avatar(username)}<a href="/${username}"
       >${o.display || username}</a
-    ></span
+    >${nameMark(o.mark)}</span
   >`;
 }
 

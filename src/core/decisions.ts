@@ -9,10 +9,14 @@
 import type { Database } from "bun:sqlite";
 import { id as newId } from "../kernel/id.ts";
 
-/** `lean` is which option on a studio ask card a careful owner would pick
- * — see `web/studio/leans.ts`, which stores `{ card, head }` in `state` so
- * `latestLean` can tell a fresh answer from one about a head that moved. */
-export type DecisionKind = "next" | "land" | "retry" | "lean";
+/** `guard` is the crew's rule not starting a run it can see is waste —
+ * a follow-up with nothing new (`skipped`), an issue at its run cap
+ * (`capped`) — counted by `guardCounts` (`crew/guard.ts`).
+ *
+ * `lean` was which option on a studio ask card a careful owner would pick.
+ * Nothing records one any more; older ledgers still hold rows of it, and the
+ * summaries that read them keep the word. */
+export type DecisionKind = "next" | "land" | "retry" | "lean" | "guard";
 
 export interface Decision {
   readonly id: string;
@@ -126,6 +130,27 @@ export function latestDecision(
   return row ? toDecision(row) : undefined;
 }
 
+/**
+ * Whether a `retry` decision still stops its pull. The crew's stop is its
+ * answer to a red check (the check is in what it saw), so a check that
+ * passes afterwards — a re-run on the same head, or a newer head — is the
+ * end of it: the ledger's `green` outcome, or a green verdict finished
+ * after it was taken (`greenAt`). Any other stop is a person's, and only a
+ * person lifts it.
+ */
+export function stopStands(
+  decision: Decision | undefined,
+  greenAt?: string | undefined,
+): boolean {
+  if (decision?.kind !== "retry" || decision.answer !== "stop") return false;
+  const state = decision.state;
+  const aboutACheck =
+    typeof state === "object" && state !== null && "check" in state;
+  if (!aboutACheck) return true;
+  if (decision.outcome === "green") return false;
+  return greenAt === undefined || greenAt <= decision.createdAt;
+}
+
 /** What came of the newest unresolved decision of this kind about an issue. */
 export function resolveOpen(
   db: Database,
@@ -144,43 +169,6 @@ export function resolveOpen(
     `UPDATE decision SET outcome = ?2, outcome_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1`,
   ).run(open.id, outcome);
   return true;
-}
-
-/**
- * The newest `lean` decision still about the same head: the option a
- * decider offered for one studio ask card, good only as long as the head it
- * was asked about. `head` is a pull's head oid, or `""` for a card about a
- * repository rather than a pull. A handful of rows back covers a card whose
- * kind changed (the same issue asked as `stopped`, then as `look`) without
- * a join on anything but what is already indexed.
- */
-export function latestLean(
-  db: Database,
-  repoId: string,
-  issueId: string | null,
-  card: string,
-  head: string,
-): Decision | undefined {
-  const rows =
-    issueId === null
-      ? db
-          .query<
-            Row,
-            [string]
-          >("SELECT * FROM decision WHERE kind = 'lean' AND issue_id IS NULL AND repo_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 10")
-          .all(repoId)
-      : db
-          .query<
-            Row,
-            [string]
-          >("SELECT * FROM decision WHERE kind = 'lean' AND issue_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 10")
-          .all(issueId);
-  return rows.map(toDecision).find((d) => {
-    const s = d.state as { card?: unknown; head?: unknown } | null;
-    return (
-      typeof s === "object" && s !== null && s.card === card && s.head === head
-    );
-  });
 }
 
 export function listDecisions(
@@ -216,8 +204,11 @@ export function listDecisionsForRepos(
   if (unique.length === 0) return [];
   return db
     .query<Row, (string | number)[]>(
+      // A guard's skips and caps are counted, not shown one by one: they
+      // would crowd out the decisions a person reads (`crew/guard.ts`).
       `SELECT * FROM decision
        WHERE repo_id IN (${unique.map((_, n) => `?${n + 1}`).join(",")})
+         AND kind != 'guard'
        ORDER BY created_at DESC, id DESC LIMIT ?${unique.length + 1}`,
     )
     .all(...unique, Math.min(500, Math.max(1, limit)))
@@ -281,4 +272,22 @@ export function decisionStats(
     kind: kind as DecisionKind,
     ...k,
   }));
+}
+
+/** A decision whose outcome is known, newest outcome first, for these repositories. */
+export function listDecidedIn(
+  db: Database,
+  repoIds: readonly string[],
+  limit = 50,
+): Decision[] {
+  if (repoIds.length === 0) return [];
+  const marks = repoIds.map((_, n) => `?${n + 2}`).join(",");
+  return db
+    .query<Row, (string | number)[]>(
+      `SELECT * FROM decision
+       WHERE outcome IS NOT NULL AND kind != 'lean' AND repo_id IN (${marks})
+       ORDER BY outcome_at DESC, id DESC LIMIT ?1`,
+    )
+    .all(limit, ...repoIds)
+    .map(toDecision);
 }

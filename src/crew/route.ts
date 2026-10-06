@@ -6,11 +6,13 @@
  * decider when there is one and by the rules otherwise (`crew/decide.ts`).
  */
 
+import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import type { Agent, CrewRole } from "../core/agents.ts";
 import type { Issue } from "../core/issues.ts";
 import type { Repo } from "../core/repos.ts";
 import { certain, decideOr, type Answers, type Questions } from "./decide.ts";
+import { markReaders } from "./direct.ts";
 
 export const SIZES = ["tiny", "small", "large"] as const;
 export type Size = (typeof SIZES)[number];
@@ -70,16 +72,20 @@ export function kindByWords(text: string): Kind {
 
 /** What the decider is told: the sentence, the place, the people. */
 export function routingState(
+  db: Database,
   repo: Repo,
   issue: Issue,
   crew: readonly { agent: Agent; role: CrewRole }[],
 ): Record<string, unknown> {
+  // A reader's words are read here too, so they carry the brief's mark.
+  const { untrusted } = markReaders(db, repo, [issue])[0]!;
   return {
     repository: `${repo.ownerName}/${repo.name}${repo.description ? ` — ${repo.description}` : ""}`,
     told: issue.title,
     ...(issue.body.trim() === ""
       ? {}
       : { details: issue.body.trim().slice(0, 1200) }),
+    ...(untrusted === undefined ? {} : { untrusted }),
     crew: crew.map((c) => ({
       name: c.agent.user.username,
       role: c.role,
@@ -146,9 +152,11 @@ export async function routeIssue(
   // An issue already carrying a builder's name keeps it: the decider picks
   // for the unassigned, and the rule already honours the assignment.
   const own = builders.find((b) => b.user.id === issue.assigneeId);
+  // A sealed report is routed by the rule here, never sent to a decider
+  // elsewhere (`core/sealed.ts`).
   const decided = await decideOr(
-    own ? undefined : app.config.decider,
-    routingState(repo, issue, crew),
+    own || issue.sealed ? undefined : app.config.decider,
+    routingState(app.db, repo, issue, crew),
     questions,
     rule,
   );

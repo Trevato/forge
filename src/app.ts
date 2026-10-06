@@ -4,6 +4,7 @@
  * side-effect-contained, so tests boot real forges by the dozen.
  */
 
+import type { MailConfig, Mailer } from "./kernel/mail.ts";
 import type { Database } from "bun:sqlite";
 import type { Decider } from "./crew/decide.ts";
 import { mkdirSync } from "node:fs";
@@ -70,12 +71,51 @@ export interface ForgeConfig {
    */
   crewCeilingUsd?: number;
   /**
+   * How many runs one issue may start in a day before the crew parks it
+   * and asks a person (`crew/guard.ts`). Undefined is `ISSUE_RUN_CAP`.
+   */
+  issueRunCap?: number;
+  /**
+   * Where mail goes out: SMTP submission (`FORGE_SMTP_URL`, `FORGE_MAIL_FROM`).
+   * Undefined is a forge that sends no mail; a newcomer's email then waits
+   * for the owner's word.
+   */
+  mail?: MailConfig;
+  /**
+   * The most messages the forge sends in a day, to everyone together
+   * (`actions/mail.ts`). Undefined is `FORGE_DAILY`.
+   */
+  mailDailyCap?: number;
+  /** Stand-in for `mail` in tests: receives each message instead of SMTP. */
+  mailer?: Mailer;
+  /**
+   * Proxies whose forwarded headers say who the client is
+   * (\`FORGE_TRUSTED_PROXIES\`, CIDR ranges). Empty or absent, only this
+   * machine is trusted to say so (\`http/peer.ts\`).
+   */
+  trustedProxies?: readonly string[];
+  /** A header a trusted edge sets to the client's address (\`FORGE_CLIENT_IP_HEADER\`). */
+  clientIpHeader?: string;
+  /**
+   * How often this process holds what it has open against each account's
+   * standing in the database (\`http/caller.ts\`), so a suspension made by
+   * another process — a roll's other half — reaches it too.
+   * @default 5000
+   */
+  standingSweepMs?: number;
+  /**
    * The SSH listener's port, once it is up — `serveForgeSsh` writes the real
    * one back here when it was asked for an ephemeral port. Every surface that
    * shows an `ssh://` clone URL reads it from here, so there is one answer.
    * Undefined means the forge is running without SSH.
    */
   sshPort?: number;
+  /**
+   * The exact command the host forge gave this one to reach its terminal
+   * (`FORGE_APP_SSH`), when it runs as an app of another forge (a spawned
+   * child). Printed verbatim wherever the forge says how to connect.
+   */
+  appSsh?: string;
 }
 
 export interface App {

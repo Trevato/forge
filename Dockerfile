@@ -7,7 +7,7 @@
 # nothing to install.
 FROM oven/bun:1.3-debian
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates curl nodejs npm tini chromium fonts-liberation \
+ && apt-get install -y --no-install-recommends git ca-certificates curl bubblewrap socat nodejs npm tini chromium fonts-liberation \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code \
  && npm cache clean --force
@@ -15,8 +15,13 @@ WORKDIR /app
 COPY package.json tsconfig.json ./
 COPY src ./src
 
+# What the running forge says it is (src/kernel/version.ts): the release
+# passes the tag it is building as VERSION and the commit as COMMIT, and the
+# process reads them back. No file in the repository carries the number.
 ARG VERSION=dev
+ARG COMMIT=""
 LABEL org.opencontainers.image.version=$VERSION
+ENV FORGE_VERSION=$VERSION FORGE_COMMIT=$COMMIT
 # Everything a forge instance is lives under FORGE_DATA — mount a volume there.
 # 8080 is the port the platform's edge admits.
 ENV FORGE_DATA=/data PORT=8080 FORGE_SSH_PORT=2222

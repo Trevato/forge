@@ -27,6 +27,7 @@ import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import type { Store } from "./store.ts";
+import { unwrapKey, wrapKey, WRAPPED_KEY } from "./wrap.ts";
 
 const log = createLog("snapshot");
 
@@ -48,13 +49,25 @@ export interface Manifest {
   readonly apps: number;
   readonly files: readonly SnapshotFile[];
   readonly bytes: number;
+  /**
+   * What the snapshot carries of the forge's key: `wrapped` under the
+   * operator's passphrase, `none` (sealed values are lost on restore), or
+   * `raw` in snapshots from before the key was wrapped.
+   */
+  readonly key?: "wrapped" | "none" | "raw";
 }
+
+/** What a manifest says of the key, including manifests older than the field. */
+export const keyOf = (m: Manifest): "wrapped" | "none" | "raw" =>
+  m.key ?? (m.files.some((f) => f.path === "secret.key") ? "raw" : "none");
 
 export interface Snapshotter {
   readonly db: Database;
   readonly dataDir: string;
   readonly reposRoot: string;
   readonly version: string;
+  /** The operator's wrapping secret; without it the key stays out. */
+  readonly passphrase?: string | undefined;
 }
 
 /** `2026-09-22T09-00-00Z`: sortable, and a name a bucket allows. */
@@ -130,7 +143,17 @@ export async function takeSnapshot(
     const dbCopy = join(scratch, "forge.db");
     forge.db.run("VACUUM INTO ?1", [dbCopy]);
     await putFile("forge.db", dbCopy);
-    await putFile("secret.key", join(forge.dataDir, "secret.key"));
+    // The key travels only wrapped. Without a passphrase it stays home.
+    let key: Manifest["key"] = "none";
+    const keyFile = Bun.file(join(forge.dataDir, "secret.key"));
+    if (forge.passphrase && (await keyFile.exists())) {
+      const raw = new Uint8Array(await keyFile.arrayBuffer());
+      const wrapped = wrapKey(raw, forge.passphrase);
+      if (unwrapKey(wrapped, forge.passphrase) === undefined)
+        throw new Error("the wrapped key does not open; snapshot abandoned");
+      await put(WRAPPED_KEY, wrapped);
+      key = "wrapped";
+    }
     for (const f of filesUnder(join(forge.dataDir, "ssh")))
       await putFile(`ssh/${f}`, join(forge.dataDir, "ssh", f));
 
@@ -204,6 +227,7 @@ export async function takeSnapshot(
       apps: kept,
       files,
       bytes: files.reduce((n, f) => n + f.bytes, 0),
+      key,
     };
     await store.put(
       `${prefix}manifest.json`,
@@ -215,6 +239,7 @@ export async function takeSnapshot(
       repos: bundled,
       apps: kept,
       files: files.length,
+      key,
       mb: (manifest.bytes / 1_048_576).toFixed(1),
     });
     return manifest;

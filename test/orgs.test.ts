@@ -14,7 +14,13 @@ import {
   removeTeamMember,
   OWNERS_TEAM,
 } from "../src/core/orgs.ts";
-import { canRead, canWrite, canAdmin } from "../src/core/repos.ts";
+import {
+  canRead,
+  canSeeOwnerFacts,
+  canWrite,
+  canAdmin,
+  ownerFactRepoIds,
+} from "../src/core/repos.ts";
 import { createRepo, getRepo } from "../src/core/repos.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -41,22 +47,22 @@ describe("org & team core", () => {
   });
 
   test("permission resolves to the highest team a member is on", async () => {
-    const founder = await createUser(app.db, {
+    const founder = await createUser(app.db, { trusted: true,
       username: "founder",
       email: "f@f.dev",
       password: "org-core-pass",
     });
-    const dev = await createUser(app.db, {
+    const dev = await createUser(app.db, { trusted: true,
       username: "dev",
       email: "d@f.dev",
       password: "org-core-pass",
     });
-    const reader = await createUser(app.db, {
+    const reader = await createUser(app.db, { trusted: true,
       username: "reader",
       email: "r@f.dev",
       password: "org-core-pass",
     });
-    const outsider = await createUser(app.db, {
+    const outsider = await createUser(app.db, { trusted: true,
       username: "outsider",
       email: "o@f.dev",
       password: "org-core-pass",
@@ -119,6 +125,54 @@ describe("org & team core", () => {
     expect(canAdmin(app.db, repo.value, dev)).toBe(false);
   });
 
+  test("ownerFactRepoIds answers canSeeOwnerFacts for many repos in one query", async () => {
+    const founder = getUserByName(app.db, "founder")!;
+    const dev = getUserByName(app.db, "dev")!;
+    const reader = getUserByName(app.db, "reader")!;
+    const outsider = getUserByName(app.db, "outsider")!;
+    const org = getOrg(app.db, "acme")!;
+    const made = await Promise.all([
+      createRepo(app.db, app.reposRoot, {
+        ownerId: org.id,
+        name: "facts-public",
+        visibility: "public",
+      }),
+      createRepo(app.db, app.reposRoot, {
+        ownerId: dev.id,
+        name: "facts-own",
+        visibility: "private",
+      }),
+      createRepo(app.db, app.reposRoot, {
+        ownerId: outsider.id,
+        name: "facts-other",
+        visibility: "public",
+      }),
+    ]);
+    const repos = [getRepo(app.db, "acme", "svc")!];
+    for (const r of made) if (r.ok) repos.push(r.value);
+    expect(repos.length).toBe(4);
+
+    for (const user of [founder, dev, reader, outsider, undefined]) {
+      let queries = 0;
+      const original = app.db.query.bind(app.db);
+      (app.db as unknown as { query: unknown }).query = (sql: string) => {
+        queries++;
+        return original(sql);
+      };
+      let batched: Set<string>;
+      try {
+        batched = ownerFactRepoIds(app.db, repos, user);
+      } finally {
+        (app.db as unknown as { query: unknown }).query = original;
+      }
+      expect(queries).toBeLessThanOrEqual(1);
+      const oneByOne = repos
+        .filter((r) => canSeeOwnerFacts(app.db, r, user))
+        .map((r) => r.id);
+      expect([...batched].sort()).toEqual(oneByOne.sort());
+    }
+  });
+
   test("the Owners team can't be emptied", async () => {
     const org = getOrg(app.db, "acme")!;
     const owners = listTeams(app.db, org.id).find(
@@ -164,7 +218,7 @@ describe("orgs over HTTP", () => {
     return fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username,
         password: "org-http-pass",
         name: "c",

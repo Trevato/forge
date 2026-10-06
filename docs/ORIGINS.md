@@ -466,7 +466,7 @@ Review states and threads, on any repo:
 
 ```
 GET    /api/v1/repos/:o/:n/pulls/:n/review-states   the verdicts
-POST   /api/v1/repos/:o/:n/pulls/:n/review-states   {state, body?} → 201
+POST   /api/v1/repos/:o/:n/pulls/:n/review-states   {state, body?, comments?} → 201
 GET    /api/v1/repos/:o/:n/pulls/:n/threads         anchors + resolution
 POST   /api/v1/repos/:o/:n/pulls/:n/threads/:anchor/resolve
 DELETE /api/v1/repos/:o/:n/pulls/:n/threads/:anchor/resolve
@@ -478,6 +478,12 @@ rather than a mode of the same one, because a comment on a line and a verdict
 on a change are different things with different rules, and one path meaning
 two of them behind a query parameter is the shape that gets called wrong.
 Each line comment now carries `anchor`, the thread it belongs to.
+
+A review that comes with line comments is still one call: `comments` on
+`…/review-states` is a list of `{path, line, side, body}`, at most 50, posted
+before the verdict and all or none — one anchor outside the diff refuses the
+whole review with `bad_anchor`, and the message says how an anchor is written.
+This is the one way the crew's reviewer brief posts a review.
 `GET …/pulls/:number` gains `status.reviews:
 { approved, changesRequested, required, mergeable }`.
 

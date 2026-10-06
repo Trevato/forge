@@ -1,9 +1,11 @@
 /**
- * One pull request: the conversation, the merge box, the commits it carries,
- * and the diff with inline review. This is the highest-value screen in the
- * product, so the merge box is an explicit state machine — one card variant
- * per state, each saying what is true and what you can do about it — and the
- * diff is given the full width it needs.
+ * One pull's Files step, and every verb a pull posts to. The change itself
+ * — its words, its decision, its conversation — is the studio's change page
+ * (`src/web/studio/change.ts`); this is the tab under it: the merge box, the
+ * commits it carries, and the diff with inline review. The merge box is an
+ * explicit state machine — one card variant per state, each saying what is
+ * true and what you can do about it — and the diff is given the full width
+ * it needs.
  */
 
 import { addCommentThrough } from "../../actions/issues.ts";
@@ -17,14 +19,16 @@ import {
 } from "../../actions/pulls.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
+import { marksByName } from "../../core/marks.ts";
 import {
   pullDiff,
+  pullDir,
   type MergePullError,
   type Pull,
   type PullReviewStatus,
   type PullStatus,
 } from "../../core/pulls.ts";
-import { getPull } from "../../core/pulls.ts";
+import { pullMayRun } from "../../core/pull_trust.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import {
   anchorKey,
@@ -32,7 +36,6 @@ import {
   isReviewState,
   latestReviewByAuthor,
   listReviewComments,
-  listReviews,
   type Review,
   type ReviewState,
   type Side,
@@ -41,11 +44,10 @@ import { getUsersByIds } from "../../core/users.ts";
 import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
 import { commitLog } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
-import { wallOf, wallSentence, type Wall } from "../../contract/policy.ts";
+import { wallOf } from "../../contract/policy.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
-  loadRepo,
   notFoundPage,
   repoBase,
   repoHeader,
@@ -60,8 +62,6 @@ import {
 } from "../diff-view.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
-import { renderMarkdown } from "../markdown.ts";
-import type { IconName as Glyph } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
@@ -71,45 +71,25 @@ import {
   card,
   icon,
   labelCss,
-  listCard,
-  originTag,
   queuedPhrase,
   sha,
-  stateBadge,
   time,
-  tlEvent,
-  userLink,
-  verdictBadge,
-  type Tone,
 } from "../ui.ts";
 import {
   assigneeCard,
-  composer,
   conversation,
   labelsCard,
   originError,
-  originGlyph,
-  parseNumber,
   threadFragment,
-  type Entry,
 } from "./thread.ts";
-import { previewCard } from "./apps.ts";
-import { lookCard } from "./looks.ts";
-import { pullState } from "./pulls.ts";
 import { crewActivityCard } from "./runs.ts";
-import { studioPull } from "../studio/change.ts";
-import { studioRecord } from "../studio/nouns.ts";
-
-/** The pull and its repo, or the response that refuses to say why not. */
-function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  const number = parseNumber(ctx.params.number);
-  const pull =
-    number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
-  if (!pull) return notFoundPage(ctx);
-  return { repo, pull };
-}
+import { holdCard } from "../studio/hold.ts";
+import {
+  changeHead,
+  changeTabs,
+  pullContext,
+  wallCard,
+} from "../studio/change.ts";
 
 /** Parse a "path~side~line" review anchor from a link or form field. */
 function parseAnchor(
@@ -205,6 +185,10 @@ function reviewsChip(
 
 // ---- the checks ----
 
+/** What a reader's unapproved head shows where its checks would be. */
+const WAITING_WORDS =
+  "Checks and the preview wait for a writer to approve this head";
+
 /**
  * The checks line: where the deploy of this head stands (docs/APPS.md, rule
  * 4). Rendered whenever the repository runs as an app or requires checks —
@@ -216,8 +200,10 @@ function checksLine(
   check: CheckSummary,
   required: boolean,
   isApp: boolean,
+  /** The head is a reader's and no writer has approved it yet. */
+  waiting = false,
 ): Html {
-  if (!isApp && !required && check.state === "none") return html``;
+  if (!isApp && !required && check.state === "none" && !waiting) return html``;
   const run = check.run;
   const link =
     run === null
@@ -241,7 +227,9 @@ function checksLine(
                 >${link}`
             : check.state === "cancelled"
               ? html`<span>${icon("ban")}Checks cancelled</span>${link}`
-              : html`<span>${icon("clock")}No checks on this head yet</span>`;
+              : waiting
+                ? html`<span>${icon("lock")}${WAITING_WORDS}</span>`
+                : html`<span>${icon("clock")}No checks on this head yet</span>`;
   return html`<p class="checks-line">
     ${body}${when(
       required,
@@ -258,36 +246,6 @@ function checksLine(
  * Six states, six cards. Every one names the situation, gives the reason,
  * and offers exactly the actions that are actually available.
  */
-/**
- * A pull that changes the policy: what it lets through that the base did
- * not. It is a wall — the crew never lands it on its own — so the card says
- * so, in the same sentences the ledger keeps, and leaves the decision to
- * the person reading.
- */
-function wallCard(wall: Wall): Html {
-  return card(
-    html`${icon("shield")}
-      <div class="grow">
-        <div class="merge-headline">
-          ${wall.unsound !== undefined
-            ? "This pull's contract does not read."
-            : `This pull changes the policy: ${wall.loosened.length === 1 ? "one door opens" : `${wall.loosened.length} doors open`} wider.`}
-        </div>
-        <p class="merge-sub">
-          ${wall.unsound !== undefined
-            ? "An app built on it does not boot. A person decides this one."
-            : "A cell loosened is a decision undone, so the crew leaves this to a person: read the cells, then land or say what is off."}
-        </p>
-        <ul class="wall-cells">
-          ${(wall.unsound ?? wall.loosened.map(wallSentence)).map(
-            (line) => html`<li>${line}</li>`,
-          )}
-        </ul>
-      </div>`,
-    { tone: "attn", extra: "merge-box wall" },
-  );
-}
-
 function mergeBox(
   ctx: Ctx,
   repo: Repo,
@@ -299,7 +257,15 @@ function mergeBox(
   isApp: boolean,
 ): Html {
   const thread = `${repoBase(repo)}/pulls/${pull.number}`;
-  const checks = checksLine(repoBase(repo), check, repo.requireChecks, isApp);
+  // A reader's head runs nothing until a writer approves it; say so rather
+  // than leave "no checks yet" waiting for something that will not come.
+  const checks = checksLine(
+    repoBase(repo),
+    check,
+    repo.requireChecks,
+    isApp,
+    !pullMayRun(ctx.app.db, repo, pull, status.headOid),
+  );
   const reopen = html`<form method="post" action="${thread}/state">
     <input type="hidden" name="state" value="open" />
     ${btn("Reopen", { size: "sm", icon: "pull" })}
@@ -549,53 +515,6 @@ function threadStateViews(
   return views;
 }
 
-// ---- verdicts, in the timeline ----
-
-/**
- * One verdict as a timeline entry.
- *
- * Muted and marked when it was passed on an older head: it is history, not a
- * current position, and a dismissed approval that still looks like an
- * approval is exactly how a review gate becomes decorative.
- */
-function reviewEntry(review: Review, headOid: string, glyph: Glyph): Entry {
-  const stale = review.commitOid !== headOid;
-  const tone: Tone = stale
-    ? "default"
-    : review.state === "approved"
-      ? "success"
-      : review.state === "changes_requested"
-        ? "danger"
-        : "default";
-  const who =
-    review.originAuthor === null
-      ? userLink(review.authorName)
-      : originTag(review.originAuthor, glyph);
-  return {
-    at: review.createdAt,
-    node: tlEvent({
-      icon:
-        review.state === "approved"
-          ? "check"
-          : review.state === "changes_requested"
-            ? "alert"
-            : "comment",
-      tone,
-      body: html`${who} ${verdictBadge(review.state, { stale })}
-      ${time(review.createdAt)}${when(
-        stale,
-        () => html`<span class="muted">— before the latest push</span>`,
-      )}${when(
-        review.body !== "",
-        () =>
-          html`<div class="prose review-body">
-            ${renderMarkdown(review.body)}
-          </div>`,
-      )}`,
-    }),
-  };
-}
-
 /**
  * The review card: pass a verdict.
  *
@@ -624,11 +543,16 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
   const isAuthor = pull.authorId === user.id;
   const options: { value: string; label: string; hint: string; key: string }[] =
     [];
+  // A reader's change runs nothing here until a writer approves it: the
+  // approval is also what lets its code run, and the reviewer should know.
+  const runsOnApproval = !pullMayRun(ctx.app.db, repo, pull, "");
   if (writer && !isAuthor)
     options.push({
       value: "approved",
       label: "Approve",
-      hint: "This is good to merge.",
+      hint: runsOnApproval
+        ? "This is good to merge — and its check and preview then run this code here, holding the repository owner's app token."
+        : "This is good to merge.",
       key: "v a",
     });
   if (writer)
@@ -703,22 +627,23 @@ function reviewCard(ctx: Ctx, repo: Repo, pull: Pull, action: string): Html {
   );
 }
 
-// ---- the page ----
+// ---- the Files step ----
 
-// GET /:owner/:name/pulls/:number
-export async function pullPage(ctx: Ctx): Promise<Response> {
+/**
+ * GET /:owner/:name/pulls/:number/files — the change's Files step: one tab
+ * deeper than the change itself, under the same head. Everything a person
+ * needs to read the code and land it by hand lives here and nowhere else:
+ * where the change lives, the merge box, a verdict, the commits, who has it
+ * and its labels, and the diff with its inline review threads. The diff is
+ * computed on this tab only, so the change's own page never gets slower as
+ * a change gets bigger.
+ */
+export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   const found = pullContext(ctx);
   if (found instanceof Response) return found;
   const { repo, pull } = found;
-  // In the studio a change is judged by what it does, not its diff — the
-  // same rule `repoHome` follows for an app's own page, and the same rule
-  // `changePage` below asks before opening this very page under the
-  // studio's own noun. `?mode=dev` on the URL is the escape hatch to the
-  // diff, resolved once for `ctx.mode`.
-  const studioApp = studioRecord(ctx, repo);
-  if (studioApp !== undefined)
-    return await studioPull(ctx, repo, pull, studioApp);
-  const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+  // Every read of the change is taken where its objects are (`pullDir`).
+  const dir = await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull);
   const base = repoBase(repo);
   const thread = `${base}/pulls/${pull.number}`;
 
@@ -734,17 +659,16 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
     pull.mergedAt === null && pull.state === "open"
       ? await wallOf(dir, status.baseOid, status.headOid)
       : undefined;
-  const reviewComments = byAnchor(listReviewComments(ctx.app.db, pull.id));
+  const reviewLines = listReviewComments(ctx.app.db, pull.id);
+  const reviewComments = byAnchor(reviewLines);
   const mayMerge = canWrite(ctx.app.db, repo, ctx.auth.user);
   const applied = labelsFor(ctx.app.db, pull.id);
   const allLabels = listLabels(ctx.app.db, repo.id);
-  const verdicts = listReviews(ctx.app.db, pull.id);
   const by = standings(ctx.app.db, pull, status.headOid);
   // The checks are the deploy runs of the live head, read here for the same
   // reason the review gate is: the box and the merge answer one question.
   const check = checkSummary(ctx.app.db, pull.id, status.headOid);
-  const record = getAppByRepo(ctx.app.db, repo.id);
-  const isApp = record !== undefined;
+  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
   const threads = pullThreads(ctx.app, pull);
   const threadViews = threadStateViews(ctx, repo, threads);
   const unresolved = threads.filter((t) => t.resolvedAt === null).length;
@@ -757,8 +681,14 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
     syntax,
     comments: reviewComments,
     threads: threadViews,
+    marks: marksByName(ctx.app.db, [
+      ...reviewLines.map((c) => c.authorName),
+      ...[...threadViews.values()].map((t) => t.resolvedBy ?? ""),
+    ]),
     fileLinkBase: `${base}/blob/${status.headOid}`,
-    ...(ctx.auth.user ? { reviewBase: thread } : {}),
+    ...(ctx.auth.user
+      ? { reviewBase: thread, reviewPage: `${thread}/files` }
+      : {}),
     ...(active ? { active } : {}),
   };
 
@@ -768,13 +698,6 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
   const headLabel = headRepo
     ? `${headRepo.ownerName}/${headRepo.name}:${pull.headBranch}`
     : pull.headBranch;
-
-  const glyph = originGlyph(repo);
-  const talk = conversation(ctx, repo, pull, {
-    openVerb: html`wants to merge <span class="mono">${headLabel}</span> into
-      <span class="mono">${pull.baseBranch}</span> ·`,
-    extra: verdicts.map((review) => reviewEntry(review, status.headOid, glyph)),
-  });
 
   const log = await commitLog(dir, status.headOid, {
     limit: Math.min(Math.max(status.ahead, 1), 100),
@@ -813,105 +736,50 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
       compact: true,
       ownTitle: true,
     })}
-    <div class="issue-head">
-      <h1>${pull.title} <span class="number">#${pull.number}</span></h1>
-      <div class="issue-meta">
-        ${stateBadge(pullState(pull))}
-        <span
-          >${pull.originAuthor
-            ? originTag(pull.originAuthor, originGlyph(repo))
-            : userLink(pull.authorName)}
-          opened this ${time(pull.createdAt)}</span
-        >
-        ${when(
-          pull.originUrl,
-          (url) =>
-            html`<a class="origin-link" href="${url}" rel="noreferrer noopener"
-              >${icon("external")}view on origin</a
+    ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "files")}
+    <p class="files-where muted small" id="files">
+      <span class="mono">${headLabel} → ${pull.baseBranch}</span>
+      <span class="where-sep" aria-hidden="true">·</span>
+      ${status.ahead} commit${status.ahead === 1 ? "" : "s"}
+      ${when(
+        pull.crossRepo,
+        () => html`<span class="where-sep" aria-hidden="true">·</span
+          >${badge("fork", { icon: "fork" })}`,
+      )}
+      ${when(
+        threads.length > 0,
+        () =>
+          html`<span class="where-sep" aria-hidden="true">·</span
+            ><span class="thread-count"
+              >${threads.length} thread${threads.length === 1 ? "" : "s"} ·
+              ${unresolved} unresolved</span
             >`,
-        )}
-        <span class="mono">${pull.headBranch} → ${pull.baseBranch}</span>
-        ${badge(`${status.ahead} commit${status.ahead === 1 ? "" : "s"}`, {
-          variant: "secondary",
-        })}
-        ${when(pull.crossRepo, () => badge("fork", { icon: "fork" }))}
-      </div>
-    </div>
+      )}
+    </p>
     ${when(wall, (w) => wallCard(w))}
+    ${holdCard(ctx, repo, pull, { act: false })}
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp)}
-    ${when(record, (r) => lookCard(ctx, repo, r, pull, status.headOid))}
     <div class="split">
-      <div>
-        ${talk.node}
-        ${composer(ctx, {
-          action: `${thread}/comments`,
-          stateAction: `${thread}/state`,
-          state: pull.state,
-          locked: pull.mergedAt !== null,
-          closeLabel: "Close pull request",
-        })}
-        ${reviewCard(ctx, repo, pull, `${thread}/review-state`)}
-      </div>
+      <div>${reviewCard(ctx, repo, pull, `${thread}/review-state`)}</div>
       <aside>
-        ${when(isApp, () => previewCard(ctx, repo, pull))}
         ${assigneeCard(ctx, repo, pull, `${thread}/assignee`)}
         ${labelsCard(ctx, repo, pull, applied, allLabels, `${thread}/labels`)}
         <div class="mt">${commitsCard}</div>
         ${crewActivityCard(ctx, repo, pull)}
       </aside>
     </div>
-    <div class="files-head">
-      <h2 class="mt" id="files">Files changed</h2>
-      ${when(
-        threads.length > 0,
-        () =>
-          html`<span class="muted small thread-count"
-            >${threads.length} thread${threads.length === 1 ? "" : "s"} ·
-            ${unresolved} unresolved</span
-          >`,
-      )}
-    </div>
-    ${renderDiff(diff, diffOptions)}
-    ${liveMount({
-      repo: base,
-      thread: "pull",
-      number: pull.number,
-      lastCommentId: talk.lastCommentId,
-    })}`;
+    <div class="mt">${renderDiff(diff, diffOptions)}</div>
+    ${liveMount({ repo: base })}`;
 
   return page({
     ctx,
-    title: `${pull.title} · ${repo.name}`,
+    title: `Files · ${pull.title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: liveClientJs,
   });
-}
-
-/**
- * GET /:owner/:name/changes/:number — the studio's own noun for the page
- * `/pulls/:number` already reaches. The page is `studioPull`, rendered from
- * here exactly as `pullPage` renders it: one handler each, never a second
- * copy of the page, and the same `pullContext` for who may see it, so a
- * reader who may not gets the forge's not-found at either address.
- *
- * A viewer the studio's change does not apply to — dev mode, `?mode=dev`,
- * or a repository that is not an app — is sent on to `/pulls/:number`,
- * dev's own address, the same rule `changesList` follows for the list.
- * `/pulls/:number` asked for in studio mode answers where it stands, as it
- * always has; this door adds an address, it never closes one. The forms on
- * the page post where they have always posted.
- */
-export async function changePage(ctx: Ctx): Promise<Response> {
-  const found = pullContext(ctx);
-  if (found instanceof Response) return found;
-  const { repo, pull } = found;
-  const record = studioRecord(ctx, repo);
-  if (record === undefined)
-    return redirect(`${repoBase(repo)}/pulls/${pull.number}${ctx.url.search}`);
-  return await studioPull(ctx, repo, pull, record);
 }
 
 // GET /:owner/:name/pulls/:number/thread?after=<id>
@@ -964,7 +832,8 @@ export async function pullReviewSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
-  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  // The form lives on the Files step, so every answer lands back there.
+  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}/files`;
   const anchor = parseAnchor(
     `${field(form, "path")}~${field(form, "side")}~${field(form, "line")}`,
   );
@@ -1057,9 +926,12 @@ export async function pullReviewStateSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
 
   const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  // A refusal goes back to the form, on the Files step; a verdict that
+  // landed is shown where it now reads, in the change's conversation.
+  const refused = `${dest}/files`;
   const state = field(form, "state");
   if (!isReviewState(state))
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, refused, {
       tone: "danger",
       message: "Pick approve, request changes, or comment.",
     });
@@ -1073,7 +945,7 @@ export async function pullReviewStateSubmit(ctx: Ctx): Promise<Response> {
   );
   if (!submitted.ok) {
     const error = submitted.error;
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, refused, {
       tone: "danger",
       message:
         originError(error) ??
@@ -1123,14 +995,14 @@ export function threadResolveSubmit(
       resolved,
     );
     if (!changed.ok)
-      return flashTo(ctx, `${dest}#files`, {
+      return flashTo(ctx, `${dest}/files`, {
         tone: "danger",
         message:
           changed.error === "not_found"
             ? "That thread is not here any more."
             : "Only someone in the thread, or a writer, can settle it.",
       });
-    return flashTo(ctx, `${dest}#files`, {
+    return flashTo(ctx, `${dest}/files`, {
       message: resolved ? "Thread resolved." : "Thread reopened.",
     });
   };
@@ -1155,7 +1027,7 @@ export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
     strategy,
   );
   if (!result.ok) {
-    return flashTo(ctx, dest, {
+    return flashTo(ctx, `${dest}/files`, {
       tone: "danger",
       message: mergeFailure(result.error),
     });

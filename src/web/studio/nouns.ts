@@ -31,21 +31,17 @@ export const tellHref = (base: string, number: number): string =>
   `${base}/tells/${number}`;
 
 /** One change: the same page `/pulls/:number` reaches, under the studio's
- * own noun (`changePage`, `src/web/pages/pull.ts`). */
+ * own noun (`changePage`, `src/web/studio/change.ts`). */
 export const changeHref = (base: string, number: number): string =>
   `${base}/changes/${number}`;
 
 /**
- * The one rule for whether a viewer sees the studio's own page on this
- * repo: studio mode, no `?mode=dev` escape hatch, and an app to have a
- * studio word for — the same check `issuesList`/`pullsList` make before
- * falling back to dev's own list, and `issuePage`/`pullPage` before falling
- * back to dev's own page.
+ * The one rule for whether a page speaks the studio's words on this repo:
+ * whether it runs as an app — the same for every viewer, since there is one
+ * forge and no mode (#603). A plain repository speaks git's.
  */
 export function studioRecord(ctx: Ctx, repo: Repo): AppRecord | undefined {
-  const studio =
-    ctx.mode === "studio" && ctx.url.searchParams.get("mode") !== "dev";
-  return studio ? getAppByRepo(ctx.app.db, repo.id) : undefined;
+  return getAppByRepo(ctx.app.db, repo.id);
 }
 
 /**

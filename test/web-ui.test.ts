@@ -19,6 +19,7 @@ import { listLabels, labelsFor, getIssue } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { shellJs } from "../src/web/client.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 const form = (fields: Record<string, string>) => new URLSearchParams(fields);
 
@@ -59,6 +60,7 @@ describe("web ui", () => {
       }),
       redirect: "manual",
     });
+    proveAll(app);
     return (res.headers.get("set-cookie") ?? "").split(";")[0]!;
   }
 
@@ -226,9 +228,11 @@ describe("web ui", () => {
     });
     let page = await (await fetch(at)).text();
     expect(page).toContain('data-state="closed"');
-    expect(page).toContain("Closed without merging.");
+    expect(await (await fetch(`${at}/files`)).text()).toContain(
+      "Closed without merging.",
+    );
     expect(await (await fetch(`${base}/mel/proj/pulls`)).text()).toContain(
-      "No open pull requests",
+      "Nothing open.",
     );
 
     await fetch(`${at}/state`, {
@@ -239,7 +243,9 @@ describe("web ui", () => {
     });
     page = await (await fetch(at)).text();
     expect(page).toContain('data-state="open"');
-    expect(page).toContain("Ready to merge");
+    expect(await (await fetch(`${at}/files`)).text()).toContain(
+      "Ready to merge",
+    );
   });
 
   // ---- permission-shaped chrome ----
@@ -286,9 +292,13 @@ describe("web ui", () => {
     const absent = await fetch(`${base}/kim/nothing/raw/main/a.txt`);
     expect(hidden.status).toBe(404);
     expect(absent.status).toBe(404);
-    // Byte-identical once the per-response CSP nonce is normalised: a repo you
-    // may not see and one that does not exist give the visitor the same page.
-    const scrub = (t: string) => t.replaceAll(/nonce-?="?[\w-]+/g, "nonce");
+    // Byte-identical once the per-response CSP nonce and the echo of the path
+    // the visitor typed (the page's own manifest link, #824) are normalised: a
+    // repo you may not see and one that does not exist give the same page.
+    const scrub = (t: string) =>
+      t
+        .replaceAll(/nonce-?="?[\w-]+/g, "nonce")
+        .replaceAll(/here\?path=[^"&\s]*/g, "here?path=");
     expect(scrub(await hidden.text())).toBe(scrub(await absent.text()));
   });
 
@@ -323,11 +333,10 @@ describe("web ui", () => {
       body: form({ name: "sc-ript", visibility: "public" }),
       redirect: "manual",
     });
-    // `mode=dev` because the by-name rows in the studio's own palette are
-    // apps, not every repository (`paletteIndex`, `src/web/layout.ts`) — a
-    // plain repository like this one is dev's box to find.
+    // The palette's by-name rows are every repository, apps first
+    // (`paletteIndex`, `src/web/layout.ts`), so a plain one is there too.
     const html = await (
-      await fetch(`${base}/?mode=dev`, { headers: { cookie: owner } })
+      await fetch(`${base}/`, { headers: { cookie: owner } })
     ).text();
     const start = html.indexOf(
       '<script type="application/json" id="palette-index">',
@@ -432,6 +441,8 @@ describe("web ui", () => {
   // ---- repo deletion ----
 
   test("deleting a repository needs admin and the name typed exactly", async () => {
+    // The profile test above changed mel's email; the new one is taken as proven.
+    proveAll(app);
     await fetch(`${base}/new`, {
       method: "POST",
       headers: { cookie: owner },
@@ -533,7 +544,8 @@ describe("web ui", () => {
       await fetch(`${base}/mel/proj/issues?q=nothing-matches-this&state=all`)
     ).text();
     expect(miss).not.toContain("needs a label");
-    expect(miss).toContain("No issues match those filters");
+    expect(miss).toContain("Nothing here");
+    expect(miss).toContain("nothing-matches-this in the title ✕");
 
     // A LIKE wildcard typed into the box is a literal character, not a glob.
     const wildcard = await (
@@ -541,9 +553,8 @@ describe("web ui", () => {
     ).text();
     expect(wildcard).not.toContain("needs a label");
 
-    // `mode=dev`: the studio's own `/search` is over apps, changes and
-    // tells (see `studioSearchPage`), never a plain repository — `proj` is
-    // dev's box to find, the same escape hatch `searchPage` documents.
+    // `mode=dev`: dev's face of the one `/search` (`searchPage`), the one
+    // that names a repository as one.
     const whole = await (
       await fetch(`${base}/search?q=proj&mode=dev`, {
         headers: { cookie: owner },
@@ -614,19 +625,18 @@ describe("web ui", () => {
     }
   });
 
-  test("an issue row carries its author inside the meta line", async () => {
+  test("an issue row leads with who has it and trails its word", async () => {
     const html = await (
       await fetch(`${base}/mel/proj/issues`, { headers: { cookie: owner } })
     ).text();
-    const start = html.indexOf('<span class="row-meta"');
+    const start = html.indexOf('<span class="row-lead"');
     expect(start).toBeGreaterThan(-1);
-    // From the meta to the end of the row it belongs to.
-    const meta = html.slice(start, html.indexOf("</a", start));
-    expect(meta).toContain("opened");
-    expect(meta).toContain('class="avatar"');
-    expect(meta).toContain('class="byline-name"');
-    expect(meta).toContain("mel");
-    // The state is the leading glyph's colour, not a badge repeating the filter.
+    // From the lead to the end of the row it belongs to.
+    const row = html.slice(start, html.indexOf("</a", start));
+    expect(row).toContain('class="avatar"');
+    expect(row).toContain('<span class="row-meta">');
+    expect(row).toContain('data-word="told"');
+    // The word is the row's state; no dev state badge repeats it.
     expect(html).not.toContain('class="badge" data-state="open"');
   });
 
@@ -648,7 +658,8 @@ describe("web ui", () => {
 
     // The verdicts are `v` chords on the radios, and only the verdicts this
     // person may pass: the author never sees `v a`, a reader only `v c`.
-    const pull = `/mel/proj/pulls/${pullNumber}`;
+    const change = `/mel/proj/pulls/${pullNumber}`;
+    const pull = `${change}/files`;
     const asAuthor = await as(pull, owner);
     expect(asAuthor).not.toContain('data-shortcut="v a"');
     expect(asAuthor).toMatch(
@@ -662,14 +673,14 @@ describe("web ui", () => {
     expect(asReader).not.toContain('data-shortcut="v r"');
     expect(asReader).toContain('data-shortcut="v c"');
     // Close, reopen and merge carry no key at all.
-    for (const html of [asAuthor, issue]) {
+    for (const html of [await as(change, owner), issue]) {
       const state = html.slice(
         html.indexOf('id="thread-state"'),
         html.indexOf("</form>", html.indexOf('form="thread-state"')),
       );
       expect(state).not.toContain("data-shortcut");
     }
-    const mergeAt = asAuthor.indexOf(`action="${pull}/merge"`);
+    const mergeAt = asAuthor.indexOf(`action="${change}/merge"`);
     expect(mergeAt).toBeGreaterThan(-1);
     expect(
       asAuthor.slice(mergeAt, asAuthor.indexOf("</form>", mergeAt)),

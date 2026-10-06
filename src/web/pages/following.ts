@@ -10,6 +10,7 @@
  * — it becomes the crew's proposal, or an honest sentence about why not.
  */
 
+import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import {
   relationOf,
   takeUpdates,
@@ -17,11 +18,11 @@ import {
 } from "../../actions/forks.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import {
-  canWrite,
-  getRepoById,
-  listForks,
-  type Repo,
   canRead,
+  canWrite,
+  forkParentFor,
+  type Repo,
+  visibleForks,
 } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -172,7 +173,7 @@ export function followingCard(
   const crew = listCrewRoles(ctx.app.db, repo.id).some(
     (c) => c.role === "builder",
   );
-  const followers = listForks(ctx.app.db, repo.id).length;
+  const followers = visibleForks(ctx.app.db, repo.id, ctx.auth.user).length;
 
   const canTake =
     relation.state === "behind" ||
@@ -312,10 +313,7 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const base = repoBase(repo);
-  const parent =
-    repo.forkParentId === null
-      ? undefined
-      : getRepoById(ctx.app.db, repo.forkParentId);
+  const parent = forkParentFor(ctx.app.db, repo, ctx.auth.user);
   if (parent === undefined)
     return flashOrJson(ctx, base, {
       tone: "danger",
@@ -324,6 +322,11 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
   const parentName = `${parent.ownerName}/${parent.name}`;
 
   if (field(form, "do") === "converge") {
+    if (!canWrite(ctx.app.db, repo, ctx.auth.user))
+      return flashOrJson(ctx, base, {
+        tone: "danger",
+        message: "Only a writer can ask the crew to converge.",
+      });
     const outcome = await convergeFork(ctx.app, repo, parent, ctx.auth.user);
     return flashOrJson(ctx, base, convergeWords(outcome, parentName));
   }
@@ -425,6 +428,8 @@ function convergeWords(
         tone: "danger",
         message: "Nobody can open the converge issue here.",
       };
+    case "forbidden":
+      return { tone: "danger", message: DIRECTION_NOTE };
     case "ceiling":
       return {
         tone: "danger",

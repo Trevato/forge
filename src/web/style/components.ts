@@ -119,6 +119,14 @@ select.input {
 .field .hint { display: block; font-size: 12.5px; color: var(--muted-fg); margin-top: 6px; }
 .field .error { display: block; font-size: 12.5px; color: var(--danger); margin-top: 6px; font-weight: 500; }
 .field[data-invalid] > label { color: var(--danger); }
+/* A group of checks is one field: the legend reads as a label, no frame. */
+fieldset.field { border: 0; padding: 0; min-width: 0; }
+fieldset.field > legend {
+  padding: 0; font-size: 13px; font-weight: 550; margin: 0 0 8px; color: var(--fg);
+}
+fieldset.field[data-invalid] > legend { color: var(--danger); }
+fieldset.field > .check { display: flex; }
+fieldset.field > .check + .check { margin-top: 8px; }
 .field-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
 .field-row .field { flex: 1; min-width: 160px; margin-bottom: 0; }
 .form-actions { margin-top: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -224,6 +232,13 @@ a.sha:hover { color: var(--accent); }
 
 .byline { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
 .byline a:hover { color: var(--accent); }
+.name-mark {
+  display: inline-block; padding: 0 5px; border-radius: 4px;
+  font-size: 10px; font-weight: 600; line-height: 15px; letter-spacing: 0.04em;
+  text-transform: uppercase; white-space: nowrap; vertical-align: 1px;
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.name-mark[data-mark="crew"] { color: var(--muted-fg); background: var(--muted); }
 
 /* ---- card ---- */
 .card {
@@ -236,7 +251,7 @@ a.sha:hover { color: var(--accent); }
 /* Cards stacked in normal flow space themselves. Inside a container that
    already manages its own spacing with gap, that margin would double it. */
 .card + .card { margin-top: 12px; }
-:is(.stack, .hero-points, .dash, .split, .timeline) > .card + .card { margin-top: 0; }
+:is(.stack, .dash, .split, .timeline) > .card + .card { margin-top: 0; }
 .card-head {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--muted);
@@ -707,16 +722,6 @@ a.row:hover .row-title { color: var(--accent); }
 .live-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 
 }
-
-/* Studio or dev: two buttons in the topbar, the chosen one filled. */
-.mode-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; height: 28px; align-self: center; }
-.mode-toggle form { display: contents; }
-.mode-toggle button { font: inherit; font-size: 12px; padding: 0 10px; border: 0; background: transparent; color: var(--fg); cursor: pointer; line-height: 26px; display: inline-flex; align-items: center; gap: 5px; }
-.mode-toggle button .ico { flex: none; }
-@media (max-width: 719px) { .mode-toggle button { padding: 0 9px; } }
-@media (pointer: coarse) { .mode-toggle { height: 36px; } .mode-toggle button { line-height: 34px; } }
-.mode-toggle button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
-.mode-toggle button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* iOS zooms the whole page when a focused field is set below 16px, and the
    zoom drags the scroll with it. On a touch screen every field is 16px, so

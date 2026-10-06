@@ -152,8 +152,8 @@ export const mirrorJs = /* js */ `
  * Turning one log line into an element, the way every reader of a run's log
  * draws it: a tool call bolds its name, the forge's own words go quiet and
  * italic, "you: " gets its own highlighted row, and anything else is the
- * agent speaking as \`who\`. Shared by \`runLogJs\`, \`studioRunJs\` and
- * \`appTailJs\` so a fourth live log never grows a fourth copy of it —
+ * agent speaking as \`who\`. Shared by \`studioRunJs\` and \`appTailJs\`
+ * so a third live log never grows a third copy of it —
  * interpolated inline, so \`who\` closes over whichever script uses it.
  */
 /**
@@ -161,8 +161,7 @@ export const mirrorJs = /* js */ `
  * stops at "took" — under ten seconds in tenths, matching \`durationText\`
  * (\`pages/runs.ts\`) exactly, since the two paint the very same number
  * first server-side, then live; a mismatched rounding here would flicker
- * the instant this script takes over. Shared by \`runLogJs\` and
- * \`studioRunJs\` so the two can never drift apart.
+ * the instant this script takes over. Used by \`studioRunJs\`.
  */
 const elapsedTickJs = /* js */ `
   function tick() {
@@ -187,7 +186,7 @@ const elapsedTickJs = /* js */ `
 `;
 
 const logLineJs = /* js */ `
-  var FORGE = /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\\$ |session |the session|interrupted|passed in|install |test |start |ready |process )/;
+  var FORGE = /^(claude:|done:|failed:|paused|declined:|cloning |branch |forked |pushing |push refused|clone kept|nothing to propose|opened pull|updated pull|committed the|could not|checking out|deploy |data: |\\$ |session |the session|interrupted|passed in|install |test |start |ready |process |timing: )/;
   function line(kind, speaker, fill) {
     var el = document.createElement('div');
     el.className = 'ln ln-' + kind;
@@ -218,161 +217,10 @@ const logLineJs = /* js */ `
 `;
 
 /**
- * A run's log, live. The page renders every line already written and, for
- * a run still going, refreshes itself without a script; this replaces that
- * poll with the log's own event stream, so a line lands the moment it is
- * written and the page never reloads under a reader. The stream replays
- * what the page already shows, so the first line clears the pre and the
- * tail is exact. Auto-scroll follows the bottom until the reader scrolls
- * up, and resumes when they come back down.
- */
-export const runLogJs = /* js */ `
-(function () {
-  var log = document.getElementById('run-log');
-  if (!log) return;
-  var url = log.getAttribute('data-stream');
-  var who = log.getAttribute('data-who') || 'agent';
-  var pulse = document.getElementById('run-pulse');
-  var jump = document.getElementById('run-jump');
-  var state = document.getElementById('run-state');
-  var summary = document.getElementById('run-summary');
-  var cancel = document.getElementById('run-cancel');
-  var stop = document.getElementById('run-stop');
-  var steer = document.getElementById('run-steer');
-  var live = document.getElementById('run-live');
-
-  // Following: the transcript keeps to its end until the reader scrolls up,
-  // and a pill offers the way back down when more arrives meanwhile.
-  var follow = true;
-  function atEnd() { return log.scrollTop + log.clientHeight >= log.scrollHeight - 12; }
-  function toEnd() { log.scrollTop = log.scrollHeight; follow = true; if (jump) jump.hidden = true; }
-  log.addEventListener('scroll', function () { follow = atEnd(); if (follow && jump) jump.hidden = true; });
-  if (jump) jump.addEventListener('click', toEnd);
-  // The transcript takes the room between its top and the composer, so the
-  // page itself never scrolls while a run goes.
-  function fit() {
-    var room = window.innerHeight - log.getBoundingClientRect().top - (steer ? steer.offsetHeight : 0) - 16;
-    if (room > 240) log.style.maxHeight = room + 'px';
-    if (follow) toEnd();
-  }
-  window.addEventListener('resize', fit);
-  fit();
-
-  var words = {
-    queued: ['Queued', 'secondary'], running: ['Running', 'attn'],
-    ok: ['Passed', 'success'], failed: ['Failed', 'danger'], cancelled: ['Cancelled', 'outline'],
-  };
-  function money(n) { return n < 0.01 ? '<$0.01' : '$' + n.toFixed(2); }
-  function paint(run) {
-    if (state) {
-      var look = words[run.state];
-      var badge = state.querySelector('.badge') || state;
-      if (look) {
-        badge.setAttribute('data-variant', look[1]);
-        badge.textContent = run.state === 'ok' && run.kind === 'agent' ? 'Done' : look[0];
-      }
-    }
-    if (live) live.setAttribute('data-state', run.state);
-    if (summary && run.summary) summary.textContent = run.summary;
-    var cost = document.getElementById('run-cost');
-    if (cost && typeof run.costUsd === 'number' && run.costUsd > 0) { cost.textContent = money(run.costUsd) + ' spent'; cost.hidden = false; }
-    var turns = document.getElementById('run-turns');
-    if (turns && typeof run.turns === 'number' && run.turns > 0) { turns.textContent = run.turns + (run.turns === 1 ? ' turn' : ' turns'); turns.hidden = false; }
-    if (cancel) cancel.hidden = true;
-    if (stop) stop.hidden = true;
-    if (pulse && pulse.parentNode) pulse.parentNode.removeChild(pulse);
-    var elapsed = document.getElementById('run-elapsed');
-    if (elapsed && !elapsed.getAttribute('data-finished')) elapsed.setAttribute('data-finished', new Date().toISOString());
-  }
-
-  // The same sorting the page did for the lines it rendered: a speaker
-  // column and the words, so a reader can tell who said what at a glance.
-  ${logLineJs}
-  function add(el) {
-    log.insertBefore(el, pulse && pulse.parentNode === log ? pulse : jump);
-    if (follow) toEnd(); else if (jump) jump.hidden = false;
-  }
-
-  ${elapsedTickJs}
-
-  // Steering without a reload: Enter sends, Shift+Enter breaks a line, the
-  // words go to the API, and the line the forge writes for them arrives on
-  // the stream like any other. Stop is the same form, posted as it is.
-  if (steer && window.fetch) {
-    var text = steer.querySelector('textarea');
-    function size() { if (!text) return; text.style.height = 'auto'; text.style.height = Math.min(160, text.scrollHeight) + 'px'; fit(); }
-    if (text) {
-      text.addEventListener('input', size);
-      text.addEventListener('keydown', function (ev) {
-        if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); if (steer.requestSubmit) steer.requestSubmit(); else steer.submit(); }
-      });
-      size();
-    }
-    steer.addEventListener('submit', function (ev) {
-      if (ev.submitter && ev.submitter.id === 'run-stop') return;
-      var api = steer.getAttribute('data-api');
-      if (!text || !api || steer.getAttribute('data-running') !== '1') return;
-      ev.preventDefault();
-      var said = text.value.trim();
-      if (!said) return;
-      text.disabled = true;
-      fetch(api, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ text: said }) })
-        .then(function (r) { return r.ok ? r.json() : Promise.reject(r); })
-        .then(function (out) {
-          text.value = '';
-          size();
-          var note = document.getElementById('run-steer-note');
-          if (note) note.textContent = out.outcome === 'sent' ? 'Heard at its next step. Every word is kept in the log.' : 'Nobody was listening; it went on the conversation.';
-        })
-        .catch(function () { steer.submit(); })
-        .then(function () { text.disabled = false; text.focus(); });
-    });
-  }
-
-  if (!url || typeof EventSource === 'undefined') return;
-  var meta = document.querySelector('meta[http-equiv="refresh"]');
-  if (meta && !/url=/i.test(meta.getAttribute('content') || '')) meta.remove();
-  var source = new EventSource(url);
-  var empty = document.getElementById('run-empty');
-  var seeded = false;
-  source.addEventListener('line', function (event) {
-    // The first line of a fresh stream is the log from the top: start
-    // clean. A reconnect carries on from the last line seen, and appends.
-    if (!seeded) {
-      if (event.lastEventId === '1') {
-        Array.prototype.slice.call(log.querySelectorAll('.ln:not(#run-pulse)')).forEach(function (el) { log.removeChild(el); });
-      }
-      seeded = true;
-      if (empty) empty.hidden = true;
-    }
-    // A line travels as a JSON string, so a tab or a quote survives the wire.
-    var text = event.data;
-    try { var parsed = JSON.parse(text); if (typeof parsed === 'string') text = parsed; } catch (err) {}
-    add(draw(text));
-  });
-  source.addEventListener('done', function (event) {
-    source.close();
-    var run;
-    try { run = JSON.parse(event.data); } catch (err) { return; }
-    paint(run);
-    if (steer) {
-      steer.setAttribute('data-running', '0');
-      var n = document.getElementById('run-steer-note');
-      if (n) n.textContent = 'The run is over; this goes on the conversation and starts a run.';
-      var t = steer.querySelector('textarea');
-      if (t) t.placeholder = 'Tell ' + who + ' for its next run';
-    }
-    window.clearInterval(clock);
-    tick();
-  });
-})();
-`;
-
-/**
- * The same live transcript as \`runLogJs\`, painted in the studio's own five
- * words instead of dev's queued/running/passed/failed — the one thing that
- * cannot be shared, since the two pages speak different vocabularies for the
- * same run. \`data-cap\` on \`#run-log\` bounds how many lines a long-running
+ * A run's log, live, painted in the studio's own five words. The page
+ * renders every line already written and, for a run still going, refreshes
+ * itself without a script; this replaces that poll with the log's own event
+ * stream, so a line lands the moment it is written. \`data-cap\` on \`#run-log\` bounds how many lines a long-running
  * agent can pile into the DOM: past it, the oldest line is dropped as a new
  * one arrives, so an hour-long run never grows without bound.
  */
@@ -2045,14 +1893,17 @@ export const liveRegionsJs = /* js */ `
       var mine = document.getElementById(id);
       var theirs = fresh.getElementById(id);
       if (!mine || !theirs) return;
-      // A card mid-action (the big view marks it data-busy while its post
-      // is in flight) is never pulled out from under the click; the next
+      // A region mid-action (something in it marked data-busy while its
+      // post is in flight) is never pulled out from under the click; the next
       // matching event tries the swap again.
       if (mine.querySelector('[data-busy]')) return;
       var active = document.activeElement;
       if (active && mine.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
       if (same(mine.innerHTML, theirs.innerHTML)) return;
+      // A disclosure the reader opened stays open across the swap.
+      var opened = Array.prototype.map.call(mine.querySelectorAll('details[id][open]'), function (d) { return d.id; });
       mine.innerHTML = theirs.innerHTML;
+      opened.forEach(function (i) { var d = document.getElementById(i); if (d) d.open = true; });
       Array.prototype.forEach.call(theirs.attributes, function (a) { if (a.name !== 'id') mine.setAttribute(a.name, a.value); });
       mine.dispatchEvent(new CustomEvent('forge:swapped', { bubbles: true }));
     });
@@ -2119,12 +1970,28 @@ export const liveRegionsJs = /* js */ `
     });
     Object.keys(groups).forEach(function (src) { pull(src, groups[src]); });
   }
-  var source = new EventSource('/events');
+  var source = null;
+  var since = '';
+  var retry = null;
   // The stream's own state, for a page that shows whether it is connected.
   function state(s) { document.dispatchEvent(new CustomEvent('forge:live', { detail: { state: s } })); }
-  source.addEventListener('open', function () { state('open'); });
-  source.addEventListener('error', function () { state('reconnecting'); });
-  source.addEventListener('forge', function (event) {
+  // The browser resumes a dropped stream by itself, from the last id it
+  // saw. When it gives up (CLOSED: a long offline, a sleeping laptop) we
+  // open a new one ourselves, from that same id: nothing is replayed twice
+  // and nothing in between is lost.
+  function connect() {
+    if (retry) { clearTimeout(retry); retry = null; }
+    if (source) source.close();
+    source = since ? new EventSource('/events?since=' + encodeURIComponent(since)) : new EventSource('/events');
+    source.addEventListener('open', function () { state('open'); });
+    source.addEventListener('error', function () {
+      state('reconnecting');
+      if (source.readyState === 2 && retry === null) retry = setTimeout(connect, 3000);
+    });
+    source.addEventListener('forge', onForge);
+  }
+  function onForge(event) {
+    if (event.lastEventId) since = event.lastEventId;
     var data;
     try { data = JSON.parse(event.data); } catch (err) { return; }
     document.dispatchEvent(new CustomEvent('forge:event', { detail: data }));
@@ -2138,6 +2005,14 @@ export const liveRegionsJs = /* js */ `
     // after the first, never more often than every MIN_GAP.
     if (hit && timer === null)
       timer = setTimeout(refresh, Math.max(600, last + MIN_GAP - Date.now()));
+  }
+  connect();
+  // Back online: reconnect from the last id and look at every region once,
+  // in case the replay window no longer reaches back that far.
+  window.addEventListener('online', function () {
+    connect();
+    Array.prototype.forEach.call(document.querySelectorAll('[data-live]'), function (r) { if (r.id) due[r.id] = true; });
+    if (timer === null) timer = setTimeout(refresh, 300);
   });
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden && Object.keys(due).length > 0 && timer === null) timer = setTimeout(refresh, 100);

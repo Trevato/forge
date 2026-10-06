@@ -418,7 +418,8 @@ describe("the code browser on the web", () => {
   // ---- counts on rows ----
 
   test("repository rows carry issue and pull counts, and hide the zeroes", async () => {
-    const dash = await text("/", alice);
+    // Your repositories are your own page now (#625: one home).
+    const dash = await text("/alice", alice);
     expect(dash).toContain('class="counts"');
     expect(dash).toContain("open issue");
     expect(dash).toContain("open pull request");
@@ -433,7 +434,7 @@ describe("the code browser on the web", () => {
     expect(beacon).toContain('class="counts"');
   });
 
-  test("an issue row carries its comment count with the message glyph", async () => {
+  test("an issue's comments are on the issue; its row in the one list is its word", async () => {
     const repo = getRepo(app.db, "alice", "beacon")!;
     await fetch(`${base}/alice/beacon/issues/1/comments`, {
       method: "POST",
@@ -443,16 +444,19 @@ describe("the code browser on the web", () => {
     });
     expect(repo).toBeDefined();
     const html = await text("/alice/beacon/issues", alice);
-    expect(html).toContain('class="count"');
-    expect(html).toContain("1 comments");
+    expect(html).toContain('href="/alice/beacon/tells/1"');
+    expect(html).toContain("data-word=");
+    expect(await text("/alice/beacon/issues/1", alice)).toContain(
+      "still flickering",
+    );
   });
 
   // ---- search ----
 
   test("the search page renders repositories, conversations and code", async () => {
     const html = await text("/search?q=lamp", alice);
-    expect(html).toContain("Repositories");
-    expect(html).toContain("Issues and pull requests");
+    expect(html).toContain("Apps and repositories");
+    expect(html).toContain("Tells and changes");
     expect(html).toContain(">Code");
     // A code hit says where it is and shows the line with the query marked.
     expect(html).toContain("src/lamp.ts");

@@ -93,6 +93,16 @@ Rules:
   and descriptions.
 - **Truncation is honest**: one line, ellipsis, and a `title` with the whole
   string. Never a fade-out mask — masks lie about whether there is more.
+- **A token count is shown where a byte size is shown, never as a badge on
+  its own.** Tokens are a unit, like KB: they sit beside a file's size, a
+  directory's total, a run's cost or a window's dollars and percentage, so
+  the context intuition grows next to the storage and money ones. One
+  formatter (`kernel/tokens-format.ts`, rendered by `tokenCount()` /
+  `sizeWithTokens()` in `web/ui.ts`) writes them all: `850 tok`, `1.2k tok`,
+  `48k tok`, `1.1M tok`. A count the provider reported is bare; an estimate
+  (bytes ÷ a stated bytes-per-token ratio for prose, code or data) carries a
+  `~`, and every count's `title` says which tokenizer and whether it is an
+  estimate. A binary file has no token count — no number beats a wrong one.
 
 ---
 
@@ -136,6 +146,7 @@ specification.
 | **badge** `badge()` / `stateBadge()`          | `.badge`                                                                                               | `variant=secondary\|outline\|success\|danger\|merged\|attn`; `data-state=open\|closed`, `data-pr=merged`                                 | —                                                                                                                                                                                                                                                  | a bracketed word in the state color                                   |
 | **label chip** `labelChip()`                  | `.label`                                                                                               | color via `--label` (see §7)                                                                                                             | —                                                                                                                                                                                                                                                  | a colored `‹name›`                                                    |
 | **author** `userLink()` / `userTag()`         | `.byline` (`.byline-name`)                                                                             | —                                                                                                                                        | `userTag` inside anything already a link — see below                                                                                                                                                                                               | `@name` in the avatar hue                                             |
+| **name mark** `nameMark()`                    | `.name-mark[data-mark]`                                                                                | `owner` / `crew`, from the account                                                                                                       | never typed: escaped names cannot make it                                                                                                                                                                                                          | beside the name, after the link                                       |
 | **avatar** `avatar()`                         | `.avatar`                                                                                              | `size=md\|lg`, `data-h=0..11`                                                                                                            | initials, deterministic hue                                                                                                                                                                                                                        | two initial letters in the same hue                                   |
 | **count**                                     | `.count`                                                                                               | —                                                                                                                                        | glyph plus a tabular number                                                                                                                                                                                                                        | `⌸ 3`                                                                 |
 | **stat pill** `pill()`                        | `.pill`                                                                                                | `data-tone=accent\|danger`                                                                                                               | tabular                                                                                                                                                                                                                                            | a parenthesised count                                                 |
@@ -186,8 +197,8 @@ specification.
 | **propose card**                              | `fieldset.editor-target.propose` (`.propose-line`)                                                     | —                                                                                                                                        | replaces "Where this lands" when the change is a contribution: the whole outcome in one sentence with **both** repository names, then branch, pull title and pull body. There is no "commit directly" radio, because there is no such option       | the same sentence above the commit prompt                             |
 | **run state badge** `runStateBadge()`         | `.badge`                                                                                               | `queued` · `running` (attn) · `ok` (success: _Passed_, or _Done_ for an agent run) · `failed` (danger) · `cancelled` (outline)           | the one badge a check wears on a pull, a run wears in a list, and a log page wears in its head; the log page's script repaints it on `done`                                                                                                        | `[✓ passed]` / `[✗ failed]` / `[· running]`                           |
 | **env state badge** `envStateBadge()`         | `.badge`                                                                                               | `stopped` (outline) · `deploying` (attn) · `running` (success) · `failed` (danger)                                                       | what production, or a preview, is doing now; `envTone()` is the same answer as a `dot()` for a list row                                                                                                                                            | the same word in the same tone after the environment's name           |
-| **app strip**                                 | `.app-strip`                                                                                           | —                                                                                                                                        | one line under the repo header of a repository that runs: env state badge, `sha`, the production URL as a link **through `…/app/production/open`** (never the bare hostname — a private app would 404), the preview count, App                     | one line under the where strip: `● running abc1234 · hello.localhost` |
-| **environment card**                          | `.card.env-card` (`.env-facts`, `.env-error`)                                                          | `data-tone=danger` when failed                                                                                                           | name and state in the head; `envFacts()` in the body — commit, how fast it came up, uptime, a link to the deploy run, and the deployment's own note and error, each on its own line; Open plus `envActions()` (Redeploy / Stop, writers only) in the foot. The facts and the actions are functions, not markup: a pull's preview card and the studio head render the same ones                                 | a box per environment with the same three lines                       |
+| **app strip**                                 | `.app-strip`                                                                                           | —                                                                                                                                        | one line under the repo header of a repository that runs: env state badge, `sha`, the production URL as a link **through `…/app/production/open`** (never the bare hostname — a private app would 404), the preview count, App (the studio app page)| one line under the where strip: `● running abc1234 · hello.localhost` |
+| **environment card**                          | `.card.env-card` (`.env-facts`, `.env-error`)                                                          | `data-tone=danger` when failed                                                                                                           | name and state in the head; `envFacts()` in the body — commit, how fast it came up, uptime, a link to the deploy run, and the deployment's own note and error, each on its own line; Open (or Wake it) below. It is a pull's preview card; the facts and `envActions()` (Redeploy / Stop, writers only) are functions, not markup, so the studio head and its preview rows render the same ones                                 | a box per environment with the same three lines                       |
 | **checks line**                               | `.checks-line` (`.ok`, `.bad`, `.now`)                                                                 | —                                                                                                                                        | inside the merge box, in the reviews chip's voice: `✓ Checks passed · deploy abc1234 · a passing deploy is required`. Rendered only where the repository runs as an app or requires checks; a merge box gains _Waiting on checks_                  | the same line under the review line                                   |
 | **run log**                                   | `pre.run-log`                                                                                          | `data-stream` while the run is going                                                                                                     | the log as written, wrapped so a phone never scrolls sideways; a script tails the SSE stream and follows the bottom until the reader scrolls up, a `<meta refresh>` does it without one                                                            | a scrolling pane that follows the tail                                |
 | **assignee card**                             | `.card` with an `.edit-row` form                                                                       | —                                                                                                                                        | who is on it, then one select and one button for a writer. People first, the crew last and marked `(agent)`, because assigning an agent is what starts it working and the choice is not the same kind of choice                                    | a picker with people, then agents                                     |
@@ -200,6 +211,13 @@ and honest about what it is).
 
 Three rules the browser enforces whether or not you meant them:
 
+- **A name says who it is, and nobody types that.** Beside the owner's name
+  and each agent's, `userLink()` wears a `nameMark()` — `owner`, `crew` —
+  drawn from the account (`core/marks.ts`: an admin who is a person; an
+  agent), never from a display name. Every name is escaped, so no typed word,
+  alphabet or emoji produces the `data-mark` element; a byline without one is
+  nobody the mark vouches for. A page asks `marksByName()` once for the names
+  it will show. `test/name-marks.test.ts` tries the disguises.
 - **A link inside a link is not a link.** `<a>` nested in `<a>` is not merely
   invalid — the parser closes the outer anchor and re-parents everything after
   it as a _sibling_, so the row visibly falls apart. Anything rendered inside a
@@ -317,9 +335,11 @@ grant for a private app — so the same link works for a public app and a
 private one and a stranger gets `not_found` from the forge rather than a
 guess at a hostname.
 
-**Redeploy / Stop** — two POSTs on the app page, writers only, one row per
-environment; a stop keeps the data (a redeploy brings it back), a stopped
-environment shows the honest word and the run that stopped it.
+**Redeploy / Stop** — two POSTs on the studio app page (`studio/app.ts`;
+dev's old `/:owner/:name/app` redirects there), writers only: production's
+in the head card, each preview's on its row; a stop keeps the data (a
+redeploy brings it back), a stopped environment shows the honest word and
+the run that stopped it.
 
 **Assign** — the assignee card on an issue and a pull: nobody, then people
 who can read the repository, then the crew marked as agents. Assigning an
@@ -496,12 +516,7 @@ JavaScript at all it is a `<textarea>` in a `<form>`, which is what it was
 before any of this. The Preview tab is offered on Markdown only, and renders
 through the same `/preview` fragment the server will use for the file.
 
-**Terminal keys and glyphs for origins.** Account → `o` opens Origins; there
-`c` connects, `s` syncs now, `r` browses the origin's repositories and `D`
-disconnects. In the picker `enter` **browses** the row — live, read-only,
-nothing downloaded — and `m` mirrors it into the workbench; a second `m` on a
-running mirror joins the job rather than starting a second one. On a repo's
-home `y` syncs the mirror and `P` pins it — `p` has meant _pulls_ on that
+**Origins are web-only.** Connecting, syncing and browsing an origin live on the web pages (`/origins`) and in migrate; the terminal has no origins screen. On a mirrored repo's home `y` syncs the mirror and `P` pins it — `p` has meant _pulls_ on that
 screen since before pins existed, so the toggle takes the shifted key there
 and the plain `p` everywhere a repo is a _row_ (the dashboard, explore).
 
@@ -599,8 +614,8 @@ Four rules hold the gestures together:
 Clickable today: every list row, the dashboard's four panes, the workspace's
 explorer rows and tab chips (including the active tab's `✗`), the file pane
 (focus, and the wheel), the where-strip's three places, the palette's results,
-the appearance picker's rows, the owner, refs, settings, account and origins
-lists, the origin picker's rows, the pull's diff-and-threads pane, and **every
+the appearance picker's rows, the owner, refs, settings, account
+lists, the pull's diff-and-threads pane, and **every
 hint in the help bar** — clicking a hint presses the key it names, taken from
 the binding itself so a label can never drift from the action. A list with no
 `hitList` is a bug, not a design decision: "everything you can see is
@@ -608,10 +623,9 @@ something you can click" is the whole claim.
 
 ### 6·0a. The dashboard's panes
 
-`Apps` (only when there are any; `a` opens the apps screen regardless),
 `Repositories`, `Recent activity`, `On you`, `On your machine`,
-`Organizations`. Each is
-a pane with its own cursor: `tab` / `shift+tab` cycles, the focused one wears
+`Organizations`. What is running is the studio's question, on the web; the
+terminal's dashboard is the code and the conversations. Each is a pane with its own cursor: `tab` / `shift+tab` cycles, the focused one wears
 the accent frame, `j`/`k` move inside it and `enter` opens what it is pointing
 at — an activity row opens **the issue, pull or repository it is about**, a
 pin opens its repository, an organization opens its page. `d` on a pinned row
@@ -1055,50 +1069,35 @@ there is no lifecycle to get wrong. A burst is coalesced into one refresh.
 
 ---
 
-### 6g. Apps, runs and the crew
+### 6g. Apps, runs and the crew, where the terminal still shows them
 
-The terminal's half of §5c. `:apps`, `:new app`, `:runs` and `:app` (on a
-repository) and `:crew` (admins) reach everything from the palette.
+The terminal's half of §5c is deliberately small: running an app and
+managing the crew are the studio's (`docs/STUDIO.md`), and the terminal has
+no apps, app, runs, run or crew screen and no palette entry for one. What
+remains is where the work is reviewed:
 
-- **Apps** — every app you can see: a state dot and word, the production URL,
-  the preview count. `enter` opens the app; `n` is New app as a flow of
-  prompts (name, a sentence, visibility, an agent when any exist) that lands on
-  the repository with a toast naming the URL and the agent.
-- **App** — environments production-first, then previews by pull number, each
-  with state, commit, since, and on failure the error in words. `o` opens the
-  environment through `openEnvUrl` (an OSC 8 link plus an OSC 52 copy, with the
-  honest toast over SSH); `enter` opens its run's log; `r` redeploys, `s` stops
-  behind a confirm; `l` lists the runs. Live on the repository's `run.*` and
-  `app.*` events.
-- **Runs** and **Run** — the list names each run's conversation (`#n title`)
-  through one grouped read; the run screen subscribes to the log before it
-  reads it (both synchronous, so no line is missed or doubled), follows the
-  tail until you scroll, `G` re-follows, `x` cancels for writers.
 - **Pull** — a preview line when the repository is an app (`O` opens it,
   `P` opens production beside it: comparing the two is the review), a
   checks row in the merge box and a _waiting on checks_ state with the refusal
   in words on `m`, `a` to assign (nobody, people, then the crew with the bot
   glyph on a Nerd Font), and a Crew tab of the agent runs about it.
-- **Dashboard** — `o` on the Apps pane opens the app under the cursor in a
-  browser, through the same grant a private app needs; `t` opens its
-  terminal right here.
-- **`t` anywhere an app is** (the dashboard's Apps pane, the apps list, an
-  environment on the app screen, `T` for a pull's preview) suspends the UI
-  and runs the app's `tty` on the same pty — one connection, two programs in
-  turn, exactly as `$FORGE_EDITOR` runs — and the UI returns when it exits.
-  Every refusal (not running, no `tty`, private to a guest) is a toast in
-  the same words the ssh front door uses.
+- **`T` on a pull's preview** suspends the UI and runs the app's `tty` on
+  the same pty — one connection, two programs in turn, exactly as
+  `$FORGE_EDITOR` runs — and the UI returns when it exits. Every refusal
+  (not running, no `tty`, private to a guest) is a toast in the same words
+  the ssh front door uses.
 - **Issue** — `a` to assign; a Crew card when an agent has runs, `tab` moves
-  focus to it and `enter` opens the run.
+  focus to it.
+- **A run** is a row (`screens/runlist.ts`): state dot and word, who, why,
+  the summary. `enter` on one hands over its web page,
+  `/:owner/:name/runs/:id`, where the live log, cancel and steer are — as a
+  link when the forge knows its public URL, as the path otherwise.
 - **Settings** — the App tab (enable with slug, access and preview data; edit;
   `D` to stop running as an app behind a confirm), `C` for require checks on
   General, the Crew tab (`a` adds an agent from the forge's, `d` removes).
-- **Crew** (admins, from Account with `c`) — the roster with model and budget,
-  and the first line says whether Claude Code can run at all. `n` creates
-  through five prompts, `enter` edits a field, `d` retires behind a confirm.
 
-A guest, or a non-admin at the crew screen, is told so in words; nothing here
-is a way around the actions' answers.
+A guest is told so in words; nothing here is a way around the actions'
+answers.
 
 ## 7. Two rules that are security boundaries
 
@@ -1142,3 +1141,5 @@ deletes a repository.
 9. Nothing inside a linked row is itself a link.
 10. Any control that only works with a script carries `js-only`, so a page
     without JavaScript never shows a dead button.
+11. Every token count sits beside a byte size, a cost or a percentage, and
+    goes through `tokenCount()` — never a hand-written `k`.

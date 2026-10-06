@@ -108,6 +108,8 @@ export async function merge(
     strategy: MergeStrategy;
     message: string;
     author: MergeIdentity;
+    /** Who commits it, when that is not the author. */
+    committer?: MergeIdentity;
   },
 ): Promise<Result<MergeResult, MergeError>> {
   if (
@@ -130,8 +132,8 @@ export async function merge(
   const env = {
     GIT_AUTHOR_NAME: input.author.name,
     GIT_AUTHOR_EMAIL: input.author.email,
-    GIT_COMMITTER_NAME: input.author.name,
-    GIT_COMMITTER_EMAIL: input.author.email,
+    GIT_COMMITTER_NAME: (input.committer ?? input.author).name,
+    GIT_COMMITTER_EMAIL: (input.committer ?? input.author).email,
   };
   const commit = await runGit(
     ["commit-tree", tree.value.treeOid, ...parents, "-m", input.message],

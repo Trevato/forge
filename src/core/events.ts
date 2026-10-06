@@ -7,7 +7,7 @@
 
 import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
-import { createLog } from "../kernel/log.ts";
+import { anyHeld, createLog, redactValues } from "../kernel/log.ts";
 import { repoVisible } from "./visibility.ts";
 
 const log = createLog("events");
@@ -22,6 +22,22 @@ export interface ForgeEvent {
 }
 
 export type EventListener = (event: ForgeEvent) => void;
+
+/** A payload with every granted secret value taken out of its strings. */
+function scrubPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  if (!anyHeld()) return payload;
+  const walk = (v: unknown): unknown =>
+    typeof v === "string"
+      ? redactValues(v)
+      : Array.isArray(v)
+        ? v.map(walk)
+        : v !== null && typeof v === "object"
+          ? Object.fromEntries(
+              Object.entries(v).map(([k, x]) => [k, walk(x)]),
+            )
+          : v;
+  return walk(payload) as Record<string, unknown>;
+}
 
 export class EventBus {
   private listeners = new Set<EventListener>();
@@ -40,7 +56,7 @@ export class EventBus {
       kind: input.kind,
       repoId: input.repoId ?? null,
       actorId: input.actorId ?? null,
-      payload: input.payload ?? {},
+      payload: scrubPayload(input.payload ?? {}),
       createdAt: new Date().toISOString(),
     };
     this.db
@@ -76,11 +92,29 @@ export class EventBus {
   }
 }
 
+/**
+ * Events after the one named `?n`, in the order they were written.
+ *
+ * An event's id is its name; its place is its `seq`, which every insert
+ * takes from a trigger (migration 69), strictly increasing across every
+ * connection and untouched by VACUUM.
+ * Ids are made in order only within one process: during a roll two write
+ * to one database (#875), and an event the other writes in the same
+ * millisecond may carry the smaller id. A replay that resumed by id would
+ * skip it; resumed by sequence, it misses nothing (#932). A cursor nobody
+ * holds (an event pruned, or a guess) falls back to comparing ids. An
+ * event a migration writes in SQL takes its `seq` from the same trigger.
+ */
+const afterEvent = (n: number): string =>
+  `(CASE WHEN EXISTS (SELECT 1 FROM event AS c WHERE c.id = ?${n})
+      THEN event.seq > (SELECT c.seq FROM event AS c WHERE c.id = ?${n})
+      ELSE event.id > ?${n} END)`;
+
 export interface ListEventsOptions {
   repoId?: string;
   /** Restrict to events of this kind. */
   kind?: string;
-  /** Return events with id greater than this (exclusive). */
+  /** Return events written after this one (exclusive; `afterEvent`). */
   afterId?: string;
   /** @default 100 */
   limit?: number;
@@ -110,13 +144,13 @@ export function listEventsVisibleTo(
   let where = `event.repo_id IS NOT NULL AND ${repoVisible(viewer !== undefined)}`;
   if (options.afterId !== undefined) {
     params.push(options.afterId);
-    where += ` AND event.id > ?${params.length}`;
+    where += ` AND ${afterEvent(params.length)}`;
   }
   params.push(options.limit ?? 100);
   return db
     .query<EventRow, (string | number)[]>(
       `SELECT event.* FROM event JOIN repo ON repo.id = event.repo_id
-       WHERE ${where} ORDER BY event.id DESC LIMIT ?${params.length}`,
+       WHERE ${where} ORDER BY event.seq DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toEvent);
@@ -140,6 +174,14 @@ const toEvent = (r: EventRow): ForgeEvent => ({
   createdAt: r.created_at,
 });
 
+/** One event by id, or undefined. No access check: the caller owes one. */
+export function getEvent(db: Database, eventId: string): ForgeEvent | undefined {
+  const row = db
+    .query<EventRow, [string]>("SELECT * FROM event WHERE id = ?1")
+    .get(eventId);
+  return row ? toEvent(row) : undefined;
+}
+
 export function listEvents(
   db: Database,
   options: ListEventsOptions = {},
@@ -156,13 +198,13 @@ export function listEvents(
   }
   if (options.afterId !== undefined) {
     params.push(options.afterId);
-    clauses.push(`id > ?${params.length}`);
+    clauses.push(afterEvent(params.length));
   }
   params.push(options.limit ?? 100);
   const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
   return db
     .query<EventRow, (string | number)[]>(
-      `SELECT * FROM event ${where} ORDER BY id DESC LIMIT ?${params.length}`,
+      `SELECT * FROM event ${where} ORDER BY event.seq DESC LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toEvent);

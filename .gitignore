@@ -9,3 +9,13 @@ dist/
 
 # a TypeSafe API key, kept beside the forge, never in it
 typesafe-api-key
+
+# databases live under FORGE_APP_DATA or data/, never in the tree (#558)
+/*.db
+/*.db-wal
+/*.db-shm
+# a forge whose data directory was the checkout leaves these; boot now
+# refuses that, and the gate refuses a tracked key or database (#622)
+/forge.db*
+/ssh/
+/*.sock

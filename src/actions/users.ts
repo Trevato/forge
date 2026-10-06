@@ -3,6 +3,7 @@
  * an account authenticates with over the SSH listener.
  */
 
+import { emailChanged, welcome } from "./verify.ts";
 import type { App } from "../app.ts";
 import {
   addKey,
@@ -10,6 +11,7 @@ import {
   parseAuthorizedKey,
   type UserKey,
 } from "../core/keys.ts";
+import { reservedName } from "../core/reserved.ts";
 import { setUserSetting } from "../core/settings.ts";
 import {
   createToken as mintToken,
@@ -18,6 +20,7 @@ import {
 } from "../core/tokens.ts";
 import {
   changePassword as rehash,
+  cleanDisplayName,
   createUser,
   updateProfile as writeProfile,
   verifyPassword,
@@ -35,14 +38,32 @@ export interface SignUpInput {
   password: string;
 }
 
-/** The first account on a fresh forge is the admin — no setup wizard. */
+export type SignUpError = CreateUserError;
+
+/**
+ * The first account on a fresh forge is the admin — no setup wizard. A name
+ * the crew, the owner or the forge itself answers to is not free
+ * (`core/reserved.ts`).
+ */
 export async function signUp(
   app: App,
   input: SignUpInput,
-): Promise<Result<User, CreateUserError>> {
+  /** Where the request came from, for the owner's audit of who joined. */
+  from: { address?: string | undefined } = {},
+): Promise<Result<User, SignUpError>> {
   const created = await createUser(app.db, { ...input, adminIfFirst: true });
   if (!created.ok) return created;
-  app.bus.append({ kind: "user.created", actorId: created.value.id });
+  app.bus.append({
+    kind: "user.created",
+    actorId: created.value.id,
+    payload: {
+      via: "signup",
+      ...(from.address === undefined ? {} : { address: from.address }),
+    },
+  });
+  // The address is proven by the link it is sent (the first account by
+  // being first); until then nothing it does may create or cost.
+  await welcome(app, created.value);
   return created;
 }
 
@@ -89,12 +110,36 @@ export function updateProfile(
   app: App,
   actor: User | undefined,
   patch: ProfilePatch,
-): Result<User, "unauthorized" | UpdateProfileError> {
+): Result<
+  User,
+  | "unauthorized"
+  | "display_name_reserved"
+  | "display_name_mixed_script"
+  | UpdateProfileError
+> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  // A display name is read beside every comment: nobody else may wear the
+  // crew's, the owner's or the forge's.
+  // Judged as it will be stored (\`cleanDisplayName\`), not as it was typed.
+  const displayName =
+    patch.displayName === undefined
+      ? undefined
+      : cleanDisplayName(patch.displayName);
+  const reserved =
+    displayName !== undefined && displayName !== user.value.displayName
+      ? reservedName(app.db, displayName, user.value.id, "display")
+      : undefined;
+  // A mix of alphabets is refused for what it is, not as someone's name.
+  if (reserved === "mixed") return err("display_name_mixed_script");
+  if (reserved !== undefined) return err("display_name_reserved");
   const updated = writeProfile(app.db, user.value.id, patch);
   if (!updated.ok) return updated;
-  const fields = (["displayName", "email"] as const).filter(
+  // A new address is unproven at once; its link follows (and can be asked
+  // for again), so a send that fails never leaves the old proof standing.
+  if (updated.value.email.toLowerCase() !== user.value.email.toLowerCase())
+    void emailChanged(app, updated.value);
+  const fields = (["displayName", "email", "commitEmail"] as const).filter(
     (k) => patch[k] !== undefined,
   );
   app.bus.append({

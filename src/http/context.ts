@@ -8,7 +8,6 @@ import type { TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
 import type { ThemeName } from "../design/themes.ts";
 import type { Log } from "../kernel/log.ts";
-import type { Mode } from "../web/mode.ts";
 
 export interface Auth {
   readonly user: User | undefined;
@@ -17,6 +16,8 @@ export interface Auth {
   readonly scope: TokenScope | undefined;
   /** `edge`: the platform in front of the forge signed this person in. */
   readonly via: "session" | "edge" | "token" | "password" | "none";
+  /** Which signed-in browser asked, when `via` is `session`. */
+  readonly sessionId?: string;
 }
 
 export interface Ctx {
@@ -27,8 +28,6 @@ export interface Ctx {
   auth: Auth;
   /** Persisted theme choice from the forge_theme cookie; absent = system. */
   theme: ThemeName | undefined;
-  /** Studio or dev, from the forge_mode cookie; studio when unset. */
-  mode: Mode;
 }
 
 export type Handler = (ctx: Ctx) => Response | Promise<Response>;

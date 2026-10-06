@@ -41,6 +41,7 @@ import {
   userLink,
 } from "../ui.ts";
 import { accountSections } from "./origins.ts";
+import { markOf } from "../../core/marks.ts";
 
 /** The admin, or the response that turns everyone else away. */
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -93,7 +94,15 @@ export function crewReadiness(ctx: Ctx): Html {
     </p>`;
   return html`<p class="muted small mb">
     ${icon("check")} ${crew.detail} is ready to run the crew.
-  </p>`;
+  </p>
+  ${when(
+    !crew.sandbox.enforced,
+    () => html`<p class="error-note mb" id="crew-unsandboxed">
+      ${icon("alert")} Unsandboxed: agents' shells run unrestricted here
+      (${crew.sandbox.reason}). They can read this forge's data and reach any
+      host.
+    </p>`,
+  )}`;
 }
 
 // ---- the form ----
@@ -314,6 +323,7 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
                       ${icon("bot")}
                       ${userLink(agent.user.username, {
                         avatar: false,
+                        mark: markOf(agent.user),
                       })}
                       ${when(
                         agent.user.displayName !== agent.user.username,

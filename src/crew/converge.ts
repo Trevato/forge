@@ -14,6 +14,7 @@
  * Nothing here ever moves the fork's default branch by itself.
  */
 
+import { mayDirectCrew } from "./direct.ts";
 import type { App } from "../app.ts";
 import { openIssue } from "../actions/issues.ts";
 import { listCrewRoles, type Agent } from "../core/agents.ts";
@@ -27,9 +28,11 @@ import { listIssues, setAssignee, type Issue } from "../core/issues.ts";
 import { closesFromBody, listPulls, type Pull } from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { activeRunFor, listRuns } from "../core/runs.ts";
+import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
 import { parkedCount } from "./autonomy.ts";
+import { PARK_STRIKES } from "./parks.ts";
 import { queueAgentRun } from "./dispatch.ts";
 import { pickBuilder } from "./route.ts";
 
@@ -53,6 +56,8 @@ export type Converge =
   | { kind: "nothing"; relation: ForkRelation | undefined }
   | { kind: "no_crew" }
   | { kind: "nobody" }
+  /** The person asking may not direct the crew here (`direct.ts`). */
+  | { kind: "forbidden" }
   | { kind: "ceiling" };
 
 /** The fork's open converge issue, if the parent's updates are in hand. */
@@ -62,7 +67,7 @@ export function convergeIssue(
   parent: Repo,
 ): Issue | undefined {
   const title = convergeTitle(parent);
-  return listIssues(app.db, fork.id, { state: "open", limit: 200 }).find(
+  return listIssues(app.db, fork.id, { sealed: true, state: "open", limit: 200 }).find(
     (i) => i.title === title,
   );
 }
@@ -73,7 +78,7 @@ export function proposalFor(
   fork: Repo,
   issue: Issue,
 ): Pull | undefined {
-  return listPulls(app.db, fork.id, { state: "open", limit: 100 }).find(
+  return listPulls(app.db, fork.id, { sealed: true, state: "open", limit: 100 }).find(
     (p) =>
       closesFromBody(p.body).includes(issue.number) ||
       new RegExp(`^[^/]+/${issue.number}(-|$)`).test(p.headBranch),
@@ -97,7 +102,7 @@ export function convergeState(
     )?.agent;
     return { kind: "working", issue, agent };
   }
-  if (parkedCount(app, issue.id) >= 2) return { kind: "parked", issue };
+  if (parkedCount(app, fork, issue.id) >= PARK_STRIKES) return { kind: "parked", issue };
   return { kind: "working", issue, agent: undefined };
 }
 
@@ -126,6 +131,10 @@ export async function convergeFork(
   parent: Repo,
   actor: User | undefined,
 ): Promise<Converge> {
+  // Asked by someone, it is their run to start; asked by nobody, it is the
+  // fork's own autonomy, which its owner turned on.
+  if (actor !== undefined && !mayDirectCrew(app.db, fork, actor))
+    return { kind: "forbidden" };
   const relation = await forkRelation(app, fork, parent);
   if (relation === undefined || relation.state !== "diverged" || relation.clean)
     return { kind: "nothing", relation };
@@ -220,8 +229,7 @@ async function diverged(app: App, fork: Repo, parent: Repo): Promise<void> {
     if (by === undefined) return;
     const took = await takeUpdates(app, fork, parent, {
       id: by.id,
-      name: by.displayName || by.username,
-      email: by.email,
+      ...commitIdentity(app.config, by),
     });
     log.info(took.ok ? "took the parent's updates" : "could not take updates", {
       fork: `${fork.ownerName}/${fork.name}`,

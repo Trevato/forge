@@ -20,11 +20,13 @@
  * lane each, at one scale, so a column means the same thing in every lane.
  */
 
+import { mayViewId, sealedScope } from "../../core/sealed.ts";
 import type { Database } from "bun:sqlite";
 import type { App } from "../../app.ts";
 import {
   blockedOn,
   criticalPath,
+  idleFurniture,
   levelAndFlow,
   readyNow,
   repoGraph,
@@ -34,8 +36,12 @@ import {
   type Ranked,
 } from "../../core/dependencies.ts";
 import type { Issue } from "../../core/issues.ts";
-import { openPullsClosing } from "../../core/pulls.ts";
-import { listReposVisibleTo, type Repo } from "../../core/repos.ts";
+import { holdsFor } from "../../core/holds.ts";
+import {
+  getRepoById,
+  listReposVisibleTo,
+  type Repo,
+} from "../../core/repos.ts";
 import { listActiveRuns, type Run, type RunState } from "../../core/runs.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -54,7 +60,27 @@ import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { avatar, hueOf, icon } from "../ui.ts";
 import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
+import {
+  parkedTwice,
+  struckOut,
+  type ParkedTwice,
+} from "../../crew/parks.ts";
+import {
+  OUTSIDERS_NOTE,
+  proposedWork,
+  READER_SUGGESTION,
+} from "../../crew/direct.ts";
 import { studioRecord, tellHref } from "../studio/nouns.ts";
+import { milestoneHref } from "./milestones.ts";
+import {
+  isStructural,
+  LATER,
+  NO_PILLAR,
+  PILLAR_DAYS,
+  PLAN_OWN,
+  pillarView,
+  type PillarView,
+} from "../../core/pillars.ts";
 
 /** Where a card's own link goes: dev's issue page, by default. */
 const devIssueHref = (base: string, number: number): string =>
@@ -396,16 +422,20 @@ export type Word =
   | "ready"
   | "working"
   | "blocked"
+  | "deferred"
   | "done"
   | "parked"
-  | "waiting";
+  | "waiting"
+  | "held";
 
 const WORDS: readonly Word[] = [
   "ready",
   "working",
   "blocked",
   "waiting",
+  "held",
   "parked",
+  "deferred",
   "done",
 ];
 
@@ -415,8 +445,19 @@ export interface Marks {
   readonly crew: Map<string, RunState>;
   /** Open issues an open pull would close: proposed, not landed. */
   readonly waiting: Set<string>;
-  /** Issues whose last word is the crew parking them. */
+  /** Of those, the ones whose pull a person holds, by issue id: "alice: second review under way". */
+  readonly onHold: Map<string, string>;
+  /** Issues whose last word is the crew parking them, or whose blocker closed unfinished. */
   readonly parked: Set<string>;
+  /** Why an issue is parked on a closed blocker, by issue id: "#4 was dropped". */
+  readonly why: Map<string, string>;
+  /**
+   * Work that is deferred, by issue id, with why: "behind the Later gate",
+   * or "only deferred work needs it: #12 One interface" (`core/dependencies.ts`).
+   */
+  readonly deferred: ReadonlyMap<string, string>;
+  /** The issues the crew parked twice: the planner's now, with every reason. */
+  readonly twice: readonly ParkedTwice[];
 }
 
 /**
@@ -432,27 +473,6 @@ export function crewMarks(runs: readonly Run[]): Map<string, RunState> {
   return marks;
 }
 
-/** Issues whose latest comment is the crew parking them. */
-function parkedIds(db: Database, issueIds: readonly string[]): Set<string> {
-  const out = new Set<string>();
-  const CHUNK = 400;
-  for (let i = 0; i < issueIds.length; i += CHUNK) {
-    const batch = issueIds.slice(i, i + CHUNK);
-    const marks = batch.map((_, n) => `?${n + 1}`).join(",");
-    const rows = db
-      .query<{ id: string }, string[]>(
-        `SELECT c.issue_id AS id FROM comment c
-           JOIN (SELECT issue_id, MAX(created_at) AS at FROM comment
-                 WHERE issue_id IN (${marks}) GROUP BY issue_id) last
-             ON last.issue_id = c.issue_id AND last.at = c.created_at
-         WHERE c.body LIKE 'Parked by the crew%'`,
-      )
-      .all(...batch);
-    for (const row of rows) out.add(row.id);
-  }
-  return out;
-}
-
 /** The marks for one repository's graph: three reads, all bounded. */
 export function marksFor(
   db: Database,
@@ -460,32 +480,81 @@ export function marksFor(
   graph: Graph,
   runs: readonly Run[],
 ): Marks {
+  const repo = getRepoById(db, repoId);
+  if (repo === undefined) return NO_MARKS;
   const byNumber = new Map(graph.issues.map((i) => [i.number, i.id]));
   const waiting = new Set<string>();
-  for (const number of openPullsClosing(db, repoId).keys()) {
+  const onHold = new Map<string, string>();
+  const closing = proposedWork(db, repo);
+  const holds = holdsFor(
+    db,
+    [...closing.values()].map((pull) => pull.id),
+  );
+  for (const [number, pull] of closing) {
     const id = byNumber.get(number);
-    if (id !== undefined) waiting.add(id);
+    if (id === undefined) continue;
+    waiting.add(id);
+    const hold = holds.get(pull.id);
+    if (hold !== undefined) onHold.set(id, `${hold.heldByName}: ${hold.why}`);
   }
   const open = graph.issues.filter((i) => i.state === "open").map((i) => i.id);
-  return { crew: crewMarks(runs), waiting, parked: parkedIds(db, open) };
+  const parked = struckOut(db, repo, open);
+  const why = new Map<string, string>();
+  const numbers = new Map(graph.issues.map((i) => [i.id, i.number]));
+  for (const id of graph.unadopted) {
+    parked.add(id);
+    why.set(id, READER_SUGGESTION);
+  }
+  // An umbrella or the gate with nothing open in front of it is not ready:
+  // it is a person's to close.
+  for (const issue of idleFurniture(graph)) {
+    parked.add(issue.id);
+    why.set(issue.id, PLAN_OWN);
+  }
+  for (const h of graph.held) {
+    parked.add(h.issueId);
+    const note = `#${numbers.get(h.blockedById)} was ${h.reason === "split" ? "split" : "dropped"}`;
+    const had = why.get(h.issueId);
+    why.set(h.issueId, had === undefined ? note : `${had}; ${note}`);
+  }
+  // The plan's own furniture is not work that was deferred: it keeps its word.
+  const deferred = new Map(
+    [...graph.deferred].filter(([id]) => !graph.structural.has(id)),
+  );
+  return {
+    crew: crewMarks(runs),
+    waiting,
+    onHold,
+    parked,
+    why,
+    deferred,
+    twice: parkedTwice(db, [repo]),
+  };
 }
 
 export const NO_MARKS: Marks = {
   crew: new Map(),
   waiting: new Set(),
+  onHold: new Map(),
   parked: new Set(),
+  why: new Map(),
+  deferred: new Map(),
+  twice: [],
 };
 
 /**
  * The word for an issue, most telling first: done is done; the crew on it
- * outranks a pull for it; a pull outranks having been parked; and what is
- * left is ready or blocked by what the graph says.
+ * outranks a pull for it; a pull a person holds says so rather than that it
+ * waits; a pull outranks having been parked; and what is left is ready or
+ * blocked by what the graph says.
  */
 export function wordFor(issue: Issue, ready: Set<string>, marks: Marks): Word {
   if (issue.state === "closed") return "done";
   if (marks.crew.has(issue.id)) return "working";
+  if (marks.onHold.has(issue.id)) return "held";
   if (marks.waiting.has(issue.id)) return "waiting";
   if (marks.parked.has(issue.id)) return "parked";
+  if (marks.deferred.has(issue.id)) return "deferred";
   return ready.has(issue.id) ? "ready" : "blocked";
 }
 
@@ -613,7 +682,7 @@ function node(
     ${run ? html`data-run="${run}"` : null}
     href="${issueHref(base, n.issue.number)}"
   >
-    <title>${number} ${n.issue.title} — ${word}</title>
+    <title>${number} ${n.issue.title} — ${word}${word === "held" ? ` by ${emphasis.marks.onHold.get(n.issue.id)}` : word === "deferred" ? `: ${emphasis.marks.deferred.get(n.issue.id)}` : emphasis.marks.why.has(n.issue.id) ? `: ${emphasis.marks.why.get(n.issue.id)}` : ""}</title>
     ${word === "working"
       ? html`<rect
           class="map-breath"
@@ -798,7 +867,9 @@ export function countWords(words: readonly Word[]): Record<Word, number> {
     blocked: 0,
     done: 0,
     parked: 0,
+    deferred: 0,
     waiting: 0,
+    held: 0,
   };
   for (const w of words) out[w]++;
   return out;
@@ -838,6 +909,111 @@ function rankedList(
               </li>`,
           )}
         </ol>`}
+  </section>`;
+}
+
+/** One pillar's open work on the map: how much, and how much of it can move. */
+export interface PillarRow {
+  /** The pillar's name; null is the work that names none. */
+  readonly name: string | null;
+  /** The umbrella's number, for a pillar. */
+  readonly umbrella?: number;
+  readonly open: number;
+  readonly ready: number;
+  readonly blocked: number;
+  /** For no pillar: the issues themselves, to be filed. */
+  readonly issues?: readonly Issue[];
+}
+
+/**
+ * The open issues counted by pillar: every pillar in order, then the work
+ * that names none, when there is any. The plan's own furniture — the
+ * umbrellas, the gate, the direction — is not work and is not counted.
+ */
+export function pillarRows(
+  repo: Repo,
+  graph: Graph,
+  ready: Set<string>,
+  marks: Marks,
+  view: PillarView,
+): PillarRow[] {
+  const tally = new Map<
+    string | null,
+    { open: number; ready: number; blocked: number }
+  >(view.names.map((name) => [name, { open: 0, ready: 0, blocked: 0 }]));
+  const umbrella = new Map<string, number>(
+    view.set.pillars.map((p) => [p.name, p.umbrella.number]),
+  );
+  if (view.set.later !== undefined) umbrella.set(LATER, view.set.later.number);
+  const loose: Issue[] = [];
+  for (const issue of graph.issues) {
+    if (issue.state !== "open" || isStructural(view.set, issue.id)) continue;
+    if (issue.id === repo.directionIssueId) continue;
+    const name = view.of.get(issue.id) ?? null;
+    const row = tally.get(name) ?? { open: 0, ready: 0, blocked: 0 };
+    const word = wordFor(issue, ready, marks);
+    row.open++;
+    if (word === "ready") row.ready++;
+    if (word === "blocked") row.blocked++;
+    tally.set(name, row);
+    if (name === null) loose.push(issue);
+  }
+  return [
+    ...view.names.map((name) => ({
+      name,
+      ...(umbrella.has(name) ? { umbrella: umbrella.get(name)! } : {}),
+      ...tally.get(name)!,
+    })),
+    ...(loose.length === 0
+      ? []
+      : [{ name: null, ...tally.get(null)!, issues: loose }]),
+  ];
+}
+
+/** Where a pillar's issues are: the list, narrowed to its label. */
+export const pillarHref = (base: string, name: string): string =>
+  `${base}/issues?label=${encodeURIComponent(name)}`;
+
+/**
+ * The map by pillar: is the crew building what was asked. One row a
+ * pillar — a link to its milestone, where its issues and how far they are
+ * can be read — with what is open, ready and blocked; then the issues that
+ * name no pillar, each a link, since they are the ones to file.
+ */
+function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
+  const base = repoBase(repo);
+  const counts = (r: PillarRow): string =>
+    r.open === 0
+      ? "nothing open"
+      : `${r.open} open · ${r.ready} ready · ${r.blocked} blocked`;
+  return html`<section class="map-list map-pillars" id="map-pillars">
+    <h2>By pillar</h2>
+    <ul>
+      ${rows.map((r) =>
+        r.name === null
+          ? html`<li data-pillar="">
+              <b>${NO_PILLAR}</b>
+              <span class="muted small"
+                >${counts(r)}:
+                ${(r.issues ?? []).slice(0, 8).map(
+                  (i) =>
+                    html`<a href="${base}/issues/${i.number}" title="${i.title}"
+                        >#${i.number}</a
+                      >${" "}`,
+                )}${(r.issues ?? []).length > 8 ? "…" : ""}</span
+              >
+            </li>`
+          : html`<li data-pillar="${r.name}">
+              <a
+                href="${r.umbrella === undefined
+                  ? pillarHref(base, r.name)
+                  : milestoneHref(base, r.umbrella)}"
+                >${r.name}</a
+              >
+              <span class="muted small">${counts(r)}</span>
+            </li>`,
+      )}
+    </ul>
   </section>`;
 }
 
@@ -933,6 +1109,8 @@ export const mapCss = /* css */ `
 .map-title { font-size: 12.5px; font-weight: 560; fill: var(--fg); transition: fill 120ms var(--ease); }
 .map-node:hover .map-title { fill: var(--accent); }
 .map-node[data-state="done"] .map-title, .map-node[data-state="done"] .map-meta, .map-node[data-state="done"] .map-word { fill: var(--faint); }
+.map-node[data-state="deferred"] .map-card { fill: none; stroke-dasharray: 4 3; }
+.map-node[data-state="deferred"] .map-title { fill: var(--muted-fg); }
 .map-node[data-state="blocked"] .map-title { fill: var(--muted-fg); }
 .map-meta { font-size: 11px; fill: var(--faint); font-variant-numeric: tabular-nums; }
 .map-who circle { fill: color-mix(in srgb, hsl(var(--hue, 220) 62% 52%) 22%, var(--card)); stroke: color-mix(in srgb, hsl(var(--hue, 220) 62% 52%) 30%, transparent); }
@@ -946,6 +1124,9 @@ export const mapCss = /* css */ `
 .map-node[data-state="waiting"] .map-dot { fill: var(--merged); }
 .map-node[data-state="parked"] .map-dot { fill: var(--attn); }
 .map-node[data-state="parked"] .map-word { fill: var(--attn); }
+.map-node[data-state="held"] .map-card { stroke: color-mix(in srgb, var(--attn) 45%, var(--border)); }
+.map-node[data-state="held"] .map-dot { fill: var(--attn); }
+.map-node[data-state="held"] .map-word { fill: var(--attn); }
 
 /* ---- edges ---- */
 .map-edge { fill: none; stroke: var(--border-strong); stroke-width: 1.25; }
@@ -962,6 +1143,7 @@ export const mapCss = /* css */ `
 .map-counts i[data-state="working"] { background: var(--accent); }
 .map-counts i[data-state="waiting"] { background: var(--merged); }
 .map-counts i[data-state="parked"] { background: var(--attn); }
+.map-counts i[data-state="held"] { background: var(--attn); }
 .map-counts i[data-state="done"] { background: transparent; border: 1px solid var(--faint); }
 
 /* ---- beside the drawing ---- */
@@ -970,6 +1152,7 @@ export const mapCss = /* css */ `
 .map-list ol li::marker { color: var(--faint); font-variant-numeric: tabular-nums; }
 .map-list li span { display: block; }
 .map-list + .map-list { margin-top: 18px; }
+.map-pillars ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13.5px; }
 .map-chart { width: 100%; height: auto; display: block; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
 .map-level { fill: none; stroke: var(--accent); stroke-width: 1.5; }
 .map-flow { fill: color-mix(in srgb, var(--fg) 14%, transparent); }
@@ -1162,7 +1345,10 @@ export const mapViewJs = /* js */ `
 
 /** One line on how the repository runs itself, when it does. */
 function autonomyLine(ctx: Ctx, repo: Repo): Html | null {
-  if (repo.autonomy === "off") return null;
+  if (repo.autonomy === "off")
+    return repo.crewOutsiders
+      ? html`<p class="small map-autonomy">${OUTSIDERS_NOTE}</p>`
+      : null;
   const s = autonomyStatus(ctx.app, repo);
   const paused =
     s.paused === "ceiling"
@@ -1172,7 +1358,7 @@ function autonomyLine(ctx: Ctx, repo: Repo): Html | null {
         : s.paused === "nobody"
           ? " · paused: nobody to act as"
           : "";
-  const line = `${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"} · $${s.spentTodayUsd.toFixed(2)} of $${s.ceilingUsd.toFixed(0)} today · ${s.active} of ${s.slots} slots${paused}`;
+  const line = `${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"} · $${s.spentTodayUsd.toFixed(2)} of $${s.ceilingUsd.toFixed(0)} today · ${s.active} of ${s.slots} slots${paused} · ${repo.crewOutsiders ? "anyone signed in directs the crew" : "only writers direct the crew"}`;
   return html`<p class="small map-autonomy">
     ${icon("play")} ${line} ·
     <a href="${repoBase(repo)}/settings/autonomy">settings</a>
@@ -1195,7 +1381,9 @@ export function mapPage(ctx: Ctx): Response {
   // same rule every other studio surface follows (`studioRecord`).
   const studio = studioRecord(ctx, repo) !== undefined;
   const issueHref = studio ? tellHref : devIssueHref;
-  const graph = repoGraph(db, repo.id);
+  const graph = repoGraph(db, repo.id, {
+    ...sealedScope(db, repo, ctx.auth.user),
+  });
   const ready = readyNow(graph);
   const blocked = blockedOn(graph);
   const critical = criticalPath(graph);
@@ -1205,12 +1393,14 @@ export function mapPage(ctx: Ctx): Response {
   const counts = countWords(
     graph.issues.map((i) => wordFor(i, readySet, marks)),
   );
+  const pillars = pillarView(db, repo);
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>
       <p class="muted">
         What waits for what. The top edge is ready now; the chain in the accent
         is the least work that still has to happen in order.
+        <a href="${repoBase(repo)}/milestones">How far each milestone is</a>.
       </p>
       ${autonomyLine(ctx, repo)}
     </div>
@@ -1230,6 +1420,9 @@ export function mapPage(ctx: Ctx): Response {
         ${placed.nodes.length === 0 ? null : countsLine(counts)}
       </div>
       <aside>
+        ${pillars === undefined
+          ? null
+          : pillarList(repo, pillarRows(repo, graph, readySet, marks, pillars))}
         ${graph.issues.length === 0
           ? null
           : rankedList(
@@ -1289,6 +1482,7 @@ export function mapJson(
   repo: Repo,
   graph: Graph,
   marks: Marks = NO_MARKS,
+  pillars?: PillarView,
 ): Record<string, unknown> {
   const ready = readyNow(graph);
   const readySet = new Set(ready.map((r) => r.issue.id));
@@ -1298,9 +1492,20 @@ export function mapJson(
     state: i.state,
     assignee: i.assigneeName,
     word: wordFor(i, readySet, marks),
+    ...(pillars === undefined ? {} : { pillar: pillars.of.get(i.id) ?? null }),
+    ...(i.state === "closed" && i.closeReason !== null
+      ? { closeReason: i.closeReason }
+      : {}),
+    ...(marks.why.has(i.id) ? { parkedBecause: marks.why.get(i.id) } : {}),
+    ...(marks.deferred.has(i.id) && i.state === "open"
+      ? { deferredBecause: marks.deferred.get(i.id) }
+      : {}),
+    ...(marks.onHold.has(i.id) ? { heldBy: marks.onHold.get(i.id) } : {}),
   });
   return {
     repo: { owner: repo.ownerName, name: repo.name },
+    // Who the crew takes direction from (`crew/direct.ts`).
+    crewOutsiders: repo.crewOutsiders,
     ready: ready.map((r) => ({
       ...brief(r.issue),
       holdsUp: r.holdsUp,
@@ -1315,12 +1520,34 @@ export function mapJson(
       .filter((i) => marks.crew.has(i.id))
       .map((i) => i.number),
     issues: graph.issues.map(brief),
+    // What the crew gave up on and the planner now holds: never only a word.
+    parkedTwice: marks.twice.map((t) => ({
+      number: t.number,
+      title: t.title,
+      reasons: t.reasons,
+    })),
     counts: countWords(graph.issues.map((i) => wordFor(i, readySet, marks))),
     edges: graph.edges.map((e) => {
       const a = graph.issues.find((i) => i.id === e.issueId);
       const b = graph.issues.find((i) => i.id === e.blockedById);
       return { issue: a?.number, blockedBy: b?.number };
     }),
+    // For a repository with pillars: its open work by pillar (`pillar` null
+    // is the work that names none), and what merged this week by pillar.
+    ...(pillars === undefined
+      ? {}
+      : {
+          pillars: pillarRows(repo, graph, readySet, marks, pillars).map(
+            (r) => ({
+              pillar: r.name,
+              ...(r.umbrella === undefined ? {} : { umbrella: r.umbrella }),
+              open: r.open,
+              ready: r.ready,
+              blocked: r.blocked,
+            }),
+          ),
+          mergedByPillar: { days: PILLAR_DAYS, counts: pillars.merged },
+        }),
   };
 }
 
@@ -1367,9 +1594,12 @@ export function globalLanes(app: App, viewer: User | undefined): Lane[] {
     byRepo.set(run.repoId, [...(byRepo.get(run.repoId) ?? []), run]);
   const lanes: Lane[] = [];
   for (const repo of repos) {
-    const flying = byRepo.get(repo.id) ?? [];
+    // A run on a sealed report is not shown to who may not see the report.
+    const flying = (byRepo.get(repo.id) ?? []).filter((r) =>
+      mayViewId(db, repo, r.issueId, viewer),
+    );
     if ((repo.counts?.openIssues ?? 0) === 0 && flying.length === 0) continue;
-    const graph = repoGraph(db, repo.id);
+    const graph = repoGraph(db, repo.id, sealedScope(db, repo, viewer));
     const marks = marksFor(db, repo.id, graph, flying);
     const ready = readyNow(graph);
     const readySet = new Set(ready.map((r) => r.issue.id));

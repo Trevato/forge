@@ -242,7 +242,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
       concurrency: 1,
     });
 
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -516,9 +516,8 @@ describe("dev's vocabulary never reaches a studio page", () => {
         title: "vocab",
         shows: [`href="#i-pull"/></svg>Changes`],
         hides: [`href="#i-eye"/></svg>Look`, `>Look<`, 'class="where"'],
-        // #281: `?mode=dev` on the same address is unaffected — the where
-        // strip renders exactly as today, dev's own dots and words.
-        dev: ["workbench", "this machine"],
+        // #630: the app page is the home in every mode; its code, with dev's
+        // where strip, is the Files step one tab over.
       },
       {
         word: "tell",
@@ -526,8 +525,8 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // #171: the composer's close button used to say "Close issue" here,
         // dev's own noun on the studio's own page.
         shows: ["Close tell"],
-        dev: ["<h2>Labels</h2>", "Close issue"],
-        devTitle: `${tellTitle} · vocab`,
+        // One issue page (#626): dev's controls are its closed Details.
+        title: `${tellTitle} · vocab`,
       },
       // The studio's own nouns for the same two pages (#158): one handler
       // each, so what is walked here is the very page above under the
@@ -544,17 +543,17 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "working",
         path: `${repoPath}/runs/${runId}`,
         title: `scout on #${tellNumber} ${tellTitle} · vocab`,
-        devTitle: `scout on #${tellNumber} ${tellTitle} · vocab`,
       },
       {
         word: "look",
         path: `${repoPath}/pulls/${openPullNumber}`,
         // #171: the composer's close button used to say "Close pull
         // request" here, dev's own noun on the studio's own page.
-        shows: ["Close change"],
+        // One change page (#628): the diff, the branch and the merge box are
+        // its Files step, which speaks git on purpose, so it is not a row.
+        shows: ["Close change", `${repoPath}/pulls/${openPullNumber}/files`],
         hides: ['class="where"'],
-        dev: ["diff-table", openBranch, "Close pull request", "workbench"],
-        devTitle: `${openPullTitle} · vocab`,
+        title: `${openPullTitle} · vocab`,
       },
       {
         word: "look (the studio's noun)",
@@ -565,7 +564,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
       {
         word: "shipped",
         path: `${repoPath}/pulls/${mergedPullNumber}`,
-        dev: ["diff-table"],
+        shows: ['data-word="shipped"'],
       },
       {
         // #197: the map used to link every card to dev's `/issues/:number`
@@ -600,22 +599,20 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "tells",
         path: `${repoPath}/issues`,
         shows: [untouchedTitle, tellTitle],
-        dev: [`>#${tellNumber} opened`],
-        devTitle: "Issues · vocab",
+        // One list (#627): `?mode=dev` has no other page to show here.
+        title: "Everything told · vocab",
       },
       {
         word: "tells (told)",
         path: `${repoPath}/issues?word=told`,
         shows: [untouchedTitle],
         hides: [tellTitle],
-        dev: [`>#${tellNumber} opened`],
       },
       {
         word: "tells (next page)",
         path: `${repoPath}/issues?cursor=${tellNumber}`,
         shows: [untouchedTitle],
         hides: [tellTitle],
-        dev: [`>#${untouchedNumber} opened`],
       },
       {
         word: "tells (the studio's noun)",
@@ -650,22 +647,19 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "changes",
         path: `${repoPath}/pulls`,
         shows: [openPullTitle, secondChangeTitle],
-        dev: [openBranch],
-        devTitle: "Pull requests · vocab",
+        title: "Every change · vocab",
       },
       {
         word: "changes (look)",
         path: `${repoPath}/pulls?word=look`,
         shows: [openPullTitle],
         hides: [secondChangeTitle],
-        dev: [openBranch],
       },
       {
         word: "changes (next page)",
         path: `${repoPath}/pulls?cursor=${secondChangeNumber}`,
         shows: [openPullTitle],
         hides: [secondChangeTitle],
-        dev: [openBranch],
       },
       {
         word: "runs",
@@ -677,9 +671,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // The stopped run is not open and moving, so the bare list leaves it
         // out — the filter below is where it shows up.
         hides: [`href="${repoPath}/runs/${stoppedRunId}"`],
-        dev: ["Done"],
         title: "Every run · vocab",
-        devTitle: "Runs · vocab",
       },
       {
         word: "runs (stopped)",
@@ -689,7 +681,6 @@ describe("dev's vocabulary never reaches a studio page", () => {
           `href="${repoPath}/runs/${runId}"`,
           `href="${repoPath}/runs/${workingRunId}"`,
         ],
-        dev: ["Done"],
       },
       {
         word: "runs (next page)",
@@ -698,15 +689,11 @@ describe("dev's vocabulary never reaches a studio page", () => {
         path: `${repoPath}/runs?cursor=${workingRunId}`,
         shows: [`href="${repoPath}/runs/${runId}"`],
         hides: [`href="${repoPath}/runs/${workingRunId}"`],
-        dev: ["Done"],
       },
-      {
-        // The studio's own settings: the crew, and how far it may go.
-        word: "crew",
-        path: `${repoPath}/settings`,
-        shows: ["scout"],
-        title: "Settings · vocab",
-      },
+      // Settings (#631) is one page now: the studio's own cards lead it —
+      // the crew, and how far it may go — and the branch, its gates and the
+      // rest sit beneath in git's own words on purpose, so it is not a row
+      // here; studio.test.ts holds its order.
     ];
   });
 
@@ -739,11 +726,9 @@ describe("dev's vocabulary never reaches a studio page", () => {
         html.length,
         `${p.word} (${p.path}) is ${html.length} bytes — a diff would blow through ${MAX_BODY_BYTES}`,
       ).toBeLessThan(MAX_BODY_BYTES);
-      // The studio chrome: the topbar's own tab reads "Studio", never
-      // "Code", the moment the mode and the repository are the studio's —
-      // and it is the only source of the literal word on any of these
-      // pages, so its presence here is the chrome, proven.
-      expect(html).toContain("Studio");
+      // The studio chrome: an app's own first tab reads "Studio", never
+      // "Code" — on every page that carries a repository's header.
+      if (html.includes('class="repo-head"')) expect(html).toContain("Studio");
 
       const title = titleOf(html);
       if (p.title !== undefined)
@@ -831,52 +816,18 @@ describe("dev's vocabulary never reaches a studio page", () => {
     expect(rows.get("alice/vocab — Tell the crew")).toBe(`${repoPath}#tell`);
   });
 
-  test("?mode=dev on the same routes still carries dev's own words — the assertions above are real, not vacuous", async () => {
-    let proved = 0;
+  test("an old ?mode=dev address on any of these routes is the same page without it (#603)", async () => {
     for (const p of pages) {
-      if (p.dev === undefined && p.devTitle === undefined) continue;
       const res = await fetch(`${base}${asDev(p.path)}`, {
         headers: { cookie },
         redirect: "manual",
       });
-      if (res.status === 404) continue;
-      expect(res.status, `${p.word} (${asDev(p.path)}) did not answer`).toBe(
-        200,
-      );
-      // Dev's own words, read where the studio's are read: inside `<main>`,
-      // so the shared client script's own literals can never stand in for a
-      // page that said nothing.
-      const html = await res.text();
-      if (p.devTitle !== undefined)
-        expect(
-          titleOf(html),
-          `${p.word} (${asDev(p.path)}) lost dev's own title`,
-        ).toBe(p.devTitle);
-      const visible = pageContent(html);
-      for (const word of p.dev ?? []) {
-        expect(
-          visible,
-          `${p.word} (${asDev(p.path)}) lost dev's word "${word}" — the studio row for this path proves nothing`,
-        ).toContain(word);
-      }
-      // And it is dev's page, not the studio's: the studio word badge is the
-      // one thing every studio render puts on a row or a header.
-      expect(
-        visible,
-        `${p.word} (${asDev(p.path)}) rendered the studio's own word badge`,
-      ).not.toContain('data-word="');
-      proved += 1;
+      expect(res.status, asDev(p.path)).toBe(303);
+      expect(res.headers.get("location"), asDev(p.path)).toBe(p.path);
     }
-    // Every row that named dev words was actually reached: the 404 skip
-    // above is for a page still being built, never a way for a row to stop
-    // proving itself once it exists.
-    expect(proved).toBe(
-      pages.filter((p) => p.dev !== undefined || p.devTitle !== undefined)
-        .length,
-    );
   });
 
-  test("a repository that is not an app keeps dev's own titles in the studio mode — the same `studioRecord` rule, not a second one (#262)", async () => {
+  test("a repository that is not an app keeps dev's own titles in the studio mode — the same `studioRecord` rule, not a second one (#262); its lists are the one list (#627)", async () => {
     const alice = getUserByName(app.db, "alice")!;
     const plain = await createRepo(app, alice, {
       name: "plain",
@@ -888,7 +839,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
       ["/alice/plain/issues", "Issues · plain"],
       ["/alice/plain/issues/new", "New issue · plain"],
       ["/alice/plain/pulls", "Pull requests · plain"],
-      ["/alice/plain/runs", "Runs · plain"],
+      ["/alice/plain/runs", "Every run · plain"],
     ]);
     for (const [path, title] of titles) {
       const res = await fetch(`${base}${path}`, {
@@ -924,10 +875,11 @@ describe("dev's vocabulary never reaches a studio page", () => {
     expect(((await studio.json()) as { error: string }).error).toBe(
       "A merged change cannot be reopened.",
     );
+    // One forge (#603): an old dev cookie hears the app's own word too.
     const dev = await reopen("dev");
     expect(dev.status).toBe(422);
     expect(((await dev.json()) as { error: string }).error).toBe(
-      "A merged pull request cannot be reopened.",
+      "A merged change cannot be reopened.",
     );
   });
 });

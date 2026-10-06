@@ -8,17 +8,21 @@
  * page that sent them, or JSON when the asks panel asked in place.
  */
 
-import { addComment, setIssueStateThrough } from "../../actions/issues.ts";
-import { tellCrew } from "../../actions/crew.ts";
+import { mayView } from "../../core/sealed.ts";
+import { holdPull, releasePull } from "../../actions/holds.ts";
+import { addComment } from "../../actions/issues.ts";
+import { tell } from "../../actions/tell.ts";
+import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
 import { revertPull, type RevertPullError } from "../../actions/revert.ts";
 import { getPull } from "../../core/pulls.ts";
+import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { bringUpToDate } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
-import { field, readForm } from "../form.ts";
-import { flashOrJson, flashTo, redirect } from "../layout.ts";
-import { isMode, modeCookie } from "../mode.ts";
+import { field, readForm, type Form } from "../form.ts";
+import { flashOrJson, flashTo } from "../layout.ts";
+import { changeHref } from "./nouns.ts";
 
 /** A merge refusal in a person's words. */
 function mergeWords(error: unknown): string {
@@ -31,6 +35,45 @@ function mergeWords(error: unknown): string {
   return String(error);
 }
 
+/**
+ * One tell, two doors: the sentence becomes work on `repo`, and the person
+ * lands back on `back` with the one tell's own answer — refused as the
+ * crew's direction says, or for an unverified email, or told.
+ */
+async function tellFrom(
+  ctx: Ctx,
+  repo: Repo,
+  form: Form,
+  back: string,
+): Promise<Response> {
+  const text = field(form, "text").trim();
+  if (text === "")
+    return flashTo(ctx, back, {
+      tone: "danger",
+      message: "Say something first.",
+    });
+  const told = await tell(ctx.app, ctx.auth.user, repo, text);
+  if (!told.ok)
+    return flashTo(ctx, back, {
+      tone: "danger",
+      message:
+        told.error === "forbidden"
+          ? DIRECTION_NOTE
+          : told.error === "unverified"
+            ? "Verify your email first."
+            : "That could not be told.",
+    });
+  const { routed } = told.value;
+  if (routed === undefined)
+    return flashTo(ctx, back, {
+      message: `Told. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
+    });
+  const builder = routed.builder;
+  return flashTo(ctx, back, {
+    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}. Watch it work below.`,
+  });
+}
+
 /** POST /:owner/:name/tell  { text } — a sentence becomes work. */
 export async function tellSubmit(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
@@ -38,29 +81,25 @@ export async function tellSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const base = repoBase(repo);
-  const text = field(form, "text").trim();
-  if (text === "")
-    return flashTo(ctx, base, {
-      tone: "danger",
-      message: "Say something first.",
-    });
-  const told = await tellCrew(ctx.app, ctx.auth.user, repo, text);
-  if (!told.ok)
-    return flashTo(ctx, base, {
-      tone: "danger",
-      message: "That could not be told.",
-    });
-  const { routed } = told.value;
-  if (routed === undefined)
-    return flashTo(ctx, base, {
-      message: `Told. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
-    });
-  const builder = routed.builder;
-  return flashTo(ctx, base, {
-    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}. Watch it work below.`,
-  });
+  return tellFrom(ctx, repo, form, repoBase(repo));
 }
+
+/**
+ * POST /tell  { app, text } — the home's composer without a script: the
+ * same tell, to the app the form names (`owner/name`), and back to the home.
+ * A repository the viewer cannot read is the answer one that does not exist
+ * gives.
+ */
+export async function composerSubmit(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const [owner = "", name = "", ...extra] = field(form, "app").split("/");
+  const repo = extra.length === 0 ? getRepo(ctx.app.db, owner, name) : undefined;
+  if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
+  return tellFrom(ctx, repo, form, "/");
+}
+
 
 /** POST /:owner/:name/pulls/:number/ship — land a green change. */
 export async function shipSubmit(ctx: Ctx): Promise<Response> {
@@ -74,7 +113,8 @@ export async function shipSubmit(ctx: Ctx): Promise<Response> {
   const pull = Number.isInteger(number)
     ? getPull(ctx.app.db, repo.id, number)
     : undefined;
-  if (!pull) return notFoundPage(ctx);
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
+    return notFoundPage(ctx);
   const merged = await mergePull(ctx.app, ctx.auth.user, repo, pull, "squash");
   // A conflict is never the person's to fix: the pull's agent brings the
   // branch up to date, and the pull comes back green, or lands on its own.
@@ -155,7 +195,8 @@ export async function takeBackSubmit(ctx: Ctx): Promise<Response> {
   const pull = Number.isInteger(number)
     ? getPull(ctx.app.db, repo.id, number)
     : undefined;
-  if (!pull) return notFoundPage(ctx);
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
+    return notFoundPage(ctx);
   const reverted = await revertPull(ctx.app, ctx.auth.user, repo, pull);
   if (!reverted.ok)
     return flashOrJson(ctx, `${base}/pulls/${pull.number}`, {
@@ -179,7 +220,8 @@ export async function saySubmit(ctx: Ctx): Promise<Response> {
   const pull = Number.isInteger(number)
     ? getPull(ctx.app.db, repo.id, number)
     : undefined;
-  if (!pull) return notFoundPage(ctx);
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
+    return notFoundPage(ctx);
   const text = field(form, "text").trim();
   if (text === "")
     return flashTo(ctx, base, {
@@ -194,24 +236,67 @@ export async function saySubmit(ctx: Ctx): Promise<Response> {
   });
 }
 
-/** Where a form sends a person back: what it said, else the referer, else
- * home — and never off this forge. */
-function backTo(ctx: Ctx, said: string): string {
-  const back = said || ctx.request.headers.get("referer") || "/";
-  return (back.startsWith("/") && !back.startsWith("//")) ||
-    back.startsWith(`${ctx.url.origin}/`)
-    ? back
-    : "/";
+/** The change a hold form is about, and where its answer shows. */
+function heldPull(ctx: Ctx, repo: Repo) {
+  const number = Number(ctx.params.number);
+  const pull = Number.isInteger(number)
+    ? getPull(ctx.app.db, repo.id, number)
+    : undefined;
+  return pull === undefined || !mayView(ctx.app.db, repo, pull, ctx.auth.user)
+    ? undefined
+    : { pull, back: `${changeHref(repoBase(repo), pull.number)}#hold` };
 }
 
-/** POST /mode  { mode } — studio or dev, for this browser. */
-export async function modeSubmit(ctx: Ctx): Promise<Response> {
-  const form = await readForm(ctx);
+/** POST /:owner/:name/pulls/:number/hold  { why } — not this one yet. */
+export async function holdSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const choice = field(form, "mode");
-  const secure = ctx.url.protocol === "https:";
-  return redirect(
-    backTo(ctx, field(form, "back")),
-    modeCookie(isMode(choice) ? choice : undefined, secure),
+  const found = heldPull(ctx, repo);
+  if (!found) return notFoundPage(ctx);
+  const held = holdPull(
+    ctx.app,
+    ctx.auth.user,
+    repo,
+    found.pull,
+    field(form, "why"),
   );
+  if (!held.ok && (held.error === "not_found" || held.error === "forbidden"))
+    return notFoundPage(ctx);
+  return flashTo(ctx, found.back, {
+    ...(held.ok
+      ? {
+          message: "Held. No rule reviews or lands it until it is released.",
+        }
+      : {
+          tone: "danger" as const,
+          message:
+            held.error === "not_open"
+              ? "Only an open change can be held."
+              : held.error === "why_too_long"
+                ? "Say why in one line, a shorter one."
+                : "Say why, in one line.",
+        }),
+  });
 }
+
+/** POST /:owner/:name/pulls/:number/release — let a held change go. */
+export async function releaseSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const found = heldPull(ctx, repo);
+  if (!found) return notFoundPage(ctx);
+  const released = releasePull(ctx.app, ctx.auth.user, repo, found.pull);
+  if (!released.ok) return notFoundPage(ctx);
+  return flashTo(ctx, found.back, {
+    message: released.value
+      ? "Released. The rules take it from here."
+      : "Nothing was holding it.",
+  });
+}
+

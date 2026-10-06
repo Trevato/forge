@@ -9,13 +9,8 @@
  */
 
 import { canRead, listForks, type Repo } from "../../core/repos.ts";
-import { forkRepo } from "../../actions/repos.ts";
-import {
-  forkDrift,
-  syncFork,
-  takeUpdates,
-  type ForkDrift,
-} from "../../actions/forks.ts";
+import { FORKS_PER_DAY, forkRepo } from "../../actions/repos.ts";
+import { forkDrift, takeUpdates, type ForkDrift } from "../../actions/forks.ts";
 import { lineageOf } from "../../core/following.ts";
 import { followingCard, followingOf, lineageCard } from "./following.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
@@ -28,6 +23,7 @@ import {
 import { isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import { blobForRender, type TreeEntry } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
+import { estimateTokens } from "../../kernel/tokens-format.ts";
 import { safeBack, type Ctx } from "../../http/context.ts";
 import { json, notFound } from "../../http/respond.ts";
 import type { Blob, RepoSource } from "../../view/source.ts";
@@ -48,7 +44,7 @@ import { studioApp } from "../studio/app.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { flashTo, fragment, page } from "../layout.ts";
+import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { browseBase, localScope, type RepoScope } from "../scope.ts";
 import { repoForkOf } from "../../core/origins.ts";
@@ -57,6 +53,8 @@ import {
   card,
   empty,
   fileSize,
+  sizeWithTokens,
+  tokenCount,
   icon,
   iconBtn,
   listCard,
@@ -191,7 +189,9 @@ export async function forkSubmit(ctx: Ctx): Promise<Response> {
     const reason =
       forked.error === "name_taken"
         ? "You already have a repository by that name."
-        : "That fork could not be created.";
+        : forked.error === "limit"
+          ? `That is today's forks made (${FORKS_PER_DAY} a day). Try again tomorrow.`
+          : "That fork could not be created.";
     return flashTo(ctx, repoBase(repo), { tone: "danger", message: reason });
   }
   return flashTo(ctx, repoBase(forked.value), {
@@ -328,14 +328,41 @@ export function treeListing(
             entry.size >= 0,
             () =>
               html`<span class="row-trail muted small num"
-                >${fileSize(entry.size)}</span
+                >${sizeWithTokens(entry.size, target)}</span
               >`,
           )}
         </a>
       </li>`,
     );
   }
-  return listCard(rows);
+  return html`${listCard(rows)}${directoryTotal(entries)}`;
+}
+
+/**
+ * What the files at this level weigh together: bytes and estimated tokens,
+ * the two summed over the same files. Subdirectories carry no size in a
+ * tree listing (`git ls-tree -l` gives `-`), so they are not in it — the
+ * line says "here" and the tooltip says why. Binary files add bytes but no
+ * tokens. Nothing when there are no files.
+ */
+export function directoryTotal(entries: readonly TreeEntry[]): Html {
+  let files = 0;
+  let bytes = 0;
+  let tokens = 0;
+  for (const entry of entries) {
+    if (entry.type !== "blob" || entry.size < 0) continue;
+    files += 1;
+    bytes += entry.size;
+    tokens += estimateTokens(entry.size, entry.name) ?? 0;
+  }
+  if (files === 0) return html``;
+  return html`<p
+    class="muted small num tree-total"
+    title="Files at this level only; subdirectories are not counted"
+  >
+    ${files.toLocaleString("en-US")} file${files === 1 ? "" : "s"} here ·
+    ${fileSize(bytes)} · ${tokenCount(tokens, "estimated")}
+  </p>`;
 }
 
 /**
@@ -582,6 +609,17 @@ function aboutCard(
           )}
         </dl>
         ${whereItLives}
+        ${when(
+          repo.visibility === "public" && repo.origin === null,
+          () =>
+            html`<p class="mt small muted">
+              ${icon("lock")} Found a security problem?
+              <a href="${repoBase(repo)}/issues/new?sealed=1"
+                >Report it sealed</a
+              >: only the people who keep this repository and its crew see it
+              until the fix is released.
+            </p>`,
+        )}
         <p class="mt small muted">Clone over HTTPS</p>
         <span class="clone"
           ><span class="clone-text" id="clone-https">${cloneUrl}</span>
@@ -763,7 +801,8 @@ export function renderBlob(
     view === "rendered" && o.blob.kind === "text"
       ? renderedMarkdown(o.blob)
       : blobBody(base, o.ref, o.path, o.blob);
-  const sizeText = o.blob.kind === "too_large" ? "" : fileSize(o.blob.size);
+  const sizeText =
+    o.blob.kind === "too_large" ? "" : sizeWithTokens(o.blob.size, o.path);
   const fileHref = `${base}/blob/${encoded}/${o.path}`;
   return html`<div class="code-pane" id="code-pane" data-path="${o.path}">
     <div class="path-head">
@@ -845,17 +884,36 @@ export function rawResponse(blob: Blob): Response {
   });
 }
 
-// GET /:owner/:name — the repo home: the tree at a ref, README, About rail.
+// GET /:owner/:name — the repo home. An app's home is the app, for every
+// viewer: what it serves, who is on it, what it asks; its code is one tab
+// deeper, at /files. Any other repository's home is its code. An older
+// `?ref=` link to the code of an app is handed on to its Files step.
 export async function repoHome(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  // In the studio an app's home is the app: what it serves, who is on it,
-  // what it asks. Dev mode is the code, as ever. A repository with no app
-  // record has nothing of that to show — read once, used either way below.
-  const studioMode = ctx.mode === "studio";
-  const record = studioMode ? getAppByRepo(ctx.app.db, repo.id) : undefined;
-  if (record !== undefined) return await studioApp(ctx, repo, record);
-  const noApp = studioMode ? noAppCard(ctx, repo) : null;
+  const record = getAppByRepo(ctx.app.db, repo.id);
+  if (record === undefined) return await codeHome(ctx, repo);
+  if (ctx.url.searchParams.has("ref"))
+    return redirect(`${repoBase(repo)}/files${ctx.url.search}`);
+  return await studioApp(ctx, repo, record);
+}
+
+// GET /:owner/:name/files — an app's Files step: its code, exactly the page
+// any other repository's home is. A repository that is not an app has no
+// step under a home that is already its code, so it is sent there.
+export async function repoFiles(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (getAppByRepo(ctx.app.db, repo.id) === undefined)
+    return redirect(`${repoBase(repo)}${ctx.url.search}`);
+  return await codeHome(ctx, repo);
+}
+
+/** The code at a ref: the tree, the README and the About rail — with, in
+ * the studio, the offer to make a repository that is not an app one. */
+async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
+  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  const noApp = isApp ? null : noAppCard(ctx, repo);
   const scope = localScope(ctx, repo);
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
   const refs = await refSetFrom(scope.source);

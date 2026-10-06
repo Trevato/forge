@@ -25,16 +25,16 @@ describe("commit via API (no git client)", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        username: "bot",
-        email: "bot@f.dev",
+        username: "mira",
+        email: "mira@f.dev",
         password: "contents-api-pass",
       }),
     });
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "bot",
+      body: JSON.stringify({ adminConfirm: true,
+        username: "mira",
         password: "contents-api-pass",
         name: "c",
         scope: "rw",
@@ -50,7 +50,7 @@ describe("commit via API (no git client)", () => {
       },
       body: JSON.stringify({ name: "app", visibility: "public" }),
     });
-    repoGitDir = repoDir(join(dataDir, "repos"), "bot", "app");
+    repoGitDir = repoDir(join(dataDir, "repos"), "mira", "app");
   });
 
   afterAll(async () => {
@@ -60,7 +60,7 @@ describe("commit via API (no git client)", () => {
   });
 
   const commit = (payload: unknown) =>
-    fetch(`${base}/api/v1/repos/bot/app/contents`, {
+    fetch(`${base}/api/v1/repos/mira/app/contents`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
@@ -100,7 +100,7 @@ describe("commit via API (no git client)", () => {
     expect(log[0]?.subject).toBe("add license");
     // The file browser renders it (highlighted).
     const page = await (
-      await fetch(`${base}/bot/app/blob/main/src/index.ts`)
+      await fetch(`${base}/mira/app/blob/main/src/index.ts`)
     ).text();
     expect(page).toContain("hi");
   });
@@ -127,9 +127,9 @@ describe("commit via API (no git client)", () => {
     const cookie = await fetch(`${base}/api/v1/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ username: "bot", password: "contents-api-pass" }),
+      body: JSON.stringify({ username: "mira", password: "contents-api-pass" }),
     }).then((r) => (r.headers.get("set-cookie") ?? "").split(";")[0]!);
-    const pr = await fetch(`${base}/bot/app/pulls/new`, {
+    const pr = await fetch(`${base}/mira/app/pulls/new`, {
       method: "POST",
       headers: { cookie },
       body: form,
@@ -141,12 +141,15 @@ describe("commit via API (no git client)", () => {
         headers: { cookie },
       })
     ).text();
-    expect(prPage).toContain("Ready to merge");
+    // The one change page (#703): a writer is offered Ship; before a check has
+    // run it says what the change waits on.
+    expect(prPage).toContain("Ship");
+    expect(prPage).toContain("ship");
   });
 
   test("a push event fires so the outbox/webhooks/SSE see API commits", async () => {
     const events = await (
-      await fetch(`${base}/api/v1/repos/bot/app/events`, {
+      await fetch(`${base}/api/v1/repos/mira/app/events`, {
         headers: { authorization: `Bearer ${token}` },
       })
     ).json();
@@ -168,8 +171,8 @@ describe("commit via API (no git client)", () => {
     const roToken = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "bot",
+      body: JSON.stringify({ adminConfirm: true,
+        username: "mira",
         password: "contents-api-pass",
         name: "ro",
         scope: "ro",
@@ -177,7 +180,7 @@ describe("commit via API (no git client)", () => {
     })
       .then((r) => r.json())
       .then((j) => (j as { token: string }).token);
-    const res = await fetch(`${base}/api/v1/repos/bot/app/contents`, {
+    const res = await fetch(`${base}/api/v1/repos/mira/app/contents`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${roToken}`,

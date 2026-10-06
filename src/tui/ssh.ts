@@ -10,16 +10,18 @@
  * to.
  */
 
+import { holdOpen } from "../http/caller.ts";
 import { join } from "node:path";
 import type { App as Forge } from "../app.ts";
 import { findKeyByFingerprint, touchKey } from "../core/keys.ts";
 import { canRead, canWrite, getRepo } from "../core/repos.ts";
-import { getUserById, type User } from "../core/users.ts";
+import { getUserById, isActive, type User } from "../core/users.ts";
 import { createRepo } from "../actions/repos.ts";
 import { hookEnv } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import { parseGitCommand, runGitService } from "../git/smart-ssh.ts";
 import { serveSsh, type SshServer, type SshSession } from "../ssh/server.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
 import { createForgeApp } from "./forge.ts";
 import { appForLogin, attachAppTty } from "../apps/tty.ts";
 import type { Terminal } from "./term/terminal.ts";
@@ -135,8 +137,10 @@ export function attachTui(
 /** Resolve the account a presented key belongs to, or a guest. */
 export function identityFor(forge: Forge, session: SshSession): TuiIdentity {
   const match = findKeyByFingerprint(forge.db, session.key.fingerprint);
-  const user =
+  const found =
     match === undefined ? undefined : getUserById(forge.db, match.userId);
+  // A suspended or removed account's key opens nothing: it is a guest.
+  const user = found !== undefined && isActive(found) ? found : undefined;
   if (match !== undefined && user !== undefined)
     touchKey(forge.db, match.keyId);
   return {
@@ -151,6 +155,40 @@ export function identityFor(forge: Forge, session: SshSession): TuiIdentity {
 }
 
 /**
+ * Standing is checked when a key signs in, and again for as long as the
+ * session lasts: when the owner suspends or removes the account, its open
+ * sessions — a terminal, an app's tty, a clone still streaming — end there
+ * and then, instead of acting on as a person who no longer may.
+ */
+export function endOnSuspension(
+  forge: Forge,
+  session: SshSession,
+  user: User,
+): void {
+  const stop = forge.bus.subscribe((event) => {
+    if (
+      (event.kind === "account.suspended" || event.kind === "account.removed") &&
+      event.payload["username"] === user.username
+    ) {
+      stop();
+      end();
+    }
+  });
+  // And held open under the account, so a suspension another process
+  // wrote ends it on this one's sweep (\`http/caller.ts\`).
+  const end = (): void => {
+    if (session.ended) return;
+    session.writeStderr(`${CRLF}forge: this account was suspended${CRLF}`);
+    session.exit(1);
+  };
+  const unhold = holdOpen(forge.db, user.id, undefined, end);
+  session.onClose(() => {
+    stop();
+    unhold();
+  });
+}
+
+/**
  * What a forge does with an inbound SSH session: a shell is the TUI, an exec
  * is git or nothing. Never throws — a fault here would take the listener with
  * it, and one bad client must not.
@@ -159,6 +197,8 @@ export function forgeSshSession(forge: Forge): (session: SshSession) => void {
   return (session) => {
     try {
       const identity = identityFor(forge, session);
+      if (identity.user !== undefined)
+        endOnSuspension(forge, session, identity.user);
       if (session.kind === "shell") {
         // The login name is decorative for the forge — any name opens the
         // terminal UI — unless it names an app, in which case it opens
@@ -277,4 +317,20 @@ export async function serveForgeSsh(
   forge.config.sshPort = server.port;
   forge.config.sshHostKey = server.hostKey.fingerprint;
   return server;
+}
+
+/**
+ * `serveForgeSsh` as a value: the terminal is optional, the forge is not. A
+ * port that will not bind (or any other failure starting the listener) comes
+ * back as an Err the boot logs once, and the web keeps serving.
+ */
+export async function startForgeSsh(
+  forge: Forge,
+  options: ForgeSshOptions,
+): Promise<Result<SshServer, Error>> {
+  try {
+    return ok(await serveForgeSsh(forge, options));
+  } catch (cause) {
+    return err(cause instanceof Error ? cause : new Error(String(cause)));
+  }
 }

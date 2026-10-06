@@ -18,30 +18,22 @@ import { G } from "./term/screen.ts";
 import { fileIcon, icon, type IconName } from "./ui/icons.ts";
 import type { SessionOpts, Terminal } from "./term/terminal.ts";
 import { Session, type TuiIdentity } from "./session.ts";
-import { accountScreen } from "./screens/account.ts";
-import { appScreen } from "./screens/app.ts";
-import { appsScreen, newAppFlow } from "./screens/apps.ts";
 import {
   ISSUE_MARK,
   ORIGIN_MARK,
   PULL_MARK,
   errorText,
   promptScreen,
+  openOnWeb,
 } from "./screens/common.ts";
-import { crewScreen } from "./screens/crew.ts";
 import { issueScreen } from "./screens/issue.ts";
-import { runsScreen } from "./screens/runs.ts";
 import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
-import { exploreScreen } from "./screens/explore.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { newPullScreen } from "./screens/newpull.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
-import { originsScreen } from "./screens/origins.ts";
-import { ownerScreen } from "./screens/owner.ts";
 import { repoScreen } from "./screens/repo.ts";
-import { settingsScreen } from "./screens/settings.ts";
 import { signInScreen } from "./screens/signin.ts";
 import { local } from "./screens/where.ts";
 
@@ -55,7 +47,8 @@ export function forgeRoot(session: Session): (ctx: Ctx) => Screen {
 const REPO_VERBS: readonly {
   id: string;
   title: string;
-  open: (f: Session, ctx: Ctx, repo: Repo) => Screen;
+  /** The screen to push, or nothing when the verb hands over to the web. */
+  open: (f: Session, ctx: Ctx, repo: Repo) => Screen | undefined;
 }[] = [
   {
     id: "repo",
@@ -75,16 +68,14 @@ const REPO_VERBS: readonly {
   { id: "new-issue", title: "New issue", open: newIssueScreen },
   { id: "new-pull", title: "New pull request", open: newPullScreen },
   {
-    id: "runs",
-    title: "Runs in a repository",
-    open: (f, ctx, repo) => runsScreen(f, ctx, repo),
+    id: "settings",
+    title: "Repository settings",
+    // One settings page, the web's (#635): the terminal hands over its address.
+    open: (f, ctx, repo) => {
+      openOnWeb(f, ctx, `/${repo.ownerName}/${repo.name}/settings`, "Settings");
+      return undefined;
+    },
   },
-  {
-    id: "app",
-    title: "Open an app",
-    open: (f, ctx, repo) => appScreen(f, ctx, repo),
-  },
-  { id: "settings", title: "Repository settings", open: settingsScreen },
 ];
 
 /**
@@ -102,24 +93,23 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         run: () => ctx.push(dashboardScreen(session, ctx)),
       },
       {
+        // Browsing other people and forges is the web explorer's (#607):
+        // the terminal hands over its address.
         id: "explore",
-        title: "Explore repositories",
-        run: () => ctx.push(exploreScreen(session, ctx)),
+        title: "Explore",
+        hint: "on the web",
+        run: () => openOnWeb(session, ctx, "/explore", "The explorer"),
       },
       {
-        id: "apps",
-        title: "Apps",
-        hint: "what is running",
-        run: () => ctx.push(appsScreen(session, ctx)),
-      },
-      {
+        // A person's or an org's page is the web's (#636): the terminal
+        // hands over its address.
         id: "profile",
         title: "Open a profile",
         hint: "username or org",
         run: () =>
           ctx.push(
             askFor(ctx, "Profile", "username", (name) => {
-              ctx.push(ownerScreen(session, ctx, name));
+              openOnWeb(session, ctx, `/${encodeURIComponent(name)}`, "That profile");
               return undefined;
             }),
           ),
@@ -142,7 +132,8 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               // this check the palette would be a way around `canRead`.
               if (!repo || !canRead(session.db, repo, session.user))
                 return "not found";
-              ctx.push(verb.open(session, ctx, repo));
+              const next = verb.open(session, ctx, repo);
+              if (next !== undefined) ctx.push(next);
               return undefined;
             }),
           ),
@@ -165,32 +156,11 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
     if (session.signedIn)
       commands.push(
         {
-          id: "new-app",
-          title: "New app",
-          hint: "a repository that runs",
-          // The flow is modals over whatever is on the stack; the palette
-          // closed already, so they draw over the screen beneath it.
-          run: () => newAppFlow(session, ctx, blank("New app")),
-        },
-        {
           id: "account",
           title: "Account settings",
-          run: () => ctx.push(accountScreen(session, ctx)),
-        },
-        {
-          id: "origins",
-          title: "Origins",
-          hint: "connected forges",
-          run: () => ctx.push(originsScreen(session, ctx)),
+          run: () => openOnWeb(session, ctx, "/settings", "Account settings"),
         },
       );
-    if (session.user?.isAdmin === true)
-      commands.push({
-        id: "crew",
-        title: "Crew",
-        hint: "the agents on this forge",
-        run: () => ctx.push(crewScreen(session, ctx)),
-      });
     commands.push({
       id: "quit",
       title: "Quit",

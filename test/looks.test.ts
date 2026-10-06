@@ -22,11 +22,13 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { envDataDir, previewEnv } from "../src/apps/data.ts";
 import { readGrant } from "../src/apps/proxy.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
-import type { AppRecord } from "../src/core/apps.ts";
+import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
-import { looksForEnv, type Look } from "../src/core/looks.ts";
-import type { Pull } from "../src/core/pulls.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { looksForEnv, recordLook, type Look } from "../src/core/looks.ts";
+import { encodePng } from "../src/design/image/png.ts";
+import { setAppMembers } from "../src/core/app_members.ts";
+import { listPulls, type Pull } from "../src/core/pulls.ts";
+import { getRepo, type Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -48,6 +50,11 @@ const PASSWORD = "a-good-passphrase";
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
   "base64",
+);
+
+/** A blank page at desktop's size, as a browser would picture one. */
+const DESKTOP_PNG = Buffer.from(
+  encodePng(1280, 800, new Uint8Array(1280 * 800 * 4).fill(255)),
 );
 
 /** A PNG's width and height, from its IHDR. */
@@ -75,7 +82,7 @@ describe("the look", () => {
   const fake: Capture = async (input) => {
     calls.push(input);
     if (mode === "fail") return err("the browser fell over");
-    writeFileSync(input.out, PNG);
+    writeFileSync(input.out, input.width === 1280 ? DESKTOP_PNG : PNG);
     return ok();
   };
 
@@ -143,7 +150,7 @@ describe("the look", () => {
     });
     await runtime.start();
     looks = startLooks(app, { localUrl: servers.url, capture: fake });
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: PASSWORD,
@@ -151,7 +158,7 @@ describe("the look", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, {
+    const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: PASSWORD,
@@ -183,7 +190,7 @@ describe("the look", () => {
   let first = "";
   let second = "";
 
-  test("a green deploy is pictured at all three widths, as the owner, once per head; a newer head replaces", async () => {
+  test("a green deploy is pictured at all three widths, once per head — phone and desktop as the owner, the thumb as a stranger, reduced from the desktop page; a newer head replaces", async () => {
     const production = await settled((r) => r.env === "production");
     expect(production.state).toBe("ok");
     const rows = await pictured("production", production.commitOid);
@@ -209,8 +216,24 @@ describe("the look", () => {
     expect(readdirSync(join(dataDir, "looks", ".taking"))).toEqual([]);
     const phone = calls.find((c) => c.width === 390)!;
     expect(phone.height).toBe(844);
-    expect(calls.find((c) => c.width === 1280)?.height).toBe(800);
-    expect(calls.find((c) => c.width === 200)?.height).toBe(125);
+    // Desktop and thumb are both taken in desktop's window: a browser does
+    // not lay a page out at a tile's size.
+    const wide = calls.filter((c) => c.width === 1280);
+    expect(wide.map((c) => c.height)).toEqual([800, 800]);
+    const thumb = rows.find((l) => l.kind === "thumb")!;
+    expect(pngSize(join(dataDir, thumb.path))).toEqual([640, 400]);
+    const desktop = rows.find((l) => l.kind === "desktop")!;
+    expect(pngSize(join(dataDir, desktop.path))).toEqual([1280, 800]);
+    // The thumb's grant names nobody: the tile a stranger is shown is the
+    // page as a stranger sees it.
+    const thumbCall = calls.find((c) => c.out.endsWith("-thumb.png"))!;
+    const thumbGrant = readGrant(
+      dataDir,
+      new URL(thumbCall.url).searchParams.get("t") ?? "",
+      { app: record, env: "production" },
+    );
+    expect(thumbGrant).toBeDefined();
+    expect(thumbGrant?.who).toBeUndefined();
     const url = new URL(phone.url);
     expect(url.host).toBe(`hello.${DOMAIN}:${servers.port}`);
     expect(url.pathname).toBe("/__forge/grant");
@@ -285,15 +308,14 @@ describe("the look", () => {
       await web(`${base}/pulls/${pull.number}`, aliceCookie)
     ).text();
     expect(page).toContain("<h2>Look</h2>");
-    expect(page).toContain(`src="${base}/looks/${env}/${second}/phone.png"`);
-    expect(page).toContain(`src="${base}/looks/${env}/${second}/desktop.png"`);
+    expect(page).toContain(`src="${base}/looks/${env}/${second}/phone.png?v=`);
+    expect(page).toContain(`src="${base}/looks/${env}/${second}/desktop.png?v=`);
     expect(page).toContain(second.slice(0, 7));
     expect(page).not.toContain("the head has moved");
 
-    const image = await web(
-      `${base}/looks/${env}/${second}/phone.png`,
-      aliceCookie,
-    );
+    // The page names the picture with its taking: that URL is kept for good.
+    const src = new RegExp(`src="(${base}/looks/${env}/${second}/phone\\.png\\?v=\\d+)"`).exec(page)![1]!;
+    const image = await web(src, aliceCookie);
     expect(image.status).toBe(200);
     expect(image.headers.get("content-type")).toBe("image/png");
     expect(image.headers.get("cache-control")).toContain("immutable");
@@ -533,7 +555,7 @@ describe("the look", () => {
     )!;
     expect(page).toContain(`class="look-now"`);
     expect(page).toContain(
-      `src="/alice/hello/looks/production/${production.commitOid}/thumb.png"`,
+      `src="/alice/hello/looks/production/${production.commitOid}/thumb.png?v=`,
     );
 
     // A commit pictured before the thumb kind existed has only its phone
@@ -555,7 +577,7 @@ describe("the look", () => {
       (l) => l.kind === "desktop",
     )!;
     expect(fallback).toContain(
-      `src="/alice/hello/looks/production/${productionDesktop.commitOid}/desktop.png"`,
+      `src="/alice/hello/looks/production/${productionDesktop.commitOid}/desktop.png?v=`,
     );
   }, 120_000);
 
@@ -625,16 +647,252 @@ describe("the look", () => {
     expect(page).toContain(`<p class="muted small look-page">/</p>`);
     expect(page).toContain(`<p class="muted small look-page">/board</p>`);
     expect(page).toContain(
-      `src="/alice/hello/looks/${env}/${commitOid}/board-phone.png"`,
+      `src="/alice/hello/looks/${env}/${commitOid}/board-phone.png?v=`,
     );
     expect(page).toContain(
-      `src="/alice/hello/looks/${env}/${commitOid}/phone.png"`,
+      `src="/alice/hello/looks/${env}/${commitOid}/phone.png?v=`,
     );
     expect(page).toContain(
       `alt="hello /board #${opened.value.number} on a phone"`,
     );
     expect(page).toContain(`alt="hello #${opened.value.number} on a phone"`);
   }, 120_000);
+
+  test("the sweep pictures a running production missing one: a thumb from before thumbs were the page is retaken as a stranger; one that failed is not retried each sweep", async () => {
+    const status = runtime.envStatus(record, "production")!;
+    expect(status.state).toBe("running");
+    const head = status.commitOid;
+    // Whatever production lacks at its head now (an earlier test dropped
+    // its thumb), the sweep takes.
+    looks.sweep();
+    await looks.idle();
+    const thumbAtHead = (): Look | undefined =>
+      looksForEnv(app.db, record.id, "production").find(
+        (l) => l.kind === "thumb" && l.commitOid === head && l.page === "/",
+      );
+    const thumb = thumbAtHead()!;
+    expect(thumb.error).toBeNull();
+
+    // A thumb taken the old way: a 200×125 corner of the page.
+    writeFileSync(
+      join(dataDir, thumb.path),
+      Buffer.from(encodePng(200, 125, new Uint8Array(200 * 125 * 4))),
+    );
+    const before = calls.length;
+    looks.sweep();
+    await looks.idle();
+    expect(calls).toHaveLength(before + 1);
+    const retaken = calls.at(-1)!;
+    expect(retaken.out.endsWith("-thumb.png")).toBe(true);
+    expect([retaken.width, retaken.height]).toEqual([1280, 800]);
+    expect(
+      readGrant(dataDir, new URL(retaken.url).searchParams.get("t") ?? "", {
+        app: record,
+        env: "production",
+      })?.who,
+    ).toBeUndefined();
+    expect(pngSize(join(dataDir, thumbAtHead()!.path))).toEqual([640, 400]);
+
+    // A whole set: nothing to take.
+    looks.sweep();
+    await looks.idle();
+    expect(calls).toHaveLength(before + 1);
+
+    // A picture that failed at this head had its turn: the sweep leaves
+    // it to the next deploy rather than starting a browser every time.
+    recordLook(app.db, {
+      appId: record.id,
+      env: "production",
+      commitOid: head,
+      kind: "thumb",
+      path: "",
+      error: "the browser fell over",
+    });
+    looks.sweep();
+    await looks.idle();
+    expect(calls).toHaveLength(before + 1);
+  }, 60_000);
+
+  test("pictures are shown only to those allowed to see them (#727): on a public repository hosting a private app, a stranger gets none, a signed-in reader the thumb, a writer all", async () => {
+    // `hello` is a private app; its repository is made public here.
+    expect(record.access).toBe("private");
+    app.db.query(`UPDATE repo SET visibility = 'public' WHERE id = ?1`).run(repo.id);
+    try {
+      const head = runtime.envStatus(record, "production")!.commitOid;
+      // The test before left this head's thumb failed; picture it again.
+      const thumbPath = `looks/${record.id}/production/${head}-thumb.png`;
+      const retake = () =>
+        recordLook(app.db, {
+          appId: record.id,
+          env: "production",
+          commitOid: head,
+          kind: "thumb",
+          path: thumbPath,
+        });
+      writeFileSync(join(dataDir, thumbPath), PNG);
+      retake();
+      const at = (kind: string) => `/alice/hello/looks/production/${head}/${kind}.png`;
+      const status = async (kind: string, cookie: string) =>
+        (await web(at(kind), cookie)).status;
+
+      // A stranger cannot open a private app: no picture of it at all.
+      for (const kind of ["desktop", "phone", "thumb"])
+        expect(await status(kind, "")).toBe(404);
+      // However the path is spelled, the same answer: every spelling the
+      // route resolves reaches the one rule.
+      for (const spelled of [
+        `/ALICE/Hello/looks/production/${head}/desktop.png`,
+        `//alice/hello/looks/production/${head}/desktop.png`,
+        `/alice//hello/looks/production/${head}/desktop.png`,
+        `/alice/hello.git/looks/production/${head}/desktop.png`,
+        `/alice/%68ello/looks/production/${head}/desktop.png`,
+        `/alice/hello/looks/production/${head}/%64esktop.png`,
+        `/alice/hello/looks/production/${head.toUpperCase()}/desktop.png`,
+        `/alice/hello/looks/production/${head}/desktop.png?v=1`,
+        `/alice/hello/looks/production/${head}/thumb.png`,
+      ]) {
+        const answer = await web(spelled, "");
+        expect(answer.status === 404 || answer.status >= 300).toBe(true);
+        expect(answer.headers.get("content-type")).not.toBe("image/png");
+      }
+      const strangers = await (await web("/alice/hello", "forge_mode=studio")).text();
+      expect(strangers).not.toContain("/looks/production/");
+      // A signed-in reader may not enter a private app (#620): no picture.
+      // Named by the app (#752), they may: the thumb, taken as nobody —
+      // never the owner's phone or desktop.
+      expect(await status("thumb", bobCookie)).toBe(404);
+      setAppMembers(app.db, record.id, [bob.id], alice.id);
+      expect(await status("desktop", bobCookie)).toBe(404);
+      expect(await status("phone", bobCookie)).toBe(404);
+      expect(await status("thumb", bobCookie)).toBe(200);
+      const readers = await (await web("/alice/hello", `${bobCookie}; forge_mode=studio`)).text();
+      expect(readers).toContain("/thumb.png?v=");
+      expect(readers).not.toContain("/desktop.png");
+      expect(readers).not.toContain("/phone.png");
+      // A writer: all three.
+      for (const kind of ["desktop", "phone", "thumb"])
+        expect(await status(kind, aliceCookie)).toBe(200);
+
+      // A public app: a stranger gets the thumb — but not one taken before
+      // thumbs were taken as nobody (200 px wide, the owner's view).
+      app.db.query(`UPDATE app SET access = 'public' WHERE id = ?1`).run(record.id);
+      expect(await status("thumb", "")).toBe(200);
+      expect(await status("desktop", "")).toBe(404);
+      writeFileSync(
+        join(dataDir, thumbPath),
+        Buffer.from(encodePng(200, 125, new Uint8Array(200 * 125 * 4))),
+      );
+      expect(await status("thumb", "")).toBe(404);
+      expect(await status("thumb", aliceCookie)).toBe(200);
+      writeFileSync(join(dataDir, thumbPath), PNG);
+
+      // Kept for good only under the name of this taking: a retake at the
+      // same commit is a new URL, and the bare name is checked every time.
+      const named = await (await web("/alice/hello", "forge_mode=studio")).text();
+      const src = /src="([^"]*\/thumb\.png\?v=\d+)"/.exec(named)![1]!;
+      const versioned = await web(src, "");
+      expect(versioned.headers.get("cache-control")).toContain("immutable");
+      expect((await web(at("thumb"), "")).headers.get("cache-control")).toBe(
+        "private, no-cache",
+      );
+      await Bun.sleep(5);
+      retake();
+      const after = await (await web("/alice/hello", "forge_mode=studio")).text();
+      expect(after).not.toContain(src);
+      expect(after).toContain("/thumb.png?v=");
+    } finally {
+      app.db.query(`UPDATE app SET access = 'private' WHERE id = ?1`).run(record.id);
+      app.db.query(`UPDATE repo SET visibility = 'private' WHERE id = ?1`).run(repo.id);
+    }
+  });
+
+  test("a public app's previews are taken as nobody, so a reader of its pull sees the Look card; a picture taken as the owner stays the writers' (#738)", async () => {
+    const made = await newApp(app, alice, { name: "gallery", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const gallery = made.value.repo;
+    const galleryApp = made.value.app;
+    expect(galleryApp.access).toBe("public");
+    const branch = await commitToBranch(app, alice, gallery, {
+      branch: "frame",
+      base: gallery.defaultBranch,
+      message: "A frame",
+      files: [{ path: "FRAME.md", content: "frame\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, gallery, {
+      title: "A frame",
+      baseBranch: gallery.defaultBranch,
+      headBranch: "frame",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const env = previewEnv(opened.value.number);
+    const commit = branch.value.commitOid;
+    expect((await settled((r) => r.env === env, gallery.id)).state).toBe("ok");
+    const rows = await until(() => {
+      const found = looksForEnv(app.db, galleryApp.id, env).filter(
+        (l) => l.commitOid === commit,
+      );
+      return found.length === 3 ? found : undefined;
+    }, 30_000);
+    // All three taken as nobody, and the browser was told so.
+    expect(rows.map((l) => l.takenAs)).toEqual(["nobody", "nobody", "nobody"]);
+    const phoneCall = calls.filter((c) => c.out.includes(galleryApp.id) || c.url.includes("gallery")).find((c) => c.width === 390)!;
+    expect(
+      readGrant(dataDir, new URL(phoneCall.url).searchParams.get("t") ?? "", {
+        app: galleryApp,
+        env,
+      })?.who,
+    ).toBeUndefined();
+    // A reader and a stranger fetch them, and the pull shows the reader its Look.
+    const at = (kind: string) => `/alice/gallery/looks/${env}/${commit}/${kind}.png`;
+    for (const cookie of ["", bobCookie]) {
+      expect((await web(at("phone"), cookie)).status).toBe(200);
+      expect((await web(at("desktop"), cookie)).status).toBe(200);
+    }
+    const pullPage = await (
+      await web(`/alice/gallery/pulls/${opened.value.number}`, bobCookie)
+    ).text();
+    expect(pullPage).toContain("<h2>Look</h2>");
+    expect(pullPage).toContain(`/alice/gallery/looks/${env}/${commit}/phone.png?v=`);
+    // A picture taken as the owner — every picture before #738 — stays the
+    // writers', even of a public app.
+    app.db
+      .query(`UPDATE look SET taken_as = 'owner' WHERE app_id = ?1 AND env = ?2`)
+      .run(galleryApp.id, env);
+    expect((await web(at("phone"), bobCookie)).status).toBe(404);
+    expect((await web(at("phone"), aliceCookie)).status).toBe(200);
+    const after = await (
+      await web(`/alice/gallery/pulls/${opened.value.number}`, bobCookie)
+    ).text();
+    expect(after).not.toContain("<h2>Look</h2>");
+  }, 120_000);
+
+  test("a public app made private after its pictures were taken: a reader gets them no more, and no Look card; its writer still does (#845)", async () => {
+    const gallery = getRepo(app.db, "alice", "gallery")!;
+    const galleryApp = getAppByRepo(app.db, gallery.id)!;
+    const look = looksForEnv(app.db, galleryApp.id, "production").find(
+      (l) => l.kind === "phone" && l.error === null,
+    )!;
+    // Taken as nobody while the app was public.
+    app.db.query(`UPDATE look SET taken_as = 'nobody' WHERE app_id = ?1`).run(galleryApp.id);
+    const at = `/alice/gallery/looks/production/${look.commitOid}/phone.png`;
+    expect((await web(at, bobCookie)).status).toBe(200);
+    const pull = listPulls(app.db, gallery.id, { state: "open" })[0]!;
+    const card = async (cookie: string) =>
+      (await (await web(`/alice/gallery/pulls/${pull.number}`, cookie)).text()).includes("<h2>Look</h2>");
+    expect(await card(bobCookie)).toBe(true);
+    // Made private: the same files, asked again on every fetch.
+    app.db.query(`UPDATE app SET access = 'private' WHERE id = ?1`).run(galleryApp.id);
+    try {
+      expect((await web(at, bobCookie)).status).toBe(404);
+      expect((await web(at, "")).status).toBe(404);
+      expect(await card(bobCookie)).toBe(false);
+      expect((await web(at, aliceCookie)).status).toBe(200);
+      expect(await card(aliceCookie)).toBe(true);
+    } finally {
+      app.db.query(`UPDATE app SET access = 'public' WHERE id = ?1`).run(galleryApp.id);
+    }
+  });
 
   test("memory pressure is what the container truly holds, never its page cache", async () => {
     const { cgroupMemoryPressure, memoryPressure } =

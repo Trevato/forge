@@ -1,28 +1,56 @@
 /**
  * `bun test`, over the named files, in parallel shards.
  *
+ *   bun scripts/test-shards.ts [bun test flags…] --gate
  *   bun scripts/test-shards.ts [bun test flags…] test/a.test.ts test/b.test.ts …
+ *   bun scripts/test-shards.ts --record [bun test flags…] test/a.test.ts …
+ *   bun scripts/test-shards.ts [bun test flags…] -- a b …   (test/a.test.ts …)
  *
- * The files come from the command line, so `forge.json`'s `check.run`
- * stays the one place that names them. Each shard is its own `bun test`
+ * `--gate` runs the files `scripts/gate.ts` admits, which is how
+ * `forge.json`'s `check.run` names them; files on the command line are for
+ * running a slice by hand. Each shard is its own `bun test`
  * over a disjoint slice (`scripts/shards.ts` decides the slices); a
  * shard's output is written through whole when it finishes, so the log
  * reads one shard at a time, and the tail names every failing test from
  * every shard. Exits non-zero if any shard does.
+ *
+ * Files are weighed by how long they took, from `scripts/test-times.json`
+ * (a file it does not name, or a table it refuses, falls back to bytes).
+ * `--record` refreshes that table: the same number of workers, but each
+ * file is its own `bun test`, timed alone from spawn to exit, and the
+ * table is rewritten from those times when every file is green.
  */
 
 import { availableParallelism } from "node:os";
-import { statSync } from "node:fs";
-import { shardCount, splitFiles, tally, type ShardResult } from "./shards.ts";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  formatTimes,
+  parseTimes,
+  shardCount,
+  splitArgs,
+  splitFiles,
+  tally,
+  weigher,
+  type ShardResult,
+} from "./shards.ts";
+import { GATE } from "./gate.ts";
 
-const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
+const TIMES = new URL("./test-times.json", import.meta.url).pathname;
 
-const args = process.argv.slice(2);
-const files = args.filter((arg) => TEST_FILE.test(arg));
-const flags = args.filter((arg) => !TEST_FILE.test(arg));
+const argv = process.argv.slice(2);
+const record = argv.includes("--record");
+const gate = argv.includes("--gate");
+const args = argv.filter((arg) => arg !== "--record" && arg !== "--gate");
+const split = splitArgs(args);
+if (!split.ok) {
+  console.error(`test-shards: ${split.error}`);
+  process.exit(2);
+}
+const flags = split.flags;
+const files = [...(gate ? GATE : []), ...split.files];
 
 if (files.length === 0) {
-  console.error("test-shards: name the test files to run");
+  console.error("test-shards: name the test files to run, or --gate");
   process.exit(2);
 }
 // A file that is not there would be a filter matching nothing to `bun
@@ -50,11 +78,35 @@ if (!count.ok) {
   console.error(`test-shards: ${count.error}`);
   process.exit(2);
 }
-// Bytes stand in for how long a file takes: no timings are kept between runs.
-const slices = splitFiles(files, count.value, (file) => size.get(file) ?? 0);
+// Measured seconds where the table has them, bytes scaled to seconds
+// where it does not. A missing or refused table is said out loud and the
+// gate still runs, on bytes alone.
+let times = new Map<string, number>();
+let table = "";
+try {
+  table = readFileSync(TIMES, "utf8");
+} catch {
+  console.log("test-shards: no scripts/test-times.json; weighing by bytes");
+}
+if (table !== "") {
+  const parsed = parseTimes(table);
+  if (parsed.ok) times = parsed.value;
+  else
+    console.log(
+      `test-shards: scripts/test-times.json refused (${parsed.error}); weighing by bytes`,
+    );
+}
+const weight = weigher(files, size, times);
+// Recording runs one file per process, so every file is its own slice.
+const slices = record
+  ? files.map((file) => [file])
+  : splitFiles(files, count.value, weight);
 
 console.log(
-  `test-shards: ${files.length} files in ${slices.length} shard${slices.length === 1 ? "" : "s"}`,
+  record
+    ? `test-shards: recording ${files.length} files, ${count.value} at a time`
+    : `test-shards: ${files.length} files in ${slices.length} shard${slices.length === 1 ? "" : "s"}, ` +
+        `expected ${slices.map((slice) => slice.reduce((sum, file) => sum + weight(file), 0).toFixed(0) + "s").join(" ")}`,
 );
 
 const children = new Set<Bun.Subprocess>();
@@ -74,7 +126,9 @@ async function drain(
   into.push(decoder.decode());
 }
 
-async function runShard(slice: string[], index: number): Promise<ShardResult> {
+type Timed = ShardResult & { seconds: number };
+
+async function runShard(slice: string[], index: number): Promise<Timed> {
   const started = performance.now();
   // An exact path, never a filter: `test/web.test.ts` alone would also
   // match any file whose path contains it, in some other shard.
@@ -98,11 +152,51 @@ async function runShard(slice: string[], index: number): Promise<ShardResult> {
   process.stdout.write(
     `\n── shard ${index + 1}/${slices.length} (exit ${code}, ${seconds}s): ${slice.join(" ")}\n${text}${text.endsWith("\n") ? "" : "\n"}`,
   );
-  return { files: slice, code, output: text };
+  return {
+    files: slice,
+    code,
+    output: text,
+    seconds: (performance.now() - started) / 1000,
+  };
+}
+
+/** Runs every slice, at most `width` at once, in the slices' order. */
+async function pool(width: number): Promise<Timed[]> {
+  const results: Timed[] = [];
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < slices.length) {
+      const index = next++;
+      results[index] = await runShard(slices[index]!, index);
+    }
+  }
+  await Promise.all(Array.from({ length: width }, worker));
+  return results;
 }
 
 const started = performance.now();
-const results = await Promise.all(slices.map(runShard));
+const results = await pool(record ? count.value : slices.length);
 const ending = tally(results, (performance.now() - started) / 1000);
+const spread = results.map((result) => result.seconds);
 console.log(`\n${ending.lines.join("\n")}`);
+if (!record && results.length > 1)
+  console.log(
+    `Slowest shard ${Math.max(...spread).toFixed(1)}s, fastest ${Math.min(...spread).toFixed(1)}s.`,
+  );
+if (record) {
+  if (ending.code !== 0) {
+    console.log(
+      "test-shards: not recording: a file is red, so its time is not its time",
+    );
+  } else {
+    // Files this run did not name keep their old times: a partial run
+    // refreshes what it ran and forgets nothing else.
+    const fresh = new Map(times);
+    for (const result of results) fresh.set(result.files[0]!, result.seconds);
+    writeFileSync(TIMES, formatTimes(fresh));
+    console.log(
+      `test-shards: wrote ${results.length} times to scripts/test-times.json`,
+    );
+  }
+}
 process.exit(ending.code);

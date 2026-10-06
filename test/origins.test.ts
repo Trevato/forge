@@ -7,7 +7,6 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { commitToBranch, forkRepo } from "../src/actions/repos.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { settled } from "../src/origins/jobs.ts";
 import { open, seal } from "../src/kernel/secret.ts";
 import { discover } from "../src/origins/discover.ts";
@@ -16,6 +15,7 @@ import { providerFor } from "../src/origins/providers/index.ts";
 import { staticCredential } from "../src/origins/types.ts";
 import { anchorFromHunk } from "../src/origins/providers/http.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 /**
  * Origins, end to end: a real forge, a fake API that behaves like Forgejo,
@@ -170,7 +170,7 @@ describe("origins: connecting, mirroring, writing through", () => {
         }),
       });
     }
-    resetConnectLimit();
+    proveAll(app);
   });
 
   afterAll(async () => {
@@ -324,7 +324,7 @@ describe("origins: connecting, mirroring, writing through", () => {
     const minted = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "alice",
         password: ALICE_PASSWORD,
         name: "rw",

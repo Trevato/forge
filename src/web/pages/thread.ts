@@ -8,8 +8,13 @@
  * is what makes a long thread skimmable.
  */
 
+import { mayView } from "../../core/sealed.ts";
 import { listCrew } from "../../actions/crew.ts";
-import { linkIssue, unlinkIssue } from "../../actions/dependencies.ts";
+import {
+  confirmIssue,
+  linkIssue,
+  unlinkIssue,
+} from "../../actions/dependencies.ts";
 import { dependenciesOf } from "../../core/dependencies.ts";
 import { isCrew } from "../../core/agents.ts";
 import {
@@ -18,8 +23,21 @@ import {
   setIssueStateThrough,
 } from "../../actions/issues.ts";
 import { listEvents } from "../../core/events.ts";
-import type { Issue, Label } from "../../core/issues.ts";
-import { getIssue, labelsFor, listComments } from "../../core/issues.ts";
+import { markOf, marksByName, type Mark } from "../../core/marks.ts";
+import {
+  CLOSE_REASONS,
+  type CloseReason,
+  type Issue,
+  type Label,
+} from "../../core/issues.ts";
+import { editIssue, type Closing } from "../../actions/issues.ts";
+import {
+  getIssue,
+  labelsFor,
+  listComments,
+  MAX_BODY,
+  MAX_TITLE,
+} from "../../core/issues.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { inlineIcons, type IconName as Glyph } from "../icons.ts";
 import {
@@ -47,7 +65,8 @@ import {
   type Tone,
 } from "../ui.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
-import { studioRecord } from "../studio/nouns.ts";
+import { studioRecord, tellHref } from "../studio/nouns.ts";
+import { interruptionsOn } from "../../crew/interrupted.ts";
 
 /**
  * The four ways a write can fail *because of the origin*, in words.
@@ -90,7 +109,13 @@ export function threadContext(
   const number = parseNumber(ctx.params.number);
   const issue =
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
-  if (!issue || issue.kind !== kind) return notFoundPage(ctx);
+  // A sealed report is not there for anyone who may not see it (`core/sealed.ts`).
+  if (
+    !issue ||
+    issue.kind !== kind ||
+    !mayView(ctx.app.db, repo, issue, ctx.auth.user)
+  )
+    return notFoundPage(ctx);
   return { repo, issue };
 }
 
@@ -123,6 +148,8 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
       tone: "default",
       verb: "reviewed a line",
     },
+    "issue.edited": { icon: "pencil", tone: "default", verb: "edited this" },
+    "pull.edited": { icon: "pencil", tone: "default", verb: "edited this" },
   };
 
 /**
@@ -156,7 +183,7 @@ function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
         icon: look.icon,
         tone: look.tone,
         body: html`${actor
-            ? userLink(actor.username)
+            ? userLink(actor.username, { mark: markOf(actor) })
             : html`<span>someone</span>`} <span>${look.verb}</span> ${time(
             event.createdAt,
           )}`,
@@ -164,6 +191,22 @@ function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
     });
   }
   return entries;
+}
+
+/**
+ * The crew's runs here that the provider or a restart cut short, each as
+ * its own line: `interrupted: provider limit, resumes 02:00 UTC`. Not a
+ * park and not a comment — a comment on an assigned issue starts a run.
+ */
+function interruptionEntries(ctx: Ctx, issue: Issue): Entry[] {
+  return interruptionsOn(ctx.app.db, issue.id).map((run) => ({
+    at: run.at,
+    node: tlEvent({
+      icon: "clock",
+      tone: "attn",
+      body: html`<span>the crew's run was ${run.summary}</span> ${time(run.at)}`,
+    }),
+  }));
 }
 
 export interface ConversationOptions {
@@ -176,6 +219,49 @@ export interface ConversationOptions {
    * timeline that files it separately reads as two conversations.
    */
   extra?: readonly Entry[];
+  /**
+   * Where a new title or body posts, for a viewer who may give one (the
+   * author, or a person who writes here — the same rule `editIssue` keeps,
+   * decided by the page so nobody is shown a form the server would refuse).
+   */
+  editAction?: string | undefined;
+}
+
+/**
+ * The opening post's own words, open for editing under it: the title and
+ * the body as they stand, one form, one Save. Folded away until asked for,
+ * since most visits read and few rewrite.
+ */
+function editForm(issue: Issue, action: string): Html {
+  return html`<details class="tl-edit" id="edit">
+    <summary class="muted small">${icon("pencil")} Edit</summary>
+    <form class="card comment-form mt" method="post" action="${action}">
+      <label class="sr-only" for="edit-title">Title</label>
+      <input
+        class="input"
+        id="edit-title"
+        name="title"
+        value="${issue.title}"
+        required
+        maxlength="${MAX_TITLE}"
+      />
+      <label class="sr-only" for="edit-body">Description</label>
+      <textarea
+        class="input mt"
+        id="edit-body"
+        name="body"
+        rows="8"
+        data-grow
+        maxlength="${MAX_BODY}"
+      >
+${issue.body}</textarea>
+      <div class="form-actions">
+        <span class="muted small">Markdown, as in a comment.</span>
+        <span class="spacer"></span>
+        ${btn("Save", { size: "sm", icon: "check" })}
+      </div>
+    </form>
+  </details>`;
 }
 
 /**
@@ -193,14 +279,21 @@ export function conversation(
   // diff, and showing it in both places says the same thing twice.
   const comments = listComments(ctx.app.db, issue.id, { kind: "comment" });
   const glyph = originGlyph(repo);
+  // Who each name is, asked once for the whole thread (`core/marks.ts`).
+  const marks = marksByName(ctx.app.db, [
+    issue.authorName,
+    ...comments.map((c) => c.authorName),
+  ]);
   const entries: Entry[] = comments.map((c) => ({
     at: c.createdAt,
     node: threadComment(c.id, c.authorName, c.createdAt, c.body, {
       originAuthor: c.originAuthor,
       originKind: glyph,
+      mark: marks.get(c.authorName),
     }),
   }));
   entries.push(...stateEvents(ctx, repo, issue));
+  entries.push(...interruptionEntries(ctx, issue));
   entries.push(...(options.extra ?? []));
   entries.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 
@@ -208,6 +301,7 @@ export function conversation(
     commentCard({
       id: "",
       author: issue.authorName,
+      mark: marks.get(issue.authorName),
       at: issue.createdAt,
       body: issue.body,
       verb: options.openVerb,
@@ -219,7 +313,9 @@ export function conversation(
 
   return {
     node: html`<div class="timeline" id="conversation">
-      ${opening}${entries.map((e) => e.node)}
+      ${opening}${when(options.editAction, (action) =>
+        editForm(issue, action),
+      )}${entries.map((e) => e.node)}
     </div>`,
     lastCommentId: comments.length > 0 ? comments[comments.length - 1]!.id : "",
   };
@@ -232,12 +328,17 @@ export function threadComment(
   author: string,
   at: string,
   body: string,
-  origin: { originAuthor?: string | null; originKind?: Glyph } = {},
+  origin: {
+    originAuthor?: string | null;
+    originKind?: Glyph;
+    mark?: Mark | undefined;
+  } = {},
 ): Html {
   return html`<div class="tl-item" data-kind="comment" data-comment-id="${id}">
     <span class="tl-dot">${icon("comment")}</span>${commentCard({
       id,
       author,
+      mark: origin.mark,
       at,
       body,
       verb: "commented",
@@ -264,16 +365,26 @@ export function threadFragment(ctx: Ctx, kind: "issue" | "pull"): Response {
   const number = parseNumber(ctx.params.number);
   const issue =
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
-  if (!issue || issue.kind !== kind) return new Response("", { status: 404 });
+  if (
+    !issue ||
+    issue.kind !== kind ||
+    !mayView(ctx.app.db, repo, issue, ctx.auth.user)
+  )
+    return new Response("", { status: 404 });
   const after = ctx.url.searchParams.get("after") ?? "";
   const fresh = listComments(ctx.app.db, issue.id, {
     kind: "comment",
   }).filter((c) => c.id > after);
   const glyph = originGlyph(repo);
+  const marks = marksByName(
+    ctx.app.db,
+    fresh.map((c) => c.authorName),
+  );
   const fragment = html`${fresh.map((c) =>
     threadComment(c.id, c.authorName, c.createdAt, c.body, {
       originAuthor: c.originAuthor,
       originKind: glyph,
+      mark: marks.get(c.authorName),
     }),
   )}`;
   return new Response(inlineIcons(fragment.text), {
@@ -293,12 +404,16 @@ export interface ComposerOptions {
   /** Where close/reopen POSTs; omitted hides those buttons. */
   stateAction?: string;
   state: "open" | "closed";
+  /** Offer why an issue closes: done, dropped, or split into others. */
+  reasons?: boolean;
   /** A merged pull can never reopen. */
   locked?: boolean;
   /** What the close button calls the thing here — dev's own noun
    * ("pull request", "issue") or the studio's ("change", "tell"). The
    * caller knows which page it is drawing; the composer does not have to. */
   closeLabel: string;
+  /** Who directs the crew here, on a thread an agent holds (`crew/direct.ts`). */
+  crewNote?: string | undefined;
 }
 
 /** The comment box. Close and reopen are their own form, not an `intent`
@@ -327,6 +442,30 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
           />
         </form>`
       : null;
+  // Why it closes sits beside the button that closes it, joined to the
+  // state form by id like the button; the numbers it split into only show
+  // once "split into…" is picked (`.close-into`, no script needed).
+  const reasons =
+    stateForm !== null && o.reasons && o.state === "open"
+      ? html`<select
+            class="input close-reason"
+            name="reason"
+            form="thread-state"
+            aria-label="Why it closes"
+          >
+            <option value="done">done</option>
+            <option value="dropped">dropped</option>
+            <option value="split">split into…</option>
+          </select>
+          <input
+            class="input close-into"
+            name="into"
+            form="thread-state"
+            inputmode="numeric"
+            placeholder="#, #"
+            aria-label="Issue numbers it was split into"
+          />`
+      : null;
   const closeButton =
     o.stateAction !== undefined && !o.locked
       ? btn(o.state === "open" ? o.closeLabel : "Reopen", {
@@ -353,13 +492,16 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
         placeholder="Leave a comment"
         required
       ></textarea>
+      ${o.crewNote === undefined
+        ? null
+        : html`<p class="muted small crew-note">${o.crewNote}</p>`}
       <div class="form-actions">
         <span class="muted small"
           >${icon("file")} Markdown is supported — <code>**bold**</code>,
           <code>[link](url)</code>, <code>&gt; quote</code>.</span
         >
         <span class="spacer"></span>
-        ${closeButton}
+        ${reasons} ${closeButton}
         ${btn("Comment", { variant: "primary", icon: "comment" })}
       </div>
     </form>`;
@@ -479,7 +621,11 @@ export function assigneeCard(
       ? html`<p class="muted small">Nobody yet.</p>`
       : html`<p class="bar">
           ${when(issue.assigneeIsAgent, () => icon("bot"))}
-          ${userLink(issue.assigneeName)}
+          ${userLink(issue.assigneeName, {
+            mark: marksByName(ctx.app.db, [issue.assigneeName]).get(
+              issue.assigneeName,
+            ),
+          })}
         </p>`;
   if (!mayEdit)
     return card(current, {
@@ -579,6 +725,28 @@ export async function stateSubmit(
 
   const wanted = field(form, "state") === "closed" ? "closed" : "open";
   const dest = `${repoBase(found.repo)}/${kind === "pull" ? "pulls" : "issues"}/${found.issue.number}`;
+  const why = field(form, "reason");
+  const intoText = field(form, "into").trim();
+  const into = intoText
+    .split(/[\s,]+/)
+    .filter((t) => t !== "")
+    .map((t) => Number(t.replace(/^#/, "")));
+  if (
+    (why !== "" && !CLOSE_REASONS.includes(why as CloseReason)) ||
+    into.length > 50 ||
+    !into.every((n) => Number.isInteger(n) && n > 0)
+  )
+    return flashOrJson(ctx, dest, {
+      tone: "danger",
+      message: "Close as done, dropped, or split into issue numbers.",
+    });
+  const closing: Closing =
+    wanted === "closed" && kind === "issue" && why !== ""
+      ? {
+          reason: why as CloseReason,
+          ...(why === "split" ? { into } : {}),
+        }
+      : {};
   // The `…Through` twin: identical on a native repo, and on a mirror it
   // closes the issue at the origin first and reflects what came back.
   const changed = await setIssueStateThrough(
@@ -587,6 +755,7 @@ export async function stateSubmit(
     found.repo,
     found.issue,
     wanted,
+    closing,
   );
   if (!changed.ok) {
     // The same noun the redirect target is about to render with
@@ -607,6 +776,41 @@ export async function stateSubmit(
   return flashOrJson(ctx, dest, {
     message: wanted === "closed" ? "Closed." : "Reopened.",
   });
+}
+
+/** POST …/:number/edit — a new title or body, for both kinds. */
+export async function wordsSubmit(
+  ctx: Ctx,
+  kind: "issue" | "pull",
+): Promise<Response> {
+  const found = threadContext(ctx, kind);
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/${kind === "pull" ? "pulls" : "issues"}/${found.issue.number}`;
+  const edited = editIssue(ctx.app, ctx.auth.user, found.repo, found.issue, {
+    title: field(form, "title"),
+    body: field(form, "body"),
+  });
+  if (!edited.ok) {
+    if (edited.error === "not_found") return notFoundPage(ctx);
+    const message =
+      originError(edited.error) ??
+      (edited.error === "forbidden" || edited.error === "unauthorized"
+        ? "Only the author or someone with write access can edit this."
+        : edited.error === "taken_up"
+          ? "A writer has taken this up: comment instead."
+          : edited.error === "empty_title"
+          ? "A title is needed."
+          : edited.error === "title_too_long"
+            ? `A title is at most ${MAX_TITLE} characters.`
+            : edited.error === "body_too_long"
+              ? "That description is too long."
+              : "That could not be changed.");
+    return flashOrJson(ctx, dest, { tone: "danger", message });
+  }
+  return flashOrJson(ctx, dest, { message: "Saved." });
 }
 
 /** POST …/:number/labels — replace the label set. Writers only. */
@@ -676,8 +880,21 @@ export function dependenciesCard(
         (i) =>
           html`<li data-state="${i.state}">
             ${icon(i.state === "closed" ? "issueClosed" : "issue")}
-            <a href="${base}/issues/${i.number}">${i.title}</a>
+            <a href="${tellHref(base, i.number)}">${i.title}</a>
             <span class="muted small">#${i.number}</span>
+            ${i.closeReason === "dropped" || i.closeReason === "split"
+              ? html`<span class="muted small">${i.closeReason}</span>`
+              : null}
+            ${removable &&
+            mayEdit &&
+            (i.closeReason === "dropped" || i.closeReason === "split")
+              ? html`<form method="post" action="${action}" class="inline">
+                  <input type="hidden" name="confirm" value="${i.number}" />
+                  <button class="btn btn-ghost btn-xs" type="submit">
+                    Still holds
+                  </button>
+                </form>`
+              : null}
             ${removable && mayEdit
               ? html`<form method="post" action="${action}" class="inline">
                   <input type="hidden" name="unlink" value="${i.number}" />
@@ -725,7 +942,14 @@ export function dependenciesCard(
           ${btn("Waits for", { type: "submit", size: "sm" })}
         </form>`
       : null}
-    <p class="muted small mt"><a href="${base}/map">See the map</a></p>`;
+    <p class="muted small mt">
+      ${blockedBy.length === 0
+        ? null
+        : html`<a href="${base}/milestones/${issue.number}"
+              >See how far it is</a
+            >
+            · `}<a href="${base}/map">See the map</a>
+    </p>`;
   return card(body, {
     head: html`${icon("map")}
       <h2>Depends on</h2>`,
@@ -741,7 +965,13 @@ export async function dependencySubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const dest = `${repoBase(found.repo)}/issues/${found.issue.number}`;
   const unlink = field(form, "unlink").trim();
-  const raw = unlink !== "" ? unlink : field(form, "blockedBy").trim();
+  const confirm = field(form, "confirm").trim();
+  const raw =
+    unlink !== ""
+      ? unlink
+      : confirm !== ""
+        ? confirm
+        : field(form, "blockedBy").trim();
   const number = Number(raw.replace(/^#/, ""));
   const other =
     Number.isInteger(number) && number > 0
@@ -755,7 +985,9 @@ export async function dependencySubmit(ctx: Ctx): Promise<Response> {
   const result =
     unlink !== ""
       ? unlinkIssue(ctx.app, ctx.auth.user, found.repo, found.issue, other)
-      : linkIssue(ctx.app, ctx.auth.user, found.repo, found.issue, other);
+      : confirm !== ""
+        ? confirmIssue(ctx.app, ctx.auth.user, found.repo, found.issue, other)
+        : linkIssue(ctx.app, ctx.auth.user, found.repo, found.issue, other);
   if (!result.ok) {
     const words: Record<string, string> = {
       self: "An issue cannot wait for itself.",
@@ -771,8 +1003,10 @@ export async function dependencySubmit(ctx: Ctx): Promise<Response> {
   }
   return flashTo(ctx, dest, {
     message:
-      unlink !== ""
-        ? `#${found.issue.number} no longer waits for #${other.number}.`
-        : `#${found.issue.number} waits for #${other.number}.`,
+      confirm !== ""
+        ? `#${found.issue.number} may go ahead without #${other.number}.`
+        : unlink !== ""
+          ? `#${found.issue.number} no longer waits for #${other.number}.`
+          : `#${found.issue.number} waits for #${other.number}.`,
   });
 }

@@ -3,8 +3,11 @@
  * narrower; there is no second identity system.
  */
 
+import { markUnproven, markVerified } from "./verify.ts";
 import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
+import { noreplyAddress } from "./commit_identity.ts";
+import { reservedName } from "./reserved.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -20,8 +23,20 @@ export interface User {
    * tokens the forge mints for a run (docs/APPS.md).
    */
   readonly kind: "user" | "org" | "agent";
+  /**
+   * Which address the commits the forge writes for this person carry: the
+   * no-reply one on the forge's host, or — by explicit opt-in — `email`
+   * (`core/commit_identity.ts`).
+   */
+  readonly commitEmail: CommitEmail;
   readonly createdAt: string;
+  /** When the owner suspended the account; null while it is in good standing. */
+  readonly suspendedAt: string | null;
+  /** When the owner removed it. The row stays so the name stays taken. */
+  readonly removedAt: string | null;
 }
+
+export type CommitEmail = "noreply" | "account";
 
 interface UserRow {
   id: string;
@@ -32,7 +47,10 @@ interface UserRow {
   password_hash: string;
   kind: "user" | "org";
   is_agent: number;
+  commit_email: CommitEmail;
   created_at: string;
+  suspended_at: string | null;
+  removed_at: string | null;
 }
 
 function toUser(row: UserRow): User {
@@ -45,9 +63,27 @@ function toUser(row: UserRow): User {
     // The flag, not the column, decides: see migration 14 for why an agent
     // is stored as kind 'user' with is_agent set.
     kind: row.is_agent === 1 ? "agent" : row.kind,
+    commitEmail: row.commit_email === "account" ? "account" : "noreply",
     createdAt: row.created_at,
+    suspendedAt: row.suspended_at,
+    removedAt: row.removed_at,
   };
 }
+
+/**
+ * Whether an account may act at all. Every credential — session, token,
+ * password, edge sign-in, SSH key — asks this before it names a person.
+ */
+export const isActive = (user: User): boolean =>
+  user.suspendedAt === null && user.removedAt === null;
+
+/**
+ * Whether `viewer` finds no account at `user`'s name: a suspended or removed
+ * person is kept, and hidden from everyone but a site admin (#831). Their
+ * name stays on what they wrote in others' threads.
+ */
+export const hiddenFrom = (user: User, viewer: User | undefined): boolean =>
+  user.kind === "user" && !isActive(user) && viewer?.isAdmin !== true;
 
 const MIN_PASSWORD = 10;
 const MAX_EMAIL = 254;
@@ -56,6 +92,7 @@ const MAX_DISPLAY_NAME = 80;
 export type CreateUserError =
   | "invalid_username"
   | "username_taken"
+  | "username_reserved"
   | "email_taken"
   | "weak_password";
 
@@ -83,6 +120,29 @@ export interface CreateUserInput {
    * @default false
    */
   agent?: boolean;
+  /**
+   * The caller vouches for this account's email: a seeded account (a
+   * spawned forge's admin, a claim, a test fixture). Without it the account
+   * starts unproven and must follow a link before it can create or cost
+   * (\`core/verify.ts\`) — so a way in added later that forgets to say so is
+   * held back, never trusted by accident. Agents are never held back.
+   * @default false
+   */
+  trusted?: boolean;
+  /**
+   * Make the account under a reserved name on purpose (\`core/reserved.ts\`):
+   * a seed that names it deliberately. Every other way in — signup, an
+   * edge or linked sign-in, any added later — is held to the rule here,
+   * in the one place accounts are made. Agents are named by the admin.
+   * @default false
+   */
+  allowReserved?: boolean;
+  /**
+   * The account naming this one, whose own name does not count against it:
+   * an admin's everyday account may carry the admin's handle ("ada-me").
+   * Every other protected name still does.
+   */
+  reservedSelf?: string;
 }
 
 export async function createUser(
@@ -108,6 +168,13 @@ export async function createUser(
         : "email_taken",
     );
   }
+  // Taken is said first; only a name nobody holds can be a reserved one.
+  if (
+    !agent &&
+    input.allowReserved !== true &&
+    reservedName(db, input.username, input.reservedSelf) !== undefined
+  )
+    return err("username_reserved");
 
   const userId = id();
   // An account without a password has an empty hash, which no verifier
@@ -147,6 +214,11 @@ export async function createUser(
       .get(input.username);
     return err(taken ? "username_taken" : "email_taken");
   }
+  // Every person gets a row: proven when the caller vouches, else not yet.
+  if (!agent) {
+    if (input.trusted === true) markVerified(db, userId, new Date().toISOString());
+    else markUnproven(db, userId);
+  }
   return ok(getUserById(db, userId)!);
 }
 
@@ -159,11 +231,21 @@ function isUniqueViolation(error: unknown): boolean {
 export interface ProfilePatch {
   displayName?: string;
   email?: string;
+  commitEmail?: CommitEmail;
+}
+
+/**
+ * A display name as it is stored: trimmed, cut to its limit, and trimmed
+ * again — so a name padded past the cut is judged by what is kept.
+ */
+export function cleanDisplayName(raw: string): string {
+  return raw.trim().slice(0, MAX_DISPLAY_NAME).trim();
 }
 
 export type UpdateProfileError =
   | "email_taken"
   | "invalid_email"
+  | "invalid_commit_email"
   | "no_such_user";
 
 /** Change the mutable profile fields. Absent keys are left untouched. */
@@ -183,14 +265,13 @@ export function updateProfile(
       .get(email, userId);
     if (taken) return err("email_taken");
   }
-  const displayName = (patch.displayName ?? current.displayName)
-    .trim()
-    .slice(0, MAX_DISPLAY_NAME);
-  db.query("UPDATE user SET email = ?1, display_name = ?2 WHERE id = ?3").run(
-    email,
-    displayName,
-    userId,
-  );
+  const displayName = cleanDisplayName(patch.displayName ?? current.displayName);
+  const commitEmail = patch.commitEmail ?? current.commitEmail;
+  if (commitEmail !== "noreply" && commitEmail !== "account")
+    return err("invalid_commit_email");
+  db.query(
+    "UPDATE user SET email = ?1, display_name = ?2, commit_email = ?3 WHERE id = ?4",
+  ).run(email, displayName, commitEmail, userId);
   return ok(getUserById(db, userId)!);
 }
 
@@ -241,13 +322,22 @@ export async function ensureEdgeUser(
   host: string,
 ): Promise<User | undefined> {
   const existing = getUserByName(db, login);
-  if (existing) return existing.kind === "user" ? existing : undefined;
+  if (existing)
+    return existing.kind === "user" && isActive(existing) ? existing : undefined;
+  // The edge vouches for a login, not for its right to a name: createUser
+  // refuses a reserved one, so a platform account called after the crew or
+  // the owner is not let in under it.
   const made = await createUser(db, {
     username: login,
-    email: `${login}@users.noreply.${host}`,
+    email: noreplyAddress(login, host),
     adminIfFirst: true,
   });
-  return made.ok ? made.value : undefined;
+  if (!made.ok) return undefined;
+  // A newcomer through the edge starts unproven like one through /signup
+  // (its placeholder is no address at all); the forge's first account is
+  // proven by being first.
+  if (made.value.isAdmin) markVerified(db, made.value.id, made.value.createdAt);
+  return made.value;
 }
 
 /** Constant-shape verification: always burns an argon2 verify, hit or miss. */
@@ -271,7 +361,8 @@ export async function verifyPassword(
   // neither does an agent, whose hash is empty besides.
   if (!valid || !row || row.kind === "org" || row.is_agent === 1)
     return err("bad_credentials");
-  return ok(toUser(row));
+  const user = toUser(row);
+  return isActive(user) ? ok(user) : err("bad_credentials");
 }
 
 /**

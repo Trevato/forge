@@ -6,6 +6,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { rmSync } from "node:fs";
 import { isSafeName } from "../git/guard.ts";
 import { installHooks } from "../git/hooks.ts";
 import { closeReader } from "../git/read.ts";
@@ -19,10 +20,21 @@ import {
 import { id } from "../kernel/id.ts";
 import { createLog } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { appsNaming, isAppMember } from "./app_members.ts";
 import { likeEscape, pageLimit } from "./issues.ts";
-import { REPO_VISIBLE, REPO_WRITABLE } from "./visibility.ts";
-import { accessAllows, orgAccess, type Access } from "./orgs.ts";
-import { getUserById, type User } from "./users.ts";
+import {
+  OWNER_STANDING,
+  PUBLIC_VISIBLE,
+  REPO_VISIBLE,
+  REPO_WRITABLE,
+} from "./visibility.ts";
+import {
+  accessAllows,
+  orgAccess,
+  orgAccessByOrg,
+  type Access,
+} from "./orgs.ts";
+import { getUserById, isActive, type User } from "./users.ts";
 
 const log = createLog("repos");
 
@@ -86,10 +98,22 @@ export interface Repo {
   readonly autonomyCeilingUsd: number;
   readonly autonomySlots: number;
   readonly autonomyBy: string | null;
+  /**
+   * "Outsiders may trigger the crew": whether someone who cannot write here
+   * may still start or steer a run by speaking (`crew/direct.ts`). Off by
+   * default; on a public repository it hands strangers the owner's budget.
+   */
+  readonly crewOutsiders: boolean;
   /** The issue the planner is given, when the map has run dry. */
   readonly directionIssueId: string | null;
   /** The repo this was forked from, or null. */
   readonly forkParentId: string | null;
+  /**
+   * The repository whose sealed reports this one holds the work for
+   * (`core/sealed.ts`): a private repository its owner's crew pushes to,
+   * read only by the base's writers and crew. Null for every other one.
+   */
+  readonly sealedFor: string | null;
   /** The origin this mirrors, or null for a native repo. */
   readonly origin: RepoOrigin | null;
   /**
@@ -116,8 +140,10 @@ interface RepoRow {
   autonomy_ceiling_usd: number;
   autonomy_slots: number;
   autonomy_by: string | null;
+  crew_outsiders: number;
   direction_issue_id: string | null;
   fork_parent_id: string | null;
+  sealed_for: string | null;
   origin_id: string | null;
   origin_kind: "github" | "forgejo" | "gitea" | null;
   origin_full_name: string | null;
@@ -150,8 +176,10 @@ function toRepo(row: RepoRow): Repo {
     autonomyCeilingUsd: row.autonomy_ceiling_usd,
     autonomySlots: row.autonomy_slots,
     autonomyBy: row.autonomy_by,
+    crewOutsiders: row.crew_outsiders === 1,
     directionIssueId: row.direction_issue_id,
     forkParentId: row.fork_parent_id,
+    sealedFor: row.sealed_for,
     origin:
       row.origin_id !== null && row.origin_kind !== null
         ? {
@@ -189,8 +217,10 @@ export function countsForRepos(
     const holes = chunk.map((_, n) => `?${n + 1}`).join(",");
     const rows = db
       .query<{ repo_id: string; kind: "issue" | "pull"; n: number }, string[]>(
+        // A sealed report is not counted where everyone reads the counts
+        // (`sealed.ts`): a count that moves is a hint.
         `SELECT repo_id, kind, COUNT(*) AS n FROM issue
-         WHERE state = 'open' AND repo_id IN (${holes})
+         WHERE state = 'open' AND sealed = 0 AND repo_id IN (${holes})
          GROUP BY repo_id, kind`,
       )
       .all(...chunk);
@@ -263,16 +293,20 @@ export async function createRepo(
   await installHooks(dir);
 
   const repoId = id();
-  db.query(
-    `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
-  ).run(
-    repoId,
-    input.ownerId,
-    input.name,
-    input.visibility ?? "private",
-    input.description ?? "",
-    branch,
+  rowOrUndo(dir, () =>
+    db
+      .query(
+        `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
+      )
+      .run(
+        repoId,
+        input.ownerId,
+        input.name,
+        input.visibility ?? "private",
+        input.description ?? "",
+        branch,
+      ),
   );
   return ok(getRepoById(db, repoId)!);
 }
@@ -281,12 +315,37 @@ export type ForkRepoError =
   | "invalid_name"
   | "name_taken"
   | "already_forked"
-  | "fork_failed";
+  | "fork_failed"
+  /** The owner's forks in the last day reached `perDay` (#888). */
+  | "limit";
+
+const DAY_MS = 86_400_000;
+
+/**
+ * When an owner made each fork since `since`, oldest first — from the
+ * ledger of forks made (`fork_made`), not the forks that still exist: a
+ * deleted copy still counts toward the day it was made in.
+ */
+export function forksSince(db: Database, ownerId: string, since: string): string[] {
+  return db
+    .query<{ made_at: string }, [string, string]>(
+      `SELECT made_at FROM fork_made WHERE owner_id = ?1 AND made_at >= ?2 ORDER BY made_at`,
+    )
+    .all(ownerId, since)
+    .map((r) => r.made_at);
+}
+
+/** A marker the row's transaction throws when the day's forks are made. */
+class OverLimit extends Error {}
 
 /**
  * Fork a repo into another owner. The git objects are shared with the parent
  * via alternates (see forkBareRepo), so this is instant and storage-bounded.
- * The fork inherits the parent's visibility and default branch.
+ * The fork takes the parent's default branch, and its visibility unless a
+ * narrower one is asked for: it is born with it, never public first (#888);
+ * a private parent's fork is private whatever is asked. With `perDay`, the
+ * owner's forks in the last 24 hours are counted in the same transaction
+ * that writes the row, so two forks at once cannot both pass the limit.
  */
 export async function forkRepo(
   db: Database,
@@ -294,8 +353,32 @@ export async function forkRepo(
   parent: Repo,
   ownerId: string,
   name?: string,
+  options: {
+    visibility?: "public" | "private";
+    perDay?: number;
+    now?: number;
+    /**
+     * The private repository the owner works the parent's sealed reports in
+     * (`sealed.ts`): private whatever the parent is, no fork in the graph,
+     * read by the parent's writers and crew. One per owner and parent. Not
+     * a fork, so not one the daily limit counts.
+     */
+    sealed?: boolean;
+  } = {},
 ): Promise<Result<Repo, ForkRepoError>> {
-  const forkName = name ?? parent.name;
+  const sealed = options.sealed === true;
+  const forkName = name ?? (sealed ? `${parent.name}-sealed` : parent.name);
+  const visibility =
+    sealed || parent.visibility === "private"
+      ? "private"
+      : (options.visibility ?? parent.visibility);
+  const now = options.now ?? Date.now();
+  const since = new Date(now - DAY_MS).toISOString();
+  const overLimit = (): boolean =>
+    !sealed &&
+    options.perDay !== undefined &&
+    forksSince(db, ownerId, since).length >= options.perDay;
+  if (overLimit()) return err("limit");
   if (!isSafeName(forkName)) return err("invalid_name");
   const owner = db
     .query<
@@ -309,7 +392,11 @@ export async function forkRepo(
   // comes first so a re-fork reports "already_forked", not "name_taken".
   if (
     db
-      .query("SELECT 1 FROM repo WHERE owner_id = ?1 AND fork_parent_id = ?2")
+      .query(
+        sealed
+          ? "SELECT 1 FROM repo WHERE owner_id = ?1 AND sealed_for = ?2"
+          : "SELECT 1 FROM repo WHERE owner_id = ?1 AND fork_parent_id = ?2",
+      )
       .get(ownerId, parent.id)
   ) {
     return err("already_forked");
@@ -331,19 +418,65 @@ export async function forkRepo(
   await installHooks(forkDir);
 
   const repoId = id();
-  db.query(
-    `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
-  ).run(
-    repoId,
-    ownerId,
-    forkName,
-    parent.visibility,
-    parent.description,
-    parent.defaultBranch,
-    parent.id,
-  );
+  try {
+    rowOrUndo(forkDir, () =>
+      db.transaction(() => {
+        // Counted again with the write: the git copy above took a moment,
+        // and another fork may have landed in it.
+        if (overLimit()) throw new OverLimit();
+        db.query(
+          `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id, sealed_for)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
+        ).run(
+          repoId,
+          ownerId,
+          forkName,
+          visibility,
+          parent.description,
+          parent.defaultBranch,
+          sealed ? null : parent.id,
+          sealed ? parent.id : null,
+        );
+        if (!sealed)
+          db.query(`INSERT INTO fork_made (owner_id, made_at) VALUES (?1, ?2)`).run(
+            ownerId,
+            new Date(now).toISOString(),
+          );
+      })(),
+    );
+  } catch (error) {
+    if (error instanceof OverLimit) return err("limit");
+    throw error;
+  }
   return ok(getRepoById(db, repoId)!);
+}
+
+/**
+ * Git first, row second — and when the row is refused (a constraint, an
+ * operator's trigger), the directory git just made goes with it, so a
+ * refusal leaves nothing on disk for anyone to fill it with.
+ */
+function rowOrUndo(dir: string, insert: () => unknown): void {
+  try {
+    insert();
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/** The private repository `ownerId` works `baseId`'s sealed reports in, if any. */
+export function getSealedFork(
+  db: Database,
+  ownerId: string,
+  baseId: string,
+): Repo | undefined {
+  const row = db
+    .query<RepoRow, [string, string]>(
+      `${SELECT} WHERE repo.owner_id = ?1 AND repo.sealed_for = ?2`,
+    )
+    .get(ownerId, baseId);
+  return row ? toRepo(row) : undefined;
 }
 
 /** Repos forked directly from this one. */
@@ -420,6 +553,14 @@ export function getRepoById(db: Database, repoId: string): Repo | undefined {
   return row ? toRepo(row) : undefined;
 }
 
+/** Every repository one account owns, whatever its visibility. */
+export function listReposOwnedBy(db: Database, ownerId: string): Repo[] {
+  return db
+    .query<RepoRow, [string]>(`${SELECT} WHERE repo.owner_id = ?1`)
+    .all(ownerId)
+    .map(toRepo);
+}
+
 /**
  * Several repos by id, in one query, keyed by id. What a pin list, an
  * activity feed, or any other page holding a bag of repo ids should ask,
@@ -452,6 +593,8 @@ export interface ListReposOptions {
   limit?: number;
   /** Resume after this repo id (exclusive) — lists run newest first. */
   cursor?: string;
+  /** Repositories that run an app first, each half newest first (not with `cursor`). */
+  appsFirst?: boolean;
 }
 
 // Visibility in SQL: public, owned, or owned by an org the viewer is on a
@@ -461,13 +604,17 @@ export interface ListReposOptions {
 // same one and two copies of an access rule is how a forge grows a leak.
 const VISIBLE = REPO_VISIBLE;
 
+/** A listing's order: newest first, or apps first and then newest (`appsFirst`). */
+const newestFirst = (options: ListReposOptions): string =>
+  `${options.appsFirst === true ? "EXISTS (SELECT 1 FROM app WHERE app.repo_id = repo.id) DESC, " : ""}repo.id DESC`;
+
 export function listReposVisibleTo(
   db: Database,
   viewer: User | undefined,
   options: ListReposOptions = {},
 ): Repo[] {
   const params: (string | number)[] = [viewer?.id ?? ""];
-  let where = viewer ? VISIBLE : "repo.visibility = 'public'";
+  let where = viewer ? VISIBLE : PUBLIC_VISIBLE;
   if (options.query !== undefined && options.query.trim() !== "") {
     params.push(`%${likeEscape(options.query.trim())}%`);
     const p = params.length;
@@ -481,7 +628,7 @@ export function listReposVisibleTo(
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+      `${SELECT} WHERE ${where} ORDER BY ${newestFirst(options)} LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRepo);
@@ -515,7 +662,7 @@ export function listReposWritableTo(
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+      `${SELECT} WHERE ${where} ORDER BY ${newestFirst(options)} LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRepo);
@@ -531,7 +678,7 @@ export function listReposByOwner(
 ): Repo[] {
   const params: (string | number)[] = [viewer?.id ?? "", ownerName];
   let where = `user.username = ?2 COLLATE NOCASE AND ${
-    viewer ? VISIBLE : "repo.visibility = 'public'"
+    viewer ? VISIBLE : PUBLIC_VISIBLE
   }`;
   if (options.query !== undefined && options.query.trim() !== "") {
     params.push(`%${likeEscape(options.query.trim())}%`);
@@ -546,7 +693,7 @@ export function listReposByOwner(
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
-      `${SELECT} WHERE ${where} ORDER BY repo.id DESC LIMIT ?${params.length}`,
+      `${SELECT} WHERE ${where} ORDER BY ${newestFirst(options)} LIMIT ?${params.length}`,
     )
     .all(...params)
     .map(toRepo);
@@ -602,7 +749,7 @@ function personalOrDirect(repo: Repo, user: User | undefined): boolean {
   return user !== undefined && (user.id === repo.ownerId || user.isAdmin);
 }
 
-function onCrew(db: Database, repo: Repo, user: User | undefined): boolean {
+export function onCrew(db: Database, repo: Repo, user: User | undefined): boolean {
   if (user === undefined || user.kind !== "agent") return false;
   return (
     db
@@ -625,14 +772,39 @@ function orgAccessFor(
   return orgAccess(db, repo.ownerId, user);
 }
 
+/**
+ * Whether the repo's owner is in good standing. A suspended or removed
+ * account's repositories read as absent to everyone but a site admin
+ * (`OWNER_STANDING`, its SQL twin).
+ */
+export function ownerInStanding(db: Database, repo: Repo): boolean {
+  return (
+    db
+      .query<{ n: number }, [string]>(
+        `SELECT 1 AS n FROM repo WHERE repo.id = ?1 AND ${OWNER_STANDING}`,
+      )
+      .get(repo.id) !== null
+  );
+}
+
 export function canRead(
   db: Database,
   repo: Repo,
   user: User | undefined,
 ): boolean {
+  if (!ownerInStanding(db, repo)) return user?.isAdmin === true;
   if (repo.visibility === "public") return true;
   if (personalOrDirect(repo, user)) return true;
   if (onCrew(db, repo, user)) return true;
+  // The work on a sealed report is read by whoever may see the report on
+  // its base: the base's writers and crew, and nobody else (`sealed.ts`).
+  if (repo.sealedFor !== null) {
+    const base = getRepoById(db, repo.sealedFor);
+    return (
+      base !== undefined &&
+      (canWrite(db, base, user) || onCrew(db, base, user))
+    );
+  }
   return accessAllows(orgAccessFor(db, repo, user), "read");
 }
 
@@ -643,6 +815,73 @@ export function canWrite(
 ): boolean {
   if (personalOrDirect(repo, user)) return true;
   return accessAllows(orgAccessFor(db, repo, user), "write");
+}
+
+/**
+ * Who may enter an app, its previews and its terminal. A public app is open
+ * to anyone. A private one answers to the people who can write the
+ * repository and to its crew — never to everyone who can read it, so making
+ * a repository public changes nobody's way into its app (#620) — and to the
+ * people it names (#752), who may enter it and its previews and nothing
+ * else: not its terminal (`named: false`), not its code, not its crew.
+ */
+export function canEnterApp(
+  db: Database,
+  repo: Repo,
+  app: { readonly id: string; readonly access: "public" | "private" },
+  user: User | undefined,
+  { named = true }: { named?: boolean } = {},
+): boolean {
+  if (app.access === "public") return true;
+  if (canWrite(db, repo, user) || onCrew(db, repo, user)) return true;
+  return (
+    named &&
+    user !== undefined &&
+    user.kind === "user" &&
+    isActive(user) &&
+    isAppMember(db, app.id, user.id)
+  );
+}
+
+/**
+ * `canEnterApp` for a whole page of apps, in a fixed number of reads: the
+ * ids of the apps `user` may enter. The same rule, clause for clause — a
+ * public app is open; a private one answers to whoever may write the
+ * repository or is on its crew (`writableRepoIds`, the SQL twin of
+ * `canWrite` with the crew in it), and, when `named`, to an active person
+ * the app names — asked once for every private app rather than per row.
+ */
+export function enterableApps(
+  db: Database,
+  rows: readonly {
+    readonly repo: Repo;
+    readonly app: { readonly id: string; readonly access: "public" | "private" };
+  }[],
+  user: User | undefined,
+  { named = true }: { named?: boolean } = {},
+): Set<string> {
+  const out = new Set<string>();
+  const closed = rows.filter((r) => {
+    if (r.app.access === "public") out.add(r.app.id);
+    return r.app.access !== "public";
+  });
+  if (closed.length === 0 || user === undefined) return out;
+  const writable = writableRepoIds(
+    db,
+    user,
+    closed.map((r) => r.repo.id),
+  );
+  const naming =
+    named && user.kind === "user" && isActive(user)
+      ? appsNaming(
+          db,
+          user.id,
+          closed.map((r) => r.app.id),
+        )
+      : new Set<string>();
+  for (const r of closed)
+    if (writable.has(r.repo.id) || naming.has(r.app.id)) out.add(r.app.id);
+  return out;
 }
 
 /**
@@ -659,6 +898,32 @@ export function canSeeOwnerFacts(
   user: User | undefined,
 ): boolean {
   return canWrite(db, repo, user);
+}
+
+/**
+ * `canSeeOwnerFacts` for many repositories at once: the ids of those whose
+ * owner facts the user may see. The same rules as `canWrite` — owner, site
+ * admin, or a write/admin team in the owning org (no crew grant, unlike
+ * `REPO_WRITABLE`) — answered from one read of the user's teams, so a list
+ * does not pay a user lookup and a permission query per row.
+ */
+export function ownerFactRepoIds(
+  db: Database,
+  repos: readonly Repo[],
+  user: User | undefined,
+): Set<string> {
+  const out = new Set<string>();
+  if (user === undefined) return out;
+  const orgs = user.isAdmin
+    ? new Map<string, Access>()
+    : orgAccessByOrg(db, user);
+  for (const repo of repos)
+    if (
+      personalOrDirect(repo, user) ||
+      accessAllows(orgs.get(repo.ownerId) ?? "none", "write")
+    )
+      out.add(repo.id);
+  return out;
 }
 
 /**
@@ -716,6 +981,8 @@ export interface RepoSettings {
   autonomySlots?: number;
   /** Who the forge acts as when it assigns and lands on its own. */
   autonomyBy?: string | null;
+  /** Whether someone who cannot write here may start or steer a run. */
+  crewOutsiders?: boolean;
 }
 
 /** Update the mutable repo fields, leaving unspecified ones untouched. */
@@ -728,7 +995,7 @@ export function updateRepoSettings(
     `UPDATE repo SET visibility = ?1, description = ?2, protect_default = ?3,
        default_branch = ?4, require_review = ?5, require_checks = ?7,
        autonomy = ?8, autonomy_direction = ?9, autonomy_ceiling_usd = ?10,
-       autonomy_slots = ?11, autonomy_by = ?12
+       autonomy_slots = ?11, autonomy_by = ?12, crew_outsiders = ?13
      WHERE id = ?6`,
   ).run(
     settings.visibility ?? repo.visibility,
@@ -743,6 +1010,7 @@ export function updateRepoSettings(
     settings.autonomyCeilingUsd ?? repo.autonomyCeilingUsd,
     settings.autonomySlots ?? repo.autonomySlots,
     settings.autonomyBy === undefined ? repo.autonomyBy : settings.autonomyBy,
+    (settings.crewOutsiders ?? repo.crewOutsiders) ? 1 : 0,
   );
   return getRepoById(db, repo.id)!;
 }

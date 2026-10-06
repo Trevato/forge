@@ -17,7 +17,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openIssue } from "../src/actions/issues.ts";
+import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
@@ -351,7 +351,7 @@ describe("the terminal, around the workspace", () => {
       await h.press(":");
       await h.type("or");
       await h.until("COMMANDS");
-      expect(h.text()).toContain("Explore repositories");
+      expect(h.text()).toContain("Open a repository");
     } finally {
       h.stop();
     }
@@ -364,8 +364,11 @@ describe("the terminal, around the workspace", () => {
     try {
       await h.settle();
       expect(h.text()).not.toContain("Realtime beacon");
-      // Nobody touches the terminal: the outbox is the only input.
-      openIssue(forge, alice, repo, { title: "Realtime beacon" });
+      // Nobody touches the terminal: the outbox is the only input. What is
+      // on you is the launcher's live pane.
+      const told = openIssue(forge, alice, repo, { title: "Realtime beacon" });
+      if (!told.ok) throw new Error("open failed");
+      expect(assignIssue(forge, alice, repo, told.value, alice).ok).toBe(true);
       await h.until("Realtime beacon");
       expect(h.text()).toContain("Realtime beacon");
     } finally {
@@ -435,7 +438,7 @@ describe("the terminal, around the workspace", () => {
       await h.settle();
       await openRepo(h, "lighthouse");
       // A native repo has no origin page, and the screen says so rather than
-      // pretending. (The mirrored case is covered in tui-origins.)
+      // pretending. (The mirrored case is covered on the web.)
       await h.press("O");
       expect(h.text()).toContain("no origin page");
     } finally {

@@ -4,9 +4,9 @@
  * before it reaches an action.
  */
 
+import { bodyCapFor, readBounded } from "./limits.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
-import { trapAsync } from "../kernel/result.ts";
 import { crossOrigin, type Ctx } from "./context.ts";
 
 export function json(
@@ -144,18 +144,51 @@ export function securityFloor(response: Response): Response {
  */
 export function respondAccess(error: string, status: number): Response {
   if (error === "not_found") return notFound();
+  // An account whose email is unproven may read, not create or cost: the
+  // same words on every surface (\`actions/verify.ts\`).
+  if (error === "unverified")
+    return json({ error, message: "verify your email first" }, 403);
   if (error === "unauthorized") return unauthorized();
   if (error === "forbidden") return forbidden();
   return json({ error }, status);
 }
 
-/** A JSON object body, or `{}` for anything else — malformed input is not a 500. */
-export async function body(request: Request): Promise<Record<string, unknown>> {
-  const parsed = await trapAsync(() => request.json());
-  const value = parsed.ok ? parsed.value : undefined;
+/** Bytes as a JSON object, or `{}` for anything else — malformed input is not a 500. */
+function asObject(bytes: Uint8Array): Record<string, unknown> {
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return {};
+  }
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
     : {};
+}
+
+/**
+ * A JSON object body, at most \`BODY_MAX\` bytes for a signed-in caller and
+ * \`STRANGER_MAX\` for anyone else (\`http/limits.ts\`) — a route reads its
+ * body before it asks who is calling, so the cap cannot wait for that. Past
+ * the cap, or malformed, \`{}\`; an over-limit body closes its connection.
+ */
+export async function body(request: Request): Promise<Record<string, unknown>> {
+  const bytes = await readBounded(request, bodyCapFor(request));
+  return bytes === "too_large" ? {} : asObject(bytes);
+}
+
+/**
+ * A JSON object body kept to at most \`max\` bytes, for a route a stranger
+ * may call: the declared length is a claim and a chunked body declares
+ * none, so the stream itself is counted (\`readBounded\`). \`too_large\` past
+ * the limit — the connection then closes once answered — else as \`body\`.
+ */
+export async function boundedBody(
+  request: Request,
+  max: number,
+): Promise<Record<string, unknown> | "too_large"> {
+  const bytes = await readBounded(request, max);
+  return bytes === "too_large" ? "too_large" : asObject(bytes);
 }
 
 export const str = (v: unknown): string => (typeof v === "string" ? v : "");
@@ -211,6 +244,8 @@ export function publicUser(user: User) {
     username: user.username,
     displayName: user.displayName,
     isAdmin: user.isAdmin,
+    // Which address commits carry — the choice, never the address itself.
+    commitEmail: user.commitEmail,
   };
 }
 

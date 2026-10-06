@@ -26,6 +26,7 @@ import {
 } from "../src/core/decisions.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
+import { submitReview } from "../src/core/reviews.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { setCrewRole } from "../src/core/agents.ts";
@@ -72,7 +73,7 @@ describe("the decision ledger", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-ledger-"));
     app = createApp({ dataDir, port: 0, decider });
     servers = await serve(app);
-    const a = await createUser(app.db, {
+    const a = await createUser(app.db, { trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -182,6 +183,14 @@ describe("the decision ledger", () => {
     });
     claimRun(app.db, check.id);
     finishRun(app.db, check.id, { state: "ok", summary: "check passed" });
+    // An agent's pull ships only once reviewed (#597): this crew has no
+    // reviewer, so a person's approval of the head is the review.
+    submitReview(app.db, {
+      issueId: pull.id,
+      authorId: alice.id,
+      state: "approved",
+      commitOid: pull.headOid,
+    });
 
     // Nobody is asked: the decider is not called, and the pull lands.
     const calls = decider.seen.length;
@@ -456,8 +465,9 @@ describe("the decision ledger", () => {
     expect(conflict?.actorId).toBe(scout.id);
   });
 
-  test("a repository on its own never waits: past its tries a pull is parked, its issue goes back on the map, and an issue parked twice is left to the direction", async () => {
+  test("a repository on its own never waits: past its tries a pull is parked, its issue goes back on the map, and an issue parked twice is handed to the planner", async () => {
     const { parkPull, parkedCount } = await import("../src/crew/autonomy.ts");
+    const { parkedTwice } = await import("../src/crew/parks.ts");
     const { listComments, getIssueById: issueById } =
       await import("../src/core/issues.ts");
     const work = openIssue(app, alice, repo, { title: "Gift cards" });
@@ -494,9 +504,9 @@ describe("the decision ledger", () => {
         b.startsWith("Parked by the crew: the check stayed red"),
       ),
     ).toBe(true);
-    expect(parkedCount(app, work.value.id)).toBe(1);
-    // Parked once: the planner can re-plan it and the crew picks it again.
-    // Parked twice: left to the direction, never picked by itself.
+    expect(parkedCount(app, fresh(), work.value.id)).toBe(1);
+    // Parked once: the crew picks it again. Parked twice: never picked by
+    // itself, and the planner's, with both reasons as the notes gave them.
     addComment(
       app,
       alice,
@@ -504,10 +514,17 @@ describe("the decision ledger", () => {
       about,
       "Parked by the crew: main moved under it twice",
     );
-    expect(parkedCount(app, work.value.id)).toBe(2);
+    expect(parkedCount(app, fresh(), work.value.id)).toBe(2);
     script["next"] = String(work.value.number);
     await driveRepo(app, fresh());
     expect(issueById(app.db, work.value.id)?.assigneeId).toBeNull();
+    expect(
+      parkedTwice(app.db, [fresh()]).find((i) => i.number === work.value.number)
+        ?.reasons,
+    ).toEqual([
+      `the check stayed red through 2 automatic tries (pull #${opened.value.number} closed)`,
+      "main moved under it twice",
+    ]);
     // Not a question for a person, in either case.
   });
 
@@ -566,7 +583,7 @@ describe("the decision ledger", () => {
       }),
     ).toBe(true);
     expect(issueById(app.db, work.value.id)?.assigneeId).toBeNull();
-    expect(parkedCount(app, work.value.id)).toBe(1);
+    expect(parkedCount(app, fresh(), work.value.id)).toBe(1);
     // A run that opened a pull parks nothing.
     expect(
       settleAgentRun(app, fresh(), {

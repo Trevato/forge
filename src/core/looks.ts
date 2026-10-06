@@ -15,17 +15,38 @@ export const isLookKind = (value: string): value is LookKind =>
   (LOOK_KINDS as readonly string[]).includes(value);
 
 /**
- * The three widths, as a person holds them: a phone, a laptop's window, and
- * a thumbnail — taken at the size a slot actually shows, at desktop's own
- * aspect, rather than a full picture squeezed into a small box.
+ * The three sizes a picture is kept at, as a person holds them: a phone, a
+ * laptop's window, and a thumbnail — the desktop page reduced to half its
+ * width, sharp in a tile on a phone or a desktop at twice the pixels.
  */
 export const LOOK_SIZES: Readonly<
   Record<LookKind, { readonly width: number; readonly height: number }>
 > = {
   phone: { width: 390, height: 844 },
   desktop: { width: 1280, height: 800 },
-  thumb: { width: 200, height: 125 },
+  thumb: { width: 640, height: 400 },
 };
+
+/**
+ * The window each picture is taken in. A thumb is the desktop page, taken
+ * whole and reduced: a browser does not lay a page out in a window the
+ * size of a tile (headless Chromium keeps a minimum width, and pictures a
+ * corner of a wider page).
+ */
+export const LOOK_WINDOWS: Readonly<
+  Record<LookKind, { readonly width: number; readonly height: number }>
+> = {
+  phone: LOOK_SIZES.phone,
+  desktop: LOOK_SIZES.desktop,
+  thumb: LOOK_SIZES.desktop,
+};
+
+/**
+ * The width of a thumb taken in a 200×125 window, before thumbs were the
+ * desktop page reduced: a corner of the page, cropped, taken as the owner.
+ * One at this width is retaken the next time its app is up.
+ */
+export const LEGACY_THUMB_WIDTH = 200;
 
 /** A look with no page recorded — every row before `app.looks` existed. */
 export const DEFAULT_PAGE = "/";
@@ -63,6 +84,8 @@ export interface Look {
   readonly createdAt: string;
   /** Why there is no picture, when there is none. */
   readonly error: string | null;
+  /** Who the picture was taken as: the owner (an admin), or nobody. */
+  readonly takenAs: "owner" | "nobody";
 }
 
 interface Row {
@@ -75,6 +98,7 @@ interface Row {
   path: string;
   created_at: string;
   error: string | null;
+  taken_as: "owner" | "nobody";
 }
 
 const toLook = (r: Row): Look => ({
@@ -87,6 +111,7 @@ const toLook = (r: Row): Look => ({
   path: r.path,
   createdAt: r.created_at,
   error: r.error,
+  takenAs: r.taken_as,
 });
 
 export interface RecordLookInput {
@@ -97,16 +122,18 @@ export interface RecordLookInput {
   readonly kind: LookKind;
   readonly path: string;
   readonly error?: string | undefined;
+  /** Who it was taken as; the owner unless said. */
+  readonly takenAs?: "owner" | "nobody" | undefined;
 }
 
 /** Record a picture, or the reason there is none. A retake replaces. */
 export function recordLook(db: Database, input: RecordLookInput): Look {
   const page = input.page ?? DEFAULT_PAGE;
   db.query(
-    `INSERT INTO look (id, app_id, env, commit_oid, page, kind, path, error)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+    `INSERT INTO look (id, app_id, env, commit_oid, page, kind, path, error, taken_as)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
      ON CONFLICT (app_id, env, commit_oid, page, kind) DO UPDATE SET
-       path = excluded.path, error = excluded.error,
+       path = excluded.path, error = excluded.error, taken_as = excluded.taken_as,
        created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
   ).run(
     newId(),
@@ -117,6 +144,7 @@ export function recordLook(db: Database, input: RecordLookInput): Look {
     input.kind,
     input.path,
     input.error ?? null,
+    input.takenAs ?? "owner",
   );
   return getLook(db, input.appId, input.env, input.commitOid, page, input.kind)!;
 }
@@ -193,3 +221,18 @@ export function deleteLooks(
           .all(appId, env, keepCommit);
   return gone.map(toLook);
 }
+
+/**
+ * Which taking of a picture this is: a picture retaken at the same commit
+ * (a thumb from before thumbs were the page, or one that failed) is a new
+ * file under the same name, so the name alone cannot be cached for good.
+ */
+export const lookVersion = (look: Look): string =>
+  look.createdAt.replace(/\D/g, "");
+
+/** Where a picture is served. Named by page and kind, unless the page is
+ * the home page, when it is the kind alone — exactly the URL from before
+ * `app.looks` existed — and by which taking of it, so a browser that kept
+ * the last one for a year asks for the new one. */
+export const lookUrl = (base: string, look: Look): string =>
+  `${base}/looks/${look.env}/${look.commitOid}/${lookSlot(look.page, look.kind)}.png?v=${lookVersion(look)}`;
