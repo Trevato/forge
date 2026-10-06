@@ -169,6 +169,7 @@ import {
 } from "../web/studio/actions.ts";
 import { everydayCreate, everydayKeep } from "../web/pages/everyday.ts";
 import { claimFragmentPage, claimPage, claimSubmit } from "../web/pages/claim.ts";
+import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import {
@@ -525,6 +526,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/claim", claimSubmit);
   router.add("GET", "/claim/:token", claimPage);
   // "+ New forge": the spawn door as a page, an admin's only (spawn/door.ts).
+  router.add("GET", "/forges", forgesPage);
+  router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
   router.add("POST", "/claim/:token", claimSubmit);

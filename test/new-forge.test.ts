@@ -195,6 +195,7 @@ describe("+ New forge", () => {
     expect(html).not.toContain(KEY);
     expect(html).toMatch(/name="modelKey"[^>]*required|required[^>]*name="modelKey"/);
     expect(html).toContain("Type the key again to spawn");
+    expect(html).not.toMatch(/Model key \(optional\)/);
     // The plan's own Spawn button submits the same form.
     expect(html).toMatch(/<button[^>]*form="new-forge"[^>]*>\s*Spawn/);
     const made = await post(admin, [
