@@ -39,13 +39,27 @@ export function sessionUser(
   db: Database,
   token: string,
 ): Result<User, "invalid_session"> {
+  const found = sessionOf(db, token);
+  return found.ok ? ok(found.value.user) : found;
+}
+
+/** The account behind a session cookie, and which of its browsers it is. */
+export function sessionOf(
+  db: Database,
+  token: string,
+): Result<{ user: User; id: string }, "invalid_session"> {
   const hash = sha256(token);
   const row = db
     .query<
-      { user_id: string; expires_at: string; last_seen_at: string | null },
+      {
+        id: string;
+        user_id: string;
+        expires_at: string;
+        last_seen_at: string | null;
+      },
       [string]
     >(
-      "SELECT user_id, expires_at, last_seen_at FROM session WHERE token_hash = ?1",
+      "SELECT id, user_id, expires_at, last_seen_at FROM session WHERE token_hash = ?1",
     )
     .get(hash);
   const now = new Date();
@@ -60,7 +74,7 @@ export function sessionUser(
       now.toISOString(),
       hash,
     );
-  return ok(user);
+  return ok({ user, id: row.id });
 }
 
 export function destroySession(db: Database, token: string): void {

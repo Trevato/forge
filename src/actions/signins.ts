@@ -96,5 +96,11 @@ export function endAccountSession(
   if (!user.ok) return user;
   if (!endSession(app.db, user.value.id, sessionId)) return err("not_found");
   audited(app, actor!, user.value, "session");
+  // The browser's open streams end with it (the listener's `session.ended`).
+  app.bus.append({
+    kind: "session.ended",
+    actorId: actor!.id,
+    payload: { sessionId },
+  });
   return ok();
 }
