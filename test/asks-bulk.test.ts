@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { holdPull, releasePull } from "../src/actions/holds.ts";
+import { setHold } from "../src/core/holds.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
 import { addTeamMember, createOrg, createTeam } from "../src/actions/orgs.ts";
 import { openPull } from "../src/actions/pulls.ts";
@@ -24,6 +25,7 @@ import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { BREAKER_NOTE } from "../src/crew/breaker.ts";
+import { VERBS, type Target } from "../src/fleet/verbs.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { askLinesFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -71,7 +73,7 @@ describe("acting on many asks at once", () => {
     });
     const location = res.headers.get("location");
     if (res.status === 303 && location !== null) {
-      expect(location).toStartWith("/asks?op=");
+      expect(location).toStartWith("/?op=");
       const next = await fetch(`${servers.url}${location}`, { headers, redirect: "manual" });
       expect(next.status).toBe(200);
       return (await next.text()).replace(/\s+/g, " ");
@@ -542,5 +544,27 @@ describe("acting on many asks at once", () => {
     });
     expect(rows(again.body)).toEqual({ [`alice/quiet#${held.number}`]: "ok" });
     expect(now(held).mergedAt).not.toBeNull();
+  });
+  test("a hold set after the plan and before the write still holds: the write asks again", async () => {
+    // The row's plan found nothing to refuse; by the time its write runs,
+    // earlier rows of the batch have landed and a person has held this one.
+    const dana = getUserByName(app.db, "dana")!;
+    const pull = await greenPull(quiet, "Held between plan and write");
+    const target: Target = {
+      id: pull.id,
+      repo: quiet,
+      label: `alice/quiet#${pull.number}`,
+      issue: getIssueById(app.db, pull.id)!,
+      merged: false,
+      green: true,
+      stale: false,
+    };
+    const ship = VERBS["ship"]!;
+    expect(ship.refuse(app, target, "shipped")).toBeUndefined();
+    setHold(app.db, pull.id, alice.id, "wait for the migration");
+    expect(await ship.write(app, dana, target, "shipped")).toBe(
+      "held by alice (wait for the migration): release it first",
+    );
+    expect(getPull(app.db, quiet.id, pull.number)!.mergedAt).toBeNull();
   });
 });

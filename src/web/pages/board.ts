@@ -4,7 +4,8 @@
  * decided, and today's spend against each app's ceiling with what a shipped
  * change cost over the week — each a live region that swaps itself when a
  * matching event lands. A site admin also gets two strips above them: the
- * forge's health, and each subscription's windows. Nothing on it
+ * forge's health, and each subscription's windows; whoever owns an app gets
+ * a line for each thing its crew waits on them for. Nothing on it
  * needs a click, and everything on it links somewhere. It reads the same
  * tables as the studio and adds no state of its own.
  *
@@ -40,6 +41,7 @@ import { vitals, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
 import {
+  LATER,
   NO_PILLAR,
   PILLAR_DAYS,
   pillarView,
@@ -57,7 +59,9 @@ import {
   autonomyStatus,
   plannerDeclines,
   startOfTodayUtc,
+  truncateAtWord,
 } from "../../crew/autonomy.ts";
+import { parkedTwice } from "../../crew/parks.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { boardJs, liveRegionsJs } from "../client.ts";
@@ -72,6 +76,7 @@ import {
 } from "../studio/words.ts";
 import { lookUrl } from "../../core/looks.ts";
 import { thumbLook } from "./looks.ts";
+import { milestoneHref } from "./milestones.ts";
 
 // ---- words ----
 
@@ -365,7 +370,7 @@ function asksStrip(ctx: Ctx): Html | null {
   const since = new Date(Date.now() - ASKS_WINDOW_DAYS * 86_400_000).toISOString();
   const m = askMeasure(ctx.app.db, user.id, since);
   if (m.raised + m.acted + m.dismissed + m.expired === 0) return null;
-  return html`<a class="board-asks" id="asks-measure" href="/asks"
+  return html`<a class="board-asks" id="asks-measure" href="/#needs-you"
     >Asks, ${ASKS_WINDOW_DAYS} days: <b>${m.raised}</b> raised · <b>${m.acted}</b> acted
     on · <b>${m.dismissed}</b> dismissed · <b>${m.expired}</b> went by themselves</a
   >`;
@@ -414,22 +419,28 @@ function returnsStrip(ctx: Ctx, scope: BoardScope): Html | null {
 
 // ---- the planner, waiting for a person ----
 
+/** An issue's title and a park's reason on the board: one clause each, cut at a word. */
+const TITLE_MAX = 64;
+const REASON_MAX = 96;
+
 /**
  * One line per app whose planner declined the direction: its last words
  * and a box to answer them, which is a comment on the direction issue —
- * the word `planIfThin` waits for. Only for apps whose owner facts the
- * viewer may see; nothing at all when no planner is waiting.
+ * the word `planIfThin` waits for. And one line per issue a crew parked
+ * twice and handed to its planner (`crew/parks.ts`): why, and a link to
+ * the issue, where the planner answers; it stays until the issue is split,
+ * replaced or deferred. Only for apps whose owner facts the viewer may
+ * see; nothing at all when no planner is waiting and none holds an issue.
  */
 function declinedStrip(ctx: Ctx, scope: BoardScope): Html | null {
-  const declines = plannerDeclines(
-    ctx.app.db,
-    scope.repos.filter((r) => scope.ownerFacts.has(r.id)),
-  );
-  if (declines.length === 0) return null;
+  const owned = scope.repos.filter((r) => scope.ownerFacts.has(r.id));
+  const declines = plannerDeclines(ctx.app.db, owned);
+  const parked = parkedTwice(ctx.app.db, owned);
+  if (declines.length === 0 && parked.length === 0) return null;
   return html`<div
     class="board-declined"
     id="declined"
-    data-live="run.*,issue.*"
+    data-live="run.*,issue.*,pull.*"
     role="status"
   >
     ${declines.map((d) => {
@@ -453,6 +464,20 @@ function declinedStrip(ctx: Ctx, scope: BoardScope): Html | null {
         />
         <button class="btn" data-variant="primary" type="submit">Answer</button>
       </form>`;
+    })}
+    ${parked.map((issue) => {
+      const repo = scope.byId.get(issue.repoId)!;
+      return html`<div class="board-declined-row board-parked-row">
+        <span class="board-declined-says"
+          ><b>${repo.name}</b>: the crew parked #${issue.number} twice and
+          handed it to the planner —
+          ${truncateAtWord(issue.title, TITLE_MAX)}.
+          ${issue.reasons.map(
+            (reason) => html`<q>${truncateAtWord(reason, REASON_MAX)}</q> `,
+          )}</span
+        >
+        <a class="btn" href="${repoBase(repo)}/issues/${issue.number}">Open</a>
+      </div>`;
     })}
   </div>`;
 }
@@ -716,6 +741,16 @@ function byPillar(ctx: Ctx, scope: BoardScope): Html | null {
     const view = pillarView(db, repo);
     if (view === undefined) return [];
     const base = repoBase(repo);
+    // One tap to how far a pillar is: its umbrella's milestone.
+    const umbrella = new Map<string, number>(
+      view.set.pillars.map((p) => [p.name, p.umbrella.number]),
+    );
+    if (view.set.later !== undefined)
+      umbrella.set(LATER, view.set.later.number);
+    const hrefOf = (name: string): string =>
+      umbrella.has(name)
+        ? milestoneHref(base, umbrella.get(name)!)
+        : `${base}/issues?label=${encodeURIComponent(name)}`;
     return [
       html`<p class="board-pillars" data-app="${repo.name}">
         <span class="board-pillars-h"
@@ -730,7 +765,7 @@ function byPillar(ctx: Ctx, scope: BoardScope): Html | null {
             : html`<a
                 class="board-pillar"
                 data-zero="${count.merged === 0 ? "yes" : "no"}"
-                href="${base}/issues?label=${encodeURIComponent(count.pillar)}"
+                href="${hrefOf(count.pillar)}"
                 >${count.pillar} <b>${count.merged}</b></a
               >`,
         )}
@@ -927,6 +962,7 @@ export const boardCss = /* css */ `
 .board-asks b { color: var(--fg); font-weight: 600; }
 .board-declined { display: flex; flex-direction: column; gap: 8px; padding: 10px var(--pad) 0; }
 .board-declined-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12em, 22em) auto; gap: 10px; align-items: center; padding: 10px 14px; border: 1px solid color-mix(in srgb, var(--attn) 45%, var(--border)); border-radius: var(--radius, 10px); }
+.board-parked-row { grid-template-columns: minmax(0, 1fr) auto; }
 .board-declined-says { color: var(--attn); line-height: 1.35; }
 .board-declined-says q { color: var(--fg); }
 .board[data-wall] .board-declined-row .input, .board[data-wall] .board-declined-row .btn { display: none; }

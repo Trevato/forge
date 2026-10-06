@@ -5,7 +5,7 @@
  * `actions/make_it_yours.ts`.
  */
 
-import { makeItYours } from "../../actions/make_it_yours.ts";
+import { COPIES_PER_DAY, makeItYours } from "../../actions/make_it_yours.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   loadRepo,
@@ -15,7 +15,7 @@ import {
   signInFirst,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html } from "../html.ts";
+import { html, when } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { btn, card } from "../ui.ts";
 
@@ -74,6 +74,29 @@ export async function makeItYoursPage(ctx: Ctx): Promise<Response> {
             ${p.from}: it moves with the original until you change it, and tells
             you when it cannot.
           </dd>
+          ${p.existing
+            ? html`<dt>Who sees it</dt>
+                <dd>${p.visibility === "public" ? "anyone" : "you"}</dd>`
+            : html`<dt>Who sees it</dt>
+                <dd class="stack stack-tight">
+                  <label
+                    ><input type="radio" name="visibility" value="private" checked />
+                    Only you, until you open it up</label
+                  >
+                  ${when(
+                    repo.visibility === "public",
+                    () =>
+                      html`<label
+                        ><input type="radio" name="visibility" value="public" />
+                        Anyone, from the start</label
+                      >`,
+                  )}
+                </dd>
+                <dt>Today</dt>
+                <dd>
+                  ${p.copiesLeft} more cop${p.copiesLeft === 1 ? "y" : "ies"} you
+                  can make in the next day
+                </dd>`}
         </dl>
         <div class="form-actions">
           ${btn(p.existing ? "Open mine" : "Make it yours", {
@@ -98,6 +121,7 @@ export async function makeItYoursSubmit(ctx: Ctx): Promise<Response> {
   const name = field(form, "name").trim();
   const made = await makeItYours(ctx.app, ctx.auth.user, repo, {
     dryRun: false,
+    visibility: field(form, "visibility") === "public" ? "public" : "private",
     ...(name === "" ? {} : { name }),
   });
   if (!made.ok || made.value.made === undefined) {
@@ -108,7 +132,9 @@ export async function makeItYoursSubmit(ctx: Ctx): Promise<Response> {
           ? "This app is already yours."
           : made.error.kind === "unverified"
             ? "Prove your email first: the link is in your inbox."
-            : "That could not be made yours."
+            : made.error.kind === "limit"
+              ? `That is today's copies made (${COPIES_PER_DAY} a day). Another can be made after ${made.error.resetsAt.slice(11, 16)} UTC.`
+              : "That could not be made yours."
       : "That could not be made yours.";
     return flashTo(ctx, repoBase(repo), { tone: "danger", message });
   }

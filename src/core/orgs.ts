@@ -157,6 +157,9 @@ export function addTeamMember(
 ): boolean {
   const user = getUserById(db, userId);
   if (!user || user.kind === "org") return false; // can't nest orgs
+  // An agent is never admin (CLAUDE.md, invariant 10): no team that confers
+  // it takes one — the action says why (`agent_cannot_own`).
+  if (user.kind === "agent" && team.permission === "admin") return false;
   return (
     db
       .query(
@@ -166,20 +169,73 @@ export function addTeamMember(
   );
 }
 
-/** Remove a member, refusing to empty the Owners team (an org needs an admin). */
+/**
+ * The people who can administer an organization now: on its Owners team,
+ * never an agent, neither removed nor suspended. An organization must
+ * always keep one.
+ */
+export function personOwners(db: Database, orgId: string): string[] {
+  return (
+    db
+      .query<{ user_id: string }, [string, string]>(
+        `SELECT m.user_id FROM team_member m
+           JOIN team t ON t.id = m.team_id
+           JOIN user u ON u.id = m.user_id
+          WHERE t.org_id = ?1 AND t.name = ?2 AND u.kind = 'user'
+            AND u.is_agent = 0 AND u.removed_at IS NULL
+            AND u.suspended_at IS NULL`,
+      )
+      .all(orgId, OWNERS_TEAM)
+  ).map((r) => r.user_id);
+}
+
+/**
+ * Whether taking `user` off an organization's owners would leave it with no
+ * active person to administer it. Taking an agent off never does.
+ */
+export function isLastOwner(db: Database, orgId: string, user: User): boolean {
+  if (user.kind !== "user") return false;
+  const onOwners =
+    db
+      .query<{ n: number }, [string, string, string]>(
+        `SELECT 1 AS n FROM team_member m JOIN team t ON t.id = m.team_id
+          WHERE t.org_id = ?1 AND t.name = ?2 AND m.user_id = ?3`,
+      )
+      .get(orgId, OWNERS_TEAM, user.id) !== null;
+  return onOwners && personOwners(db, orgId).every((id) => id === user.id);
+}
+
+/** The organizations `userId` is the last active person owning: removing them would orphan these. */
+export function soleOwnedOrgs(db: Database, userId: string): User[] {
+  const user = getUserById(db, userId);
+  if (user === undefined) return [];
+  return (
+    db
+      .query<{ org_id: string }, [string, string]>(
+        `SELECT DISTINCT t.org_id FROM team_member m JOIN team t ON t.id = m.team_id
+          WHERE m.user_id = ?1 AND t.name = ?2`,
+      )
+      .all(userId, OWNERS_TEAM)
+  )
+    .filter((r) => isLastOwner(db, r.org_id, user))
+    .map((r) => getUserById(db, r.org_id))
+    .filter((u): u is User => u !== undefined);
+}
+
+/**
+ * Remove a member, refusing to take the last person off the Owners team: an
+ * organization needs someone who can administer it, and an agent never can.
+ */
 export function removeTeamMember(
   db: Database,
   team: Team,
   userId: string,
 ): boolean {
   if (team.name === OWNERS_TEAM) {
-    const count = db
-      .query<
-        { n: number },
-        [string]
-      >("SELECT COUNT(*) AS n FROM team_member WHERE team_id = ?1")
-      .get(team.id);
-    if ((count?.n ?? 0) <= 1) return false;
+    // Taking an agent off is always allowed; taking off the last active
+    // person is not.
+    const user = getUserById(db, userId);
+    if (user !== undefined && isLastOwner(db, team.orgId, user)) return false;
   }
   return (
     db

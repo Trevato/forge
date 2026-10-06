@@ -180,6 +180,7 @@ describe("the forge over MCP", () => {
       "make_it_yours",
       "front_page",
       "map",
+      "milestones",
       "returns",
       "spend",
       "usage",

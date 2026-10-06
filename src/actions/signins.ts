@@ -11,6 +11,7 @@ import {
   destroySession,
   endSession,
   listSessions,
+  sessionOf,
   type SessionInfo,
 } from "../core/sessions.ts";
 import { deleteToken, listTokens, type TokenInfo } from "../core/tokens.ts";
@@ -92,18 +93,18 @@ export function revokeAccountToken(
 
 /**
  * Sign out the browser asking: the same path as ending it from Settings, so
- * the streams its other tabs hold end now, not when they next reconnect. A
- * cookie that no longer names a live session is simply forgotten.
+ * the streams its other tabs hold end now, not when they next reconnect.
+ * The cookie is what names the browser, whatever else signed the request
+ * in (the platform edge goes first). One that no longer names a live
+ * session is simply forgotten.
  */
-export function signOutHere(
-  app: App,
-  actor: User | undefined,
-  sessionId: string | undefined,
-  token: string | undefined,
-): void {
-  if (actor !== undefined && sessionId !== undefined)
-    endAccountSession(app, actor, actor.username, sessionId);
-  else if (token !== undefined) destroySession(app.db, token);
+export function signOutHere(app: App, token: string | undefined): void {
+  if (token === undefined) return;
+  const found = sessionOf(app.db, token);
+  if (found.ok) {
+    const { user, id } = found.value;
+    endAccountSession(app, user, user.username, id);
+  } else destroySession(app.db, token);
 }
 
 /** Sign one of an account's browsers out. */
