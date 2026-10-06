@@ -167,7 +167,7 @@ import {
   composerSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
-import { everydayCreate, everydayKeep } from "../web/pages/everyday.ts";
+import { everydayCreate, everydayKeep, everydaySwitch } from "../web/pages/everyday.ts";
 import { claimFragmentPage, claimPage, claimSubmit } from "../web/pages/claim.ts";
 import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
@@ -613,6 +613,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/password", passwordUpdate);
   // The everyday account: an admin's daily account, apart from admin (#596).
   router.add("POST", "/settings/everyday", everydayCreate);
+  router.add("POST", "/settings/everyday/switch", everydaySwitch);
   router.add("POST", "/settings/everyday/keep", everydayKeep);
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
