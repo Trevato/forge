@@ -91,12 +91,12 @@ export function lookImage(ctx: Ctx): Response {
 }
 
 /**
- * Who may fetch a picture (#727). Phone and desktop are taken signed in as
- * the owner, an admin: they are the writers' alone. The thumb is taken as
- * nobody, and is shown to whoever may open the app — anyone for a public
- * app, a signed-in reader for a private one — but a thumb from before
- * thumbs were taken as nobody (`keepLook`) was the owner's view, and is
- * the writers' until it is retaken.
+ * Who may fetch a picture (#727, #738). Writers, all of them. Anyone else
+ * only what was taken as nobody, and only of an app they may open (anyone
+ * for a public app, a writer, the crew or a named person for a private
+ * one): the thumb always, a public app's phone and desktop too. A picture
+ * taken as the owner, an admin, stays the writers'; so does a thumb from
+ * before thumbs were taken as nobody (`keepLook`), until it is retaken.
  */
 export function mayFetchLook(
   ctx: Ctx,
@@ -106,10 +106,12 @@ export function mayFetchLook(
 ): boolean {
   const user = ctx.auth.user;
   if (canSeeOwnerFacts(ctx.app.db, repo, user)) return true;
-  if (look.kind !== "thumb") return false;
-  // A private app's thumb is for whoever may enter it (#620, #752): a
-  // person it names sees it; a reader who is not named does not.
+  // A private app's pictures are for whoever may enter it (#620, #752): a
+  // person it names sees them; a reader who is not named does not.
   if (!canEnterApp(ctx.app.db, repo, record, user)) return false;
+  // Phone and desktop are a reader's only when taken as nobody — a public
+  // app's, since #738; one taken as the owner stays the writers' (#727).
+  if (look.kind !== "thumb") return look.takenAs === "nobody";
   return keepLook(ctx.app.config.dataDir, look);
 }
 
@@ -128,11 +130,18 @@ export function lookCard(
   pull: Pull,
   headOid: string,
 ): Html {
-  // Its pictures are the owner's view: a reader who cannot write gets none.
-  if (!canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user)) return html``;
   const base = repoBase(repo);
   const env = previewEnv(pull.number);
-  const looks = looksForEnv(ctx.app.db, record.id, env);
+  // What this viewer may see: all of it for a writer; for a reader, only a
+  // phone or desktop picture taken as nobody (a public app's), and no card
+  // without one.
+  const writer = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
+  const looks = looksForEnv(ctx.app.db, record.id, env).filter(
+    (l) =>
+      writer ||
+      (l.kind !== "thumb" && l.error === null && mayFetchLook(ctx, repo, record, l)),
+  );
+  if (!writer && looks.length === 0) return html``;
   const head = html`${icon("eye")}
     <h2>Look</h2>`;
   if (looks.length === 0) {

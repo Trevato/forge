@@ -350,7 +350,12 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     // The phone and desktop pictures are what the owner sees: the app
     // renders for a signed-in admin, exactly as when they open it from the
     // forge. The thumb is what a stranger sees — it is the picture on the
-    // tiles a signed-out visitor is shown — so it is taken as nobody.
+    // tiles a signed-out visitor is shown — so it is taken as nobody. A
+    // public app on a public repository is the world's to see, so all of
+    // its pictures are taken as nobody, and a reader of its pulls sees them
+    // too (#738).
+    const everyone = repo.visibility === "public" && record.access === "public";
+    const asNobody = (kind: LookKind): boolean => everyone || kind === "thumb";
     const owner = getUserById(app.db, repo.ownerId);
     const asOwner: GrantWho | undefined =
       owner === undefined
@@ -365,7 +370,7 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         { app: record, env: item.env },
         GRANT_TTL_MS,
         Date.now(),
-        kind === "thumb" ? undefined : asOwner,
+        asNobody(kind) ? undefined : asOwner,
       );
       const url = `http://${host}:${port}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(page)}`;
       const path = lookPath(item.appId, item.env, item.commitOid, page, kind);
@@ -407,7 +412,12 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
         }
         mkdirSync(dirname(out), { recursive: true });
         renameSync(staged, out);
-        recordLook(app.db, { ...row, kind, path });
+        recordLook(app.db, {
+          ...row,
+          kind,
+          path,
+          takenAs: asNobody(kind) ? "nobody" : "owner",
+        });
       } else {
         rmSync(staged, { force: true });
         allOk = false;
