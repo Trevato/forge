@@ -14,6 +14,8 @@
  * directory — so guessing a hostname yields the forge's own "not found".
  */
 
+import { getIssue, type Issue } from "../core/issues.ts";
+import { mayView } from "../core/sealed.ts";
 import { appHostSuffix } from "./host.ts";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
@@ -311,6 +313,18 @@ const HOP_BY_HOP = [
   "upgrade",
 ];
 
+/**
+ * The sealed pull a preview serves, when it serves one (`core/sealed.ts`):
+ * a sealed report's fix, which only those who may see the report may open,
+ * on a public app as on a private one.
+ */
+function sealedPull(runtime: AppsRuntime, target: AppTarget): Issue | undefined {
+  const number = /^pull-(\d+)$/.exec(target.env)?.[1];
+  if (number === undefined) return undefined;
+  const pull = getIssue(runtime.app.db, target.app.repoId, Number(number));
+  return pull?.sealed === true ? pull : undefined;
+}
+
 /** Whether the person a grant names may enter this app now. */
 function stillEntitled(
   runtime: AppsRuntime,
@@ -320,11 +334,13 @@ function stillEntitled(
   if (grant.who === undefined) return false;
   const repo = getRepoById(runtime.app.db, target.app.repoId);
   const user = getUserById(runtime.app.db, grant.who.id);
+  const sealed = sealedPull(runtime, target);
   return (
     repo !== undefined &&
     user !== undefined &&
     isActive(user) &&
-    canEnterApp(runtime.app.db, repo, target.app, user)
+    canEnterApp(runtime.app.db, repo, target.app, user) &&
+    (sealed === undefined || mayView(runtime.app.db, repo, sealed, user))
   );
 }
 
@@ -355,13 +371,17 @@ function admit(
     signed?.who === undefined
       ? undefined
       : getUserById(runtime.app.db, signed.who.id);
+  // A sealed pull's preview is held like a private app's, whatever the
+  // app's own access: asked on every request.
+  const guarded =
+    target.app.access === "private" ||
+    sealedPull(runtime, target) !== undefined;
   const lapsed =
     signed !== undefined &&
-    ((target.app.access === "private" &&
-      !stillEntitled(runtime, target, signed)) ||
+    ((guarded && !stillEntitled(runtime, target, signed)) ||
       (named !== undefined && !isActive(named)));
   const grant = lapsed ? undefined : signed;
-  if (target.app.access === "private") {
+  if (guarded) {
     if (grant === undefined) {
       // A person arriving by link is sent to the forge to sign in; it vouches
       // for them if they may enter the app and sends them back with the

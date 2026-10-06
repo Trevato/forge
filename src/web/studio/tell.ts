@@ -370,7 +370,7 @@ function sealCard(ctx: Ctx, repo: Repo, issue: Issue, action: string): Html | nu
     <input type="hidden" name="sealed" value="${issue.sealed ? "0" : "1"}" />
     ${btn(
       issue.sealed
-        ? "Unseal: show this report to every reader"
+        ? "Unseal: publish this report, its fix and their whole history to every reader"
         : "Seal as a security report",
       { variant: issue.sealed ? "danger" : "ghost", icon: "lock" },
     )}

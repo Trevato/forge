@@ -161,6 +161,16 @@ export function eventSealed(
   return eventRow(db, event)?.sealed === true;
 }
 
+/** Whether environment `env` of repository `repoId` is the preview of a sealed pull. */
+export function sealedPreview(
+  db: Database,
+  repoId: string,
+  env: string,
+): boolean {
+  const number = /^pull-(\d+)$/.exec(env)?.[1];
+  return number !== undefined && sealedByNumber(db, repoId, Number(number));
+}
+
 /** Seal or unseal. Returns whether it changed. */
 export function setSealed(
   db: Database,
