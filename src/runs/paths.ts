@@ -15,7 +15,7 @@
  * stop that punctuates is not part of the path — `wrote to <dir>.`,
  * `(see <dir>.)`, `<dir>...` — and reads `wrote to .`, `(see .)`, `...`,
  * the sentence's own stop standing for "here". A dot that a name goes on
- * after (`<dir>.bak`) is a sibling's.
+ * after (`<dir>.bak`, `<dir>..bak`) is a sibling's.
  *
  * An empty `dir` is dropped: there is nothing to strip.
  */
@@ -37,10 +37,7 @@ function strip(line: string, dir: string): string {
     if (at === -1) return out + line.slice(from);
     const end = at + dir.length;
     const next = line[end];
-    const after = line[end + 1];
-    const stop =
-      next === "." &&
-      (after === undefined || after === "." || !SEGMENT.test(after));
+    const stop = next === "." && punctuates(line, end);
     const whole =
       (at === 0 || !SEGMENT.test(line[at - 1]!)) &&
       (next === undefined || next === "/" || stop || !SEGMENT.test(next));
@@ -55,6 +52,16 @@ function strip(line: string, dir: string): string {
       from = end;
     }
   }
+}
+
+/**
+ * Whether the dots at `at` punctuate — a full stop, an ellipsis — rather
+ * than begin a name: nothing a name is made of follows them.
+ */
+function punctuates(line: string, at: number): boolean {
+  let i = at;
+  while (line[i] === ".") i++;
+  return i === line.length || !SEGMENT.test(line[i]!);
 }
 
 /**
