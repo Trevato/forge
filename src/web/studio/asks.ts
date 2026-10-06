@@ -626,7 +626,7 @@ export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> =
 /** Every kind has its own: a row never says "green changes" of something that is not one. */
 const rowLine = (kind: DecisionKind, n: number): string => ROW_PLURAL[kind](n);
 
-/** The anchor a row's card carries on `/asks`, so a link can land on it. */
+/** The anchor a row's card carries on the home (what needs you, `needsYouSection`), so a link can land on it. */
 export const askAnchor = (id: string): string => id.replace(/[^a-z0-9-]/g, "-");
 
 /**
@@ -644,7 +644,7 @@ export function askLinesFor(
   line: string;
   kind: DecisionKind;
   repoId: string;
-  /** Where a person decides it: the pull or issue, or the row on `/asks`. */
+  /** Where a person decides it: the pull or issue, or the row on the home. */
   link: string;
   /** The pull's or issue's number, for a row of one that is about one. */
   number?: number;
