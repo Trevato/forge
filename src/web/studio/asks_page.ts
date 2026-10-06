@@ -370,5 +370,5 @@ export async function asksBulkUndo(ctx: Ctx): Promise<Response> {
     return op.error.code === "not_found"
       ? notFoundPage(ctx)
       : await asksScreen(ctx, nothingDone(op.error.message));
-  return redirect(`/asks?op=${op.value.id}#asks-bulk-result`);
+  return redirect(`/?op=${op.value.id}#asks-bulk-result`);
 }
