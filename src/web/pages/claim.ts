@@ -288,7 +288,9 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     return again(
       made.error === "email_taken"
         ? { email: "That email already has an account." }
-        : { username: "That username is taken." },
+        : made.error === "username_reserved"
+          ? { username: "That name is reserved." }
+          : { username: "That username is taken." },
     );
   }
   if (team) {
