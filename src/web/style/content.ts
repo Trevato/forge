@@ -1160,15 +1160,19 @@ textarea.editor:focus { outline: none; }
    its words, not the column. */
 .needs-you #asks-bulk select { width: auto; }
 /* A phone shows the top asks and one "N more" that opens in place to all
-   of them; a wider screen shows ASKS_SHOWN and its own "N more" past that. */
-@media (max-width: 480px) {
-  .needs-you #asks-more > summary { display: none; }
-  .needs-you #asks-more::details-content { content-visibility: visible; }
-  .needs-you #asks-more > .stack { margin-top: 0; }
-}
-@media (min-width: 481px) {
-  .needs-you #asks-phone-more > summary { display: none; }
-  .needs-you #asks-phone-more::details-content { content-visibility: visible; }
-  .needs-you #asks-phone-more > .stack { margin-top: 0; }
+   of them; a wider screen shows ASKS_SHOWN and its own "N more" past that.
+   Only where a details element can be held open: elsewhere both summaries
+   stay, so every ask is still a tap away. */
+@supports selector(::details-content) {
+  @media (max-width: 480px) {
+    .needs-you #asks-more > summary { display: none; }
+    .needs-you #asks-more::details-content { content-visibility: visible; }
+    .needs-you #asks-more > .stack { margin-top: 0; }
+  }
+  @media (min-width: 481px) {
+    .needs-you #asks-phone-more > summary { display: none; }
+    .needs-you #asks-phone-more::details-content { content-visibility: visible; }
+    .needs-you #asks-phone-more > .stack { margin-top: 0; }
+  }
 }
 `;

@@ -250,8 +250,12 @@ describe("asks that earn their place", () => {
     // "more" sits inside it, and the stylesheet hides each where it is not.
     expect(wide!.indexOf('id="asks-more"')).toBeLessThan(wide!.indexOf("</details>"));
     const css = await (await fetch(`${servers.url}${home.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
-    expect(css).toContain("@media (max-width: 480px) {\n  .needs-you #asks-more > summary { display: none; }");
-    expect(css).toContain("@media (min-width: 481px) {\n  .needs-you #asks-phone-more > summary { display: none; }");
+    // Only where the browser can hold a details element open: an older one
+    // keeps both summaries, so no ask is out of reach.
+    const held = css.slice(css.indexOf("@supports selector(::details-content) {"));
+    expect(held).toContain("@media (max-width: 480px) {\n    .needs-you #asks-more > summary { display: none; }");
+    expect(held).toContain("@media (min-width: 481px) {\n    .needs-you #asks-phone-more > summary { display: none; }");
+    expect(css.indexOf("#asks-more > summary")).toBeGreaterThan(css.indexOf("@supports selector(::details-content)"));
     // Arriving at #needs-you, the first Tab lands on an ask, not the bulk step.
     const bulk = asks.indexOf('id="asks-bulk"');
     expect(bulk).toBeGreaterThan(asks.indexOf("</details>"));
