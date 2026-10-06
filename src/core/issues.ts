@@ -349,6 +349,8 @@ export interface ListIssuesOptions {
    * forgets shows nothing sealed.
    */
   sealed?: boolean;
+  /** Include the sealed issues this user filed (`sealed.ts`): a reporter follows their own report. */
+  sealedBy?: string;
 }
 
 /**
@@ -364,7 +366,13 @@ export function listIssues(
   const kind = options.kind ?? "issue";
   const params: (string | number)[] = [repoId, kind];
   let where = "issue.repo_id = ?1 AND issue.kind = ?2";
-  if (options.sealed !== true) where += " AND issue.sealed = 0";
+  if (options.sealed !== true) {
+    if (options.sealedBy === undefined) where += " AND issue.sealed = 0";
+    else {
+      params.push(options.sealedBy);
+      where += ` AND (issue.sealed = 0 OR issue.author_id = ?${params.length})`;
+    }
+  }
   if (state !== "all") {
     params.push(state);
     where += ` AND issue.state = ?${params.length}`;

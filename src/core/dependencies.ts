@@ -217,7 +217,7 @@ export function repoGraph(
   db: Database,
   repoId: string,
   /** Include sealed issues (`sealed.ts`): for a viewer who may see them, and the crew. */
-  options: { readonly sealed?: boolean } = {},
+  options: { readonly sealed?: boolean; readonly sealedBy?: string } = {},
 ): Graph {
   const edges = db
     .query<{ issue_id: string; blocked_by_id: string }, [string]>(
@@ -253,7 +253,12 @@ export function repoGraph(
     ids.add(e.blockedById);
   }
   const issues = [...getIssuesByIds(db, [...ids]).values()]
-    .filter((i) => options.sealed === true || !i.sealed)
+    .filter(
+      (i) =>
+        options.sealed === true ||
+        !i.sealed ||
+        (options.sealedBy !== undefined && i.authorId === options.sealedBy),
+    )
     .sort((a, b) => a.number - b.number);
   const present = new Set(issues.map((i) => i.id));
   const repo = getRepoById(db, repoId);

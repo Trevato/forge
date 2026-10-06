@@ -8,7 +8,7 @@
  * the system's own voice and takes no actor.
  */
 
-import { canSeeSealed, sealedById } from "../core/sealed.ts";
+import { mayViewId } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { steerRun } from "../crew/runner.ts";
@@ -92,10 +92,9 @@ export function listRepoRuns(
   if (!reader.ok) return reader;
   if (!mayReadRuns(app, actor, repo)) return ok([]);
   // A run on a sealed report, or its fix, is the report's (`core/sealed.ts`).
-  const seesSealed = canSeeSealed(app.db, repo, actor);
   return ok(
-    queryRuns(app.db, repo.id, options).filter(
-      (r) => seesSealed || r.issueId === null || !sealedById(app.db, r.issueId),
+    queryRuns(app.db, repo.id, options).filter((r) =>
+      mayViewId(app.db, repo, r.issueId, actor),
     ),
   );
 }
@@ -110,12 +109,7 @@ export function getRepoRun(
   if (!mayReadRuns(app, actor, repo)) return err("not_found");
   const run = getRun(app.db, runId);
   if (!run || run.repoId !== repo.id) return err("not_found");
-  if (
-    run.issueId !== null &&
-    sealedById(app.db, run.issueId) &&
-    !canSeeSealed(app.db, repo, actor)
-  )
-    return err("not_found");
+  if (!mayViewId(app.db, repo, run.issueId, actor)) return err("not_found");
   return ok(run);
 }
 

@@ -8,7 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
-import { canSeeSealed, mayView, sealedById } from "../core/sealed.ts";
+import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { accountSignIns, endAccountSession } from "../actions/signins.ts";
 import { STRANGER_MAX } from "./limits.ts";
 import {
@@ -1988,7 +1988,7 @@ export function apiRoutes(router: Router<Handler>): void {
       listIssues(ctx.app.db, repo.id, {
         ...query,
         kind: "issue",
-        sealed: canSeeSealed(ctx.app.db, repo, ctx.auth.user),
+        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
       }),
     );
     return json(paged(items, query.limit, (i) => i.number));
@@ -2251,7 +2251,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const graph = repoGraph(ctx.app.db, repo.id, {
-      sealed: canSeeSealed(ctx.app.db, repo, ctx.auth.user),
+      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
     });
     return json(
       mapJson(
@@ -2298,7 +2298,6 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const kind = ctx.url.searchParams.get("kind");
     const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
-    const seesSealed = canSeeSealed(ctx.app.db, repo, ctx.auth.user);
     return json({
       decisions: listDecisions(ctx.app.db, repo.id, {
         kind:
@@ -2312,8 +2311,7 @@ export function apiRoutes(router: Router<Handler>): void {
       })
         // What the decider saw about a sealed report is the report's (`sealed.ts`).
         .filter(
-          (d) =>
-            seesSealed || d.issueId === null || !sealedById(ctx.app.db, d.issueId),
+          (d) => mayViewId(ctx.app.db, repo, d.issueId, ctx.auth.user),
         ),
       week: decisionStats(ctx.app.db, repo.id, week),
     });
@@ -2391,7 +2389,7 @@ export function apiRoutes(router: Router<Handler>): void {
       ctx,
       listPulls(ctx.app.db, repo.id, {
         ...query,
-        sealed: canSeeSealed(ctx.app.db, repo, ctx.auth.user),
+        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
       }),
     );
     return json(paged(items, query.limit, (p) => p.number));

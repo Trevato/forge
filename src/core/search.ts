@@ -265,16 +265,23 @@ export function searchLocalIssues(
   limit: number,
   /** The repositories among these whose sealed issues the viewer may see (`sealed.ts`). */
   sealedOk: ReadonlySet<string> = new Set(),
+  /** And the sealed reports this user filed, wherever they are. */
+  sealedBy?: string,
 ): IssueHit[] {
   if (repos.length === 0) return [];
   const byId = new Map(repos.map((r) => [r.id, r]));
   const ids = [...byId.keys()];
   const holes = ids.map((_, i) => `?${i + 1}`).join(",");
   const open = [...sealedOk].filter((id) => byId.has(id));
-  const sealedClause =
-    open.length === 0
-      ? "AND sealed = 0"
-      : `AND (sealed = 0 OR repo_id IN (${open.map((_, i) => `?${ids.length + 3 + i}`).join(",")}))`;
+  const extra: string[] = [...open, ...(sealedBy === undefined ? [] : [sealedBy])];
+  const ors = [
+    "sealed = 0",
+    ...(open.length === 0
+      ? []
+      : [`repo_id IN (${open.map((_, i) => `?${ids.length + 3 + i}`).join(",")})`]),
+    ...(sealedBy === undefined ? [] : [`author_id = ?${ids.length + 3 + open.length}`]),
+  ];
+  const sealedClause = `AND (${ors.join(" OR ")})`;
   const rows = db
     .query<
       {
@@ -295,7 +302,7 @@ export function searchLocalIssues(
        ORDER BY updated_at DESC
        LIMIT ?${ids.length + 2}`,
     )
-    .all(...ids, `%${likeEscape(query.trim())}%`, limit, ...open);
+    .all(...ids, `%${likeEscape(query.trim())}%`, limit, ...extra);
 
   const hits: IssueHit[] = [];
   for (const row of rows) {

@@ -9,7 +9,7 @@
  * and `/tells`, `/pulls` and `/changes` alike.
  */
 
-import { canSeeSealed } from "../../core/sealed.ts";
+import { sealedScope } from "../../core/sealed.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import {
@@ -340,7 +340,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   const fetched = listIssues(db, repo.id, {
     ...options,
     kind: "issue",
-    sealed: canSeeSealed(db, repo, ctx.auth.user),
+    ...sealedScope(db, repo, ctx.auth.user),
   }).filter(
     (issue) => issue.id !== repo.directionIssueId,
   );
@@ -479,7 +479,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
 
   const fetched = listPulls(db, repo.id, {
     ...options,
-    sealed: canSeeSealed(db, repo, ctx.auth.user),
+    ...sealedScope(db, repo, ctx.auth.user),
   });
   const words = await Promise.all(
     fetched.map((pull) => pullWord(wordCtx, pull)),

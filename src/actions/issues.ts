@@ -18,7 +18,7 @@
  * "mirrored" on the others, which is honest rather than silently wrong.
  */
 
-import { setSealed } from "../core/sealed.ts";
+import { canSeeSealed, setSealed } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { isCrew } from "../core/agents.ts";
@@ -222,8 +222,12 @@ export function setIssueState(
   if (!user.ok) return user;
   if (issue.repoId !== repo.id) return err("not_found");
   if (isMirror(app, repo)) return err("mirrored");
+  // A sealed report's author follows it and speaks on it, but its state is
+  // the writers' (`core/sealed.ts`).
   const mayModerate =
-    user.value.id === issue.authorId || canWrite(app.db, repo, user.value);
+    canWrite(app.db, repo, user.value) ||
+    (user.value.id === issue.authorId &&
+      (!issue.sealed || canSeeSealed(app.db, repo, user.value)));
   if (!mayModerate) return err("forbidden");
   // The plan's own issues — a pillar's umbrella, the Later umbrella, the
   // Later gate — are a person's to close, whatever access an agent holds:

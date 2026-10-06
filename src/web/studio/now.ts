@@ -7,7 +7,7 @@
  * a repaint (`layout.fragment`, `client.liveRegionsJs`).
  */
 
-import { canSeeSealed, sealedById } from "../../core/sealed.ts";
+import { mayViewId, sealedScope } from "../../core/sealed.ts";
 import { envPull } from "../../apps/data.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { listCrewRoles } from "../../core/agents.ts";
@@ -76,9 +76,8 @@ export async function nowCard(
   const base = repoBase(repo);
   const { openPulls, builderCount, ownerFacts, wordCtx, deployTailing } = o;
   // A run on a sealed report, and the report, are for who may see it.
-  const seesSealed = canSeeSealed(db, repo, ctx.auth.user);
-  const runs = listRuns(db, repo.id, { kind: "agent", limit: 8 }).filter(
-    (r) => seesSealed || r.issueId === null || !sealedById(db, r.issueId),
+  const runs = listRuns(db, repo.id, { kind: "agent", limit: 8 }).filter((r) =>
+    mayViewId(db, repo, r.issueId, ctx.auth.user),
   );
   const actors = getUsersByIds(
     db,
@@ -96,7 +95,7 @@ export async function nowCard(
     kind: "issue",
     state: "open",
     limit: 30,
-    sealed: seesSealed,
+    ...sealedScope(db, repo, ctx.auth.user),
   });
   const told = openTells.filter(
     (i) => i.assigneeIsAgent && !openByIssue.has(i.number),
@@ -341,7 +340,7 @@ export async function appNowFragment(ctx: Ctx): Promise<Response> {
   const openPulls = listPulls(db, repo.id, {
     state: "open",
     limit: 10,
-    sealed: canSeeSealed(db, repo, ctx.auth.user),
+    ...sealedScope(db, repo, ctx.auth.user),
   });
   const { card } = await nowCard(ctx, repo, record, {
     openPulls,

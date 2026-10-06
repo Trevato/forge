@@ -8,7 +8,7 @@
  * `canRead`; what is left is shape.
  */
 
-import { canSeeSealed, mayView } from "../core/sealed.ts";
+import { mayView, sealedScope } from "../core/sealed.ts";
 import type { App } from "../app.ts";
 import {
   commentCounts,
@@ -254,7 +254,7 @@ export function localSource(
         kind: query.kind,
         state: query.state,
         limit,
-        sealed: canSeeSealed(app.db, repo, actor),
+        ...sealedScope(app.db, repo, actor),
         ...(query.label === undefined ? {} : { label: query.label }),
         ...(query.author === undefined ? {} : { author: query.author }),
         ...(query.query === undefined ? {} : { query: query.query }),

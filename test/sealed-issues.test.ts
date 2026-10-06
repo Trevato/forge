@@ -307,6 +307,70 @@ describe("a stranger and a reader see nothing of a sealed report", () => {
   });
 });
 
+describe("a reader who files a sealed report follows it, and only it", () => {
+  test("its author reads it, comments on it and finds it in lists and search; may not close it; a second stranger finds nothing", async () => {
+    const eve = ok(
+      await createUser(app.db, {
+        trusted: true,
+        username: "eve",
+        email: "eve@forge.local",
+        password: "a-good-passphrase",
+      }),
+    );
+    token.eve = createToken(app.db, eve.id, "t", "rw").token;
+    const filed = await fetch(`${servers.url}/api/v1/repos/alice/square/issues`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token.mallory}`, "content-type": "application/json" },
+      body: JSON.stringify({ title: "X9QMINE reset link reuse", body: "X9QMINEBODY", sealed: true }),
+    });
+    expect(filed.status).toBe(201);
+    const mine = ((await filed.json()) as { number: number }).number;
+
+    // The reporter: the issue, with its mark, in lists and in search.
+    const one = await get(`/api/v1/repos/alice/square/issues/${mine}`, "mallory");
+    expect(one.status).toBe(200);
+    expect((JSON.parse(one.text) as { sealed: boolean }).sealed).toBe(true);
+    expect((await get("/api/v1/repos/alice/square/issues?state=all", "mallory")).text).toContain("X9QMINE");
+    expect((await get("/api/v1/search?q=reuse", "mallory")).text).toContain("X9QMINE");
+    expect((await get(`/alice/square/issues/${mine}`, "mallory")).status).toBe(200);
+    const said = await fetch(
+      `${servers.url}/api/v1/repos/alice/square/issues/${mine}/comments`,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${token.mallory}`, "content-type": "application/json" },
+        body: JSON.stringify({ body: "It also works on the API." }),
+      },
+    );
+    expect(said.status).toBe(201);
+    // Events about it reach its author.
+    const about = listEvents(app.db, { repoId: repo.id }).filter(
+      (e) => e.payload["number"] === mine,
+    );
+    expect(about.filter(audienceFilter(app.db, mallory)).length).toBe(about.length);
+    // Its state is the writers'.
+    const closed = await fetch(
+      `${servers.url}/api/v1/repos/alice/square/issues/${mine}`,
+      {
+        method: "PATCH",
+        headers: { authorization: `Bearer ${token.mallory}`, "content-type": "application/json" },
+        body: JSON.stringify({ state: "closed" }),
+      },
+    );
+    expect(closed.status).toBe(403);
+    // Still nothing of anyone else's sealed report.
+    expect((await get(`/api/v1/repos/alice/square/issues/${report.number}`, "mallory")).status).toBe(404);
+    // A second stranger, and nobody signed in, find nothing of it.
+    for (const who of ["eve", undefined] as const) {
+      const { status, text } = await get(`/api/v1/repos/alice/square/issues/${mine}`, who);
+      expect({ who, status }).toEqual({ who, status: 404 });
+      expect(text).not.toContain("X9QMINE");
+      expect((await get("/api/v1/repos/alice/square/issues?state=all", who)).text).not.toContain("X9QMINE");
+      expect((await get("/api/v1/search?q=reuse", who)).text).not.toContain("X9QMINE");
+    }
+    expect(about.filter(audienceFilter(app.db, eve))).toEqual([]);
+  });
+});
+
 describe("nothing about it leaves the forge", () => {
   test("a webhook is never queued an event about it; it is for one about public work", () => {
     app.db

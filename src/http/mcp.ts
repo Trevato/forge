@@ -17,7 +17,7 @@
  * no page. `ro` tokens read; `rw` tokens act.
  */
 
-import { canSeeSealed, mayView, sealedById } from "../core/sealed.ts";
+import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
 import { addCommentThrough, setIssueSealed } from "../actions/issues.ts";
 import {
@@ -413,11 +413,8 @@ const TOOLS: readonly Tool[] = [
       const runs = listActiveRuns(
         ctx.app.db,
         repos.filter((r) => mayReadRuns(ctx.app, user, r)).map((r) => r.id),
-      ).filter(
-        (r) =>
-          r.issueId === null ||
-          !sealedById(ctx.app.db, r.issueId) ||
-          canSeeSealed(ctx.app.db, byId.get(r.repoId)!, user),
+      ).filter((r) =>
+        mayViewId(ctx.app.db, byId.get(r.repoId)!, r.issueId, user),
       );
       const actors = getUsersByIds(
         ctx.app.db,
@@ -990,7 +987,7 @@ const TOOLS: readonly Tool[] = [
       const repo = planRepo(ctx, user, args);
       if (isAnswer(repo)) return repo;
       const graph = repoGraph(ctx.app.db, repo.id, {
-        sealed: canSeeSealed(ctx.app.db, repo, user),
+        ...sealedScope(ctx.app.db, repo, user),
       });
       return good(
         mapJson(

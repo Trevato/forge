@@ -20,7 +20,7 @@
  * lane each, at one scale, so a column means the same thing in every lane.
  */
 
-import { canSeeSealed, sealedById } from "../../core/sealed.ts";
+import { mayViewId, sealedScope } from "../../core/sealed.ts";
 import type { Database } from "bun:sqlite";
 import type { App } from "../../app.ts";
 import {
@@ -1345,7 +1345,7 @@ export function mapPage(ctx: Ctx): Response {
   const studio = studioRecord(ctx, repo) !== undefined;
   const issueHref = studio ? tellHref : devIssueHref;
   const graph = repoGraph(db, repo.id, {
-    sealed: canSeeSealed(db, repo, ctx.auth.user),
+    ...sealedScope(db, repo, ctx.auth.user),
   });
   const ready = readyNow(graph);
   const blocked = blockedOn(graph);
@@ -1548,12 +1548,11 @@ export function globalLanes(app: App, viewer: User | undefined): Lane[] {
   const lanes: Lane[] = [];
   for (const repo of repos) {
     // A run on a sealed report is not shown to who may not see the report.
-    const seesSealed = canSeeSealed(db, repo, viewer);
-    const flying = (byRepo.get(repo.id) ?? []).filter(
-      (r) => seesSealed || r.issueId === null || !sealedById(db, r.issueId),
+    const flying = (byRepo.get(repo.id) ?? []).filter((r) =>
+      mayViewId(db, repo, r.issueId, viewer),
     );
     if ((repo.counts?.openIssues ?? 0) === 0 && flying.length === 0) continue;
-    const graph = repoGraph(db, repo.id, { sealed: seesSealed });
+    const graph = repoGraph(db, repo.id, sealedScope(db, repo, viewer));
     const marks = marksFor(db, repo.id, graph, flying);
     const ready = readyNow(graph);
     const readySet = new Set(ready.map((r) => r.issue.id));

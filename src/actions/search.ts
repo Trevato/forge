@@ -11,6 +11,7 @@
  * did not have it.
  */
 
+import { isActive } from "../core/users.ts";
 import { canSeeSealed } from "../core/sealed.ts";
 import type { App } from "../app.ts";
 import { listOrigins } from "../core/origins.ts";
@@ -103,6 +104,7 @@ export async function search(
             .filter((r) => canSeeSealed(app.db, r, actor))
             .map((r) => r.id),
         ),
+        actor !== undefined && isActive(actor) ? actor.id : undefined,
       )
     : [];
   const localIssueCount = issues.length;
