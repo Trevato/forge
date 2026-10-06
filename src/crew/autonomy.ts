@@ -1177,8 +1177,10 @@ export async function landIfGreen(
   // One gate for every pull, whoever wrote it: when the crew has a
   // reviewer, a green head is queued for review and waits for an approval
   // on that very head (a person's counts the same). A push is a new head,
-  // so it starts over. Without a reviewer the pull lands as it always has,
-  // and so does one whose review lapsed.
+  // so it starts over. An agent's pull waits for that approval however
+  // long it takes — with no reviewer, or after one lapsed, a person's
+  // (#597). Only a person's own pull lands without a reviewer, or after a
+  // review lapsed.
   const review = await reviewed(app, repo, pull);
   if (review === "hold") return false;
   // Green and clear of the wall lands. An autonomous repository does not
