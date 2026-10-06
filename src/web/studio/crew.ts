@@ -336,7 +336,17 @@ ${repo.autonomyDirection}</textarea
         })}
         <div class="form-actions">${btn("Save", { variant: "primary" })}</div>
       </form>`;
-  return card(html`${state}${form}`, {
+  // An autonomous repository with no reviewer lands nothing an agent wrote
+  // on its own: each such pull waits for a person's review (#597).
+  const noReviewer =
+    repo.autonomy === "autonomous" &&
+    !listCrewRoles(ctx.app.db, repo.id).some((c) => c.role === "reviewer")
+      ? html`<p class="small" id="no-reviewer">
+          <b>No reviewer: agent pulls wait for you.</b> Put a reviewer on the
+          crew under Crew to have them reviewed and land on their own.
+        </p>`
+      : null;
+  return card(html`${state}${noReviewer}${form}`, {
     id: "autonomy",
     head: html`${icon("play")}
       <h2>On its own</h2>`,

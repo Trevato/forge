@@ -46,7 +46,8 @@ import {
 import { share } from "../feed/share.ts";
 import { parseTargets } from "./feed.ts";
 import { appsRuntime, envsFor } from "../apps/runtime.ts";
-import { getIssue, getIssueById } from "../core/issues.ts";
+import { getIssue, getIssueById, listOpenAgentPullsVisibleTo } from "../core/issues.ts";
+import { waitsForPerson } from "../crew/review.ts";
 import { getPull } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
@@ -365,7 +366,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "now",
     description:
-      "What the crew is doing right now, across your apps: who, on what, since when, and what it has cost so far; a planner that declined the direction and waits for you comes first, as a row with no run and its words in `says`.",
+      "What the crew is doing right now, across your apps: who, on what, since when, and what it has cost so far; a planner that declined the direction and waits for you comes first, as a row with no run and its words in `says`; then each agent pull that waits for your review (no reviewer on the crew, or one that lapsed), with `since`.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
@@ -398,8 +399,34 @@ const TOOLS: readonly Tool[] = [
         since: d.at,
         costUsd: 0,
       }));
+      // An agent's green pull that waits for a person's review (#597): no
+      // reviewer on the crew, or one that lapsed — with its age, never silent.
+      const ownRepos = repos.filter((r) => owned.has(r.id));
+      const reviewWaits = listOpenAgentPullsVisibleTo(ctx.app.db, user, 200)
+        .filter((i) => ownRepos.some((r) => r.id === i.repoId))
+        .flatMap((issue) => {
+          const pull = getPull(ctx.app.db, issue.repoId, issue.number);
+          const repo = byId.get(issue.repoId);
+          const wait = pull && repo ? waitsForPerson(ctx.app.db, repo.id, pull) : undefined;
+          return wait === undefined || repo === undefined
+            ? []
+            : [
+                {
+                  run: null,
+                  app: `${repo.ownerName}/${repo.name}`,
+                  who: "you",
+                  on: `#${issue.number} ${issue.title}`,
+                  why: "review",
+                  state: "waiting for your review",
+                  says: wait.why === "lapsed" ? "the reviewer did not answer" : "no reviewer on the crew",
+                  since: wait.since,
+                  costUsd: 0,
+                },
+              ];
+        });
       return good([
         ...waiting,
+        ...reviewWaits,
         ...runs.map((r) => {
           const repo = byId.get(r.repoId)!;
           const issue =
