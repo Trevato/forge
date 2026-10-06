@@ -150,7 +150,11 @@ import {
 } from "../web/pages/issues.ts";
 import { tellPage } from "../web/studio/tell.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
-import { milestonePage, milestonesPage } from "../web/pages/milestones.ts";
+import {
+  milestonePage,
+  milestonesPage,
+  milestoneWatch,
+} from "../web/pages/milestones.ts";
 import {
   limbPreviewPage,
   limbReceiptPage,
@@ -875,6 +879,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/map", mapPage);
   router.add("GET", "/:owner/:name/milestones", milestonesPage);
   router.add("GET", "/:owner/:name/milestones/:number", milestonePage);
+  router.add("POST", "/:owner/:name/milestones/:number/watch", milestoneWatch);
   router.add("GET", "/:owner/:name/milestones/:number/limb", limbPreviewPage);
   router.add("POST", "/:owner/:name/milestones/:number/limb", limbSubmit);
   router.add(

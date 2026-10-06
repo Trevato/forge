@@ -183,6 +183,7 @@ describe("the forge over MCP", () => {
       "front_page",
       "map",
       "milestones",
+      "watch",
       "limb",
       "returns",
       "spend",

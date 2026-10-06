@@ -19,6 +19,7 @@ import {
   type Repo,
 } from "../core/repos.ts";
 import { getUserById, type User } from "../core/users.ts";
+import { watchedBy } from "../core/watches.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
 export type FeedKind =
@@ -32,7 +33,8 @@ export type FeedKind =
   // under one, a look of what a change made (#599).
   | "tell"
   | "reply"
-  | "look";
+  | "look"
+  | "milestone";
 
 /** What a candidate is, before it is ranked and worded. */
 export interface Candidate {
@@ -75,6 +77,45 @@ const base = (r: Repo): string => `/${r.ownerName}/${r.name}`;
 
 /** Every ask sits above the news (a failed run is 4); among asks, consequence alone orders them. */
 const ASK_URGENCY_FLOOR = 5;
+/** What a person asked to watch sits above plain news, and its landing with a failure. */
+const WATCH_URGENCY = 2;
+const LANDED_URGENCY = 4;
+
+/**
+ * What the viewer watches (`core/watches.ts`), one item for each milestone:
+ * how far it is and what merged since they last opened it, or that it
+ * landed, or that it will not. A milestone with nothing new says nothing.
+ */
+function watchedCandidates(db: Database, viewer: User, now: number): Candidate[] {
+  const out: Candidate[] = [];
+  for (const w of watchedBy(db, viewer, now)) {
+    if (w.state === "moving" && w.merged.length === 0) continue;
+    const { done, total } = w.milestone.weight;
+    const name = `“${clip(w.milestone.name, 60)}”`;
+    const n = w.merged.length;
+    const what =
+      w.state === "landed"
+        ? `${name} landed: ${done} of ${total} done`
+        : w.state === "moving"
+          ? `${name} is ${done} of ${total} done: ${n} merged since you last looked (${clip(w.merged.map((p) => p.title).join("; "), 80)})`
+          : `${name} was ${w.state === "split" ? "split into smaller issues" : "dropped"}: it will not land as it was written`;
+    out.push({
+      id: w.itemId,
+      kind: "milestone",
+      repoId: w.repo.id,
+      app: slug(w.repo),
+      actorId: null,
+      actor: null,
+      at: w.at,
+      link: `${base(w.repo)}/milestones/${w.milestone.issue.number}`,
+      what,
+      urgency: w.state === "landed" ? LANDED_URGENCY : WATCH_URGENCY,
+      // The sentence is the milestone's, whatever led the ranking.
+      said: what,
+    });
+  }
+  return out;
+}
 
 export function candidatesFor(
   db: Database,
@@ -140,6 +181,7 @@ export function candidatesFor(
       },
     });
   }
+  out.push(...watchedCandidates(db, viewer, now));
   for (const d of decided) {
     const repo = repos.get(d.repoId);
     if (!repo) continue;
