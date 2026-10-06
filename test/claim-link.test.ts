@@ -2,9 +2,10 @@
  * The claim link, round two (#729, #730). The secret travels in the URL's
  * fragment — `https://child/claim#<token>` — so no server, edge or proxy
  * on the way sees it in a request line or a Referer: the page reads it in
- * the browser and posts it in the body. And only the spawner (an admin of
- * the parent) can re-issue a link for a child nobody has claimed; the old
- * one dies at once.
+ * the browser and posts it in the body. Any site admin of the parent can
+ * re-issue a link for a child nobody has claimed; the old one dies at once.
+ * Through MCP the link stays out of the agent's conversation unless asked
+ * for there on purpose (#839).
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -235,5 +236,40 @@ describe("the claim link in the fragment, and its re-issue", () => {
     expect(a.claimUrl).toContain("/claim#");
     const b = (await (await send()).json()) as { claimUrl: string };
     expect(b.claimUrl).not.toContain("/claim#");
+  });
+
+  test("MCP claim_link keeps the link out of the conversation unless reveal is sent (#839)", async () => {
+    const call = async (token: string, args: Record<string, unknown>) => {
+      const res = await fetch(`${parentServers.url}/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "claim_link", arguments: args },
+        }),
+      });
+      const r = ((await res.json()) as any).result;
+      return { error: r.isError === true, text: r.content[0].text as string };
+    };
+    // Without reveal nothing is re-issued and no link is in the answer.
+    const kept = await call(adminRw, { name: "kai" });
+    expect(kept.error).toBe(false);
+    expect(kept.text).not.toContain("/claim#");
+    expect(JSON.parse(kept.text)).toMatchObject({
+      reissued: false,
+      says: expect.stringContaining("/forges"),
+    });
+    // Asked for on purpose: a link, said plainly to be a live secret.
+    const shown = await call(adminRw, { name: "kai", reveal: true });
+    expect(shown.error).toBe(false);
+    const body = JSON.parse(shown.text) as { claimUrl: string; says: string };
+    expect(body.claimUrl).toMatch(/\/claim#[A-Za-z0-9_-]{43}$/);
+    expect(body.says).toContain("live secret");
+    // Revealing is a re-issue: a token that may only read gets nothing.
+    const ro = await call(adminRo, { name: "kai", reveal: true });
+    expect(ro.error).toBe(true);
+    expect(ro.text).not.toContain("/claim#");
   });
 });
