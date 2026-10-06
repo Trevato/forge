@@ -306,7 +306,7 @@ import {
   parseExploreQuery,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
-import { makeItYours } from "../actions/make_it_yours.ts";
+import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -3367,12 +3367,25 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const name = str(input.name);
+    const visibility = str(input.visibility);
+    if (visibility !== "" && visibility !== "public" && visibility !== "private")
+      return apiError("invalid", 422, "visibility is public or private");
     const made = await makeItYours(ctx.app, ctx.auth.user, repo, {
       dryRun,
       ...(name === "" ? {} : { name }),
+      ...(visibility === "" ? {} : { visibility }),
     });
     if (!made.ok)
-      return made.error.kind === "invalid"
+      return made.error.kind === "limit"
+        ? json(
+            {
+              error: "limit",
+              message: `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`,
+              resetsAt: made.error.resetsAt,
+            },
+            429,
+          )
+        : made.error.kind === "invalid"
         ? apiError("invalid", 422, made.error.message)
         : made.error.kind === "own"
           ? apiError("own", 409, "this app is already yours")
