@@ -8,7 +8,11 @@
  * back to continue); errors are `{ error, message }`.
  */
 
-import { accountSignIns, endAccountSession } from "../actions/signins.ts";
+import {
+  accountSignIns,
+  endAccountSession,
+  signOutHere,
+} from "../actions/signins.ts";
 import { STRANGER_MAX } from "./limits.ts";
 import {
   askedIn,
@@ -158,7 +162,7 @@ import {
   listReviews,
   withOutdated,
 } from "../core/reviews.ts";
-import { createSession, destroySession } from "../core/sessions.ts";
+import { createSession } from "../core/sessions.ts";
 import { listTokens } from "../core/tokens.ts";
 import {
   getUserByName,
@@ -1039,8 +1043,12 @@ export function apiRoutes(router: Router<Handler>): void {
     // Cookie-authenticated logout, so it must be same-origin like any other
     // cookie mutation — otherwise it's a cross-site forced-logout.
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
-    const token = cookieValue(ctx.request, "forge_session");
-    if (token !== undefined) destroySession(ctx.app.db, token);
+    signOutHere(
+      ctx.app,
+      ctx.auth.user,
+      ctx.auth.sessionId,
+      cookieValue(ctx.request, "forge_session"),
+    );
     return json({}, 200, {
       "set-cookie": sessionCookie("", new Date(0), ctx.url),
     });
