@@ -144,7 +144,7 @@ export function updateAgent(
 
 /**
  * Put an agent on a repository's crew. Idempotent. Only an agent: the
- * database refuses anyone else (migration 61), so a caller that passes a
+ * database refuses anyone else (`repo_crew_agents_only`), so a caller that passes a
  * person has a bug, and hears about it as an error, not a quiet no.
  */
 export function addCrew(
@@ -163,7 +163,7 @@ export function addCrew(
 }
 
 /**
- * People — not agents — on any crew: what migration 61 now refuses, if any
+ * People — not agents — on any crew: what `repo_crew_agents_only` now refuses, if any
  * was put there before it. Reported at boot, never removed by the forge.
  */
 export function peopleOnCrews(
