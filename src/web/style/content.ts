@@ -185,7 +185,9 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
      spare: a tighter gap and a narrower select. */
   .comment-form .form-actions { gap: 6px; }
   .comment-form .form-actions .close-reason { padding-inline: 8px 24px; max-width: 84px; }
-  .comment-form .form-actions > :last-child .ico { display: none; }
+  /* Words carry the buttons here; their icons give back the width a 360 px
+     row needs for "Close issue", and the buttons keep their full height. */
+  .comment-form .form-actions .btn .ico { display: none; }
 }
 .connect-more .connect-path { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
 .connect-path h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
