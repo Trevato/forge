@@ -142,6 +142,7 @@ import {
 import { commitPage, commitsPage } from "../web/pages/commits.ts";
 import {
   issueCommentSubmit,
+  issuePrivateSubmit,
   issueSealSubmit,
   issueThreadFragment,
   newIssuePage,
@@ -846,6 +847,7 @@ export function buildRouter(): Router<Handler> {
     issueCommentSubmit,
   );
   router.add("POST", "/:owner/:name/issues/:number/seal", issueSealSubmit);
+  router.add("POST", "/:owner/:name/issues/:number/private", issuePrivateSubmit);
   // Close/reopen and labels are their own verbs, not riders on a comment.
   router.add("POST", "/:owner/:name/issues/:number/state", (ctx) =>
     stateSubmit(ctx, "issue"),

@@ -1480,4 +1480,19 @@ export const migrations: readonly string[] = [
   -- base's git or a public fork's before it merges.
   ALTER TABLE repo ADD COLUMN sealed_for TEXT REFERENCES repo(id) ON DELETE CASCADE;
   `,
+  // 66 — a sealed repository is never public, said by the database (#865's
+  // review): the rule lived in `updateRepoSettings`; these triggers hold
+  // it for every writer of `repo.visibility`, now and later.
+  `
+  CREATE TRIGGER repo_sealed_never_public BEFORE UPDATE OF visibility, sealed_for ON repo
+  WHEN NEW.sealed_for IS NOT NULL AND NEW.visibility = 'public'
+  BEGIN
+    SELECT RAISE(ABORT, 'a sealed repository is never public');
+  END;
+  CREATE TRIGGER repo_sealed_never_public_insert BEFORE INSERT ON repo
+  WHEN NEW.sealed_for IS NOT NULL AND NEW.visibility = 'public'
+  BEGIN
+    SELECT RAISE(ABORT, 'a sealed repository is never public');
+  END;
+  `,
 ];

@@ -60,6 +60,8 @@ function composeForm(
   headBranches: string[],
   values: ComposeValues,
   error?: string,
+  /** Offer the deliberate yes to publishing a sealed fix's branch (`sealed_in_public`). */
+  confirmPublic = false,
 ): Html {
   const cross = parent !== undefined;
   return html`<form method="post" action="${repoBase(repo)}/pulls/new">
@@ -109,6 +111,14 @@ function composeForm(
         hint: "Markdown is supported.",
       })}
     </div>
+    ${confirmPublic
+      ? html`<label class="field mt">
+          <input type="checkbox" name="confirm_public" value="1" />
+          Publish this branch anyway: everyone who can read
+          ${repo.ownerName}/${repo.name} sees the fix, and with it where the
+          hole is.
+        </label>`
+      : null}
     <div class="form-actions">
       ${btn("Create pull request", { variant: "primary", icon: "pull" })}
       ${btn("Cancel", { href: `${repoBase(repo)}/pulls`, variant: "ghost" })}
@@ -205,6 +215,8 @@ const COMPOSE_ERRORS: Record<string, string> = {
   unknown_head: "That compare branch does not exist.",
   nothing_to_merge: "The compare branch has no commits beyond base.",
   invalid_branch: "That branch name is not valid.",
+  sealed_in_public:
+    "This fixes a sealed security report, and this branch is public: anyone can read the fix, and with it where the hole is. Work on it privately — open the report and choose “Work on this privately” — or publish anyway below.",
 };
 
 // POST /:owner/:name/pulls/new
@@ -235,6 +247,7 @@ export async function newPullSubmit(ctx: Ctx): Promise<Response> {
     baseBranch: values.base,
     headBranch: values.head,
     ...(parent ? { headRepo: repo } : {}),
+    ...(field(form, "confirm_public") === "1" ? { confirmPublic: true } : {}),
   });
   if (!created.ok) {
     // Re-render with everything the author typed still in place.
@@ -258,6 +271,7 @@ export async function newPullSubmit(ctx: Ctx): Promise<Response> {
               values,
               COMPOSE_ERRORS[created.error] ??
                 "That pull request could not be opened.",
+              created.error === "sealed_in_public",
             )}
           </div>`,
       },

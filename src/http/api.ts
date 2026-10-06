@@ -108,6 +108,7 @@ import {
   deleteRepo,
   deleteWebhook,
   forkRepo,
+  privateRepoForSealed,
   updateRepoSettings,
 } from "../actions/repos.ts";
 import {
@@ -2219,6 +2220,21 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   // What an issue waits for, and what waits for it.
+  // The private repository a writer fixes a sealed report in by hand (#865).
+  router.add("POST", "/api/v1/repos/:owner/:name/issues/:number/private", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const found = loadIssue(ctx);
+    if ("error" in found) return found.error;
+    const made = await privateRepoForSealed(ctx.app, ctx.auth.user, found.repo, found.issue);
+    if (!made.ok)
+      return made.error === "not_found"
+        ? notFound()
+        : respondAccess(made.error, 422);
+    const there = `${made.value.ownerName}/${made.value.name}`;
+    return json({ repo: there, clone: `${ctx.url.origin}/${there}.git` }, 201);
+  });
+
   router.add(
     "GET",
     "/api/v1/repos/:owner/:name/issues/:number/dependencies",
@@ -2555,7 +2571,15 @@ export function apiRoutes(router: Router<Handler>): void {
       baseBranch: str(input.base),
       headBranch: str(input.head),
       ...(headRepo ? { headRepo } : {}),
+      // A person's deliberate yes to fixing a sealed report from a public branch.
+      ...(input.confirmPublic === true ? { confirmPublic: true } : {}),
     });
+    if (!created.ok && created.error === "sealed_in_public")
+      return apiError(
+        "sealed_in_public",
+        422,
+        "this fixes a sealed report from a public branch: push it to your private repository (POST …/issues/<n>/private) and open the pull from there, or send confirmPublic: true",
+      );
     if (!created.ok)
       return created.error === "origin_owner_only" ||
         created.error === "origin_refused" ||
