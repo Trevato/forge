@@ -23,7 +23,7 @@ import { field, readForm } from "../form.ts";
 import { listReposVisibleTo } from "../../core/repos.ts";
 import { html, type Html } from "../html.ts";
 import { redirect } from "../layout.ts";
-import { btn, card, icon, listCard, row } from "../ui.ts";
+import { btn, card, icon, row } from "../ui.ts";
 import {
   askAnchor,
   askRows,
@@ -123,8 +123,7 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
   const only = r.items.length === 1 ? r.items[0] : undefined;
   if (only) return decisionCard(ctx, only, picked);
   const base = repoBase(r.repo);
-  return listCard(
-    r.items.map((d) => {
+  const lines = r.items.map((d) => {
       const number = d.pull?.number ?? d.issue?.number;
       const href = d.pull
         ? changeHref(base, d.pull.number)
@@ -135,8 +134,19 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
         title: html`<a href="${href}">${d.pull?.title ?? d.issue?.title ?? ""}</a>`,
         meta: html`<span class="bar">${decisionActions(ctx, d)}</span>`,
       });
-    }),
+  });
+  // On a phone a group is its head line, its asks one tap away, so two
+  // groups never push the composer past the fold; a wider screen holds the
+  // details open and shows every line, as before.
+  return card(
+    html`<details class="ask-group">
+      <summary>Show all ${r.items.length}</summary>
+      <ul class="list">
+        ${lines}
+      </ul>
+    </details>`,
     {
+      pad: false,
       id: askAnchor(r.id),
       head: html`${BULK_KINDS.has(r.kind)
           ? html`<input

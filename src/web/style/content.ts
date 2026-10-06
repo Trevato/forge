@@ -1173,6 +1173,9 @@ textarea.editor:focus { outline: none; }
     .needs-you #asks-phone-more > summary { display: none; }
     .needs-you #asks-phone-more::details-content { content-visibility: visible; }
     .needs-you #asks-phone-more > .stack { margin-top: 0; }
+    .needs-you .ask-group > summary { display: none; }
+    .needs-you .ask-group::details-content { content-visibility: visible; }
   }
 }
+.needs-you .ask-group > summary { padding: 10px 14px; cursor: pointer; }
 `;

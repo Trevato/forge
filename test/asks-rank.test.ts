@@ -344,5 +344,15 @@ describe("asks that earn their place", () => {
     const asks = await page("/");
     expect(asks).toContain("2 green changes wait for your look");
     expect(asks).toContain("<b>security</b>: \u201cWiden the board id\u201d");
+    // On a phone the row is its head line, its two asks one tap away; a
+    // wider screen holds them open (the lead's call: the fold wins).
+    const group = asks.slice(asks.indexOf("2 green changes wait for your look"));
+    expect(group).toContain('<details class="ask-group">');
+    expect(group).toContain("<summary>Show all 2</summary>");
+    const css = await (await fetch(`${servers.url}${asks.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
+    const wide = css.slice(css.indexOf("@supports selector(::details-content) {"));
+    expect(wide.slice(wide.indexOf("@media (min-width: 481px)"))).toContain(
+      ".needs-you .ask-group > summary { display: none; }",
+    );
   });
 });
