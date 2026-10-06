@@ -13,7 +13,7 @@ import { listAgents } from "../../core/agents.ts";
 import { listReposVisibleTo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import { noRoom, spawnDoor, type Door } from "../../spawn/door.ts";
+import { childHost, noRoom, spawnDoor, type Door } from "../../spawn/door.ts";
 import {
   LEFT_BEHIND,
   MAX_BUDGET_USD,
@@ -32,6 +32,8 @@ interface Values {
   readonly crew: readonly string[];
   readonly keepAccess: boolean;
   readonly budgetUsd: string;
+  /** The last post carried a key: it is never sent back, so it is asked for again. */
+  readonly hadKey: boolean;
 }
 
 const EMPTY: Values = {
@@ -41,6 +43,7 @@ const EMPTY: Values = {
   crew: [],
   keepAccess: false,
   budgetUsd: "",
+  hadKey: false,
 };
 
 type Errors = Partial<Record<string, string>>;
@@ -105,14 +108,14 @@ function formView(
       : null}
     ${plan}
     ${card(
-      html`<form method="post" action="/forges/new" class="stack">
+      html`<form method="post" action="/forges/new" class="stack" id="new-forge">
         ${formField({
           label: "Name",
           name: "name",
           value: values.name,
           required: true,
           autofocus: true,
-          hint: `Its address: <name>.${ctx.url.host}. Lowercase letters, digits and dashes.`,
+          hint: `Its address: <name>.${childHost(ctx.app)}. Lowercase letters, digits and dashes.`,
           ...(errors["name"] ? { error: errors["name"] } : {}),
         })}
         ${formField({
@@ -172,7 +175,10 @@ function formView(
           name: "modelKey",
           type: "password",
           autocomplete: "off",
-          hint: "An API-billed key (sk-ant-api…) from a workspace with its own spend limit; sealed in the child, never shown again. Never a subscription token.",
+          required: values.hadKey,
+          hint: values.hadKey
+            ? "Type the key again to spawn: it is never sent back to your browser."
+            : "An API-billed key (sk-ant-api…) from a workspace with its own spend limit; sealed in the child, never shown again. Never a subscription token.",
           ...(errors["modelKey"] ? { error: errors["modelKey"] } : {}),
         })}
         ${formField({
@@ -197,20 +203,41 @@ function formView(
   </div>`;
 }
 
-/** The dry run, as the page shows it above the form. */
-function planView(body: Record<string, unknown>): Html {
+/**
+ * The dry run, as the page shows it above the form: what the person gets
+ * (where, as whom, with whom still there, on what budget), then what is
+ * copied — and the Spawn it confirms, so a phone need not scroll back down.
+ */
+function planView(ctx: Ctx, values: Values, body: Record<string, unknown>): Html {
   const copied = (body["copied"] as string[] | undefined) ?? [];
   const bytes = Number(body["bytes"] ?? 0);
   const note = body["keyNote"];
+  const plan = body["plan"] as { budgetUsd?: number | null } | undefined;
+  const budget = plan?.budgetUsd ?? null;
+  const address = `https://${values.name}.${childHost(ctx.app)}`;
   return card(
     html`<ul class="mb">
+        <li>A forge at <b>${address}</b>.</li>
+        <li>Whoever opens the link becomes its admin.</li>
+        <li>
+          ${values.keepAccess
+            ? "You keep owner access after it is claimed; the claim page tells them."
+            : "You leave once it is claimed; they can invite you back."}
+        </li>
+        ${budget === null
+          ? null
+          : html`<li>Its crew runs on the key you give, up to $${budget} for the key's whole life.</li>`}
+      </ul>
+      <p class="mb">Copied into it:</p>
+      <ul class="mb">
         ${copied.map((c) => html`<li>${c}</li>`)}
       </ul>
       <p class="muted small">
         About ${Math.max(1, Math.round(bytes / 1024))} KB. Nothing is made until
         you press Spawn.
       </p>
-      ${typeof note === "string" ? html`<p class="small mt">${note}</p>` : null}`,
+      ${typeof note === "string" ? html`<p class="small mt">${note}</p>` : null}
+      <p class="mt">${btn("Spawn", { variant: "primary", form: "new-forge" })}</p>`,
     { id: "plan", head: html`<h2>The plan</h2>` },
   );
 }
@@ -230,7 +257,13 @@ function madeView(body: Record<string, unknown>): Html {
               Send this link to the person it is for. It works once, for a day,
               and is shown only now.
             </p>
-            <p><code class="mono" id="claim-link">${link}</code></p>
+            <p class="muted small mb">
+              Send it as you would a password: to them alone, not to a group.
+            </p>
+            <p class="claim-link-box"><code class="mono" id="claim-link">${link}</code></p>
+            <p class="mt">
+              ${btn("Copy the link", { type: "button", copy: "claim-link", icon: "copy", variant: "primary", size: "sm" })}
+            </p>
             ${typeof note === "string"
               ? html`<p class="small mt">${note}</p>`
               : null}`
@@ -269,6 +302,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     crew: all(form, "crew"),
     keepAccess: asBool(form, "keepAccess"),
     budgetUsd: field(form, "budgetUsd").trim(),
+    hadKey: field(form, "modelKey").trim() !== "",
   };
   const key = field(form, "modelKey").trim();
   const planOnly = field(form, "do") === "plan";
@@ -295,7 +329,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     return page({
       ctx,
       title: "New forge",
-      body: formView(ctx, user, values, {}, planView(door.body)),
+      body: formView(ctx, user, values, {}, planView(ctx, values, door.body)),
     });
   const response = page(
     { ctx, title: "New forge", body: madeView(door.body) },

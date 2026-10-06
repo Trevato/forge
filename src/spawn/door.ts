@@ -32,11 +32,14 @@ export function usePlacement(app: App, placement: Placement): void {
   placements.set(app, placement);
 }
 
+/** The host a hosted child lives under: `<name>.<this>`. */
+export const childHost = (app: App): string =>
+  app.config.url ? new URL(app.config.url).host : (app.config.host ?? "localhost");
+
 function placementFor(app: App): Placement {
   let p = placements.get(app);
   if (!p) {
-    const host = app.config.url ? new URL(app.config.url).host : (app.config.host ?? "localhost");
-    p = hostedPlacement({ host });
+    p = hostedPlacement({ host: childHost(app) });
     placements.set(app, p);
   }
   return p;

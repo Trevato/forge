@@ -23,6 +23,7 @@ import { quietLogs } from "./helpers/globals.ts";
 quietLogs();
 
 const PASSWORD = "a-long-new-forge-passphrase";
+const KEY = "sk-ant-api03-child-key-AAAAAAAAAAAAAAAAAAAAAAAA";
 
 describe("+ New forge", () => {
   let dir = "";
@@ -152,6 +153,61 @@ describe("+ New forge", () => {
     expect(await children()).toBe(0);
   });
 
+  test("the plan says what the person gets: the address, the admin, your access, the budget", async () => {
+    const left = (
+      await (
+        await post(admin, [
+          ["name", "kai"],
+          ["apps", "alice/bakery"],
+          ["do", "plan"],
+        ])
+      ).text()
+    ).replace(/\s+/g, " ");
+    expect(left).toContain("https://kai.forge.test");
+    expect(left).toContain("Whoever opens the link becomes its admin");
+    expect(left).toContain("You leave once it is claimed");
+    const kept = (
+      await (
+        await post(admin, [
+          ["name", "kai"],
+          ["apps", "alice/bakery"],
+          ["keepAccess", "on"],
+          ["modelKey", KEY],
+          ["budgetUsd", "5"],
+          ["do", "plan"],
+        ])
+      ).text()
+    ).replace(/\s+/g, " ");
+    expect(kept).toContain("You keep owner access");
+    expect(kept).toContain("$5");
+  });
+
+  test("a plan made with a key asks for it again, never echoes it, and Spawn with it makes the child", async () => {
+    const planned = await post(admin, [
+      ["name", "lia"],
+      ["apps", "alice/bakery"],
+      ["modelKey", KEY],
+      ["budgetUsd", "5"],
+      ["do", "plan"],
+    ]);
+    expect(planned.status).toBe(200);
+    const html = await planned.text();
+    expect(html).not.toContain(KEY);
+    expect(html).toMatch(/name="modelKey"[^>]*required|required[^>]*name="modelKey"/);
+    expect(html).toContain("Type the key again to spawn");
+    // The plan's own Spawn button submits the same form.
+    expect(html).toMatch(/<button[^>]*form="new-forge"[^>]*>\s*Spawn/);
+    const made = await post(admin, [
+      ["name", "lia"],
+      ["apps", "alice/bakery"],
+      ["modelKey", KEY],
+      ["budgetUsd", "5"],
+      ["do", "spawn"],
+    ]);
+    expect(made.status).toBe(201);
+    expect(await made.text()).toMatch(/https:\/\/lia\.forge\.test\/claim#[A-Za-z0-9_-]{43}/);
+  });
+
   test("an error is shown beside the field that caused it", async () => {
     const bad = await post(admin, [
       ["name", "Not A Name"],
@@ -186,7 +242,7 @@ describe("+ New forge", () => {
     expect(res.headers.get("location")).toBeNull();
     const html = await res.text();
     expect(html).toMatch(/https:\/\/kai\.forge\.test\/claim#[A-Za-z0-9_-]{43}/);
-    expect(await children()).toBe(1);
+    expect(await children()).toBe(2);
     // Asked again, the child exists: no second link.
     const again = await post(admin, [
       ["name", "kai"],
