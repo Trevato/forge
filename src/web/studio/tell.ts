@@ -7,6 +7,7 @@
  * dependency form) belongs here; `?mode=dev` reads that page, unchanged.
  */
 
+import { mayEditIssue } from "../../actions/issues.ts";
 import { threadNote } from "../../crew/direct.ts";
 import type { Database } from "bun:sqlite";
 import { appsRuntime } from "../../apps/runtime.ts";
@@ -297,7 +298,13 @@ async function studioTell(
     </div>
   </div>`;
 
-  const talk = conversation(ctx, repo, issue, { openVerb: "opened this" });
+  const talk = conversation(ctx, repo, issue, {
+    openVerb: "opened this",
+    editAction:
+      mayEditIssue(ctx.app, repo, issue, user) && repo.origin === null
+        ? `${repoBase(repo)}/issues/${issue.number}/edit`
+        : undefined,
+  });
   const applied = labelsFor(db, issue.id);
   const allLabels = listLabels(db, repo.id);
   // Closed until asked for: neither is the next thing a person does here,

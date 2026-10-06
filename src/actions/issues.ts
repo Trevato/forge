@@ -33,6 +33,7 @@ import {
   setAssignee,
   setIssueLabels as writeLabels,
   setIssueState as writeState,
+  updateIssueText,
   type CloseReason,
   type Comment,
   type Issue,
@@ -97,6 +98,72 @@ export function openIssue(
     payload: { number: created.value.number },
   });
   return created;
+}
+
+export type EditError =
+  | AccessError
+  | MirrorError
+  | TitleError
+  | "body_too_long"
+  | "nothing_to_change";
+
+/**
+ * Whose words these are to change: the author's, or a person's who writes
+ * the repository. The pages ask this before offering the form, so nobody
+ * is shown one the server would refuse. A mirror is refused separately,
+ * with its own words.
+ */
+export function mayEditIssue(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  user: User | undefined,
+): boolean {
+  if (user === undefined || !canRead(app.db, repo, user)) return false;
+  if (user.id === issue.authorId) return true;
+  return user.kind !== "agent" && canWrite(app.db, repo, user);
+}
+
+/**
+ * Change the title or the body of an issue or a pull after it was opened:
+ * the pull whose body still says "work in progress", the issue whose title
+ * no longer says what it asks. Its author's say over their own words, any
+ * author's; a person who writes the repository may edit anyone's. An agent
+ * that did not write it may not: the crew lands, labels and closes, but a
+ * person's words are the person's. A mirror's words belong to its origin.
+ *
+ * What a pull closes, who it answers, and the map are all read from the
+ * body on every read, so they follow the edit with no column to drift. The
+ * event says that an edit happened and to what, never the words: the page
+ * has them, and a sealed pull's words stay where its seal keeps them.
+ */
+export function editIssue(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  issue: Issue,
+  input: { title?: string | undefined; body?: string | undefined },
+): Result<Issue, EditError> {
+  const user = requireParticipant(app, actor, repo);
+  if (!user.ok) return user;
+  if (issue.repoId !== repo.id) return err("not_found");
+  if (!mayEditIssue(app, repo, issue, user.value)) return err("forbidden");
+  if (isMirror(app, repo)) return err("mirrored");
+  if (input.title === undefined && input.body === undefined)
+    return err("nothing_to_change");
+  const changed = (["title", "body"] as const).filter(
+    (field) => input[field] !== undefined && input[field] !== issue[field],
+  );
+  if (changed.length === 0) return ok(issue);
+  const updated = updateIssueText(app.db, issue.id, input);
+  if (!updated.ok) return updated;
+  app.bus.append({
+    kind: `${issue.kind}.edited`,
+    repoId: repo.id,
+    actorId: user.value.id,
+    payload: { number: issue.number, changed },
+  });
+  return updated;
 }
 
 /**

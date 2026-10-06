@@ -230,7 +230,7 @@ import {
   removeFromCrew,
   updateAgent,
 } from "../actions/crew.ts";
-import { assignIssue } from "../actions/issues.ts";
+import { assignIssue, editIssue } from "../actions/issues.ts";
 import { steerRepoRun } from "../actions/runs.ts";
 import {
   dependencyWords,
@@ -608,6 +608,31 @@ function originAware(error: string, status = 422): Response {
     );
   return respondAccess(error, status);
 }
+
+/**
+ * The words a PATCH on an issue or a pull brings: `title` and `body`, each
+ * a string when given. Anything else in those keys is a bad request.
+ */
+function textFrom(
+  input: Record<string, unknown>,
+): { title?: string; body?: string } | undefined {
+  const out: { title?: string; body?: string } = {};
+  for (const key of ["title", "body"] as const) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (typeof value !== "string") return undefined;
+    out[key] = value;
+  }
+  return out;
+}
+
+/** A PATCH that changes nothing it knows is a request with nothing in it. */
+const NOTHING_TO_CHANGE = () =>
+  apiError(
+    "nothing_to_change",
+    422,
+    "send a new title or body, a state, or both",
+  );
 
 /**
  * `reason` and `into` of a close request, or undefined when they are not
@@ -2359,21 +2384,36 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadIssue(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
-      const wanted = str(input.state);
-      if (wanted !== "open" && wanted !== "closed")
+      // New words first, then a new state: each is its own authorization,
+      // and either alone is a whole request.
+      const text = textFrom(input);
+      if (text === undefined) return json({ error: "invalid_text" }, 422);
+      const wanted = input.state === undefined ? undefined : str(input.state);
+      if (wanted !== undefined && wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
-      const closing = closingFrom(input);
-      if (closing === undefined) return json({ error: "invalid_reason" }, 422);
-      const changed = await setIssueStateThrough(
-        ctx.app,
-        ctx.auth.user,
-        found.repo,
-        found.issue,
-        wanted,
-        closing,
-      );
-      if (!changed.ok) return originAware(changed.error, 409);
-      return json(withLabels(ctx, changed.value));
+      if (wanted === undefined && text.title === undefined && text.body === undefined)
+        return NOTHING_TO_CHANGE();
+      let issue = found.issue;
+      if (text.title !== undefined || text.body !== undefined) {
+        const edited = editIssue(ctx.app, ctx.auth.user, found.repo, issue, text);
+        if (!edited.ok) return originAware(edited.error, 422);
+        issue = edited.value;
+      }
+      if (wanted !== undefined) {
+        const closing = closingFrom(input);
+        if (closing === undefined) return json({ error: "invalid_reason" }, 422);
+        const changed = await setIssueStateThrough(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          issue,
+          wanted,
+          closing,
+        );
+        if (!changed.ok) return originAware(changed.error, 409);
+        issue = changed.value;
+      }
+      return json(withLabels(ctx, issue));
     },
   );
 
@@ -2473,17 +2513,34 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
-      const wanted = str(input.state);
-      if (wanted !== "open" && wanted !== "closed")
+      // The same two halves as an issue's PATCH: words, then state.
+      const text = textFrom(input);
+      if (text === undefined) return json({ error: "invalid_text" }, 422);
+      const wanted = input.state === undefined ? undefined : str(input.state);
+      if (wanted !== undefined && wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
-      const changed = await setIssueStateThrough(
-        ctx.app,
-        ctx.auth.user,
-        found.repo,
-        found.pull,
-        wanted,
-      );
-      if (!changed.ok) return originAware(changed.error, 409);
+      if (wanted === undefined && text.title === undefined && text.body === undefined)
+        return NOTHING_TO_CHANGE();
+      if (text.title !== undefined || text.body !== undefined) {
+        const edited = editIssue(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          found.pull,
+          text,
+        );
+        if (!edited.ok) return originAware(edited.error, 422);
+      }
+      if (wanted !== undefined) {
+        const changed = await setIssueStateThrough(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          getPull(ctx.app.db, found.repo.id, found.pull.number)!,
+          wanted,
+        );
+        if (!changed.ok) return originAware(changed.error, 409);
+      }
       return json(
         withLabels(ctx, getPull(ctx.app.db, found.repo.id, found.pull.number)!),
       );

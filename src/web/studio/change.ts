@@ -9,6 +9,7 @@
  * bigger.
  */
 
+import { mayEditIssue } from "../../actions/issues.ts";
 import { threadNote } from "../../crew/direct.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
@@ -467,6 +468,10 @@ async function changeConversation(
     extra: listReviews(db, pull.id).map((review) =>
       reviewEntry(review, headOid, glyph),
     ),
+    editAction:
+      mayEditIssue(ctx.app, repo, pull, ctx.auth.user) && !mirrored
+        ? `${thread}/edit`
+        : undefined,
   });
 
   const body = html`${repoHeader(ctx, repo, "pulls", {
