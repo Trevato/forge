@@ -68,6 +68,9 @@ const SELECT_ALL_JS = `document.addEventListener('change', function (e) {
 /** The rows shown before "N more": the few that matter most. */
 export const ASKS_SHOWN = 5;
 
+/** The rows a phone shows before its own "N more" (#883's follow-up). */
+export const ASKS_SHOWN_PHONE = 2;
+
 /**
  * Why it ranks high, when that is more than its kind: security, money,
  * held-up work — and, on a collapsed row, which of its asks that is.
@@ -213,12 +216,36 @@ export function needsYouSection(
       scriptJs: "",
     };
   // The forge's own health first, then the few asks that matter most;
-  // the rest are one tap away, in the same order.
-  const first = rows.slice(0, ASKS_SHOWN);
+  // the rest are one tap away, in the same order. A phone shows fewer
+  // (ASKS_SHOWN_PHONE) so the composer stays near the fold: the outer
+  // "more" is the phone's and opens in place to every ask; a wider screen
+  // flattens it and keeps the inner "more" for what is past ASKS_SHOWN.
+  const first = rows.slice(0, ASKS_SHOWN_PHONE);
+  const middle = rows.slice(ASKS_SHOWN_PHONE, ASKS_SHOWN);
   const rest = rows.slice(ASKS_SHOWN);
   const pickable = decisions.filter((d) => BULK_KINDS.has(d.kind)).length;
+  const more = (id: string, n: number, inner: Html): Html =>
+    html`<details id="${id}">
+      <summary>${n} more</summary>
+      <div class="stack mt">${inner}</div>
+    </details>`;
+  const restMore =
+    rest.length === 0
+      ? null
+      : more("asks-more", rest.length, html`${rest.map((r) => rowCard(ctx, r, picked))}`);
+  // The asks come first, so the first Tab after #needs-you lands on one;
+  // the bulk step acts on what was picked, after them.
   const body = html`<section id="needs-you" class="needs-you stack">
     <h2 id="asks-sentence">${askSentence(count)}</h2>
+    ${top?.banner ?? null}
+    ${needs.map(forgeCard)} ${first.map((r) => rowCard(ctx, r, picked))}
+    ${middle.length === 0
+      ? null
+      : more(
+          "asks-phone-more",
+          rows.length - first.length,
+          html`${middle.map((r) => rowCard(ctx, r, picked))} ${restMore}`,
+        )}
     ${pickable < 2
       ? null
       : html`<form id="asks-bulk" method="post" action="/asks/bulk" class="bar">
@@ -231,14 +258,6 @@ export function needsYouSection(
           ${btn("Preview", { size: "sm" })}
           <span class="muted small">on the selected asks</span>
         </form>`}
-    ${top?.banner ?? null}
-    ${needs.map(forgeCard)} ${first.map((r) => rowCard(ctx, r, picked))}
-    ${rest.length === 0
-      ? null
-      : html`<details id="asks-more">
-          <summary>${rest.length} more</summary>
-          <div class="stack mt">${rest.map((r) => rowCard(ctx, r, picked))}</div>
-        </details>`}
     ${decisions.map((d) => decisionForm(d))}
   </section>`;
   return { body, scriptJs: pickable < 2 ? "" : SELECT_ALL_JS };
