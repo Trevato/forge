@@ -14,9 +14,9 @@ jobs:
     runs-on: isolated
     env:
       REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
-      # Match forge.json check.limits.memory (4096 MiB). Default Node heap (~258MB)
-      # OOMs during `bun x tsc --noEmit` on this tree.
-      NODE_OPTIONS: --max-old-space-size=4096
+      # Do not set NODE_OPTIONS here to the full check.limits.memory (4096):
+      # that lets Node claim the entire cgroup and the kernel OOMs (`Killed`)
+      # during parallel test shards. Heap for tsc is set in forge.json check.run.
     steps:
       - name: derive owner + app
         run: |
