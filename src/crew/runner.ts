@@ -17,7 +17,7 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { addComment } from "../actions/issues.ts";
 import { openPull } from "../actions/pulls.ts";
-import { forkRepo } from "../actions/repos.ts";
+import { forkRepo, sealedForkFor } from "../actions/repos.ts";
 import { announceRun } from "../actions/runs.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
@@ -355,7 +355,7 @@ function forgetLandedClone(app: App, run: Run): void {
   const pull =
     issue.kind === "pull"
       ? getPull(app.db, repo.id, issue.number)
-      : listPulls(app.db, repo.id, { state: "closed" }).find(
+      : listPulls(app.db, repo.id, { sealed: true, state: "closed" }).find(
           (p) => p.headBranch === run.branch,
         );
   if (pull === undefined || (pull.state === "open" && pull.mergedAt === null))
@@ -575,7 +575,15 @@ async function work(
   // and writes only its own copy of it: the branch lives there, and the
   // pull proposes it back. A pull whose branch lives anywhere else is not
   // the agent's to move.
-  const fork = await forkFor(app, agent, repo, write);
+  // A sealed report's work lives where only the base's writers and crew
+  // can read it, never in the agent's public fork (`core/sealed.ts`).
+  const fork = await forkFor(
+    app,
+    agent,
+    repo,
+    write,
+    issue.sealed || pull?.sealed === true,
+  );
   if (!fork.ok) return { state: "failed", summary: fork.error };
   // A reviewer reads a pull it did not write: the diff comes to it in the
   // brief, its clone is its own fork at a scratch branch, and it pushes
@@ -1175,12 +1183,22 @@ async function work(
  * One fork per agent per repository; a name already taken by something
  * else of the agent's gets the owner's name in front.
  */
-async function forkFor(
+export async function forkFor(
   app: App,
   agent: Agent,
   repo: Repo,
   write: (line: string) => void,
+  /** The task is a sealed report: its work goes in a private repository (`core/sealed.ts`). */
+  sealed = false,
 ): Promise<Result<Repo, string>> {
+  if (sealed) {
+    const made = await sealedForkFor(app, agent.user, repo);
+    if (!made.ok)
+      return err(
+        `could not make a private place for ${repo.ownerName}/${repo.name}'s sealed work: ${made.error}`,
+      );
+    return ok(made.value);
+  }
   const existing = getForkOf(app.db, agent.user.id, repo.id);
   if (existing !== undefined) return ok(existing);
   let made = await forkRepo(app, agent.user, repo);
@@ -1445,7 +1463,7 @@ async function landWork(
 
   const existing =
     pull ??
-    listPulls(app.db, repo.id, { state: "open", limit: 200 }).find(
+    listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 200 }).find(
       (p) => p.headRepoId === fork.id && p.headBranch === branch,
     );
   if (existing !== undefined) {

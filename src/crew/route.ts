@@ -152,8 +152,10 @@ export async function routeIssue(
   // An issue already carrying a builder's name keeps it: the decider picks
   // for the unassigned, and the rule already honours the assignment.
   const own = builders.find((b) => b.user.id === issue.assigneeId);
+  // A sealed report is routed by the rule here, never sent to a decider
+  // elsewhere (`core/sealed.ts`).
   const decided = await decideOr(
-    own ? undefined : app.config.decider,
+    own || issue.sealed ? undefined : app.config.decider,
     routingState(app.db, repo, issue, crew),
     questions,
     rule,

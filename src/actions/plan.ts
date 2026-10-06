@@ -10,6 +10,7 @@
  * nothing reaches the ready list without a reason to be built now.
  */
 
+import { sealedScope } from "../core/sealed.ts";
 import type { App } from "../app.ts";
 import { isCrew } from "../core/agents.ts";
 import { addDependency, repoGraph, readyNow } from "../core/dependencies.ts";
@@ -366,7 +367,7 @@ export function openPlan(
     .map((item) => number.get(item.key)!);
   return ok({
     opened,
-    ready: readyNow(repoGraph(app.db, repo.id)).map((r) => r.issue.number),
+    ready: readyNow(repoGraph(app.db, repo.id, sealedScope(app.db, repo, actor))).map((r) => r.issue.number),
     later: deferred,
     ...(deferred.length > 0 && gate ? { gate: gate.number } : {}),
   });

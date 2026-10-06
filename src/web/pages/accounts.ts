@@ -19,11 +19,15 @@ import {
 } from "../../actions/signins.ts";
 import { mailConfigured } from "../../actions/verify.ts";
 import type { AccountRow } from "../../core/accounts.ts";
-import { soleOwnedOrgs } from "../../core/orgs.ts";
+import {
+  OWNERS_TEAM,
+  ownerlessOrgs,
+  soleOwnedOrgs,
+} from "../../core/orgs.ts";
 import { getUserByName } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
-import { readForm } from "../form.ts";
+import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
 import {
@@ -85,10 +89,15 @@ function row(a: AccountRow, sole: readonly string[]): Html {
         ${time(a.createdAt)}${how.length > 0
           ? html` · ${how.join(" · ")}`
           : null}
-        · ${holds.join(" · ")}${sole.length > 0
+        · ${holds.join(" · ")}${sole.length > 0 && a.suspendedAt === null
           ? html` · only owner of ${sole.join(", ")}`
           : null}
       </div>
+      ${sole.length > 0 && a.suspendedAt !== null
+        ? html`<div class="row-meta">
+            ${badge(`${sole.join(", ")}: no active owner`, { tone: "danger" })}
+          </div>`
+        : null}
     </div>
     ${actionable
       ? html`<div class="row-actions">
@@ -119,6 +128,11 @@ function row(a: AccountRow, sole: readonly string[]): Html {
 
 // GET /settings/accounts
 export function accountsPage(ctx: Ctx): Response {
+  return accountsView(ctx);
+}
+
+/** The page, with what an act needs said first (`notice`) when it did not finish. */
+function accountsView(ctx: Ctx, notice?: Html, status = 200): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   const listed = listAccounts(ctx.app, ctx.auth.user);
   if (!listed.ok) return notFoundPage(ctx);
@@ -135,9 +149,31 @@ export function accountsPage(ctx: Ctx): Response {
         </p>`,
         { tone: "attn" },
       );
+  // An organization every owner of which is suspended or removed stays as
+  // it is for its members; only the forge's owner can mend it.
+  const orphans = ownerlessOrgs(ctx.app.db);
+  const ownerless =
+    orphans.length === 0
+      ? null
+      : card(
+          html`<p>
+            ${orphans.map(
+              (o, i) => html`${i > 0 ? ", " : ""}${userLink(o.username)}`,
+            )}
+            ${orphans.length === 1 ? "has" : "have"} no active owner: everyone
+            on Owners is suspended or removed. Unsuspend one, or add an owner:
+            ${orphans.map(
+              (o, i) =>
+                html`${i > 0 ? ", " : ""}<a href="${ownersTeam(o.username)}"
+                    >${o.username}'s Owners</a
+                  >`,
+            )}.
+          </p>`,
+          { tone: "attn" },
+        );
   return shell(
     ctx,
-    html`${noMail}${card(
+    html`${notice ?? null}${ownerless}${noMail}${card(
       people.length === 0
         ? empty({ icon: "users", title: "Nobody has joined yet." })
         : html`<ul class="rows">
@@ -160,6 +196,33 @@ export function accountsPage(ctx: Ctx): Response {
           </p>`,
       },
     )}`,
+    status,
+  );
+}
+
+/** Where an organization's owners are added. */
+const ownersTeam = (org: string): string =>
+  `/${encodeURIComponent(org)}/-/teams/${encodeURIComponent(OWNERS_TEAM)}`;
+
+/** Before suspending the last active owner of an organization, say so once. */
+function confirmSuspend(username: string, orgs: readonly string[]): Html {
+  const at = `/settings/accounts/${encodeURIComponent(username)}`;
+  return card(
+    html`<p>
+        <strong>${username}</strong> is the only active owner of
+        ${orgs.join(", ")}. Suspended, nobody can administer
+        ${orgs.length === 1 ? "it" : "them"} until they are unsuspended or
+        another member is made an owner. Its members keep what they have.
+      </p>
+      <form method="post" action="${at}/suspend" class="form-actions">
+        <input type="hidden" name="confirm" value="1" />
+        ${btn("Suspend anyway", { type: "submit", size: "sm", variant: "danger" })}
+        ${orgs[0] === undefined
+          ? null
+          : btn("Add an owner first", { href: ownersTeam(orgs[0]), size: "sm" })}
+        ${btn("Keep them", { href: "/settings/accounts", size: "sm", variant: "ghost" })}
+      </form>`,
+    { tone: "attn" },
   );
 }
 
@@ -252,7 +315,9 @@ export function accountAct(act: Act) {
     const username = ctx.params.username ?? "";
     const done =
       act === "suspend"
-        ? await suspendAccount(ctx.app, ctx.auth.user, username)
+        ? await suspendAccount(ctx.app, ctx.auth.user, username, {
+            confirmed: field(form, "confirm") === "1",
+          })
         : act === "unsuspend"
           ? unsuspendAccount(ctx.app, ctx.auth.user, username)
           : act === "verify"
@@ -260,6 +325,14 @@ export function accountAct(act: Act) {
             : await removeAccount(ctx.app, ctx.auth.user, username);
     if (!done.ok) {
       if (done.error === "not_found") return notFoundPage(ctx);
+      if (act === "suspend" && done.error === "last_owner") {
+        const user = getUserByName(ctx.app.db, username);
+        const orgs =
+          user === undefined
+            ? []
+            : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username);
+        return accountsView(ctx, confirmSuspend(username, orgs), 409);
+      }
       return flashTo(ctx, "/settings/accounts", {
         message:
           done.error === "not_allowed"

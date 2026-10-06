@@ -108,6 +108,12 @@ export interface Repo {
   readonly directionIssueId: string | null;
   /** The repo this was forked from, or null. */
   readonly forkParentId: string | null;
+  /**
+   * The repository whose sealed reports this one holds the work for
+   * (`core/sealed.ts`): a private repository its owner's crew pushes to,
+   * read only by the base's writers and crew. Null for every other one.
+   */
+  readonly sealedFor: string | null;
   /** The origin this mirrors, or null for a native repo. */
   readonly origin: RepoOrigin | null;
   /**
@@ -137,6 +143,7 @@ interface RepoRow {
   crew_outsiders: number;
   direction_issue_id: string | null;
   fork_parent_id: string | null;
+  sealed_for: string | null;
   origin_id: string | null;
   origin_kind: "github" | "forgejo" | "gitea" | null;
   origin_full_name: string | null;
@@ -172,6 +179,7 @@ function toRepo(row: RepoRow): Repo {
     crewOutsiders: row.crew_outsiders === 1,
     directionIssueId: row.direction_issue_id,
     forkParentId: row.fork_parent_id,
+    sealedFor: row.sealed_for,
     origin:
       row.origin_id !== null && row.origin_kind !== null
         ? {
@@ -209,8 +217,10 @@ export function countsForRepos(
     const holes = chunk.map((_, n) => `?${n + 1}`).join(",");
     const rows = db
       .query<{ repo_id: string; kind: "issue" | "pull"; n: number }, string[]>(
+        // A sealed report is not counted where everyone reads the counts
+        // (`sealed.ts`): a count that moves is a hint.
         `SELECT repo_id, kind, COUNT(*) AS n FROM issue
-         WHERE state = 'open' AND repo_id IN (${holes})
+         WHERE state = 'open' AND sealed = 0 AND repo_id IN (${holes})
          GROUP BY repo_id, kind`,
       )
       .all(...chunk);
@@ -347,15 +357,27 @@ export async function forkRepo(
     visibility?: "public" | "private";
     perDay?: number;
     now?: number;
+    /**
+     * The private repository the owner works the parent's sealed reports in
+     * (`sealed.ts`): private whatever the parent is, no fork in the graph,
+     * read by the parent's writers and crew. One per owner and parent. Not
+     * a fork, so not one the daily limit counts.
+     */
+    sealed?: boolean;
   } = {},
 ): Promise<Result<Repo, ForkRepoError>> {
-  const forkName = name ?? parent.name;
+  const sealed = options.sealed === true;
+  const forkName = name ?? (sealed ? `${parent.name}-sealed` : parent.name);
   const visibility =
-    parent.visibility === "private" ? "private" : (options.visibility ?? parent.visibility);
+    sealed || parent.visibility === "private"
+      ? "private"
+      : (options.visibility ?? parent.visibility);
   const now = options.now ?? Date.now();
   const since = new Date(now - DAY_MS).toISOString();
   const overLimit = (): boolean =>
-    options.perDay !== undefined && forksSince(db, ownerId, since).length >= options.perDay;
+    !sealed &&
+    options.perDay !== undefined &&
+    forksSince(db, ownerId, since).length >= options.perDay;
   if (overLimit()) return err("limit");
   if (!isSafeName(forkName)) return err("invalid_name");
   const owner = db
@@ -370,7 +392,11 @@ export async function forkRepo(
   // comes first so a re-fork reports "already_forked", not "name_taken".
   if (
     db
-      .query("SELECT 1 FROM repo WHERE owner_id = ?1 AND fork_parent_id = ?2")
+      .query(
+        sealed
+          ? "SELECT 1 FROM repo WHERE owner_id = ?1 AND sealed_for = ?2"
+          : "SELECT 1 FROM repo WHERE owner_id = ?1 AND fork_parent_id = ?2",
+      )
       .get(ownerId, parent.id)
   ) {
     return err("already_forked");
@@ -399,8 +425,8 @@ export async function forkRepo(
         // and another fork may have landed in it.
         if (overLimit()) throw new OverLimit();
         db.query(
-          `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id)
-           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+          `INSERT INTO repo (id, owner_id, name, visibility, description, default_branch, fork_parent_id, sealed_for)
+           VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
         ).run(
           repoId,
           ownerId,
@@ -408,12 +434,14 @@ export async function forkRepo(
           visibility,
           parent.description,
           parent.defaultBranch,
-          parent.id,
+          sealed ? null : parent.id,
+          sealed ? parent.id : null,
         );
-        db.query(`INSERT INTO fork_made (owner_id, made_at) VALUES (?1, ?2)`).run(
-          ownerId,
-          new Date(now).toISOString(),
-        );
+        if (!sealed)
+          db.query(`INSERT INTO fork_made (owner_id, made_at) VALUES (?1, ?2)`).run(
+            ownerId,
+            new Date(now).toISOString(),
+          );
       })(),
     );
   } catch (error) {
@@ -435,6 +463,20 @@ function rowOrUndo(dir: string, insert: () => unknown): void {
     rmSync(dir, { recursive: true, force: true });
     throw error;
   }
+}
+
+/** The private repository `ownerId` works `baseId`'s sealed reports in, if any. */
+export function getSealedFork(
+  db: Database,
+  ownerId: string,
+  baseId: string,
+): Repo | undefined {
+  const row = db
+    .query<RepoRow, [string, string]>(
+      `${SELECT} WHERE repo.owner_id = ?1 AND repo.sealed_for = ?2`,
+    )
+    .get(ownerId, baseId);
+  return row ? toRepo(row) : undefined;
 }
 
 /** Repos forked directly from this one. */
@@ -748,6 +790,15 @@ export function canRead(
   if (repo.visibility === "public") return true;
   if (personalOrDirect(repo, user)) return true;
   if (onCrew(db, repo, user)) return true;
+  // The work on a sealed report is read by whoever may see the report on
+  // its base: the base's writers and crew, and nobody else (`sealed.ts`).
+  if (repo.sealedFor !== null) {
+    const base = getRepoById(db, repo.sealedFor);
+    return (
+      base !== undefined &&
+      (canWrite(db, base, user) || onCrew(db, base, user))
+    );
+  }
   return accessAllows(orgAccessFor(db, repo, user), "read");
 }
 

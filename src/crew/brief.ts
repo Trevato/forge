@@ -457,6 +457,9 @@ const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 
 /** `<agent>/<issue number>-<slug>`: a branch name that says whose and what for. */
 export function branchFor(agent: Agent, issue: Issue): string {
+  // A sealed report's title must not reach git, where every reader of the
+  // repository sees its branches (`core/sealed.ts`).
+  if (issue.sealed) return `${agent.user.username}/${issue.number}`;
   const slug = issue.title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
