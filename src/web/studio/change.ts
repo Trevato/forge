@@ -10,6 +10,7 @@
  */
 
 import { mayEditIssue } from "../../actions/issues.ts";
+import { mayView } from "../../core/sealed.ts";
 import { threadNote } from "../../crew/direct.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
@@ -19,6 +20,7 @@ import {
   revertOf,
   toldBy,
   type Pull,
+  pullDir,
 } from "../../core/pulls.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import { listReviews, type Review } from "../../core/reviews.ts";
@@ -84,7 +86,8 @@ export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
   const number = parseNumber(ctx.params.number);
   const pull =
     number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
-  if (!pull) return notFoundPage(ctx);
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
+    return notFoundPage(ctx);
   return { repo, pull };
 }
 
@@ -271,7 +274,8 @@ async function changeConversation(
   const thread = `${base}/pulls/${pull.number}`;
   const wordCtx: WordCtx = {
     db,
-    dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+    // The change is read where its objects are (`pullDir`).
+    dir: await pullDir(db, ctx.app.reposRoot, repo, pull),
     runtime: appsRuntime(ctx.app),
     record,
     history: servingHistory(),

@@ -16,6 +16,7 @@
 
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { askMeasure } from "../../core/ask_ledger.ts";
+import { reviewersOf, waitsForPerson } from "../../crew/review.ts";
 import { tokenReturns } from "../../core/returns.ts";
 import { returnsRepos } from "../../actions/returns.ts";
 import {
@@ -47,7 +48,7 @@ import {
   pillarView,
   reposWithUmbrellas,
 } from "../../core/pillars.ts";
-import { listPulls, mergedPullsForRepos, toldBy, type Pull } from "../../core/pulls.ts";
+import { joinMany, listPulls, mergedPullsForRepos, toldBy, type Pull } from "../../core/pulls.ts";
 import {
   listReposVisibleTo,
   ownerFactRepoIds,
@@ -226,7 +227,8 @@ export function boardPage(ctx: Ctx): Response {
       ></span>
       <time class="board-clock" id="board-clock"></time>
     </header>
-    ${forgeStrip(ctx)} ${declinedStrip(ctx, scope)} ${asksStrip(ctx)}
+    ${forgeStrip(ctx)} ${declinedStrip(ctx, scope)} ${reviewStrip(ctx, scope)}
+    ${asksStrip(ctx)}
     ${returnsStrip(ctx, scope)}
     ${windowsStrip(ctx)}
     <div class="board-grid">
@@ -351,6 +353,51 @@ function forgeStrip(ctx: Ctx): Html | null {
           })
     }
   </div>`;
+}
+
+// ---- agent pulls that wait for a person's review ----
+
+/**
+ * One line per autonomous app whose agent pulls wait for a person's review
+ * (#597): "No reviewer: agent pulls wait for you" when its crew has none,
+ * and how many wait and since when — a lapsed review or no reviewer, never
+ * a silent hold. Owner facts only; absent when nothing waits and every
+ * autonomous app has its reviewer.
+ */
+function reviewStrip(ctx: Ctx, scope: BoardScope): Html | null {
+  const db = ctx.app.db;
+  const repos = scope.repos.filter(
+    (r) => scope.ownerFacts.has(r.id) && r.autonomy === "autonomous",
+  );
+  if (repos.length === 0) return null;
+  const ids = db
+    .query<{ id: string }, string[]>(
+      `SELECT issue.id AS id FROM issue JOIN user ON user.id = issue.author_id
+       WHERE issue.kind = 'pull' AND issue.state = 'open' AND user.is_agent = 1
+         AND issue.repo_id IN (${repos.map((_, i) => `?${i + 1}`).join(",")})`,
+    )
+    .all(...repos.map((r) => r.id))
+    .map((r) => r.id);
+  const pulls = joinMany(db, [...getIssuesByIds(db, ids).values()]);
+  const lines = repos.flatMap((repo) => {
+    const waits = pulls
+      .filter((p) => p.repoId === repo.id)
+      .flatMap((p) => {
+        const w = waitsForPerson(db, repo.id, p);
+        return w === undefined ? [] : [w];
+      });
+    const none = reviewersOf(db, repo.id).length === 0;
+    if (!none && waits.length === 0) return [];
+    const oldest = waits.map((w) => w.since).sort()[0];
+    return [
+      html`<a class="board-asks" href="/#needs-you"
+        ><b>${repo.name}</b>: ${none ? "No reviewer: agent pulls wait for you" : "agent pulls wait for your review"}${waits.length === 0
+          ? null
+          : html` · <b>${waits.length}</b> waiting since ${oldest!.slice(0, 10)}`}</a
+      >`,
+    ];
+  });
+  return lines.length === 0 ? null : html`<div id="review-waits">${lines}</div>`;
 }
 
 // ---- what asked you, and what came of it ----

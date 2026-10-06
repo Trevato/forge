@@ -101,16 +101,39 @@ export function storedCapacity(
 
 /** What `key` is now: the stored value, else the boot default. Read on every use. */
 export function capacityValue(db: Database, key: CapacityKey): string {
-  return storedCapacity(db, key) ?? capacityDefault(key);
+  return storedCapacity(db, key) ?? bootDefault(db, key);
 }
 
-/** A count setting as a number, `fallback` when it is empty (`checks.shards` unset). */
+/** What each service of a forge booted with, by its database. */
+const booted = new WeakMap<Database, Map<CapacityKey, string>>();
+
+/**
+ * A service says what it booted with (a hosted forge's crew boots at one,
+ * not the environment's fallback), so the default an admin is shown, and
+ * goes back to, is the one actually in force.
+ */
+export function noteBooted(db: Database, key: CapacityKey, value: string): void {
+  const map = booted.get(db) ?? new Map<CapacityKey, string>();
+  map.set(key, value);
+  booted.set(db, map);
+}
+
+/** The default in force: what the service booted with, else the environment's. */
+export function bootDefault(db: Database, key: CapacityKey): string {
+  return booted.get(db)?.get(key) ?? capacityDefault(key);
+}
+
+/**
+ * A count setting as a number: an admin's value, else `fallback` — the
+ * value the calling service booted with, which is the default in force.
+ */
 export function capacityCount(
   db: Database,
   key: CapacityKey,
   fallback: number,
 ): number {
-  const n = Number(capacityValue(db, key));
+  const stored = storedCapacity(db, key);
+  const n = stored === undefined ? Number.NaN : Number(stored);
   return Number.isInteger(n) && n > 0 ? n : fallback;
 }
 

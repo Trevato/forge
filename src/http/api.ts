@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import {
   accountSignIns,
@@ -34,6 +35,7 @@ import { CAPPED_WORDS } from "../actions/mail.ts";
 import { emailVerified } from "../core/verify.ts";
 import { readHealth } from "../actions/health.ts";
 import { listChildren } from "../actions/spawn.ts";
+import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
@@ -44,6 +46,7 @@ import {
   addCommentThrough,
   openIssueThrough,
   setIssueLabelsThrough,
+  setIssueSealed,
   setIssueStateThrough,
 } from "../actions/issues.ts";
 import {
@@ -95,6 +98,7 @@ import {
 } from "../actions/pulls.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
+import { watchMilestone } from "../actions/watches.ts";
 import { search } from "../actions/search.ts";
 import {
   commitToBranch,
@@ -145,7 +149,13 @@ import {
   type Team,
   soleOwnedOrgs,
 } from "../core/orgs.ts";
-import { getPull, listPulls, pullDiff, type Pull } from "../core/pulls.ts";
+import {
+  getPull,
+  listPulls,
+  pullDiff,
+  pullDir,
+  type Pull,
+} from "../core/pulls.ts";
 import {
   canAdmin,
   canRead,
@@ -924,8 +934,12 @@ async function pullHeadOid(ctx: Ctx, repo: Repo, pull: Pull): Promise<string> {
   const ref = pull.crossRepo
     ? `refs/pull/${pull.number}/head`
     : `refs/heads/${pull.headBranch}`;
-  return (await resolveOid(dirOf(ctx, repo), ref)) ?? pull.headOid;
+  return (await resolveOid(await pullDirOf(ctx, repo, pull), ref)) ?? pull.headOid;
 }
+
+/** Where a pull's objects are (`pullDir`): its base, or a sealed one's own place. */
+const pullDirOf = (ctx: Ctx, repo: Repo, pull: Pull): Promise<string> =>
+  pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull);
 
 function positiveInt(raw: string | undefined): number | undefined {
   const n = Number(raw);
@@ -953,7 +967,9 @@ function loadConversation(ctx: Ctx): Found<{ issue: Issue }> {
   const number = positiveInt(ctx.params.number);
   const issue =
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
-  if (!issue) return { error: notFound() };
+  // A sealed report is not there for anyone who may not see it (`core/sealed.ts`).
+  if (!issue || !mayView(ctx.app.db, repo, issue, ctx.auth.user))
+    return { error: notFound() };
   return { repo, issue };
 }
 
@@ -976,7 +992,8 @@ function loadPull(ctx: Ctx): Found<{ pull: Pull }> {
   const number = positiveInt(ctx.params.number);
   const pull =
     number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
-  if (!pull) return { error: notFound() };
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
+    return { error: notFound() };
   return { repo, pull };
 }
 
@@ -1202,7 +1219,22 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("POST", "/api/v1/admin/accounts/:username/suspend", async (ctx) => {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
-    const done = await suspendAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    const input = await body(ctx.request);
+    const done = await suspendAccount(ctx.app, ctx.auth.user, ctx.params.username!, {
+      confirmed: input.confirm === true,
+    });
+    if (!done.ok && done.error === "last_owner") {
+      const user = getUserByName(ctx.app.db, ctx.params.username!);
+      const orgs =
+        user === undefined
+          ? []
+          : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username);
+      return apiError(
+        "last_owner",
+        409,
+        `${ctx.params.username} is the only active person owning ${orgs.join(", ")}: suspending leaves no one to administer it. Make someone else an owner first, or send {"confirm": true} to suspend anyway`,
+      );
+    }
     return done.ok ? json({ username: done.value.username, suspendedAt: done.value.suspendedAt }) : accountError(done.error);
   });
 
@@ -2068,7 +2100,11 @@ export function apiRoutes(router: Router<Handler>): void {
     const query = listQuery(ctx);
     const items = withLabelsMany(
       ctx,
-      listIssues(ctx.app.db, repo.id, { ...query, kind: "issue" }),
+      listIssues(ctx.app.db, repo.id, {
+        ...query,
+        kind: "issue",
+        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+      }),
     );
     return json(paged(items, query.limit, (i) => i.number));
   });
@@ -2089,6 +2125,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const created = await openIssueThrough(ctx.app, ctx.auth.user, repo, {
       title: str(input.title),
       body: str(input.body),
+      ...(input.sealed === true ? { sealed: true } : {}),
     });
     if (!created.ok) return originAware(created.error);
     return json(withLabels(ctx, created.value), 201);
@@ -2218,6 +2255,8 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadIssue(ctx);
       if ("error" in found) return found.error;
       const deps = dependenciesOf(ctx.app.db, found.issue.id);
+      const seen = (i: Issue) =>
+        mayView(ctx.app.db, found.repo, i, ctx.auth.user);
       const brief = (i: Issue) => ({
         number: i.number,
         title: i.title,
@@ -2225,8 +2264,8 @@ export function apiRoutes(router: Router<Handler>): void {
         ...(i.closeReason === null ? {} : { closeReason: i.closeReason }),
       });
       return json({
-        blockedBy: deps.blockedBy.map(brief),
-        blocks: deps.blocks.map(brief),
+        blockedBy: deps.blockedBy.filter(seen).map(brief),
+        blocks: deps.blocks.filter(seen).map(brief),
       });
     },
   );
@@ -2340,6 +2379,33 @@ export function apiRoutes(router: Router<Handler>): void {
       return data === undefined ? notFound() : json(data);
     },
   );
+  // Watch a milestone, or stop (#732): the caller's own watch, so a write
+  // token and nothing more. The read above says `watching`.
+  for (const method of ["PUT", "DELETE"] as const)
+    router.add(
+      method,
+      "/api/v1/repos/:owner/:name/milestones/:number/watch",
+      (ctx) => {
+        const denied = requireScope(ctx, "rw");
+        if (denied) return denied;
+        const repo = loadRepo(ctx);
+        const number = positiveInt(ctx.params.number);
+        if (!repo || number === undefined) return notFound();
+        const set = watchMilestone(
+          ctx.app,
+          ctx.auth.user,
+          repo,
+          number,
+          method === "PUT",
+        );
+        if (set.ok) return json(set.value);
+        return set.error === "not_found"
+          ? notFound()
+          : set.error === "unauthorized"
+            ? unauthorized()
+            : apiError("forbidden", 403, "only a person watches a milestone");
+      },
+    );
   // One action on a whole limb (#733): defer, resume, or close as not
   // doing. A fleet operation in every respect — a dry run by default with a
   // read credential, an admin token to apply, the receipt in
@@ -2377,7 +2443,9 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const graph = repoGraph(ctx.app.db, repo.id);
+    const graph = repoGraph(ctx.app.db, repo.id, {
+      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+    });
     return json(
       mapJson(
         repo,
@@ -2433,7 +2501,11 @@ export function apiRoutes(router: Router<Handler>): void {
             ? kind
             : undefined,
         limit: 100,
-      }),
+      })
+        // What the decider saw about a sealed report is the report's (`sealed.ts`).
+        .filter(
+          (d) => mayViewId(ctx.app.db, repo, d.issueId, ctx.auth.user),
+        ),
       week: decisionStats(ctx.app.db, repo.id, week),
     });
   });
@@ -2447,8 +2519,20 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadIssue(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
-      // New words first, then a new state: each is its own authorization,
-      // and either alone is a whole request.
+      // Three acts a PATCH may carry, each its own authorization and each
+      // alone a whole request: sealing (a writer's), new words, a new state.
+      let issue = found.issue;
+      if (typeof input.sealed === "boolean") {
+        const sealed = setIssueSealed(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          issue,
+          input.sealed,
+        );
+        if (!sealed.ok) return originAware(sealed.error, 409);
+        issue = sealed.value;
+      }
       const text = textFrom(input);
       if (text === undefined) return json({ error: "invalid_text" }, 422);
       const wanted = input.state === undefined ? undefined : str(input.state);
@@ -2459,8 +2543,9 @@ export function apiRoutes(router: Router<Handler>): void {
         text.title === undefined &&
         text.body === undefined
       )
-        return NOTHING_TO_CHANGE();
-      let issue = found.issue;
+        return typeof input.sealed === "boolean"
+          ? json(withLabels(ctx, issue))
+          : NOTHING_TO_CHANGE();
       if (text.title !== undefined || text.body !== undefined) {
         const edited = editIssue(
           ctx.app,
@@ -2521,7 +2606,13 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = withLabelsMany(ctx, listPulls(ctx.app.db, repo.id, query));
+    const items = withLabelsMany(
+      ctx,
+      listPulls(ctx.app.db, repo.id, {
+        ...query,
+        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+      }),
+    );
     return json(paged(items, query.limit, (p) => p.number));
   });
 
@@ -2568,7 +2659,7 @@ export function apiRoutes(router: Router<Handler>): void {
     // a second round trip, and the review gate beside it so a client knows
     // whether merging is even on offer.
     const { status, diff } = await pullDiff(
-      dirOf(ctx, found.repo),
+      await pullDirOf(ctx, found.repo, found.pull),
       found.pull,
       { db: ctx.app.db, requireReview: found.repo.requireReview },
     );
@@ -2730,7 +2821,10 @@ export function apiRoutes(router: Router<Handler>): void {
     async (ctx) => {
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      const { diff } = await pullDiff(dirOf(ctx, found.repo), found.pull);
+      const { diff } = await pullDiff(
+        await pullDirOf(ctx, found.repo, found.pull),
+        found.pull,
+      );
       return json(
         withOutdated(
           readerMarked(
@@ -3605,6 +3699,16 @@ export function apiRoutes(router: Router<Handler>): void {
         ? apiError("forbidden", 403, "the front page is a site admin's to set")
         : apiError("invalid", 422, set.error.message);
     return json(set.value);
+  });
+
+  // A spawned forge's word about itself (#776): claimed or not, to anyone;
+  // when anything last happened, only to its parent's secret. Nothing else;
+  // 404 when not spawned.
+  router.add("GET", "/api/v1/forge", async (ctx) => {
+    const shown = ctx.request.headers.get(PARENT_HEADER) ?? undefined;
+    const state = await forgeState(ctx.app, shown);
+    if (!state) return apiError("not_found", 404, "this forge was not spawned");
+    return json(state);
   });
 
   // A forge's children (docs/SPAWN.md): an admin's, planned before made.

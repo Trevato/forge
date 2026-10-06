@@ -50,9 +50,11 @@ export function readFeed(
   ].filter((c) =>
     // An ask is never muted away. Its own dismissal was already read by
     // `askLinesFor`, cause-aware: it comes back when something new happens.
+    // A milestone the viewer chose to watch is not muted with its app.
     c.id.startsWith("ask:")
       ? true
-      : !dismissed.has(c.id) && (c.kind === "ask" || !muted.has(c.repoId)),
+      : !dismissed.has(c.id) &&
+        (c.kind === "ask" || c.kind === "milestone" || !muted.has(c.repoId)),
   );
   let ranked = rank(candidates, affinityFor(db, viewer, now), now);
   const cursor = options.cursor;

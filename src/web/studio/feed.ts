@@ -20,7 +20,7 @@ import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
 export const FEED_LIVE =
-  "run.finished,issue.opened,issue.commented,pull.commented,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,decision.*";
+  "run.finished,issue.opened,issue.commented,pull.commented,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,issue.closed,decision.*";
 
 export const FEED_FIRST_PAGE = 20;
 
@@ -33,6 +33,7 @@ const KIND_LABEL: Record<FeedItem["kind"], string> = {
   decision: "Decision",
   map: "Map",
   cost: "Cost",
+  milestone: "Watching",
   tell: "Told",
   reply: "Reply",
   look: "Look",
@@ -80,7 +81,7 @@ export function feedCard(item: FeedItem): Html {
       </form>
       <span class="fcard-acts">
         <button type="button" class="btn btn-sm btn-ghost" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
-        ${item.kind === "ask" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
+        ${item.kind === "ask" || item.kind === "milestone" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
       </span>
     </details>
   </article>`;

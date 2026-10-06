@@ -28,6 +28,7 @@ import { addDependency } from "../src/core/dependencies.ts";
 import { getIssue, getIssueById, type Issue } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { submitReview } from "../src/core/reviews.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -428,6 +429,10 @@ describe("a repository on its own", () => {
       finishRun(app.db, run.id, { state, summary: state });
       // What dispatch does with every check's result.
       resolveOpen(app.db, pull.id, "retry", state === "ok" ? "green" : "red");
+      // An agent's pull ships only once reviewed (#597); this crew has no
+      // reviewer, so a person approves each green head. The stop is the subject.
+      if (state === "ok")
+        submitReview(app.db, { issueId: pull.id, authorId: alice.id, state: "approved", commitOid: head });
     };
     const stop = (pull: { id: string }, state: unknown, by: string) =>
       recordDecision(app.db, {

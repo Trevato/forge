@@ -15,6 +15,7 @@
  * environment does — a preview's go when its pull closes.
  */
 
+import { sealedPreview } from "../core/sealed.ts";
 import {
   closeSync,
   existsSync,
@@ -354,8 +355,14 @@ export function startLooks(app: App, options: LooksOptions): LooksHandle {
     // public app on a public repository is the world's to see, so all of
     // its pictures are taken as nobody, and a reader of its pulls sees them
     // too (#738).
-    const everyone = repo.visibility === "public" && record.access === "public";
-    const asNobody = (kind: LookKind): boolean => everyone || kind === "thumb";
+    // A sealed pull's preview is its report's (`core/sealed.ts`): nobody can
+    // open it, so every picture of it is taken as the owner, and kept for
+    // the writers.
+    const sealed = sealedPreview(app.db, repo.id, item.env);
+    const everyone =
+      !sealed && repo.visibility === "public" && record.access === "public";
+    const asNobody = (kind: LookKind): boolean =>
+      !sealed && (everyone || kind === "thumb");
     const owner = getUserById(app.db, repo.ownerId);
     const asOwner: GrantWho | undefined =
       owner === undefined

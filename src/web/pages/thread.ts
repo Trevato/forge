@@ -8,6 +8,7 @@
  * is what makes a long thread skimmable.
  */
 
+import { mayView } from "../../core/sealed.ts";
 import { listCrew } from "../../actions/crew.ts";
 import {
   confirmIssue,
@@ -107,7 +108,13 @@ export function threadContext(
   const number = parseNumber(ctx.params.number);
   const issue =
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
-  if (!issue || issue.kind !== kind) return notFoundPage(ctx);
+  // A sealed report is not there for anyone who may not see it (`core/sealed.ts`).
+  if (
+    !issue ||
+    issue.kind !== kind ||
+    !mayView(ctx.app.db, repo, issue, ctx.auth.user)
+  )
+    return notFoundPage(ctx);
   return { repo, issue };
 }
 
@@ -345,7 +352,12 @@ export function threadFragment(ctx: Ctx, kind: "issue" | "pull"): Response {
   const number = parseNumber(ctx.params.number);
   const issue =
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
-  if (!issue || issue.kind !== kind) return new Response("", { status: 404 });
+  if (
+    !issue ||
+    issue.kind !== kind ||
+    !mayView(ctx.app.db, repo, issue, ctx.auth.user)
+  )
+    return new Response("", { status: 404 });
   const after = ctx.url.searchParams.get("after") ?? "";
   const fresh = listComments(ctx.app.db, issue.id, {
     kind: "comment",

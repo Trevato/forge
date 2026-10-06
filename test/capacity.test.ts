@@ -22,6 +22,8 @@ import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import {
   capacityChanges,
+  capacityCount,
+  noteBooted,
   capacityEnv,
   capacityValue,
   egressSetting,
@@ -32,6 +34,8 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { startCrew } from "../src/crew/dispatch.ts";
 import { Gate } from "../src/git/env.ts";
+import { readHealth } from "../src/actions/health.ts";
+import { EGRESS_REPORTED } from "../src/kernel/vitals.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
 
@@ -288,6 +292,116 @@ describe("capacity: only a forge admin reads or changes it", () => {
       await fetch(`${servers.url}/settings/capacity`, { headers: { cookie } })
     ).text();
     expect(after).toContain("alice");
+  });
+});
+
+describe("report mode is loud to admins, and to nobody else", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let alice: User;
+  let bob: User;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-capacity-loud-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    const a = await createUser(app.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const b = await createUser(app.db, {
+      trusted: true,
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error(b.error);
+    bob = b.value;
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const page = async (): Promise<string> => {
+    const res = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: servers.url },
+      body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
+    });
+    const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    return (await fetch(`${servers.url}/settings/capacity`, { headers: { cookie } })).text();
+  };
+  const needs = (who: User | undefined): string[] =>
+    "needs" in readHealth(app, who) ? (readHealth(app, who) as { needs: string[] }).needs : [];
+
+  test("reported: the admin's vitals and the Capacity page name what is open", async () => {
+    expect(changeCapacity(app, alice, "cells.egress", "report").ok).toBe(true);
+    expect(needs(alice)).toContain(EGRESS_REPORTED);
+    expect(EGRESS_REPORTED).toContain("any public host on ports 80 and 443");
+    const shown = await page();
+    expect(shown).toContain('id="egress-reported"');
+    expect(shown.replace(/\s+/g, " ")).toContain("may reach any public host on ports 80 and 443");
+  });
+
+  test("reported: the public health check, a member and a stranger hear nothing of it", async () => {
+    const health = await fetch(`${servers.url}/healthz`);
+    expect(health.status).toBe(200);
+    expect(await health.text()).toBe("ok");
+    expect(JSON.stringify(readHealth(app, bob))).not.toContain("gress");
+    expect(JSON.stringify(readHealth(app, undefined))).not.toContain("gress");
+    const api = await (await fetch(`${servers.url}/api/v1/health`)).text();
+    expect(api).not.toContain("gress");
+  });
+
+  test("enforced: no warning anywhere", async () => {
+    expect(changeCapacity(app, alice, "cells.egress", "enforce").ok).toBe(true);
+    expect(needs(alice)).not.toContain(EGRESS_REPORTED);
+    expect(await page()).not.toContain('id="egress-reported"');
+  });
+});
+
+describe("the default shown, and gone back to, is the one the service booted with", () => {
+  test("a crew booted at one shows one, and a reset returns it there", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-capacity-boot-"));
+    const app = createApp({ dataDir, port: 0 });
+    try {
+      const a = await createUser(app.db, {
+        trusted: true,
+        username: "alice",
+        email: "alice@forge.local",
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      if (!a.ok) throw new Error(a.error);
+      // What startCrew says for a hosted forge, booted at one.
+      noteBooted(app.db, "crew.concurrency", "1");
+      const row = () => {
+        const listed = listCapacity(app, a.value);
+        if (!listed.ok) throw new Error("not listed");
+        return listed.value.settings.find((s) => s.key === "crew.concurrency")!;
+      };
+      expect(row()).toMatchObject({ value: "1", default: "1", source: "default" });
+      expect(capacityCount(app.db, "crew.concurrency", 1)).toBe(1);
+      const raised = changeCapacity(app, a.value, "crew.concurrency", "3");
+      expect(raised.ok && raised.value.from).toBe("1");
+      expect(capacityCount(app.db, "crew.concurrency", 1)).toBe(3);
+      const reset = changeCapacity(app, a.value, "crew.concurrency", null);
+      expect(reset.ok && reset.value.to).toBe("1");
+      expect(row()).toMatchObject({ value: "1", source: "default" });
+    } finally {
+      app.close();
+      await rm(dataDir, { recursive: true, force: true });
+    }
   });
 });
 

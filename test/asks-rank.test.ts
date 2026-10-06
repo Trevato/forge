@@ -232,15 +232,29 @@ describe("asks that earn their place", () => {
     ).toBe(true);
   });
 
-  test("five rows by default, the rest one tap away", async () => {
+  test("five rows by default, the rest one tap away; a phone shows two (#883)", async () => {
     for (const name of ["r4", "r5", "r6"])
       await greenPull(name, `Work in ${name}`);
     // What needs you is pinned on the home (#634): count its own cards.
     const home = await page("/");
     const asks = home.slice(home.indexOf('<section id="needs-you"'));
-    const before = asks.split('id="asks-more"')[0]!;
-    expect((before.match(/class="card[" ]/g) ?? []).length).toBe(5);
+    const cards = (s: string) => (s.match(/class="card[" ]/g) ?? []).length;
+    // Two before the phone's "more", three more inside it before the wide
+    // screen's "more": a wide screen flattens the outer one and shows five.
+    const [phone, wide] = asks.split('id="asks-phone-more"');
+    expect(cards(phone!)).toBe(2);
+    expect(cards(wide!.split('id="asks-more"')[0]!)).toBe(3);
+    expect(asks).toContain("<summary>4 more</summary>");
     expect(asks).toContain("<summary>1 more</summary>");
+    // The phone's "more" opens in place to every ask: the wide screen's
+    // "more" sits inside it, and the stylesheet hides each where it is not.
+    expect(wide!.indexOf('id="asks-more"')).toBeLessThan(wide!.indexOf("</details>"));
+    const css = await (await fetch(`${servers.url}${home.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
+    expect(css).toContain("@media (max-width: 480px) {\n  .needs-you #asks-more > summary { display: none; }");
+    expect(css).toContain("@media (min-width: 481px) {\n  .needs-you #asks-phone-more > summary { display: none; }");
+    // Arriving at #needs-you, the first Tab lands on an ask, not the bulk step.
+    const bulk = asks.indexOf('id="asks-bulk"');
+    expect(bulk).toBeGreaterThan(asks.indexOf("</details>"));
   });
 
   test("an unsigned reader gets no asks from the API", async () => {

@@ -205,6 +205,22 @@ export function isLastOwner(db: Database, orgId: string, user: User): boolean {
   return onOwners && personOwners(db, orgId).every((id) => id === user.id);
 }
 
+/**
+ * Organizations no active person owns: every owner left is suspended or
+ * removed. They stay as they are for their members; the forge's owner is
+ * told (`web/pages/accounts.ts`).
+ */
+export function ownerlessOrgs(db: Database): User[] {
+  return db
+    .query<{ id: string }, []>(
+      "SELECT id FROM user WHERE kind = 'org' AND removed_at IS NULL ORDER BY username",
+    )
+    .all()
+    .filter((r) => personOwners(db, r.id).length === 0)
+    .map((r) => getUserById(db, r.id))
+    .filter((u): u is User => u !== undefined);
+}
+
 /** The organizations `userId` is the last active person owning: removing them would orphan these. */
 export function soleOwnedOrgs(db: Database, userId: string): User[] {
   const user = getUserById(db, userId);

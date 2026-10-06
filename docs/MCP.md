@@ -31,6 +31,7 @@ for a tunnel and a forge that sleeps.
 | `tell`         | a sentence becomes an issue, a builder is picked, a run starts on the crew's next tick            | yes    |
 | `say`          | speak on an issue or a pull; a working builder hears it as its next step                          | yes    |
 | `edit`         | a new title or body for an issue or a pull: its author's, or a writer's; an agent edits only what it wrote | yes    |
+| `seal`         | `{ repo, number, sealed }`: seal a security report (and the pull that fixes it) so only writers and the crew see it, or unseal it for every reader; a writer's, recorded | yes    |
 | `now`          | what the crew is doing right now: who, on what, since when, at what cost; a planner that declined the direction and waits for you comes first (`run: null`, its words in `says`) |        |
 | `stop`         | stop one run by its id from `now`                                                                 | yes    |
 | `health`       | how this forge is: the version and commit it runs, draining or not, the rollout and its incidents |        |
@@ -49,8 +50,9 @@ for a tunnel and a forge that sleeps.
 | `make_it_yours` | `{ repo, name?, visibility?, dryRun? }`: a fork of an app you can see, as your own app, following the original; code and history copied, data and secrets not; private unless `visibility` is public (a public original only); at most 5 copies an account a day; plans unless `dryRun` is false | yes    |
 | `front_page`   | `{ pinned?, hidden?, weights?, dryRun? }`: the front page as a stranger sees it, ranked, with numbers; a site admin sets what is pinned (first public one featured), hidden, and what counts (weights of forks, ships, use, fresh, 0 to 10) | yes    |
 | `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is, parked twice and why (`app`) |        |
-| `milestones`   | `{ app, issue? }`: how far each thing asked for is, from the dependency tree: the plan's limbs with their weights, or one milestone opened (who is building, what is blocked and on what, what merged in 7 days, an estimate) |        |
+| `milestones`   | `{ app, issue? }`: how far each thing asked for is (and, with `issue`, whether you watch it: `watching`), from the dependency tree: the plan's limbs with their weights, or one milestone opened (who is building, what is blocked and on what, what merged in 7 days, an estimate) |        |
 | `limb`         | `{ app, issue, action, reason?, pillar?, operation?, dryRun? }`: defer, resume or close a whole limb as not doing, or undo an operation; plans unless `dryRun` is false, and applying takes an admin token | yes    |
+| `watch`        | `{ app, issue, watch? }`: watch a milestone, or stop with `watch: false`: one item in your feed that follows it, and one push to your phone when it lands | yes    |
 | `usage`        | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's |        |
 | `link`         | `{ app, issue, blockedBy }`: the issue waits for another; loops and cross-repository are refused  | yes    |
 | `unlink`       | `{ app, issue, blockedBy }`: the issue stops waiting for it                                       | yes    |

@@ -56,6 +56,12 @@ export interface Issue {
   readonly assigneeIsAgent: boolean;
   /** Whether the author is a crew member, not a person. */
   readonly authorIsAgent: boolean;
+  /**
+   * A security report, or the pull that fixes one: seen only by people who
+   * can write the repository and its crew until a writer unseals it
+   * (`core/sealed.ts`).
+   */
+  readonly sealed: boolean;
 }
 
 interface IssueRow {
@@ -78,6 +84,7 @@ interface IssueRow {
   assignee_name: string | null;
   assignee_is_agent: number | null;
   author_is_agent: number;
+  sealed: number;
 }
 
 const SELECT = `
@@ -107,6 +114,7 @@ function toIssue(row: IssueRow): Issue {
     assigneeName: row.assignee_name,
     assigneeIsAgent: row.assignee_is_agent === 1,
     authorIsAgent: row.author_is_agent === 1,
+    sealed: row.sealed === 1,
   };
 }
 
@@ -238,6 +246,8 @@ export interface CreateIssueInput {
   body?: string;
   /** @default "issue" */
   kind?: IssueKind;
+  /** A security report, seen only by writers and the crew (`sealed.ts`). @default false */
+  sealed?: boolean;
 }
 
 /** Caps on free text. Generous for humans, bounded for the index and the wire. */
@@ -265,8 +275,8 @@ export function createIssue(
     const number = nextNumber(db, input.repoId);
     const newId = id();
     db.query(
-      `INSERT INTO issue (id, repo_id, number, kind, title, body, author_id)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+      `INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, sealed)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
     ).run(
       newId,
       input.repoId,
@@ -275,6 +285,7 @@ export function createIssue(
       title,
       input.body ?? "",
       input.authorId,
+      input.sealed === true ? 1 : 0,
     );
     return newId;
   });
@@ -364,6 +375,14 @@ export interface ListIssuesOptions {
   limit?: number;
   /** Resume after this issue number (exclusive) — lists run newest first. */
   cursor?: number;
+  /**
+   * Include sealed issues (`sealed.ts`): only for a viewer who may see them,
+   * or the forge's own work. Left out unless asked for, so a list that
+   * forgets shows nothing sealed.
+   */
+  sealed?: boolean;
+  /** Include the sealed issues this user filed (`sealed.ts`): a reporter follows their own report. */
+  sealedBy?: string;
 }
 
 /**
@@ -379,6 +398,13 @@ export function listIssues(
   const kind = options.kind ?? "issue";
   const params: (string | number)[] = [repoId, kind];
   let where = "issue.repo_id = ?1 AND issue.kind = ?2";
+  if (options.sealed !== true) {
+    if (options.sealedBy === undefined) where += " AND issue.sealed = 0";
+    else {
+      params.push(options.sealedBy);
+      where += ` AND (issue.sealed = 0 OR issue.author_id = ?${params.length})`;
+    }
+  }
   if (state !== "all") {
     params.push(state);
     where += ` AND issue.state = ?${params.length}`;
@@ -823,7 +849,10 @@ export function issueCounts(
     .query<
       { state: IssueState; n: number },
       [string, IssueKind]
-    >("SELECT state, COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND kind = ?2 GROUP BY state")
+    >(
+      // Sealed reports are not counted where everyone reads the counts (`sealed.ts`).
+      "SELECT state, COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND kind = ?2 AND sealed = 0 GROUP BY state",
+    )
     .all(repoId, kind);
   let open = 0;
   let closed = 0;
