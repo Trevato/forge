@@ -258,6 +258,24 @@ describe("reserved names", () => {
     expect((await signup("scout-finch")).status).toBe(201);
   });
 
+  test("a name run together with a protected one is refused too", async () => {
+    // The owner's handle with digits, a doubled last letter, or a role word
+    // run on; a crew name run together with a role word.
+    for (const name of ["trevato2", "trevato007", "trevatoo", "trevatoofficial", "realtrevato", "scoutbot", "botscout", "torquecrew2"]) {
+      const res = await signup(name);
+      expect(res.status).toBe(422);
+      expect(await res.json()).toEqual({ error: "username_reserved" });
+    }
+    const ada = getUserByName(app.db, "ada")!;
+    for (const displayName of ["Trevato2", "ScoutBot"]) {
+      const patched = updateProfile(app, ada, { displayName });
+      expect(patched.ok).toBe(false);
+    }
+    // A longer word that only starts with a crew name is someone's own.
+    for (const name of ["scouting", "torquemada", "scouts"])
+      expect((await signup(name)).status).toBe(201);
+  });
+
   test("every way an account is made holds to the rule; a seed opts out by name", async () => {
     // A way in added later (a linked sign-in) makes accounts through
     // createUser, and inherits the rule without calling anything.

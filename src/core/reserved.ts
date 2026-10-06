@@ -253,5 +253,34 @@ export function reservedName(
       if (claimsRole) return "agent";
     }
   }
+  // The same, run together: "trevato2", "trevatoo", "realtrevato",
+  // "scoutbot". Trailing digits never make a name someone else's.
+  const run = words.join("").replace(/[0-9]+$/, "");
+  for (const holder of holders) {
+    const handle = skeleton(holder.username);
+    if (handle.length < 3) continue;
+    if (holder.is_agent === 1) {
+      if (runsWithRole(run, handle)) return "agent";
+    } else if (ownersRunOn(run, handle)) return "owner";
+  }
   return undefined;
+}
+
+/** A crew name run together with a role word, either way round. */
+const runsWithRole = (run: string, handle: string): boolean =>
+  run === handle ||
+  [...ROLE_WORDS].some((w) => run === handle + w || run === w + handle);
+
+/**
+ * The owner's handle run on: a long handle anywhere inside, a short one
+ * doubled at the end ("trevatoo") or with a role word either side. The
+ * owners are few, and a stranger in their name is the costliest mistake.
+ */
+function ownersRunOn(run: string, handle: string): boolean {
+  if (run === handle) return true;
+  if (handle.length >= 5 && run.includes(handle)) return true;
+  const last = handle.at(-1)!;
+  const tail = run.slice(handle.length);
+  if (run.startsWith(handle) && [...tail].every((c) => c === last)) return true;
+  return runsWithRole(run, handle);
 }
