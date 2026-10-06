@@ -13,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { addCrew, isCrew, peopleOnCrews } from "../src/core/agents.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { canWrite, writableRepoIds, type Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -134,7 +134,7 @@ describe("only an agent is on a crew", () => {
   });
 
   test("a person already on a crew from before is reported, never removed", () => {
-    // As if put there before migration 61: the guard stands aside for one row.
+    // As if put there before `repo_crew_agents_only`: the guard stands aside for one row.
     app.db.exec("DROP TRIGGER repo_crew_agents_only");
     app.db
       .query("INSERT INTO repo_crew (repo_id, user_id) VALUES (?1, ?2)")
@@ -146,5 +146,9 @@ describe("only an agent is on a crew", () => {
       { repoId: repo.id, username: "bob" },
     ]);
     expect(isCrew(app.db, repo.id, bob.id)).toBe(true);
+    // Kept, but no key: the SQL write check reads the crew grant as onCrew
+    // does, agents only.
+    expect(writableRepoIds(app.db, bob, [repo.id]).has(repo.id)).toBe(false);
+    expect(canWrite(app.db, repo, bob)).toBe(false);
   });
 });
