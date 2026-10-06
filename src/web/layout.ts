@@ -15,6 +15,7 @@ import { edgeLoginUrl, edgeLogoutUrl } from "../http/edge.ts";
 import { json } from "../http/respond.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { secret } from "../kernel/id.ts";
+import { runningLine } from "../kernel/version.ts";
 import {
   metaThemeColor,
   THEME_NAMES,
@@ -32,6 +33,7 @@ import {
 } from "./flash.ts";
 import { prefersJson } from "./form.ts";
 import { html, raw, when, type Html } from "./html.ts";
+import { noRoom } from "../spawn/door.ts";
 import { icon, iconSprite, inlineIcons, themeGlyph } from "./icons.ts";
 import { btn, iconBtn, kbd, menu, pill, type MenuItem } from "./ui.ts";
 
@@ -177,18 +179,26 @@ function asksLink(ctx: Ctx): Html {
   return html`<a
     class="btn"
     data-size="sm"
-    href="/asks"
+    href="/#needs-you"
     title="${count === 0 ? "All fine" : `${count} need you`}"
     >Asks${count === 0 ? null : pill(count, "accent")}</a
   >`;
 }
 
-function newMenu(): Html {
+/** A whole forge for someone (`/forges/new`): an admin's verb only. */
+const NEW_FORGE: MenuItem = { label: "New forge", href: "/forges/new", icon: "fork" };
+
+/** The door shows only to an admin, and only while a child still fits here. */
+const sendsForges = (ctx: Ctx): boolean =>
+  ctx.auth.user?.isAdmin === true && noRoom(ctx.app) === undefined;
+
+function newMenu(ctx: Ctx): Html {
   const items: MenuItem[] = [
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
     { label: "New organization", href: "/organizations/new", icon: "users" },
+    ...(sendsForges(ctx) ? [NEW_FORGE] : []),
   ];
   return menu({
     trigger: icon("plus"),
@@ -199,11 +209,12 @@ function newMenu(): Html {
   });
 }
 
-function userMenu(user: User, signOut: MenuItem): Html {
+function userMenu(ctx: Ctx, user: User, signOut: MenuItem): Html {
   const items: MenuItem[] = [
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
     { label: "Your repositories", href: "/", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
+    { label: "Explore", href: "/explore", icon: "search" },
     { label: "Map", href: "/map", icon: "map" },
     { separator: true, label: "" },
     // The "+" menu is hidden on a phone to keep the topbar inside the
@@ -211,6 +222,7 @@ function userMenu(user: User, signOut: MenuItem): Html {
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
+    ...(sendsForges(ctx) ? [NEW_FORGE] : []),
     { separator: true, label: "" },
     { label: "Settings", href: "/settings", icon: "settings" },
     { label: "Access tokens", href: "/settings/tokens", icon: "key" },
@@ -276,6 +288,7 @@ function helpButton(): Html {
 const STATIC_PALETTE_DEV: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
+  { t: "Explore", h: "/explore", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
@@ -297,8 +310,9 @@ const STATIC_PALETTE_DEV: PaletteItem[] = [
 const STATIC_PALETTE_STUDIO: PaletteItem[] = [
   { t: "Home", h: "/", c: "Go to" },
   { t: "Apps", h: "/apps", c: "Go to" },
+  { t: "Explore", h: "/explore", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
-  { t: "Asks you", h: "/asks", c: "Go to" },
+  { t: "Asks you", h: "/#needs-you", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
   { t: "Front page", h: "/front", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
@@ -332,6 +346,7 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
       c: studio ? "Apps" : "Repositories",
     })),
     ...(studio ? STATIC_PALETTE_STUDIO : STATIC_PALETTE_DEV),
+    ...(sendsForges(ctx) ? [{ t: "New forge", h: "/forges/new", c: "Create" }] : []),
   ];
   // `studio` rides along so the palette's *remote* rows — what the search
   // API found, folded in the browser — build the same addresses the server
@@ -455,7 +470,8 @@ function topbar(
           ctx,
         )}${themeMenu(theme)}
         ${user
-          ? html`<span class="hide-sm">${newMenu()}</span>${userMenu(
+          ? html`<span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
+                ctx,
                 user,
                 ctx.auth.via === "edge"
                   ? {
@@ -475,10 +491,20 @@ function topbar(
     </header>`;
 }
 
-function footer(): Html {
+/**
+ * The foot of every page. A site admin reads what is running there, as the
+ * build stamped it (`kernel/version.ts`), in place of the line everyone
+ * else gets: the one person who is asked "which version is this?".
+ */
+function footer(ctx: Ctx): Html {
   return html`<footer class="foot">
     <span class="mark"></span>
-    <span>forge — your code, your machine</span>
+    <span
+      >forge
+      ${ctx.auth.user?.isAdmin === true
+        ? runningLine()
+        : "— your code, your machine"}</span
+    >
     <span class="spacer"></span>
     <button
       class="btn js-only"
@@ -529,7 +555,7 @@ export function page(options: PageOptions, status = 200): Response {
     >
       ${flash ? flashToast(flash) : null}${options.body}
     </main>
-    ${options.bare ? null : footer()} ${overlays()}
+    ${options.bare ? null : footer(ctx)} ${overlays()}
     ${paletteIndex(ctx, options.palette ?? [])}`;
 
   const doc = html`<!doctype html>

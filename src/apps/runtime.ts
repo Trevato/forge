@@ -28,7 +28,8 @@ import { announceRun } from "../actions/runs.ts";
 import { requeueAbandonedChecks } from "../checks/service.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { pullMayRun } from "../core/pull_trust.ts";
-import { getRepoById, type Repo } from "../core/repos.ts";
+import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
+import type { User } from "../core/users.ts";
 import {
   cancelRun,
   listRuns,
@@ -81,6 +82,7 @@ import {
 import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
+import { egressSetting } from "../core/capacity.ts";
 import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
 import {
   startProcess,
@@ -341,6 +343,29 @@ const runtimes = new WeakMap<App, AppsRuntime>();
 /** The runtime serving this forge, if apps are on. */
 export const appsRuntime = (app: App): AppsRuntime | undefined =>
   runtimes.get(app);
+
+/**
+ * An app's environments as `viewer` may see them. A private app's state,
+ * errors and runs are its writers' and crew's (`canEnterApp`, without the
+ * people it only names, who enter the app and nothing behind it); to
+ * anyone else who can read the repository it shows none — a deploy error
+ * can carry paths and configuration (#620). Every surface that shows a
+ * viewer an app's environments reads them here.
+ */
+export function envsFor(
+  app: App,
+  viewer: User | undefined,
+  record: AppRecord,
+): EnvStatus[] {
+  const runtime = runtimes.get(app);
+  if (runtime === undefined) return [];
+  if (record.access === "private") {
+    const repo = getRepoById(app.db, record.repoId);
+    if (repo === undefined || !canEnterApp(app.db, repo, record, viewer, { named: false }))
+      return [];
+  }
+  return runtime.status(record);
+}
 
 export class AppsRuntime {
   private readonly envs = new Map<string, Environment>();
@@ -651,6 +676,12 @@ export class AppsRuntime {
       // restart used to cost.
       // One idle past the age stays stopped: a restart never wakes it.
       if (reason === "boot") {
+        // A preview at a head nobody who can write approved — built before
+        // the gate, or its approval withdrawn — does not come back at all.
+        if (!this.mayRun(record, repo, env, head)) {
+          await this.teardown(record, env);
+          continue;
+        }
         const idleSince = this.idleSince(repo, pull, env);
         if (idleSince !== undefined) {
           this.hibernateAtBoot(record, env, head, idleSince);
@@ -783,6 +814,22 @@ export class AppsRuntime {
       }
       // An approval is what lets a reader's pull run: deploy its head now.
       case "pull.reviewed": {
+        // A writer asking for changes may withdraw what let the preview run:
+        // if the code it serves may no longer run, it stops now, not at its
+        // next sleep or restart.
+        if (event.payload["state"] === "changes_requested") {
+          const pull = this.pullFromEvent(repo, event);
+          if (!pull) return;
+          const env = previewEnv(pull.number);
+          const state = this.envs.get(key(record.id, env));
+          const serving =
+            state?.live?.commitOid ??
+            state?.deploying?.run.commitOid ??
+            state?.asleep?.commitOid;
+          if (serving !== undefined && !this.mayRun(record, repo, env, serving))
+            await this.teardown(record, env);
+          return;
+        }
         if (event.payload["state"] !== "approved") return;
         const pull = this.pullFromEvent(repo, event);
         if (!pull || pull.state !== "open") return;
@@ -1235,6 +1282,8 @@ export class AppsRuntime {
       home: join(envDir(dataDir, record.id, env), "home"),
       onUndeclared: (host, port) =>
         noteReached(dataDir, record.repoId, host, port),
+      // Asked at every start: an admin's flip reaches the next cell.
+      egressMode: egressSetting(this.app.db),
     };
   }
 
@@ -1274,10 +1323,16 @@ export class AppsRuntime {
               home: base.home,
               hide: base.hide,
               egress: live.manifest.egress ?? [],
-              reach: [this.options.forgeUrl],
+              // A terminal is the app's own client: it reaches the app on
+              // its port, as it would beside it.
+              reach: [
+                this.options.forgeUrl,
+                `http://127.0.0.1:${live.handle.port}`,
+              ],
               limits: resolveLimits("app", live.manifest.limits),
               terminal: true,
               onUndeclared: base.onUndeclared,
+              egressMode: base.egressMode,
             },
     };
   }

@@ -21,6 +21,7 @@
  */
 
 import { newAccountLines } from "../actions/accounts.ts";
+import { mailCeilingLines } from "../actions/mail.ts";
 import type { Database } from "bun:sqlite";
 import { lookup } from "node:dns/promises";
 import type { App } from "../app.ts";
@@ -51,6 +52,7 @@ const WAKES = new Set([
   "repo.settings_updated",
   "account.notify_set",
   "user.created",
+  "mail.ceiling",
 ]);
 
 export type NotifyUrlError =
@@ -197,6 +199,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       ...askLinesFor(app.db, user).map((a) => ({ line: a.line, items: a.items })),
       ...newAccountLines(app.db, user, now()),
       ...landedLines(app.db, user, now()),
+      ...mailCeilingLines(app, user, now()),
     ];
     const before = seen.get(userId);
     // What is gone may ask again later, and then it is new again. Seen by

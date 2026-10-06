@@ -17,7 +17,6 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { enableApp } from "../src/actions/apps.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { createToken } from "../src/actions/users.ts";
 import { listOrigins } from "../src/core/origins.ts";
 import { listPins } from "../src/core/pins.ts";
@@ -61,6 +60,8 @@ describe("origins on the web", () => {
   let base: string;
   let alice = "";
   let bob = "";
+  /** The device-flow pages are hers: five flows in a row, under the connect cap. */
+  let carol = "";
 
   /** A browser request: session cookie, manual redirects, real Origin. */
   const asUser = (
@@ -170,7 +171,7 @@ describe("origins on the web", () => {
     base = servers.url;
     alice = await signUp("alice");
     bob = await signUp("bob");
-    resetConnectLimit();
+    carol = await signUp("carol");
     forgetProviders(dataDir);
   });
 
@@ -399,7 +400,7 @@ describe("origins on the web", () => {
 
   // ---- pins ----
 
-  test("the pin toggle round-trips and the dashboard lists what is pinned", async () => {
+  test("the pin toggle round-trips and the home lists what is pinned", async () => {
     const aliceId = getUserByName(app.db, "alice")!.id;
     const pinned = await asUser(alice, "/alice/widgets/pin", {
       form: { pinned: "1" },
@@ -410,7 +411,7 @@ describe("origins on the web", () => {
     const dash = await (await asUser(`${alice}; forge_mode=dev`, "/")).text();
     expect(dash).toContain("On your machine");
     expect(dash).toContain("forge sync");
-    expect(dash).toContain("Pinned");
+    expect(dash).toContain('href="/alice/widgets"');
     // The pin card says where each repo lives, and offers the way back out.
     expect(dash).toContain("Unpin");
 
@@ -437,15 +438,14 @@ describe("origins on the web", () => {
 
   test("the device flow shows the code and the poll route completes it", async () => {
     process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
-    resetConnectLimit();
-    const started = await asUser(alice, "/settings/origins/oauth", {
+    const started = await asUser(carol, "/settings/origins/oauth", {
       form: { kind: "github", host: github.url },
     });
     expect(started.status).toBe(303);
     const where = started.headers.get("location") ?? "";
     expect(where).toStartWith("/settings/origins/flows/");
 
-    const page = await (await asUser(alice, where)).text();
+    const page = await (await asUser(carol, where)).text();
     expect(page).toContain("WXYZ-1234");
     expect(page).toContain(ghOauth.verificationUri);
     // The no-JavaScript half is on the page, and says so.
@@ -455,18 +455,18 @@ describe("origins on the web", () => {
     expect(page).not.toContain(ghOauth.deviceCode);
 
     // Still pending: the poll comes back to the same page.
-    const pending = await asUser(alice, `${where}/poll`, { form: {} });
+    const pending = await asUser(carol, `${where}/poll`, { form: {} });
     expect(pending.status).toBe(303);
     expect(pending.headers.get("location")).toBe(where);
 
     // The human approves on the other device.
     ghOauth.approved = true;
-    const done = await asUser(alice, `${where}/poll`, { form: {} });
+    const done = await asUser(carol, `${where}/poll`, { form: {} });
     expect(done.status).toBe(303);
     expect(done.headers.get("location")).toBe("/settings/origins?connected=1");
 
     const landing = await (
-      await asUser(alice, "/settings/origins?connected=1")
+      await asUser(carol, "/settings/origins?connected=1")
     ).text();
     expect(landing).toContain("Origin connected.");
     expect(landing).toContain("OAuth");
@@ -480,12 +480,11 @@ describe("origins on the web", () => {
    */
   test("the flow page carries a QR, a short link, copy buttons and a safe open link", async () => {
     process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
-    resetConnectLimit();
-    const started = await asUser(alice, "/settings/origins/oauth", {
+    const started = await asUser(carol, "/settings/origins/oauth", {
       form: { kind: "github", host: github.url },
     });
     const where = started.headers.get("location") ?? "";
-    const page = await (await asUser(alice, where)).text();
+    const page = await (await asUser(carol, where)).text();
 
     // The QR is inline SVG: no request, no dependency, and dark-on-light
     // whatever the theme is doing around it.
@@ -514,8 +513,7 @@ describe("origins on the web", () => {
    */
   test("/go/:code redirects a signed-out phone, and dead codes are one 404", async () => {
     process.env.FORGE_GITHUB_CLIENT_ID = CLIENT_ID;
-    resetConnectLimit();
-    const started = await asUser(alice, "/settings/origins/oauth", {
+    const started = await asUser(carol, "/settings/origins/oauth", {
       form: { kind: "github", host: github.url },
     });
     const where = started.headers.get("location") ?? "";
@@ -566,12 +564,16 @@ describe("origins on the web", () => {
     });
     expect(stale.status).toBe(404);
     // Identical but for the per-response CSP nonce, which every page gets.
+    // The code the guesser typed echoes in the page's manifest link (#824):
+    // scrub it with the nonce, since both are the visitor's own bytes.
     const sameBut = (text: string): string =>
-      text.replaceAll(/nonce="[^"]*"/g, 'nonce="N"');
+      text
+        .replaceAll(/nonce="[^"]*"/g, 'nonce="N"')
+        .replaceAll(/here\?path=[^"&\s]*/g, "here?path=");
     expect(sameBut(await stale.text())).toBe(sameBut(await unknown.text()));
 
     // A finished flow's link dies with it, and the code is not reissued.
-    const fresh = await asUser(alice, "/settings/origins/oauth", {
+    const fresh = await asUser(carol, "/settings/origins/oauth", {
       form: { kind: "github", host: github.url },
     });
     const secondId = (fresh.headers.get("location") ?? "").split("/").pop()!;
@@ -583,7 +585,7 @@ describe("origins on the web", () => {
       .get(secondId)!;
     expect(second.short_code).not.toBe(row.short_code);
     ghOauth.approved = true;
-    await asUser(alice, `/settings/origins/flows/${secondId}/poll`, {
+    await asUser(carol, `/settings/origins/flows/${secondId}/poll`, {
       form: {},
     });
     ghOauth.approved = false;
@@ -594,11 +596,11 @@ describe("origins on the web", () => {
   });
 
   test("the poll route answers JSON when asked, for the enhancement", async () => {
-    const started = await asUser(alice, "/settings/origins/oauth", {
+    const started = await asUser(carol, "/settings/origins/oauth", {
       form: { kind: "github", host: github.url },
     });
     const where = started.headers.get("location") ?? "";
-    const polled = await asUser(alice, `${where}/poll`, {
+    const polled = await asUser(carol, `${where}/poll`, {
       form: {},
       headers: { accept: "application/json" },
     });
@@ -610,7 +612,6 @@ describe("origins on the web", () => {
   // ---- the Forgejo code flow ----
 
   test("an unregistered instance shows the exact redirect URI to paste", async () => {
-    resetConnectLimit();
     const started = await asUser(bob, "/settings/origins/oauth", {
       form: { host: forgejo.url },
     });

@@ -18,8 +18,9 @@ import {
   type Limb,
   type Milestone,
 } from "../../core/milestones.ts";
-import { PILLAR_DAYS } from "../../core/pillars.ts";
-import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import type { LimbAction } from "../../actions/limbs.ts";
+import { isStructural, PILLAR_DAYS, pillarsOf } from "../../core/pillars.ts";
+import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { isWatching } from "../../core/watches.ts";
 import { watchMilestone } from "../../actions/watches.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -40,6 +41,48 @@ import { btn, time } from "../ui.ts";
 /** Where a milestone is: its own page. */
 export const milestoneHref = (base: string, number: number): string =>
   `${base}/milestones/${number}`;
+
+/** Where an action on the whole limb is previewed and confirmed (`limb.ts`). */
+export const limbHref = (
+  base: string,
+  number: number,
+  action: LimbAction,
+): string => `${milestoneHref(base, number)}/limb?action=${action}`;
+
+/**
+ * The actions on a whole limb, for whoever administers the repository:
+ * defer it (or resume it, when it is deferred), or close it as not doing.
+ * Each opens its preview; nothing is written from here. The plan's own
+ * furniture cannot be filed, so an umbrella offers only the close.
+ */
+function limbActions(
+  base: string,
+  m: Milestone,
+  furniture: boolean,
+  lead: Html | null,
+): Html {
+  const number = m.issue.number;
+  return html`<p class="bar ms-actions" id="limb-actions">
+    ${lead}
+    ${furniture
+      ? null
+      : m.deferred
+        ? btn("Resume", {
+            href: limbHref(base, number, "resume"),
+            size: "sm",
+            variant: "primary",
+          })
+        : btn("Defer", {
+            href: limbHref(base, number, "defer"),
+            size: "sm",
+            ...(m.trim === undefined ? {} : { variant: "primary" as const }),
+          })}
+    ${btn("Close as not doing", {
+      href: limbHref(base, number, "close"),
+      size: "sm",
+    })}
+  </p>`;
+}
 
 const dollars = (n: number): string => `$${n.toFixed(2)}`;
 
@@ -119,6 +162,7 @@ const STATE_WORDS: Record<LeafState, string> = {
   proposed: "proposed",
   ready: "ready",
   blocked: "blocked",
+  deferred: "deferred",
   done: "done",
   gone: "not doing",
 };
@@ -170,7 +214,14 @@ function milestoneBody(
     html`<a href="${base}/issues/${number}">${title}</a>
       <span class="muted small">#${number}</span>`;
   const w = m.weight;
-  const open = m.leaves.filter((l) => l.issue.state === "open");
+  // Each issue once: what is under Building now or Blocked is not listed
+  // again under Issues.
+  const above = new Set([
+    ...m.building.map((b) => b.issue.id),
+    ...m.blocked.map((b) => b.issue.id),
+  ]);
+  const stillOpen = m.leaves.filter((l) => l.issue.state === "open");
+  const open = stillOpen.filter((l) => !above.has(l.issue.id));
   const closed = m.leaves.filter((l) => l.issue.state !== "open");
   return html`<div class="ms-top mt">
       <p class="small muted">
@@ -198,7 +249,7 @@ function milestoneBody(
           >Read the issue #${m.issue.number}</a
         >
       </p>
-      ${when(actions, (bar) => html`<div class="bar ms-actions">${bar}</div>`)}
+      ${actions}
     </div>
     ${when(
       m.limbs.length > 0,
@@ -274,19 +325,25 @@ function milestoneBody(
           )}
     </section>
     ${when(
-      m.leaves.length > 0,
+      open.length > 0 || closed.length > 0 || stillOpen.length === 0,
       () =>
         html`<section class="ms-section" id="ms-leaves">
           <h2>Issues</h2>
           ${open.length === 0
-            ? html`<p class="muted small">None open.</p>`
+            ? when(
+                stillOpen.length === 0 && m.leaves.length > 0,
+                () => html`<p class="muted small">None open.</p>`,
+              )
             : folded(
                 open.map(
                   (leaf) =>
                     html`<li data-state="${leaf.state}">
                       ${issue(leaf.issue.number, leaf.issue.title)}
                       <span class="ms-state small"
-                        >${STATE_WORDS[leaf.state]}</span
+                        >${STATE_WORDS[leaf.state]}${leaf.why !== undefined &&
+                        !m.deferred
+                          ? ` · ${leaf.why}`
+                          : ""}</span
                       >
                     </li>`,
                 ),
@@ -326,7 +383,9 @@ export function milestonePage(ctx: Ctx): Response {
     : undefined;
   if (milestone === undefined) return notFoundPage(ctx);
   const viewer = ctx.auth.user;
-  const actions =
+  // Watch is each person's own; acting on the whole limb is for whoever
+  // administers the repository. One row, Watch first.
+  const watch =
     viewer?.kind === "user"
       ? watchButton(
           repoBase(repo),
@@ -334,6 +393,16 @@ export function milestonePage(ctx: Ctx): Response {
           isWatching(ctx.app.db, viewer.id, milestone.issue.id),
         )
       : null;
+  const actions = canAdmin(ctx.app.db, repo, ctx.auth.user)
+    ? limbActions(
+        repoBase(repo),
+        milestone,
+        isStructural(pillarsOf(ctx.app.db, repo), milestone.issue.id),
+        watch,
+      )
+    : watch === null
+      ? null
+      : html`<p class="bar ms-actions">${watch}</p>`;
   return page({
     ctx,
     title: `${milestone.name} · ${repo.name}`,

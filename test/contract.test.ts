@@ -327,17 +327,25 @@ describe("proof by exhaustion", () => {
 
   test("a door answers in the time a lookup takes, on an order of hundreds", () => {
     // Every role above the six before it: a dense order, computed once.
+    // "Once" is what is measured, by counting each time the order is
+    // walked (a role asked what it stands above); a clock would measure the
+    // machine instead.
+    let walked = 0;
+    const role = (above: string[], held: Role["held"]): Role => ({
+      get above() {
+        walked++;
+        return above;
+      },
+      held,
+    });
     const roles: Record<string, Role> = {
-      r0: { above: [], held: { by: "everyone" } },
+      r0: role([], { by: "everyone" }),
     };
     for (let i = 1; i < 300; i++)
-      roles[`r${i}`] = {
-        above: Array.from(
-          { length: Math.min(6, i) },
-          (_, k) => `r${i - 1 - k}`,
-        ),
-        held: { by: "identity", role: `r${i}` },
-      };
+      roles[`r${i}`] = role(
+        Array.from({ length: Math.min(6, i) }, (_, k) => `r${i - 1 - k}`),
+        { by: "identity", role: `r${i}` },
+      );
     const contract: Contract = {
       roles,
       resources: {
@@ -355,9 +363,11 @@ describe("proof by exhaustion", () => {
     expect(check(contract)).toEqual([]);
     const actor: Actor = { id: "x", roles: ["r200"] };
     decide(contract, "thing", "create", actor);
-    const start = performance.now();
+    expect(walked).toBeGreaterThan(0);
+    walked = 0;
     for (let i = 0; i < 1000; i++) decide(contract, "thing", "create", actor);
-    expect(performance.now() - start).toBeLessThan(200);
+    // A thousand decisions later the order has not been walked again.
+    expect(walked).toBe(0);
     expect(decide(contract, "thing", "create", actor)).toBe("yes");
     expect(decide(contract, "thing", "update", actor)).toBe("no");
   });

@@ -44,7 +44,7 @@ import {
   plannerDeclines,
   spentTodayForRepos,
 } from "../../crew/autonomy.ts";
-import { BREAKER_NOTE, breakerParked } from "../../crew/breaker.ts";
+import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -626,7 +626,7 @@ export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> =
 /** Every kind has its own: a row never says "green changes" of something that is not one. */
 const rowLine = (kind: DecisionKind, n: number): string => ROW_PLURAL[kind](n);
 
-/** The anchor a row's card carries on `/asks`, so a link can land on it. */
+/** The anchor a row's card carries on the home (what needs you, `needsYouSection`), so a link can land on it. */
 export const askAnchor = (id: string): string => id.replace(/[^a-z0-9-]/g, "-");
 
 /**
@@ -644,7 +644,7 @@ export function askLinesFor(
   line: string;
   kind: DecisionKind;
   repoId: string;
-  /** Where a person decides it: the pull or issue, or the row on `/asks`. */
+  /** Where a person decides it: the pull or issue, or the row on the home. */
   link: string;
   /** The pull's or issue's number, for a row of one that is about one. */
   number?: number;
@@ -670,7 +670,7 @@ export function askLinesFor(
       return {
         ...about,
         line: `${row.repo.name}: ${rowLine(row.kind, row.items.length)}`,
-        link: `/asks#${askAnchor(row.id)}`,
+        link: `/#${askAnchor(row.id)}`,
       };
     const line = `${row.repo.name}${only.kind === "paused" ? " " : ": "}${lineOf(only)}`;
     if (only.kind === "paused")
@@ -964,10 +964,10 @@ export function askDismissedBy(db: Database, viewerId: string, issue: Issue): bo
     issue.kind === "pull"
       ? pullCause(db, issue)
       : (db
-          .query<{ at: string | null }, [string, string]>(
-            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body = ?2",
+          .query<{ at: string | null }, [string, string, string]>(
+            "SELECT MAX(created_at) AS at FROM comment WHERE issue_id = ?1 AND body IN (?2, ?3)",
           )
-          .get(issue.id, BREAKER_NOTE)?.at ?? issue.createdAt);
+          .get(issue.id, ...WAITING_NOTES)?.at ?? issue.createdAt);
   return at > cause;
 }
 

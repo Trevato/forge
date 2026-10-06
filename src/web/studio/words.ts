@@ -12,6 +12,8 @@ import type { Database } from "bun:sqlite";
 import { ancestorsOf } from "../../git/merge.ts";
 import type { AppsRuntime, EnvStatus } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
+import { canEnterApp, getRepoById } from "../../core/repos.ts";
+import type { User } from "../../core/users.ts";
 import type { Efficiency } from "../../core/efficiency.ts";
 import type { WindowStanding } from "../../core/standing.ts";
 import { whenText } from "../../crew/limits.ts";
@@ -82,6 +84,8 @@ export interface WordCtx {
   readonly runtime: AppsRuntime | undefined;
   readonly record: AppRecord | undefined;
   readonly history: ServingHistory;
+  /** Who is reading: a private app's production is theirs only if they may enter it. */
+  readonly viewer: User | undefined;
 }
 
 /**
@@ -189,6 +193,14 @@ export async function pullWord(
     const commitOid = pull.mergedOid ?? pull.headOid;
     if (ctx.runtime === undefined || ctx.record === undefined)
       return { word: "shipped", note: "merged" };
+    // A private app's production — its state, its deploy's error — is for
+    // those who may enter it (`canEnterApp`); anyone else reads "merged".
+    const repo = getRepoById(ctx.db, ctx.record.repoId);
+    if (
+      repo === undefined ||
+      !canEnterApp(ctx.db, repo, ctx.record, ctx.viewer, { named: false })
+    )
+      return { word: "shipped", note: "merged" };
     const production = ctx.runtime
       .status(ctx.record)
       .find((e) => e.env === "production");
@@ -198,7 +210,12 @@ export async function pullWord(
   }
   if (pull.state === "closed")
     return { word: "stopped", note: "closed without shipping" };
-  return checkRunWord(checkSummary(ctx.db, pull.id, pull.headOid));
+  const check = checkSummary(ctx.db, pull.id, pull.headOid);
+  // A repository that is not an app never deploys a head, so it never gets
+  // a look: an open change there waits on a person, and says so.
+  if (ctx.record === undefined && check.state === "none")
+    return { word: "waiting", note: "open — waiting on a person" };
+  return checkRunWord(check);
 }
 
 /**
@@ -346,7 +363,7 @@ const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
  * live script repaints as a run finishes (`studioRunJs`). `cancelled` draws
  * the same quiet, secondary look as `waiting` and `planned` — a restart is
  * never the danger red a real failure earns. */
-export function wordBadge(word: Word, id?: string): Html {
+export function wordBadge(word: Word, id?: string, plain = false): Html {
   const variant =
     word === "look" || word === "shipped" || word === "done"
       ? "success"
@@ -360,7 +377,9 @@ export function wordBadge(word: Word, id?: string): Html {
     data-variant="${variant}"
     data-word="${word}"
     ${id === undefined ? null : html`id="${id}"`}
-    >${word === "working" ? icon("loader") : null}${word}</span
+    >${word === "working" ? icon("loader") : null}${plain && word === "told"
+      ? "open"
+      : word}</span
   >`;
 }
 

@@ -29,6 +29,7 @@ import {
   type MergePullError,
   type Pull,
 } from "../core/pulls.ts";
+import { isStructural, pillarsOf } from "../core/pillars.ts";
 import type { Repo } from "../core/repos.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
 import {
@@ -391,10 +392,14 @@ export async function mergePull(
     },
   });
   // What the pull said it closes, closes: the issue is done when the change
-  // lands, as the person who landed it — which is what frees the map.
+  // lands, as the person who landed it — which is what frees the map. Not
+  // the plan's own issues: no change finishes an umbrella or opens the
+  // Later gate, whatever its body says; a person closes those by hand.
+  const plan = pillarsOf(app.db, repo);
   for (const n of closesFromBody(pull.body)) {
     const issue = getIssue(app.db, repo.id, n);
     if (!issue || issue.kind !== "issue" || issue.state !== "open") continue;
+    if (isStructural(plan, issue.id)) continue;
     const closed = setIssueStateCore(app.db, issue.id, "closed");
     if (!closed) continue;
     app.bus.append({

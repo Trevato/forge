@@ -13,7 +13,7 @@
  */
 
 import { childEnv, pump } from "../apps/process.ts";
-import { stripForgeDirs } from "../runs/paths.ts";
+import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import type { SandboxPolicy } from "./sandbox.ts";
 
 export interface ClaudeInput {
@@ -270,6 +270,9 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     }, settleMs);
   };
 
+  // The workdir as the forge named it and as the agent's process reports
+  // it: a tool line reads `CREW.md` under either spelling.
+  const workdir = spellings([input.cwd]);
   const onLine = (line: string): void => {
     if (line.trim() === "") return;
     if (sawResult && !finished) armIdle();
@@ -291,7 +294,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       return;
     }
     if (type === "assistant") {
-      for (const text of assistantLines(e, input.cwd)) input.log(text);
+      for (const text of assistantLines(e, workdir)) input.log(text);
       const message = e["message"];
       if (input.onUsage && typeof message === "object" && message !== null) {
         const m = message as Record<string, unknown>;
@@ -456,7 +459,10 @@ export function tokensOf(usage: unknown): {
 }
 
 /** The lines a person wants from an assistant turn: its words and its tool calls. */
-function assistantLines(e: Record<string, unknown>, cwd: string): string[] {
+function assistantLines(
+  e: Record<string, unknown>,
+  workdir: readonly string[],
+): string[] {
   const message = e["message"];
   if (typeof message !== "object" || message === null) return [];
   const content = (message as Record<string, unknown>)["content"];
@@ -468,14 +474,18 @@ function assistantLines(e: Record<string, unknown>, cwd: string): string[] {
         if (line.trim() !== "") out.push(line);
     } else if (block["type"] === "tool_use") {
       out.push(
-        `→ ${describeTool(String(block["name"] ?? "tool"), block["input"], cwd)}`,
+        `→ ${describeTool(String(block["name"] ?? "tool"), block["input"], workdir)}`,
       );
     }
   }
   return out;
 }
 
-function describeTool(name: string, input: unknown, cwd: string): string {
+function describeTool(
+  name: string,
+  input: unknown,
+  workdir: readonly string[],
+): string {
   const args =
     typeof input === "object" && input !== null
       ? (input as Record<string, unknown>)
@@ -488,7 +498,7 @@ function describeTool(name: string, input: unknown, cwd: string): string {
     return "";
   };
   const detail = stripForgeDirs(
-    [cwd],
+    workdir,
     first([
       "command",
       "file_path",

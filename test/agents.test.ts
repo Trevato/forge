@@ -27,6 +27,7 @@ import {
   resetSseDroppedCount,
   sseDroppedCount,
 } from "../src/http/sse.ts";
+import { CONNECT_LIMITS } from "../src/actions/origins.ts";
 import { RateLimiter } from "../src/core/ratelimit.ts";
 import { deliveryBusy, runDelivery } from "../src/core/webhooks.ts";
 import { Gate, gitGate, runGit } from "../src/git/env.ts";
@@ -77,7 +78,7 @@ describe("fifty agents at once", () => {
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "cora",
         password: "a-long-crew-password",
         name: "fleet",
@@ -286,7 +287,7 @@ describe("Idempotency-Key", () => {
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "mira",
         password: "a-long-bot-password",
         name: "retries",
@@ -362,7 +363,7 @@ describe("Idempotency-Key", () => {
     const other = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "mira",
         password: "a-long-bot-password",
         name: "second-agent",
@@ -472,6 +473,31 @@ describe("per-token rate limits", () => {
     expect(limiter.take("t", "rw").allowed).toBe(true);
   });
 
+  test("a limit counted over a longer window: the connect cap frees the sixth attempt after a quarter of an hour", () => {
+    // The connect limiter's own settings (`actions/origins.ts`), with the
+    // clock in hand: five pass, the sixth is refused, and once the first is
+    // fifteen minutes old the sixth passes.
+    const first = 1_000_000;
+    let now = first;
+    const limiter = new RateLimiter(CONNECT_LIMITS, () => now);
+    // Five attempts, a second apart.
+    for (let i = 0; i < 5; i++) {
+      expect(limiter.take("alice", "rw").allowed).toBe(true);
+      now += 1_000;
+    }
+    const sixth = limiter.take("alice", "rw");
+    expect(sixth.allowed).toBe(false);
+    expect(sixth.retryAfter).toBe(15 * 60 - 5);
+    // A minute is not enough: this window is not the API's.
+    now += 60_001;
+    expect(limiter.take("alice", "rw").allowed).toBe(false);
+    // The first attempt is a quarter of an hour old: one more passes, and
+    // only one, since the second is still inside the window.
+    now = first + 15 * 60_000 + 1;
+    expect(limiter.take("alice", "rw").allowed).toBe(true);
+    expect(limiter.take("alice", "rw").allowed).toBe(false);
+  });
+
   test("one runaway token cannot spend another token's budget", () => {
     let now = 1_000_000;
     const limiter = new RateLimiter(
@@ -551,7 +577,7 @@ describe("rate limits over HTTP", () => {
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "loop",
         password: "a-long-loop-password",
         name: "runaway",
@@ -608,7 +634,7 @@ describe("rate limits over HTTP", () => {
     const fresh = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify({ adminConfirm: true,
         username: "loop",
         password: "a-long-loop-password",
         name: "polite",

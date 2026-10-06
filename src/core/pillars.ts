@@ -156,6 +156,23 @@ export function isStructural(set: Pillars, issueId: string): boolean {
   );
 }
 
+/** The ids of the plan's furniture: every umbrella, the Later umbrella and the gate. */
+export function structuralIds(set: Pillars): Set<string> {
+  return new Set([
+    ...set.pillars.map((pillar) => pillar.umbrella.id),
+    ...(set.later === undefined ? [] : [set.later.id]),
+    ...(set.gate === undefined ? [] : [set.gate.id]),
+  ]);
+}
+
+/**
+ * Why the plan's furniture is never the crew's to take, as the map says it.
+ * An umbrella says what work is for and the gate holds work back: closing
+ * one is a person's decision — closing the gate opens everything deferred.
+ */
+export const PLAN_OWN =
+  "the plan's own: a person closes it, the crew never picks it";
+
 /**
  * What every issue of the repository serves, by issue id: the first pillar,
  * in order, whose umbrella waits for it directly; else `Later`, when it

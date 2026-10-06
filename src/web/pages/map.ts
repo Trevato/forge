@@ -25,6 +25,7 @@ import type { App } from "../../app.ts";
 import {
   blockedOn,
   criticalPath,
+  idleFurniture,
   levelAndFlow,
   readyNow,
   repoGraph,
@@ -58,7 +59,11 @@ import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { avatar, hueOf, icon } from "../ui.ts";
 import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
-import { struckOut } from "../../crew/parks.ts";
+import {
+  parkedTwice,
+  struckOut,
+  type ParkedTwice,
+} from "../../crew/parks.ts";
 import {
   OUTSIDERS_NOTE,
   proposedWork,
@@ -71,6 +76,7 @@ import {
   LATER,
   NO_PILLAR,
   PILLAR_DAYS,
+  PLAN_OWN,
   pillarView,
   type PillarView,
 } from "../../core/pillars.ts";
@@ -415,6 +421,7 @@ export type Word =
   | "ready"
   | "working"
   | "blocked"
+  | "deferred"
   | "done"
   | "parked"
   | "waiting"
@@ -427,6 +434,7 @@ const WORDS: readonly Word[] = [
   "waiting",
   "held",
   "parked",
+  "deferred",
   "done",
 ];
 
@@ -442,6 +450,13 @@ export interface Marks {
   readonly parked: Set<string>;
   /** Why an issue is parked on a closed blocker, by issue id: "#4 was dropped". */
   readonly why: Map<string, string>;
+  /**
+   * Work that is deferred, by issue id, with why: "behind the Later gate",
+   * or "only deferred work needs it: #12 One interface" (`core/dependencies.ts`).
+   */
+  readonly deferred: ReadonlyMap<string, string>;
+  /** The issues the crew parked twice: the planner's now, with every reason. */
+  readonly twice: readonly ParkedTwice[];
 }
 
 /**
@@ -489,13 +504,31 @@ export function marksFor(
     parked.add(id);
     why.set(id, READER_SUGGESTION);
   }
+  // An umbrella or the gate with nothing open in front of it is not ready:
+  // it is a person's to close.
+  for (const issue of idleFurniture(graph)) {
+    parked.add(issue.id);
+    why.set(issue.id, PLAN_OWN);
+  }
   for (const h of graph.held) {
     parked.add(h.issueId);
     const note = `#${numbers.get(h.blockedById)} was ${h.reason === "split" ? "split" : "dropped"}`;
     const had = why.get(h.issueId);
     why.set(h.issueId, had === undefined ? note : `${had}; ${note}`);
   }
-  return { crew: crewMarks(runs), waiting, onHold, parked, why };
+  // The plan's own furniture is not work that was deferred: it keeps its word.
+  const deferred = new Map(
+    [...graph.deferred].filter(([id]) => !graph.structural.has(id)),
+  );
+  return {
+    crew: crewMarks(runs),
+    waiting,
+    onHold,
+    parked,
+    why,
+    deferred,
+    twice: parkedTwice(db, [repo]),
+  };
 }
 
 export const NO_MARKS: Marks = {
@@ -504,6 +537,8 @@ export const NO_MARKS: Marks = {
   onHold: new Map(),
   parked: new Set(),
   why: new Map(),
+  deferred: new Map(),
+  twice: [],
 };
 
 /**
@@ -518,6 +553,7 @@ export function wordFor(issue: Issue, ready: Set<string>, marks: Marks): Word {
   if (marks.onHold.has(issue.id)) return "held";
   if (marks.waiting.has(issue.id)) return "waiting";
   if (marks.parked.has(issue.id)) return "parked";
+  if (marks.deferred.has(issue.id)) return "deferred";
   return ready.has(issue.id) ? "ready" : "blocked";
 }
 
@@ -645,7 +681,7 @@ function node(
     ${run ? html`data-run="${run}"` : null}
     href="${issueHref(base, n.issue.number)}"
   >
-    <title>${number} ${n.issue.title} — ${word}${word === "held" ? ` by ${emphasis.marks.onHold.get(n.issue.id)}` : emphasis.marks.why.has(n.issue.id) ? `: ${emphasis.marks.why.get(n.issue.id)}` : ""}</title>
+    <title>${number} ${n.issue.title} — ${word}${word === "held" ? ` by ${emphasis.marks.onHold.get(n.issue.id)}` : word === "deferred" ? `: ${emphasis.marks.deferred.get(n.issue.id)}` : emphasis.marks.why.has(n.issue.id) ? `: ${emphasis.marks.why.get(n.issue.id)}` : ""}</title>
     ${word === "working"
       ? html`<rect
           class="map-breath"
@@ -830,6 +866,7 @@ export function countWords(words: readonly Word[]): Record<Word, number> {
     blocked: 0,
     done: 0,
     parked: 0,
+    deferred: 0,
     waiting: 0,
     held: 0,
   };
@@ -1071,6 +1108,8 @@ export const mapCss = /* css */ `
 .map-title { font-size: 12.5px; font-weight: 560; fill: var(--fg); transition: fill 120ms var(--ease); }
 .map-node:hover .map-title { fill: var(--accent); }
 .map-node[data-state="done"] .map-title, .map-node[data-state="done"] .map-meta, .map-node[data-state="done"] .map-word { fill: var(--faint); }
+.map-node[data-state="deferred"] .map-card { fill: none; stroke-dasharray: 4 3; }
+.map-node[data-state="deferred"] .map-title { fill: var(--muted-fg); }
 .map-node[data-state="blocked"] .map-title { fill: var(--muted-fg); }
 .map-meta { font-size: 11px; fill: var(--faint); font-variant-numeric: tabular-nums; }
 .map-who circle { fill: color-mix(in srgb, hsl(var(--hue, 220) 62% 52%) 22%, var(--card)); stroke: color-mix(in srgb, hsl(var(--hue, 220) 62% 52%) 30%, transparent); }
@@ -1455,6 +1494,9 @@ export function mapJson(
       ? { closeReason: i.closeReason }
       : {}),
     ...(marks.why.has(i.id) ? { parkedBecause: marks.why.get(i.id) } : {}),
+    ...(marks.deferred.has(i.id) && i.state === "open"
+      ? { deferredBecause: marks.deferred.get(i.id) }
+      : {}),
     ...(marks.onHold.has(i.id) ? { heldBy: marks.onHold.get(i.id) } : {}),
   });
   return {
@@ -1475,6 +1517,12 @@ export function mapJson(
       .filter((i) => marks.crew.has(i.id))
       .map((i) => i.number),
     issues: graph.issues.map(brief),
+    // What the crew gave up on and the planner now holds: never only a word.
+    parkedTwice: marks.twice.map((t) => ({
+      number: t.number,
+      title: t.title,
+      reasons: t.reasons,
+    })),
     counts: countWords(graph.issues.map((i) => wordFor(i, readySet, marks))),
     edges: graph.edges.map((e) => {
       const a = graph.issues.find((i) => i.id === e.issueId);

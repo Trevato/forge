@@ -19,7 +19,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { App } from "../app.ts";
 import { getAppById, getAppBySlug, type AppRecord } from "../core/apps.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
-import { canEnterApp, canRead, getRepoById } from "../core/repos.ts";
+import {
+  canEnterApp,
+  canRead,
+  getRepoById,
+  ownerInStanding,
+} from "../core/repos.ts";
 import { getUserById, isActive } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
@@ -104,9 +109,18 @@ export function resolveAppHostname(
   const parsed = parseAppHost(host, domain);
   if (parsed === undefined) return ownDomain(app, host);
   const record = getAppBySlug(app.db, parsed.slug);
-  return record
+  return record && shown(app, record)
     ? { app: record, env: parsed.env, nested: parsed.nested }
     : "unknown";
+}
+
+/**
+ * An app whose repository's owner is suspended or removed has no host: it
+ * answers as a name nobody holds, not as an app that is stopped (#831).
+ */
+function shown(app: App, record: AppRecord): boolean {
+  const repo = getRepoById(app.db, record.repoId);
+  return repo !== undefined && ownerInStanding(app.db, repo);
 }
 
 /**
@@ -120,7 +134,7 @@ function ownDomain(app: App, host: string): AppTarget | undefined {
   const domain = getVerifiedDomain(app.db, host.replace(/:\d+$/, ""));
   if (domain === undefined) return undefined;
   const record = getAppById(app.db, domain.appId);
-  return record === undefined
+  return record === undefined || !shown(app, record)
     ? undefined
     : { app: record, env: domain.env, nested: false };
 }
@@ -348,12 +362,19 @@ function admit(
   // person it names may still enter: a grant outlives a change of heart —
   // a writer removed, the app made private — by up to twelve hours, and
   // reading the repository was never enough (#620).
-  const grant =
-    signed !== undefined &&
-    target.app.access === "private" &&
-    !stillEntitled(runtime, target, signed)
+  // A grant names a person only while they are in good standing: a
+  // suspended or removed account is no one to a public app, and nothing to
+  // a private one.
+  const named =
+    signed?.who === undefined
       ? undefined
-      : signed;
+      : getUserById(runtime.app.db, signed.who.id);
+  const lapsed =
+    signed !== undefined &&
+    ((target.app.access === "private" &&
+      !stillEntitled(runtime, target, signed)) ||
+      (named !== undefined && !isActive(named)));
+  const grant = lapsed ? undefined : signed;
   if (target.app.access === "private") {
     if (grant === undefined) {
       // A person arriving by link is sent to the forge to sign in; it vouches
@@ -516,6 +537,7 @@ export async function proxyApp(
       status,
       upstream,
       headers,
+      vouched?.who,
     );
   }
 
@@ -606,6 +628,19 @@ export function held(
  */
 export interface AppSocket {
   readonly upstream: WebSocket;
+  /** The person the grant named, so their suspension can end the socket. */
+  readonly userId: string | undefined;
+}
+
+/** Every proxied socket that names a person, by account. */
+const socketsByUser = new Map<string, Set<Bun.ServerWebSocket<AppSocket>>>();
+
+/** End every app socket this account has open (\`actions/accounts.ts\`). */
+export function closeSocketsOf(userId: string): void {
+  const open = socketsByUser.get(userId);
+  if (open === undefined) return;
+  socketsByUser.delete(userId);
+  for (const ws of [...open]) closeBoth(ws, 1008, "this account was suspended");
 }
 
 /**
@@ -654,6 +689,7 @@ async function proxyWebSocket(
   status: EnvStatus,
   upstreamUrl: URL,
   forwarded: Headers,
+  who: GrantWho | undefined,
 ): Promise<Response | undefined> {
   const url = new URL(upstreamUrl);
   url.protocol = "ws:";
@@ -675,7 +711,7 @@ async function proxyWebSocket(
     runtime.holdStream(target.app, target.env),
   );
   const upgraded = server.upgrade(request, {
-    data: { upstream },
+    data: { upstream, userId: who?.id },
     // The app's choice of subprotocol is what the browser hears; without
     // one Bun echoes the first the browser offered, which is what the app
     // itself would have done on Bun.
@@ -757,7 +793,12 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
   idleTimeout: WS_IDLE_SECONDS,
 
   open(ws) {
-    const { upstream } = ws.data;
+    const { upstream, userId } = ws.data;
+    if (userId !== undefined) {
+      let held = socketsByUser.get(userId);
+      if (held === undefined) socketsByUser.set(userId, (held = new Set()));
+      held.add(ws);
+    }
     // No frame from the app can get here first. Its `open` event resolved
     // `connectUpstream`, and the microtask checkpoint after that callback
     // runs `proxyWebSocket` to completion — `server.upgrade` calls this
@@ -806,7 +847,12 @@ export const appWebSocket: Bun.WebSocketHandler<AppSocket> = {
   },
 
   close(ws, code, reason) {
-    const { upstream } = ws.data;
+    const { upstream, userId } = ws.data;
+    if (userId !== undefined) {
+      const held = socketsByUser.get(userId);
+      held?.delete(ws);
+      if (held?.size === 0) socketsByUser.delete(userId);
+    }
     if (upstream.readyState === WebSocket.CLOSED) return;
     // 1006 here is the browser gone without a close frame.
     if (code === 1006) upstream.close(1001, "the browser went away");

@@ -707,11 +707,9 @@ describe("a hold is set, shown and lifted", () => {
       `action="/alice/garden/pulls/${pull.number}/release"`,
     );
     expect(after).not.toContain("Hold this change");
-    // The pull's own page, the one that reads the code, says it too.
-    const dev = await page(
-      `/alice/garden/pulls/${pull.number}?mode=dev`,
-      cookie,
-    );
+    // The change's Files step, the one that reads the code, says it too
+    // (#628: one change page; `?mode=dev` answers the same page now).
+    const dev = await page(`/alice/garden/pulls/${pull.number}/files`, cookie);
     expect(dev).toContain("holds this");
     expect(dev).toContain(WHY);
     expect(dev).not.toContain(
@@ -739,9 +737,16 @@ describe("a hold is set, shown and lifted", () => {
     f.app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(dana.id);
     const mine = await signIn("alice");
     const theirs = await signIn("dana");
+    // What needs you, pinned on the home (#634), is the part to read: the
+    // feed below it may well mention the change as news.
+    const asks = async (cookie: string) => {
+      const home = await page("/", cookie);
+      const at = home.indexOf('<section id="needs-you"');
+      return at === -1 ? "" : home.slice(at, home.indexOf("</section>", at));
+    };
     // Held by alice (the test above): the green change is not on her asks.
-    expect(await page("/asks", mine)).not.toContain(pull.title);
-    expect(await page("/asks", theirs)).toContain(pull.title);
+    expect(await asks(mine)).not.toContain(pull.title);
+    expect(await asks(theirs)).toContain(pull.title);
     // Let go, it asks her for a look like any green change here.
     const let_go = await form(
       `/alice/garden/pulls/${pull.number}/release`,
@@ -750,7 +755,7 @@ describe("a hold is set, shown and lifted", () => {
     );
     expect(let_go.status).toBe(303);
     expect(getHold(f.app.db, pull.id)).toBeUndefined();
-    expect(await page("/asks", mine)).toContain(pull.title);
+    expect(await asks(mine)).toContain(pull.title);
     // And the map goes back to saying a pull waits.
     const card =
       (await page("/alice/garden/map", mine)).match(

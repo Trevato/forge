@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { listEvents } from "../src/core/events.ts";
 import { firstFetchRetry } from "../src/origins/mirror.ts";
 import { settled } from "../src/origins/jobs.ts";
@@ -104,7 +103,7 @@ describe("the fork flow", () => {
       await fetch(`${server.url}/api/v1/tokens`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify({ adminConfirm: true,
           username,
           password: PASSWORD,
           name: "t",
@@ -144,7 +143,6 @@ describe("the fork flow", () => {
   };
 
   const connect = async (fake: FakeForge, kind?: "github"): Promise<string> => {
-    resetConnectLimit();
     const connected = await api("/api/v1/user/origins", {
       method: "POST",
       body: JSON.stringify({

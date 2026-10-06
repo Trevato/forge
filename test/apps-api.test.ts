@@ -124,6 +124,7 @@ describe("apps, runs and the crew over the API", () => {
           await post(
             "/api/v1/tokens",
             {
+              adminConfirm: true,
               username: "alice",
               password: "a-good-passphrase",
               name: scope,

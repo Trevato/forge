@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
 import { settled, subscribe, type MirrorStage } from "../src/origins/jobs.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
@@ -285,7 +284,6 @@ describe("RepoSource: one repository, two places to read it from", () => {
     alice = getUserByName(app.db, "alice")!;
     bob = getUserByName(app.db, "bob")!;
 
-    resetConnectLimit();
     const connected = await api("/api/v1/user/origins", {
       method: "POST",
       body: JSON.stringify({ host: fake.url, token: ORIGIN_TOKEN }),
@@ -935,7 +933,7 @@ describe("RepoSource: one repository, two places to read it from", () => {
     const token = await read<{ token: string }>(
       await api("/api/v1/tokens", {
         method: "POST",
-        body: JSON.stringify({
+        body: JSON.stringify({ adminConfirm: true,
           username: "alice",
           password: ALICE_PASSWORD,
           name: "rw",

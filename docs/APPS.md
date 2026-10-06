@@ -120,7 +120,10 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    the terminal stays its writers' and crew's. Making the repository public
    changes nobody's way in. A person the app names enters it and its
    previews and gets nothing else: no code of a private repository, no
-   crew, no settings, no owner facts.
+   crew, no settings, no owner facts. What the app says about itself
+   follows the same rule: its environments' state and errors (`envsFor`),
+   its runs and their logs (`mayReadRuns`) and its run and serving events
+   reach only those who may enter it.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never
@@ -153,11 +156,17 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    and every tmpfs the machine mounts outside `/dev`, `/proc` and `/sys`
    (how Kubernetes mounts a secret or a service-account token) — and a pod
    that runs the forge should set `automountServiceAccountToken: false`
-   all the same, since the forge never talks to the cluster. That is a
-   deny-list over the machine's mounts: a ConfigMap, hostPath, PVC or CSI
-   volume mounted into the forge's pod is usually not a tmpfs and stays
-   visible, so mount none there. A cell that sees an allow-list of mounts
-   instead is #801. Memory, CPU
+   all the same, since the forge never talks to the cluster. Inside
+   Kubernetes a cell goes further and sees an allow-list of mounts: none
+   of the pod's but the root, its own /dev, /proc and /sys,
+   `/etc/hosts`, `/etc/hostname`, `/etc/resolv.conf`, and the mounts the
+   runtime and its tools live on — so a ConfigMap, hostPath, PVC or CSI
+   volume mounted for the forge is empty inside. Elsewhere (a developer's
+   machine, whose system is itself mounts: `/nix/store`, a home) the rule
+   is the machine's mounts minus the secret-bearing ones above.
+   `FORGE_CELL_MOUNTS=allow-list|deny-list` chooses either, and
+   `FORGE_CELL_MOUNTS_KEEP` (`:`-separated) names a read-only system mount
+   the allow-list must keep. Memory, CPU
    (averaged over 30 seconds) and disk are watched from outside; a cell
    over a limit is stopped, and the reason is the step's error or the
    app's last log line. Where the host cannot hold a cell (no bubblewrap,
@@ -726,10 +735,14 @@ slot used to load, so nothing goes blank. Pictures are served at
 `/:owner/:name/looks/<env>/<commit>/<page>-<kind>.png` for another, with the
 repository's own read access, cached by commit.
 
-The picture is what the repository's owner would see: headless Chromium is
-pointed at the forge's own listener with the app's hostname resolved to
-loopback, through the grant door, so the app renders for a signed-in admin
-exactly as when the owner opens it. It is taken as the page loads — what an
+The phone and desktop pictures are what the repository's owner would see:
+headless Chromium is pointed at the forge's own listener with the app's
+hostname resolved to loopback, through the grant door, so the app renders for
+a signed-in admin exactly as when the owner opens it — and they are its
+writers' alone. The thumb is taken as nobody, for the tiles strangers see. A
+public app on a public repository is the world's to see, so all three of its
+pictures are taken as nobody, and a reader of its pulls sees the Look card
+too; each row records who it was `taken_as` (#727, #738). It is taken as the page loads — what an
 app draws after that is not in it — and one at a time, forge-wide, bounded
 in time and memory. A look is best-effort: it never blocks a check or fails
 a run; one that could not be taken is recorded with its reason, and the
@@ -1019,7 +1032,10 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_APP_DOMAIN`        | the host in `FORGE_URL`/`_HOST` | what app hostnames attach to (`example` or `--x`) |
 | `FORGE_APPS_CONCURRENCY`  | `2`                             | deploys running their heavy steps at once         |
 | `FORGE_PREVIEW_IDLE_DAYS` | `3`                             | days a pull may sit untouched before its preview sleeps; `0` = never |
-| `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once                                |
+| `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once (live: Settings → Capacity)    |
+| `FORGE_CHECKS_CONCURRENCY` | `1`                            | checks at once (live: Settings → Capacity)        |
+| `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
+| `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |
 | `FORGE_CREW_BUDGET_USD`   | `5`                             | spend per run unless the agent says otherwise     |
 | `FORGE_CREW_TIMEOUT_MIN`  | `45`                            | wall-clock limit of one agent run                 |
 | `FORGE_CREW_ALLOW_HOSTS`  | —                               | hosts an agent's shell may reach, comma-separated |
@@ -1039,6 +1055,17 @@ Hosted by a forge (`FORGE_APP_URL` set), the address is `FORGE_APP_URL`,
 the data directory `FORGE_APP_DATA`, and the defaults become
 `FORGE_SSH_PORT=0`, `FORGE_CREW_CONCURRENCY=1` and
 `FORGE_APP_DOMAIN=--<its own host>`.
+
+Four of these are the forge's capacity and change while it runs: crew runs
+at once, checks at once, shards per check, and the cells' egress mode. A
+forge admin sets them under **Settings → Capacity**, through
+`PUT /api/v1/admin/capacity/:key` (`{"value": "1"}`, `null` for the
+default) or the `capacity` MCP tool; the next crew run, check or cell
+honours the change, never a restart. The variable stays the boot default
+until a value is set, and every change is listed on that page with who
+made it, when, and from what to what (`core/capacity.ts`). The shard count
+reaches a check's commands and an agent's shell as `FORGE_CHECK_SHARDS`,
+from the setting, never from the forge's own environment.
 
 ## What is deliberately not here
 

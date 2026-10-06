@@ -5,7 +5,7 @@
  */
 
 import { openPull } from "../../actions/pulls.ts";
-import { getRepoById, type Repo } from "../../core/repos.ts";
+import { forkParentFor, type Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -22,10 +22,8 @@ import { local } from "./where.ts";
 type Focus = 0 | 1 | 2 | 3 | 4;
 
 export function newPullScreen(f: Session, ctx: Ctx, head: Repo): Screen {
-  const parent =
-    head.forkParentId === null
-      ? undefined
-      : getRepoById(f.db, head.forkParentId);
+  // A parent this person may no longer read is not offered (#831).
+  const parent = forkParentFor(f.db, head, f.user);
   let base: Repo = parent ?? head;
   let baseBranch = base.defaultBranch;
   let headBranch = head.defaultBranch;

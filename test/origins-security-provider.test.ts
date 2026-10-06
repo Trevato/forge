@@ -4,7 +4,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { getOriginById } from "../src/core/origins.ts";
 import { runGitCapture } from "../src/git/env.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -63,8 +62,10 @@ const client = (
 describe("a provider request cannot be turned against the credential", () => {
   test("a redirect off-host is refused and the far host sees nothing", async () => {
     const seen: Request[] = [];
-    // Two distinct origins on loopback: `localhost` and `127.0.0.1` differ
-    // by hostname, and each `Bun.serve` picks its own port anyway.
+    // Two distinct origins on loopback, told apart by port. Both are bound
+    // and dialled at the same literal address: a name like `localhost` may
+    // bind one family and resolve to the other, and then the redirect this
+    // test is about is never reached.
     const attacker = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -73,10 +74,12 @@ describe("a provider request cannot be turned against the credential", () => {
         return Response.json({ login: "mallory" });
       },
     });
+    let asked = 0;
     const origin = Bun.serve({
       port: 0,
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       fetch() {
+        asked++;
         return new Response(null, {
           status: 302,
           headers: {
@@ -87,8 +90,10 @@ describe("a provider request cannot be turned against the credential", () => {
     });
     try {
       const result = await client(
-        `http://localhost:${origin.port}/api/v1`,
+        `http://127.0.0.1:${origin.port}/api/v1`,
       ).call({ path: "/user", method: "POST", body: { secret: "payload" } });
+      // The origin was reached and did redirect: the refusal is the client's.
+      expect(asked).toBe(1);
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.error.error).toBe("invalid_response");
@@ -339,6 +344,11 @@ describe("a bare Forgejo token cannot reach a log line", () => {
 describe("a hostile origin cannot reach git or the filesystem", () => {
   let dataDir: string;
   let upstreamDataDir: string;
+  // What a hostile value would write if it ever reached git as an argument:
+  // a path of this test's own, in a directory nothing else touches, so a
+  // stray file elsewhere cannot fail the test and a real write cannot hide.
+  let canaryDir: string;
+  let canary: string;
   let app: App;
   let servers: Servers;
   let upstreamApp: App;
@@ -392,6 +402,8 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-hostile-"));
     upstreamDataDir = await mkdtemp(join(tmpdir(), "forge-hostile-up-"));
+    canaryDir = await mkdtemp(join(tmpdir(), "forge-hostile-canary-"));
+    canary = join(canaryDir, "written");
 
     // A real git host for the one legitimate repo.
     upstreamApp = createApp({ dataDir: upstreamDataDir, port: 0 });
@@ -430,9 +442,13 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
     const state = newFakeState("forgejo", LOGIN, TOKEN);
     state.repos.push(
       { id: 1, fullName: "octo/good", cloneUrl: goodCloneUrl },
-      { id: 2, fullName: "octo/ext", cloneUrl: "ext::sh -c id" },
+      { id: 2, fullName: "octo/ext", cloneUrl: `ext::sh -c touch% ${canary}` },
       { id: 3, fullName: "octo/file", cloneUrl: "file:///etc" },
-      { id: 4, fullName: "octo/flag", cloneUrl: "-oProxyCommand=touch /tmp/x" },
+      {
+        id: 4,
+        fullName: "octo/flag",
+        cloneUrl: `-oProxyCommand=touch ${canary}`,
+      },
       { id: 5, fullName: "octo/ssh", cloneUrl: "ssh://git@example.invalid/x" },
       {
         id: 6,
@@ -477,7 +493,7 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
         pull: {
-          base: "--output=/tmp/x",
+          base: `--output=${canary}`,
           head: "refs/../heads/x",
           baseSha: "--not-an-oid",
           headSha: "deadbeef",
@@ -507,7 +523,6 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
         password: PASSWORD,
       }),
     });
-    resetConnectLimit();
     const connected = await read<{ id: string; kind: string }>(
       await api("/api/v1/user/origins", {
         method: "POST",
@@ -526,6 +541,7 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
     upstreamApp.close();
     await rm(dataDir, { recursive: true, force: true });
     await rm(upstreamDataDir, { recursive: true, force: true });
+    await rm(canaryDir, { recursive: true, force: true });
   });
 
   test("a clone URL that is not http(s) never becomes a git argument", async () => {
@@ -536,7 +552,7 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
       expect(repoRow(name)).toBeFalsy();
       expect(localRepos()).not.toContain(`${name}.git`);
     }
-    expect(existsSync("/tmp/x")).toBe(false);
+    expect(readdirSync(canaryDir)).toEqual([]);
   });
 
   test("a full name that is not owner/name is refused before any path", async () => {
@@ -612,6 +628,8 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
       base_oid: "",
       head_oid: "",
     });
+    // The base named a file for git to write; none was written.
+    expect(readdirSync(canaryDir)).toEqual([]);
   });
 
   test("the token is on no API surface, in no git config, in no error", async () => {

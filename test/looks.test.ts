@@ -22,13 +22,13 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { envDataDir, previewEnv } from "../src/apps/data.ts";
 import { readGrant } from "../src/apps/proxy.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
-import type { AppRecord } from "../src/core/apps.ts";
+import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { listEvents } from "../src/core/events.ts";
 import { looksForEnv, recordLook, type Look } from "../src/core/looks.ts";
 import { encodePng } from "../src/design/image/png.ts";
 import { setAppMembers } from "../src/core/app_members.ts";
-import type { Pull } from "../src/core/pulls.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { listPulls, type Pull } from "../src/core/pulls.ts";
+import { getRepo, type Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -803,6 +803,94 @@ describe("the look", () => {
     } finally {
       app.db.query(`UPDATE app SET access = 'private' WHERE id = ?1`).run(record.id);
       app.db.query(`UPDATE repo SET visibility = 'private' WHERE id = ?1`).run(repo.id);
+    }
+  });
+
+  test("a public app's previews are taken as nobody, so a reader of its pull sees the Look card; a picture taken as the owner stays the writers' (#738)", async () => {
+    const made = await newApp(app, alice, { name: "gallery", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const gallery = made.value.repo;
+    const galleryApp = made.value.app;
+    expect(galleryApp.access).toBe("public");
+    const branch = await commitToBranch(app, alice, gallery, {
+      branch: "frame",
+      base: gallery.defaultBranch,
+      message: "A frame",
+      files: [{ path: "FRAME.md", content: "frame\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, gallery, {
+      title: "A frame",
+      baseBranch: gallery.defaultBranch,
+      headBranch: "frame",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const env = previewEnv(opened.value.number);
+    const commit = branch.value.commitOid;
+    expect((await settled((r) => r.env === env, gallery.id)).state).toBe("ok");
+    const rows = await until(() => {
+      const found = looksForEnv(app.db, galleryApp.id, env).filter(
+        (l) => l.commitOid === commit,
+      );
+      return found.length === 3 ? found : undefined;
+    }, 30_000);
+    // All three taken as nobody, and the browser was told so.
+    expect(rows.map((l) => l.takenAs)).toEqual(["nobody", "nobody", "nobody"]);
+    const phoneCall = calls.filter((c) => c.out.includes(galleryApp.id) || c.url.includes("gallery")).find((c) => c.width === 390)!;
+    expect(
+      readGrant(dataDir, new URL(phoneCall.url).searchParams.get("t") ?? "", {
+        app: galleryApp,
+        env,
+      })?.who,
+    ).toBeUndefined();
+    // A reader and a stranger fetch them, and the pull shows the reader its Look.
+    const at = (kind: string) => `/alice/gallery/looks/${env}/${commit}/${kind}.png`;
+    for (const cookie of ["", bobCookie]) {
+      expect((await web(at("phone"), cookie)).status).toBe(200);
+      expect((await web(at("desktop"), cookie)).status).toBe(200);
+    }
+    const pullPage = await (
+      await web(`/alice/gallery/pulls/${opened.value.number}`, bobCookie)
+    ).text();
+    expect(pullPage).toContain("<h2>Look</h2>");
+    expect(pullPage).toContain(`/alice/gallery/looks/${env}/${commit}/phone.png?v=`);
+    // A picture taken as the owner — every picture before #738 — stays the
+    // writers', even of a public app.
+    app.db
+      .query(`UPDATE look SET taken_as = 'owner' WHERE app_id = ?1 AND env = ?2`)
+      .run(galleryApp.id, env);
+    expect((await web(at("phone"), bobCookie)).status).toBe(404);
+    expect((await web(at("phone"), aliceCookie)).status).toBe(200);
+    const after = await (
+      await web(`/alice/gallery/pulls/${opened.value.number}`, bobCookie)
+    ).text();
+    expect(after).not.toContain("<h2>Look</h2>");
+  }, 120_000);
+
+  test("a public app made private after its pictures were taken: a reader gets them no more, and no Look card; its writer still does (#845)", async () => {
+    const gallery = getRepo(app.db, "alice", "gallery")!;
+    const galleryApp = getAppByRepo(app.db, gallery.id)!;
+    const look = looksForEnv(app.db, galleryApp.id, "production").find(
+      (l) => l.kind === "phone" && l.error === null,
+    )!;
+    // Taken as nobody while the app was public.
+    app.db.query(`UPDATE look SET taken_as = 'nobody' WHERE app_id = ?1`).run(galleryApp.id);
+    const at = `/alice/gallery/looks/production/${look.commitOid}/phone.png`;
+    expect((await web(at, bobCookie)).status).toBe(200);
+    const pull = listPulls(app.db, gallery.id, { state: "open" })[0]!;
+    const card = async (cookie: string) =>
+      (await (await web(`/alice/gallery/pulls/${pull.number}`, cookie)).text()).includes("<h2>Look</h2>");
+    expect(await card(bobCookie)).toBe(true);
+    // Made private: the same files, asked again on every fetch.
+    app.db.query(`UPDATE app SET access = 'private' WHERE id = ?1`).run(galleryApp.id);
+    try {
+      expect((await web(at, bobCookie)).status).toBe(404);
+      expect((await web(at, "")).status).toBe(404);
+      expect(await card(bobCookie)).toBe(false);
+      expect((await web(at, aliceCookie)).status).toBe(200);
+      expect(await card(aliceCookie)).toBe(true);
+    } finally {
+      app.db.query(`UPDATE app SET access = 'public' WHERE id = ?1`).run(galleryApp.id);
     }
   });
 

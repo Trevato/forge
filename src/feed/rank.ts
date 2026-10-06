@@ -17,6 +17,8 @@ export interface FeedItem {
   readonly actor: string | null;
   readonly at: string;
   readonly link: string;
+  /** What happened, in the post's own words. */
+  readonly what: string;
   /** One sentence: why this, and why here. */
   readonly reason: string;
   readonly score: number;
@@ -137,6 +139,7 @@ export function rank(
       actor: s!.c.actor,
       at: s!.c.at,
       link: s!.c.link,
+      what: s!.c.said ?? s!.c.what,
       reason: s!.reason,
       score: Math.round(bestScore * 1e6) / 1e6,
       ...(s!.c.ask === undefined ? {} : { ask: s!.c.ask }),

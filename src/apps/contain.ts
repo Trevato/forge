@@ -104,6 +104,12 @@ export interface CellSpec {
   readonly terminal?: boolean | undefined;
   /** Told of every undeclared host let through while egress is only reported. */
   readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
+  /**
+   * Refuse undeclared egress, or only report it, for this cell — the
+   * forge's setting when the cell starts (`core/capacity.ts`); the
+   * environment's (`egressMode`) when the caller has none.
+   */
+  readonly egressMode?: "enforce" | "report" | undefined;
 }
 
 /**
@@ -257,7 +263,7 @@ export function openCell(
         hosts: spec.egress,
         origins,
         report:
-          egressMode() === "report"
+          (spec.egressMode ?? egressMode()) === "report"
             ? (host, port) => spec.onUndeclared?.(host, port)
             : undefined,
       },
@@ -275,8 +281,8 @@ export function openCell(
 
   // Deepest last, so a hidden directory never covers a writable one inside it.
   // What the caller names, plus whatever the machine mounts that may carry
-  // a secret (`secretMounts`): a cell never needs either.
-  const hidden = [...new Set([...spec.hide, ...secretMounts()])]
+  // a secret (`hiddenMounts`): a cell never needs either.
+  const hidden = [...new Set([...spec.hide, ...hiddenMounts()])]
     // A path that is not there has nothing to hide (and cannot be mounted
     // over on a read-only root). `/tmp` and `/run` are already the cell's own.
     .filter(
@@ -390,18 +396,84 @@ const SYSTEM_MOUNT = /^\/(dev|proc|sys)(\/|$)/;
  */
 export function secretMounts(mountinfo = readMountinfo()): string[] {
   const out = new Set(["/run/secrets", "/var/run/secrets"]);
+  for (const { path, type } of mountPoints(mountinfo)) {
+    if (path === "/" || SYSTEM_MOUNT.test(path)) continue;
+    if (type === "tmpfs" || /^\/(var\/)?run\//.test(path)) out.add(path);
+  }
+  return [...out];
+}
+
+/** Files a cell keeps whatever is mounted on them: what a resolver and a hostname need. */
+const KEPT_FILES = ["/etc/hosts", "/etc/hostname", "/etc/resolv.conf"];
+
+/**
+ * How a cell decides which of the machine's mounts it may see.
+ * `allow-list`: none but the root, its own /dev, /proc and /sys, the
+ * resolver's files and the mounts the runtime and its tools live on —
+ * the default inside Kubernetes, where a pod's mounts are ConfigMaps,
+ * hostPaths, volumes and secrets the operator put there for the forge.
+ * `deny-list`: the machine's mounts minus those that may carry a secret
+ * (`secretMounts`) — the default elsewhere, because a developer's machine
+ * mounts its system (`/nix/store`, a home) and a cell must still run.
+ * `FORGE_CELL_MOUNTS` chooses either.
+ */
+export function mountMode(): "allow-list" | "deny-list" {
+  const set = process.env["FORGE_CELL_MOUNTS"];
+  if (set === "allow-list" || set === "deny-list") return set;
+  return process.env["KUBERNETES_SERVICE_HOST"] ? "allow-list" : "deny-list";
+}
+
+/**
+ * Paths whose mounts a cell must see to run at all: where the runtime and
+ * the tools a cell starts live, and whatever the operator names in
+ * `FORGE_CELL_MOUNTS_KEEP` (`:`-separated, a read-only system mount).
+ */
+export function keptPaths(): string[] {
+  const tools = ["sh", "bwrap", "socat", "git", "bun"]
+    .map((tool) => Bun.which(tool))
+    .filter((path): path is string => path !== null);
+  return [
+    dirname(process.execPath),
+    ...tools.map((path) => dirname(path)),
+    ...(process.env["FORGE_CELL_MOUNTS_KEEP"] ?? "")
+      .split(":")
+      .filter((path) => path.startsWith("/")),
+  ];
+}
+
+/** Mount points from mountinfo, unescaped (it writes a space as `\040`). */
+function mountPoints(mountinfo: string): { path: string; type: string | undefined }[] {
+  const out: { path: string; type: string | undefined }[] = [];
   for (const line of mountinfo.split("\n")) {
     const fields = line.split(" ");
     const point = fields[4];
+    if (point === undefined || point === "") continue;
     const dash = fields.indexOf("-");
-    const type = dash === -1 ? undefined : fields[dash + 1];
-    if (point === undefined || point === "/") continue;
-    // mountinfo escapes spaces and the like as octal.
-    const path = point.replace(/\\([0-7]{3})/g, (_, o: string) =>
-      String.fromCharCode(parseInt(o, 8)),
-    );
-    if (SYSTEM_MOUNT.test(path)) continue;
-    if (type === "tmpfs" || /^\/(var\/)?run\//.test(path)) out.add(path);
+    out.push({
+      path: point.replace(/\\([0-7]{3})/g, (_, o: string) =>
+        String.fromCharCode(parseInt(o, 8)),
+      ),
+      type: dash === -1 ? undefined : fields[dash + 1],
+    });
+  }
+  return out;
+}
+
+/** Every mount point a cell hides, in the given mode (`mountMode`). */
+export function hiddenMounts(
+  mountinfo = readMountinfo(),
+  mode = mountMode(),
+  kept = keptPaths(),
+): string[] {
+  const denied = secretMounts(mountinfo);
+  if (mode === "deny-list") return denied;
+  const out = new Set(denied);
+  for (const { path } of mountPoints(mountinfo)) {
+    if (path === "/" || SYSTEM_MOUNT.test(path) || KEPT_FILES.includes(path))
+      continue;
+    // A mount the runtime or a tool lives on (or under) stays.
+    if (kept.some((k) => k === path || k.startsWith(`${path}/`))) continue;
+    out.add(path);
   }
   return [...out];
 }

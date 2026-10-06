@@ -32,18 +32,24 @@ for a tunnel and a forge that sleeps.
 | `say`          | speak on an issue or a pull; a working builder hears it as its next step                          | yes    |
 | `now`          | what the crew is doing right now: who, on what, since when, at what cost; a planner that declined the direction and waits for you comes first (`run: null`, its words in `says`) |        |
 | `stop`         | stop one run by its id from `now`                                                                 | yes    |
+| `health`       | how this forge is: the version and commit it runs, draining or not, the rollout and its incidents |        |
 | `audit`        | who can do what, per app, read from its contract.json in git: yes, own or no per door, and whether outsiders may direct its crew (`crewOutsiders`) |        |
 | `outsiders`    | `{ repo, on?, dryRun? }`: whether people who cannot write may direct the crew; with `on`, planned first (`dryRun` is true unless `false`); set only by the app's admin with an admin token, never an agent | yes    |
 | `probe`        | knock on a running app's doors as nobody, a user and an admin; the ones that disobey its contract |        |
 | `following`    | where a fork stands against what it follows, and what the crew is doing about it                  |        |
 | `spawn`        | `{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make | yes    |
+| `claim_link`   | `{ name }`: a new claim link for a child you spawned that nobody has claimed; the old one stops working. An admin's | yes    |
 | `take_updates` | a fork takes its parent's updates when git can do it alone; a conflict is refused                 | yes    |
 | `converge`     | the fork's crew merges where both sides changed the same files; comes back as a pull              | yes    |
 | `asked`        | `{ repo?, show?, order? }`: what people asked the crew for, by default nothing merged yet and oldest first: who and when, the pulls that close it, the crew's last activity, waiting/building/shipped/closed, stale when not shipped in three days and flagged when stale with nothing built; repositories you can write |        |
 | `app_members`  | `{ repo, members?, dryRun? }`: the people a private app names, who may enter it and its previews and nothing else; a writer (never an agent) changes the list with an admin-scope token | yes    |
-| `front_page`   | `{ pinned?, hidden?, dryRun? }`: the front page as a stranger sees it, ranked, with numbers; a site admin sets what is pinned (first public one featured) and hidden | yes    |
-| `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is (`app`)           |        |
+| `explore`      | `{ query? }`: the apps and people you can see, ranked by forks, ships, use and freshness, with their numbers; `kind:` `sort:` and words in one line |        |
+| `feed`         | `{ limit?, cursor? }`: your home timeline — tells, replies, runs, changes and looks — ranked, with who, what, why and a link; the same items as `GET /api/v1/feed` |        |
+| `make_it_yours` | `{ repo, name?, visibility?, dryRun? }`: a fork of an app you can see, as your own app, following the original; code and history copied, data and secrets not; private unless `visibility` is public (a public original only); at most 5 copies an account a day; plans unless `dryRun` is false | yes    |
+| `front_page`   | `{ pinned?, hidden?, weights?, dryRun? }`: the front page as a stranger sees it, ranked, with numbers; a site admin sets what is pinned (first public one featured), hidden, and what counts (weights of forks, ships, use, fresh, 0 to 10) | yes    |
+| `map`          | an app's plan: ready now, waiting on what, the critical path, where the crew is, parked twice and why (`app`) |        |
 | `milestones`   | `{ app, issue? }`: how far each thing asked for is (and, with `issue`, whether you watch it: `watching`), from the dependency tree: the plan's limbs with their weights, or one milestone opened (who is building, what is blocked and on what, what merged in 7 days, an estimate) |        |
+| `limb`         | `{ app, issue, action, reason?, pillar?, operation?, dryRun? }`: defer, resume or close a whole limb as not doing, or undo an operation; plans unless `dryRun` is false, and applying takes an admin token | yes    |
 | `watch`        | `{ app, issue, watch? }`: watch a milestone, or stop with `watch: false`: one item in your feed that follows it, and one push to your phone when it lands | yes    |
 | `usage`        | `{ repo, days? }`: what the crew's runs spent — tokens, cost, wall time — by subscription, agent, issue, and each account's 5-hour and weekly standing; a writer's |        |
 | `link`         | `{ app, issue, blockedBy }`: the issue waits for another; loops and cross-repository are refused  | yes    |

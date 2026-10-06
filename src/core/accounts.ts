@@ -29,6 +29,8 @@ export interface AccountRow {
   readonly spentUsd: number;
   readonly suspendedAt: string | null;
   readonly removedAt: string | null;
+  /** Whether the email is proven (\`core/verify.ts\`); agents always are. */
+  readonly verified: boolean;
 }
 
 /** Every person and agent, newest first. Organizations are not accounts. */
@@ -44,6 +46,7 @@ export function listAccounts(db: Database): AccountRow[] {
         created_at: string;
         suspended_at: string | null;
         removed_at: string | null;
+        verified_at: string | null;
         repos: number;
         apps: number;
         spent: number | null;
@@ -53,6 +56,7 @@ export function listAccounts(db: Database): AccountRow[] {
     >(
       `SELECT u.id, u.username, u.display_name, u.is_admin, u.is_agent,
               u.created_at, u.suspended_at, u.removed_at,
+              (SELECT c.verified_at FROM email_check c WHERE c.user_id = u.id) AS verified_at,
               (SELECT COUNT(*) FROM repo r WHERE r.owner_id = u.id) AS repos,
               (SELECT COUNT(*) FROM app a JOIN repo r ON r.id = a.repo_id
                 WHERE r.owner_id = u.id) AS apps,
@@ -80,6 +84,7 @@ export function listAccounts(db: Database): AccountRow[] {
       spentUsd: Math.round((r.spent ?? 0) * 100) / 100,
       suspendedAt: r.suspended_at,
       removedAt: r.removed_at,
+      verified: r.is_agent === 1 || r.verified_at !== null,
     };
   });
 }

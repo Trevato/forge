@@ -256,8 +256,9 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
     expect(pullMayRun(app.db, lib, pull, head)).toBe(false);
   });
 
-  test("a preview asleep at a head nobody approved is taken down, not woken", async () => {
-    const { pull, head } = await forkPull(carol, notes, "sleeper");
+  /** A reader's fork-pull preview on the app, approved and deployed. */
+  async function deployedPreview(branch: string) {
+    const { pull, head } = await forkPull(carol, notes, branch);
     await approve(alice, notes, pull);
     const env = `pull-${pull.number}`;
     const deadline = Date.now() + 90_000;
@@ -269,9 +270,13 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
       if (Date.now() > deadline) throw new Error("preview did not deploy");
       await Bun.sleep(200);
     }
-    // As if it had been deployed before the gate: no approval stands.
-    app.db.run("DELETE FROM review WHERE issue_id = ?1", [pull.id]);
-    // The forge comes back over the same data: the preview is asleep.
+    return { pull, head, env };
+  }
+
+  const envOf = (env: string) =>
+    runtime.status(notesApp).find((e) => e.env === env);
+
+  async function restart(): Promise<void> {
     await runtime.stop();
     runtime = new AppsRuntime(app, {
       domain: "apps.test",
@@ -281,10 +286,60 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
       concurrency: 1,
     });
     await runtime.start();
-    expect(
-      runtime.status(notesApp).find((e) => e.env === env)?.state,
-    ).toBe("asleep");
+  }
+
+  test("a preview asleep at a head nobody approved is taken down, not woken", async () => {
+    const { pull, env } = await deployedPreview("sleeper");
+    await restart();
+    expect(envOf(env)?.state).toBe("asleep");
+    // The approval goes after it fell asleep: waking asks again.
+    app.db.run("DELETE FROM review WHERE issue_id = ?1", [pull.id]);
     expect(await runtime.wake(notesApp, env as never)).toBeUndefined();
-    expect(runtime.status(notesApp).find((e) => e.env === env)).toBeUndefined();
+    expect(envOf(env)).toBeUndefined();
+  }, 120_000);
+
+  test("at boot, a preview at a head nobody approved is taken down", async () => {
+    const { pull, env } = await deployedPreview("booted");
+    // As if it had been deployed before the gate: no approval stands.
+    app.db.run("DELETE FROM review WHERE issue_id = ?1", [pull.id]);
+    await restart();
+    expect(envOf(env)).toBeUndefined();
+  }, 120_000);
+
+  test("a writer asking for changes on a running preview's head takes it down at once", async () => {
+    const { pull, env } = await deployedPreview("running");
+    expect(["running", "deploying"]).toContain(envOf(env)?.state ?? "");
+    const turned = await submitReview(app, alice, notes, pull, {
+      state: "changes_requested",
+      body: "Not this.",
+    });
+    expect(turned.ok).toBe(true);
+    const deadline = Date.now() + 10_000;
+    while (envOf(env) !== undefined && Date.now() < deadline)
+      await Bun.sleep(100);
+    expect(envOf(env)).toBeUndefined();
+  }, 120_000);
+
+  test("a writer's own preview survives boot and a changes request", async () => {
+    const mine = await commitToBranch(app, alice, notes, {
+      branch: "own",
+      message: "Own",
+      files: [{ path: "OWN.md", content: "own\n" }],
+    });
+    if (!mine.ok) throw new Error(JSON.stringify(mine.error));
+    const opened = await openPull(app, alice, notes, {
+      title: "Own",
+      baseBranch: "main",
+      headBranch: "own",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const env = `pull-${opened.value.number}`;
+    const deadline = Date.now() + 90_000;
+    while (envOf(env)?.state !== "running") {
+      if (Date.now() > deadline) throw new Error("preview did not deploy");
+      await Bun.sleep(200);
+    }
+    await restart();
+    expect(envOf(env)?.state).toBe("asleep");
   }, 120_000);
 });

@@ -11,6 +11,7 @@
  * what the forge has.
  */
 
+import { capacityEnv } from "../core/capacity.ts";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
@@ -32,6 +33,7 @@ import {
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import {
   canWrite,
+  forkParentFor,
   getForkOf,
   getRepoById,
   type Repo,
@@ -80,6 +82,8 @@ import {
   whenText,
 } from "./limits.ts";
 import { interruptedSummary } from "./interrupted.ts";
+import { laterGate } from "./later.ts";
+import { parkedTwice } from "./parks.ts";
 import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import {
@@ -99,6 +103,8 @@ import { grantSecrets, parseDeclaration, type Grant } from "./grant.ts";
 import { historyHolds, scrubTree } from "./leak.ts";
 import { workdirFor } from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
+import { feedbackSince } from "./news.ts";
+import { SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
 
 const log = createLog("crew");
 
@@ -238,6 +244,18 @@ export async function executeAgentRun(
   run: Run,
   options: CrewOptions,
 ): Promise<Pause | undefined> {
+  // A follow-up queued behind a run that has since answered everything:
+  // nothing new to act on, so nothing starts (`guard.ts`).
+  if (
+    run.reason === "feedback" &&
+    run.attempt === 0 &&
+    run.startedAt === null &&
+    skipsQueued(app, run)
+  ) {
+    const skipped = cancelRun(app.db, run.id, SKIP_SUMMARY);
+    if (skipped) announceRun(app, skipped);
+    return undefined;
+  }
   const claimed = claimRun(app.db, run.id);
   if (!claimed) return undefined;
   const lease = holdLease(app.db, run.id);
@@ -303,6 +321,21 @@ export async function executeAgentRun(
   });
   if (done) announceRun(app, done);
   return undefined;
+}
+
+/** Whether a queued follow-up would find nothing new (`news.ts`): recorded as a skip. */
+function skipsQueued(app: App, run: Run): boolean {
+  const repo = getRepoById(app.db, run.repoId);
+  const issue =
+    run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
+  const agent =
+    run.actorId === null ? undefined : getAgent(app.db, run.actorId);
+  return (
+    repo !== undefined &&
+    issue !== undefined &&
+    agent !== undefined &&
+    skipsFeedback(app.db, repo, issue, agent)
+  );
 }
 
 /**
@@ -669,7 +702,7 @@ async function work(
       (taskIssue === undefined
         ? undefined
         : lastAgentRun(app.db, taskIssue.id, agent.user.id));
-    const since = previous?.finishedAt ?? issue.createdAt;
+    const since = feedbackSince(app.db, repo, issue, agent);
     const record = getAppByRepo(app.db, repo.id);
     const runtime = appsRuntime(app);
     const previewUrl =
@@ -742,9 +775,10 @@ async function work(
               .filter((f) => f !== "")
           : undefined,
       following:
-        reason === "converge" && repo.forkParentId !== null
+        reason === "converge"
           ? (() => {
-              const parent = getRepoById(app.db, repo.forkParentId);
+              // Only a parent the agent may read is put in its brief.
+              const parent = forkParentFor(app.db, repo, agent.user);
               return parent === undefined
                 ? undefined
                 : {
@@ -755,6 +789,13 @@ async function work(
           : undefined,
       ...(reason === "review" && pull
         ? await reviewInputs(app, repo, pull, record, bare)
+        : {}),
+      // A planning run is given what the crew handed over (`parks.ts`).
+      ...(brief.role === "planner" && issue.id === repo.directionIssueId
+        ? {
+            parkedTwice: parkedTwice(app.db, [repo]),
+            laterGate: laterGate(app.db, repo.id),
+          }
         : {}),
       checkKind:
         failedCheck?.run?.kind === "check" ||
@@ -820,6 +861,9 @@ async function work(
     }
     const started = Date.now();
     const env: Record<string, string> = {
+      // The shard count an admin set (`core/capacity.ts`), for the checks an
+      // agent runs in its clone; never the pod's environment.
+      ...capacityEnv(app.db),
       ...gitAuth,
       ...identity,
       FORGE_URL: options.forgeUrl,

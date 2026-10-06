@@ -418,7 +418,8 @@ describe("the code browser on the web", () => {
   // ---- counts on rows ----
 
   test("repository rows carry issue and pull counts, and hide the zeroes", async () => {
-    const dash = await text("/", alice);
+    // Your repositories are your own page now (#625: one home).
+    const dash = await text("/alice", alice);
     expect(dash).toContain('class="counts"');
     expect(dash).toContain("open issue");
     expect(dash).toContain("open pull request");
@@ -454,8 +455,8 @@ describe("the code browser on the web", () => {
 
   test("the search page renders repositories, conversations and code", async () => {
     const html = await text("/search?q=lamp", alice);
-    expect(html).toContain("Repositories");
-    expect(html).toContain("Issues and pull requests");
+    expect(html).toContain("Apps and repositories");
+    expect(html).toContain("Tells and changes");
     expect(html).toContain(">Code");
     // A code hit says where it is and shows the line with the query marked.
     expect(html).toContain("src/lamp.ts");

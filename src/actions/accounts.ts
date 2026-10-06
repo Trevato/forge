@@ -12,6 +12,7 @@
 
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
+import { soleOwnedOrgs } from "../core/orgs.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
   dropCredentials,
@@ -23,6 +24,7 @@ import {
 import { deleteRepo as destroyRepo, listReposOwnedBy } from "../core/repos.ts";
 import { listActive } from "../core/runs.ts";
 import { getUserByName, type User } from "../core/users.ts";
+import { markVerified } from "../core/verify.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireUser } from "./access.ts";
 import { cancelRepoRun } from "./runs.ts";
@@ -117,13 +119,17 @@ export async function removeAccount(
   app: App,
   actor: User | undefined,
   username: string,
-): Promise<Result<void, AccountActionError | "delete_failed">> {
+): Promise<Result<void, AccountActionError | "delete_failed" | "last_owner">> {
   const admin = requireForgeAdmin(actor);
   if (!admin.ok) return admin;
   const found = target(app, admin.value, username);
   if (!found.ok) return found;
   const user = found.value;
   if (user.removedAt !== null) return ok();
+  // An organization this account alone owns would be left with nobody to
+  // administer it: someone else is made an owner first (`soleOwnedOrgs`
+  // names them), and nothing here has changed yet.
+  if (soleOwnedOrgs(app.db, user.id).length > 0) return err("last_owner");
   // Stop it first, so nothing it owns is running while it is taken apart.
   setSuspended(app.db, user.id, new Date().toISOString());
   dropCredentials(app.db, user.id);
@@ -141,6 +147,30 @@ export async function removeAccount(
     payload: { username: user.username },
   });
   return ok();
+}
+
+/**
+ * The owner's word that an account's email is theirs: what lets a newcomer
+ * create and cost when the forge sends no mail, or when a link went astray.
+ * Recorded in the audit as the owner's act.
+ */
+export function verifyAccount(
+  app: App,
+  actor: User | undefined,
+  username: string,
+): Result<User, AccountActionError> {
+  const admin = requireForgeAdmin(actor);
+  if (!admin.ok) return admin;
+  const user = getUserByName(app.db, username);
+  if (user === undefined || user.kind === "org") return err("not_found");
+  if (user.kind === "agent" || user.removedAt !== null) return err("not_allowed");
+  markVerified(app.db, user.id, new Date().toISOString());
+  app.bus.append({
+    kind: "account.email_verified",
+    actorId: admin.value.id,
+    payload: { username: user.username, by: "owner" },
+  });
+  return ok(user);
 }
 
 const NEW_FOR_MS = 7 * 24 * 3_600_000;

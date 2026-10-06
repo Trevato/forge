@@ -11,18 +11,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { holdPull, releasePull } from "../src/actions/holds.ts";
+import { setHold } from "../src/core/holds.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
 import { addTeamMember, createOrg, createTeam } from "../src/actions/orgs.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
-import type { Pull } from "../src/core/pulls.ts";
+import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { BREAKER_NOTE } from "../src/crew/breaker.ts";
+import { VERBS, type Target } from "../src/fleet/verbs.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { askLinesFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -70,7 +73,7 @@ describe("acting on many asks at once", () => {
     });
     const location = res.headers.get("location");
     if (res.status === 303 && location !== null) {
-      expect(location).toStartWith("/asks?op=");
+      expect(location).toStartWith("/?op=");
       const next = await fetch(`${servers.url}${location}`, { headers, redirect: "manual" });
       expect(next.status).toBe(200);
       return (await next.text()).replace(/\s+/g, " ");
@@ -479,5 +482,89 @@ describe("acting on many asks at once", () => {
     });
     const refused = (await acting.json()) as { result: { isError?: boolean } };
     expect(refused.result.isError).toBe(true);
+  });
+  test("a held change does not ship in a batch: its row says who holds it, and the rest go", async () => {
+    const made = await createUser(app.db, {
+      trusted: true,
+      username: "dana",
+      email: "dana@forge.local",
+      password: PASSWORD,
+    });
+    if (!made.ok) throw new Error(made.error);
+    app.db
+      .query("UPDATE user SET is_admin = 1 WHERE id = ?1")
+      .run(made.value.id);
+    const dana = getUserByName(app.db, "dana")!;
+    const danaRw = createToken(app.db, dana.id, "rw", "rw").token;
+    const held = await greenPull(quiet, "Not this one yet");
+    const free = await greenPull(quiet, "This one goes");
+    const why = "the security review is under way";
+    expect(holdPull(app, alice, quiet, held, why).ok).toBe(true);
+    // It asks nothing of alice, who holds it; it still asks dana for a look.
+    expect(items(alice)).not.toContain(`look:${held.id}`);
+    const picked = [`look:${held.id}`, `look:${free.id}`];
+    for (const item of picked) expect(items(dana)).toContain(item);
+
+    const rows = (body: any): Record<string, string> =>
+      Object.fromEntries(
+        body.rows.map(
+          (r: { label: string; outcome: string; reason: string }) => [
+            r.label,
+            `${r.outcome} ${r.reason}`.trim(),
+          ],
+        ),
+      );
+    const now = (pull: Pull) => getPull(app.db, quiet.id, pull.number)!;
+    const refusal = `refused held by alice (${why}): release it first`;
+    const plan = await api(danaRw, "/api/v1/asks/bulk", {
+      action: "ship",
+      items: picked,
+    });
+    expect(plan.body.preview).toBe(true);
+    expect(rows(plan.body)[`alice/quiet#${held.number}`]).toBe(refusal);
+    const shipped = await api(danaRw, "/api/v1/asks/bulk", {
+      action: "ship",
+      items: picked,
+      preview: false,
+    });
+    expect(shipped.status).toBe(201);
+    expect(rows(shipped.body)).toEqual({
+      [`alice/quiet#${held.number}`]: refusal,
+      [`alice/quiet#${free.number}`]: "ok",
+    });
+    expect(now(free).mergedAt).not.toBeNull();
+    expect([now(held).state, now(held).mergedAt]).toEqual(["open", null]);
+
+    // Released, the same word ships it.
+    expect(releasePull(app, alice, quiet, held).ok).toBe(true);
+    const again = await api(danaRw, "/api/v1/asks/bulk", {
+      action: "ship",
+      items: [`look:${held.id}`],
+      preview: false,
+    });
+    expect(rows(again.body)).toEqual({ [`alice/quiet#${held.number}`]: "ok" });
+    expect(now(held).mergedAt).not.toBeNull();
+  });
+  test("a hold set after the plan and before the write still holds: the write asks again", async () => {
+    // The row's plan found nothing to refuse; by the time its write runs,
+    // earlier rows of the batch have landed and a person has held this one.
+    const dana = getUserByName(app.db, "dana")!;
+    const pull = await greenPull(quiet, "Held between plan and write");
+    const target: Target = {
+      id: pull.id,
+      repo: quiet,
+      label: `alice/quiet#${pull.number}`,
+      issue: getIssueById(app.db, pull.id)!,
+      merged: false,
+      green: true,
+      stale: false,
+    };
+    const ship = VERBS["ship"]!;
+    expect(ship.refuse(app, target, "shipped")).toBeUndefined();
+    setHold(app.db, pull.id, alice.id, "wait for the migration");
+    expect(await ship.write(app, dana, target, "shipped")).toBe(
+      "held by alice (wait for the migration): release it first",
+    );
+    expect(getPull(app.db, quiet.id, pull.number)!.mergedAt).toBeNull();
   });
 });

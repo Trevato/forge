@@ -23,7 +23,12 @@ import {
   createRepo,
 } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
-import { addDependency, dependenciesOf } from "../src/core/dependencies.ts";
+import {
+  addDependency,
+  dependenciesOf,
+  readyNow,
+  repoGraph,
+} from "../src/core/dependencies.ts";
 import {
   getIssueById,
   getLabel,
@@ -354,8 +359,10 @@ describe("pillars", () => {
     expect(data.pillars).toEqual([
       { pillar: "P0 Trust", umbrella: trust.number, open: 3, ready: 2, blocked: 1 },
       { pillar: "P1 Feed", umbrella: feed.number, open: 2, ready: 2, blocked: 0 },
-      // One under the Later umbrella; two behind the gate, which is open.
-      { pillar: "Later", umbrella: later.number, open: 3, ready: 1, blocked: 2 },
+      // One under the Later umbrella; two behind the gate. All three are
+      // deferred: not ready, and not blocked either — nothing they wait for
+      // is the reason.
+      { pillar: "Later", umbrella: later.number, open: 3, ready: 0, blocked: 0 },
       // The loose issue, the footer (which waits for the composer), and the
       // stranger's three: one waits for the loose issue, and the other two
       // are a reader's suggestions, open and never ready (`crew/direct.ts`).
@@ -454,5 +461,136 @@ describe("pillars", () => {
     expect(await get("/board?apps=plain")).not.toContain(
       'class="board-pillars"',
     );
+  });
+
+  describe("the plan's own issues are not work", () => {
+    let bare: Repo;
+    let pillar: Issue;
+    let umbrella: Issue;
+    let barrier: Issue;
+    let work: Issue;
+    let chore: Issue;
+    const own = (title: string): Issue => {
+      const opened = openIssue(app, alice, getRepoById(app.db, bare.id)!, {
+        title,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      return opened.value;
+    };
+    const now = () => getRepoById(app.db, bare.id)!;
+    const state = (issue: Issue) => getIssueById(app.db, issue.id)!.state;
+
+    beforeAll(async () => {
+      const made = await createRepo(app, alice, {
+        name: "bare",
+        visibility: "private",
+      });
+      if (!made.ok) throw new Error(String(made.error));
+      bare = made.value;
+      const seeded = await commitToBranch(app, alice, bare, {
+        message: "Start",
+        files: [{ path: "README.md", content: "# bare\n" }],
+      });
+      if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+      expect(addToCrew(app, alice, bare, "mason").ok).toBe(true);
+      // Nothing serves the pillar yet, nothing is deferred, and the gate
+      // waits for nothing: each has nothing open in front of it.
+      pillar = own("P0 Trust: agents contained");
+      umbrella = own("Later: work that serves no pillar now");
+      barrier = own("Later gate: nothing behind this starts");
+      work = own("Real work");
+      chore = own("A chore");
+    });
+
+    test("an umbrella, the Later umbrella and the gate are never ready: not for the crew, not on the map", async () => {
+      const graph = repoGraph(app.db, bare.id);
+      expect([...graph.structural].sort()).toEqual(
+        [pillar.id, umbrella.id, barrier.id].sort(),
+      );
+      expect(readyNow(graph).map((r) => r.issue.number)).toEqual([
+        work.number,
+        chore.number,
+      ]);
+      const data = await api("/api/v1/repos/alice/bare/map");
+      expect(data.ready.map((r: { number: number }) => r.number)).toEqual([
+        work.number,
+        chore.number,
+      ]);
+      // Each says whose it is, rather than reading ready or blocked.
+      for (const own of [pillar, umbrella, barrier])
+        expect(
+          data.issues.find((i: { number: number }) => i.number === own.number),
+        ).toMatchObject({
+          word: "parked",
+          parkedBecause:
+            "the plan's own: a person closes it, the crew never picks it",
+        });
+      expect(data.counts).toMatchObject({ ready: 2, parked: 3 });
+      const page = await get("/alice/bare/map");
+      const listed = page.slice(
+        page.indexOf("<h2>Ready now</h2>"),
+        page.indexOf("</section>", page.indexOf("<h2>Ready now</h2>")),
+      );
+      expect(listed).toContain("Real work");
+      expect(listed).not.toContain("Later gate");
+      expect(listed).not.toContain("P0 Trust");
+      expect(listed).not.toContain("Later: work");
+      // The planner's own answer lists the same ready work.
+      const plan = await tool("map", { app: "alice/bare" });
+      expect(
+        plan.value.ready.map((r: { number: number }) => r.number),
+      ).toEqual([work.number, chore.number]);
+    });
+
+    test("refused: an agent does not close one, whatever access it holds; a merged pull does not; a person who writes does", async () => {
+      const close = (who: User, issue: Issue) => {
+        const closed = setIssueState(
+          app,
+          who,
+          now(),
+          getIssueById(app.db, issue.id)!,
+          "closed",
+        );
+        return closed.ok ? "closed" : closed.error;
+      };
+      for (const own of [barrier, umbrella, pillar])
+        expect(close(mason, own)).toBe("forbidden");
+      // An agent that was given the forge's highest access still does not:
+      // it may close work, and not the plan's own.
+      app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(mason.id);
+      const mighty = getUserByName(app.db, "mason")!;
+      expect(mighty.isAdmin).toBe(true);
+      for (const own of [barrier, umbrella, pillar])
+        expect(close(mighty, own)).toBe("forbidden");
+      expect(close(mighty, chore)).toBe("closed");
+      app.db.query("UPDATE user SET is_admin = 0 WHERE id = ?1").run(mason.id);
+      for (const own of [barrier, umbrella, pillar])
+        expect(state(own)).toBe("open");
+
+      // A change that says it closes the gate lands, and closes only work.
+      const branch = await commitToBranch(app, alice, now(), {
+        branch: "feature/real",
+        base: "main",
+        message: "Real work",
+        files: [{ path: "real.md", content: "real\n" }],
+      });
+      if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+      const opened = await openPull(app, alice, now(), {
+        title: "Real work",
+        body: `Closes #${work.number}\nCloses #${barrier.number}\nCloses #${pillar.number}`,
+        baseBranch: "main",
+        headBranch: "feature/real",
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      const merged = await mergePull(app, alice, now(), opened.value, "squash");
+      if (!merged.ok) throw new Error(JSON.stringify(merged.error));
+      expect(state(work)).toBe("closed");
+      expect(state(barrier)).toBe("open");
+      expect(state(pillar)).toBe("open");
+
+      // A person who writes the repository closes the gate, by hand.
+      expect(close(alice, barrier)).toBe("closed");
+      expect(state(barrier)).toBe("closed");
+    });
   });
 });

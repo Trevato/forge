@@ -8,7 +8,10 @@
 import { openPull } from "../../actions/pulls.ts";
 import type { Label } from "../../core/issues.ts";
 import type { Pull } from "../../core/pulls.ts";
-import { getRepoById, type Repo } from "../../core/repos.ts";
+import {
+  forkParentFor,
+  type Repo,
+} from "../../core/repos.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -118,10 +121,9 @@ function composeForm(
 async function composeContext(ctx: Ctx, repo: Repo, forceSelf: boolean) {
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
   const headBranches = (await refSet(dir)).branches;
-  const parent =
-    repo.forkParentId !== null && !forceSelf
-      ? getRepoById(ctx.app.db, repo.forkParentId)
-      : undefined;
+  const parent = forceSelf
+    ? undefined
+    : forkParentFor(ctx.app.db, repo, ctx.auth.user);
   const baseBranches = parent
     ? (await refSet(repoDir(ctx.app.reposRoot, parent.ownerName, parent.name)))
         .branches
@@ -216,10 +218,9 @@ export async function newPullSubmit(ctx: Ctx): Promise<Response> {
   // A fork proposing upstream creates the PR in the PARENT repo, with this
   // fork as the head. Otherwise it is a plain within-repo pull.
   const wantsParent = field(form, "baseRepo") === "parent";
-  const parent =
-    wantsParent && repo.forkParentId !== null
-      ? getRepoById(ctx.app.db, repo.forkParentId)
-      : undefined;
+  const parent = wantsParent
+    ? forkParentFor(ctx.app.db, repo, ctx.auth.user)
+    : undefined;
   const baseRepo = parent ?? repo;
   const values: ComposeValues = {
     title: field(form, "title"),

@@ -55,7 +55,7 @@ describe("forge-level secrets", () => {
         await fetch(`${servers.url}/api/v1/tokens`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
+          body: JSON.stringify({ adminConfirm: true,
             username,
             password: "a-good-passphrase",
             name: "t",

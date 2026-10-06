@@ -130,7 +130,7 @@ describe("a spawned child's apps", () => {
     child = createApp({ dataDir: childDirOf(parent, spawned.value.bodyId), port: 0 });
     await firstBoot(child);
     servers = await serve(child);
-    const token = spawned.value.claimUrl!.split("/claim/")[1]!;
+    const token = spawned.value.claimUrl!.split("/claim#")[1]!;
     const claimed = await fetch(`${servers.url}/claim/${token}`, {
       method: "POST",
       headers: { origin: servers.url },

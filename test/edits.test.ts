@@ -11,7 +11,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { editFiles, MAX_FILE_BYTES } from "../src/actions/contents.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import { createApp, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
@@ -57,7 +56,7 @@ describe("edits: files, branches and a pull in one call", () => {
       await fetch(`${base}/api/v1/tokens`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ username, password, name: scope, scope }),
+        body: JSON.stringify({ adminConfirm: true, username, password, name: scope, scope }),
       }),
     ).then((t) => t.token);
 
@@ -425,7 +424,6 @@ describe("edits on a mirror land upstream first", () => {
         password: ALICE_PASSWORD,
       }),
     });
-    resetConnectLimit();
 
     const connected = await read<{ id: string }>(
       await api("/api/v1/user/origins", {

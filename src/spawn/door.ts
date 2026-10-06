@@ -6,7 +6,7 @@
  * the caller says `false` — returns the plan and changes nothing.
  */
 
-import { listChildren, spawnForge, type SpawnError } from "../actions/spawn.ts";
+import { listChildren, reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
 import type { App } from "../app.ts";
 import { getAgentByName } from "../core/agents.ts";
 import { canRead, getRepo } from "../core/repos.ts";
@@ -32,14 +32,22 @@ export function usePlacement(app: App, placement: Placement): void {
   placements.set(app, placement);
 }
 
+/** The host a hosted child lives under: `<name>.<this>`. */
+export const childHost = (app: App): string =>
+  app.config.url ? new URL(app.config.url).host : (app.config.host ?? "localhost");
+
 function placementFor(app: App): Placement {
   let p = placements.get(app);
   if (!p) {
-    const host = app.config.url ? new URL(app.config.url).host : (app.config.host ?? "localhost");
-    p = hostedPlacement({ host });
+    p = hostedPlacement({ host: childHost(app) });
     placements.set(app, p);
   }
   return p;
+}
+
+/** Why this forge can hold no child right now, or undefined when it can. */
+export function noRoom(app: App): string | undefined {
+  return placementFor(app).room?.()?.message;
 }
 
 /** One status and one sentence per kind of failure. */
@@ -167,3 +175,11 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
   };
 }
 
+/** A new claim link for an unclaimed child (#729): the old one dies. */
+export async function reissueDoor(ctx: Ctx, user: User, name: string): Promise<Door> {
+  const made = await reissueClaim(ctx.app, user, name, { request: ctx.request, url: ctx.url });
+  if (made.ok) return { status: 201, body: { ...made.value } };
+  if (made.error.kind === "not_found")
+    return { status: 404, body: { error: "not_found", message: `no child forge named ${name}` } };
+  return spawnWords(made.error);
+}
