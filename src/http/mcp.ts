@@ -74,6 +74,8 @@ import {
 } from "../crew/direct.ts";
 import { setCrewOutsiders } from "../actions/repos.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
+import { undoFleetOp } from "../actions/fleet.ts";
+import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
 import {
   milestoneData,
   milestonesJson,
@@ -1011,6 +1013,77 @@ const TOOLS: readonly Tool[] = [
             "no issue by that number waits for others here",
           )
         : good(data);
+    },
+  },
+  {
+    name: "limb",
+    description:
+      "One action on a whole limb of the plan — a milestone and everything beneath it that only it needs. `defer` moves the limb behind the Later gate, so the crew picks none of it; `resume` brings it back, under `pillar` when you name one; `close` closes every open issue of the limb as not doing, with `reason` said on each; `undo` reverses an `operation` by its id. A dry run unless `dryRun` is false: it answers with every row before and after, what the action takes along (`taken`) and what stays because something outside the limb still waits for it (`kept`), and changes nothing. Applying and undoing take an admin token of a person who administers the app, and answer with the receipt.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        issue: {
+          type: "integer",
+          minimum: 1,
+          description: "The limb: the number of its issue.",
+        },
+        action: { type: "string", enum: ["defer", "resume", "close", "undo"] },
+        reason: {
+          type: "string",
+          description: "For close: why it is not being done, in one sentence.",
+        },
+        pillar: {
+          type: "string",
+          description:
+            "For resume: the pillar to put it back under, by name or short form; under none when absent.",
+        },
+        operation: {
+          type: "string",
+          description: "For undo: the id of the operation to reverse.",
+        },
+        dryRun: {
+          type: "boolean",
+          description: "false to apply; anything else plans and changes nothing.",
+        },
+      },
+      required: ["app", "action"],
+    },
+    writes: true,
+    dryByDefault: true,
+    async run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const dry = args["dryRun"] !== false;
+      // The fleet's rule: a read credential plans, an admin one applies.
+      if (!dry && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "applying a limb action takes an admin token");
+      const refused = (e: { code: string; message: string }) =>
+        bad(e.code, e.message);
+      if (args["action"] === "undo") {
+        if (dry) return bad("invalid", "undo is not a dry run: pass dryRun false");
+        const undone = await undoFleetOp(ctx.app, user, str(args["operation"]));
+        return undone.ok ? good(undone.value) : refused(undone.error);
+      }
+      const number = args["issue"];
+      if (
+        !isLimbAction(args["action"]) ||
+        typeof number !== "number" ||
+        !Number.isInteger(number) ||
+        number < 1
+      )
+        return bad("invalid", "give the limb's issue number and an action: defer, resume, close or undo");
+      const request = {
+        action: args["action"],
+        ...(typeof args["reason"] === "string" ? { reason: args["reason"] } : {}),
+        ...(typeof args["pillar"] === "string" ? { pillar: args["pillar"] } : {}),
+      };
+      if (dry) {
+        const plan = previewLimb(ctx.app, user, repo, number, request);
+        return plan.ok ? good({ dryRun: true, ...plan.value }) : refused(plan.error);
+      }
+      const op = await applyLimb(ctx.app, user, repo, number, request);
+      return op.ok ? good({ dryRun: false, ...op.value }) : refused(op.error);
     },
   },
   {
