@@ -205,18 +205,18 @@ describe("the terminal UI, against a real forge", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("the dashboard lists your repositories and recent activity", async () => {
+  test("the dashboard is a launcher: your repositories and what is on you, and no activity feed", async () => {
     const h = boot(forge, asAlice());
     await h.settle();
     const text = h.text();
     expect(text).toContain("alice/lighthouse");
     expect(text).toContain("alice/vault");
-    expect(text).toContain("Recent activity");
-    // English, not event kinds: nothing in the feed may read like a payload.
-    expect(text).toContain("alice opened issue #1");
+    expect(text).toContain("On you");
+    expect(text).toContain("find a repository");
+    // What happened is the web feed's job now (#636).
+    expect(text).not.toContain("Recent activity");
+    expect(text).not.toContain("Organizations");
     expect(text).not.toMatch(/issue\.opened|repo\.created|label\.created/);
-    // Account plumbing is not repo activity.
-    expect(text).not.toContain("user.created");
     h.stop();
   });
 

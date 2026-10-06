@@ -313,6 +313,9 @@ export function appPanels(
     <span class="spacer"></span>
     ${lookNow(ctx, repo, record)}
     ${openAppBtn(base, production)}
+    ${when(!writer, () =>
+      btn("Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
+    )}
     ${when(production, (env) => envActions(base, env, writer))}
   </div>`;
   return {

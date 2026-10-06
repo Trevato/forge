@@ -123,6 +123,12 @@ const app = createApp({
         },
       }
     : {}),
+  // FORGE_MAIL_DAILY: the most messages the forge sends in a day, to
+  // everyone together (`actions/mail.ts`).
+  ...(Number.isInteger(Number(process.env.FORGE_MAIL_DAILY)) &&
+  Number(process.env.FORGE_MAIL_DAILY) > 0
+    ? { mailDailyCap: Number(process.env.FORGE_MAIL_DAILY) }
+    : {}),
   // Who may say who the client is: the ingress in front of a hosted forge.
   ...(trustedProxies.length > 0 ? { trustedProxies } : {}),
   ...((process.env.FORGE_CLIENT_IP_HEADER ?? "").trim() !== ""
@@ -130,6 +136,12 @@ const app = createApp({
     : {}),
   ...(Number(process.env.FORGE_CREW_CEILING_USD) > 0
     ? { crewCeilingUsd: Number(process.env.FORGE_CREW_CEILING_USD) }
+    : {}),
+  // FORGE_CREW_ISSUE_RUNS: runs one issue may start in a day before it is
+  // parked for a person (`crew/guard.ts`).
+  ...(Number.isInteger(Number(process.env.FORGE_CREW_ISSUE_RUNS)) &&
+  Number(process.env.FORGE_CREW_ISSUE_RUNS) > 0
+    ? { issueRunCap: Number(process.env.FORGE_CREW_ISSUE_RUNS) }
     : {}),
   ...((process.env.FORGE_EDGE_NAME ?? "").trim() === ""
     ? {}

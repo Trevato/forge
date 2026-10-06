@@ -155,7 +155,7 @@ describe("an interrupted run is not a park", () => {
     expect(parks(work)).toEqual([]);
     expect(parkedCount(app, fresh(), work.id)).toBe(0);
     // Three outages inside the hour are not three failures.
-    expect(breakerTripped(app.db, work.id)).toBe(false);
+    expect(breakerTripped(app.db, fresh(), work.id)).toBe(false);
     // Not stalled: nobody needs to speak for it to be picked again.
     expect(await driveRepo(app, fresh())).toBe("picked");
     expect(getIssueById(app.db, work.id)!.assigneeId).toBe(mason.id);
