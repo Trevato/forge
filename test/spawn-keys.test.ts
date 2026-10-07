@@ -1,7 +1,7 @@
 /**
  * A spawned child's own keys and domain (#576): its secret key and SSH host
  * key are made in its own directory and are not the parent's; nothing in
- * its config points into the parent; its address is <name>.<parent's host>
+ * its config points into the parent; its address is <name>--<parent's host>
  * and its home shows it; it prints FORGE_APP_SSH verbatim or says the
  * terminal is off. And the one credential a spawner may hand a child — an
  * API-billed model key with a daily cap — is sealed with the child's key,
@@ -336,11 +336,11 @@ describe("a spawned child's own keys and domain", () => {
     }
   });
 
-  test("the child's address is <name>.<parent's host>, recorded and shown on its home", async () => {
+  test("the child's address is <name>--<parent's host>, recorded and shown on its home", async () => {
     const record = JSON.parse(
       await Bun.file(join(childDir, "parent.json")).text(),
     ) as { url: string };
-    expect(record.url).toBe("https://maria.forge.test");
+    expect(record.url).toBe("https://maria--forge.test");
     const child = createApp({ dataDir: childDir, port: 0 });
     await firstBoot(child);
     const childServers = await serve(child);
@@ -366,7 +366,7 @@ describe("a spawned child's own keys and domain", () => {
         ).text()
       ).replace(/\s+/g, " ");
       expect(home).toContain(
-        'Your forge: <a href="https://maria.forge.test">maria.forge.test</a>',
+        'Your forge: <a href="https://maria--forge.test">maria--forge.test</a>',
       );
       // No SSH of its own and no host command: the keys page says the terminal is off.
       const keys = await (

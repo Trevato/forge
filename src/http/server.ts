@@ -397,6 +397,8 @@ import {
   proxyApp,
   resolveAppHost,
 } from "../apps/proxy.ts";
+
+import { closeHostedChildren, resolveHostedChild } from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 
 // ---- auth ----
@@ -1566,6 +1568,27 @@ async function clearStaleSockets(app: App): Promise<void> {
   }
 }
 
+
+/**
+ * One forge's HTTP routes without a listener: what the parent's Host
+ * dispatch uses to answer for a hosted child in-process.
+ */
+export interface ForgeHttp {
+  handle(request: Request): Promise<Response>;
+  close(): void;
+}
+
+export function forgeHttp(app: App): ForgeHttp {
+  const router = buildRouter();
+  const apiRouter = buildApiRouter();
+  const limiter = new RateLimiter();
+  return {
+    handle: (request) => answer(app, router, apiRouter, limiter, request),
+    // App lifetime is owned by spawn/host.ts (closeHostedChildren).
+    close: () => {},
+  };
+}
+
 export async function serve(app: App): Promise<Servers> {
   const router = buildRouter();
   const apiRouter = buildApiRouter();
@@ -1573,6 +1596,8 @@ export async function serve(app: App): Promise<Servers> {
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
+  // Hosted children answered in-process: one ForgeHttp per child dataDir.
+  const childHttps = new Map<string, ForgeHttp>();
   // An account suspended or removed ends what it has open on this
   // listener: its event streams and the app sockets it was let into. A
   // browser signed out ends the streams it opened.
@@ -1636,6 +1661,29 @@ export async function serve(app: App): Promise<Servers> {
         if (target === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
       }
+      // A hosted child's Host (`<name>--<parentHost>`) is answered by that
+      // child's own App before the parent's pages. Ingress routes the label
+      // here; forge terminates Host routing in-process.
+      {
+        const child = await resolveHostedChild(app, request);
+        if (child === "unknown")
+          return securityFloor(new Response("not found", { status: 404 }));
+        if (child !== undefined) {
+          const key = child.config.dataDir;
+          let http = childHttps.get(key);
+          if (http === undefined) {
+            http = forgeHttp(child);
+            childHttps.set(key, http);
+          }
+          notePeer(request, server.requestIP(request)?.address, trust);
+          armClose(request, () => server.timeout(request, 1));
+          const response = securityFloor(await http.handle(request));
+          await settleBody(request);
+          if (!mustClose(request)) return response;
+          server.timeout(request, 1);
+          return withHeader(response, "connection", "close");
+        }
+      }
       notePeer(request, server.requestIP(request)?.address, trust);
       // A body refused part-way, or one left unread with no declared length,
       // ends its connection once answered (`http/limits.ts`).
@@ -1680,6 +1728,9 @@ export async function serve(app: App): Promise<Servers> {
     stop() {
       endOpen();
       clearInterval(sweep);
+      for (const http of childHttps.values()) http.close();
+      childHttps.clear();
+      closeHostedChildren(app);
       web.stop(true);
       internal.stop(true);
       // Our socket goes with us; a corpse is only ever an unclean exit's.

@@ -128,8 +128,8 @@ describe("the client list", () => {
     if (lost.status !== 201) throw new Error(`spawn lou ${lost.status}`);
     // Children are reached at their address; here maria's is this server.
     useChildFetch(parent, (url, init) =>
-      url.startsWith("https://maria.forge.test/")
-        ? fetch(url.replace("https://maria.forge.test", childServers.url), init)
+      url.startsWith("https://maria--forge.test/")
+        ? fetch(url.replace("https://maria--forge.test", childServers.url), init)
         : Promise.reject(new Error("unreachable")),
     );
     admin = await signIn("alice");
@@ -193,7 +193,7 @@ describe("the client list", () => {
     const maria = html.slice(html.indexOf('data-forge="maria"'));
     expect(maria).toContain("Maria&#39;s bakery");
     expect(maria).toContain("alice/bakery");
-    expect(maria).toContain('href="https://maria.forge.test"');
+    expect(maria).toContain('href="https://maria--forge.test"');
     expect(maria).toMatch(/data-claimed="no"/);
     const lou = html.slice(html.indexOf('data-forge="lou"'));
     expect(lou).toMatch(/data-claimed="unknown"/);
@@ -218,7 +218,7 @@ describe("the client list", () => {
     const res = await fresh(admin);
     expect(res.status).toBe(201);
     expect(res.headers.get("cache-control")).toContain("no-store");
-    const link = /https:\/\/maria\.forge\.test\/claim#[A-Za-z0-9_-]{43}/.exec(await res.text())?.[0];
+    const link = /https:\/\/maria--forge.test\/claim#[A-Za-z0-9_-]{43}/.exec(await res.text())?.[0];
     expect(link).toBeDefined();
     expect(link).not.toBe(claimUrl);
     claimUrl = link!;

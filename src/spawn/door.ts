@@ -14,8 +14,15 @@ import { kindOfToken } from "../core/subscriptions.ts";
 import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Ctx } from "../http/context.ts";
-import { hostedPlacement, type Placement } from "./placement.ts";
+import {
+  childPublicUrl,
+  hostedPlacement,
+  memoryBodies,
+  type BodyStore,
+  type Placement,
+} from "./placement.ts";
 import { dryRun, planSpawn, KEY_BUDGET_NOTE, MAX_APPS, type CatalogApp, type CrewBrief, type SpawnSource } from "./plan.ts";
+import { readdirSync, readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -32,14 +39,57 @@ export function usePlacement(app: App, placement: Placement): void {
   placements.set(app, placement);
 }
 
-/** The host a hosted child lives under: `<name>.<this>`. */
+/**
+ * The parent forge's public host. A hosted child's address is
+ * `<name>--<this>` (see `childPublicUrl`), one label under the platform apex.
+ */
 export const childHost = (app: App): string =>
   app.config.url ? new URL(app.config.url).host : (app.config.host ?? "localhost");
+
+/** Public URL of a hosted child — derived from name + parent host so old ledgers stay reachable. */
+export const childUrlOf = (app: App, name: string): string =>
+  childPublicUrl(name, childHost(app));
+
+/** Seed the in-memory body store from on-disk ledgers so room()/exists survive restart. */
+function seedBodies(app: App, store: BodyStore): void {
+  const dir = join(app.config.dataDir, "spawn");
+  let files: string[] = [];
+  try {
+    files = readdirSync(dir);
+  } catch {
+    return;
+  }
+  const host = childHost(app);
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    try {
+      const ledger = JSON.parse(readFileSync(join(dir, f), "utf8")) as {
+        name?: unknown;
+        bodyId?: unknown;
+        url?: unknown;
+      };
+      if (typeof ledger.name !== "string" || typeof ledger.bodyId !== "string") continue;
+      if (store.list().some((b) => b.bodyId === ledger.bodyId || b.name === ledger.name)) continue;
+      store.add({
+        bodyId: ledger.bodyId,
+        name: ledger.name,
+        url: childPublicUrl(ledger.name, host),
+        depth: 1,
+        agents: 1,
+        ssh: false,
+      });
+    } catch {
+      // A corrupt ledger line is ignored for capacity; spawn reads it carefully.
+    }
+  }
+}
 
 function placementFor(app: App): Placement {
   let p = placements.get(app);
   if (!p) {
-    p = hostedPlacement({ host: childHost(app) });
+    const store = memoryBodies();
+    seedBodies(app, store);
+    p = hostedPlacement({ host: childHost(app), store });
     placements.set(app, p);
   }
   return p;

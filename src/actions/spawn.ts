@@ -50,7 +50,7 @@ import { Database } from "bun:sqlite";
 import { loadKey, open } from "../kernel/secret.ts";
 import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
-import type { Placement } from "../spawn/placement.ts";
+import { childPublicUrl, type Placement } from "../spawn/placement.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { requireUser } from "./access.ts";
 
@@ -119,6 +119,14 @@ export const childDirOf = (app: App, bodyId: string): string =>
   join(app.config.dataDir, "children", bodyId);
 const ledgerPath = (app: App, name: string): string =>
   join(app.config.dataDir, "spawn", `${name}.json`);
+
+/** Parent public host for deriving child URLs (ignores stale ledger.url). */
+const parentHostOf = (app: App): string =>
+  app.config.url ? new URL(app.config.url).host : (app.config.host ?? "localhost");
+
+/** Live child URL from name + parent host — old subdomain ledgers still resolve. */
+export const liveChildUrl = (app: App, name: string): string =>
+  childPublicUrl(name, parentHostOf(app));
 
 async function readLedger(app: App, name: string): Promise<Ledger | undefined> {
   const file = Bun.file(ledgerPath(app, name));
@@ -202,7 +210,7 @@ async function make(
         });
     }
     if (ledger.done)
-      return ok({ name: plan.name, org: plan.org, url: ledger.url, bodyId: ledger.bodyId, existed: true });
+      return ok({ name: plan.name, org: plan.org, url: liveChildUrl(app, plan.name), bodyId: ledger.bodyId, existed: true });
     if (ledger.statusToken === undefined) {
       ledger.statusToken = secret();
       await writeLedger(app, ledger);
@@ -230,19 +238,19 @@ async function make(
 
   const copied = await copyInto(app, owner, plan, ledger, deps.modelKey);
   if (!copied.ok) return fail(copied.error);
-  const claimUrl = claimLink(ledger.url, copied.value);
+  const claimUrl = claimLink(liveChildUrl(app, plan.name), copied.value);
 
   ledger.done = true;
   await writeLedger(app, ledger);
   app.bus.append({
     kind: "forge.spawned",
     actorId: owner.id,
-    payload: { name: plan.name, org: plan.org, url: ledger.url, apps: plan.apps.map((a) => a.ref) },
+    payload: { name: plan.name, org: plan.org, url: liveChildUrl(app, plan.name), apps: plan.apps.map((a) => a.ref) },
   });
   return ok({
     name: plan.name,
     org: plan.org,
-    url: ledger.url,
+    url: liveChildUrl(app, plan.name),
     bodyId: ledger.bodyId,
     existed: false,
     claimUrl,
@@ -386,8 +394,8 @@ async function copyInto(
         upstream,
         name: plan.name,
         org: plan.org,
-        // The child's own address, from the placement: <name>.<parent's host>.
-        url: ledger.url,
+        // The child's own address: <name>--<parent's host>.
+        url: liveChildUrl(app, plan.name),
         keepAccess: plan.keepAccess,
         // Only the hash: the parent alone holds what it answers to.
         ...(ledger.statusToken === undefined ? {} : { statusHash: sha256(ledger.statusToken) }),
@@ -448,7 +456,7 @@ export async function reissueClaim(
       return err({ kind: "refused", reason: "claimed", message: `${name} is already claimed; ask its owner to invite you` });
     const token = mintClaim(child.db, spawned.org.id);
     app.bus.append({ kind: "forge.claim_reissued", actorId: user.value.id, payload: { name } });
-    return ok({ name, claimUrl: claimLink(ledger.url, token) });
+    return ok({ name, claimUrl: claimLink(liveChildUrl(app, name), token) });
   } finally {
     child.close();
   }
@@ -482,7 +490,7 @@ export async function listChildren(app: App): Promise<Child[]> {
     if (ledger)
       out.push({
         name: ledger.name,
-        url: ledger.url,
+        url: liveChildUrl(app, ledger.name),
         bodyId: ledger.bodyId,
         done: ledger.done,
         for: ledger.forWhom ?? null,

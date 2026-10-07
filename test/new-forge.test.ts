@@ -163,7 +163,7 @@ describe("+ New forge", () => {
         ])
       ).text()
     ).replace(/\s+/g, " ");
-    expect(left).toContain("https://kai.forge.test");
+    expect(left).toContain("https://kai--forge.test");
     expect(left).toContain("Whoever opens the link becomes its admin");
     expect(left).toContain("You leave once it is claimed");
     const kept = (
@@ -206,7 +206,7 @@ describe("+ New forge", () => {
       ["do", "spawn"],
     ]);
     expect(made.status).toBe(201);
-    expect(await made.text()).toMatch(/https:\/\/lia\.forge\.test\/claim#[A-Za-z0-9_-]{43}/);
+    expect(await made.text()).toMatch(/https:\/\/lia--forge.test\/claim#[A-Za-z0-9_-]{43}/);
   });
 
   test("an error is shown beside the field that caused it", async () => {
@@ -242,7 +242,7 @@ describe("+ New forge", () => {
     expect(res.headers.get("cache-control")).toContain("no-store");
     expect(res.headers.get("location")).toBeNull();
     const html = await res.text();
-    expect(html).toMatch(/https:\/\/kai\.forge\.test\/claim#[A-Za-z0-9_-]{43}/);
+    expect(html).toMatch(/https:\/\/kai--forge.test\/claim#[A-Za-z0-9_-]{43}/);
     expect(await children()).toBe(2);
     // Asked again, the child exists: no second link.
     const again = await post(admin, [

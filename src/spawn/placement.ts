@@ -3,9 +3,10 @@
  * validated SpawnPlan to a Placement and gets back where the child lives;
  * it never learns whether that is inside this process or on someone else's
  * machine. `hosted` is the only implementation today: the child is an app
- * inside the parent, reached by a subdomain, with no SSH and one agent at a
- * time. An external placement (Cloudflare, Fly, metal — spike #339) plugs
- * in by implementing the same interface.
+ * inside the parent, reached by a single-label host
+ * (`<name>--<parentHost>`), with no SSH and one agent at a time. An
+ * external placement (Cloudflare, Fly, metal — spike #339) plugs in by
+ * implementing the same interface.
  */
 
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -55,6 +56,39 @@ export function memoryBodies(): BodyStore {
 export const MAX_CHILDREN = 5;
 export const MAX_DEPTH = 2;
 
+/**
+ * Host suffix a hosted child attaches to: `--forge.open-platform.sh` when
+ * the parent is `forge.open-platform.sh`. One label under the platform
+ * apex (same shape as apps), not a nested subdomain the wildcard misses.
+ */
+export function childHostSuffix(parentHost: string): string {
+  const host = parentHost.toLowerCase().replace(/:\d+$/, "");
+  return `--${host}`;
+}
+
+/** Public origin of a hosted child, derived from name + parent host. */
+export function childPublicUrl(name: string, parentHost: string): string {
+  return `https://${name}${childHostSuffix(parentHost)}`;
+}
+
+const CHILD_NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
+
+/**
+ * The child name a `Host` names under this parent's suffix, or undefined
+ * when the host is not a hosted-child address.
+ */
+export function parseHostedChildName(
+  hostHeader: string,
+  parentHost: string,
+): string | undefined {
+  const host = hostHeader.toLowerCase().replace(/:\d+$/, "");
+  if (!/^[a-z0-9](?:[a-z0-9.-]{0,252})?$/i.test(host)) return undefined;
+  const suffix = childHostSuffix(parentHost);
+  if (!host.endsWith(suffix)) return undefined;
+  const name = host.slice(0, -suffix.length);
+  return CHILD_NAME.test(name) ? name : undefined;
+}
+
 export interface HostedOptions {
   /** The parent forge's public host, e.g. "forge.example.com". */
   readonly host: string;
@@ -95,7 +129,7 @@ export function hostedPlacement(opts: HostedOptions): Placement {
       if (held.some((b) => b.name === plan.name)) {
         return refuse("exists", `a child named ${plan.name} already exists`);
       }
-      const url = `https://${plan.name}.${opts.host}`;
+      const url = childPublicUrl(plan.name, opts.host);
       const bodyId = newId();
       store.add({ bodyId, name: plan.name, url, depth: depth + 1, agents: 1, ssh: false });
       return ok({ url, bodyId });
