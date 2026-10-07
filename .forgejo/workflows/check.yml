@@ -13,22 +13,33 @@ name: check
 # applies to forge check cells, NOT to Actions runs-on: isolated — so keep
 # `node … tsc --noEmit &&` in forge.json check.run for forge-side cells and
 # do not duplicate typecheck here. This workflow only runs the gate half.
+#
+# The serial SHARDS=1 gate is ~32–50m wall clock. The isolated runner silently
+# cuts a single job at ~30m (pod/runner wall), so timeout-minutes: 120 does
+# not help. Split the gate across matrix jobs via --shard N/M; each cell
+# still runs FORGE_CHECK_SHARDS=1 (one bun test at a time — do not reintroduce
+# parallel bun in one container; that OOMed on #386). A final `check` job
+# aggregates the matrix so the required status stays `check / check (…)`.
 on:
   push:
     branches: [main]
   pull_request:
 
 jobs:
-  check:
+  gate:
     runs-on: isolated
-    # Serial SHARDS=1 gate is ~50m locally; without a job ceiling the
-    # runner can cut the suite off mid-file (~40m) before the last shards.
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        # 174 gate files → ~58 each; ~11–17m expected, under the ~30m runner wall.
+        shard: [1, 2, 3]
     env:
       REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
       # Do not set NODE_OPTIONS job-wide: a big heap lets Node claim the
       # cgroup and the kernel OOMs (`Killed`, exit 137). Typecheck lives in
       # forge.json check.run (4Gi forge cells), not on this runner.
+      FORGE_CHECK_SHARD_TOTAL: "3"
     steps:
       - name: derive owner + app
         run: |
@@ -50,13 +61,29 @@ jobs:
         working-directory: src
         run: bun install --frozen-lockfile
 
-      # Gate only — typecheck skipped on isolated Actions (see header comment).
+      # Gate slice only — typecheck skipped on isolated Actions (see header).
       # forge.json check.run still runs tsc on forge check cells (4Gi).
-      - name: gate (forge.json check.run, test-shards half)
+      - name: gate shard ${{ matrix.shard }}/3
         working-directory: src
+        env:
+          FORGE_CHECK_SHARD_INDEX: ${{ matrix.shard }}
         run: |
           set -eu
-          echo "$ FORGE_CHECK_SHARDS=1 bun scripts/test-shards.ts --timeout 60000 --gate"
+          echo "$ FORGE_CHECK_SHARDS=1 bun scripts/test-shards.ts --timeout 60000 --gate --shard ${{ matrix.shard }}/3"
           # stderr for start lines: Actions often fully-buffers piped stdout
           # until process exit, which an OOM never reaches.
-          FORGE_CHECK_SHARDS=1 bun scripts/test-shards.ts --timeout 60000 --gate
+          FORGE_CHECK_SHARDS=1 bun scripts/test-shards.ts --timeout 60000 --gate --shard ${{ matrix.shard }}/3
+
+  # Required PR status is `check / check (pull_request)`. Matrix cells report
+  # as `check / gate (N, …)`; this job restores the top-level `check` name.
+  check:
+    runs-on: isolated
+    needs: [gate]
+    if: always()
+    timeout-minutes: 10
+    steps:
+      - name: require every gate shard green
+        run: |
+          set -eu
+          echo "gate result: ${{ needs.gate.result }}"
+          test "${{ needs.gate.result }}" = "success"
