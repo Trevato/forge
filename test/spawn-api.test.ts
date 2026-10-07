@@ -101,11 +101,13 @@ describe("spawn over the API and MCP", () => {
     expect((await post(rw, [1])).status).toBe(422);
   });
 
-  test("a non-admin, an ro token and no token are refused, even for a dry run", async () => {
-    expect((await post(bobRw, { name: "kid" })).status).toBe(403);
-    expect((await post(bobRw, { name: "kid", dryRun: false })).status).toBe(403);
+  test("a non-admin person may plan and spawn; ro and no token may not make", async () => {
+    // Bob is not a site admin — self-serve spawn is allowed for any person.
+    // Empty apps: bob cannot read alice's private notes.
+    expect((await post(bobRw, { name: "bobs-kid", apps: [] })).status).toBe(200);
     expect((await post(ro, { name: "kid" })).status).toBe(403);
     expect((await post(null, { name: "kid" })).status).toBe(401);
+    // Listing forges sent stays an admin's.
     expect((await get(bobRw)).status).toBe(403);
     expect(placed).toBe(0);
   });
@@ -120,13 +122,14 @@ describe("spawn over the API and MCP", () => {
     const res = await post(rw, { name: "kid", apps: ["alice/notes"], crew: ["scout"], dryRun: false });
     expect(res.status).toBe(201);
     const made = (await res.json()) as any;
-    expect(made).toMatchObject({ dryRun: false, name: "kid", url: "https://kid.fake.test", existed: false });
+    expect(made).toMatchObject({ dryRun: false, name: "kid", existed: false });
+    expect(String(made.url)).toContain("kid");
     expect(placed).toBe(1);
     const list = (await (await get(ro)).json()) as any;
     expect(list.items).toEqual([
       {
         name: "kid",
-        url: "https://kid.fake.test",
+        url: expect.stringContaining("kid"),
         bodyId: "fake-1",
         done: true,
         for: null,
@@ -161,12 +164,13 @@ describe("spawn over the API and MCP", () => {
     expect(JSON.parse(plan.text)).toMatchObject({ dryRun: true, says: expect.stringContaining("nothing was made") });
     const denied = await mcp(ro, { name: "kid2", apps: ["alice/notes"], dryRun: false });
     expect(denied).toEqual({ error: true, text: "forbidden: this token may read, not act" });
-    const notAdmin = await mcp(bobRw, { name: "kid2" });
-    expect(notAdmin.error).toBe(true);
-    expect(notAdmin.text).toStartWith("forbidden:");
+    // A non-admin person's rw token may plan via MCP (empty apps — no private reads).
+    const asBob = await mcp(bobRw, { name: "bobs-kid2", apps: [] });
+    expect(asBob.error).toBe(false);
+    expect(JSON.parse(asBob.text)).toMatchObject({ dryRun: true });
     const made = await mcp(rw, { name: "kid2", apps: ["alice/notes"], dryRun: false });
     expect(made.error).toBe(false);
-    expect(JSON.parse(made.text)).toMatchObject({ dryRun: false, name: "kid2", url: "https://kid2.fake.test" });
+    expect(JSON.parse(made.text)).toMatchObject({ dryRun: false, name: "kid2" });
     expect(placed).toBe(2);
     // The claim link, a live secret, stays out of the conversation (#839)...
     expect(made.text).not.toContain("claimUrl");

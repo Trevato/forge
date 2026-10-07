@@ -157,7 +157,9 @@ export async function spawnForge(
   if (crossOrigin(deps.request, deps.url, app.log)) return err({ kind: "cross_origin" });
   const user = requireUser(actor);
   if (!user.ok) return err({ kind: "unauthorized" });
-  if (!user.value.isAdmin) return err({ kind: "forbidden" });
+  // Any signed-in person may start a child forge (claim it, become its
+  // admin). Agents and orgs cannot: a forge is a person's to open.
+  if (user.value.kind !== "user") return err({ kind: "forbidden" });
   const owner = user.value;
 
   // The dry-run is not trusted: the plan is made again, here.

@@ -157,12 +157,12 @@ function asksLink(ctx: Ctx): Html {
   >`;
 }
 
-/** A whole forge for someone (`/forges/new`): an admin's verb only. */
+/** A whole forge for someone (`/forges/new`): any signed-in person's. */
 const NEW_FORGE: MenuItem = { label: "New forge", href: "/forges/new", icon: "fork" };
 
 /** The door shows only to an admin, and only while a child still fits here. */
 const sendsForges = (ctx: Ctx): boolean =>
-  ctx.auth.user?.isAdmin === true && noRoom(ctx.app) === undefined;
+  ctx.auth.user?.kind === "user" && noRoom(ctx.app) === undefined;
 
 function newMenu(ctx: Ctx): Html {
   const items: MenuItem[] = [

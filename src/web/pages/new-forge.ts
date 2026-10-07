@@ -1,6 +1,6 @@
 /**
- * `/forges/new`: "+ New forge" (#426), the page a forge's admin spawns a
- * child from. It is the same door as `POST /api/v1/forges` and the MCP
+ * `/forges/new`: "+ New forge" (#426), the page a signed-in person spawns a
+ * child from (they claim it and become its admin). It is the same door as `POST /api/v1/forges` and the MCP
  * `spawn` (`spawn/door.ts`), as one form that works without JavaScript.
  *
  * The path: the owner wants to send someone a forge; from the "+" menu he
@@ -106,7 +106,7 @@ function formView(
   const crew = listAgents(ctx.app.db);
   return html`<div class="narrow-wide">
     ${pageHead("New forge", {
-      sub: "A whole forge for someone: the apps you choose, a crew, and one link to send.",
+      sub: "Your own forge, or one for someone else: the apps you choose, a crew, and one link to claim.",
       actions: btn("Forges you sent", { href: "/forges", size: "sm" }),
     })}
     ${errors["form"]
@@ -303,10 +303,10 @@ function madeView(body: Record<string, unknown>): Html {
 const asBool = (form: Form, name: string): boolean =>
   field(form, name) === "on";
 
-// GET /forges/new — the form; an admin's only.
+// GET /forges/new — any signed-in person; agents are refused.
 export function newForgePage(ctx: Ctx): Response {
   const user = ctx.auth.user;
-  if (!user?.isAdmin) return notFoundPage(ctx);
+  if (!user || user.kind !== "user") return notFoundPage(ctx);
   return page({
     ctx,
     title: "New forge",
@@ -317,7 +317,7 @@ export function newForgePage(ctx: Ctx): Response {
 // POST /forges/new — `do=plan` shows the plan; anything else spawns.
 export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
-  if (!user?.isAdmin) return notFoundPage(ctx);
+  if (!user || user.kind !== "user") return notFoundPage(ctx);
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   const values: Values = {
