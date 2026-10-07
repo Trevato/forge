@@ -159,7 +159,7 @@ describe("a spawned child's first boot", () => {
 
   test("the spawner sees one claim link; neither forge keeps it in the clear", async () => {
     expect(claimUrl).toMatch(
-      /^https:\/\/maria\.forge\.test\/claim#[A-Za-z0-9_-]{43}$/,
+      /^https:\/\/maria--forge\.test\/claim#[A-Za-z0-9_-]{43}$/,
     );
     let everything = "";
     for (const root of [join(dir, "spawn"), childDirOf(parent, bodyId)])

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
+import { childPublicUrl, childHostSuffix, hostedPlacement, memoryBodies, parseHostedChildName } from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
 
 const plan = (name: string): SpawnPlan => ({ name, org: "o", apps: [], briefs: [], subscriptions: [], direction: "", keepAccess: false, budgetUsd: null });
@@ -13,7 +13,7 @@ describe("hosted placement", () => {
   test("places a child as a subdomain of the parent, one agent, no SSH", async () => {
     const { p, store } = make();
     const r = await p.place(plan("kid"));
-    expect(r).toEqual({ ok: true, value: { url: "https://kid.f.test", bodyId: "b1" } });
+    expect(r).toEqual({ ok: true, value: { url: "https://kid--f.test", bodyId: "b1" } });
     expect(store.list()[0]).toMatchObject({ depth: 1, agents: 1, ssh: false });
   });
 
@@ -41,5 +41,22 @@ describe("hosted placement", () => {
     const r = await p.place(plan("a"));
     expect(!r.ok && r.error.reason).toBe("exists");
     expect((await p.retire("nope")).ok).toBe(true);
+  });
+});
+
+describe("hosted child hostnames", () => {
+  test("derive a single-label child URL from the parent host", () => {
+    expect(childHostSuffix("forge.open-platform.sh")).toBe("--forge.open-platform.sh");
+    expect(childPublicUrl("homie", "forge.open-platform.sh")).toBe(
+      "https://homie--forge.open-platform.sh",
+    );
+    expect(childPublicUrl("kid", "forge.test")).toBe("https://kid--forge.test");
+  });
+
+  test("parse a child name from Host", () => {
+    expect(parseHostedChildName("homie--forge.open-platform.sh", "forge.open-platform.sh")).toBe("homie");
+    expect(parseHostedChildName("forge.open-platform.sh", "forge.open-platform.sh")).toBeUndefined();
+    expect(parseHostedChildName("notes--forge-trevato-apps.open-platform.sh", "forge.open-platform.sh")).toBeUndefined();
+    expect(parseHostedChildName("Homie--Forge.open-platform.sh:443", "forge.open-platform.sh")).toBe("homie");
   });
 });

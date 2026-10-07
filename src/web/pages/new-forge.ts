@@ -13,7 +13,7 @@ import { listAgents } from "../../core/agents.ts";
 import { listReposVisibleTo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import { childHost, noRoom, spawnDoor, type Door } from "../../spawn/door.ts";
+import { childHost, childUrlOf, noRoom, spawnDoor, type Door } from "../../spawn/door.ts";
 import {
   LEFT_BEHIND,
   MAX_FOR_CHARS,
@@ -119,7 +119,7 @@ function formView(
           value: values.name,
           required: true,
           autofocus: true,
-          hint: `Its address: <name>.${childHost(ctx.app)}. Lowercase letters, digits and dashes.`,
+          hint: `Its address: <name>--${childHost(ctx.app)}. Lowercase letters, digits and dashes.`,
           ...(errors["name"] ? { error: errors["name"] } : {}),
         })}
         ${formField({
@@ -225,7 +225,7 @@ function planView(ctx: Ctx, values: Values, body: Record<string, unknown>): Html
   const note = body["keyNote"];
   const plan = body["plan"] as { budgetUsd?: number | null } | undefined;
   const budget = plan?.budgetUsd ?? null;
-  const address = `https://${values.name}.${childHost(ctx.app)}`;
+  const address = childUrlOf(ctx.app, values.name);
   return card(
     html`<ul class="mb">
         <li>A forge at <b>${address}</b>.</li>

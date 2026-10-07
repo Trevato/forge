@@ -53,7 +53,7 @@ export interface Spawned {
   readonly org: User;
   /** Whether the spawner keeps owner access after the claim. */
   readonly keepAccess: boolean;
-  /** The child's own address, `<name>.<parent's host>`, when recorded. */
+  /** The child's own address, `<name>--<parent's host>`, when recorded. */
   readonly url: string | undefined;
   /** The hash of what the parent answers to (`spawn/clients.ts`), when recorded. */
   readonly statusHash: string | undefined;
