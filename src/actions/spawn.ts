@@ -89,6 +89,8 @@ export interface SpawnDeps {
    * `budgetUsd`, locked in the child.
    */
   readonly modelKey?: string;
+  /** Anthropic-compatible API base URL sealed with the starter key (OpenRouter, etc.). */
+  readonly modelEndpoint?: string;
 }
 
 interface Ledger {
@@ -236,7 +238,7 @@ async function make(
     await writeLedger(app, ledger);
   }
 
-  const copied = await copyInto(app, owner, plan, ledger, deps.modelKey);
+  const copied = await copyInto(app, owner, plan, ledger, deps.modelKey, deps.modelEndpoint);
   if (!copied.ok) return fail(copied.error);
   const claimUrl = claimLink(liveChildUrl(app, plan.name), copied.value);
 
@@ -267,6 +269,7 @@ async function copyInto(
   plan: SpawnPlan,
   ledger: Ledger,
   modelKey: string | undefined,
+  modelEndpoint: string | undefined,
 ): Promise<Result<string, string>> {
   const dir = childDirOf(app, ledger.bodyId);
   await mkdir(dir, { recursive: true });
@@ -377,6 +380,9 @@ async function copyInto(
           const added = addSubscription(child.db, dir, {
             name: STARTER_KEY,
             token: modelKey,
+            ...(modelEndpoint === undefined || modelEndpoint.trim() === ""
+              ? {}
+              : { apiBase: modelEndpoint }),
             createdBy: founder.id,
           });
           return added.ok ? added.value : undefined;

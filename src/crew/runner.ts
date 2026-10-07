@@ -87,6 +87,8 @@ import { parkedTwice } from "./parks.ts";
 import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import {
+  credentialEnvOf,
+  hostOfApiBase,
   pickSubscription,
   PLATFORM,
   restSubscription,
@@ -893,12 +895,18 @@ async function work(
     // Asked again for every invocation (`crew/sandbox.ts`): an agent made
     // since the last one is denied from this one on.
     const hosts = grant.hosts;
+    const gatewayHost =
+      picked.kind === "ready" ? hostOfApiBase(picked.apiBase) : undefined;
     const shellPolicy = () =>
       sandboxPolicy({
         dataDir: app.config.dataDir,
         agentName: agent.user.username,
         urls: [options.localUrl, options.forgeUrl],
-        extraHosts: [...(options.allowHosts ?? []), ...hosts],
+        extraHosts: [
+          ...(options.allowHosts ?? []),
+          ...hosts,
+          ...(gatewayHost === undefined ? [] : [gatewayHost]),
+        ],
         enforced: options.sandboxEnforced,
         runId: run.id,
       });
@@ -1508,13 +1516,19 @@ function redactResult<T extends { result: string }>(r: T): T {
 
 /**
  * The credential a run's environment carries: the picked account's token
- * under the variable Claude Code reads it from, or — with nothing granted —
- * whatever the forge itself was started with.
+ * under the variable Claude Code reads it from (plus a gateway base URL when
+ * the account has one), or — with nothing granted — whatever the forge
+ * itself was started with.
  */
 function credentialEnv(picked: Pick): Record<string, string> {
-  if (picked.kind === "ready") return { [picked.envName]: picked.token };
+  if (picked.kind === "ready") return credentialEnvOf(picked);
   const own: Record<string, string> = {};
-  for (const name of ["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]) {
+  for (const name of [
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_AUTH_TOKEN",
+  ]) {
     const value = process.env[name];
     if (value !== undefined) own[name] = value;
   }

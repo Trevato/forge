@@ -13,12 +13,15 @@ import type { Repo } from "../src/core/repos.ts";
 import { listRuns } from "../src/core/runs.ts";
 import {
   addSubscription,
+  credentialEnvOf,
   deleteSubscription,
   EVERYONE,
   getSubscription,
+  hostOfApiBase,
   kindOfToken,
   listGrants,
   listSubscriptions,
+  parseApiBase,
   pickSubscription,
   restSubscription,
   setGrants,
@@ -32,13 +35,30 @@ import { serve, type Servers } from "../src/http/server.ts";
 const OAT = "sk-ant-oat01-personal-token-for-the-test";
 const KEY = "sk-ant-api03-work-key-for-the-test";
 
+const OR_KEY = "sk-or-v1-openrouter-key-for-the-test-aaaaaaaa";
+const GATEWAY = "https://openrouter.ai/api";
+
 describe("a token's kind", () => {
   test("is read from its shape, and anything else is refused", () => {
     expect(kindOfToken(OAT)).toBe("oauth");
     expect(kindOfToken(KEY)).toBe("api_key");
+    expect(kindOfToken(OR_KEY)).toBe("api_key");
     expect(kindOfToken("hunter2")).toBeUndefined();
+    expect(kindOfToken("hunter2", { apiBase: GATEWAY })).toBe("api_key");
     expect(kindOfToken("sk-ant-oat01-with space")).toBeUndefined();
     expect(kindOfToken(`sk-ant-api03-${"x".repeat(600)}`)).toBeUndefined();
+  });
+
+  test("parses an Anthropic-compatible base URL, stripping /v1", () => {
+    expect(parseApiBase("https://openrouter.ai/api/v1")).toBe(
+      "https://openrouter.ai/api",
+    );
+    expect(parseApiBase("https://openrouter.ai/api/")).toBe(
+      "https://openrouter.ai/api",
+    );
+    expect(parseApiBase("http://openrouter.ai/api")).toBeUndefined();
+    expect(parseApiBase("https://user:pass@openrouter.ai/api")).toBeUndefined();
+    expect(hostOfApiBase(GATEWAY)).toBe("openrouter.ai");
   });
 });
 
@@ -80,6 +100,47 @@ describe("the pool", () => {
       .query<{ token_enc: string }, []>("SELECT token_enc FROM subscription")
       .get()!;
     expect(raw.token_enc).not.toContain(OAT);
+  });
+
+  test("seals an OpenRouter key with its gateway and injects Claude Code env", () => {
+    const added = addSubscription(app.db, dataDir, {
+      name: "openrouter",
+      token: OR_KEY,
+      apiBase: "https://openrouter.ai/api/v1",
+    });
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    expect(added.value.kind).toBe("api_key");
+    expect(added.value.apiBase).toBe("https://openrouter.ai/api");
+    setGrants(app.db, "repo-or", EVERYONE, [added.value.id]);
+    const pick = pickSubscription(
+      app.db,
+      dataDir,
+      { repoId: "repo-or", ownerId: "org-or", agentId: "bot-or" },
+      new Date("2026-10-07T12:00:00Z"),
+    );
+    expect(pick.kind).toBe("ready");
+    if (pick.kind !== "ready") return;
+    expect(pick.apiBase).toBe("https://openrouter.ai/api");
+    expect(credentialEnvOf(pick)).toEqual({
+      ANTHROPIC_BASE_URL: "https://openrouter.ai/api",
+      ANTHROPIC_AUTH_TOKEN: OR_KEY,
+      ANTHROPIC_API_KEY: "",
+    });
+    expect(
+      addSubscription(app.db, dataDir, {
+        name: "oauth-gateway",
+        token: OAT,
+        apiBase: GATEWAY,
+      }),
+    ).toEqual({ ok: false, error: "invalid_api_base" });
+    expect(
+      addSubscription(app.db, dataDir, {
+        name: "bad-base",
+        token: OR_KEY,
+        apiBase: "not a url",
+      }),
+    ).toEqual({ ok: false, error: "invalid_api_base" });
   });
 
   test("picks the nearest grant whole, an agent's before everyone's, and rotates", () => {

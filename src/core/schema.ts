@@ -1540,4 +1540,10 @@ export const migrations: readonly string[] = [
     SELECT RAISE(ABORT, 'a sealed repository is never public');
   END;
   `,
+  // 71 — an optional Anthropic-compatible API base URL on a subscription
+  // (`core/subscriptions.ts`): OpenRouter and other gateways, plain text
+  // (not a secret). Empty means Anthropic's own endpoint.
+  `
+  ALTER TABLE subscription ADD COLUMN api_base TEXT;
+  `,
 ];
