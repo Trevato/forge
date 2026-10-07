@@ -360,10 +360,15 @@ describe("apps, runs and the crew on the web", () => {
     expect(page).toContain('class="ln ln-forge"');
     expect(page).toContain('id="run-elapsed"');
     // The stream and the no-script refresh exist only while it is going.
+    // Read state first; if the run already finished, re-fetch the page so we
+    // do not assert against HTML rendered while it was still going (race).
     const fresh = listRuns(app.db, hello.id).find((r) => r.id === run!.id)!;
     const going = fresh.state === "queued" || fresh.state === "running";
-    expect(page.includes("data-stream=")).toBe(going);
-    expect(page.includes('http-equiv="refresh"')).toBe(going);
+    const livePage = going
+      ? page
+      : await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
+    expect(livePage.includes("data-stream=")).toBe(going);
+    expect(livePage.includes('http-equiv="refresh"')).toBe(going);
 
     const door = await web(alice, `/runs/${run!.id}`);
     expect(door.status).toBe(303);

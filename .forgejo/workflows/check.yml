@@ -21,6 +21,9 @@ on:
 jobs:
   check:
     runs-on: isolated
+    # Serial SHARDS=1 gate is ~50m locally; without a job ceiling the
+    # runner can cut the suite off mid-file (~40m) before the last shards.
+    timeout-minutes: 120
     env:
       REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
       # Do not set NODE_OPTIONS job-wide: a big heap lets Node claim the

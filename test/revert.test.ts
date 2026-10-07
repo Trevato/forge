@@ -18,8 +18,14 @@ import { getPull, revertOf, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { resolveOid } from "../src/git/merge.ts";
+import {
+  mergeTreeWriteArgs,
+  resolveOid,
+  setMergeTreeAcceptsMergeBaseForTest,
+  writeMergeTree,
+} from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
+import { runGit } from "../src/git/env.ts";
 
 describe("take it back: reverting a shipped change, headless", () => {
   let dataDir: string;
@@ -169,5 +175,87 @@ describe("take it back: reverting a shipped change, headless", () => {
     if (!opened.ok) throw new Error(JSON.stringify(opened.error));
     const refused = await revertPull(app, alice, repo, opened.value);
     expect(refused).toEqual({ ok: false, error: "not_shipped" });
+  });
+});
+
+describe("merge-tree --write-tree args and legacy --merge-base fallback", () => {
+  test("modern args pass --merge-base= when a base is set, and omit it otherwise", () => {
+    const ours = "a".repeat(40);
+    const theirs = "b".repeat(40);
+    const base = "c".repeat(40);
+    expect(mergeTreeWriteArgs(ours, theirs)).toEqual([
+      "merge-tree",
+      "--write-tree",
+      "--name-only",
+      ours,
+      theirs,
+    ]);
+    expect(mergeTreeWriteArgs(ours, theirs, base)).toEqual([
+      "merge-tree",
+      "--write-tree",
+      "--name-only",
+      `--merge-base=${base}`,
+      ours,
+      theirs,
+    ]);
+  });
+
+  test("the legacy shared-parent path undoes a commit the same way as --merge-base", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-merge-tree-"));
+    try {
+      const dir = join(dataDir, "repo.git");
+      const init = await runGit(["init", "--bare", dir]);
+      if (!init.ok) throw new Error(init.error.stderr);
+      const env = {
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t",
+      };
+      const blob = async (content: string) => {
+        const r = await runGit(["hash-object", "-w", "--stdin"], {
+          cwd: dir,
+          env,
+          stdin: content,
+        });
+        if (!r.ok) throw new Error(r.error.stderr);
+        return r.value;
+      };
+      const commit = async (msg: string, content: string, parent?: string) => {
+        const oid = await blob(content);
+        const tree = await runGit(["mktree"], {
+          cwd: dir,
+          env,
+          stdin: `100644 blob ${oid}\tfile.txt\n`,
+        });
+        if (!tree.ok) throw new Error(tree.error.stderr);
+        const args = ["commit-tree", tree.value, "-m", msg];
+        if (parent) args.push("-p", parent);
+        const c = await runGit(args, { cwd: dir, env });
+        if (!c.ok) throw new Error(c.error.stderr);
+        return c.value;
+      };
+      const root = await commit("root", "alpha\n");
+      const changed = await commit("change", "alpha\nBETA\n", root);
+      const onto = changed;
+      // Revert shape: writeMergeTree(onto, mainline=root, base=changed)
+      setMergeTreeAcceptsMergeBaseForTest(true);
+      const modern = await writeMergeTree(dir, onto, root, changed);
+      setMergeTreeAcceptsMergeBaseForTest(false);
+      const legacy = await writeMergeTree(dir, onto, root, changed);
+      setMergeTreeAcceptsMergeBaseForTest(true);
+      expect(modern.ok).toBe(true);
+      expect(legacy.ok).toBe(true);
+      if (!modern.ok || !legacy.ok) return;
+      expect(legacy.value.treeOid).toBe(modern.value.treeOid);
+      const show = await runGit(
+        ["cat-file", "-p", `${legacy.value.treeOid}:file.txt`],
+        { cwd: dir },
+      );
+      expect(show.ok).toBe(true);
+      if (show.ok) expect(show.value).toBe("alpha"); // runGit strips the trailing newline
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
   });
 });
