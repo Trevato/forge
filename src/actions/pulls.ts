@@ -28,10 +28,12 @@ import {
   type CreatePullError,
   type MergePullError,
   type Pull,
+  pullDir,
 } from "../core/pulls.ts";
 import { isStructural, pillarsOf } from "../core/pillars.ts";
 import type { Repo } from "../core/repos.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
+import { sealedByNumber } from "../core/sealed.ts";
 import {
   addReviewComment,
   anchorContent,
@@ -83,6 +85,14 @@ export interface OpenPullInput {
   /** The issue id of the pull this one reverts ("Take it back"). Native
    * repos only — a mirror's pull is the origin's, which has no such field. */
   revertsIssueId?: string;
+  /**
+   * A person's deliberate yes to fixing a sealed report from a branch that
+   * is already public (this repository, or a public fork). Without it such
+   * a pull is refused (`sealed_in_public`) and the private repository is
+   * offered instead. An agent's is never taken: the crew works sealed
+   * reports in its private repository.
+   */
+  confirmPublic?: boolean;
 }
 
 export async function openPull(
@@ -93,7 +103,11 @@ export async function openPull(
 ): Promise<
   Result<
     Pull,
-    CreatePullError | "not_found" | "unauthorized" | WriteThroughError
+    | CreatePullError
+    | "not_found"
+    | "unauthorized"
+    | "sealed_in_public"
+    | WriteThroughError
   >
 > {
   const user = requireParticipant(app, actor, baseRepo);
@@ -165,10 +179,27 @@ export async function openPull(
 
   const head = input.headRepo;
   if (head && head.id !== baseRepo.id) {
-    // The fork must be readable and actually descend from this base.
-    if (!canRead(app.db, head, user.value) || head.forkParentId !== baseRepo.id)
+    // The fork must be readable and actually descend from this base — or be
+    // the private place this base's sealed work is done in (`core/sealed.ts`).
+    if (
+      !canRead(app.db, head, user.value) ||
+      (head.forkParentId !== baseRepo.id && head.sealedFor !== baseRepo.id)
+    )
       return err("not_found");
   }
+  // A fix for a sealed report, from a branch anyone can read (this
+  // repository, or a public fork), publishes where the hole is. Refused
+  // unless a person says yes to that; the private repository is the way.
+  const fixesSealed = closesFromBody(input.body ?? "").some((n) =>
+    sealedByNumber(app.db, baseRepo.id, n),
+  );
+  const apart = head !== undefined && head.sealedFor === baseRepo.id;
+  if (
+    fixesSealed &&
+    !apart &&
+    !(input.confirmPublic === true && user.value.kind !== "agent")
+  )
+    return err("sealed_in_public");
   const created = await createPull(
     app.db,
     repoDir(app.reposRoot, baseRepo.ownerName, baseRepo.name),
@@ -274,7 +305,7 @@ async function anchorLines(
   lines: readonly ReviewInput[],
 ): Promise<Result<AnchoredLine[], BodyError | "bad_anchor">> {
   const { status, diff } = await pullDiff(
-    repoDir(app.reposRoot, repo.ownerName, repo.name),
+    await pullDir(app.db, app.reposRoot, repo, pull),
     pull,
   );
   const out: AnchoredLine[] = [];
@@ -357,11 +388,14 @@ export async function mergePull(
     requester ? commitIdentity(app.config, requester) : null,
     lander,
   );
+  const baseDir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const at = await pullDir(app.db, app.reposRoot, repo, pull);
   const merged = await landPull(
     app.db,
-    repoDir(app.reposRoot, repo.ownerName, repo.name),
+    baseDir,
     pull,
     {
+      ...(at === baseDir ? {} : { sealedFrom: at }),
       gate: {
         db: app.db,
         requireReview: repo.requireReview,
@@ -492,8 +526,10 @@ export async function submitReview(
   const anchored = await anchorLines(app, repo, pull, lines);
   if (!anchored.ok) return anchored;
 
-  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
-  const status = await pullStatus(dir, pull);
+  const status = await pullStatus(
+    await pullDir(app.db, app.reposRoot, repo, pull),
+    pull,
+  );
 
   const through = writeThroughFor(app, user, repo);
   if (!through.ok) return through;

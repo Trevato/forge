@@ -416,10 +416,38 @@ describe("terminal: apps, runs and the crew", () => {
       await h.until("On you");
       expect(h.text()).toContain("Tune the drums");
       expect(h.text()).not.toContain("Apps");
-      // repos → activity → on you.
-      await h.press("tab", "tab", "enter");
+      // repos → on you.
+      await h.press("tab", "enter");
       await h.until("assigned to alice");
       expect(h.text()).toContain("Tune the drums");
+    } finally {
+      h.stop();
+    }
+  }, 30_000);
+
+  test("finding someone else's repository is the launcher's filter: yours by default, anything you can see once you type", async () => {
+    const bob = getUserByName(forge.db, "bob")!;
+    const theirs = await createRepo(forge, alice, {
+      name: "alices-lantern",
+      visibility: "public",
+    });
+    expect(theirs.ok).toBe(true);
+    const hidden = await createRepo(forge, alice, {
+      name: "alices-diary",
+      visibility: "private",
+    });
+    expect(hidden.ok).toBe(true);
+    const h = boot(forge, identityFor(bob));
+    try {
+      await h.until("On you");
+      expect(h.text()).not.toContain("alice/alices-lantern");
+      await h.press("/");
+      await h.type("alices");
+      await h.until("alice/alices-lantern");
+      // A private repository bob cannot read never shows, typed or not.
+      expect(h.text()).not.toContain("alices-diary");
+      await h.press("enter", "enter");
+      await h.until("alice/alices-lantern");
     } finally {
       h.stop();
     }

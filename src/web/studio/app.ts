@@ -9,6 +9,8 @@
  * for a viewer who can write here; a stranger sees the app.
  */
 
+import { sealedScope } from "../../core/sealed.ts";
+import { egressSetting } from "../../core/capacity.ts";
 import { egressNote } from "./egress.ts";
 import { audit } from "../../contract/audit.ts";
 import { latestProbes } from "../../contract/probes.ts";
@@ -47,6 +49,7 @@ import { nowCard, nowRegion } from "./now.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, servingHistory, type WordCtx } from "./words.ts";
 import { crewKeyNote } from "./crew.ts";
+import { noteAppOpened } from "../../core/next-steps.ts";
 
 /**
  * The week's decisions in one line: how many, how many the decider took
@@ -197,6 +200,12 @@ export async function studioApp(
   // owner's facts, not the app's — a viewer who cannot write here reads this
   // page as a stranger, whatever else they can see of the repository.
   const ownerFacts = canSeeOwnerFacts(db, repo, ctx.auth.user);
+  // The owner of a spawned forge (or their everyday account) opening an
+  // app: their second first step. A write during a GET, on purpose: opening
+  // the app IS the step, and a beacon would miss a person without
+  // JavaScript. It is one user_setting row, written once, only on a spawned
+  // forge, only for its owner, and changes nothing anyone else sees.
+  await noteAppOpened(ctx.app, ctx.auth.user);
   const wordCtx: WordCtx = {
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
@@ -207,7 +216,11 @@ export async function studioApp(
   };
   const crew = listCrewRoles(db, repo.id);
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
-  const openPulls = listPulls(db, repo.id, { state: "open", limit: 10 });
+  const openPulls = listPulls(db, repo.id, {
+    state: "open",
+    limit: 10,
+    ...sealedScope(db, repo, ctx.auth.user),
+  });
   const week = new Date(Date.now() - 7 * 24 * 60 * 60_000).toISOString();
   // What landed this week, counted by the database like the runs and the
   // spend below — a page of closed pulls would stop at a hundred and the
@@ -440,6 +453,7 @@ export async function studioApp(
           ctx.app.config.dataDir,
           repo.id,
           appsRuntime(ctx.app)?.liveFor(record, "production")?.cell?.egress ?? [],
+          egressSetting(ctx.app.db),
         )
       : null}
     <div class="dash">

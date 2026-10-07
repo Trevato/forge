@@ -20,12 +20,6 @@ export type Allowed = {
 
 export const ALLOWED: readonly Allowed[] = [
   {
-    orphan: "src/actions/origins.ts#resetConnectLimit",
-    reason:
-      "a test seam: it clears the connect limit's module-level window, and only tests call it",
-    issue: 685,
-  },
-  {
     orphan: "GET /fleet/graph",
     reason:
       "the fleet graph shipped ahead of the fleet page that is to link to it",

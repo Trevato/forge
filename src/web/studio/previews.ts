@@ -7,6 +7,7 @@
  * deploy event refreshes (`appStateFragment`) share.
  */
 
+import { sealedScope } from "../../core/sealed.ts";
 import { terminalFor } from "../../actions/apps.ts";
 import { envPull, previewEnv } from "../../apps/data.ts";
 import {
@@ -313,6 +314,9 @@ export function appPanels(
     <span class="spacer"></span>
     ${lookNow(ctx, repo, record)}
     ${openAppBtn(base, production)}
+    ${when(!writer, () =>
+      btn("Make it yours", { href: `${base}/make-it-yours`, icon: "fork" }),
+    )}
     ${when(production, (env) => envActions(base, env, writer))}
   </div>`;
   return {
@@ -338,6 +342,7 @@ export function appStateFragment(ctx: Ctx): Response {
   const openPulls = listPulls(ctx.app.db, repo.id, {
     state: "open",
     limit: 10,
+    ...sealedScope(ctx.app.db, repo, ctx.auth.user),
   });
   const { head, previews } = appPanels(ctx, repo, record, openPulls);
   return fragment(html`<div id="app-head">${head}</div>

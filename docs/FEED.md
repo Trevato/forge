@@ -4,9 +4,11 @@ A per-viewer read model of what happened on the forge, ranked, each item with
 one sentence saying why it is there.
 
 `GET /api/v1/feed?limit=&cursor=` → `{ items, next_cursor }`, for the signed-in
-viewer only. An item is `{ id, kind, app, actor, at, link, reason, score }`;
-`kind` is `run | ask | pull | decision | map | cost`. Strings are plain text,
-not HTML: whatever renders them escapes them.
+viewer only. An item is `{ id, kind, app, actor, at, link, what, reason,
+score }`; `kind` is `run | ask | pull | decision | map | cost | tell | reply |
+look`. `what` is the post in its own words; `reason` the sentence for why it
+is there. Strings are plain text, not HTML: whatever renders them escapes
+them. The MCP tool `feed { limit, cursor }` answers the same.
 
 `POST /api/v1/feed/interactions` `{ item, kind, app? }` records what the viewer
 did (`opened dwelled steered told swiped shipped shared dismissed muted`).
@@ -19,10 +21,17 @@ Anything the viewer cannot read is a 404.
 - Events through `listEventsVisibleTo` then `audienceFilter`: `run.finished`
   (a deploy, check or agent run; a costly agent run is a `cost` item, shown
   only to those who may see owner facts), `pull.opened|merged|reviewed`,
-  `look.taken` (new: a full set of preview pictures), `app.serving`,
-  `issue.blocked|unblocked` (map changes).
+  `look.taken` (a `look`: a full set of pictures), `app.serving`,
+  `issue.blocked|unblocked` (map changes), `issue.opened` (a `tell`, in its
+  title's words) and `issue.commented|pull.commented` (a `reply`, in its
+  own words).
 - Pending asks (`askLinesFor`), only for what the viewer may decide.
 - Decision-ledger outcomes, only for repositories the viewer may write.
+- The milestones the viewer watches (`core/watches.ts`), one `milestone`
+  item each and only when there is something new: how far it is and what
+  merged since they last opened it, that it landed, or that it was dropped
+  or split. Its id carries its progress, so the item is replaced, never
+  repeated, as the milestone moves. Not muted with its app.
 
 Runs already announce themselves on the outbox (`run.*`); looks did not, so
 `look.taken` was added.
@@ -44,9 +53,13 @@ that item has gone).
 
 ## The page (`src/web/studio/feed.ts`)
 
-`/` for a signed-in viewer renders the first 20 items as cards above the shelf,
-server-side, and `/live/feed` answers the same region for the live-regions
-client (etag, 304). A card: the reason as a link into the thing, Steer (run
+`/` for a signed-in viewer is the feed (#599): the composer on top (a tell to
+one of your apps; through the outbox to `POST /api/v1/feed/tells`, or `POST
+/tell` without a script), then the first 20 items as posts, server-side; your
+apps and what is on you in a narrow column on a desk, a tab away on a phone.
+The app rows and the cost line are `/apps`. `/live/feed` answers the timeline
+region for the live-regions client (etag, 304). A post: who did it, what it
+says as a link into the thing, a small line of why, Steer (run
 cards, posts to the run's `steer`) or Tell the crew (everything else, posts to
 the app's `tell`), Dismiss and Mute app (the interactions API, same-origin).
 Keys: `j`/`k`/Enter are the shell's, `x` dismisses the focused card.

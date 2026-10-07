@@ -266,3 +266,54 @@ export function tally(results: readonly ShardResult[], seconds: number): Tally {
     ],
   };
 }
+
+/**
+ * Contiguous 1-based slice of `files` for Actions matrix cells (`--shard N/M`).
+ * Slices are disjoint and covering; empty only when `files` is empty.
+ */
+export function sliceFiles(
+  files: readonly string[],
+  index: number,
+  total: number,
+): { ok: true; files: string[] } | { ok: false; error: string } {
+  if (!Number.isInteger(total) || total < 1)
+    return {
+      ok: false,
+      error: `shard total must be a whole number from 1, not ${JSON.stringify(total)}`,
+    };
+  if (!Number.isInteger(index) || index < 1 || index > total)
+    return {
+      ok: false,
+      error: `shard index must be from 1 to ${total}, not ${JSON.stringify(index)}`,
+    };
+  const start = Math.floor((files.length * (index - 1)) / total);
+  const end = Math.floor((files.length * index) / total);
+  return { ok: true, files: [...files.slice(start, end)] };
+}
+
+/**
+ * Parses `--shard N/M` (or the same shape from env). Empty / undefined means
+ * no matrix slice — run every named file.
+ */
+export function parseShardSpec(
+  spec: string | undefined,
+):
+  | { ok: true; index: number; total: number }
+  | { ok: true; none: true }
+  | { ok: false; error: string } {
+  if (spec === undefined || spec.trim() === "") return { ok: true, none: true };
+  const m = /^([1-9][0-9]{0,2})\/([1-9][0-9]{0,2})$/.exec(spec.trim());
+  if (!m)
+    return {
+      ok: false,
+      error: `shard must be N/M (e.g. 1/3), not ${JSON.stringify(spec)}`,
+    };
+  const index = Number(m[1]);
+  const total = Number(m[2]);
+  if (index > total)
+    return {
+      ok: false,
+      error: `shard index ${index} is past total ${total}`,
+    };
+  return { ok: true, index, total };
+}

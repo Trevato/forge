@@ -10,7 +10,9 @@ import {
   SHARDS_MAX,
   formatTimes,
   parseTimes,
+  parseShardSpec,
   shardCount,
+  sliceFiles,
   splitArgs,
   splitFiles,
   tally,
@@ -311,5 +313,54 @@ describe("splitArgs", () => {
     expect(files.length).toBeGreaterThan(0);
     for (const file of files)
       expect(await Bun.file(new URL(`../${file}`, import.meta.url)).exists()).toBe(true);
+  });
+});
+
+describe("parseShardSpec", () => {
+  test("empty means no matrix slice", () => {
+    expect(parseShardSpec(undefined)).toEqual({ ok: true, none: true });
+    expect(parseShardSpec("")).toEqual({ ok: true, none: true });
+    expect(parseShardSpec("  ")).toEqual({ ok: true, none: true });
+  });
+
+  test("N/M is accepted; nonsense and index past total are refused", () => {
+    expect(parseShardSpec("1/3")).toEqual({ ok: true, index: 1, total: 3 });
+    expect(parseShardSpec("3/3")).toEqual({ ok: true, index: 3, total: 3 });
+    expect(parseShardSpec(" 2/4 ")).toEqual({ ok: true, index: 2, total: 4 });
+    for (const bad of ["0/3", "1/0", "4/3", "1", "1-3", "a/b", "1/3/5"])
+      expect(parseShardSpec(bad).ok).toBe(false);
+  });
+});
+
+describe("sliceFiles", () => {
+  test("three slices of 174 are contiguous, disjoint, covering", () => {
+    const files = Array.from({ length: 174 }, (_, i) => `test/f${i}.test.ts`);
+    const parts = [1, 2, 3].map((i) => {
+      const sliced = sliceFiles(files, i, 3);
+      expect(sliced.ok).toBe(true);
+      if (!sliced.ok) throw new Error("slice");
+      return sliced.files;
+    });
+    expect(parts.map((p) => p.length)).toEqual([58, 58, 58]);
+    expect(parts.flat()).toEqual(files);
+    expect(new Set(parts.flat()).size).toBe(174);
+  });
+
+  test("uneven totals still cover every file once", () => {
+    const files = ["a", "b", "c", "d", "e"];
+    const parts = [1, 2, 3, 4].map((i) => {
+      const sliced = sliceFiles(files, i, 4);
+      expect(sliced.ok).toBe(true);
+      if (!sliced.ok) throw new Error("slice");
+      return sliced.files;
+    });
+    expect(parts.map((p) => p.length)).toEqual([1, 1, 1, 2]);
+    expect(parts.flat()).toEqual(files);
+  });
+
+  test("bad index or total is refused", () => {
+    expect(sliceFiles(["a"], 0, 1).ok).toBe(false);
+    expect(sliceFiles(["a"], 2, 1).ok).toBe(false);
+    expect(sliceFiles(["a"], 1, 0).ok).toBe(false);
   });
 });

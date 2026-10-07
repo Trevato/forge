@@ -8,10 +8,13 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { markHeard } from "../core/issues.ts";
+import { capacityCount, noteBooted } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
 import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
 import type { App } from "../app.ts";
+import { transact } from "../kernel/db.ts";
 import { announceRun } from "../actions/runs.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import type { ForgeEvent } from "../core/events.ts";
@@ -47,6 +50,13 @@ import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
 import { followDivergence } from "./converge.ts";
 import { breakerTripped } from "./breaker.ts";
+import {
+  CAP_NOTE,
+  capReached,
+  ISSUE_RUN_CAP,
+  recordCap,
+  skipsFeedback,
+} from "./guard.ts";
 import { dataInTemp, sandboxAvailable, sweepRunTmp } from "./sandbox.ts";
 import { mayDirectCrew } from "./direct.ts";
 import {
@@ -122,6 +132,8 @@ export async function startCrew(
     });
   // The shell sandbox is policy, not decoration: where the host cannot
   // hold a run to it, the runs say so instead of warning on every command.
+  // The default the Capacity page shows and goes back to (`core/capacity.ts`).
+  noteBooted(app.db, "crew.concurrency", String(options.concurrency));
   const sandbox = await sandboxAvailable();
   // Temp directories of runs a stopped forge never finished: old enough
   // that no forge beside this one (a rollout) can still be using them.
@@ -252,28 +264,53 @@ export function queueAgentRun(
     return undefined;
   }
   // Three failed or declined runs in an hour: parked, until a person speaks.
-  if (breakerTripped(app.db, issue.id)) {
+  if (breakerTripped(app.db, repo, issue.id)) {
     parkForBreaker(app, repo, issue, agent);
     return undefined;
   }
-  const active = activeRunFor(app.db, "agent", issue.id);
-  // One queued follow-up is enough: the run that eventually starts reads
-  // the whole conversation since the last one, so nothing is lost. The
-  // queued one may sit behind a running one, so it is looked for by itself.
-  if (
-    active !== undefined &&
-    (reason === "assigned" || hasQueuedRun(app.db, "agent", issue.id))
-  )
+  // A day's share of runs on one issue without a person's word: a loop,
+  // parked once and asked about once (`guard.ts`). A run carrying on after
+  // a pause or a restart is the same start, never a new one.
+  const cap = app.config.issueRunCap ?? ISSUE_RUN_CAP;
+  if (again === undefined && capReached(app.db, repo, issue, cap)) {
+    if (parkForBreaker(app, repo, issue, agent, CAP_NOTE))
+      recordCap(app.db, repo, issue, cap);
     return undefined;
-  const run = createRun(app.db, {
-    repoId: repo.id,
-    kind: "agent",
-    issueId: issue.id,
-    actorId: agent.user.id,
-    reason,
-    ...again,
+  }
+  // Looked for and written in one write transaction: during a roll two
+  // forge processes share this database, and both may react to the same
+  // thing — a run checked for by one and inserted by the other would be the
+  // same work twice (docs/ARCHITECTURE.md, "Two processes at once").
+  const run = transact(app.db, () => {
+    const active = activeRunFor(app.db, "agent", issue.id);
+    // A follow-up with nothing new would only read the agent's own reply
+    // and decline. With a run in flight the answer waits for it to end: the
+    // queued run asks again as it starts (`runner.ts`).
+    if (
+      reason === "feedback" &&
+      again === undefined &&
+      active === undefined &&
+      skipsFeedback(app.db, repo, issue, agent)
+    )
+      return undefined;
+    // One queued follow-up is enough: the run that eventually starts reads
+    // the whole conversation since the last one, so nothing is lost. The
+    // queued one may sit behind a running one, so it is looked for by itself.
+    if (
+      active !== undefined &&
+      (reason === "assigned" || hasQueuedRun(app.db, "agent", issue.id))
+    )
+      return undefined;
+    return createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: agent.user.id,
+      reason,
+      ...again,
+    });
   });
-  announceRun(app, run, actorId);
+  if (run !== undefined) announceRun(app, run, actorId);
   return run;
 }
 
@@ -406,8 +443,14 @@ function route(app: App, event: ForgeEvent): void {
           active.id,
           `${actor.username} on #${issue.number}: ${said.trim()}`,
         )
-      )
+      ) {
+        // Heard now, by the run that works it: the next run's brief does
+        // not tell it again (`news.ts`).
+        const commentId = event.payload["commentId"];
+        if (typeof commentId === "string")
+          markHeard(app.db, commentId, active.id);
         return;
+      }
       queueAgentRun(app, repo, issue, agent, "feedback", actor.id);
       return;
     }
@@ -919,7 +962,11 @@ function pump(
   const runningIssues = new Set(
     active.filter((r) => r.state === "running").map((r) => r.issueId),
   );
-  let slots = options.concurrency - runningIssues.size;
+  // Read on every pump (`core/capacity.ts`): an admin's change is the next
+  // pick's, not the next boot's. `options.concurrency` is the boot default.
+  let slots =
+    capacityCount(app.db, "crew.concurrency", options.concurrency) -
+    runningIssues.size;
   for (const queued of listQueued(app.db, "agent", 50)) {
     if (slots <= 0) break;
     if (queued.issueId !== null && runningIssues.has(queued.issueId)) continue;

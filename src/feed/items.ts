@@ -10,6 +10,7 @@ import type { Database } from "bun:sqlite";
 import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../core/events.ts";
+import { getIssue } from "../core/issues.ts";
 import { getPull, toldBy } from "../core/pulls.ts";
 import {
   canSeeOwnerFacts,
@@ -18,9 +19,22 @@ import {
   type Repo,
 } from "../core/repos.ts";
 import { getUserById, type User } from "../core/users.ts";
+import { watchedBy } from "../core/watches.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
-export type FeedKind = "run" | "ask" | "pull" | "decision" | "map" | "cost";
+export type FeedKind =
+  | "run"
+  | "ask"
+  | "pull"
+  | "decision"
+  | "map"
+  | "cost"
+  // A post: something a person or the crew said — a tell opened, a reply
+  // under one, a look of what a change made (#599).
+  | "tell"
+  | "reply"
+  | "look"
+  | "milestone";
 
 /** What a candidate is, before it is ranked and worded. */
 export interface Candidate {
@@ -63,6 +77,45 @@ const base = (r: Repo): string => `/${r.ownerName}/${r.name}`;
 
 /** Every ask sits above the news (a failed run is 4); among asks, consequence alone orders them. */
 const ASK_URGENCY_FLOOR = 5;
+/** What a person asked to watch sits above plain news, and its landing with a failure. */
+const WATCH_URGENCY = 2;
+const LANDED_URGENCY = 4;
+
+/**
+ * What the viewer watches (`core/watches.ts`), one item for each milestone:
+ * how far it is and what merged since they last opened it, or that it
+ * landed, or that it will not. A milestone with nothing new says nothing.
+ */
+function watchedCandidates(db: Database, viewer: User, now: number): Candidate[] {
+  const out: Candidate[] = [];
+  for (const w of watchedBy(db, viewer, now)) {
+    if (w.state === "moving" && w.merged.length === 0) continue;
+    const { done, total } = w.milestone.weight;
+    const name = `“${clip(w.milestone.name, 60)}”`;
+    const n = w.merged.length;
+    const what =
+      w.state === "landed"
+        ? `${name} landed: ${done} of ${total} done`
+        : w.state === "moving"
+          ? `${name} is ${done} of ${total} done: ${n} merged since you last looked (${clip(w.merged.map((p) => p.title).join("; "), 80)})`
+          : `${name} was ${w.state === "split" ? "split into smaller issues" : "dropped"}: it will not land as it was written`;
+    out.push({
+      id: w.itemId,
+      kind: "milestone",
+      repoId: w.repo.id,
+      app: slug(w.repo),
+      actorId: null,
+      actor: null,
+      at: w.at,
+      link: `${base(w.repo)}/milestones/${w.milestone.issue.number}`,
+      what,
+      urgency: w.state === "landed" ? LANDED_URGENCY : WATCH_URGENCY,
+      // The sentence is the milestone's, whatever led the ranking.
+      said: what,
+    });
+  }
+  return out;
+}
 
 export function candidatesFor(
   db: Database,
@@ -128,6 +181,7 @@ export function candidatesFor(
       },
     });
   }
+  out.push(...watchedCandidates(db, viewer, now));
   for (const d of decided) {
     const repo = repos.get(d.repoId);
     if (!repo) continue;
@@ -193,7 +247,7 @@ function fromEvent(
         kind: "run",
         link,
         urgency: state === "failed" ? 4 : 0,
-        what: `a ${kind} run ${state === "failed" ? "failed" : "finished"}${summary ? `: ${summary}` : ""}`,
+        what: `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} run ${state === "failed" ? "failed" : "finished"}${summary ? `: ${summary}` : ""}`,
       };
     }
     case "pull.opened":
@@ -203,13 +257,40 @@ function fromEvent(
     case "pull.reviewed":
       return { ...common, kind: "pull", link: change, what: `a change was reviewed${title ? `: ${clip(title)}` : ""}` };
     case "look.taken":
+      return { ...common, kind: "look", link: base(repo), what: "a new picture of it is ready" };
     case "app.serving":
+      return { ...common, kind: "pull", link: base(repo), what: "a new version is serving" };
+    // A tell is a post; a comment is a reply under it, in its own words.
+    case "issue.opened": {
+      if (number === undefined) return undefined;
+      const told = getIssue(db, repo.id, number)?.title ?? "";
       return {
         ...common,
-        kind: "pull",
-        link: base(repo),
-        what: e.kind === "look.taken" ? "a new preview picture is ready" : "a new version is serving",
+        kind: "tell",
+        link: `${base(repo)}/tells/${number}`,
+        what: told === "" ? `told #${number}` : clip(told),
       };
+    }
+    case "issue.commented":
+    case "pull.commented": {
+      if (number === undefined) return undefined;
+      const said = typeof p["body"] === "string" ? p["body"].trim() : "";
+      // A reply names what it answers: the tell's or the change's title.
+      const on = clip(
+        (e.kind === "issue.commented" ? getIssue(db, repo.id, number)?.title : title) ??
+          `#${number}`,
+        60,
+      );
+      return {
+        ...common,
+        kind: "reply",
+        link:
+          e.kind === "issue.commented"
+            ? `${base(repo)}/tells/${number}`
+            : change,
+        what: said === "" ? `replied on “${on}”` : `on “${on}”: ${clip(said)}`,
+      };
+    }
     case "issue.blocked":
     case "issue.unblocked":
       return {

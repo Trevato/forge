@@ -8,6 +8,13 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
+import { changeCapacity, listCapacity } from "../actions/capacity.ts";
+import {
+  accountSignIns,
+  endAccountSession,
+  signOutHere,
+} from "../actions/signins.ts";
 import { STRANGER_MAX } from "./limits.ts";
 import {
   askedIn,
@@ -24,10 +31,12 @@ import {
   verifyAccount,
 } from "../actions/accounts.ts";
 import { resendVerification } from "../actions/verify.ts";
+import { CAPPED_WORDS } from "../actions/mail.ts";
 import { emailVerified } from "../core/verify.ts";
-import { forgeHealth } from "../kernel/guard.ts";
+import { readHealth } from "../actions/health.ts";
 import { listChildren } from "../actions/spawn.ts";
-import { spawnDoor } from "../spawn/door.ts";
+import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
+import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
 import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
@@ -37,6 +46,7 @@ import {
   addCommentThrough,
   openIssueThrough,
   setIssueLabelsThrough,
+  setIssueSealed,
   setIssueStateThrough,
 } from "../actions/issues.ts";
 import {
@@ -88,6 +98,7 @@ import {
 } from "../actions/pulls.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
+import { watchMilestone } from "../actions/watches.ts";
 import { search } from "../actions/search.ts";
 import {
   commitToBranch,
@@ -97,7 +108,9 @@ import {
   deleteLabel,
   deleteRepo,
   deleteWebhook,
+  FORKS_PER_DAY,
   forkRepo,
+  privateRepoForSealed,
   updateRepoSettings,
 } from "../actions/repos.ts";
 import {
@@ -111,7 +124,10 @@ import {
 } from "../actions/users.ts";
 import { listEvents } from "../core/events.ts";
 import { audienceFilter } from "../core/event_audience.ts";
-import { getReposByIds } from "../core/repos.ts";
+import {
+  forkParentFor,
+  getReposByIds,
+} from "../core/repos.ts";
 import {
   commentCounts,
   getIssue,
@@ -133,8 +149,15 @@ import {
   listTeamsVisibleTo,
   type Permission,
   type Team,
+  soleOwnedOrgs,
 } from "../core/orgs.ts";
-import { getPull, listPulls, pullDiff, type Pull } from "../core/pulls.ts";
+import {
+  getPull,
+  listPulls,
+  pullDiff,
+  pullDir,
+  type Pull,
+} from "../core/pulls.ts";
 import {
   canAdmin,
   canRead,
@@ -156,9 +179,14 @@ import {
   listReviews,
   withOutdated,
 } from "../core/reviews.ts";
-import { createSession, destroySession } from "../core/sessions.ts";
+import { createSession } from "../core/sessions.ts";
 import { listTokens } from "../core/tokens.ts";
-import { getUserByName, verifyPassword, type User } from "../core/users.ts";
+import {
+  getUserByName,
+  hiddenFrom,
+  verifyPassword,
+  type User,
+} from "../core/users.ts";
 import { isPinned } from "../core/pins.ts";
 import { listWebhooks } from "../core/webhooks.ts";
 import { diffCommit } from "../git/diff.ts";
@@ -208,14 +236,14 @@ import {
 import {
   addToCrew,
   createAgent,
+  crewAsSeen,
   deleteAgent,
   getAgentView,
   listAllAgents,
-  listCrew,
   removeFromCrew,
   updateAgent,
 } from "../actions/crew.ts";
-import { assignIssue } from "../actions/issues.ts";
+import { assignIssue, editIssue, TAKEN_UP } from "../actions/issues.ts";
 import { steerRepoRun } from "../actions/runs.ts";
 import {
   dependencyWords,
@@ -227,6 +255,11 @@ import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
+import {
+  milestoneData,
+  milestonesJson,
+} from "../web/pages/milestones.ts";
+import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
 import { appsRuntime, envsFor, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
@@ -246,7 +279,6 @@ import {
   type Run,
 } from "../core/runs.ts";
 import { resolveOid } from "../git/merge.ts";
-import { vitals } from "../kernel/vitals.ts";
 import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
@@ -300,6 +332,7 @@ import {
   parseExploreQuery,
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
+import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -591,6 +624,34 @@ function originAware(error: string, status = 422): Response {
 }
 
 /**
+ * The words a PATCH on an issue or a pull brings: `title` and `body`, each
+ * a string when given. Anything else in those keys is a bad request.
+ */
+function textFrom(
+  input: Record<string, unknown>,
+): { title?: string; body?: string } | undefined {
+  const out: { title?: string; body?: string } = {};
+  for (const key of ["title", "body"] as const) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (typeof value !== "string") return undefined;
+    out[key] = value;
+  }
+  return out;
+}
+
+/** An edit refused because someone who directs the crew acted on the words. */
+const takenUp = () => apiError("taken_up", 403, TAKEN_UP);
+
+/** A PATCH that changes nothing it knows is a request with nothing in it. */
+const NOTHING_TO_CHANGE = () =>
+  apiError(
+    "nothing_to_change",
+    422,
+    "send a new title or body, a state, or both",
+  );
+
+/**
  * `reason` and `into` of a close request, or undefined when they are not
  * the shapes they must be (a bad reason word, `into` not a list of numbers).
  */
@@ -870,13 +931,32 @@ function agentJson(agent: Agent) {
   };
 }
 
+/**
+ * An agent as `viewer` may see it: its brief, model and budget are the
+ * owner's configuration (#946), for the forge's owner and the agent itself;
+ * anyone else signed in sees who it is.
+ */
+function agentFor(agent: Agent, viewer: User | undefined) {
+  if (viewer?.isAdmin === true || viewer?.id === agent.user.id)
+    return agentJson(agent);
+  return {
+    username: agent.user.username,
+    displayName: agent.user.displayName,
+    createdAt: agent.createdAt,
+  };
+}
+
 /** The live head of a pull — the branch tip, or the snapshot for a fork's. */
 async function pullHeadOid(ctx: Ctx, repo: Repo, pull: Pull): Promise<string> {
   const ref = pull.crossRepo
     ? `refs/pull/${pull.number}/head`
     : `refs/heads/${pull.headBranch}`;
-  return (await resolveOid(dirOf(ctx, repo), ref)) ?? pull.headOid;
+  return (await resolveOid(await pullDirOf(ctx, repo, pull), ref)) ?? pull.headOid;
 }
+
+/** Where a pull's objects are (`pullDir`): its base, or a sealed one's own place. */
+const pullDirOf = (ctx: Ctx, repo: Repo, pull: Pull): Promise<string> =>
+  pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull);
 
 function positiveInt(raw: string | undefined): number | undefined {
   const n = Number(raw);
@@ -904,7 +984,9 @@ function loadConversation(ctx: Ctx): Found<{ issue: Issue }> {
   const number = positiveInt(ctx.params.number);
   const issue =
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
-  if (!issue) return { error: notFound() };
+  // A sealed report is not there for anyone who may not see it (`core/sealed.ts`).
+  if (!issue || !mayView(ctx.app.db, repo, issue, ctx.auth.user))
+    return { error: notFound() };
   return { repo, issue };
 }
 
@@ -927,7 +1009,8 @@ function loadPull(ctx: Ctx): Found<{ pull: Pull }> {
   const number = positiveInt(ctx.params.number);
   const pull =
     number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
-  if (!pull) return { error: notFound() };
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
+    return { error: notFound() };
   return { repo, pull };
 }
 
@@ -993,12 +1076,14 @@ export function apiRoutes(router: Router<Handler>): void {
 
   router.add("GET", "/api/v1/users/:username", (ctx) => {
     const user = getUserByName(ctx.app.db, ctx.params.username!);
-    return user ? json(publicProfile(user)) : notFound();
+    return user && !hiddenFrom(user, ctx.auth.user)
+      ? json(publicProfile(user))
+      : notFound();
   });
 
   router.add("GET", "/api/v1/users/:username/repos", (ctx) => {
     const user = getUserByName(ctx.app.db, ctx.params.username!);
-    if (!user) return notFound();
+    if (!user || hiddenFrom(user, ctx.auth.user)) return notFound();
     const query = repoQuery(ctx);
     const items = listReposByOwner(
       ctx.app.db,
@@ -1030,8 +1115,7 @@ export function apiRoutes(router: Router<Handler>): void {
     // Cookie-authenticated logout, so it must be same-origin like any other
     // cookie mutation — otherwise it's a cross-site forced-logout.
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
-    const token = cookieValue(ctx.request, "forge_session");
-    if (token !== undefined) destroySession(ctx.app.db, token);
+    signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
     return json({}, 200, {
       "set-cookie": sessionCookie("", new Date(0), ctx.url),
     });
@@ -1057,6 +1141,8 @@ export function apiRoutes(router: Router<Handler>): void {
       return apiError("too_soon", 429, "a link was sent a moment ago; check your inbox, or try again in a few minutes");
     if (sent.error === "no_mail")
       return apiError("no_mail", 503, "this forge sends no mail yet; ask its owner to verify you");
+    if (sent.error === "capped")
+      return apiError("capped", 429, CAPPED_WORDS);
     return apiError("failed", 502, "the link could not be sent; try again");
   });
 
@@ -1114,6 +1200,32 @@ export function apiRoutes(router: Router<Handler>): void {
   const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
     ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
 
+  // The forge's capacity (`core/capacity.ts`): read and changed live by an
+  // admin, never by an agent; anyone else is told the door is not there.
+  router.add("GET", "/api/v1/admin/capacity", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const listed = listCapacity(ctx.app, ctx.auth.user);
+    return listed.ok ? json(listed.value) : notFound();
+  });
+
+  router.add("PUT", "/api/v1/admin/capacity/:key", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const value = input.value === null ? null : str(input.value);
+    const changed = changeCapacity(ctx.app, ctx.auth.user, ctx.params.key!, value);
+    if (changed.ok) return json(changed.value);
+    if (changed.error === "not_found") return notFound();
+    return apiError(
+      changed.error,
+      422,
+      changed.error === "no_such_setting"
+        ? "no such capacity setting"
+        : "that value is outside what this setting takes",
+    );
+  });
+
   router.add("GET", "/api/v1/admin/accounts", (ctx) => {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
@@ -1124,7 +1236,22 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("POST", "/api/v1/admin/accounts/:username/suspend", async (ctx) => {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
-    const done = await suspendAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    const input = await body(ctx.request);
+    const done = await suspendAccount(ctx.app, ctx.auth.user, ctx.params.username!, {
+      confirmed: input.confirm === true,
+    });
+    if (!done.ok && done.error === "last_owner") {
+      const user = getUserByName(ctx.app.db, ctx.params.username!);
+      const orgs =
+        user === undefined
+          ? []
+          : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username);
+      return apiError(
+        "last_owner",
+        409,
+        `${ctx.params.username} is the only active person owning ${orgs.join(", ")}: suspending leaves no one to administer it. Make someone else an owner first, or send {"confirm": true} to suspend anyway`,
+      );
+    }
     return done.ok ? json({ username: done.value.username, suspendedAt: done.value.suspendedAt }) : accountError(done.error);
   });
 
@@ -1148,6 +1275,18 @@ export function apiRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
     const done = await removeAccount(ctx.app, ctx.auth.user, ctx.params.username!);
+    if (!done.ok && done.error === "last_owner") {
+      const user = getUserByName(ctx.app.db, ctx.params.username!);
+      const orgs =
+        user === undefined
+          ? []
+          : soleOwnedOrgs(ctx.app.db, user.id).map((o) => o.username);
+      return apiError(
+        "last_owner",
+        409,
+        `${ctx.params.username} is the only person owning ${orgs.join(", ")}: make someone else an owner first`,
+      );
+    }
     return done.ok ? json({ removed: ctx.params.username }) : accountError(done.error);
   });
 
@@ -1255,6 +1394,33 @@ export function apiRoutes(router: Router<Handler>): void {
     return new Response(null, { status: 204 });
   });
 
+  // Where an account is signed in: its person, or the forge's owner for any
+  // person (`actions/signins.ts`). Anyone else finds no such account.
+  router.add("GET", "/api/v1/users/:username/signins", (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const seen = accountSignIns(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.username!,
+      cookieValue(ctx.request, "forge_session"),
+    );
+    if (!seen.ok) return notFound();
+    return json({ tokens: seen.value.tokens, sessions: seen.value.sessions });
+  });
+
+  router.add("DELETE", "/api/v1/users/:username/sessions/:id", (ctx) => {
+    const denied = requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const done = endAccountSession(
+      ctx.app,
+      ctx.auth.user,
+      ctx.params.username!,
+      ctx.params.id!,
+    );
+    return done.ok ? new Response(null, { status: 204 }) : notFound();
+  });
+
   // ── organizations & teams ────────────────────────────────────────────
 
   router.add("POST", "/api/v1/orgs", async (ctx) => {
@@ -1355,10 +1521,15 @@ export function apiRoutes(router: Router<Handler>): void {
         found.team,
         username,
       );
-      if (!removed.ok) return respondAccess(removed.error, 422);
+      if (!removed.ok)
+        return removed.error === "last_owner"
+          ? apiError(
+              "last_owner",
+              409,
+              "an organization keeps at least one person who owns it; make someone else an owner first",
+            )
+          : respondAccess(removed.error, 422);
       if (!isMember) return notFound();
-      // A member who could not be removed is the last owner.
-      if (!removed.value.removed) return json({ error: "protected" }, 409);
       return new Response(null, { status: 204 });
     },
   );
@@ -1486,7 +1657,10 @@ export function apiRoutes(router: Router<Handler>): void {
       parent,
       str(input.name) || undefined,
     );
-    if (!forked.ok) return respondAccess(forked.error, 422);
+    if (!forked.ok)
+      return forked.error === "limit"
+        ? apiError("limit", 429, `at most ${FORKS_PER_DAY} forks a day: try again tomorrow`)
+        : respondAccess(forked.error, 422);
     return json(forked.value, 201);
   });
 
@@ -1601,10 +1775,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (!repo) return notFound();
       if (!mayDirectCrew(ctx.app.db, repo, ctx.auth.user))
         return respondAccess("forbidden", 403);
-      const parent =
-        repo.forkParentId === null
-          ? undefined
-          : getRepoById(ctx.app.db, repo.forkParentId);
+      const parent = forkParentFor(ctx.app.db, repo, ctx.auth.user);
       if (parent === undefined)
         return apiError("not_a_fork", 404, "this repository follows nothing");
       const outcome = await convergeFork(ctx.app, repo, parent, ctx.auth.user);
@@ -1949,7 +2120,11 @@ export function apiRoutes(router: Router<Handler>): void {
     const query = listQuery(ctx);
     const items = withLabelsMany(
       ctx,
-      listIssues(ctx.app.db, repo.id, { ...query, kind: "issue" }),
+      listIssues(ctx.app.db, repo.id, {
+        ...query,
+        kind: "issue",
+        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+      }),
     );
     return json(paged(items, query.limit, (i) => i.number));
   });
@@ -1970,6 +2145,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const created = await openIssueThrough(ctx.app, ctx.auth.user, repo, {
       title: str(input.title),
       body: str(input.body),
+      ...(input.sealed === true ? { sealed: true } : {}),
     });
     if (!created.ok) return originAware(created.error);
     return json(withLabels(ctx, created.value), 201);
@@ -2092,6 +2268,21 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   // What an issue waits for, and what waits for it.
+  // The private repository a writer fixes a sealed report in by hand (#865).
+  router.add("POST", "/api/v1/repos/:owner/:name/issues/:number/private", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const found = loadIssue(ctx);
+    if ("error" in found) return found.error;
+    const made = await privateRepoForSealed(ctx.app, ctx.auth.user, found.repo, found.issue);
+    if (!made.ok)
+      return made.error === "not_found"
+        ? notFound()
+        : respondAccess(made.error, 422);
+    const there = `${made.value.ownerName}/${made.value.name}`;
+    return json({ repo: there, clone: `${ctx.url.origin}/${there}.git` }, 201);
+  });
+
   router.add(
     "GET",
     "/api/v1/repos/:owner/:name/issues/:number/dependencies",
@@ -2099,6 +2290,8 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadIssue(ctx);
       if ("error" in found) return found.error;
       const deps = dependenciesOf(ctx.app.db, found.issue.id);
+      const seen = (i: Issue) =>
+        mayView(ctx.app.db, found.repo, i, ctx.auth.user);
       const brief = (i: Issue) => ({
         number: i.number,
         title: i.title,
@@ -2106,8 +2299,8 @@ export function apiRoutes(router: Router<Handler>): void {
         ...(i.closeReason === null ? {} : { closeReason: i.closeReason }),
       });
       return json({
-        blockedBy: deps.blockedBy.map(brief),
-        blocks: deps.blocks.map(brief),
+        blockedBy: deps.blockedBy.filter(seen).map(brief),
+        blocks: deps.blocks.filter(seen).map(brief),
       });
     },
   );
@@ -2202,12 +2395,92 @@ export function apiRoutes(router: Router<Handler>): void {
       return new Response(null, { status: 204 });
     },
   );
+  // Milestones as data: the plan's limbs with their weights, and one
+  // milestone opened. The same numbers as the pages.
+  router.add("GET", "/api/v1/repos/:owner/:name/milestones", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    return json(milestonesJson(ctx, repo));
+  });
+  router.add(
+    "GET",
+    "/api/v1/repos/:owner/:name/milestones/:number",
+    (ctx) => {
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const number = positiveInt(ctx.params.number);
+      const data =
+        number === undefined ? undefined : milestoneData(ctx, repo, number);
+      return data === undefined ? notFound() : json(data);
+    },
+  );
+  // Watch a milestone, or stop (#732): the caller's own watch, so a write
+  // token and nothing more. The read above says `watching`.
+  for (const method of ["PUT", "DELETE"] as const)
+    router.add(
+      method,
+      "/api/v1/repos/:owner/:name/milestones/:number/watch",
+      (ctx) => {
+        const denied = requireScope(ctx, "rw");
+        if (denied) return denied;
+        const repo = loadRepo(ctx);
+        const number = positiveInt(ctx.params.number);
+        if (!repo || number === undefined) return notFound();
+        const set = watchMilestone(
+          ctx.app,
+          ctx.auth.user,
+          repo,
+          number,
+          method === "PUT",
+        );
+        if (set.ok) return json(set.value);
+        return set.error === "not_found"
+          ? notFound()
+          : set.error === "unauthorized"
+            ? unauthorized()
+            : apiError("forbidden", 403, "only a person watches a milestone");
+      },
+    );
+  // One action on a whole limb (#733): defer, resume, or close as not
+  // doing. A fleet operation in every respect — a dry run by default with a
+  // read credential, an admin token to apply, the receipt in
+  // /api/v1/fleet/ops/:id and its undo at …/undo.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/milestones/:number/limb",
+    async (ctx) => {
+      const input = await body(ctx.request);
+      const dryRun = input.dryRun !== false;
+      const denied = requireScope(ctx, dryRun ? "ro" : "admin");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      const number = positiveInt(ctx.params.number);
+      if (!repo || number === undefined) return notFound();
+      if (!isLimbAction(input.action))
+        return apiError("bad_action", 422, "action is defer, resume or close");
+      const request = {
+        action: input.action,
+        ...(typeof input.reason === "string" ? { reason: input.reason } : {}),
+        ...(typeof input.pillar === "string" ? { pillar: input.pillar } : {}),
+      };
+      if (dryRun) {
+        const plan = previewLimb(ctx.app, ctx.auth.user, repo, number, request);
+        if (!plan.ok) return respondFleet(plan.error);
+        return json({ dryRun: true, ...plan.value });
+      }
+      const op = await applyLimb(ctx.app, ctx.auth.user, repo, number, request);
+      if (!op.ok) return respondFleet(op.error);
+      return json({ dryRun: false, ...op.value }, 201);
+    },
+  );
   // The map as data: ready now, blocked on, the critical path, every edge,
   // and where the crew is.
   router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const graph = repoGraph(ctx.app.db, repo.id);
+    const graph = repoGraph(ctx.app.db, repo.id, {
+      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+    });
     return json(
       mapJson(
         repo,
@@ -2256,11 +2529,18 @@ export function apiRoutes(router: Router<Handler>): void {
     return json({
       decisions: listDecisions(ctx.app.db, repo.id, {
         kind:
-          kind === "next" || kind === "land" || kind === "retry"
+          kind === "next" ||
+          kind === "land" ||
+          kind === "retry" ||
+          kind === "guard"
             ? kind
             : undefined,
         limit: 100,
-      }),
+      })
+        // What the decider saw about a sealed report is the report's (`sealed.ts`).
+        .filter(
+          (d) => mayViewId(ctx.app.db, repo, d.issueId, ctx.auth.user),
+        ),
       week: decisionStats(ctx.app.db, repo.id, week),
     });
   });
@@ -2274,21 +2554,63 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadIssue(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
-      const wanted = str(input.state);
-      if (wanted !== "open" && wanted !== "closed")
+      // Three acts a PATCH may carry, each its own authorization and each
+      // alone a whole request: sealing (a writer's), new words, a new state.
+      let issue = found.issue;
+      if (typeof input.sealed === "boolean") {
+        const sealed = setIssueSealed(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          issue,
+          input.sealed,
+        );
+        if (!sealed.ok) return originAware(sealed.error, 409);
+        issue = sealed.value;
+      }
+      const text = textFrom(input);
+      if (text === undefined) return json({ error: "invalid_text" }, 422);
+      const wanted = input.state === undefined ? undefined : str(input.state);
+      if (wanted !== undefined && wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
-      const closing = closingFrom(input);
-      if (closing === undefined) return json({ error: "invalid_reason" }, 422);
-      const changed = await setIssueStateThrough(
-        ctx.app,
-        ctx.auth.user,
-        found.repo,
-        found.issue,
-        wanted,
-        closing,
-      );
-      if (!changed.ok) return originAware(changed.error, 409);
-      return json(withLabels(ctx, changed.value));
+      if (
+        wanted === undefined &&
+        text.title === undefined &&
+        text.body === undefined
+      )
+        return typeof input.sealed === "boolean"
+          ? json(withLabels(ctx, issue))
+          : NOTHING_TO_CHANGE();
+      if (text.title !== undefined || text.body !== undefined) {
+        const edited = editIssue(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          issue,
+          text,
+        );
+        if (!edited.ok)
+          return edited.error === "taken_up"
+            ? takenUp()
+            : originAware(edited.error, 422);
+        issue = edited.value;
+      }
+      if (wanted !== undefined) {
+        const closing = closingFrom(input);
+        if (closing === undefined)
+          return json({ error: "invalid_reason" }, 422);
+        const changed = await setIssueStateThrough(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          issue,
+          wanted,
+          closing,
+        );
+        if (!changed.ok) return originAware(changed.error, 409);
+        issue = changed.value;
+      }
+      return json(withLabels(ctx, issue));
     },
   );
 
@@ -2319,7 +2641,13 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = withLabelsMany(ctx, listPulls(ctx.app.db, repo.id, query));
+    const items = withLabelsMany(
+      ctx,
+      listPulls(ctx.app.db, repo.id, {
+        ...query,
+        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+      }),
+    );
     return json(paged(items, query.limit, (p) => p.number));
   });
 
@@ -2346,7 +2674,15 @@ export function apiRoutes(router: Router<Handler>): void {
       baseBranch: str(input.base),
       headBranch: str(input.head),
       ...(headRepo ? { headRepo } : {}),
+      // A person's deliberate yes to fixing a sealed report from a public branch.
+      ...(input.confirmPublic === true ? { confirmPublic: true } : {}),
     });
+    if (!created.ok && created.error === "sealed_in_public")
+      return apiError(
+        "sealed_in_public",
+        422,
+        "this fixes a sealed report from a public branch: push it to your private repository (POST …/issues/<n>/private) and open the pull from there, or send confirmPublic: true",
+      );
     if (!created.ok)
       return created.error === "origin_owner_only" ||
         created.error === "origin_refused" ||
@@ -2366,7 +2702,7 @@ export function apiRoutes(router: Router<Handler>): void {
     // a second round trip, and the review gate beside it so a client knows
     // whether merging is even on offer.
     const { status, diff } = await pullDiff(
-      dirOf(ctx, found.repo),
+      await pullDirOf(ctx, found.repo, found.pull),
       found.pull,
       { db: ctx.app.db, requireReview: found.repo.requireReview },
     );
@@ -2388,17 +2724,41 @@ export function apiRoutes(router: Router<Handler>): void {
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
       const input = await body(ctx.request);
-      const wanted = str(input.state);
-      if (wanted !== "open" && wanted !== "closed")
+      // The same two halves as an issue's PATCH: words, then state.
+      const text = textFrom(input);
+      if (text === undefined) return json({ error: "invalid_text" }, 422);
+      const wanted = input.state === undefined ? undefined : str(input.state);
+      if (wanted !== undefined && wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
-      const changed = await setIssueStateThrough(
-        ctx.app,
-        ctx.auth.user,
-        found.repo,
-        found.pull,
-        wanted,
-      );
-      if (!changed.ok) return originAware(changed.error, 409);
+      if (
+        wanted === undefined &&
+        text.title === undefined &&
+        text.body === undefined
+      )
+        return NOTHING_TO_CHANGE();
+      if (text.title !== undefined || text.body !== undefined) {
+        const edited = editIssue(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          found.pull,
+          text,
+        );
+        if (!edited.ok)
+          return edited.error === "taken_up"
+            ? takenUp()
+            : originAware(edited.error, 422);
+      }
+      if (wanted !== undefined) {
+        const changed = await setIssueStateThrough(
+          ctx.app,
+          ctx.auth.user,
+          found.repo,
+          getPull(ctx.app.db, found.repo.id, found.pull.number)!,
+          wanted,
+        );
+        if (!changed.ok) return originAware(changed.error, 409);
+      }
       return json(
         withLabels(ctx, getPull(ctx.app.db, found.repo.id, found.pull.number)!),
       );
@@ -2504,7 +2864,10 @@ export function apiRoutes(router: Router<Handler>): void {
     async (ctx) => {
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      const { diff } = await pullDiff(dirOf(ctx, found.repo), found.pull);
+      const { diff } = await pullDiff(
+        await pullDirOf(ctx, found.repo, found.pull),
+        found.pull,
+      );
       return json(
         withOutdated(
           readerMarked(
@@ -3303,16 +3666,9 @@ export function apiRoutes(router: Router<Handler>): void {
   // How the forge is, and the platform's word on its rollout: anyone may
   // read it (a monitor has no account). A site admin also gets the forge's
   // own vitals alongside, `ok` being both.
-  router.add("GET", "/api/v1/health", (ctx) => {
-    const forge = forgeHealth();
-    if (!ctx.auth.user?.isAdmin) return json(forge);
-    const runtime = appsRuntime(ctx.app);
-    const envs = runtime
-      ? listApps(ctx.app.db).flatMap((record) => runtime.status(record))
-      : [];
-    const v = vitals({ db: ctx.app.db, dataDir: ctx.app.config.dataDir, envs });
-    return json({ ...v, ...forge, ok: forge.ok && v.ok });
-  });
+  router.add("GET", "/api/v1/health", (ctx) =>
+    json(readHealth(ctx.app, ctx.auth.user)),
+  );
 
   // Explore (#607): the rows /explore shows, for the same one line.
   router.add("GET", "/api/v1/explore", async (ctx) => {
@@ -3321,6 +3677,50 @@ export function apiRoutes(router: Router<Handler>): void {
       query: exploreLine(query),
       items: await explore(ctx.app, ctx.auth.user, query),
     });
+  });
+
+  // Make it yours (#606): a fork with its app, planned unless dryRun is
+  // false; the answer names the copy and what was and was not copied.
+  router.add("POST", "/api/v1/repos/:owner/:name/make-it-yours", async (ctx) => {
+    const input = await body(ctx.request);
+    const dryRun = input.dryRun !== false;
+    const denied = requireScope(ctx, dryRun ? "ro" : "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const name = str(input.name);
+    const visibility = str(input.visibility);
+    if (visibility !== "" && visibility !== "public" && visibility !== "private")
+      return apiError("invalid", 422, "visibility is public or private");
+    const made = await makeItYours(ctx.app, ctx.auth.user, repo, {
+      dryRun,
+      ...(name === "" ? {} : { name }),
+      ...(visibility === "" ? {} : { visibility }),
+    });
+    if (!made.ok)
+      return made.error.kind === "limit"
+        ? json(
+            {
+              error: "limit",
+              message: `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`,
+              resetsAt: made.error.resetsAt,
+            },
+            429,
+          )
+        : made.error.kind === "invalid"
+        ? apiError("invalid", 422, made.error.message)
+        : made.error.kind === "own"
+          ? apiError("own", 409, "this app is already yours")
+          : made.error.kind === "unverified"
+            ? apiError("unverified", 403, "prove your email first")
+            : made.error.kind === "unauthorized"
+              ? unauthorized()
+              : notFound();
+    const { made: done, ...plan } = made.value;
+    return json(
+      done === undefined ? plan : { ...plan, url: `/${done.repo.ownerName}/${done.repo.name}` },
+      dryRun ? 200 : 201,
+    );
   });
 
   // The front page (#686): what a stranger is shown, for anyone; a site
@@ -3335,13 +3735,23 @@ export function apiRoutes(router: Router<Handler>): void {
     if (denied) return denied;
     const picks = frontInput(ctx.app, input);
     if (picks === undefined)
-      return apiError("invalid", 422, "send {pinned, hidden}: arrays of owner/name");
+      return apiError("invalid", 422, "send {pinned, hidden, weights}: arrays of owner/name; weights an object of forks, ships, use, fresh");
     const set = setFront(ctx.app, ctx.auth.user, picks);
     if (!set.ok)
       return set.error.kind === "forbidden"
         ? apiError("forbidden", 403, "the front page is a site admin's to set")
         : apiError("invalid", 422, set.error.message);
     return json(set.value);
+  });
+
+  // A spawned forge's word about itself (#776): claimed or not, to anyone;
+  // when anything last happened, only to its parent's secret. Nothing else;
+  // 404 when not spawned.
+  router.add("GET", "/api/v1/forge", async (ctx) => {
+    const shown = ctx.request.headers.get(PARENT_HEADER) ?? undefined;
+    const state = await forgeState(ctx.app, shown);
+    if (!state) return apiError("not_found", 404, "this forge was not spawned");
+    return json(state);
   });
 
   // A forge's children (docs/SPAWN.md): an admin's, planned before made.
@@ -3360,6 +3770,14 @@ export function apiRoutes(router: Router<Handler>): void {
     if (typeof input !== "object" || input === null || Array.isArray(input))
       return apiError("invalid", 422, "send a JSON object: name, apps, crew, dryRun");
     const door = await spawnDoor(ctx, ctx.auth.user!, input as Record<string, unknown>);
+    return json(door.body, door.status);
+  });
+
+  // A new claim link for a child nobody has claimed (#729); the old one dies.
+  router.add("POST", "/api/v1/forges/:name/claim-link", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const door = await reissueDoor(ctx, ctx.auth.user!, ctx.params["name"] ?? "");
     return json(door.body, door.status);
   });
 
@@ -4153,6 +4571,7 @@ export function apiRoutes(router: Router<Handler>): void {
     for (const issue of issues) {
       const repo = repos.get(issue.repoId);
       if (!repo || !canRead(ctx.app.db, repo, user)) continue;
+      if (!mayView(ctx.app.db, repo, issue, user)) continue;
       items.push({
         ...issue,
         repo: { owner: repo.ownerName, name: repo.name },
@@ -4164,7 +4583,10 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/agents", (ctx) => {
     const agents = listAllAgents(ctx.app, ctx.auth.user);
     if (!agents.ok) return respondAccess(agents.error, 401);
-    return json({ items: agents.value.map(agentJson), next_cursor: null });
+    return json({
+      items: agents.value.map((a) => agentFor(a, ctx.auth.user)),
+      next_cursor: null,
+    });
   });
 
   router.add("POST", "/api/v1/agents", async (ctx) => {
@@ -4193,7 +4615,7 @@ export function apiRoutes(router: Router<Handler>): void {
       ctx.params.username ?? "",
     );
     if (!agent.ok) return respondAccess(agent.error, 404);
-    return json(agentJson(agent.value));
+    return json(agentFor(agent.value, ctx.auth.user));
   });
 
   router.add("PATCH", "/api/v1/agents/:username", async (ctx) => {
@@ -4231,9 +4653,11 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/repos/:owner/:name/crew", (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const crew = listCrew(ctx.app, ctx.auth.user, repo);
+    // Names and roles for every reader; the brief, model and budget for
+    // writers and the crew (`crewAsSeen`, #946).
+    const crew = crewAsSeen(ctx.app, ctx.auth.user, repo);
     if (!crew.ok) return notFound();
-    return json({ items: crew.value.map(agentJson), next_cursor: null });
+    return json({ items: crew.value, next_cursor: null });
   });
 
   router.add("PUT", "/api/v1/repos/:owner/:name/crew/:username", (ctx) => {

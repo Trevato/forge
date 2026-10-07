@@ -80,8 +80,9 @@ test("a site admin with a read-only token gets the shape; others get the short o
   const v = (await res.json()) as Record<string, any>;
   expect(Object.keys(v).sort()).toEqual(
     [
-      "apps", "at", "checkedAt", "disk", "draining", "errors", "incidents",
-      "memory", "needs", "ok", "queue", "rollout", "stale", "stuck", "version",
+      "apps", "at", "checkedAt", "commit", "disk", "draining", "errors",
+      "incidents", "memory", "needs", "ok", "queue", "rollout", "stale", "stuck",
+      "version",
     ].sort(),
   );
   expect(v.disk.totalBytes).toBeGreaterThan(0);
@@ -147,7 +148,8 @@ test("the number of queries does not grow with runs", () => {
     if (i % 2) app.db.query("UPDATE run SET state='running' WHERE id=?1").run(r.id);
   }
   expect(count()).toBe(before);
-  expect(before).toBe(2);
+  // The queue, the running runs, and the egress mode (`core/capacity.ts`).
+  expect(before).toBe(3);
 });
 
 test("errors are counted, bounded, redacted, and a burst is said", async () => {

@@ -104,6 +104,12 @@ export interface CellSpec {
   readonly terminal?: boolean | undefined;
   /** Told of every undeclared host let through while egress is only reported. */
   readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
+  /**
+   * Refuse undeclared egress, or only report it, for this cell — the
+   * forge's setting when the cell starts (`core/capacity.ts`); the
+   * environment's (`egressMode`) when the caller has none.
+   */
+  readonly egressMode?: "enforce" | "report" | undefined;
 }
 
 /**
@@ -257,7 +263,7 @@ export function openCell(
         hosts: spec.egress,
         origins,
         report:
-          egressMode() === "report"
+          (spec.egressMode ?? egressMode()) === "report"
             ? (host, port) => spec.onUndeclared?.(host, port)
             : undefined,
       },
@@ -537,14 +543,44 @@ export function signalTree(root: number, signal: NodeJS.Signals): void {
 /**
  * The command's own pid in a cell whose bubblewrap is `root`: the first
  * child of the cell's init (the relays come after it). `undefined` until it
- * exists.
+ * exists. `--unshare-user` nests a second bwrap as the only child; step
+ * through that so the init we name is the cell's, not the outer wrapper.
  */
 export function commandPid(root: number): number | undefined {
   const children = processTable().children;
-  const init = children.get(root)?.[0];
-  if (init === undefined) return undefined;
-  const inside = children.get(init) ?? [];
-  return inside.length === 0 ? undefined : Math.min(...inside);
+  let node = root;
+  for (;;) {
+    const kids = children.get(node) ?? [];
+    if (kids.length !== 1) break;
+    node = kids[0]!;
+  }
+  const inside = children.get(node) ?? [];
+  if (inside.length === 0) return node === root ? undefined : node;
+  // Socat relays start before the command in WRAPPER; skip them so Math.min
+  // does not name a relay (or the sh that still holds `bun run`).
+  const named = inside.filter((pid) => {
+    try {
+      return !readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("socat");
+    } catch {
+      return true;
+    }
+  });
+  const pool = named.length > 0 ? named : inside;
+  let pick = Math.min(...pool);
+  // The WRAPPER may still show as `sh` holding `bun run` as its child;
+  // name the bun — that is what busy asks about.
+  for (;;) {
+    const kids = children.get(pick) ?? [];
+    if (kids.length !== 1) return pick;
+    let cmd = "";
+    try {
+      cmd = readFileSync(`/proc/${pick}/cmdline`, "utf8").replace(/\0/g, " ");
+    } catch {
+      return pick;
+    }
+    if (!/^\/bin\/sh\b/.test(cmd) && !/^sh\b/.test(cmd)) return pick;
+    pick = kids[0]!;
+  }
 }
 
 function descendants(root: number): number[] {

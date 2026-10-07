@@ -1,10 +1,10 @@
 /**
- * `/asks`: the one screen that answers "is everything fine?". A sentence —
- * *All fine*, or *N things need you* — and under it the decision cards
- * (`asks.ts`), then, for a site admin, one card per thing the forge itself
- * needs. First paint is the whole page; every button is a plain form post.
- * Many asks at once stay on this screen too: tick them, pick one action, and
- * the preview, the receipt and its Undo appear on top (`actions/asks_bulk.ts`).
+ * What needs you, pinned at the top of the home (#634): a sentence — *N
+ * things need you* — and under it the decision cards (`asks.ts`), then, for
+ * a site admin, one card per thing the forge itself needs. Every button is a
+ * plain form post. Many asks at once stay here too: tick them, pick one
+ * action, and the preview, the receipt and its Undo appear on top
+ * (`actions/asks_bulk.ts`). `/asks` was its own screen; it lands here now.
  */
 
 import {
@@ -16,12 +16,14 @@ import {
 } from "../../actions/asks_bulk.ts";
 import type { FleetValue } from "../../core/fleet_ops.ts";
 import type { Ctx } from "../../http/context.ts";
+import type { User } from "../../core/users.ts";
+import { studioHome } from "./home.ts";
 import { notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { listReposVisibleTo } from "../../core/repos.ts";
 import { html, type Html } from "../html.ts";
-import { page, redirect } from "../layout.ts";
-import { btn, card, icon, listCard, row } from "../ui.ts";
+import { redirect } from "../layout.ts";
+import { btn, card, icon, row } from "../ui.ts";
 import {
   askAnchor,
   askRows,
@@ -39,7 +41,7 @@ import {
 import { changeHref } from "./nouns.ts";
 
 /** The kinds a bulk action takes: a ceiling and a planner's decline are decided where they live. */
-const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "stopped", "parked"]);
+const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "review", "stopped", "parked"]);
 
 /** A row's box for the bulk form, which sits apart (`form="asks-bulk"`): forms do not nest. */
 const pick = (d: Decision, picked: ReadonlySet<string>): Html | null =>
@@ -65,6 +67,9 @@ const SELECT_ALL_JS = `document.addEventListener('change', function (e) {
 
 /** The rows shown before "N more": the few that matter most. */
 export const ASKS_SHOWN = 5;
+
+/** The rows a phone shows before its own "N more" (#883's follow-up). */
+export const ASKS_SHOWN_PHONE = 2;
 
 /**
  * Why it ranks high, when that is more than its kind: security, money,
@@ -118,8 +123,7 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
   const only = r.items.length === 1 ? r.items[0] : undefined;
   if (only) return decisionCard(ctx, only, picked);
   const base = repoBase(r.repo);
-  return listCard(
-    r.items.map((d) => {
+  const lines = r.items.map((d) => {
       const number = d.pull?.number ?? d.issue?.number;
       const href = d.pull
         ? changeHref(base, d.pull.number)
@@ -130,8 +134,19 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
         title: html`<a href="${href}">${d.pull?.title ?? d.issue?.title ?? ""}</a>`,
         meta: html`<span class="bar">${decisionActions(ctx, d)}</span>`,
       });
-    }),
+  });
+  // On a phone a group is its head line, its asks one tap away, so two
+  // groups never push the composer past the fold; a wider screen holds the
+  // details open and shows every line, as before.
+  return card(
+    html`<details class="ask-group">
+      <summary>Show all ${r.items.length}</summary>
+      <ul class="list">
+        ${lines}
+      </ul>
+    </details>`,
     {
+      pad: false,
       id: askAnchor(r.id),
       head: html`${BULK_KINDS.has(r.kind)
           ? html`<input
@@ -171,16 +186,32 @@ export interface AsksTop {
   readonly action?: string;
 }
 
-/** GET /asks — `?op=<id>` puts that bulk action's receipt on top. */
+/** GET /asks — the home, scrolled to what needs you; `?op=<id>` (a bulk
+ * action's receipt) rides along. */
 export function asksPage(ctx: Ctx): Response {
   const op = ctx.url.searchParams.get("op");
-  return asksScreen(ctx, op === null ? undefined : receiptTop(ctx, op));
+  return redirect(
+    op === null
+      ? "/#needs-you"
+      : `/?op=${encodeURIComponent(op)}#asks-bulk-result`,
+  );
 }
 
-/** The one screen: what asks you, with a bulk step's preview or receipt on top. */
-export function asksScreen(ctx: Ctx, top?: AsksTop): Response {
-  const user = ctx.auth.user;
-  if (!user) return signInFirst(ctx);
+/** The receipt `?op=<id>` names on the home, when it is the viewer's own. */
+export function homeTop(ctx: Ctx): AsksTop | undefined {
+  const op = ctx.url.searchParams.get("op");
+  return op === null ? undefined : receiptTop(ctx, op);
+}
+
+/** What needs you, as the home's pinned section: what asks you, with a
+ * bulk step's preview or receipt on top. Nothing on screen when nothing
+ * asks — the header's Asks link says so — but the sentence stays for a
+ * screen reader. */
+export function needsYouSection(
+  ctx: Ctx,
+  user: User,
+  top?: AsksTop,
+): { body: Html; scriptJs: string } {
   const picked = top?.picked ?? new Set<string>();
   const decisions = decisionsFor(
     ctx,
@@ -189,15 +220,45 @@ export function asksScreen(ctx: Ctx, top?: AsksTop): Response {
   const needs = forgeNeedsFor(ctx, user);
   const rows = askRows(decisions);
   const count = rows.length + needs.length;
+  if (count === 0 && top === undefined)
+    return {
+      body: html`<h2 id="asks-sentence" class="sr-only">${askSentence(0)}</h2>`,
+      scriptJs: "",
+    };
   // The forge's own health first, then the few asks that matter most;
-  // the rest are one tap away, in the same order.
-  const first = rows.slice(0, ASKS_SHOWN);
+  // the rest are one tap away, in the same order. A phone shows fewer
+  // (ASKS_SHOWN_PHONE) so the composer stays near the fold: the outer
+  // "more" is the phone's and opens in place to every ask; a wider screen
+  // flattens it and keeps the inner "more" for what is past ASKS_SHOWN.
+  const first = rows.slice(0, ASKS_SHOWN_PHONE);
+  const middle = rows.slice(ASKS_SHOWN_PHONE, ASKS_SHOWN);
   const rest = rows.slice(ASKS_SHOWN);
   const pickable = decisions.filter((d) => BULK_KINDS.has(d.kind)).length;
-  const body = html`<h1 id="asks-sentence">${askSentence(count)}</h1>
+  const more = (id: string, n: number, inner: Html): Html =>
+    html`<details id="${id}">
+      <summary>${n} more</summary>
+      <div class="stack mt">${inner}</div>
+    </details>`;
+  const restMore =
+    rest.length === 0
+      ? null
+      : more("asks-more", rest.length, html`${rest.map((r) => rowCard(ctx, r, picked))}`);
+  // The asks come first, so the first Tab after #needs-you lands on one;
+  // the bulk step acts on what was picked, after them.
+  const body = html`<section id="needs-you" class="needs-you stack">
+    <h2 id="asks-sentence">${askSentence(count)}</h2>
+    ${top?.banner ?? null}
+    ${needs.map(forgeCard)} ${first.map((r) => rowCard(ctx, r, picked))}
+    ${middle.length === 0
+      ? null
+      : more(
+          "asks-phone-more",
+          rows.length - first.length,
+          html`${middle.map((r) => rowCard(ctx, r, picked))} ${restMore}`,
+        )}
     ${pickable < 2
       ? null
-      : html`<form id="asks-bulk" method="post" action="/asks/bulk" class="bar mb">
+      : html`<form id="asks-bulk" method="post" action="/asks/bulk" class="bar">
           <select name="action" class="input" aria-label="What to do with the selected asks">
             ${Object.entries(VERB_WORDS).map(
               ([value, words]) =>
@@ -207,24 +268,17 @@ export function asksScreen(ctx: Ctx, top?: AsksTop): Response {
           ${btn("Preview", { size: "sm" })}
           <span class="muted small">on the selected asks</span>
         </form>`}
-    ${top?.banner ?? null}
-    <p class="muted small"><a href="/asked">What you asked for</a>, and what became of it.</p>
-    <div class="stack">
-      ${needs.map(forgeCard)} ${first.map((r) => rowCard(ctx, r, picked))}
-    </div>
-    ${rest.length === 0
-      ? null
-      : html`<details class="mt" id="asks-more">
-          <summary>${rest.length} more</summary>
-          <div class="stack mt">${rest.map((r) => rowCard(ctx, r, picked))}</div>
-        </details>`}
-    ${decisions.map((d) => decisionForm(d))}`;
-  return page({
-    ctx,
-    title: askSentence(count),
-    body,
-    ...(pickable < 2 ? {} : { scriptJs: SELECT_ALL_JS }),
-  });
+    ${decisions.map((d) => decisionForm(d))}
+  </section>`;
+  return { body, scriptJs: pickable < 2 ? "" : SELECT_ALL_JS };
+}
+
+/** The home with a bulk step's preview or receipt on top of what needs
+ * you — where every bulk answer lands. */
+async function asksScreen(ctx: Ctx, top: AsksTop): Promise<Response> {
+  const user = ctx.auth.user;
+  if (!user) return signInFirst(ctx);
+  return await studioHome(ctx, user, top);
 }
 
 // ---- many at once: select, preview, do it, undo — all on this screen ----
@@ -307,15 +361,16 @@ export async function asksBulkSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const action = field(form, "action");
   const items = form.getAll("item").filter((i): i is string => typeof i === "string");
-  if (items.length === 0) return asksScreen(ctx, nothingDone("select at least one ask first"));
+  if (items.length === 0)
+    return await asksScreen(ctx, nothingDone("select at least one ask first"));
   const verb = VERB_WORDS[action] ?? action;
   if (field(form, "apply") === "1") {
     const op = await applyAsksBulk(ctx.app, ctx.auth.user, action, items);
-    if (!op.ok) return asksScreen(ctx, nothingDone(op.error.message));
-    return redirect(`/asks?op=${op.value.id}#asks-bulk-result`);
+    if (!op.ok) return await asksScreen(ctx, nothingDone(op.error.message));
+    return redirect(`/?op=${op.value.id}#asks-bulk-result`);
   }
   const plan = previewAsksBulk(ctx.app, ctx.auth.user, action, items);
-  if (!plan.ok) return asksScreen(ctx, nothingDone(plan.error.message));
+  if (!plan.ok) return await asksScreen(ctx, nothingDone(plan.error.message));
   const p = plan.value;
   const foot = html`<form method="post" action="/asks/bulk" class="bar">
     <input type="hidden" name="action" value="${action}" />
@@ -327,7 +382,7 @@ export async function asksBulkSubmit(ctx: Ctx): Promise<Response> {
       ${p.reversible ? "undo afterwards" : "not undone afterwards"}</span
     >
   </form>`;
-  return asksScreen(ctx, {
+  return await asksScreen(ctx, {
     banner: bulkCard(`${verb}: ${p.counts.change} of ${items.length}`, bulkRows(p.rows, p.skipped), foot),
     picked: new Set(items),
     action,
@@ -343,6 +398,6 @@ export async function asksBulkUndo(ctx: Ctx): Promise<Response> {
   if (!op.ok)
     return op.error.code === "not_found"
       ? notFoundPage(ctx)
-      : asksScreen(ctx, nothingDone(op.error.message));
-  return redirect(`/asks?op=${op.value.id}#asks-bulk-result`);
+      : await asksScreen(ctx, nothingDone(op.error.message));
+  return redirect(`/?op=${op.value.id}#asks-bulk-result`);
 }

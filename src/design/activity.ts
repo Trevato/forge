@@ -20,10 +20,6 @@ const environment = (env: unknown): string => {
   return preview === "" ? "production" : `the preview of #${preview}`;
 };
 
-/** Moments rather than facts: a feed shows what came of them instead. */
-export const isTransientEvent = (kind: string): boolean =>
-  kind === "run.queued" || kind === "run.started";
-
 export function eventVerb(event: ForgeEvent): string {
   const { kind, payload } = event;
   if (kind === "run.finished") {
@@ -97,9 +93,13 @@ const WORDS: Record<string, string> = {
   "issue.closed": "closed an issue",
   "issue.reopened": "reopened an issue",
   "issue.commented": "commented on an issue",
+  "issue.edited": "edited an issue",
   "issue.labeled": "labelled an issue",
+  "issue.sealed": "sealed a security report",
+  "issue.unsealed": "unsealed a security report",
   "pull.opened": "opened a pull request",
   "pull.merged": "merged a pull request",
+  "pull.edited": "edited a pull request",
   "pull.closed": "closed a pull request",
   "pull.reopened": "reopened a pull request",
   "pull.commented": "commented on a pull request",

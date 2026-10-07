@@ -14,9 +14,10 @@
  * timer.
  */
 
+import { holdForCaller } from "./caller.ts";
 import type { App } from "../app.ts";
 import type { User } from "../core/users.ts";
-import { listEventsVisibleTo } from "../core/events.ts";
+import { listEvents, listEventsVisibleTo } from "../core/events.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
 import type { ForgeEvent } from "../core/events.ts";
@@ -51,6 +52,25 @@ export const sseDroppedCount = (): number => slowClientsDropped;
 export const resetSseDroppedCount = (): void => {
   slowClientsDropped = 0;
 };
+
+/**
+ * Every stream open in this process, by the way to end it for a drain. A
+ * process that is going away (a roll) ends each with a resume hint — reconnect
+ * in a second, from the last id you saw — rather than letting the socket
+ * drop: the browser's EventSource reconnects, and lands on the process that
+ * replaced this one (docs/ARCHITECTURE.md, "Two processes at once").
+ */
+const openStreams = new Set<() => void>();
+
+/** How soon a drained stream's client reconnects, in milliseconds. */
+export const DRAIN_RETRY_MS = 1000;
+
+/** End every open stream with a resume hint; how many there were. */
+export function drainStreams(): number {
+  const ending = [...openStreams];
+  for (const end of ending) end();
+  return ending.length;
+}
 
 /** Send one frame. `id` lets a reconnecting client resume where it left off. */
 export type Emit = (event: string, data: unknown, id?: string) => void;
@@ -100,9 +120,12 @@ export function eventStream(
         // Assigned before `register` runs: a source that finishes immediately
         // (a job that is already done) must find a cleanup that works.
         let unsubscribe = () => {};
+        // An account suspended or removed ends its open streams then.
+        let release = () => {};
         cleanup = () => {
           if (!open) return;
           open = false;
+          release();
           unsubscribe();
           clearInterval(heartbeat);
           try {
@@ -112,7 +135,18 @@ export function eventStream(
           }
         };
 
+        const drain = () => {
+          write(`retry: ${DRAIN_RETRY_MS}\nevent: drain\ndata: {}\n\n`);
+          cleanup();
+        };
+        openStreams.add(drain);
+        const closeOnce = cleanup;
+        cleanup = () => {
+          openStreams.delete(drain);
+          closeOnce();
+        };
         request.signal.addEventListener("abort", cleanup);
+        release = holdForCaller(request, () => cleanup());
         write(`: connected\n\n`);
         unsubscribe = register(emit, () => cleanup());
         // A registration that closed the stream synchronously leaves an
@@ -176,12 +210,9 @@ export function viewerStream(
   // Readable is not the same as meant-for: configuration events are the
   // admins', a person's own choices are theirs (`core/event_audience.ts`).
   const meant = audienceFilter(app.db, viewer);
-  const after =
-    request.headers.get("last-event-id") ??
-    new URL(request.url).searchParams.get("since") ??
-    undefined;
+  const after = resumeFrom(request);
   return eventStream(request, (emit) => {
-    if (after !== undefined && after !== "") {
+    if (after !== undefined) {
       const missed = listEventsVisibleTo(app.db, viewer, {
         afterId: after,
         limit: 200,
@@ -204,12 +235,29 @@ export function sseStream(
   viewer: User | undefined,
 ): Response {
   const meant = audienceFilter(app.db, viewer);
-  return eventStream(request, (emit) =>
-    app.bus.subscribe((event: ForgeEvent) => {
-      // The event id doubles as the SSE id, so a reconnecting client can
-      // resume from where it stopped.
+  const after = resumeFrom(request);
+  return eventStream(request, (emit) => {
+    // The event id doubles as the SSE id, so a reconnecting client resumes
+    // from where it stopped: what it missed first, oldest first, then live.
+    if (after !== undefined)
+      for (const event of listEvents(app.db, {
+        repoId,
+        afterId: after,
+        limit: 200,
+      }).reverse())
+        if (meant(event)) emit(event.kind, event, event.id);
+    return app.bus.subscribe((event: ForgeEvent) => {
       if (event.repoId === repoId && meant(event))
         emit(event.kind, event, event.id);
-    }),
-  );
+    });
+  });
+}
+
+/** Where a reconnecting client asks to resume: the last event it heard. */
+function resumeFrom(request: Request): string | undefined {
+  const after =
+    request.headers.get("last-event-id") ??
+    new URL(request.url).searchParams.get("since") ??
+    "";
+  return after === "" ? undefined : after;
 }

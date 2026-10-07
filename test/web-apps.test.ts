@@ -229,10 +229,10 @@ describe("apps, runs and the crew on the web", () => {
   });
 
   test("the dashboard and /apps list the app with its state and URL", async () => {
+    // The home's rail names your apps and offers New app (#625).
     const dash = await bodyOf(alice, "/");
-    expect(dash).toContain("<h2>Apps</h2>");
+    expect(dash).toContain("<h2>Your apps</h2>");
     expect(dash).toContain("alice/hello");
-    expect(dash).toContain('href="/alice/hello/app/production/open"');
     expect(dash).toContain('href="/apps/new"');
 
     // /apps is the shelf (#630): a row opens the app's page, where its URL
@@ -306,6 +306,30 @@ describe("apps, runs and the crew on the web", () => {
     ).toBe(true);
   }, 20_000);
 
+  test("the app's tabs and doors: no second home key, no App button under the App tab, and telling the crew is offered only to who may", async () => {
+    // The palette's studio rows, so a studio browser.
+    const studio = (cookie: string) =>
+      cookie.replace("forge_mode=dev", "forge_mode=studio");
+    const home = await (await web(studio(alice), "/alice/hello")).text();
+    // `g h` is the wordmark's go-home key, once; the App tab takes none.
+    expect(home.split('data-shortcut="g h"').length - 1).toBe(1);
+    expect(home).toContain("— Tell the crew");
+    const files = await (await web(alice, "/alice/hello/files")).text();
+    expect(files).toContain('class="app-strip"');
+    const strip = files.slice(
+      files.indexOf('class="app-strip"'),
+      files.indexOf("</div>", files.indexOf('class="app-strip"')),
+    );
+    expect(strip).not.toContain(">App<");
+    // bob reads the public app but cannot write it; a visitor neither.
+    expect(await (await web(studio(bob), "/alice/hello")).text()).not.toContain(
+      "— Tell the crew",
+    );
+    expect(await (await web("", "/alice/hello")).text()).not.toContain(
+      "— Tell the crew",
+    );
+  });
+
   test("the runs list, one run's log page, and the short door to it", async () => {
     const [run] = await runsOf(hello);
     expect(run).toBeDefined();
@@ -336,10 +360,36 @@ describe("apps, runs and the crew on the web", () => {
     expect(page).toContain('class="ln ln-forge"');
     expect(page).toContain('id="run-elapsed"');
     // The stream and the no-script refresh exist only while it is going.
+    // Match the real <meta> / data-stream= attributes — not the same
+    // strings inside studioRunJs (a bare includes("http-equiv=…") stays
+    // true after the meta is gone because the script still quotes it).
     const fresh = listRuns(app.db, hello.id).find((r) => r.id === run!.id)!;
     const going = fresh.state === "queued" || fresh.state === "running";
-    expect(page.includes("data-stream=")).toBe(going);
-    expect(page.includes('http-equiv="refresh"')).toBe(going);
+    const hasMetaRefresh = (html: string): boolean =>
+      /<meta[^>]*http-equiv="refresh"/.test(html);
+    const hasLiveMarkers = (html: string): boolean =>
+      html.includes("data-stream=") || hasMetaRefresh(html);
+    let livePage = page;
+    if (going) {
+      expect(livePage.includes("data-stream=")).toBe(true);
+      expect(hasMetaRefresh(livePage)).toBe(true);
+    } else {
+      // DB already terminal; poll until the page drops both live markers
+      // (one re-fetch was not always enough under CI timing).
+      const deadline = Date.now() + 3_000;
+      for (;;) {
+        livePage = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
+        if (!hasLiveMarkers(livePage)) break;
+        if (Date.now() >= deadline) {
+          throw new Error(
+            `run ${run!.id} is ${fresh.state} but the page still streams/refreshes after settle`,
+          );
+        }
+        await Bun.sleep(200);
+      }
+      expect(livePage.includes("data-stream=")).toBe(false);
+      expect(hasMetaRefresh(livePage)).toBe(false);
+    }
 
     const door = await web(alice, `/runs/${run!.id}`);
     expect(door.status).toBe(303);

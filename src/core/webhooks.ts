@@ -8,6 +8,7 @@
  * secure channels" surface.
  */
 
+import { eventSealed } from "./sealed.ts";
 import type { Database } from "bun:sqlite";
 import { defect } from "../kernel/error.ts";
 import { id, secret as randomSecret } from "../kernel/id.ts";
@@ -140,6 +141,9 @@ export function kindMatches(spec: string, kind: string): boolean {
  */
 export function enqueueForEvent(db: Database, event: ForgeEvent): number {
   if (event.repoId === null) return 0;
+  // A hook's URL is somewhere else: nothing about a sealed report goes
+  // there, not even that it moved (`sealed.ts`).
+  if (eventSealed(db, event)) return 0;
   const hooks = db
     .query<
       { id: string; kinds: string },
@@ -174,6 +178,14 @@ interface DueRow {
 }
 
 /** Deliver all due pending deliveries. Returns how many were attempted. */
+/**
+ * How long a claimed delivery is its sender's before another may try it:
+ * well past the longest one send may take, so a claim never lapses while
+ * its sender is still waiting on the endpoint.
+ */
+export const CLAIM_MS = 60_000;
+export { DELIVER_TIMEOUT_MS };
+
 export async function deliverDue(
   db: Database,
   log: Log,
@@ -194,6 +206,25 @@ export async function deliverDue(
     .all(nowIso);
 
   for (const row of due) {
+    // Claimed before it is sent: two forge processes over one database (a
+    // roll) both see it pending, and only the one whose claim lands sends
+    // it. A claim is a short lease on `next_try_at`, taken from the clock at
+    // the moment of claiming — not the batch's start, which a slow endpoint
+    // earlier in the batch may have left a minute behind. A sender that dies
+    // mid-send leaves it to be tried again when the lease runs out.
+    const claimAt = Date.now();
+    const claimed = db
+      .query(
+        `UPDATE webhook_delivery SET next_try_at = ?2
+          WHERE id = ?1 AND state = 'pending'
+            AND (next_try_at IS NULL OR next_try_at <= ?3)`,
+      )
+      .run(
+        row.id,
+        new Date(claimAt + CLAIM_MS).toISOString(),
+        new Date(Math.max(claimAt, now.getTime())).toISOString(),
+      );
+    if (claimed.changes !== 1) continue;
     try {
       await deliverOne(db, log, row, now);
     } catch (error) {

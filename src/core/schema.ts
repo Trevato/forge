@@ -1366,4 +1366,178 @@ export const migrations: readonly string[] = [
   );
   CREATE INDEX outside_spend_repo ON outside_spend(repo_id, created_at);
   `,
+  // 58 — a signed-in browser has a name and a last-seen time (#750), so its
+  // person (and the forge's owner) can list them and sign one out. The id
+  // is not the secret: the cookie's hash stays the key.
+  `
+  ALTER TABLE session ADD COLUMN id TEXT;
+  ALTER TABLE session ADD COLUMN last_seen_at TEXT;
+  UPDATE session SET id = lower(hex(randomblob(12))) WHERE id IS NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS session_id ON session(id);
+  `,
+  // 59 — every message the forge sent, by a keyed hash of its recipient (#784): the
+  // per-recipient and forge-wide mail caps count it, across restarts.
+  `
+  CREATE TABLE IF NOT EXISTS mail_sent (
+    id        TEXT PRIMARY KEY,
+    recipient TEXT NOT NULL,
+    at        TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS mail_sent_recipient ON mail_sent(recipient, at);
+  CREATE INDEX IF NOT EXISTS mail_sent_at ON mail_sent(at);
+  `,
+  // 60 — who a picture was taken as (#738): the owner, signed in as an
+  // admin, or nobody. A public app's previews are taken as nobody, and only
+  // a picture taken as nobody is a reader's to see. Every picture before
+  // this was the owner's, which is what the default says.
+  `
+  ALTER TABLE look ADD COLUMN taken_as TEXT NOT NULL DEFAULT 'owner'
+    CHECK (taken_as IN ('owner','nobody'));
+  `,
+  // 61 — an agent never owns an organization (#722, CLAUDE.md invariant 10):
+  // every agent on a team that confers admin is taken off it, and each
+  // removal is told on the outbox as \`team.member_removed\` with its reason.
+  // The event id is a ULID made here — the time now, then randomness — so
+  // it sorts after every event before it, as \`kernel/id.ts\` would make it.
+  `
+  WITH a(c) AS (SELECT '0123456789abcdefghjkmnpqrstvwxyz'),
+       n(ms) AS (SELECT CAST(round((julianday('now') - 2440587.5) * 86400000) AS INTEGER)),
+       gone AS (
+         SELECT t.id AS team_id, u.id AS user_id, u.username AS user, o.username AS org
+           FROM team_member m
+           JOIN team t ON t.id = m.team_id
+           JOIN user u ON u.id = m.user_id
+           JOIN user o ON o.id = t.org_id
+          WHERE t.permission = 'admin' AND u.is_agent = 1
+       )
+  INSERT INTO event (id, kind, payload)
+  SELECT substr(a.c, ((n.ms >> 45) & 31) + 1, 1) || substr(a.c, ((n.ms >> 40) & 31) + 1, 1) || substr(a.c, ((n.ms >> 35) & 31) + 1, 1) || substr(a.c, ((n.ms >> 30) & 31) + 1, 1) || substr(a.c, ((n.ms >> 25) & 31) + 1, 1) || substr(a.c, ((n.ms >> 20) & 31) + 1, 1) || substr(a.c, ((n.ms >> 15) & 31) + 1, 1) || substr(a.c, ((n.ms >> 10) & 31) + 1, 1) || substr(a.c, ((n.ms >> 5) & 31) + 1, 1) || substr(a.c, ((n.ms >> 0) & 31) + 1, 1)
+         || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1) || substr(a.c, (abs(random()) % 32) + 1, 1),
+         'team.member_removed',
+         json_object('org', g.org, 'teamId', g.team_id, 'user', g.user,
+                     'why', 'an agent never owns an organization (#722)')
+    FROM gone g, a, n;
+  DELETE FROM team_member
+   WHERE (team_id, user_id) IN (
+     SELECT m.team_id, m.user_id FROM team_member m
+       JOIN team t ON t.id = m.team_id JOIN user u ON u.id = m.user_id
+      WHERE t.permission = 'admin' AND u.is_agent = 1);
+  `,
+  // 62 — only an agent is ever on a crew, said by the database itself: every
+  // route that puts someone on one (settings, the API, a migration, crew
+  // from forks, spawn's copy) meets the same refusal, and the SQL write
+  // check (`REPO_WRITABLE`'s crew clause) and `onCrew` can never drift.
+  // A person already there is reported at boot (`peopleOnCrews`), never
+  // removed by a migration.
+  `
+  CREATE TRIGGER repo_crew_agents_only BEFORE INSERT ON repo_crew
+  WHEN NOT EXISTS (SELECT 1 FROM user WHERE id = NEW.user_id AND is_agent = 1)
+  BEGIN
+    SELECT RAISE(ABORT, 'only an agent can be on a crew');
+  END;
+  CREATE TRIGGER repo_crew_agents_only_update BEFORE UPDATE OF user_id ON repo_crew
+  WHEN NOT EXISTS (SELECT 1 FROM user WHERE id = NEW.user_id AND is_agent = 1)
+  BEGIN
+    SELECT RAISE(ABORT, 'only an agent can be on a crew');
+  END;
+  `,
+  // 63 — the forge's capacity, set live by an admin (#874): crew and check
+  // concurrency, shards per check, egress mode. The environment stays the
+  // boot default; a row here overrides it, and every change is kept.
+  `
+  CREATE TABLE IF NOT EXISTS forge_setting (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS forge_setting_change (
+    key        TEXT NOT NULL,
+    from_value TEXT NOT NULL,
+    to_value   TEXT NOT NULL,
+    actor_id   TEXT NOT NULL,
+    at         TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS forge_setting_change_at ON forge_setting_change(at);
+  `,
+  // 64 — the front page's settings beyond its picks (#767): how it ranks,
+  // as one value a site admin sets. Presentation, like the picks: no event.
+  `
+  CREATE TABLE IF NOT EXISTS front_setting (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL,
+    set_by TEXT REFERENCES user(id) ON DELETE SET NULL,
+    set_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  `,
+  // 65 — a sealed issue (#621): a security report, and the pull that fixes
+  // it, seen only by people who can write the repository and its crew until
+  // a writer unseals it (`core/sealed.ts`).
+  `
+  ALTER TABLE issue ADD COLUMN sealed INTEGER NOT NULL DEFAULT 0;
+  -- The crew works a sealed report in a private repository of its own,
+  -- read by the base's writers and crew only, so the fix is never in the
+  -- base's git or a public fork's before it merges.
+  ALTER TABLE repo ADD COLUMN sealed_for TEXT REFERENCES repo(id) ON DELETE CASCADE;
+  `,
+  // 66 — a milestone a person watches (#732, `core/watches.ts`): one row per
+  // person and issue. Its progress is read from the plan, never stored.
+  `
+  CREATE TABLE IF NOT EXISTS milestone_watch (
+    user_id    TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    issue_id   TEXT NOT NULL REFERENCES issue(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (user_id, issue_id)
+  );
+  CREATE INDEX IF NOT EXISTS milestone_watch_issue ON milestone_watch(issue_id);
+  `,
+  // 67 — every fork a person made, kept when the fork is deleted (#888):
+  // the daily limit counts what was made, so deleting a copy does not make
+  // room for another. Nothing but the account's own deletion removes a row.
+  `
+  CREATE TABLE IF NOT EXISTS fork_made (
+    owner_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    made_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+  CREATE INDEX IF NOT EXISTS fork_made_owner ON fork_made(owner_id, made_at);
+  `,
+  // 68 — the run a comment was said into as it worked (#827): its agent heard
+  // it then, so the next run's brief does not tell it again.
+  `
+  ALTER TABLE comment ADD COLUMN heard_in TEXT;
+  `,
+  // 69 — an event's place in the outbox, as a number of its own (#932):
+  // replays resume by it, never by the id, which two processes in a roll
+  // can make out of order. It began as the rowid, which VACUUM may renumber
+  // on a table without an INTEGER PRIMARY KEY; this column it never
+  // touches. Every insert takes the next one, whoever writes it (the app or
+  // a migration's SQL), from the trigger: one writer at a time, so strictly
+  // increasing across every connection.
+  `
+  ALTER TABLE event ADD COLUMN seq INTEGER;
+  UPDATE event SET seq = rowid;
+  CREATE UNIQUE INDEX IF NOT EXISTS event_seq ON event(seq);
+  CREATE INDEX IF NOT EXISTS event_repo_seq ON event(repo_id, seq);
+  CREATE TRIGGER IF NOT EXISTS event_seq_next AFTER INSERT ON event
+  WHEN NEW.seq IS NULL
+  BEGIN
+    UPDATE event SET seq = (SELECT COALESCE(MAX(seq), 0) + 1 FROM event)
+     WHERE rowid = NEW.rowid;
+  END;
+  `,
+  // 70 — a sealed repository is never public, said by the database (#865's
+  // review): the rule lived in `updateRepoSettings`; these triggers hold
+  // it for every writer of `repo.visibility`, now and later.
+  `
+  CREATE TRIGGER repo_sealed_never_public BEFORE UPDATE OF visibility, sealed_for ON repo
+  WHEN NEW.sealed_for IS NOT NULL AND NEW.visibility = 'public'
+  BEGIN
+    SELECT RAISE(ABORT, 'a sealed repository is never public');
+  END;
+  CREATE TRIGGER repo_sealed_never_public_insert BEFORE INSERT ON repo
+  WHEN NEW.sealed_for IS NOT NULL AND NEW.visibility = 'public'
+  BEGIN
+    SELECT RAISE(ABORT, 'a sealed repository is never public');
+  END;
+  `,
 ];

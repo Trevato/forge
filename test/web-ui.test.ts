@@ -292,9 +292,13 @@ describe("web ui", () => {
     const absent = await fetch(`${base}/kim/nothing/raw/main/a.txt`);
     expect(hidden.status).toBe(404);
     expect(absent.status).toBe(404);
-    // Byte-identical once the per-response CSP nonce is normalised: a repo you
-    // may not see and one that does not exist give the visitor the same page.
-    const scrub = (t: string) => t.replaceAll(/nonce-?="?[\w-]+/g, "nonce");
+    // Byte-identical once the per-response CSP nonce and the echo of the path
+    // the visitor typed (the page's own manifest link, #824) are normalised: a
+    // repo you may not see and one that does not exist give the same page.
+    const scrub = (t: string) =>
+      t
+        .replaceAll(/nonce-?="?[\w-]+/g, "nonce")
+        .replaceAll(/here\?path=[^"&\s]*/g, "here?path=");
     expect(scrub(await hidden.text())).toBe(scrub(await absent.text()));
   });
 
@@ -329,11 +333,10 @@ describe("web ui", () => {
       body: form({ name: "sc-ript", visibility: "public" }),
       redirect: "manual",
     });
-    // `mode=dev` because the by-name rows in the studio's own palette are
-    // apps, not every repository (`paletteIndex`, `src/web/layout.ts`) — a
-    // plain repository like this one is dev's box to find.
+    // The palette's by-name rows are every repository, apps first
+    // (`paletteIndex`, `src/web/layout.ts`), so a plain one is there too.
     const html = await (
-      await fetch(`${base}/?mode=dev`, { headers: { cookie: owner } })
+      await fetch(`${base}/`, { headers: { cookie: owner } })
     ).text();
     const start = html.indexOf(
       '<script type="application/json" id="palette-index">',

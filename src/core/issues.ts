@@ -56,6 +56,12 @@ export interface Issue {
   readonly assigneeIsAgent: boolean;
   /** Whether the author is a crew member, not a person. */
   readonly authorIsAgent: boolean;
+  /**
+   * A security report, or the pull that fixes one: seen only by people who
+   * can write the repository and its crew until a writer unseals it
+   * (`core/sealed.ts`).
+   */
+  readonly sealed: boolean;
 }
 
 interface IssueRow {
@@ -78,6 +84,7 @@ interface IssueRow {
   assignee_name: string | null;
   assignee_is_agent: number | null;
   author_is_agent: number;
+  sealed: number;
 }
 
 const SELECT = `
@@ -107,6 +114,7 @@ function toIssue(row: IssueRow): Issue {
     assigneeName: row.assignee_name,
     assigneeIsAgent: row.assignee_is_agent === 1,
     authorIsAgent: row.author_is_agent === 1,
+    sealed: row.sealed === 1,
   };
 }
 
@@ -238,6 +246,8 @@ export interface CreateIssueInput {
   body?: string;
   /** @default "issue" */
   kind?: IssueKind;
+  /** A security report, seen only by writers and the crew (`sealed.ts`). @default false */
+  sealed?: boolean;
 }
 
 /** Caps on free text. Generous for humans, bounded for the index and the wire. */
@@ -265,8 +275,8 @@ export function createIssue(
     const number = nextNumber(db, input.repoId);
     const newId = id();
     db.query(
-      `INSERT INTO issue (id, repo_id, number, kind, title, body, author_id)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+      `INSERT INTO issue (id, repo_id, number, kind, title, body, author_id, sealed)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
     ).run(
       newId,
       input.repoId,
@@ -275,10 +285,43 @@ export function createIssue(
       title,
       input.body ?? "",
       input.authorId,
+      input.sealed === true ? 1 : 0,
     );
     return newId;
   });
   return ok(getIssueById(db, issueId)!);
+}
+
+/**
+ * Whether a person's ask stands in this issue: a person wrote it (or it
+ * came from an origin, under a name no account here holds), or it was named
+ * in the `into` of a split that closed an issue a person's ask stood in. The
+ * chain is followed, so splitting twice does not make an ask the crew's.
+ * Read from the `issue.closed` events, which are the one record of a split.
+ */
+export function standsForPerson(
+  db: Database,
+  issue: Issue,
+  seen: Set<string> = new Set(),
+): boolean {
+  if (!issue.authorIsAgent || issue.originAuthor !== null) return true;
+  seen.add(issue.id);
+  const parents = db
+    .query<{ number: number }, [string, number]>(
+      `SELECT json_extract(payload, '$.number') AS number FROM event
+        WHERE repo_id = ?1 AND kind = 'issue.closed'
+          AND json_extract(payload, '$.reason') = 'split'
+          AND EXISTS (
+            SELECT 1 FROM json_each(json_extract(payload, '$.into'))
+             WHERE value = ?2)`,
+    )
+    .all(issue.repoId, issue.number);
+  for (const row of parents) {
+    const parent = getIssue(db, issue.repoId, row.number);
+    if (parent === undefined || seen.has(parent.id)) continue;
+    if (standsForPerson(db, parent, seen)) return true;
+  }
+  return false;
 }
 
 export function getIssue(
@@ -332,6 +375,14 @@ export interface ListIssuesOptions {
   limit?: number;
   /** Resume after this issue number (exclusive) — lists run newest first. */
   cursor?: number;
+  /**
+   * Include sealed issues (`sealed.ts`): only for a viewer who may see them,
+   * or the forge's own work. Left out unless asked for, so a list that
+   * forgets shows nothing sealed.
+   */
+  sealed?: boolean;
+  /** Include the sealed issues this user filed (`sealed.ts`): a reporter follows their own report. */
+  sealedBy?: string;
 }
 
 /**
@@ -347,6 +398,13 @@ export function listIssues(
   const kind = options.kind ?? "issue";
   const params: (string | number)[] = [repoId, kind];
   let where = "issue.repo_id = ?1 AND issue.kind = ?2";
+  if (options.sealed !== true) {
+    if (options.sealedBy === undefined) where += " AND issue.sealed = 0";
+    else {
+      params.push(options.sealedBy);
+      where += ` AND (issue.sealed = 0 OR issue.author_id = ?${params.length})`;
+    }
+  }
   if (state !== "all") {
     params.push(state);
     where += ` AND issue.state = ?${params.length}`;
@@ -431,6 +489,42 @@ export interface Comment {
   readonly createdAt: string;
   /** The login on the origin, for an imported comment; null for a local one. */
   readonly originAuthor: string | null;
+  /**
+   * The run this was said into while it worked (`steerRun`), once that run
+   * ended well: its agent heard it and acted, so no later run is told it
+   * again (`crew/news.ts`). Null while the run works, and for good when it
+   * failed or was cut short — handed to a session that never answered is
+   * not heard, and the word is news to the next run.
+   */
+  readonly heardIn: string | null;
+}
+
+/** Record that run `runId` heard comment `commentId` as it worked. */
+export function markHeard(db: Database, commentId: string, runId: string): void {
+  db.query("UPDATE comment SET heard_in = ?2 WHERE id = ?1").run(commentId, runId);
+}
+
+/**
+ * New words for an issue or a pull: the title, the body, or both. The same
+ * caps as opening. Touches `updated_at`, as a comment does: an edit is
+ * someone attending to it.
+ */
+export function updateIssueText(
+  db: Database,
+  issueId: string,
+  input: { title?: string | undefined; body?: string | undefined },
+): Result<Issue, TitleError | "body_too_long" | "not_found"> {
+  const before = getIssueById(db, issueId);
+  if (before === undefined) return err("not_found");
+  const title = input.title === undefined ? before.title : input.title.trim();
+  if (title === "") return err("empty_title");
+  if (title.length > MAX_TITLE) return err("title_too_long");
+  const body = input.body ?? before.body;
+  if (body.length > MAX_BODY) return err("body_too_long");
+  db.query(
+    "UPDATE issue SET title = ?1, body = ?2, updated_at = ?3 WHERE id = ?4",
+  ).run(title, body, new Date().toISOString(), issueId);
+  return ok(getIssueById(db, issueId)!);
 }
 
 export function addComment(
@@ -465,11 +559,14 @@ function getComment(db: Database, commentId: string): Comment | undefined {
         body: string;
         created_at: string;
         origin_author: string | null;
+        heard_ok: string | null;
       },
       [string]
     >(
-      `SELECT comment.*, user.username AS author_name
-       FROM comment JOIN user ON user.id = comment.author_id WHERE comment.id = ?1`,
+      `SELECT comment.*, user.username AS author_name, heard.id AS heard_ok
+       FROM comment JOIN user ON user.id = comment.author_id
+       LEFT JOIN run heard ON heard.id = comment.heard_in AND heard.state = 'ok'
+       WHERE comment.id = ?1`,
     )
     .get(commentId);
   if (!row) return undefined;
@@ -481,6 +578,7 @@ function getComment(db: Database, commentId: string): Comment | undefined {
     body: row.body,
     createdAt: row.created_at,
     originAuthor: row.origin_author,
+    heardIn: row.heard_ok,
   };
 }
 
@@ -514,11 +612,13 @@ export function listComments(
         body: string;
         created_at: string;
         origin_author: string | null;
+        heard_ok: string | null;
       },
       [string]
     >(
-      `SELECT comment.*, user.username AS author_name
+      `SELECT comment.*, user.username AS author_name, heard.id AS heard_ok
        FROM comment JOIN user ON user.id = comment.author_id
+       LEFT JOIN run heard ON heard.id = comment.heard_in AND heard.state = 'ok'
        WHERE ${where} ORDER BY comment.id`,
     )
     .all(issueId);
@@ -530,6 +630,7 @@ export function listComments(
     body: row.body,
     createdAt: row.created_at,
     originAuthor: row.origin_author,
+    heardIn: row.heard_ok,
   }));
 }
 
@@ -768,7 +869,10 @@ export function issueCounts(
     .query<
       { state: IssueState; n: number },
       [string, IssueKind]
-    >("SELECT state, COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND kind = ?2 GROUP BY state")
+    >(
+      // Sealed reports are not counted where everyone reads the counts (`sealed.ts`).
+      "SELECT state, COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND kind = ?2 AND sealed = 0 GROUP BY state",
+    )
     .all(repoId, kind);
   let open = 0;
   let closed = 0;

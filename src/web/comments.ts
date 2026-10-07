@@ -5,6 +5,7 @@
  * what it has already shown — it is load-bearing, not decoration.
  */
 
+import type { Mark } from "../core/marks.ts";
 import { html, when, type Html } from "./html.ts";
 import { renderMarkdown } from "./markdown.ts";
 import { icon, originTag, time, userLink, type IconName } from "./ui.ts";
@@ -13,6 +14,8 @@ export interface CommentCard {
   /** "" for the opener (the issue/PR body), which has no comment row. */
   id: string;
   author: string;
+  /** The author's mark, from their account (`core/marks.ts`), never their words. */
+  mark?: Mark | undefined;
   at: string;
   body: string;
   /** "opened" | "commented" | "wants to merge …" */
@@ -34,7 +37,7 @@ export function commentCard(card: CommentCard): Html {
   const byline =
     card.originAuthor != null && card.originAuthor !== ""
       ? originTag(card.originAuthor, card.originKind ?? "globe")
-      : userLink(card.author);
+      : userLink(card.author, { mark: card.mark });
   return html`<div ${idAttr}class="card comment">
     <div class="card-head">
       ${byline}

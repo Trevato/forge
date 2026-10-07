@@ -9,6 +9,9 @@
  * bigger.
  */
 
+import { mayEditIssue } from "../../actions/issues.ts";
+import { marksByName, type Mark } from "../../core/marks.ts";
+import { mayView } from "../../core/sealed.ts";
 import { threadNote } from "../../crew/direct.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
@@ -18,6 +21,7 @@ import {
   revertOf,
   toldBy,
   type Pull,
+  pullDir,
 } from "../../core/pulls.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import { listReviews, type Review } from "../../core/reviews.ts";
@@ -83,7 +87,8 @@ export function pullContext(ctx: Ctx): { repo: Repo; pull: Pull } | Response {
   const number = parseNumber(ctx.params.number);
   const pull =
     number === undefined ? undefined : getPull(ctx.app.db, repo.id, number);
-  if (!pull) return notFoundPage(ctx);
+  if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
+    return notFoundPage(ctx);
   return { repo, pull };
 }
 
@@ -126,7 +131,12 @@ export function wallCard(wall: Wall): Html {
  * current position, and a dismissed approval that still looks like an
  * approval is exactly how a review gate becomes decorative.
  */
-function reviewEntry(review: Review, headOid: string, glyph: Glyph): Entry {
+function reviewEntry(
+  review: Review,
+  headOid: string,
+  glyph: Glyph,
+  marks: ReadonlyMap<string, Mark>,
+): Entry {
   const stale = review.commitOid !== headOid;
   const tone: Tone = stale
     ? "default"
@@ -137,7 +147,7 @@ function reviewEntry(review: Review, headOid: string, glyph: Glyph): Entry {
         : "default";
   const who =
     review.originAuthor === null
-      ? userLink(review.authorName)
+      ? userLink(review.authorName, { mark: marks.get(review.authorName) })
       : originTag(review.originAuthor, glyph);
   return {
     at: review.createdAt,
@@ -168,6 +178,8 @@ function reviewEntry(review: Review, headOid: string, glyph: Glyph): Entry {
  * who opened it and in answer to whom, where it came from, and what the
  * crew spent on it. */
 export function changeHead(ctx: Ctx, repo: Repo, pull: Pull): Html {
+  const who = toldBy(ctx.app.db, pull);
+  const marks = marksByName(ctx.app.db, [pull.authorName, who ?? ""]);
   return html`<div class="issue-head">
     <h1>${pull.title} <span class="number">#${pull.number}</span></h1>
     <div class="issue-meta">
@@ -175,12 +187,14 @@ export function changeHead(ctx: Ctx, repo: Repo, pull: Pull): Html {
       <span
         >${pull.originAuthor
           ? originTag(pull.originAuthor, originGlyph(repo))
-          : userLink(pull.authorName)}
+          : userLink(pull.authorName, { mark: marks.get(pull.authorName) })}
         opened this ${time(pull.createdAt)}</span
       >${when(
-        toldBy(ctx.app.db, pull),
-        (who) =>
-          html`<span class="told-by">in answer to ${userLink(who)}</span>`,
+        who,
+        (name) =>
+          html`<span class="told-by"
+            >in answer to ${userLink(name, { mark: marks.get(name) })}</span
+          >`,
       )}
       ${when(
         pull.originUrl,
@@ -229,8 +243,7 @@ function conflictWords(baseBranch: string, files: readonly string[]): string {
 
 /**
  * GET /:owner/:name/pulls/:number and /changes/:number: one page, two
- * addresses, for every repository and every viewer — `?mode=dev` and the
- * mode cookie change nothing. An older `?rc=` link (an inline comment form
+ * addresses, for every repository and every viewer. An older `?rc=` link (an inline comment form
  * on the diff) is handed on to the Files step, where the diff now lives.
  */
 export async function pullPage(ctx: Ctx): Promise<Response> {
@@ -270,7 +283,8 @@ async function changeConversation(
   const thread = `${base}/pulls/${pull.number}`;
   const wordCtx: WordCtx = {
     db,
-    dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+    // The change is read where its objects are (`pullDir`).
+    dir: await pullDir(db, ctx.app.reposRoot, repo, pull),
     runtime: appsRuntime(ctx.app),
     record,
     history: servingHistory(),
@@ -364,9 +378,12 @@ async function changeConversation(
       }
     : undefined;
   // Whoever opened it, Ship is offered only where `mergePull` would take
-  // it: a review gate that is not yet satisfied, or a mirror, offers none.
-  const decision =
-    reviewed && !mirrored ? (crewDecision ?? own) : undefined;
+  // it: a mirror offers no decision at all, and a review gate that is not
+  // yet satisfied holds back only the one that ships — a crew change whose
+  // check failed still offers Retry or Close, and its reason is the check.
+  const candidate = crewDecision ?? own;
+  const waitsOnReview = !reviewed && candidate?.kind === "look";
+  const decision = mirrored || waitsOnReview ? undefined : candidate;
   // Nothing to offer yet, said plainly to a writer: the merge belongs to the
   // origin, the review gate is still closed, or the check has not gone green
   // and this repository waits for that before it ships.
@@ -374,7 +391,7 @@ async function changeConversation(
     ? undefined
     : mirrored
       ? "it merges on the origin, from its Files step"
-      : !reviewed
+      : !reviewed && (candidate === undefined || waitsOnReview)
         ? "it waits on an approving review of what it is now"
         : crewDecision === undefined && !conflicted && !ownReady
           ? note
@@ -459,11 +476,20 @@ async function changeConversation(
 
   const glyph = originGlyph(repo);
   const headOid = status?.headOid ?? pull.headOid;
+  const reviews = listReviews(db, pull.id);
+  const reviewerMarks = marksByName(
+    db,
+    reviews.map((r) => r.authorName),
+  );
   const talk = conversation(ctx, repo, pull, {
     openVerb: "opened this",
-    extra: listReviews(db, pull.id).map((review) =>
-      reviewEntry(review, headOid, glyph),
+    extra: reviews.map((review) =>
+      reviewEntry(review, headOid, glyph, reviewerMarks),
     ),
+    editAction:
+      mayEditIssue(ctx.app, repo, pull, ctx.auth.user).ok && !mirrored
+        ? `${thread}/edit`
+        : undefined,
   });
 
   const body = html`${repoHeader(ctx, repo, "pulls", {
@@ -480,7 +506,12 @@ async function changeConversation(
         ${talk.node}
         ${composer(ctx, {
           action: `${thread}/comments`,
-          stateAction: `${thread}/state`,
+          // Closing is its author's or a writer's (`setIssueState`): nobody
+          // else is shown a button the server would only refuse.
+          ...(ctx.auth.user !== undefined &&
+          (ctx.auth.user.id === pull.authorId || writer)
+            ? { stateAction: `${thread}/state` }
+            : {}),
           state: pull.state,
           locked: pull.mergedAt !== null,
           closeLabel: "Close change",

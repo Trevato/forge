@@ -5,7 +5,20 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
-import { accountAct, accountsPage } from "../web/pages/accounts.ts";
+import { unsealReleased } from "../actions/sealed.ts";
+import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
+import {
+  closeStreamsOf,
+  closeStreamsOfSession,
+  noteCaller,
+  sweepStanding,
+} from "./caller.ts";
+import {
+  accountAct,
+  accountsPage,
+  personSignInsPage,
+  signInAct,
+} from "../web/pages/accounts.ts";
 import { defect } from "../kernel/error.ts";
 import {
   armClose,
@@ -20,10 +33,15 @@ import {
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo } from "../actions/repos.ts";
-import { sessionUser } from "../core/sessions.ts";
+import { sessionOf } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
 import { forgeHost } from "../core/commit_identity.ts";
-import { ensureEdgeUser, getUserByName, verifyPassword } from "../core/users.ts";
+import {
+  ensureEdgeUser,
+  getUserByName,
+  isActive,
+  verifyPassword,
+} from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
 import { healthResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
@@ -126,6 +144,8 @@ import {
 import { commitPage, commitsPage } from "../web/pages/commits.ts";
 import {
   issueCommentSubmit,
+  issuePrivateSubmit,
+  issueSealSubmit,
   issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
@@ -134,16 +154,29 @@ import {
 import { tellPage } from "../web/studio/tell.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import {
-  modeSubmit,
+  milestonePage,
+  milestonesPage,
+  milestoneWatch,
+} from "../web/pages/milestones.ts";
+import {
+  limbPreviewPage,
+  limbReceiptPage,
+  limbSubmit,
+  limbUndo,
+} from "../web/pages/limb.ts";
+import {
   saySubmit,
   shipSubmit,
   takeBackSubmit,
   holdSubmit,
   releaseSubmit,
+  composerSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
-import { everydayCreate, everydayKeep } from "../web/pages/everyday.ts";
-import { claimPage, claimSubmit } from "../web/pages/claim.ts";
+import { everydayCreate, everydayKeep, everydaySwitch } from "../web/pages/everyday.ts";
+import { claimFragmentPage, claimPage, claimSubmit } from "../web/pages/claim.ts";
+import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
+import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import {
   asksBulkSubmit,
@@ -154,6 +187,10 @@ import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { explorePage } from "../web/studio/explore.ts";
 import {
+  makeItYoursPage,
+  makeItYoursSubmit,
+} from "../web/studio/make_it_yours.ts";
+import {
   frontUpdate,
   liveAppsFragment,
   liveOnYouFragment,
@@ -162,12 +199,12 @@ import {
 import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
-import { DEFAULT_MODE, isMode, modeCookie, type Mode } from "../web/mode.ts";
 import { dependencySubmit } from "../web/pages/thread.ts";
 import {
   assigneeSubmit,
   labelsSubmit,
   stateSubmit,
+  wordsSubmit,
 } from "../web/pages/thread.ts";
 import {
   appOpen,
@@ -272,6 +309,7 @@ import {
   resendVerifyLink,
   passwordUpdate,
   tokenCreate,
+  sessionDelete,
   tokenDelete,
   tokensPage,
 } from "../web/pages/account.ts";
@@ -354,7 +392,11 @@ import { sseStream, viewerStream } from "./sse.ts";
 import { Router } from "./router.ts";
 import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
-import { appWebSocket, proxyApp, resolveAppHost } from "../apps/proxy.ts";
+import {
+  appWebSocket,
+  proxyApp,
+  resolveAppHost,
+} from "../apps/proxy.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 
 // ---- auth ----
@@ -383,8 +425,14 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
 
   const session = cookieValue(request, "forge_session");
   if (session !== undefined) {
-    const user = sessionUser(app.db, session);
-    if (user.ok) return { user: user.value, scope: "admin", via: "session" };
+    const found = sessionOf(app.db, session);
+    if (found.ok)
+      return {
+        user: found.value.user,
+        scope: "admin",
+        via: "session",
+        sessionId: found.value.id,
+      };
   }
 
   const header = request.headers.get("authorization");
@@ -479,7 +527,14 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/sw.js", serviceWorker);
   router.add("GET", "/", home);
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
+  router.add("GET", "/claim", claimFragmentPage);
+  router.add("POST", "/claim", claimSubmit);
   router.add("GET", "/claim/:token", claimPage);
+  // "+ New forge": the spawn door as a page, an admin's only (spawn/door.ts).
+  router.add("GET", "/forges", forgesPage);
+  router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
+  router.add("GET", "/forges/new", newForgePage);
+  router.add("POST", "/forges/new", newForgeSubmit);
   router.add("POST", "/claim/:token", claimSubmit);
   // The front page as a stranger sees it, for anyone; a site admin there
   // also gets the controls that decide it (#686).
@@ -494,7 +549,6 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/signup", signupSubmit);
   router.add("POST", "/logout", logoutSubmit);
   router.add("POST", "/theme", themeSubmit);
-  router.add("POST", "/mode", modeSubmit);
   // The board: a live wall of the crews at work, for a second monitor.
   router.add("GET", "/board", boardPage);
   // The board's tokens line, opened: what the spend bought (core/returns.ts).
@@ -563,10 +617,12 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/password", passwordUpdate);
   // The everyday account: an admin's daily account, apart from admin (#596).
   router.add("POST", "/settings/everyday", everydayCreate);
+  router.add("POST", "/settings/everyday/switch", everydaySwitch);
   router.add("POST", "/settings/everyday/keep", everydayKeep);
   router.add("GET", "/settings/tokens", tokensPage);
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
+  router.add("POST", "/settings/sessions/:id/delete", sessionDelete);
   // The crew: a forge admin's section, hidden from everyone else.
   router.add("GET", "/settings/subscriptions", subscriptionsPage);
   router.add("POST", "/settings/subscriptions", subscriptionAdd);
@@ -587,12 +643,25 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/cloud/write", cloudWrite);
   router.add("POST", "/settings/cloud/audit", cloudAudit);
   router.add("POST", "/settings/cloud/remove", cloudRemove);
+  router.add("GET", "/settings/capacity", capacityPage);
+  router.add("POST", "/settings/capacity", capacitySet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
   router.add("POST", "/settings/backups/destination", backupsDestination);
   router.add("POST", "/settings/backups/test", backupsTest);
   router.add("POST", "/settings/backups/clear", backupsClear);
   router.add("GET", "/settings/accounts", accountsPage);
+  router.add("GET", "/settings/accounts/:username", personSignInsPage);
+  router.add(
+    "POST",
+    "/settings/accounts/:username/tokens/:id/delete",
+    signInAct("token"),
+  );
+  router.add(
+    "POST",
+    "/settings/accounts/:username/sessions/:id/delete",
+    signInAct("session"),
+  );
   router.add(
     "POST",
     "/settings/accounts/:username/suspend",
@@ -780,9 +849,14 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/issues/:number/comments",
     issueCommentSubmit,
   );
+  router.add("POST", "/:owner/:name/issues/:number/seal", issueSealSubmit);
+  router.add("POST", "/:owner/:name/issues/:number/private", issuePrivateSubmit);
   // Close/reopen and labels are their own verbs, not riders on a comment.
   router.add("POST", "/:owner/:name/issues/:number/state", (ctx) =>
     stateSubmit(ctx, "issue"),
+  );
+  router.add("POST", "/:owner/:name/issues/:number/edit", (ctx) =>
+    wordsSubmit(ctx, "issue"),
   );
   router.add("POST", "/:owner/:name/issues/:number/labels", (ctx) =>
     labelsSubmit(ctx, "issue"),
@@ -793,6 +867,8 @@ export function buildRouter(): Router<Handler> {
   // The studio's verbs on an app: tell, ship, say, and — on a shipped
   // change — take it back.
   router.add("POST", "/:owner/:name/tell", tellSubmit);
+  // The home's composer without a script: a tell to the app it names (#599).
+  router.add("POST", "/tell", composerSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   router.add("POST", "/:owner/:name/pulls/:number/take-back", takeBackSubmit);
@@ -805,6 +881,21 @@ export function buildRouter(): Router<Handler> {
     dependencySubmit,
   );
   router.add("GET", "/:owner/:name/map", mapPage);
+  router.add("GET", "/:owner/:name/milestones", milestonesPage);
+  router.add("GET", "/:owner/:name/milestones/:number", milestonePage);
+  router.add("POST", "/:owner/:name/milestones/:number/watch", milestoneWatch);
+  router.add("GET", "/:owner/:name/milestones/:number/limb", limbPreviewPage);
+  router.add("POST", "/:owner/:name/milestones/:number/limb", limbSubmit);
+  router.add(
+    "GET",
+    "/:owner/:name/milestones/:number/limb/:op",
+    limbReceiptPage,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/milestones/:number/limb/:op/undo",
+    limbUndo,
+  );
 
   // Pull requests. Same /new-before-/:number ordering discipline.
   // One list of pulls, at `/pulls` and `/changes` alike; one change under
@@ -841,6 +932,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/pulls/:number/merge", pullMergeSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/state", (ctx) =>
     stateSubmit(ctx, "pull"),
+  );
+  router.add("POST", "/:owner/:name/pulls/:number/edit", (ctx) =>
+    wordsSubmit(ctx, "pull"),
   );
   router.add("POST", "/:owner/:name/pulls/:number/labels", (ctx) =>
     labelsSubmit(ctx, "pull"),
@@ -930,6 +1024,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/commits", commitsPage);
   router.add("GET", "/:owner/:name/commit/:oid", commitPage);
   router.add("POST", "/:owner/:name/fork", forkSubmit);
+  // Make it yours (#606): a fork with its app, planned, then made.
+  router.add("GET", "/:owner/:name/make-it-yours", makeItYoursPage);
+  router.add("POST", "/:owner/:name/make-it-yours", makeItYoursSubmit);
   // A fork takes what it follows: git's part by itself, the rest by the crew.
   router.add("POST", "/:owner/:name/following", followingSubmit);
   // A mirror pulls on demand; a pin says "keep this on my machine". Both are
@@ -1114,23 +1211,24 @@ function withRateHeaders(
 }
 
 /**
- * `?mode=studio` or `?mode=dev` on any URL sets the cookie, exactly like the
- * toggle's POST — a link someone is handed must work as a switch by itself,
- * not just for the one page it lands on.
+ * There is one forge, not two (#603): an address carrying the old
+ * `?mode=studio|dev` is the same page without it. A page answers there with
+ * a redirect to its own clean address, and the cookie that used to hold the
+ * choice is let go on the way.
  */
-function withModeCookie(
-  response: Response,
-  mode: Mode | undefined,
-  secure: boolean,
-): Response {
-  if (mode === undefined) return response;
-  try {
-    response.headers.append("set-cookie", modeCookie(mode, secure));
-  } catch {
-    // Same tradeoff as the rate headers: a frozen header set should not
-    // fail the request.
-  }
-  return response;
+function withoutMode(url: URL, request: Request): Response | undefined {
+  if (request.method !== "GET" || !url.searchParams.has("mode")) return undefined;
+  const clean = new URL(url);
+  clean.searchParams.delete("mode");
+  const secure = url.protocol === "https:" ? "; Secure" : "";
+  return new Response(null, {
+    status: 303,
+    headers: {
+      location: `${clean.pathname}${clean.search}${clean.hash}`,
+      "set-cookie": `forge_mode=; Max-Age=0; Path=/; SameSite=Lax; HttpOnly${secure}`,
+      "cache-control": "no-store",
+    },
+  });
 }
 
 const REPLAYABLE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -1289,6 +1387,13 @@ async function handleHook(app: App, request: Request): Promise<Response> {
           status: 403,
         });
       }
+      // A push that began before its account was suspended or removed does
+      // not land: standing is asked again here, at the ref update.
+      if (actor !== undefined && !isActive(actor)) {
+        return new Response("this account is suspended: the push is refused", {
+          status: 403,
+        });
+      }
       // Rule 1 in docs/APPS.md: the crew proposes, a person lands. An agent
       // never moves the default branch — protected or not — so production
       // changes only through a pull someone merged.
@@ -1371,6 +1476,19 @@ async function handleHook(app: App, request: Request): Promise<Response> {
     actorId: input.actorId || undefined,
     payload: { updates: input.updates },
   });
+  // A tag that releases a sealed report's fix opens the report
+  // (`actions/sealed.ts`). Off the hook's answer: git need not wait for it.
+  void unsealReleased(
+    app,
+    repo,
+    input.updates,
+    input.actorId ? getUserById(app.db, input.actorId) : undefined,
+  ).catch((error) =>
+    app.log.warn("could not unseal released reports", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      error: String(error),
+    }),
+  );
   return new Response("");
 }
 
@@ -1455,6 +1573,34 @@ export async function serve(app: App): Promise<Servers> {
   // One limiter per listener: its state is a minute of timestamps, and two
   // forges in one process (every test file) must not share a budget.
   const limiter = new RateLimiter();
+  // An account suspended or removed ends what it has open on this
+  // listener: its event streams and the app sockets it was let into. A
+  // browser signed out ends the streams it opened.
+  const unclosed = (error: unknown): void =>
+    app.log.warn("something held open did not close", { error: String(error) });
+  const endOpen = app.bus.subscribe((event) => {
+    if (event.kind === "session.ended") {
+      const id = event.payload["sessionId"];
+      if (typeof id === "string") closeStreamsOfSession(app.db, id, unclosed);
+      return;
+    }
+    if (event.kind !== "account.suspended" && event.kind !== "account.removed")
+      return;
+    const name = event.payload["username"];
+    const user =
+      typeof name === "string" ? getUserByName(app.db, name) : undefined;
+    if (user === undefined) return;
+    closeStreamsOf(app.db, user.id, unclosed);
+  });
+  // And every process holds what it has open against the database, so a
+  // suspension or sign-out another process wrote reaches it too (#846).
+  const sweep = setInterval(
+    () =>
+      sweepStanding(app.db, (error) =>
+        app.log.warn("standing sweep did not finish", { error: String(error) }),
+      ),
+    app.config.standingSweepMs ?? 5_000,
+  );
   // Who may say who the client is (\`http/peer.ts\`), settled once.
   const proxies = parseCidrs((app.config.trustedProxies ?? []).join(","));
   if (!proxies.ok)
@@ -1532,6 +1678,8 @@ export async function serve(app: App): Promise<Servers> {
     url: `http://localhost:${port}`,
     port,
     stop() {
+      endOpen();
+      clearInterval(sweep);
       web.stop(true);
       internal.stop(true);
       // Our socket goes with us; a corpse is only ever an unclean exit's.
@@ -1594,7 +1742,6 @@ async function answerGet(
     // even for someone who is.
     if (!isApiPath && prefersHtml(request, url.pathname)) {
       const themeCookie = cookieValue(request, "forge_theme") ?? "";
-      const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
       const anonCtx: Ctx = {
         app,
         request,
@@ -1602,15 +1749,18 @@ async function answerGet(
         params: {},
         auth: { user: undefined, scope: undefined, via: "none" },
         theme: isThemeName(themeCookie) ? themeCookie : undefined,
-        mode: isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE,
       };
       return notFoundPage(anonCtx);
     }
     return noRoute(request.method, url.pathname);
   }
   const auth = await resolveAuth(app, request);
-  // From here a body's cap depends on who is asking (\`http/limits.ts\`).
-  if (auth.user !== undefined) noteSignedIn(request);
+  // From here a body's cap depends on who is asking (`http/limits.ts`), and
+  // a stream this request opens is the account's, to end with it.
+  if (auth.user !== undefined) {
+    noteSignedIn(request);
+    noteCaller(request, app.db, auth.user.id, auth.sessionId);
+  }
 
   // The two things standing between one runaway agent and everybody
   // else's latency, applied before a handler runs and after auth is
@@ -1625,14 +1775,10 @@ async function answerGet(
   }
 
   const themeCookie = cookieValue(request, "forge_theme") ?? "";
-  const modeCookieValue = cookieValue(request, "forge_mode") ?? "";
-  // `?mode=` on the URL is the escape hatch: a plain link a person is
-  // handed switches the browser by itself, the same way the toggle's
-  // POST does, so it must work in both directions with no form.
-  const modeParam = url.searchParams.get("mode");
-  const modeOverride = isMode(modeParam) ? modeParam : undefined;
-  const mode =
-    modeOverride ?? (isMode(modeCookieValue) ? modeCookieValue : DEFAULT_MODE);
+  if (!isApiPath) {
+    const clean = withoutMode(url, request);
+    if (clean !== undefined) return clean;
+  }
   const invoke = (into: Request): Response | Promise<Response> =>
     matched.handler({
       app,
@@ -1641,7 +1787,6 @@ async function answerGet(
       params: matched.params,
       auth,
       theme: isThemeName(themeCookie) ? themeCookie : undefined,
-      mode,
     });
 
   // A signed-in browser's outbox replays by key too (web/outbox.ts): the
@@ -1653,8 +1798,5 @@ async function answerGet(
     replayAs === undefined
       ? await invoke(request)
       : await withIdempotency(app, request, url, replayAs, invoke);
-  return withRateHeaders(
-    withModeCookie(response, modeOverride, url.protocol === "https:"),
-    verdict,
-  );
+  return withRateHeaders(response, verdict);
 }

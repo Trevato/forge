@@ -12,7 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { suspendAccount } from "../src/actions/accounts.ts";
-import { forgetFrontScores } from "../src/actions/front.ts";
+import { forgetFrontScores, frontPage } from "../src/actions/front.ts";
+import * as lookService from "../src/looks/service.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import {
@@ -23,7 +24,9 @@ import {
 } from "../src/apps/runtime.ts";
 import { createApp as insertApp, type AppRecord } from "../src/core/apps.ts";
 import {
+  DEFAULT_WEIGHTS,
   frontScore,
+  frontWeights,
   frontSignals,
   NEAR_TOP,
   rankFront,
@@ -383,7 +386,7 @@ describe("the front page", () => {
     const asMember = await mcp(memberToken, {});
     expect(asMember.value.picks).toBeUndefined();
     const asAdmin = await mcp(adminToken, {});
-    expect(asAdmin.value.picks).toEqual({ pinned: [], hidden: [] });
+    expect(asAdmin.value.picks).toEqual({ pinned: [], hidden: [], weights: DEFAULT_WEIGHTS });
   });
 
   test("ranked, not one owner's: forks lift a stranger's app; stopped, failed and unpictured apps are not shown", async () => {
@@ -457,6 +460,7 @@ describe("the front page", () => {
     expect(await set.json()).toEqual({
       pinned: ["owner/forge", "owner/three", "owner/two"],
       hidden: ["zed/loved"],
+      weights: DEFAULT_WEIGHTS,
     });
     const body = await door();
     expect(body).not.toContain('href="/owner/forge"');
@@ -644,5 +648,119 @@ describe("the front page", () => {
     const json = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
     expect(JSON.stringify(json)).not.toContain("suspended-maker/sus-app\"");
     expect(json.featured?.repo).not.toBe("suspended-maker/sus-app");
+  });
+
+  test("the page's memory of which thumbs were taken as a stranger keeps only the pictures it shows, however often they are retaken (#768)", async () => {
+    const { repo, record } = await make(admin, "retaken");
+    const reads = spyOn(lookService, "keepLook");
+    try {
+      frontPage(app);
+      // A picture already checked is not read again.
+      reads.mockClear();
+      frontPage(app);
+      expect(reads.mock.calls.filter(([, l]) => l.appId === record.id)).toHaveLength(0);
+      const retake = (n: number) => {
+        const path = `looks/${record.id}/thumb-${n}.png`;
+        mkdirSync(join(dataDir, "looks", record.id), { recursive: true });
+        writeFileSync(join(dataDir, path), PNG);
+        recordLook(app.db, {
+          appId: record.id,
+          env: "production",
+          commitOid: HEAD,
+          kind: "thumb",
+          path,
+        });
+      };
+      for (let n = 0; n < 25; n++) {
+        retake(n);
+        reads.mockClear();
+        const shown = frontPage(app);
+        // The new picture is read once…
+        expect(reads.mock.calls.filter(([, l]) => l.appId === record.id)).toHaveLength(1);
+        expect(JSON.stringify(shown)).toContain(`/${repo.ownerName}/${repo.name}/looks/`);
+      }
+      // …and the ones it replaced were forgotten: shown again, the first is
+      // read afresh, not answered from a memory that kept every path.
+      retake(0);
+      reads.mockClear();
+      frontPage(app);
+      expect(reads.mock.calls.filter(([, l]) => l.appId === record.id)).toHaveLength(1);
+    } finally {
+      reads.mockRestore();
+    }
+  });
+
+  test("the ranking's weights are a site admin's alone: a stranger and a plain member are refused on the API, the page and MCP, and are not shown them (#767)", async () => {
+    expect((await put(null, { weights: { forks: 0 } })).status).toBe(401);
+    expect((await put(memberToken, { weights: { forks: 0 } })).status).toBe(403);
+    const memberCookie = await signIn("mia");
+    const posted = await fetch(`${base}/front`, {
+      method: "POST",
+      headers: { cookie: memberCookie, origin: base },
+      body: new URLSearchParams({ action: "weights", forks: "0", ships: "0", use: "0", fresh: "0" }),
+      redirect: "manual",
+    });
+    expect(posted.status).toBe(403);
+    expect((await mcp(memberToken, { weights: { forks: 0 }, dryRun: false })).error).toContain("forbidden");
+    expect(frontWeights(app.db)).toEqual(DEFAULT_WEIGHTS);
+    const anonymous = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
+    expect(anonymous.picks).toBeUndefined();
+    expect(JSON.stringify(anonymous)).not.toContain('"weights"');
+  });
+
+  test("a site admin's weights change the order, within bounds; a value out of bounds is refused (#767)", async () => {
+    // One app with forks by people, one with ships: which leads depends on
+    // what counts.
+    const forked = await make(other, "weighed-forks");
+    const forkerA = await createUser(app.db, { trusted: true, username: "forker-a", email: "fa@forge.local", password: "a-good-passphrase" });
+    if (!forkerA.ok) throw new Error(forkerA.error);
+    const forkA = await createRepo(app, forkerA.value, { name: "my-weighed", visibility: "public" });
+    if (!forkA.ok) throw new Error(String(forkA.error));
+    app.db.query(`UPDATE repo SET fork_parent_id = ?1 WHERE id = ?2`).run(forked.repo.id, forkA.value.id);
+    const shipped = await make(other, "weighed-ships");
+    for (let n = 0; n < 6; n++) {
+      const issue = createIssue(app.db, { repoId: shipped.repo.id, authorId: other.id, title: `ship ${n}`, kind: "pull" });
+      if (!issue.ok) throw new Error(issue.error);
+      app.db
+        .query(`INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, merged_at) VALUES (?1, 'main', ?2, '', '', ?3)`)
+        .run(issue.value.id, `s${n}`, new Date(Date.now() - 2 * 86_400_000).toISOString());
+    }
+    const order = async () => {
+      forgetFrontScores(app);
+      const json = (await (await fetch(`${base}/api/v1/front`)).json()) as any;
+      const names: string[] = [json.featured?.repo, ...json.apps.map((a: any) => a.repo)];
+      return [names.indexOf("zed/weighed-forks"), names.indexOf("zed/weighed-ships")] as const;
+    };
+    expect((await put(adminToken, { pinned: [], hidden: [] })).status).toBe(200);
+    // Ships alone count: the shipped app leads.
+    const ships = await put(adminToken, { weights: { forks: 0, ships: 10, use: 0, fresh: 0 } });
+    expect(ships.status).toBe(200);
+    expect(((await ships.json()) as any).weights).toEqual({ forks: 0, ships: 10, use: 0, fresh: 0 });
+    const shipsFirst = await order();
+    expect(shipsFirst[1]).toBeLessThan(shipsFirst[0]);
+    // Forks alone count: the forked app leads. One weight given keeps the rest.
+    expect((await put(adminToken, { weights: { forks: 10, ships: 0 } })).status).toBe(200);
+    expect(frontWeights(app.db)).toEqual({ forks: 10, ships: 0, use: 0, fresh: 0 });
+    const forksFirst = await order();
+    expect(forksFirst[0]).toBeLessThan(forksFirst[1]);
+    // Out of bounds, or not a number: refused, and nothing changes.
+    for (const bad of [{ forks: 11 }, { ships: -1 }, { use: "a lot" }]) {
+      expect((await put(adminToken, { weights: bad })).status).toBe(422);
+    }
+    expect(frontWeights(app.db)).toEqual({ forks: 10, ships: 0, use: 0, fresh: 0 });
+    // The admin sees them; the page's controls say them; and they go back.
+    const asAdmin = (await mcp(adminToken, {})).value;
+    expect(asAdmin.picks.weights).toEqual({ forks: 10, ships: 0, use: 0, fresh: 0 });
+    const cookie = await signIn("owner");
+    const page = await (await fetch(`${base}/front`, { headers: { cookie } })).text();
+    expect(page).toMatch(/name="forks"\s+value="10"/);
+    const reset = await fetch(`${base}/front`, {
+      method: "POST",
+      headers: { cookie, origin: base },
+      body: new URLSearchParams({ action: "weights", forks: "3", ships: "2", use: "1", fresh: "2" }),
+      redirect: "manual",
+    });
+    expect(reset.status).toBe(303);
+    expect(frontWeights(app.db)).toEqual(DEFAULT_WEIGHTS);
   });
 });

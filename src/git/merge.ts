@@ -36,35 +36,18 @@ export interface MergeResult {
  * compute from history — a revert needs the commit being undone as the base,
  * not whatever `ours`/`theirs` share an ancestor with.
  */
-export async function writeMergeTree(
-  dir: string,
-  ours: string,
-  theirs: string,
-  base?: string,
-): Promise<Result<{ treeOid: string }, MergeError>> {
-  if (
-    !isSafeOid(ours) ||
-    !isSafeOid(theirs) ||
-    (base !== undefined && !isSafeOid(base))
-  ) {
-    return err({ kind: "unsafe" });
-  }
+/**
+ * Whether this git's `merge-tree --write-tree` accepts `--merge-base=`
+ * (added in git 2.40). Isolated Actions runners may ship 2.38/2.39, which
+ * have `--write-tree` but reject the flag. Lazily cleared to false after the
+ * first "unknown option" so later reverts skip the doomed spawn.
+ */
+let mergeTreeAcceptsMergeBase = true;
 
-  // merge-tree exits 0 on a clean merge (stdout = tree oid) and 1 on conflict
-  // (stdout = tree oid, blank line, then conflicted file names). Both outcomes
-  // are data on stdout, so capture regardless of exit code.
-  const out = await runGitCapture(
-    [
-      "merge-tree",
-      "--write-tree",
-      "--name-only",
-      ...(base === undefined ? [] : [`--merge-base=${base}`]),
-      ours,
-      theirs,
-    ],
-    { cwd: dir, timeoutMs: 60_000 },
-  );
-
+/** Parse merge-tree --write-tree stdout/stderr into a tree oid or conflict. */
+function parseWriteTree(
+  out: { code: number; stdout: string; stderr: string },
+): Result<{ treeOid: string }, MergeError> {
   if (out.code === 0) {
     const treeOid = out.stdout.split("\n")[0]!.trim();
     if (!isSafeOid(treeOid))
@@ -83,6 +66,127 @@ export async function writeMergeTree(
     kind: "git",
     message: out.stderr.trim() || `merge-tree exited ${out.code}`,
   });
+}
+
+function isUnknownMergeBaseOption(stderr: string): boolean {
+  // git prints: error: unknown option `merge-base=…'
+  return /unknown option [`']merge-base/.test(stderr);
+}
+
+/**
+ * On git < 2.40, `--merge-base=` is missing. Synthesize two commits that
+ * share `base` as their only parent so `merge-tree --write-tree A B` finds
+ * that parent as the merge base — same three-way as the modern flag.
+ */
+async function writeMergeTreeWithLegacyBase(
+  dir: string,
+  ours: string,
+  theirs: string,
+  base: string,
+): Promise<Result<{ treeOid: string }, MergeError>> {
+  const oursTree = await runGit(["rev-parse", `${ours}^{tree}`], { cwd: dir });
+  if (!oursTree.ok)
+    return err({ kind: "git", message: oursTree.error.stderr });
+  const theirsTree = await runGit(["rev-parse", `${theirs}^{tree}`], {
+    cwd: dir,
+  });
+  if (!theirsTree.ok)
+    return err({ kind: "git", message: theirsTree.error.stderr });
+
+  const env = {
+    GIT_AUTHOR_NAME: "forge",
+    GIT_AUTHOR_EMAIL: "forge@localhost",
+    GIT_COMMITTER_NAME: "forge",
+    GIT_COMMITTER_EMAIL: "forge@localhost",
+  };
+  const fakeOurs = await runGit(
+    ["commit-tree", oursTree.value, "-p", base, "-m", "merge-tree ours"],
+    { cwd: dir, env },
+  );
+  if (!fakeOurs.ok)
+    return err({ kind: "git", message: fakeOurs.error.stderr });
+  const fakeTheirs = await runGit(
+    ["commit-tree", theirsTree.value, "-p", base, "-m", "merge-tree theirs"],
+    { cwd: dir, env },
+  );
+  if (!fakeTheirs.ok)
+    return err({ kind: "git", message: fakeTheirs.error.stderr });
+
+  return parseWriteTree(
+    await runGitCapture(
+      [
+        "merge-tree",
+        "--write-tree",
+        "--name-only",
+        fakeOurs.value,
+        fakeTheirs.value,
+      ],
+      { cwd: dir, timeoutMs: 60_000 },
+    ),
+  );
+}
+
+/**
+ * Args for the modern `merge-tree --write-tree` form. Exported so a unit
+ * test can lock the flag shape without spawning git.
+ */
+export function mergeTreeWriteArgs(
+  ours: string,
+  theirs: string,
+  base?: string,
+): string[] {
+  return [
+    "merge-tree",
+    "--write-tree",
+    "--name-only",
+    ...(base === undefined ? [] : [`--merge-base=${base}`]),
+    ours,
+    theirs,
+  ];
+}
+
+/** Test-only: force the next writeMergeTree(base) onto the legacy path. */
+export function setMergeTreeAcceptsMergeBaseForTest(value: boolean): void {
+  mergeTreeAcceptsMergeBase = value;
+}
+
+export async function writeMergeTree(
+  dir: string,
+  ours: string,
+  theirs: string,
+  base?: string,
+): Promise<Result<{ treeOid: string }, MergeError>> {
+  if (
+    !isSafeOid(ours) ||
+    !isSafeOid(theirs) ||
+    (base !== undefined && !isSafeOid(base))
+  ) {
+    return err({ kind: "unsafe" });
+  }
+
+  // merge-tree exits 0 on a clean merge (stdout = tree oid) and 1 on conflict
+  // (stdout = tree oid, blank line, then conflicted file names). Both outcomes
+  // are data on stdout, so capture regardless of exit code.
+  if (base === undefined) {
+    return parseWriteTree(
+      await runGitCapture(mergeTreeWriteArgs(ours, theirs), {
+        cwd: dir,
+        timeoutMs: 60_000,
+      }),
+    );
+  }
+
+  if (mergeTreeAcceptsMergeBase) {
+    const out = await runGitCapture(mergeTreeWriteArgs(ours, theirs, base), {
+      cwd: dir,
+      timeoutMs: 60_000,
+    });
+    if (!isUnknownMergeBaseOption(out.stderr)) return parseWriteTree(out);
+    // git < 2.40: remember and fall through to the shared-parent workaround.
+    mergeTreeAcceptsMergeBase = false;
+  }
+
+  return writeMergeTreeWithLegacyBase(dir, ours, theirs, base);
 }
 
 /**

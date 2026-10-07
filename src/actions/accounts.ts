@@ -12,6 +12,7 @@
 
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
+import { soleOwnedOrgs } from "../core/orgs.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
   dropCredentials,
@@ -77,13 +78,21 @@ export async function suspendAccount(
   app: App,
   actor: User | undefined,
   username: string,
-): Promise<Result<User, AccountActionError>> {
+  /**
+   * The owner has seen that this account is the last active owner of an
+   * organization (`soleOwnedOrgs`), and suspends it anyway. Without it the
+   * suspension is refused as `last_owner` and nothing changes.
+   */
+  options: { confirmed?: boolean } = {},
+): Promise<Result<User, AccountActionError | "last_owner">> {
   const admin = requireForgeAdmin(actor);
   if (!admin.ok) return admin;
   const found = target(app, admin.value, username);
   if (!found.ok) return found;
   const user = found.value;
   if (user.removedAt !== null) return err("not_allowed");
+  if (options.confirmed !== true && soleOwnedOrgs(app.db, user.id).length > 0)
+    return err("last_owner");
   setSuspended(app.db, user.id, new Date().toISOString());
   dropCredentials(app.db, user.id);
   await quiet(app, admin.value, user);
@@ -118,13 +127,17 @@ export async function removeAccount(
   app: App,
   actor: User | undefined,
   username: string,
-): Promise<Result<void, AccountActionError | "delete_failed">> {
+): Promise<Result<void, AccountActionError | "delete_failed" | "last_owner">> {
   const admin = requireForgeAdmin(actor);
   if (!admin.ok) return admin;
   const found = target(app, admin.value, username);
   if (!found.ok) return found;
   const user = found.value;
   if (user.removedAt !== null) return ok();
+  // An organization this account alone owns would be left with nobody to
+  // administer it: someone else is made an owner first (`soleOwnedOrgs`
+  // names them), and nothing here has changed yet.
+  if (soleOwnedOrgs(app.db, user.id).length > 0) return err("last_owner");
   // Stop it first, so nothing it owns is running while it is taken apart.
   setSuspended(app.db, user.id, new Date().toISOString());
   dropCredentials(app.db, user.id);

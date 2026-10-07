@@ -71,11 +71,21 @@ export interface ForgeConfig {
    */
   crewCeilingUsd?: number;
   /**
+   * How many runs one issue may start in a day before the crew parks it
+   * and asks a person (`crew/guard.ts`). Undefined is `ISSUE_RUN_CAP`.
+   */
+  issueRunCap?: number;
+  /**
    * Where mail goes out: SMTP submission (`FORGE_SMTP_URL`, `FORGE_MAIL_FROM`).
    * Undefined is a forge that sends no mail; a newcomer's email then waits
    * for the owner's word.
    */
   mail?: MailConfig;
+  /**
+   * The most messages the forge sends in a day, to everyone together
+   * (`actions/mail.ts`). Undefined is `FORGE_DAILY`.
+   */
+  mailDailyCap?: number;
   /** Stand-in for `mail` in tests: receives each message instead of SMTP. */
   mailer?: Mailer;
   /**
@@ -86,6 +96,13 @@ export interface ForgeConfig {
   trustedProxies?: readonly string[];
   /** A header a trusted edge sets to the client's address (\`FORGE_CLIENT_IP_HEADER\`). */
   clientIpHeader?: string;
+  /**
+   * How often this process holds what it has open against each account's
+   * standing in the database (\`http/caller.ts\`), so a suspension made by
+   * another process — a roll's other half — reaches it too.
+   * @default 5000
+   */
+  standingSweepMs?: number;
   /**
    * The SSH listener's port, once it is up — `serveForgeSsh` writes the real
    * one back here when it was asked for an ephemeral port. Every surface that

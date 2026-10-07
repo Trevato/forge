@@ -29,7 +29,7 @@ import { appsForRepos } from "../../core/apps.ts";
 import { reposWithBuilder } from "../../core/agents.ts";
 import { reposWithUnclaimedTell } from "../../core/issues.ts";
 import { openPullsForRepos } from "../../core/pulls.ts";
-import { canEnterApp, ownerFactRepoIds, type Repo } from "../../core/repos.ts";
+import { enterableApps, ownerFactRepoIds, type Repo } from "../../core/repos.ts";
 import {
   getRunsByIds,
   isTerminal,
@@ -180,16 +180,24 @@ export async function shelfRows(
     ),
   );
 
+  // Who may enter which private app, for the whole shelf in one batch.
+  const enterable = enterableApps(
+    db,
+    repos.flatMap((repo) => {
+      const app = records.get(repo.id);
+      return app === undefined ? [] : [{ repo, app }];
+    }),
+    user,
+    { named: false },
+  );
+
   return await Promise.all(
     repos.map(async (repo) => {
       const record = records.get(repo.id);
       // A private app the viewer may not enter is a name on a shelf: no
       // state, no word, no crew — what it says about itself is its writers'
       // and crew's (`envsFor`, `mayReadRuns`).
-      if (
-        record !== undefined &&
-        !canEnterApp(db, repo, record, user, { named: false })
-      )
+      if (record !== undefined && !enterable.has(record.id))
         return sealedRow(repo, user);
       const envs =
         record === undefined ? [] : envsFor(ctx.app, ctx.auth.user, record);

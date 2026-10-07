@@ -7,6 +7,7 @@
  */
 
 import { getHold, WHY_MAX } from "../../core/holds.ts";
+import { marksByName } from "../../core/marks.ts";
 import type { Pull } from "../../core/pulls.ts";
 import { canWrite, type Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -33,8 +34,12 @@ export function holdCard(
   if (hold !== undefined)
     return card(
       html`<p>
-          ${userLink(hold.heldByName)} holds this, ${time(hold.heldAt)}:
-          ${hold.why}
+          ${userLink(hold.heldByName, {
+            mark: marksByName(ctx.app.db, [hold.heldByName]).get(
+              hold.heldByName,
+            ),
+          })}
+          holds this, ${time(hold.heldAt)}: ${hold.why}
         </p>
         <p class="muted small">
           No rule sends it to review or lands it until it is released. A person

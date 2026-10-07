@@ -9,13 +9,8 @@
  */
 
 import { canRead, listForks, type Repo } from "../../core/repos.ts";
-import { forkRepo } from "../../actions/repos.ts";
-import {
-  forkDrift,
-  syncFork,
-  takeUpdates,
-  type ForkDrift,
-} from "../../actions/forks.ts";
+import { FORKS_PER_DAY, forkRepo } from "../../actions/repos.ts";
+import { forkDrift, takeUpdates, type ForkDrift } from "../../actions/forks.ts";
 import { lineageOf } from "../../core/following.ts";
 import { followingCard, followingOf, lineageCard } from "./following.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
@@ -194,7 +189,9 @@ export async function forkSubmit(ctx: Ctx): Promise<Response> {
     const reason =
       forked.error === "name_taken"
         ? "You already have a repository by that name."
-        : "That fork could not be created.";
+        : forked.error === "limit"
+          ? `That is today's forks made (${FORKS_PER_DAY} a day). Try again tomorrow.`
+          : "That fork could not be created.";
     return flashTo(ctx, repoBase(repo), { tone: "danger", message: reason });
   }
   return flashTo(ctx, repoBase(forked.value), {
@@ -612,6 +609,17 @@ function aboutCard(
           )}
         </dl>
         ${whereItLives}
+        ${when(
+          repo.visibility === "public" && repo.origin === null,
+          () =>
+            html`<p class="mt small muted">
+              ${icon("lock")} Found a security problem?
+              <a href="${repoBase(repo)}/issues/new?sealed=1"
+                >Report it sealed</a
+              >: only the people who keep this repository and its crew see it
+              until the fix is released.
+            </p>`,
+        )}
         <p class="mt small muted">Clone over HTTPS</p>
         <span class="clone"
           ><span class="clone-text" id="clone-https">${cloneUrl}</span>
@@ -905,7 +913,7 @@ export async function repoFiles(ctx: Ctx): Promise<Response> {
  * the studio, the offer to make a repository that is not an app one. */
 async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
-  const noApp = ctx.mode === "studio" && !isApp ? noAppCard(ctx, repo) : null;
+  const noApp = isApp ? null : noAppCard(ctx, repo);
   const scope = localScope(ctx, repo);
   const cloneUrl = `${ctx.url.origin}/${repo.ownerName}/${repo.name}.git`;
   const refs = await refSetFrom(scope.source);

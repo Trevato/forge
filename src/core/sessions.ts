@@ -5,11 +5,23 @@
 
 import type { Database } from "bun:sqlite";
 import { sha256 } from "../kernel/hash.ts";
-import { secret } from "../kernel/id.ts";
+import { id as newId, secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { getUserById, isActive, type User } from "./users.ts";
 
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** How stale a session's last-seen time may get before a request moves it. */
+const SEEN_EVERY_MS = 60 * 1000;
+
+/** A signed-in browser, as its person sees it: never its secret. */
+export interface SessionInfo {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly lastSeenAt: string | null;
+  readonly expiresAt: string;
+  /** The browser asking: signing it out signs the asker out. */
+  readonly current: boolean;
+}
 
 export function createSession(
   db: Database,
@@ -18,8 +30,8 @@ export function createSession(
   const token = secret();
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
   db.query(
-    "INSERT INTO session (token_hash, user_id, expires_at) VALUES (?1, ?2, ?3)",
-  ).run(sha256(token), userId, expiresAt.toISOString());
+    "INSERT INTO session (token_hash, user_id, expires_at, id) VALUES (?1, ?2, ?3, ?4)",
+  ).run(sha256(token), userId, expiresAt.toISOString(), newId());
   return { token, expiresAt };
 }
 
@@ -27,20 +39,89 @@ export function sessionUser(
   db: Database,
   token: string,
 ): Result<User, "invalid_session"> {
+  const found = sessionOf(db, token);
+  return found.ok ? ok(found.value.user) : found;
+}
+
+/** The account behind a session cookie, and which of its browsers it is. */
+export function sessionOf(
+  db: Database,
+  token: string,
+): Result<{ user: User; id: string }, "invalid_session"> {
+  const hash = sha256(token);
   const row = db
     .query<
-      { user_id: string; expires_at: string },
+      {
+        id: string;
+        user_id: string;
+        expires_at: string;
+        last_seen_at: string | null;
+      },
       [string]
-    >("SELECT user_id, expires_at FROM session WHERE token_hash = ?1")
-    .get(sha256(token));
-  if (!row || row.expires_at <= new Date().toISOString())
+    >(
+      "SELECT id, user_id, expires_at, last_seen_at FROM session WHERE token_hash = ?1",
+    )
+    .get(hash);
+  const now = new Date();
+  if (!row || row.expires_at <= now.toISOString())
     return err("invalid_session");
   const user = getUserById(db, row.user_id);
-  return user && isActive(user) ? ok(user) : err("invalid_session");
+  if (!user || !isActive(user)) return err("invalid_session");
+  // At most one write a minute per browser, however busy it is.
+  const stale = new Date(now.getTime() - SEEN_EVERY_MS).toISOString();
+  if (row.last_seen_at === null || row.last_seen_at < stale)
+    db.query("UPDATE session SET last_seen_at = ?1 WHERE token_hash = ?2").run(
+      now.toISOString(),
+      hash,
+    );
+  return ok({ user, id: row.id });
 }
 
 export function destroySession(db: Database, token: string): void {
   db.query("DELETE FROM session WHERE token_hash = ?1").run(sha256(token));
+}
+
+/**
+ * An account's signed-in browsers, newest first; `current` is the cookie
+ * of the browser asking, when it is one of them.
+ */
+export function listSessions(
+  db: Database,
+  userId: string,
+  current?: string,
+): SessionInfo[] {
+  const mine = current === undefined ? undefined : sha256(current);
+  return db
+    .query<
+      {
+        id: string;
+        token_hash: string;
+        created_at: string;
+        last_seen_at: string | null;
+        expires_at: string;
+      },
+      [string, string]
+    >(
+      `SELECT id, token_hash, created_at, last_seen_at, expires_at FROM session
+       WHERE user_id = ?1 AND expires_at > ?2 ORDER BY created_at DESC, id`,
+    )
+    .all(userId, new Date().toISOString())
+    .map((r) => ({
+      id: r.id,
+      createdAt: r.created_at,
+      lastSeenAt: r.last_seen_at,
+      expiresAt: r.expires_at,
+      current: r.token_hash === mine,
+    }));
+}
+
+/** Sign one browser of this account out. False when it is not theirs. */
+export function endSession(db: Database, userId: string, id: string): boolean {
+  return (
+    db
+      .query("DELETE FROM session WHERE id = ?1 AND user_id = ?2")
+      .run(id, userId).changes > 0
+  );
 }
 
 /** Housekeeping for the background worker. */

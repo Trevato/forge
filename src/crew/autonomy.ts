@@ -55,6 +55,7 @@ import {
   listPulls,
   type MergePullError,
   type Pull,
+  pullDir,
 } from "../core/pulls.ts";
 import {
   getRepoById,
@@ -81,8 +82,17 @@ import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
+import { capReached, ISSUE_RUN_CAP } from "./guard.ts";
 import { interruptionOf } from "./interrupted.ts";
-import { parkedCount as countParks, PARK_STRIKES } from "./parks.ts";
+import {
+  PARK_NOTE,
+  PARK_STRIKES,
+  PLANNER_HINT,
+  parkedCount as countParks,
+  parkedTwice,
+  parkReason,
+  parkReasons,
+} from "./parks.ts";
 import { createLog } from "../kernel/log.ts";
 import {
   directorsAmong,
@@ -344,7 +354,7 @@ export async function driveRepo(
   for (const r of active)
     if (r.actorId !== null)
       inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
-  const graph = repoGraph(app.db, repo.id);
+  const graph = repoGraph(app.db, repo.id, { sealed: true });
   const proposed = proposedWork(app.db, repo);
   const ready = readyNow(graph).filter(
     (r) =>
@@ -353,6 +363,7 @@ export async function driveRepo(
       !proposed.has(r.issue.number) &&
       (r.issue.assigneeId === null || !planners.has(r.issue.assigneeId)) &&
       !stalled(app, repo, r.issue) &&
+      !atRunCap(app, repo, r.issue) &&
       parkedCount(app, repo, r.issue.id) < PARK_STRIKES,
   );
   const next = await nextOf(app, repo, ready);
@@ -400,9 +411,16 @@ const THIN_MAP = 3;
 
 /**
  * Give the planner the direction when the map is thin — fewer than a few
- * ready issues — and no planning run is in flight, and the last one is
- * old enough. Returns whether a planning run was set up. Planning runs
- * alongside building: the builders are never waited for.
+ * ready issues — or when the crew has handed it an issue it parked twice,
+ * and no planning run is in flight, and the last one is old enough.
+ * Returns whether a planning run was set up. Planning runs alongside
+ * building: the builders are never waited for.
+ *
+ * A hand-over is owed one pass, not one a minute: it asks only while it is
+ * newer than the last planning run. That one pass is owed even by a planner
+ * that declined the direction — the decline answered the direction, and
+ * this is something it has not seen. What the pass leaves as it was stays
+ * on the board and in every later brief (`parks.ts`).
  */
 function notPlanned(repo: Repo, why: string): false {
   log.info("planner not asked", {
@@ -421,7 +439,8 @@ async function planIfThin(
   ready: number,
   now: Date,
 ): Promise<boolean> {
-  if (ready >= THIN_MAP) return false;
+  const handed = parkedTwice(app.db, [repo]);
+  if (ready >= THIN_MAP && handed.length === 0) return false;
   const planner = crew.find((c) => c.role === "planner")?.agent;
   if (planner === undefined) return notPlanned(repo, "no planner on the crew");
   if (repo.autonomyDirection.trim() === "")
@@ -436,12 +455,22 @@ async function planIfThin(
        ORDER BY created_at DESC LIMIT 1`,
     )
     .get(direction.id);
-  if (breakerTripped(app.db, direction.id, now))
+  if (breakerTripped(app.db, repo, direction.id, now))
     return notPlanned(repo, "parked: three failed runs in an hour");
+  // The hand-overs the planner has not been given: newer than its last pass.
+  const seen = lastPlan?.created_at ?? "";
+  const owed = handed.filter((issue) => issue.at > seen);
+  if (ready >= THIN_MAP && owed.length === 0) return false;
+  if (atRunCap(app, repo, direction))
+    return notPlanned(repo, "parked: the direction is at its run cap");
   if (lastPlan !== null && lastPlan !== undefined) {
     // A planner that declined the direction is not asked again until a
-    // person has said something on it.
-    if (lastPlan.state === "failed" && declinedUnanswered(app, repo, direction))
+    // person has said something on it, or the crew hands it an issue.
+    if (
+      owed.length === 0 &&
+      lastPlan.state === "failed" &&
+      declinedUnanswered(app, repo, direction)
+    )
       return notPlanned(repo, "the planner declined; waiting for a person");
     if (lastPlan.state === "queued" || lastPlan.state === "running")
       return notPlanned(repo, "a planning run is in flight");
@@ -463,11 +492,18 @@ async function planIfThin(
   if (!assigned.ok)
     return notPlanned(repo, `could not assign: ${String(assigned.error)}`);
   log.info(
-    ready === 0 ? "map ran dry; planner asked" : "map is thin; planner asked",
+    owed.length > 0
+      ? "parked twice; planner asked"
+      : ready === 0
+        ? "map ran dry; planner asked"
+        : "map is thin; planner asked",
     {
       repo: `${repo.ownerName}/${repo.name}`,
       planner: planner.user.username,
       ready,
+      ...(owed.length > 0
+        ? { parkedTwice: owed.map((issue) => `#${issue.number}`).join(" ") }
+        : {}),
     },
   );
   return true;
@@ -582,30 +618,70 @@ export function plannerDeclines(
 
 /**
  * The breaker trips: the assignment is cleared and one note says why, once.
- * The map reads the note as `parked`; the board's "needs you" lists it.
+ * The map reads the note as `parked`; the asks list it for a person.
  */
 export function parkForBreaker(
   app: App,
   repo: Repo,
   issue: Issue,
   agent: Agent,
-): void {
+  note: string = BREAKER_NOTE,
+): boolean {
   const author =
     (repo.autonomyBy === null ? undefined : getUserById(app.db, repo.autonomyBy)) ??
     agent.user;
   if (issue.assigneeId !== null) assignIssue(app, author, repo, issue, null);
   const last = listComments(app.db, issue.id).at(-1);
-  if (last?.body === BREAKER_NOTE) return;
-  addComment(app, author, repo, issue, BREAKER_NOTE);
-  log.info("parked by the breaker", {
+  if (last?.body === note) return false;
+  addComment(app, author, repo, issue, note);
+  log.info(note === BREAKER_NOTE ? "parked by the breaker" : "parked at the run cap", {
     repo: `${repo.ownerName}/${repo.name}`,
     issue: issue.number,
   });
+  return true;
 }
 
-/** How many times the crew has parked this issue since a person who directs it or the planner last spoke (`parks.ts`). */
+/** Whether `issue` is at its run cap (`guard.ts`): the clock neither picks nor plans it. */
+export function atRunCap(app: App, repo: Repo, issue: Issue): boolean {
+  return capReached(app.db, repo, issue, app.config.issueRunCap ?? ISSUE_RUN_CAP);
+}
+
+/** How many times the crew has parked this issue since a person who directs it last spoke (`parks.ts`). */
 export function parkedCount(app: App, repo: Repo, issueId: string): number {
   return countParks(app.db, repo, issueId);
+}
+
+/** What happens to an issue the crew hands over, said once on the issue. */
+const HANDED_OVER =
+  "The planner splits it, replaces it with a fresh issue, or defers it; a person can also say what to try. Nothing starts here until then, and the board lists it.";
+
+/**
+ * What a park says on its issue. A first strike is the reason — and, when a
+ * pull closed with it, a word to the planner. The strike that takes the
+ * issue out of the crew's hands also says every reason since someone who
+ * directs the crew last spoke, and whose it is now: an issue parked twice
+ * is handed over, never dropped.
+ */
+function strikeNote(
+  db: Database,
+  repo: Repo,
+  issue: Issue,
+  reason: string,
+  hint = "",
+): string {
+  const note = `${PARK_NOTE}${reason}`;
+  const reasons = [...parkReasons(db, repo, issue.id), parkReason(note)];
+  if (reasons.length < PARK_STRIKES)
+    return hint === "" ? note : `${note} ${hint}`;
+  return [
+    note,
+    "",
+    `Parked ${reasons.length === 2 ? "twice" : `${reasons.length} times`} since a person last spoke here, so it is the planner's now. Every reason:`,
+    "",
+    ...reasons.map((r, n) => `${n + 1}. ${r}`),
+    "",
+    HANDED_OVER,
+  ].join("\n");
 }
 
 /**
@@ -622,7 +698,7 @@ export function parkIssue(
   const by = getUserById(app.db, repo.autonomyBy);
   if (!by || issue.state !== "open") return false;
   if (issue.assigneeId !== null) assignIssue(app, by, repo, issue, null);
-  addComment(app, by, repo, issue, `Parked by the crew: ${why}`);
+  addComment(app, by, repo, issue, strikeNote(app.db, repo, issue, why));
   log.info("parked", {
     repo: `${repo.ownerName}/${repo.name}`,
     issue: issue.number,
@@ -711,9 +787,9 @@ function answeredWithoutChange(
  * issues back on the map unassigned with the same reason, and move on. A
  * repository on its own never waits for a person; a parked issue is the
  * planner's to split or drop on its next pass, and one parked twice is
- * left to the direction. A pull a person holds is not parked: closing it
- * would hand its issue back to the crew, to build the same change again
- * beside the one that was told to wait.
+ * handed to the planner with every reason (`strikeNote`). A pull a person
+ * holds is not parked: closing it would hand its issue back to the crew, to
+ * build the same change again beside the one that was told to wait.
  */
 export function parkPull(
   app: App,
@@ -727,8 +803,7 @@ export function parkPull(
   if (!by) return false;
   const issue = getIssueById(app.db, pull.id);
   if (!issue || issue.state !== "open") return false;
-  const note = `Parked by the crew: ${why}`;
-  addComment(app, by, repo, issue, note);
+  addComment(app, by, repo, issue, `${PARK_NOTE}${why}`);
   const closed = setIssueState(app, by, repo, issue, "closed");
   if (!closed.ok) return false;
   for (const number of closesFromBody(pull.body)) {
@@ -740,7 +815,13 @@ export function parkPull(
       by,
       repo,
       about,
-      `${note} (pull #${pull.number} closed). Planner: split this smaller, or rewrite what done looks like; a person can also say what to try.`,
+      strikeNote(
+        app.db,
+        repo,
+        about,
+        `${why} (pull #${pull.number} closed).`,
+        PLANNER_HINT,
+      ),
     );
   }
   log.info("parked", {
@@ -759,7 +840,7 @@ export function parkPull(
 export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   if (repo.autonomy !== "autonomous") return 0;
   let landed = 0;
-  for (const pull of listPulls(app.db, repo.id, { state: "open", limit: 50 }))
+  for (const pull of listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 }))
     if (await landIfGreen(app, repo, pull)) landed++;
   return landed;
 }
@@ -819,7 +900,7 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
       // Every tick says what it did and why, so an app that sits still is
       // never a mystery: the numbers behind "idle" are on the line.
       const status = autonomyStatus(app, current, now);
-      const graph = repoGraph(app.db, current.id);
+      const graph = repoGraph(app.db, current.id, { sealed: true });
       log.info("tick", {
         repo: `${repo.ownerName}/${repo.name}`,
         did,
@@ -864,13 +945,21 @@ export function readyState(
     db,
     repo,
     few.map((r) => r.issue),
-  ).map((issue, n) => ({
-    number: issue.number,
-    title: issue.title,
-    body: issue.body.slice(0, 400),
-    holdsUp: few[n]!.holdsUp,
-    ...(issue.untrusted === undefined ? {} : { untrusted: issue.untrusted }),
-  }));
+  ).map((issue, n) =>
+    // A sealed report's words never leave the forge for a decider
+    // (`core/sealed.ts`): it is a number, and that it is sealed.
+    issue.sealed
+      ? { number: issue.number, sealed: true, holdsUp: few[n]!.holdsUp }
+      : {
+          number: issue.number,
+          title: issue.title,
+          body: issue.body.slice(0, 400),
+          holdsUp: few[n]!.holdsUp,
+          ...(issue.untrusted === undefined
+            ? {}
+            : { untrusted: issue.untrusted }),
+        },
+  );
 }
 
 async function nextOf(
@@ -886,7 +975,7 @@ async function nextOf(
   const describe: Record<string, string> = {};
   for (const r of few)
     describe[String(r.issue.number)] =
-      `#${r.issue.number} ${r.issue.title}` +
+      `#${r.issue.number} ${r.issue.sealed ? "(sealed)" : r.issue.title}` +
       (r.holdsUp > 0 ? ` (holds up ${r.holdsUp})` : "");
   const decided = await decideAndRecord(
     app,
@@ -969,21 +1058,31 @@ export function bringUpToDate(
 }
 
 /**
- * Whether the review gate lets this green head land: `pass` with no
- * reviewer on the crew, or with an approval on this head and no change
- * requested; `hold` while the review is out or changes are asked for; and
- * `lapsed` when the reviewer was asked twice and never answered — the pull
- * lands without it, and says so (`crew/review.ts`).
+ * Whether the review gate lets this green head land: `pass` with an
+ * approval on this head and no change requested; `hold` while the review
+ * is out or changes are asked for. An agent's pull is held until approved
+ * — with no reviewer, or after one lapsed, a person's review is what it
+ * waits for (#597). A person's own pull passes with no reviewer on the
+ * crew, and is `lapsed` when the reviewer was asked twice and never
+ * answered: it lands without it, and says so (`crew/review.ts`).
  */
 async function reviewed(
   app: App,
   repo: Repo,
   pull: Pull,
 ): Promise<"pass" | "hold" | "lapsed"> {
-  if (reviewersOf(app.db, repo.id).length === 0) return "pass";
   const seen = reviewSummary(app.db, pull.id, pull.headOid);
   if (seen.changesRequested > 0) return "hold";
   if (seen.approvals > 0) return "pass";
+  // An agent's pull ships only on an approving review — the crew's reviewer
+  // or a person's. With no reviewer, or a review that lapsed, it waits for
+  // a person (`waitsForPerson` puts it where a person looks); never by lapse.
+  if (pull.authorIsAgent) {
+    if (reviewersOf(app.db, repo.id).length > 0) await sendToReview(app, repo, pull);
+    return "hold";
+  }
+  // A person's own pull is not held for a review that never comes.
+  if (reviewersOf(app.db, repo.id).length === 0) return "pass";
   const stage = await sendToReview(app, repo, pull);
   return stage === "lapsed" ? "lapsed" : stage === "none" ? "pass" : "hold";
 }
@@ -1028,7 +1127,8 @@ export async function landIfGreen(
   // up to date, before anyone is asked whether it should land. A conflict
   // is remembered by the two tips it was between: until one of them moves
   // there is nothing new to try.
-  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  // Asked where the pull's objects are: a sealed one's own place (`pullDir`).
+  const dir = await pullDir(app.db, app.reposRoot, repo, pull);
   const baseTip =
     (await resolveOid(dir, `refs/heads/${pull.baseBranch}`)) ?? "";
   const between = `${pull.headOid}:${baseTip}`;
@@ -1087,8 +1187,10 @@ export async function landIfGreen(
   // One gate for every pull, whoever wrote it: when the crew has a
   // reviewer, a green head is queued for review and waits for an approval
   // on that very head (a person's counts the same). A push is a new head,
-  // so it starts over. Without a reviewer the pull lands as it always has,
-  // and so does one whose review lapsed.
+  // so it starts over. An agent's pull waits for that approval however
+  // long it takes — with no reviewer, or after one lapsed, a person's
+  // (#597). Only a person's own pull lands without a reviewer, or after a
+  // review lapsed.
   const review = await reviewed(app, repo, pull);
   if (review === "hold") return false;
   // Green and clear of the wall lands. An autonomous repository does not

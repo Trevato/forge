@@ -17,7 +17,13 @@
 
 import type { App } from "../app.ts";
 import { appsForRepos } from "../core/apps.ts";
-import { frontScore, frontSignals, type FrontSignals } from "../core/front.ts";
+import { markOf, type Mark } from "../core/marks.ts";
+import {
+  frontScore,
+  frontSignals,
+  frontWeights,
+  type FrontSignals,
+} from "../core/front.ts";
 import { canEnterApp, listReposVisibleTo, type Repo } from "../core/repos.ts";
 import { getUsersByIds, isActive, type User } from "../core/users.ts";
 import { listChildren } from "./spawn.ts";
@@ -114,6 +120,14 @@ export interface ExploreRow {
   readonly score: number;
   /** An app's repository, for "Make it yours". */
   readonly repo?: { readonly owner: string; readonly name: string };
+  /** A person's mark, from their account (`core/marks.ts`): the owner's, never a typed one. */
+  readonly mark?: Mark;
+  /**
+   * Whether this viewer may make the app theirs (#606, #922): signed in, a
+   * person, not its owner, and the app one they may copy — public, or a
+   * private one they enter as its own. The same rules Make it yours checks.
+   */
+  readonly copyable?: boolean;
 }
 
 export async function explore(
@@ -142,6 +156,7 @@ export async function explore(
       );
     },
   );
+  const weights = frontWeights(db);
   const signals = frontSignals(
     db,
     appRepos.map((r) => r.id),
@@ -160,6 +175,15 @@ export async function explore(
       : { ...s, awakeHours: 0 };
   };
 
+  const copyable = (repo: Repo): boolean => {
+    if (viewer === undefined || viewer.kind === "agent" || !isActive(viewer)) return false;
+    if (repo.ownerId === viewer.id) return false;
+    const record = records.get(repo.id)!;
+    return (
+      record.access === "public" ||
+      canEnterApp(db, repo, record, viewer, { named: false })
+    );
+  };
   const appRows: ExploreRow[] = appRepos.map((repo) => {
     const s = told(repo);
     return {
@@ -174,8 +198,9 @@ export async function explore(
         apps: 1,
       },
       shippedAt: s.shippedAt,
-      score: frontScore(s, now),
+      score: frontScore(s, now, weights),
       repo: { owner: repo.ownerName, name: repo.name },
+      copyable: copyable(repo),
     };
   });
 
@@ -187,11 +212,14 @@ export async function explore(
       .filter((t): t is string => t !== null)
       .sort()
       .at(-1);
+    const owner = owners.get(repo.ownerId);
+    const mark = markOf(owner);
     people.set(repo.ownerName, {
       kind: "person",
       name: repo.ownerName,
       url: `/${repo.ownerName}`,
-      description: owners.get(repo.ownerId)?.displayName ?? "",
+      description: owner?.displayName ?? "",
+      ...(mark === undefined ? {} : { mark }),
       numbers: {
         forks: (was?.numbers.forks ?? 0) + row.numbers.forks,
         ships: (was?.numbers.ships ?? 0) + row.numbers.ships,

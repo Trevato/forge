@@ -11,7 +11,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { resetConnectLimit } from "../src/actions/origins.ts";
 import {
   advertiseRefs,
   isGitService,
@@ -445,7 +444,6 @@ describe("push-through, adversarially", () => {
         }),
       });
     }
-    resetConnectLimit();
 
     const connected = await read<{ id: string }>(
       await api("/api/v1/user/origins", {

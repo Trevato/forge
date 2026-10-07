@@ -3,18 +3,23 @@
  * answers three questions — who has it, what it is waiting on, and what the
  * crew has done with it. Where it stands is `tellWord`, which every studio
  * list of tells reads too, so a tell says the same thing in a row as it does
- * on its own page. Nothing a dev-mode reader needs (labels, milestones, the
- * dependency form) belongs here; `?mode=dev` reads that page, unchanged.
+ * on its own page. What it waits for (its dependencies) stays in view;
+ * what a person only sometimes changes (who has it, its labels) waits in
+ * one closed Details section.
  */
 
+import { mayEditIssue } from "../../actions/issues.ts";
+import { marksByName } from "../../core/marks.ts";
 import { threadNote } from "../../crew/direct.ts";
 import type { Database } from "bun:sqlite";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { listEvents } from "../../core/events.ts";
+import { repoGraph } from "../../core/dependencies.ts";
 import { labelsFor, listLabels, type Issue } from "../../core/issues.ts";
 import { getPull, openPullsClosing, type Pull } from "../../core/pulls.ts";
-import { canEnterApp, type Repo } from "../../core/repos.ts";
+import { canEnterApp, canWrite, getSealedFork, type Repo } from "../../core/repos.ts";
+import { canSeeSealed } from "../../core/sealed.ts";
 import { activeRunFor, listRuns } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
@@ -25,6 +30,8 @@ import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
   avatar,
+  badge,
+  btn,
   card,
   icon,
   labelCss,
@@ -107,6 +114,11 @@ export async function tellWord(
   if (!runsOpenTo(wordCtx, repo)) return { word: "told", note: "told" };
   if (activeRunFor(db, "agent", issue.id) !== undefined)
     return { word: "working", note: "working now" };
+  // Deferred work is not waiting to be picked up: the crew will not take
+  // it, and the page says why, as the map does.
+  const deferred = deferredWhy(wordCtx, repo, issue);
+  if (deferred !== undefined)
+    return { word: "told", note: `deferred: ${deferred}` };
   const last = listRuns(db, repo.id, {
     kind: "agent",
     issueId: issue.id,
@@ -119,7 +131,31 @@ export async function tellWord(
   // were still sitting in a queue.
   if (issue.assigneeId !== null && !issue.assigneeIsAgent)
     return { word: "told", note: "held" };
-  return { word: "told", note: "not picked up yet" };
+  return {
+    word: "told",
+    note:
+      wordCtx.record === undefined ? "waiting for someone" : "not picked up yet",
+  };
+}
+
+/** One graph read for each repository on a page, however many tells it words. */
+const deferrals = new WeakMap<
+  WordCtx,
+  Map<string, ReadonlyMap<string, string>>
+>();
+
+/** Why this issue is deferred (`core/dependencies.ts`), when it is. */
+function deferredWhy(
+  wordCtx: WordCtx,
+  repo: Repo,
+  issue: Issue,
+): string | undefined {
+  let byRepo = deferrals.get(wordCtx);
+  if (byRepo === undefined) deferrals.set(wordCtx, (byRepo = new Map()));
+  let known = byRepo.get(repo.id);
+  if (known === undefined)
+    byRepo.set(repo.id, (known = repoGraph(wordCtx.db, repo.id).deferred));
+  return known.get(issue.id);
 }
 
 /** Whether the reader may see this repository's runs (`mayReadRuns`). */
@@ -200,8 +236,7 @@ async function tellClosingPull(
 
 /**
  * GET /:owner/:name/issues/:number and /tells/:number: one page, two
- * addresses, for every repository and every viewer — `?mode=dev` and the
- * mode cookie change nothing. Same `threadContext` at both, so a reader who
+ * addresses, for every repository and every viewer. Same `threadContext` at both, so a reader who
  * may not see it gets the forge's not-found at either.
  */
 export async function tellPage(ctx: Ctx): Promise<Response> {
@@ -241,12 +276,21 @@ async function studioTell(
     history: servingHistory(),
     viewer: ctx.auth.user,
   };
+  // A repository that is not an app speaks of issues, not tells.
+  const plain = wordCtx.record === undefined;
+  // Closing is the author's or a writer's (`setIssueState`); nobody else is
+  // shown a button the server would only refuse.
+  const user = ctx.auth.user;
+  const mayClose =
+    user !== undefined &&
+    (user.id === issue.authorId || canWrite(db, repo, user));
   const [wordInfo, runsCard, closingCard] = await Promise.all([
     direction ? undefined : tellWord(wordCtx, repo, issue, closingPull),
     tellRuns(wordCtx, repo, issue),
     closingPull ? tellClosingPull(ctx, wordCtx, repo, closingPull) : undefined,
   ]);
 
+  const marks = marksByName(db, [issue.authorName, issue.assigneeName ?? ""]);
   const head = html`<div class="issue-head">
     <h1>${issue.title} <span class="number">#${issue.number}</span></h1>
     <div class="issue-meta">
@@ -257,13 +301,13 @@ async function studioTell(
             ordinary tell</span
           >`
         : wordInfo
-          ? html`${wordBadge(wordInfo.word)}
+          ? html`${wordBadge(wordInfo.word, undefined, plain)}
               <span class="muted small">${wordInfo.note}</span>`
           : stateBadge(issue.state)}
       <span
         >${issue.originAuthor
           ? originTag(issue.originAuthor, originGlyph(repo))
-          : userLink(issue.authorName)}
+          : userLink(issue.authorName, { mark: marks.get(issue.authorName) })}
         opened this ${time(issue.createdAt)}</span
       >
       ${when(
@@ -273,11 +317,19 @@ async function studioTell(
             >${icon("external")}view on origin</a
           >`,
       )}
+      ${when(
+        issue.sealed,
+        () =>
+          badge("Sealed security report", { tone: "danger", icon: "lock" }),
+      )}
       ${workSpent(ctx, repo, issue.id)}
       ${issue.assigneeName !== null
         ? html`<span
             >${when(issue.assigneeIsAgent, () => icon("bot"))}
-            ${userLink(issue.assigneeName)} has it</span
+            ${userLink(issue.assigneeName, {
+              mark: marks.get(issue.assigneeName),
+            })}
+            has it</span
           >`
         : !direction && wordInfo?.word === "told"
           ? html`<span class="muted">nobody has it yet</span>`
@@ -285,7 +337,13 @@ async function studioTell(
     </div>
   </div>`;
 
-  const talk = conversation(ctx, repo, issue, { openVerb: "opened this" });
+  const talk = conversation(ctx, repo, issue, {
+    openVerb: "opened this",
+    editAction:
+      mayEditIssue(ctx.app, repo, issue, user).ok && repo.origin === null
+        ? `${repoBase(repo)}/issues/${issue.number}/edit`
+        : undefined,
+  });
   const applied = labelsFor(db, issue.id);
   const allLabels = listLabels(db, repo.id);
   // Closed until asked for: neither is the next thing a person does here,
@@ -296,6 +354,7 @@ async function studioTell(
     <summary>Details</summary>
     ${assigneeCard(ctx, repo, issue, `${thread}/assignee`)}
     ${labelsCard(ctx, repo, issue, applied, allLabels, `${thread}/labels`)}
+    ${sealCard(ctx, repo, issue, `${thread}/seal`)}
   </details>`;
 
   const body = html`${repoHeader(ctx, repo, "issues", {
@@ -308,14 +367,15 @@ async function studioTell(
         ${talk.node}
         ${composer(ctx, {
           action: `${thread}/comments`,
-          stateAction: `${thread}/state`,
+          ...(mayClose ? { stateAction: `${thread}/state` } : {}),
           state: issue.state,
-          closeLabel: "Close tell",
+          closeLabel: plain ? "Close issue" : "Close tell",
           crewNote: threadNote(ctx.app.db, repo, issue),
           reasons: true,
         })}
       </div>
       <aside>
+        ${privateWorkCard(ctx, repo, issue, `${thread}/private`)}
         ${runsCard}
         ${closingCard}
         ${dependenciesCard(ctx, repo, issue, `${thread}/dependencies`)}
@@ -338,4 +398,54 @@ async function studioTell(
     styleCss: labelCss([...allLabels, ...applied]),
     scriptJs: liveClientJs,
   });
+}
+
+/**
+ * Where to fix a sealed report by hand, for a person who may see it: a
+ * branch here, or on a public fork, is public — the fix says where the
+ * hole is — so the private repository the crew uses is offered (#865).
+ */
+function privateWorkCard(ctx: Ctx, repo: Repo, issue: Issue, action: string): Html | null {
+  const user = ctx.auth.user;
+  if (!issue.sealed || user === undefined || user.kind === "agent") return null;
+  if (!canSeeSealed(ctx.app.db, repo, user)) return null;
+  const mine = getSealedFork(ctx.app.db, user.id, repo.id);
+  return card(
+    html`<p>
+        A branch on ${repo.ownerName}/${repo.name}, or on a public fork, is
+        public: its fix shows where the hole is. Fix this one in your private
+        repository — only you, this repository's writers and its crew read it
+        — and open the pull from there.
+      </p>
+      ${mine
+        ? html`<p class="small">
+            Yours: <a href="/${mine.ownerName}/${mine.name}">${mine.ownerName}/${mine.name}</a>
+            · push to <code>${ctx.url.origin}/${mine.ownerName}/${mine.name}.git</code>
+          </p>`
+        : html`<form method="post" action="${action}" class="mt">
+            ${btn("Work on this privately", { variant: "primary", icon: "lock" })}
+          </form>`}`,
+    {
+      id: "work-privately",
+      head: html`${icon("lock")}
+        <h2>Fix it privately</h2>`,
+    },
+  );
+}
+
+/**
+ * Seal or unseal, for someone who can write here (`core/sealed.ts`).
+ * Unsealing publishes the report and its fix, so it says so on the button.
+ */
+function sealCard(ctx: Ctx, repo: Repo, issue: Issue, action: string): Html | null {
+  if (!canWrite(ctx.app.db, repo, ctx.auth.user)) return null;
+  return html`<form method="post" action="${action}" class="mt">
+    <input type="hidden" name="sealed" value="${issue.sealed ? "0" : "1"}" />
+    ${btn(
+      issue.sealed
+        ? "Unseal: publish this report, its fix and their whole history to every reader"
+        : "Seal as a security report",
+      { variant: issue.sealed ? "danger" : "ghost", icon: "lock" },
+    )}
+  </form>`;
 }

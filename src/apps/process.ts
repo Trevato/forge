@@ -16,7 +16,7 @@ import { envPull } from "./data.ts";
 import { forgeApiUrl } from "./token.ts";
 import { isReservedAppEnvName } from "../core/app_env.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { stripForgeDirs } from "../runs/paths.ts";
+import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import { seconds } from "./timing.ts";
 import {
   commandPid,
@@ -78,6 +78,8 @@ export interface CellBase {
   readonly home: string;
   /** Told of an undeclared host reached while egress is only reported. */
   readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
+  /** The egress mode, as the forge's setting says at this start. */
+  readonly egressMode?: "enforce" | "report" | undefined;
 }
 
 export type StartStage = "install" | "test" | "start" | "ready";
@@ -253,8 +255,9 @@ export async function runStep(
     stderr: "pipe",
   });
   const recent: string[] = [];
+  const dirs = spellings([options.cwd]);
   const scrub = (raw: string): void => {
-    const line = stripForgeDirs([options.cwd], raw);
+    const line = stripForgeDirs(dirs, raw);
     recent.push(line);
     if (recent.length > TAIL_LINES) recent.shift();
     options.log(line);
@@ -314,6 +317,7 @@ function stepCell(input: StartInput): CellSpec | undefined {
     reach: [input.forgeUrl],
     limits: resolveLimits("step", undefined),
     onUndeclared: base.onUndeclared,
+    egressMode: base.egressMode,
   };
 }
 
@@ -385,6 +389,7 @@ export async function startProcess(
             limits: resolveLimits("app", manifest.limits),
             listen: port,
             onUndeclared: input.cell.onUndeclared,
+            egressMode: input.cell.egressMode,
           },
           log,
         );
@@ -413,9 +418,10 @@ export async function startProcess(
   cell?.watch(proc.pid, () => killTree(proc.pid));
   // Output is pumped for the life of the process, not just the start.
   const recent: string[] = [];
+  const dirs = spellings([input.dir, input.dataDir]);
   const remember = (raw: string): void => {
     firstOutputAt ??= Date.now();
-    const line = stripForgeDirs([input.dir, input.dataDir], raw);
+    const line = stripForgeDirs(dirs, raw);
     recent.push(line);
     if (recent.length > 20) recent.shift();
     log(line);

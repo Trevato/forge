@@ -175,6 +175,20 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .form-actions .close-reason { width: auto; min-height: 32px; padding-block: 0; }
 .form-actions .close-into { display: none; width: 7em; min-height: 32px; }
 .form-actions:has(.close-reason option[value="split"]:checked) .close-into { display: inline-block; }
+/* On a phone the Markdown hint takes its own line, so the reason, Close and
+   Comment stay together on the next one instead of Comment wrapping alone. */
+@media (max-width: 480px) {
+  .comment-form .form-actions > .muted.small { flex-basis: 100%; }
+  .comment-form .form-actions > .spacer { display: none; }
+  .comment-form .form-actions > :last-child { margin-left: auto; }
+  /* The reason select, Close and Comment must fit 332 px with room to
+     spare: a tighter gap and a narrower select. */
+  .comment-form .form-actions { gap: 6px; }
+  .comment-form .form-actions .close-reason { padding-inline: 8px 24px; max-width: 84px; }
+  /* Words carry the buttons here; their icons give back the width a 360 px
+     row needs for "Close issue", and the buttons keep their full height. */
+  .comment-form .form-actions .btn .ico { display: none; }
+}
 .connect-more .connect-path { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
 .connect-path h3 { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .connect-path h3 .ico { color: var(--muted-fg); }
@@ -215,6 +229,10 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   .repo-layout { grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; }
   .repo-layout > .about { position: sticky; top: calc(var(--topbar-h) + 16px); }
 }
+/* Make it yours: what is copied and what is not, read before saying yes. */
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; margin: 0; }
+.kv dt { color: var(--muted-fg); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
 .about dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 13px; margin: 0; }
 .about dt { color: var(--muted-fg); }
 .about dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
@@ -320,6 +338,16 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 /* A subscription's headroom for people: a small number beside its windows. */
 .headroom { display: flex; align-items: center; gap: 6px; }
 .headroom .input { width: 5em; }
+/* A spawned forge's first steps (#600): three rows, the next one leading. */
+.next-crew { margin: 0 0 12px 1.1em; }
+.next-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.next-step { display: grid; grid-template-columns: 1.4em minmax(0, 1fr); gap: 8px; align-items: start; }
+.next-step-mark { color: var(--faint); padding-top: 2px; }
+.next-step[data-done="yes"] .next-step-mark { color: var(--success, var(--accent)); }
+.next-step[data-done="yes"] .next-step-title { color: var(--muted-fg); text-decoration: line-through; }
+.next-step[data-primary] .next-step-title { font-weight: 600; }
+.next-step-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 36rem; }
+.next-step-apps { display: flex; flex-wrap: wrap; gap: 6px; }
 /* The everyday-account ask on the home: a form's width, not the page's. */
 .everyday-ask { max-width: 34rem; margin-bottom: 16px; }
 /* On a phone an account's controls go under its name, not over it. */
@@ -419,6 +447,25 @@ form.inline { display: inline; margin-left: auto; }
 .explore-main { display: grid; gap: 2px; min-width: 0; flex: 1; }
 .explore-name { font-weight: 600; }
 .explore-line .input { flex: 1; min-width: 0; }
+/* On a phone the first rows belong on the first screen: one row of chips
+   that scrolls sideways, and a row's verb under its numbers. The chips fade
+   at the right edge, so a cut one says there is more; where the browser
+   ties an animation to scrolling, the fade lifts at the end. */
+@property --chip-fade { syntax: "<length>"; inherits: false; initial-value: 32px; }
+@keyframes chip-fade { 90% { --chip-fade: 32px; } to { --chip-fade: 0px; } }
+@media (max-width: 600px) {
+  .explore-filters {
+    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 calc(100% - var(--chip-fade)), transparent);
+  }
+  @supports (animation-timeline: scroll()) {
+    .explore-filters { animation: chip-fade linear both; animation-timeline: scroll(self inline); }
+  }
+  .explore-filters .seg { flex: none; }
+  .explore-row { flex-wrap: wrap; row-gap: 6px; }
+  .explore-row > .explore-main { flex-basis: 100%; }
+  .explore-row > .btn { margin-left: 0; }
+}
 
 /* The featured repository: its picture and its crew at work, side by side
    on a desk, stacked on a phone. */
@@ -448,6 +495,8 @@ form.inline { display: inline; margin-left: auto; }
 .front-pick { gap: 8px; }
 .front-pick form.inline { margin-left: 0; }
 .front-pin-any { padding: 12px 16px; flex-wrap: nowrap; }
+.front-weights { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 0 16px 12px; }
+.front-weights .input { width: 4.5em; margin-left: 4px; }
 .front-pin-any .input { flex: 1; min-width: 0; }
 .front-controls .small { padding: 0 16px 14px; }
 @media (max-width: 520px) {
@@ -1108,6 +1157,44 @@ textarea.editor:focus { outline: none; }
   border: 1px dashed var(--border); border-radius: var(--radius);
 }
 .no-hits .ico { color: var(--faint); flex: none; }
+/* The client list (#776): whom a forge is for is the point of the row, so
+   its line wraps rather than being cut off on a phone. */
+.forges-sent .row-meta { white-space: normal; }
+.forges-sent .row-trail { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.forges-sent .row-trail form { margin: 0; }
+.forges-sent a.row-title { color: var(--fg); }
+@media (max-width: 560px) {
+  .forges-sent .row { flex-wrap: wrap; }
+  .forges-sent .row-trail { flex-basis: 100%; justify-content: flex-start; }
+}
+/* "+ New forge" (#426): the claim link, shown once, impossible to miss. */
+.claim-link-box {
+  margin: 0; padding: 12px 14px; font-size: 15px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--muted); overflow-wrap: anywhere;
+}
 
 }
+/* What needs you, pinned on the home: the bulk step's select as wide as
+   its words, not the column. */
+.needs-you #asks-bulk select { width: auto; }
+/* A phone shows the top asks and one "N more" that opens in place to all
+   of them; a wider screen shows ASKS_SHOWN and its own "N more" past that.
+   Only where a details element can be held open: elsewhere both summaries
+   stay, so every ask is still a tap away. */
+@supports selector(::details-content) {
+  @media (max-width: 480px) {
+    .needs-you #asks-more > summary { display: none; }
+    .needs-you #asks-more::details-content { content-visibility: visible; }
+    .needs-you #asks-more > .stack { margin-top: 0; }
+  }
+  @media (min-width: 481px) {
+    .needs-you #asks-phone-more > summary { display: none; }
+    .needs-you #asks-phone-more::details-content { content-visibility: visible; }
+    .needs-you #asks-phone-more > .stack { margin-top: 0; }
+    .needs-you .ask-group > summary { display: none; }
+    .needs-you .ask-group::details-content { content-visibility: visible; }
+  }
+}
+.needs-you .ask-group > summary { padding: 10px 14px; cursor: pointer; }
 `;

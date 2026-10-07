@@ -208,7 +208,7 @@ describe("explore", () => {
         headers: { authorization: `Bearer ${bobToken}` },
       })
     ).text();
-    expect(signedIn).toContain('action="/alice/loved/fork"');
+    expect(signedIn).toContain('href="/alice/loved/make-it-yours"');
     const res = await fetch(`${base}/mcp`, {
       method: "POST",
       headers: {
@@ -238,5 +238,22 @@ describe("explore", () => {
       expect(shown).not.toContain("sus/susapp");
       expect(shown).not.toContain("sus");
     }
+  });
+
+  test("Make it yours is offered only where it can be made: not a private app to a reader, not the viewer's own app (#922)", async () => {
+    const asBob = await (
+      await fetch(`${base}/explore`, { headers: { authorization: `Bearer ${bobToken}` } })
+    ).text();
+    expect(asBob).toContain('href="/alice/loved/make-it-yours"');
+    // alice/gated is a public repository whose app only its writers enter.
+    expect(asBob).not.toContain('href="/alice/gated/make-it-yours"');
+    const rows = (await api("kind:app", bobToken)).items;
+    expect(rows.find((r) => r.name === "alice/gated").copyable).toBe(false);
+    expect(rows.find((r) => r.name === "alice/loved").copyable).toBe(true);
+    // Its own apps are not offered back to their owner.
+    const asAlice = await (
+      await fetch(`${base}/explore`, { headers: { authorization: `Bearer ${aliceToken}` } })
+    ).text();
+    expect(asAlice).not.toContain('href="/alice/loved/make-it-yours"');
   });
 });

@@ -192,6 +192,9 @@ describe("the shell sandbox denies the whole data directory but the agent's own 
   });
 
   test("a data directory that cannot be listed refuses the run, never denies nothing", () => {
+    // Root can readdir chmod 0o000 directories, so the listing never fails on
+    // the isolated Actions runner (uid 0). Same skip as apps-adversarial.
+    if (process.getuid?.() === 0) return;
     const locked = join(dataDir, "..", `forge-sandbox-locked-${process.pid}`);
     mkdirSync(join(locked, "crew"), { recursive: true });
     chmodSync(locked, 0o000);

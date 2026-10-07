@@ -14,18 +14,26 @@ import {
   deleteAgent as removeAgent,
   getAgent,
   getAgentByName,
+  isCrew,
   listAgents,
   listCrew as queryCrew,
+  listCrewRoles,
   removeCrew as deleteCrew,
   updateAgent as patchAgent,
   type Agent,
   type AgentPatch,
+  type CrewRole,
   BRIEF_MAX,
   BUDGET_MAX_USD,
   MODEL_MAX,
 } from "../core/agents.ts";
-import type { Repo } from "../core/repos.ts";
-import { createUser, type CreateUserError, type User } from "../core/users.ts";
+import { canWrite, type Repo } from "../core/repos.ts";
+import {
+  createUser,
+  getUserByName,
+  type CreateUserError,
+  type User,
+} from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireReader, requireRepoAdmin, requireUser } from "./access.ts";
 
@@ -183,19 +191,64 @@ export function listCrew(
   return ok(queryCrew(app.db, repo.id));
 }
 
+/** One crew member as a viewer may see it: always who and what they do. */
+export interface CrewMember {
+  readonly username: string;
+  readonly displayName: string;
+  readonly role: CrewRole;
+  /**
+   * The owner's configuration of the agent (#946): its brief, model and
+   * budget. Only the repository's writers and its own crew see it; a reader
+   * or a stranger sees the crew's names and roles.
+   */
+  readonly config?: { model: string; brief: string; budgetUsd: number };
+}
+
+/** The crew of a repository, shown as `actor` may see it. */
+export function crewAsSeen(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): Result<CrewMember[], "not_found"> {
+  const reader = requireReader(app, actor, repo);
+  if (!reader.ok) return reader;
+  const configured =
+    actor !== undefined &&
+    (canWrite(app.db, repo, actor) ||
+      (actor.kind === "agent" && isCrew(app.db, repo.id, actor.id)));
+  return ok(
+    listCrewRoles(app.db, repo.id).map(({ agent, role }) => ({
+      username: agent.user.username,
+      displayName: agent.user.displayName,
+      role,
+      ...(configured
+        ? {
+            config: {
+              model: agent.model,
+              brief: agent.brief,
+              budgetUsd: agent.budgetUsd,
+            },
+          }
+        : {}),
+    })),
+  );
+}
+
 /** Put an agent on the crew: it may now read and write this repository. */
 export function addToCrew(
   app: App,
   actor: User | undefined,
   repo: Repo,
   username: string,
-): Result<Agent, "not_found" | "no_such_agent" | "unverified"> {
+): Result<Agent, "not_found" | "no_such_agent" | "not_an_agent" | "unverified"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
   const proven = requireVerified(app, admin.value);
   if (!proven.ok) return proven;
   const agent = getAgentByName(app.db, username);
-  if (!agent) return err("no_such_agent");
+  // A person is never on a crew: said plainly, before the database would.
+  if (!agent)
+    return err(getUserByName(app.db, username) ? "not_an_agent" : "no_such_agent");
   if (insertCrew(app.db, repo.id, agent.user.id, admin.value.id)) {
     app.bus.append({
       kind: "crew.added",

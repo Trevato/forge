@@ -46,6 +46,8 @@ const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
 interface Values {
   readonly username?: string;
   readonly email?: string;
+  /** The claim code, when it came in the body (the fragment link). */
+  readonly token?: string;
 }
 type Errors = Partial<Record<"username" | "email" | "password", string>>;
 
@@ -54,7 +56,7 @@ function dead(ctx: Ctx, state: Exclude<ClaimState["state"], "ok">): Response {
     unknown: {
       status: 404,
       title: "This is not a claim link",
-      text: "The link may have been cut short. Ask whoever sent it for a new one.",
+      text: "The link may have been cut short, or replaced by a newer one. Ask whoever sent it for the latest.",
     },
     used: {
       status: 410,
@@ -132,6 +134,17 @@ function claimForm(
         </p>
         <p class="mb" id="claim-access">${accessSentence(spawned, spawner)}</p>
         <form method="post" action="${ctx.url.pathname}">
+          ${ctx.params["token"] === undefined
+            ? html`<div id="claim-token-field">
+                ${formField({
+                  label: "Claim code",
+                  name: "token",
+                  value: values.token ?? "",
+                  required: true,
+                  hint: "The part of your link after the #. Opening the link fills it in.",
+                })}
+              </div>`
+            : null}
           ${formField({
             label: "Username",
             name: "username",
@@ -170,7 +183,40 @@ function claimForm(
   </div>`;
 }
 
+/**
+ * The fragment link's page script: take the claim code from `#…` into the
+ * form and drop it from the address bar, so it is never in a request line,
+ * a Referer, the history or a screenshot of the URL. Without JavaScript the
+ * code field stays visible and takes a paste.
+ */
+const fragmentJs = /* js */ `
+(function () {
+  var field = document.querySelector('input[name="token"]');
+  if (!field) return;
+  var code = location.hash.slice(1);
+  if (!code) return;
+  field.value = code;
+  var box = document.getElementById('claim-token-field');
+  if (box) box.hidden = true;
+  history.replaceState(null, '', location.pathname + location.search);
+})();
+`;
+
+// GET /claim — the form for a fragment link: the code arrives in the
+// browser only, so nothing is known or spent here until the form posts it.
+export async function claimFragmentPage(ctx: Ctx): Promise<Response> {
+  const spawned = await spawnedOrg(ctx.app);
+  if (spawned === undefined) return dead(ctx, "unknown");
+  return page({
+    ctx,
+    title: "This forge is yours",
+    body: claimForm(ctx, spawned, owners(ctx, spawned).spawner, {}, {}),
+    scriptJs: fragmentJs,
+  });
+}
+
 // GET /claim/:token — the form, or why the link no longer works. Spends nothing.
+// Links sent before the fragment form keep working here.
 export async function claimPage(ctx: Ctx): Promise<Response> {
   const spawned = await spawnedOrg(ctx.app);
   if (spawned === undefined) return dead(ctx, "unknown");
@@ -194,7 +240,9 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
   const spawned = await spawnedOrg(ctx.app);
   if (spawned === undefined) return dead(ctx, "unknown");
   const orgId = spawned.org.id;
-  const token = ctx.params["token"] ?? "";
+  // From the path for an old link, else from the form's body — never from
+  // a query string, which proxies and logs would keep.
+  const token = ctx.params["token"] ?? field(form, "token");
   const before = readClaim(ctx.app.db, orgId, token);
   if (before.state !== "ok") return dead(ctx, before.state);
   const { team, spawner } = owners(ctx, spawned);
@@ -202,6 +250,7 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
   const values = {
     username: field(form, "username"),
     email: field(form, "email"),
+    ...(ctx.params["token"] === undefined ? { token } : {}),
   };
   const password = field(form, "password");
   const errors: Errors = {};
@@ -239,7 +288,9 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     return again(
       made.error === "email_taken"
         ? { email: "That email already has an account." }
-        : { username: "That username is taken." },
+        : made.error === "username_reserved"
+          ? { username: "That name is reserved." }
+          : { username: "That username is taken." },
     );
   }
   if (team) {

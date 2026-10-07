@@ -2,8 +2,8 @@
  * `/explore` (#607): the apps, people and forges the viewer can see, ranked
  * by real numbers and shown with them, narrowed in one line that lives in
  * the URL (`?q=kind:app sort:forks garden`). Every app row says "Make it
- * yours": a fork into the viewer's account, one press (#606 makes it the
- * whole app). Decided in `actions/explore.ts`; this page only draws it.
+ * yours" (#606): a plan of the copy, then the app as theirs. Decided in
+ * `actions/explore.ts`; this page only draws it.
  */
 
 import {
@@ -17,7 +17,7 @@ import type { Ctx } from "../../http/context.ts";
 import { pageHead } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { btn, empty, listCard, seg, timeAgo } from "../ui.ts";
+import { btn, empty, listCard, nameMark, seg, timeAgo } from "../ui.ts";
 
 const href = (query: ExploreQuery): string => {
   const line = exploreLine(query);
@@ -37,11 +37,12 @@ function numbers(row: ExploreRow): string {
   return parts.filter((p) => p !== "").join(" · ");
 }
 
-function rowHtml(ctx: Ctx, row: ExploreRow): Html {
+function rowHtml(row: ExploreRow): Html {
   const said = numbers(row);
   return html`<li class="row explore-row">
     <span class="explore-main">
-      <a class="explore-name" href="${row.url}">${row.name}</a>
+      <a class="explore-name" href="${row.url}">${row.name}</a
+      >${nameMark(row.mark)}
       ${when(
         row.description,
         (d) => html`<span class="muted small truncate">${d}</span>`,
@@ -49,15 +50,13 @@ function rowHtml(ctx: Ctx, row: ExploreRow): Html {
       ${when(said, (s) => html`<span class="muted small">${s}</span>`)}
     </span>
     ${when(
-      row.kind === "app" && ctx.auth.user !== undefined ? row.repo : undefined,
+      row.copyable === true ? row.repo : undefined,
       (repo) =>
-        html`<form
-          method="post"
-          action="/${repo.owner}/${repo.name}/fork"
-          class="inline"
-        >
-          ${btn("Make it yours", { size: "sm", icon: "fork" })}
-        </form>`,
+        btn("Make it yours", {
+          href: `/${repo.owner}/${repo.name}/make-it-yours`,
+          size: "sm",
+          icon: "fork",
+        }),
     )}
   </li>`;
 }
@@ -82,7 +81,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
     { label: "Fresh", sort: "fresh" as const },
   ];
   const body = html`${pageHead("Explore", {
-      sub: "Apps and the people who make them, ranked by forks, what shipped this month, use and how lately — the numbers on every row.",
+      sub: "Apps and their makers, ranked by forks, ships, use and how lately — the numbers on every row.",
     })}
     <form method="get" action="/explore" class="bar mb explore-line">
       <input
@@ -96,7 +95,7 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
       />
       ${btn("Go", { size: "sm" })}
     </form>
-    <div class="filters mb">
+    <div class="filters mb explore-filters">
       ${seg(
         kinds.map((k) => ({
           label: k.label,
@@ -118,6 +117,6 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
           title: "Nothing matches",
           note: "Clear the line to see everything you can.",
         })
-      : listCard(rows.map((row) => rowHtml(ctx, row)))}`;
+      : listCard(rows.map(rowHtml))}`;
   return page({ ctx, title: "Explore", body });
 }

@@ -36,6 +36,7 @@ import { createUser, getUserByName, type User } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { sha256 } from "../kernel/hash.ts";
+import { secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { crossOrigin } from "../http/context.ts";
 import {
@@ -48,7 +49,7 @@ import {
 import { Database } from "bun:sqlite";
 import { loadKey, open } from "../kernel/secret.ts";
 import { loadOrCreateHostKey } from "../ssh/keys.ts";
-import { mintClaim } from "../spawn/claim.ts";
+import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
 import type { Placement } from "../spawn/placement.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { requireUser } from "./access.ts";
@@ -96,6 +97,15 @@ interface Ledger {
   readonly url: string;
   readonly planHash: string;
   done: boolean;
+  /** For the client list (#776); absent on a ledger written before it. */
+  readonly forWhom?: string;
+  readonly apps?: readonly string[];
+  readonly createdAt?: string;
+  /**
+   * What the parent shows the child to learn its private facts (when anything
+   * last happened); the child keeps only its hash. Never in an answer.
+   */
+  statusToken?: string;
 }
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
@@ -193,6 +203,10 @@ async function make(
     }
     if (ledger.done)
       return ok({ name: plan.name, org: plan.org, url: ledger.url, bodyId: ledger.bodyId, existed: true });
+    if (ledger.statusToken === undefined) {
+      ledger.statusToken = secret();
+      await writeLedger(app, ledger);
+    }
   } else {
     const placed = await deps.placement.place(plan);
     if (!placed.ok) return err({ kind: "refused", ...placed.error });
@@ -200,13 +214,23 @@ async function make(
       await deps.placement.retire(placed.value.bodyId);
       return fail("placement returned an unusable body id");
     }
-    ledger = { name: plan.name, bodyId: placed.value.bodyId, url: placed.value.url, planHash, done: false };
+    ledger = {
+      name: plan.name,
+      bodyId: placed.value.bodyId,
+      url: placed.value.url,
+      planHash,
+      done: false,
+      ...(plan.forWhom === undefined ? {} : { forWhom: plan.forWhom }),
+      apps: plan.apps.map((a) => a.ref),
+      createdAt: new Date().toISOString(),
+      statusToken: secret(),
+    };
     await writeLedger(app, ledger);
   }
 
   const copied = await copyInto(app, owner, plan, ledger, deps.modelKey);
   if (!copied.ok) return fail(copied.error);
-  const claimUrl = `${ledger.url}/claim/${copied.value}`;
+  const claimUrl = claimLink(ledger.url, copied.value);
 
   ledger.done = true;
   await writeLedger(app, ledger);
@@ -248,8 +272,10 @@ async function copyInto(
         const made = await createUser(child.db, {
           username: owner.username,
           email: `${owner.username}@spawn.forge.invalid`,
-          // Seeded by the parent's owner, who is proven there.
+          // Seeded by the parent's owner, who is proven there, under the
+          // name they already hold there.
           trusted: true,
+          allowReserved: true,
         });
         return made.ok ? made.value : undefined;
       })());
@@ -257,7 +283,8 @@ async function copyInto(
 
     let org = getOrg(child.db, plan.org);
     if (!org) {
-      const made = createOrg(child.db, plan.org, founder.id);
+      // Named by the spawner, who was held to the rule on the parent.
+      const made = createOrg(child.db, plan.org, founder.id, { allowReserved: true });
       if (!made.ok) return err(`could not make org ${plan.org}: ${made.error}`);
       org = made.value;
     }
@@ -362,6 +389,8 @@ async function copyInto(
         // The child's own address, from the placement: <name>.<parent's host>.
         url: ledger.url,
         keepAccess: plan.keepAccess,
+        // Only the hash: the parent alone holds what it answers to.
+        ...(ledger.statusToken === undefined ? {} : { statusHash: sha256(ledger.statusToken) }),
       }),
     );
     return ok(mintClaim(child.db, org.id));
@@ -393,16 +422,73 @@ function heldKey(dir: string): string | undefined {
   }
 }
 
-/** The children this forge has made or begun, from its ledger, by name. */
-export async function listChildren(
+/**
+ * A new claim link for a child nobody has claimed yet (#729): the spawner's
+ * — an admin of this forge — when the first went unused or was lost. The
+ * child keeps one claim row, so minting replaces it and the old link dies
+ * at once. A claimed child (one with a person as admin) is refused.
+ */
+export async function reissueClaim(
   app: App,
-): Promise<{ name: string; url: string; bodyId: string; done: boolean }[]> {
+  actor: User | undefined,
+  name: string,
+  deps: { readonly request: Request; readonly url: URL },
+): Promise<Result<{ readonly name: string; readonly claimUrl: string }, SpawnError | { readonly kind: "not_found" }>> {
+  if (crossOrigin(deps.request, deps.url, app.log)) return err({ kind: "cross_origin" });
+  const user = requireUser(actor);
+  if (!user.ok) return err({ kind: "unauthorized" });
+  if (!user.value.isAdmin) return err({ kind: "forbidden" });
+  const ledger = /^[a-z0-9-]{1,39}$/.test(name) ? await readLedger(app, name) : undefined;
+  if (!ledger || !ledger.done) return err({ kind: "not_found" });
+  const child = createApp({ dataDir: childDirOf(app, ledger.bodyId) });
+  try {
+    const spawned = await spawnedOrg(child);
+    if (!spawned) return fail("the child has no organisation to claim");
+    if (hasAdmin(child.db))
+      return err({ kind: "refused", reason: "claimed", message: `${name} is already claimed; ask its owner to invite you` });
+    const token = mintClaim(child.db, spawned.org.id);
+    app.bus.append({ kind: "forge.claim_reissued", actorId: user.value.id, payload: { name } });
+    return ok({ name, claimUrl: claimLink(ledger.url, token) });
+  } finally {
+    child.close();
+  }
+}
+
+/** What this forge shows a child it made to learn its private facts; undefined for an older child. */
+export async function statusTokenOf(app: App, name: string): Promise<string | undefined> {
+  return (await readLedger(app, name))?.statusToken;
+}
+
+/** One child, as the ledger keeps it. */
+export interface Child {
+  readonly name: string;
+  readonly url: string;
+  readonly bodyId: string;
+  readonly done: boolean;
+  /** Whom it is for; null when unsaid. */
+  readonly for: string | null;
+  readonly apps: readonly string[];
+  /** When it was begun; null on a ledger older than the client list. */
+  readonly createdAt: string | null;
+}
+
+/** The children this forge has made or begun, from its ledger, by name. */
+export async function listChildren(app: App): Promise<Child[]> {
   const dir = join(app.config.dataDir, "spawn");
   const files = await readdir(dir).catch(() => [] as string[]);
-  const out = [];
+  const out: Child[] = [];
   for (const f of files.filter((f) => f.endsWith(".json")).sort()) {
     const ledger = await readLedger(app, f.slice(0, -".json".length));
-    if (ledger) out.push({ name: ledger.name, url: ledger.url, bodyId: ledger.bodyId, done: ledger.done });
+    if (ledger)
+      out.push({
+        name: ledger.name,
+        url: ledger.url,
+        bodyId: ledger.bodyId,
+        done: ledger.done,
+        for: ledger.forWhom ?? null,
+        apps: ledger.apps ?? [],
+        createdAt: ledger.createdAt ?? null,
+      });
   }
   return out;
 }

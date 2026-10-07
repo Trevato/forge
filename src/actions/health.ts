@@ -1,0 +1,30 @@
+/**
+ * How the forge is, as it answers anyone who asks: the version and commit
+ * it runs, whether it is draining, and the platform's word on its rollout
+ * (`kernel/guard.ts`). A monitor has no account, so there is nothing to
+ * authorize. A site admin also gets the forge's own vitals alongside, and
+ * `ok` is then both.
+ *
+ * One answer for the API (`GET /api/v1/health`) and the MCP `health` tool.
+ */
+
+import type { App } from "../app.ts";
+import { appsRuntime } from "../apps/runtime.ts";
+import { listApps } from "../core/apps.ts";
+import type { User } from "../core/users.ts";
+import { forgeHealth, type ForgeHealth } from "../kernel/guard.ts";
+import { vitals, type Vitals } from "../kernel/vitals.ts";
+
+export function readHealth(
+  app: App,
+  actor: User | undefined,
+): ForgeHealth | (Vitals & ForgeHealth) {
+  const forge = forgeHealth();
+  if (!actor?.isAdmin) return forge;
+  const runtime = appsRuntime(app);
+  const envs = runtime
+    ? listApps(app.db).flatMap((record) => runtime.status(record))
+    : [];
+  const v = vitals({ db: app.db, dataDir: app.config.dataDir, envs });
+  return { ...v, ...forge, ok: forge.ok && v.ok };
+}

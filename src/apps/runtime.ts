@@ -13,6 +13,7 @@
  * commit, once.
  */
 
+import { pullDir, runDir } from "../core/pulls.ts";
 import { accountActive } from "../core/accounts.ts";
 import { sshCommand } from "../ssh/command.ts";
 import { appHostSuffix } from "./host.ts";
@@ -82,6 +83,7 @@ import {
 import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
+import { egressSetting } from "../core/capacity.ts";
 import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
 import {
   startProcess,
@@ -660,14 +662,14 @@ export class AppsRuntime {
     if (tip !== undefined && only !== "preview")
       this.requestDeploy(record, repo, "production", tip, reason);
     const open = new Set<EnvName>(["production"]);
-    for (const pull of listPulls(this.app.db, repo.id, {
+    for (const pull of listPulls(this.app.db, repo.id, { sealed: true,
       state: "open",
       limit: 200,
     })) {
       const env = previewEnv(pull.number);
       open.add(env);
       if (only === "production") continue;
-      const head = await this.pullHead(dir, pull);
+      const head = await this.pullHead(repo, pull);
       if (head === undefined) continue;
       // A preview the forge built in an earlier life comes back asleep, not
       // deployed: nobody is looking at it this second, and the first who
@@ -675,6 +677,12 @@ export class AppsRuntime {
       // restart used to cost.
       // One idle past the age stays stopped: a restart never wakes it.
       if (reason === "boot") {
+        // A preview at a head nobody who can write approved — built before
+        // the gate, or its approval withdrawn — does not come back at all.
+        if (!this.mayRun(record, repo, env, head)) {
+          await this.teardown(record, env);
+          continue;
+        }
         const idleSince = this.idleSince(repo, pull, env);
         if (idleSince !== undefined) {
           this.hibernateAtBoot(record, env, head, idleSince);
@@ -704,7 +712,8 @@ export class AppsRuntime {
     }
   }
 
-  private async pullHead(dir: string, pull: Pull): Promise<string | undefined> {
+  private async pullHead(repo: Repo, pull: Pull): Promise<string | undefined> {
+    const dir = await pullDir(this.app.db, this.app.reposRoot, repo, pull);
     const ref = pull.crossRepo
       ? `refs/pull/${pull.number}/head`
       : `refs/heads/${pull.headBranch}`;
@@ -755,7 +764,7 @@ export class AppsRuntime {
             );
           }
           // Every open pull whose head is this branch previews the new tip.
-          for (const pull of listPulls(this.app.db, repo.id, {
+          for (const pull of listPulls(this.app.db, repo.id, { sealed: true,
             state: "open",
             limit: 200,
           })) {
@@ -793,7 +802,7 @@ export class AppsRuntime {
       case "pull.reopened": {
         const pull = this.pullFromEvent(repo, event);
         if (!pull) return;
-        const head = await this.pullHead(dir, pull);
+        const head = await this.pullHead(repo, pull);
         if (head !== undefined)
           this.requestDeploy(
             record,
@@ -807,10 +816,26 @@ export class AppsRuntime {
       }
       // An approval is what lets a reader's pull run: deploy its head now.
       case "pull.reviewed": {
+        // A writer asking for changes may withdraw what let the preview run:
+        // if the code it serves may no longer run, it stops now, not at its
+        // next sleep or restart.
+        if (event.payload["state"] === "changes_requested") {
+          const pull = this.pullFromEvent(repo, event);
+          if (!pull) return;
+          const env = previewEnv(pull.number);
+          const state = this.envs.get(key(record.id, env));
+          const serving =
+            state?.live?.commitOid ??
+            state?.deploying?.run.commitOid ??
+            state?.asleep?.commitOid;
+          if (serving !== undefined && !this.mayRun(record, repo, env, serving))
+            await this.teardown(record, env);
+          return;
+        }
         if (event.payload["state"] !== "approved") return;
         const pull = this.pullFromEvent(repo, event);
         if (!pull || pull.state !== "open") return;
-        const head = await this.pullHead(dir, pull);
+        const head = await this.pullHead(repo, pull);
         if (head !== undefined)
           this.requestDeploy(
             record,
@@ -1107,7 +1132,8 @@ export class AppsRuntime {
     | { ok: true; value: Live; tested: Promise<Result<void, string>> }
     | { ok: false; error: string }
   > {
-    const bare = repoDir(this.app.reposRoot, repo.ownerName, repo.name);
+    // A sealed pull's preview is built from where its work is (`pullDir`).
+    const bare = await runDir(this.app.db, this.app.reposRoot, repo, run.issueId);
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, run.commitOid, "forge.json"),
       readFileAt(bare, run.commitOid, "package.json"),
@@ -1259,6 +1285,8 @@ export class AppsRuntime {
       home: join(envDir(dataDir, record.id, env), "home"),
       onUndeclared: (host, port) =>
         noteReached(dataDir, record.repoId, host, port),
+      // Asked at every start: an admin's flip reaches the next cell.
+      egressMode: egressSetting(this.app.db),
     };
   }
 
@@ -1307,6 +1335,7 @@ export class AppsRuntime {
               limits: resolveLimits("app", live.manifest.limits),
               terminal: true,
               onUndeclared: base.onUndeclared,
+              egressMode: base.egressMode,
             },
     };
   }

@@ -12,6 +12,7 @@ import { firstBoot } from "./spawn/first-boot.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
+import { drainStreams } from "./http/sse.ts";
 import { serve } from "./http/server.ts";
 import { runSync } from "./origins/sync.ts";
 import { startForgeSsh } from "./tui/ssh.ts";
@@ -30,12 +31,14 @@ import { startCrew } from "./crew/dispatch.ts";
 import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
 import { typeSafeDecider } from "./crew/decide.ts";
 import { graphInstagram } from "./crew/instagram.ts";
+import { peopleOnCrews } from "./core/agents.ts";
 import { startNotifier } from "./crew/notify.ts";
 import { sweepStaleAsks } from "./crew/stale_asks.ts";
 import { recordAskLedger } from "./web/studio/asks.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
 import { pruneTokens } from "./core/tokens.ts";
 import { dataHomeRefusal } from "./kernel/data_home.ts";
+import { running } from "./kernel/version.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -123,6 +126,12 @@ const app = createApp({
         },
       }
     : {}),
+  // FORGE_MAIL_DAILY: the most messages the forge sends in a day, to
+  // everyone together (`actions/mail.ts`).
+  ...(Number.isInteger(Number(process.env.FORGE_MAIL_DAILY)) &&
+  Number(process.env.FORGE_MAIL_DAILY) > 0
+    ? { mailDailyCap: Number(process.env.FORGE_MAIL_DAILY) }
+    : {}),
   // Who may say who the client is: the ingress in front of a hosted forge.
   ...(trustedProxies.length > 0 ? { trustedProxies } : {}),
   ...((process.env.FORGE_CLIENT_IP_HEADER ?? "").trim() !== ""
@@ -130,6 +139,12 @@ const app = createApp({
     : {}),
   ...(Number(process.env.FORGE_CREW_CEILING_USD) > 0
     ? { crewCeilingUsd: Number(process.env.FORGE_CREW_CEILING_USD) }
+    : {}),
+  // FORGE_CREW_ISSUE_RUNS: runs one issue may start in a day before it is
+  // parked for a person (`crew/guard.ts`).
+  ...(Number.isInteger(Number(process.env.FORGE_CREW_ISSUE_RUNS)) &&
+  Number(process.env.FORGE_CREW_ISSUE_RUNS) > 0
+    ? { issueRunCap: Number(process.env.FORGE_CREW_ISSUE_RUNS) }
     : {}),
   ...((process.env.FORGE_EDGE_NAME ?? "").trim() === ""
     ? {}
@@ -226,8 +241,6 @@ const probes = apps === undefined ? undefined : startProbes(app, apps);
 // The snapshot: everything that cannot be rebuilt, nightly, to what an
 // operator sealed on the Backups page, else the platform's (`S3_*`) or a
 // directory (`FORGE_SNAPSHOT_DIR`). A forge given none says so on that page.
-const VERSION =
-  ((await import("../package.json")) as { version?: string }).version ?? "0";
 const snapshots = startSnapshots(
   app,
   () =>
@@ -237,7 +250,7 @@ const snapshots = startSnapshots(
       bus: app.bus,
     })?.store,
   {
-    version: VERSION,
+    version: running().version,
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
   },
 );
@@ -321,6 +334,14 @@ const staleTimer = setInterval(() => void tickAsks(), 120_000);
 void tickAsks();
 
 app.log.info("forge is up", { url: servers.url, data: app.config.dataDir });
+// Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
+// put on one before that is reported here for the owner to take off — the
+// forge never removes it on its own.
+for (const p of peopleOnCrews(app.db))
+  app.log.warn("a person is on a crew; only agents belong there", {
+    repo: p.repoId,
+    user: p.username,
+  });
 if (apps)
   app.log.info("apps are up", {
     domain: apps.options.domain,
@@ -374,6 +395,9 @@ function shutdown(): void {
   if (draining) return;
   draining = true;
   health.draining = true;
+  // Streams end now, with a resume hint: their browsers reconnect to the
+  // process that replaced this one, not to this one while it finishes.
+  drainStreams();
   const sessions = ssh?.sessions() ?? 0;
   app.log.info("forge draining", { sshSessions: sessions });
   clearInterval(deliveryTimer);

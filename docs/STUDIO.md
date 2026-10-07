@@ -1,11 +1,15 @@
 # The studio
 
-Two ways of seeing one forge. **Studio** is the default: apps are the unit,
-and a person does three things to one — tell the crew, look at what it
-made, decide when it asks. **Dev** shows the git underneath — code,
-commits, branches, runs — unchanged. The switch is in the top bar and is a
-cookie on that browser; the URLs are the same in both, so a link works
-whichever way its reader sees.
+One forge, for every viewer (#603). Apps are the unit, and a person does
+three things to one — tell the crew, look at what it made, decide when it
+asks. An app speaks the studio's words (told, changes, shipped); a
+repository that is not an app speaks git's (issues, pulls, commits,
+branches). Every repository's header carries the same depth row — its
+files, its changes, its runs and, where SSH is on, the terminal — so code is
+one tap from any post. The dev/studio mode is gone: no toggle, no cookie, no
+`POST /mode`, and an old `?mode=` address redirects to the same page without
+it. Where the sections below still speak of "dev mode" or `?mode=dev`, they
+describe the split that #625–#636 contracted, one screen at a time.
 
 Finding something never leaves the page you're on. `/` focuses the search
 box in the top bar, unless a field already has focus; `Cmd/Ctrl-K` opens the
@@ -226,9 +230,25 @@ header's tabs (`Told`, `Changes`, in place of dev's `Issues`, `Pulls`) link
 to `/tells` and `/changes`; dev's `Commits`/`Branches` stay dev's alone.
 `/runs` has no second noun — the studio and dev share the one address
 there. What a page _posts_ to never moves with the noun: ship, close,
-comment and decide keep posting under `/issues/:number` and
+comment, edit and decide keep posting under `/issues/:number` and
 `/pulls/:number`, which is what `form-action 'self'` and the same-origin
 checks are written against.
+
+The words of an issue or a pull are not fixed at opening. Under the opening
+post, its author or a person who writes the repository finds _Edit_: the
+title and the body as they stand, one Save, posting to `…/edit`. An agent
+edits only what it wrote (`mayEditIssue`, `actions/issues.ts`); a mirror's
+words belong to its origin. An author who may not direct the crew — a
+reader on a public repository, an outside contributor — keeps the right
+only until a person who writes has acted on the words: adopted the issue,
+or reviewed the pull. After that the answer is "a writer has taken this
+up: comment instead", since a rewrite would put new work in the crew's
+hands, or a new `Closes #N` under an approval, unseen. Over the API, `PATCH …/issues/:number` and
+`PATCH …/pulls/:number` take `title` and `body` beside `state`; the MCP
+`edit` tool does the same by number. The edit is an event (`issue.edited`,
+`pull.edited`) that says what changed, never the words, and the timeline
+shows it. What a pull closes and whom it answers are read from the body
+on every read, so they follow.
 
 _Look_ is spoken for by the five-word table above (a pull green and ready
 for a person's own look) and by the picture card on one (`lookCard`,
@@ -468,7 +488,12 @@ against the ceiling, runs, shipped, and whether it is paused — plus any
 other app the crew spent on this week — and beneath it the efficiency
 signal: spend per shipped change over the last 7 days (the usage ledger's
 `cost_usd` ÷ pulls merged, `core/efficiency.ts`, every app in one grouped
-query), or "$4.10 spent, nothing shipped" when there is no ratio. A site
+query), or "$4.10 spent, nothing shipped" when there is no ratio. Above the
+regions, whoever owns an app gets a line for each thing its crew waits on
+them for: a planner that declined the direction, with a box to answer it,
+and each issue the crew parked twice and handed to its planner, with why
+and a link to the issue where the planner answers — that one stays until
+the issue is split, replaced or deferred (`docs/PLANNING.md`). A site
 admin also gets a strip of the subscriptions above the regions: each
 account's 5-hour and weekly window — used, left, resets — in the words
 `windowWords` (`studio/words.ts`) gives them, with _inferred_ beside every

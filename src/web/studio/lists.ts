@@ -9,6 +9,7 @@
  * and `/tells`, `/pulls` and `/changes` alike.
  */
 
+import { sealedScope } from "../../core/sealed.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import {
@@ -21,8 +22,8 @@ import {
 import { listPulls, openPullsClosing } from "../../core/pulls.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
 import { waitingCount } from "../../actions/reports.ts";
-import { listRuns } from "../../core/runs.ts";
-import { mayReadRuns } from "../../actions/runs.ts";
+
+import { listRepoRuns } from "../../actions/runs.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -32,6 +33,7 @@ import {
   repoBase,
   repoHeader,
   repoPalette,
+  signInHref,
 } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -125,11 +127,12 @@ function wordFilterBar(
   current: WordFilter | undefined,
   open: boolean,
   trail?: Html,
+  words: readonly WordFilter[] = WORD_FILTERS,
 ): Html {
   return html`<div class="filters mb">
     ${seg([
       { label: "Open", href: href(undefined), current: open },
-      ...WORD_FILTERS.map((w) => ({
+      ...words.map((w) => ({
         label: w[0]!.toUpperCase() + w.slice(1),
         href: href(w),
         current: current === w,
@@ -138,6 +141,11 @@ function wordFilterBar(
     ${when(trail, (t) => html`<span class="spacer"></span>${t}`)}
   </div>`;
 }
+
+/** The words a repository that is not an app can reach: nothing there is
+ * told to a crew apart from being open, and no head is ever deployed for a
+ * look — so those two are not offered as filters there. */
+const PLAIN_FILTERS: readonly WordFilter[] = ["working", "shipped", "stopped"];
 
 const LIST_PAGE = 25;
 
@@ -227,8 +235,23 @@ function facetChips(base: string, f: ListFacets, labels: readonly Label[]): Html
       ["q", "in the title"],
     ] as const
   ).filter(([name]) => f[name] !== "");
-  if (active.length === 0 && labels.length === 0) return html``;
+  // An older `?state=closed|all` address narrows the list without a word;
+  // it shows as a chip like any other narrowing, so it can be seen and
+  // cleared.
+  const state =
+    f.word === undefined && f.state !== "open"
+      ? html`<a
+          class="label"
+          href="${facetHref(base, { ...f, state: "open" }, {})}"
+          aria-current="true"
+          title="Remove this filter"
+          >${f.state === "closed" ? "closed" : "open and closed"} ✕</a
+        >`
+      : null;
+  if (active.length === 0 && labels.length === 0 && state === null)
+    return html``;
   return html`<div class="bar mb">
+    ${state}
     ${active.map(
       ([name, says]) =>
         html`<a
@@ -314,7 +337,11 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
   const f = readFacets(ctx);
   const { options, record, wordCtx } = listRead(ctx, repo, f);
 
-  const fetched = listIssues(db, repo.id, { ...options, kind: "issue" }).filter(
+  const fetched = listIssues(db, repo.id, {
+    ...options,
+    kind: "issue",
+    ...sealedScope(db, repo, ctx.auth.user),
+  }).filter(
     (issue) => issue.id !== repo.directionIssueId,
   );
   const closingPulls = openPullsClosing(db, repo.id);
@@ -336,7 +363,13 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
       ? empty({
           icon: "issue",
           title: "Nothing here",
-          note: emptyNote(f.word, "Nothing told", "Nothing open. Tell the crew what you want and it shows up here."),
+          note: emptyNote(
+            f.word,
+            record === undefined ? "No issue" : "Nothing told",
+            record === undefined
+              ? "Nothing open."
+              : "Nothing open. Tell the crew what you want and it shows up here.",
+          ),
         })
       : listCard(
           rows.map(({ issue, info }) =>
@@ -352,7 +385,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
               )}${issue.assigneeName
                 ? html`${issue.assigneeName} · `
                 : null}${info.note} · ${time(issue.updatedAt)}`,
-              trail: wordBadge(info.word),
+              trail: wordBadge(info.word, undefined, record === undefined),
             }),
           ),
         );
@@ -386,10 +419,19 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
     waiting > 0
       ? btn(`${waiting} from outside`, { href: `${base}/reports`, size: "sm" })
       : undefined;
+  // Signed out, the way in: sign in to open one, or report a problem
+  // without an account where the repository is public.
+  const signIn = when(ctx.auth.user === undefined && outside !== undefined, () =>
+    btn("Sign in to open an issue", {
+      href: signInHref(ctx),
+      size: "sm",
+      variant: "ghost",
+    }),
+  );
   const verbs =
     ctx.auth.user === undefined && outside === undefined
       ? undefined
-      : html`${reports ?? null} ${compose} ${outside ?? null}`;
+      : html`${reports ?? null} ${compose} ${outside ?? null} ${signIn}`;
 
   const body = html`${repoHeader(ctx, repo, "issues")}
     <div class="mt">
@@ -398,6 +440,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
         f.word,
         f.word === undefined && f.state === "open",
         verbs,
+        record === undefined ? PLAIN_FILTERS : WORD_FILTERS,
       )}
       ${facetChips(listBase, f, repoLabels)} ${list}
       ${pager(
@@ -410,7 +453,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
 
   return page({
     ctx,
-    title: pageTitle("tells", repo, true),
+    title: pageTitle("tells", repo, record !== undefined),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
@@ -432,9 +475,12 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
   const f = readFacets(ctx);
-  const { options, wordCtx } = listRead(ctx, repo, f);
+  const { options, record, wordCtx } = listRead(ctx, repo, f);
 
-  const fetched = listPulls(db, repo.id, options);
+  const fetched = listPulls(db, repo.id, {
+    ...options,
+    ...sealedScope(db, repo, ctx.auth.user),
+  });
   const words = await Promise.all(
     fetched.map((pull) => pullWord(wordCtx, pull)),
   );
@@ -450,7 +496,13 @@ export async function changesList(ctx: Ctx): Promise<Response> {
       ? empty({
           icon: "pull",
           title: "Nothing here",
-          note: emptyNote(f.word, "No change", "Nothing open. A change is the crew's proposed edit to your app; the crew opens them as it works."),
+          note: emptyNote(
+            f.word,
+            "No change",
+            record === undefined
+              ? "Nothing open."
+              : "Nothing open. A change is the crew's proposed edit to your app; the crew opens them as it works.",
+          ),
         })
       : listCard(
           rows.map(({ pull, info }) =>
@@ -464,7 +516,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
                 ? originTag(pull.originAuthor, originGlyph(repo))
                 : pull.authorName} · ${info.note} ·
               ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
-              trail: wordBadge(info.word),
+              trail: wordBadge(info.word, undefined, record === undefined),
             }),
           ),
         );
@@ -478,6 +530,8 @@ export async function changesList(ctx: Ctx): Promise<Response> {
         (word) => facetHref(listBase, f, { word }),
         f.word,
         f.word === undefined && f.state === "open",
+        undefined,
+        record === undefined ? PLAIN_FILTERS : WORD_FILTERS,
       )}
       ${facetChips(listBase, f, repoLabels)} ${list}
       ${pager(
@@ -490,7 +544,7 @@ export async function changesList(ctx: Ctx): Promise<Response> {
 
   return page({
     ctx,
-    title: pageTitle("changes", repo, true),
+    title: pageTitle("changes", repo, record !== undefined),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
@@ -544,19 +598,20 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const kind = readRunsKind(ctx);
   const cursor = ctx.url.searchParams.get("cursor") ?? undefined;
 
-  // A private app's runs are for those who may enter it (`mayReadRuns`).
-  const fetched = mayReadRuns(ctx.app, ctx.auth.user, repo)
-    ? listRuns(db, repo.id, {
-        kind,
-        limit: LIST_PAGE,
-        ...(cursor ? { cursor } : {}),
-      })
-    : [];
+  // A private app's runs are for those who may enter it, and a sealed
+  // report's for those who may see it (`listRepoRuns`).
+  const listed = listRepoRuns(ctx.app, ctx.auth.user, repo, {
+    kind,
+    limit: LIST_PAGE,
+    ...(cursor ? { cursor } : {}),
+  });
+  const fetched = listed.ok ? listed.value : [];
+  const record = getAppByRepo(db, repo.id);
   const wordCtx: WordCtx = {
     db,
     dir: repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
     runtime: appsRuntime(ctx.app),
-    record: getAppByRepo(db, repo.id),
+    record,
     history: servingHistory(),
     viewer: ctx.auth.user,
   };
@@ -596,7 +651,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
               title: runTitleFrom(run, actors, issues),
               meta: html`${run.kind === "agent" ? html`${who} · ` : null}${info.note}
               · ${time(run.finishedAt ?? run.createdAt)}`,
-              trail: wordBadge(info.word),
+              trail: wordBadge(info.word, undefined, record === undefined),
             });
           }),
         );
@@ -605,7 +660,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
     (k) => k !== kind,
   );
 
-  const body = html`${repoHeader(ctx, repo, "app", { compact: true })}
+  const body = html`${repoHeader(ctx, repo, "runs", { compact: true })}
     <div class="mt">
       ${wordFilterBar(
         (word) => runsHref(base, kind, word),

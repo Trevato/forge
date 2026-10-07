@@ -8,6 +8,7 @@
  * is what makes a long thread skimmable.
  */
 
+import { mayView } from "../../core/sealed.ts";
 import { listCrew } from "../../actions/crew.ts";
 import {
   confirmIssue,
@@ -22,14 +23,21 @@ import {
   setIssueStateThrough,
 } from "../../actions/issues.ts";
 import { listEvents } from "../../core/events.ts";
+import { markOf, marksByName, type Mark } from "../../core/marks.ts";
 import {
   CLOSE_REASONS,
   type CloseReason,
   type Issue,
   type Label,
 } from "../../core/issues.ts";
-import type { Closing } from "../../actions/issues.ts";
-import { getIssue, labelsFor, listComments } from "../../core/issues.ts";
+import { editIssue, type Closing } from "../../actions/issues.ts";
+import {
+  getIssue,
+  labelsFor,
+  listComments,
+  MAX_BODY,
+  MAX_TITLE,
+} from "../../core/issues.ts";
 import { canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { inlineIcons, type IconName as Glyph } from "../icons.ts";
 import {
@@ -101,7 +109,13 @@ export function threadContext(
   const number = parseNumber(ctx.params.number);
   const issue =
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
-  if (!issue || issue.kind !== kind) return notFoundPage(ctx);
+  // A sealed report is not there for anyone who may not see it (`core/sealed.ts`).
+  if (
+    !issue ||
+    issue.kind !== kind ||
+    !mayView(ctx.app.db, repo, issue, ctx.auth.user)
+  )
+    return notFoundPage(ctx);
   return { repo, issue };
 }
 
@@ -134,6 +148,8 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
       tone: "default",
       verb: "reviewed a line",
     },
+    "issue.edited": { icon: "pencil", tone: "default", verb: "edited this" },
+    "pull.edited": { icon: "pencil", tone: "default", verb: "edited this" },
   };
 
 /**
@@ -167,7 +183,7 @@ function stateEvents(ctx: Ctx, repo: Repo, issue: Issue): Entry[] {
         icon: look.icon,
         tone: look.tone,
         body: html`${actor
-            ? userLink(actor.username)
+            ? userLink(actor.username, { mark: markOf(actor) })
             : html`<span>someone</span>`} <span>${look.verb}</span> ${time(
             event.createdAt,
           )}`,
@@ -203,6 +219,49 @@ export interface ConversationOptions {
    * timeline that files it separately reads as two conversations.
    */
   extra?: readonly Entry[];
+  /**
+   * Where a new title or body posts, for a viewer who may give one (the
+   * author, or a person who writes here — the same rule `editIssue` keeps,
+   * decided by the page so nobody is shown a form the server would refuse).
+   */
+  editAction?: string | undefined;
+}
+
+/**
+ * The opening post's own words, open for editing under it: the title and
+ * the body as they stand, one form, one Save. Folded away until asked for,
+ * since most visits read and few rewrite.
+ */
+function editForm(issue: Issue, action: string): Html {
+  return html`<details class="tl-edit" id="edit">
+    <summary class="muted small">${icon("pencil")} Edit</summary>
+    <form class="card comment-form mt" method="post" action="${action}">
+      <label class="sr-only" for="edit-title">Title</label>
+      <input
+        class="input"
+        id="edit-title"
+        name="title"
+        value="${issue.title}"
+        required
+        maxlength="${MAX_TITLE}"
+      />
+      <label class="sr-only" for="edit-body">Description</label>
+      <textarea
+        class="input mt"
+        id="edit-body"
+        name="body"
+        rows="8"
+        data-grow
+        maxlength="${MAX_BODY}"
+      >
+${issue.body}</textarea>
+      <div class="form-actions">
+        <span class="muted small">Markdown, as in a comment.</span>
+        <span class="spacer"></span>
+        ${btn("Save", { size: "sm", icon: "check" })}
+      </div>
+    </form>
+  </details>`;
 }
 
 /**
@@ -220,11 +279,17 @@ export function conversation(
   // diff, and showing it in both places says the same thing twice.
   const comments = listComments(ctx.app.db, issue.id, { kind: "comment" });
   const glyph = originGlyph(repo);
+  // Who each name is, asked once for the whole thread (`core/marks.ts`).
+  const marks = marksByName(ctx.app.db, [
+    issue.authorName,
+    ...comments.map((c) => c.authorName),
+  ]);
   const entries: Entry[] = comments.map((c) => ({
     at: c.createdAt,
     node: threadComment(c.id, c.authorName, c.createdAt, c.body, {
       originAuthor: c.originAuthor,
       originKind: glyph,
+      mark: marks.get(c.authorName),
     }),
   }));
   entries.push(...stateEvents(ctx, repo, issue));
@@ -236,6 +301,7 @@ export function conversation(
     commentCard({
       id: "",
       author: issue.authorName,
+      mark: marks.get(issue.authorName),
       at: issue.createdAt,
       body: issue.body,
       verb: options.openVerb,
@@ -247,7 +313,9 @@ export function conversation(
 
   return {
     node: html`<div class="timeline" id="conversation">
-      ${opening}${entries.map((e) => e.node)}
+      ${opening}${when(options.editAction, (action) =>
+        editForm(issue, action),
+      )}${entries.map((e) => e.node)}
     </div>`,
     lastCommentId: comments.length > 0 ? comments[comments.length - 1]!.id : "",
   };
@@ -260,12 +328,17 @@ export function threadComment(
   author: string,
   at: string,
   body: string,
-  origin: { originAuthor?: string | null; originKind?: Glyph } = {},
+  origin: {
+    originAuthor?: string | null;
+    originKind?: Glyph;
+    mark?: Mark | undefined;
+  } = {},
 ): Html {
   return html`<div class="tl-item" data-kind="comment" data-comment-id="${id}">
     <span class="tl-dot">${icon("comment")}</span>${commentCard({
       id,
       author,
+      mark: origin.mark,
       at,
       body,
       verb: "commented",
@@ -292,16 +365,26 @@ export function threadFragment(ctx: Ctx, kind: "issue" | "pull"): Response {
   const number = parseNumber(ctx.params.number);
   const issue =
     number === undefined ? undefined : getIssue(ctx.app.db, repo.id, number);
-  if (!issue || issue.kind !== kind) return new Response("", { status: 404 });
+  if (
+    !issue ||
+    issue.kind !== kind ||
+    !mayView(ctx.app.db, repo, issue, ctx.auth.user)
+  )
+    return new Response("", { status: 404 });
   const after = ctx.url.searchParams.get("after") ?? "";
   const fresh = listComments(ctx.app.db, issue.id, {
     kind: "comment",
   }).filter((c) => c.id > after);
   const glyph = originGlyph(repo);
+  const marks = marksByName(
+    ctx.app.db,
+    fresh.map((c) => c.authorName),
+  );
   const fragment = html`${fresh.map((c) =>
     threadComment(c.id, c.authorName, c.createdAt, c.body, {
       originAuthor: c.originAuthor,
       originKind: glyph,
+      mark: marks.get(c.authorName),
     }),
   )}`;
   return new Response(inlineIcons(fragment.text), {
@@ -538,7 +621,11 @@ export function assigneeCard(
       ? html`<p class="muted small">Nobody yet.</p>`
       : html`<p class="bar">
           ${when(issue.assigneeIsAgent, () => icon("bot"))}
-          ${userLink(issue.assigneeName)}
+          ${userLink(issue.assigneeName, {
+            mark: marksByName(ctx.app.db, [issue.assigneeName]).get(
+              issue.assigneeName,
+            ),
+          })}
         </p>`;
   if (!mayEdit)
     return card(current, {
@@ -691,6 +778,41 @@ export async function stateSubmit(
   });
 }
 
+/** POST …/:number/edit — a new title or body, for both kinds. */
+export async function wordsSubmit(
+  ctx: Ctx,
+  kind: "issue" | "pull",
+): Promise<Response> {
+  const found = threadContext(ctx, kind);
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/${kind === "pull" ? "pulls" : "issues"}/${found.issue.number}`;
+  const edited = editIssue(ctx.app, ctx.auth.user, found.repo, found.issue, {
+    title: field(form, "title"),
+    body: field(form, "body"),
+  });
+  if (!edited.ok) {
+    if (edited.error === "not_found") return notFoundPage(ctx);
+    const message =
+      originError(edited.error) ??
+      (edited.error === "forbidden" || edited.error === "unauthorized"
+        ? "Only the author or someone with write access can edit this."
+        : edited.error === "taken_up"
+          ? "A writer has taken this up: comment instead."
+          : edited.error === "empty_title"
+          ? "A title is needed."
+          : edited.error === "title_too_long"
+            ? `A title is at most ${MAX_TITLE} characters.`
+            : edited.error === "body_too_long"
+              ? "That description is too long."
+              : "That could not be changed.");
+    return flashOrJson(ctx, dest, { tone: "danger", message });
+  }
+  return flashOrJson(ctx, dest, { message: "Saved." });
+}
+
 /** POST …/:number/labels — replace the label set. Writers only. */
 export async function labelsSubmit(
   ctx: Ctx,
@@ -820,7 +942,14 @@ export function dependenciesCard(
           ${btn("Waits for", { type: "submit", size: "sm" })}
         </form>`
       : null}
-    <p class="muted small mt"><a href="${base}/map">See the map</a></p>`;
+    <p class="muted small mt">
+      ${blockedBy.length === 0
+        ? null
+        : html`<a href="${base}/milestones/${issue.number}"
+              >See how far it is</a
+            >
+            · `}<a href="${base}/map">See the map</a>
+    </p>`;
   return card(body, {
     head: html`${icon("map")}
       <h2>Depends on</h2>`,

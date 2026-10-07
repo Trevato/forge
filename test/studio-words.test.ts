@@ -726,11 +726,9 @@ describe("dev's vocabulary never reaches a studio page", () => {
         html.length,
         `${p.word} (${p.path}) is ${html.length} bytes — a diff would blow through ${MAX_BODY_BYTES}`,
       ).toBeLessThan(MAX_BODY_BYTES);
-      // The studio chrome: the topbar's own tab reads "Studio", never
-      // "Code", the moment the mode and the repository are the studio's —
-      // and it is the only source of the literal word on any of these
-      // pages, so its presence here is the chrome, proven.
-      expect(html).toContain("Studio");
+      // The studio chrome: an app's own first tab reads "Studio", never
+      // "Code" — on every page that carries a repository's header.
+      if (html.includes('class="repo-head"')) expect(html).toContain("Studio");
 
       const title = titleOf(html);
       if (p.title !== undefined)
@@ -818,49 +816,15 @@ describe("dev's vocabulary never reaches a studio page", () => {
     expect(rows.get("alice/vocab — Tell the crew")).toBe(`${repoPath}#tell`);
   });
 
-  test("?mode=dev on the same routes still carries dev's own words — the assertions above are real, not vacuous", async () => {
-    let proved = 0;
+  test("an old ?mode=dev address on any of these routes is the same page without it (#603)", async () => {
     for (const p of pages) {
-      if (p.dev === undefined && p.devTitle === undefined) continue;
       const res = await fetch(`${base}${asDev(p.path)}`, {
         headers: { cookie },
         redirect: "manual",
       });
-      if (res.status === 404) continue;
-      expect(res.status, `${p.word} (${asDev(p.path)}) did not answer`).toBe(
-        200,
-      );
-      // Dev's own words, read where the studio's are read: inside `<main>`,
-      // so the shared client script's own literals can never stand in for a
-      // page that said nothing.
-      const html = await res.text();
-      if (p.devTitle !== undefined)
-        expect(
-          titleOf(html),
-          `${p.word} (${asDev(p.path)}) lost dev's own title`,
-        ).toBe(p.devTitle);
-      const visible = pageContent(html);
-      for (const word of p.dev ?? []) {
-        expect(
-          visible,
-          `${p.word} (${asDev(p.path)}) lost dev's word "${word}" — the studio row for this path proves nothing`,
-        ).toContain(word);
-      }
-      // And it is dev's page, not the studio's: the studio word badge is the
-      // one thing every studio render puts on a row or a header.
-      expect(
-        visible,
-        `${p.word} (${asDev(p.path)}) rendered the studio's own word badge`,
-      ).not.toContain('data-word="');
-      proved += 1;
+      expect(res.status, asDev(p.path)).toBe(303);
+      expect(res.headers.get("location"), asDev(p.path)).toBe(p.path);
     }
-    // Every row that named dev words was actually reached: the 404 skip
-    // above is for a page still being built, never a way for a row to stop
-    // proving itself once it exists.
-    expect(proved).toBe(
-      pages.filter((p) => p.dev !== undefined || p.devTitle !== undefined)
-        .length,
-    );
   });
 
   test("a repository that is not an app keeps dev's own titles in the studio mode — the same `studioRecord` rule, not a second one (#262); its lists are the one list (#627)", async () => {
@@ -872,9 +836,9 @@ describe("dev's vocabulary never reaches a studio page", () => {
     });
     if (!plain.ok) throw new Error(String(plain.error));
     const titles = new Map([
-      ["/alice/plain/issues", "Everything told · plain"],
+      ["/alice/plain/issues", "Issues · plain"],
       ["/alice/plain/issues/new", "New issue · plain"],
-      ["/alice/plain/pulls", "Every change · plain"],
+      ["/alice/plain/pulls", "Pull requests · plain"],
       ["/alice/plain/runs", "Every run · plain"],
     ]);
     for (const [path, title] of titles) {
@@ -911,10 +875,11 @@ describe("dev's vocabulary never reaches a studio page", () => {
     expect(((await studio.json()) as { error: string }).error).toBe(
       "A merged change cannot be reopened.",
     );
+    // One forge (#603): an old dev cookie hears the app's own word too.
     const dev = await reopen("dev");
     expect(dev.status).toBe(422);
     expect(((await dev.json()) as { error: string }).error).toBe(
-      "A merged pull request cannot be reopened.",
+      "A merged change cannot be reopened.",
     );
   });
 });

@@ -7,6 +7,7 @@
  * no events.
  */
 
+import { PUBLIC_VISIBLE } from "./visibility.ts";
 import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -149,7 +150,7 @@ export function listPublicApps(db: Database, limit: number): AppRecord[] {
   return db
     .query<AppRow, [number]>(
       `SELECT app.* FROM app JOIN repo ON repo.id = app.repo_id
-       WHERE repo.visibility = 'public' ORDER BY app.id DESC LIMIT ?1`,
+       WHERE ${PUBLIC_VISIBLE} ORDER BY app.id DESC LIMIT ?1`,
     )
     .all(limit)
     .map(toApp);

@@ -66,11 +66,21 @@ export const armClose = (request: Request, close: () => void): void => {
 };
 
 /**
- * Close this request's connection once it is answered — at once if the
- * listener armed it, so a refusal found mid-stream (a git push past its
- * cap, after the answer began) still ends the connection.
+ * Mark this request's connection to close once it is answered. The listener
+ * writes the answer first (`http/server.ts`), then ends the connection —
+ * calling the armed closer here would abort before a 401/413 for an
+ * oversize body could leave, and the client would see an empty hang-up.
  */
 export const closeAfter = (request: Request): void => {
+  closing.add(request);
+};
+
+/**
+ * End the connection now: a refusal found mid-stream after the answer
+ * began (a git push past its cap). Marks the same as {@link closeAfter},
+ * and fires the armed closer at once.
+ */
+export const closeNow = (request: Request): void => {
   closing.add(request);
   closers.get(request)?.();
 };
@@ -81,9 +91,15 @@ export const mustClose = (request: Request): boolean => closing.has(request);
 /** Anything that reads chunks: a request body's reader. */
 interface Reader {
   read(): Promise<{ done: boolean; value?: { byteLength: number } }>;
+  cancel?(reason?: unknown): Promise<void>;
 }
 
-/** Read and drop up to \`budget\` bytes; true when the body ended inside it. */
+/**
+ * Read and drop up to \`budget\` bytes; true when the body ended inside it.
+ * Past the budget the reader is cancelled so the runtime is not left
+ * waiting on the rest of a chunked body — that hang-up ate the answer
+ * for a stranger's oversize POST before 401/413 could leave.
+ */
 async function drain(reader: Reader, budget: number): Promise<boolean> {
   let dropped = 0;
   for (;;) {
@@ -95,7 +111,14 @@ async function drain(reader: Reader, budget: number): Promise<boolean> {
     }
     if (read.done) return true;
     dropped += read.value?.byteLength ?? 0;
-    if (dropped > budget) return false;
+    if (dropped > budget) {
+      try {
+        await reader.cancel?.("drain budget");
+      } catch {
+        // Already gone.
+      }
+      return false;
+    }
   }
 }
 

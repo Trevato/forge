@@ -5,9 +5,14 @@
  * Mobile-first, no JavaScript required.
  */
 
-import { addCommentThrough, openIssueThrough } from "../../actions/issues.ts";
+import {
+  addCommentThrough,
+  openIssueThrough,
+  setIssueSealed,
+} from "../../actions/issues.ts";
 import type { Issue } from "../../core/issues.ts";
 import { canRead, type Repo } from "../../core/repos.ts";
+import { privateRepoForSealed } from "../../actions/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
   crumbsFor,
@@ -20,7 +25,7 @@ import {
   signInHref,
 } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { btn, empty, icon, field as formField } from "../ui.ts";
 import {
@@ -48,7 +53,7 @@ import {
 function composePage(
   ctx: Ctx,
   repo: Repo,
-  values: { title: string; body: string },
+  values: { title: string; body: string; sealed?: boolean },
   error?: string,
 ): Response {
   const studio = studioRecord(ctx, repo) !== undefined;
@@ -79,7 +84,7 @@ function composePage(
 
 function newIssueForm(
   repo: Repo,
-  values: { title: string; body: string },
+  values: { title: string; body: string; sealed?: boolean },
   submit: string,
   cancelHref: string,
   error?: string,
@@ -103,6 +108,19 @@ function newIssueForm(
         value: values.body,
         hint: "Markdown is supported.",
       })}
+      <div class="field">
+        <label class="check">
+          <input
+            type="checkbox"
+            name="sealed"
+            ${values.sealed === true ? raw("checked") : null}
+          />
+          <span
+            >Sealed security report — only people who can write here and the
+            crew see it, until one of them unseals it.</span
+          >
+        </label>
+      </div>
       <div class="form-actions">
         ${btn(submit, { variant: "primary", icon: "issue" })}
         ${btn("Cancel", { href: cancelHref, variant: "ghost" })}
@@ -119,7 +137,12 @@ export function newIssuePage(ctx: Ctx): Response {
     return canRead(ctx.app.db, repo, undefined)
       ? accountOrReport(ctx, repo)
       : signInFirst(ctx);
-  return composePage(ctx, repo, { title: "", body: "" });
+  // `?sealed=1`: the repository page's "report it sealed" link.
+  return composePage(ctx, repo, {
+    title: "",
+    body: "",
+    sealed: ctx.url.searchParams.get("sealed") === "1",
+  });
 }
 
 /**
@@ -169,7 +192,11 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
 
-  const values = { title: field(form, "title"), body: field(form, "body") };
+  const values = {
+    title: field(form, "title"),
+    body: field(form, "body"),
+    sealed: form.get("sealed") !== null,
+  };
   // The `…Through` twin: on a mirror the origin creates the issue, so the
   // number and the timestamps are the origin's rather than ones we invented.
   const created = await openIssueThrough(ctx.app, ctx.auth.user, repo, values);
@@ -194,6 +221,66 @@ export async function newIssueSubmit(ctx: Ctx): Promise<Response> {
 // GET /:owner/:name/issues/:number/thread?after=<id>
 export function issueThreadFragment(ctx: Ctx): Response {
   return threadFragment(ctx, "issue");
+}
+
+// POST /:owner/:name/issues/:number/seal  { sealed: "1" | "0" }
+export async function issueSealSubmit(ctx: Ctx): Promise<Response> {
+  const found = threadContext(ctx, "issue");
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const sealed = field(form, "sealed") === "1";
+  const dest = `${repoBase(found.repo)}/issues/${found.issue.number}`;
+  const done = setIssueSealed(
+    ctx.app,
+    ctx.auth.user,
+    found.repo,
+    found.issue,
+    sealed,
+  );
+  return flashTo(
+    ctx,
+    dest,
+    done.ok
+      ? {
+          message: sealed
+            ? "Sealed: only people who can write here and the crew see it now."
+            : "Unsealed: everyone who can read this repository sees it now.",
+        }
+      : {
+          tone: "danger",
+          message:
+            done.error === "mirrored"
+              ? "A mirror's issues live on its origin, in the open: nothing here can be sealed."
+              : "Only someone who can write here seals or unseals.",
+        },
+  );
+}
+
+// POST /:owner/:name/issues/:number/private — the place to fix a sealed report by hand
+export async function issuePrivateSubmit(ctx: Ctx): Promise<Response> {
+  const found = threadContext(ctx, "issue");
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const made = await privateRepoForSealed(ctx.app, ctx.auth.user, found.repo, found.issue);
+  const back = `${repoBase(found.repo)}/issues/${found.issue.number}`;
+  if (!made.ok)
+    return made.error === "not_found"
+      ? notFoundPage(ctx)
+      : flashTo(ctx, back, {
+          tone: "danger",
+          message:
+            made.error === "not_sealed"
+              ? "This report is not sealed: its fix can be worked in the open."
+              : "The private repository could not be made just now.",
+        });
+  const there = `${made.value.ownerName}/${made.value.name}`;
+  return flashTo(ctx, back, {
+    message: `Your private repository for sealed work is ${there}: push the fix to ${ctx.url.origin}/${there}.git and open the pull from there, saying "Closes #${found.issue.number}". Only you, this repository's writers and its crew can read it.`,
+  });
 }
 
 // POST /:owner/:name/issues/:number/comments

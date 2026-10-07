@@ -6,6 +6,7 @@
 
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
+import { canSeeSealed } from "../core/sealed.ts";
 import {
   createLabel as insertLabel,
   deleteLabel as removeLabel,
@@ -17,6 +18,7 @@ import {
   createRepo as initRepo,
   deleteRepo as destroyRepo,
   forkRepo as cloneRepo,
+  getSealedFork,
   updateRepoSettings as writeSettings,
   type CreateRepoError,
   type ForkRepoError,
@@ -108,11 +110,22 @@ export async function createRepo(
   return created;
 }
 
+/**
+ * How many forks one person may make in any 24 hours (#853, #888): each may
+ * become an app that deploys at once. Counted from the ledger of forks made,
+ * so deleting one makes no room. The crew's agents fork per issue to work —
+ * bounded instead by the crew's own concurrency and spend ceilings, since an
+ * agent forks only for a run — and the forge's own admin answers for its
+ * forge: neither is held to it.
+ */
+export const FORKS_PER_DAY = 5;
+
 export async function forkRepo(
   app: App,
   actor: User | undefined,
   parent: Repo,
   name?: string,
+  options: { visibility?: "public" | "private"; now?: number } = {},
 ): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified">> {
   const user = requireParticipant(app, actor, parent);
   if (!user.ok) return user;
@@ -124,6 +137,12 @@ export async function forkRepo(
     parent,
     user.value.id,
     name,
+    {
+      ...options,
+      ...(user.value.kind === "agent" || user.value.isAdmin
+        ? {}
+        : { perDay: FORKS_PER_DAY }),
+    },
   );
   if (!forked.ok) return forked;
   app.bus.append({
@@ -133,6 +152,59 @@ export async function forkRepo(
     payload: { parent: `${parent.ownerName}/${parent.name}` },
   });
   return forked;
+}
+
+/**
+ * The private repository an agent works `base`'s sealed reports in
+ * (`core/sealed.ts`), made on first need: private, out of the fork graph,
+ * read by the base's writers and crew only. No event: its existence is
+ * nobody else's to hear of.
+ */
+export async function sealedForkFor(
+  app: App,
+  agent: User,
+  base: Repo,
+): Promise<Result<Repo, ForkRepoError>> {
+  const existing = getSealedFork(app.db, agent.id, base.id);
+  if (existing !== undefined) return ok(existing);
+  const made = await cloneRepo(
+    app.db,
+    app.reposRoot,
+    base,
+    agent.id,
+    undefined,
+    { sealed: true },
+  );
+  if (made.ok || made.error !== "name_taken") return made;
+  return cloneRepo(
+    app.db,
+    app.reposRoot,
+    base,
+    agent.id,
+    `${base.ownerName}-${base.name}-sealed`,
+    { sealed: true },
+  );
+}
+
+/**
+ * The private repository a writer fixes this sealed report in by hand
+ * (#865's review): the same one the crew uses, made on first need, owned
+ * by the writer and read by the base's writers and crew only. A branch on
+ * the base or on a public fork is public; this is the place that is not.
+ * Anyone who may not see sealed reports here gets `not_found`, as for a
+ * report they cannot see; an issue that is not sealed has nothing to hide.
+ */
+export async function privateRepoForSealed(
+  app: App,
+  actor: User | undefined,
+  base: Repo,
+  issue: { readonly sealed: boolean },
+): Promise<Result<Repo, ForkRepoError | "not_found" | "not_sealed" | "unverified">> {
+  if (!actor || !canSeeSealed(app.db, base, actor)) return err("not_found");
+  if (!issue.sealed) return err("not_sealed");
+  const proven = requireVerified(app, actor);
+  if (!proven.ok) return proven;
+  return sealedForkFor(app, actor, base);
 }
 
 export type UpdateSettingsError = "not_found" | "unknown_branch";
@@ -152,6 +224,10 @@ export async function updateRepoSettings(
   // Who the crew obeys is a person's call: an agent never widens it, even
   // one on a team that administers the repository (`crew/direct.ts`).
   if (settings.crewOutsiders !== undefined && admin.value.kind === "agent")
+    return err("not_found");
+  // The work on a sealed report stays private until it merges into its
+  // base, whoever owns it (`core/sealed.ts`).
+  if (repo.sealedFor !== null && settings.visibility === "public")
     return err("not_found");
   const branch = settings.defaultBranch;
   if (branch !== undefined && branch !== repo.defaultBranch) {

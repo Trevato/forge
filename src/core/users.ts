@@ -77,6 +77,14 @@ function toUser(row: UserRow): User {
 export const isActive = (user: User): boolean =>
   user.suspendedAt === null && user.removedAt === null;
 
+/**
+ * Whether `viewer` finds no account at `user`'s name: a suspended or removed
+ * person is kept, and hidden from everyone but a site admin (#831). Their
+ * name stays on what they wrote in others' threads.
+ */
+export const hiddenFrom = (user: User, viewer: User | undefined): boolean =>
+  user.kind === "user" && !isActive(user) && viewer?.isAdmin !== true;
+
 const MIN_PASSWORD = 10;
 const MAX_EMAIL = 254;
 const MAX_DISPLAY_NAME = 80;
@@ -129,6 +137,12 @@ export interface CreateUserInput {
    * @default false
    */
   allowReserved?: boolean;
+  /**
+   * The account naming this one, whose own name does not count against it:
+   * an admin's everyday account may carry the admin's handle ("ada-me").
+   * Every other protected name still does.
+   */
+  reservedSelf?: string;
 }
 
 export async function createUser(
@@ -158,7 +172,7 @@ export async function createUser(
   if (
     !agent &&
     input.allowReserved !== true &&
-    reservedName(db, input.username) !== undefined
+    reservedName(db, input.username, input.reservedSelf) !== undefined
   )
     return err("username_reserved");
 

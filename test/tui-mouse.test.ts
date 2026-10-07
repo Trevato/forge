@@ -17,7 +17,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { openIssue } from "../src/actions/issues.ts";
+import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -187,6 +187,9 @@ describe("the pointer", () => {
       body: "at dusk",
     });
     if (!issue.ok) throw new Error("issue failed");
+    // On alice, so the dashboard's "On you" pane has a row to click.
+    if (!assignIssue(forge, alice, repo, issue.value, alice).ok)
+      throw new Error("assign failed");
   });
 
   afterAll(async () => {
@@ -271,13 +274,13 @@ describe("the pointer", () => {
     const h = boot();
     try {
       await h.settle();
-      const activity = h.rowOf("Recent activity");
-      expect(activity).toBeGreaterThan(0);
-      // The activity card's first row is one below its title.
-      await h.click(h.text().indexOf("Recent activity") % 120, activity + 1);
+      const onYou = h.rowOf("On you");
+      expect(onYou).toBeGreaterThan(0);
+      // The card's first row is one below its title.
+      await h.click(h.rows()[onYou]!.indexOf("On you"), onYou + 1);
       await h.settle();
       // Focus moved: the repo list no longer holds the cursor, and `enter`
-      // now opens *what the feed row is about* — the issue, not the repo it
+      // now opens *what the row is about* — the issue, not the repo it
       // happens to be sitting next to.
       await h.press("enter");
       await h.settle();
@@ -367,11 +370,10 @@ describe("the pointer", () => {
       await h.settle();
       const bar = h.rows().length - 1;
       const line = h.rows()[bar]!;
-      const at = line.indexOf("explore");
+      const at = line.indexOf("new repo");
       expect(at).toBeGreaterThan(0);
       await h.click(at, bar);
-      await h.until("Explore");
-      expect(h.rows()[1]).toContain("Explore");
+      await h.until("New repository");
     } finally {
       h.stop();
     }
