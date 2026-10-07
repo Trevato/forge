@@ -4,6 +4,15 @@ name: check
 # ever builds an image. Runs on the
 # platform's isolated, unprivileged runner pool (host mode: bun + git baked
 # in, no docker daemon).
+#
+# Typecheck (tsc --noEmit) is intentionally NOT run on this isolated Actions
+# runner. Empirically (#386/#388/#390/#392) full-project tsc SIGKILLs after
+# ~17m thrash (exit 137) at --max-old-space-size=1024 or 1536: the isolated
+# Actions cgroup is too small. Locally the same tsc finishes in ~12s with
+# peak RSS ~772 MiB at heap 1024. forge.json check.limits.memory: 4096
+# applies to forge check cells, NOT to Actions runs-on: isolated — so keep
+# `node … tsc --noEmit &&` in forge.json check.run for forge-side cells and
+# do not duplicate typecheck here. This workflow only runs the gate half.
 on:
   push:
     branches: [main]
@@ -15,8 +24,8 @@ jobs:
     env:
       REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
       # Do not set NODE_OPTIONS job-wide: a big heap lets Node claim the
-      # cgroup and the kernel OOMs (`Killed`, exit 137). Heap is scoped to
-      # the typecheck step via `node --max-old-space-size=…` only.
+      # cgroup and the kernel OOMs (`Killed`, exit 137). Typecheck lives in
+      # forge.json check.run (4Gi forge cells), not on this runner.
     steps:
       - name: derive owner + app
         run: |
@@ -34,22 +43,13 @@ jobs:
           git checkout -q "$GITHUB_SHA"
           echo "checked out $(git rev-parse --short HEAD)"
 
-      - name: install dev dependencies (types + tsc)
+      - name: install dev dependencies
         working-directory: src
         run: bun install --frozen-lockfile
 
-      # Split the forge.json check.run halves into two steps so a cgroup
-      # SIGKILL shows which side died (typecheck vs gate), instead of one
-      # silent 17m `sh -c` with no breadcrumbs (#386/#388/#390).
-      - name: typecheck (forge.json check.run, first half)
-        working-directory: src
-        run: |
-          set -eu
-          echo "$ node --max-old-space-size=1024 ./node_modules/typescript/lib/tsc.js --noEmit"
-          node --max-old-space-size=1024 ./node_modules/typescript/lib/tsc.js --noEmit
-          echo "typecheck ok"
-
-      - name: gate (forge.json check.run, second half)
+      # Gate only — typecheck skipped on isolated Actions (see header comment).
+      # forge.json check.run still runs tsc on forge check cells (4Gi).
+      - name: gate (forge.json check.run, test-shards half)
         working-directory: src
         run: |
           set -eu
