@@ -748,7 +748,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "spawn",
     description:
-      "Spawn a child forge: a new forge with the apps you name and the crew's briefs. It plans first — `dryRun` is true unless you say false — and shows what would be copied and what is left behind (secrets, tokens, keys, accounts). Only an admin spawns; a read-only token may plan, not make. A made child's claim link, the secret that hands it to its person, stays out of this conversation: its person gets a fresh one on /forges. Send `reveal: true` only to have the link here on purpose.",
+      "Spawn a child forge: a new forge with the apps you name and the crew's briefs. It plans first — `dryRun` is true unless you say false — and shows what would be copied and what is left behind (secrets, tokens, keys, accounts). Any signed-in person may spawn; a read-only token may plan, not make. Agents cannot. A made child's claim link, the secret that hands it to its person, stays out of this conversation: its person gets a fresh one on /forges. Send `reveal: true` only to have the link here on purpose.",
     inputSchema: {
       type: "object",
       properties: {

@@ -110,7 +110,7 @@ export function spawnWords(e: SpawnError): Door {
     case "unauthorized":
       return say(401, "unauthorized", "sign in with a token to spawn a forge");
     case "forbidden":
-      return say(403, "forbidden", "only an admin of this forge may spawn a child");
+      return say(403, "forbidden", "sign in as a person to spawn a forge; agents cannot");
     case "cross_origin":
       return say(403, "cross_origin", "this request came from another origin");
     case "invalid":
@@ -144,7 +144,7 @@ async function bytesOf(dir: string): Promise<number> {
 
 /** Plan a child (and make it unless `dryRun` is true, the default). */
 export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknown>): Promise<Door> {
-  if (!user.isAdmin) return spawnWords({ kind: "forbidden" });
+  if (user.kind !== "user") return spawnWords({ kind: "forbidden" });
   if (raw["dryRun"] !== undefined && typeof raw["dryRun"] !== "boolean")
     return invalid("dryRun", "must be true or false");
   const dry = raw["dryRun"] !== false;

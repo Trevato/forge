@@ -131,13 +131,15 @@ describe("spawnForge", () => {
     expect(s).toMatchObject({ ok: false, error: { kind: "invalid", field: "apps" } });
   });
 
-  test("owner-only, signed in, same-origin", async () => {
+  test("a signed-in person may spawn; unsigned and cross-origin may not", async () => {
     const bob = await createUser(app.db, { trusted: true, username: "bob", email: "b@x.invalid" });
     if (!bob.ok) throw new Error();
-    expect(await spawn({}, deps, bob.value)).toMatchObject({ error: { kind: "forbidden" } });
+    // Bob is not an admin; he may still spawn (self-serve). Dry-run path via action.
+    const asBob = await spawn({}, deps, bob.value);
+    // May fail later for missing apps in this fixture, but must not be forbidden.
+    expect(asBob).not.toMatchObject({ error: { kind: "forbidden" } });
     expect(await spawnForge(app, undefined, input, source, deps)).toMatchObject({ error: { kind: "unauthorized" } });
     const cross = { ...deps, request: post("https://evil.test") };
     expect(await spawn({}, cross)).toMatchObject({ error: { kind: "cross_origin" } });
-    await expect(readdir(join(dir, "children"))).rejects.toThrow();
   });
 });
