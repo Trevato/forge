@@ -360,15 +360,36 @@ describe("apps, runs and the crew on the web", () => {
     expect(page).toContain('class="ln ln-forge"');
     expect(page).toContain('id="run-elapsed"');
     // The stream and the no-script refresh exist only while it is going.
-    // Read state first; if the run already finished, re-fetch the page so we
-    // do not assert against HTML rendered while it was still going (race).
+    // Match the real <meta> / data-stream= attributes — not the same
+    // strings inside studioRunJs (a bare includes("http-equiv=…") stays
+    // true after the meta is gone because the script still quotes it).
     const fresh = listRuns(app.db, hello.id).find((r) => r.id === run!.id)!;
     const going = fresh.state === "queued" || fresh.state === "running";
-    const livePage = going
-      ? page
-      : await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
-    expect(livePage.includes("data-stream=")).toBe(going);
-    expect(livePage.includes('http-equiv="refresh"')).toBe(going);
+    const hasMetaRefresh = (html: string): boolean =>
+      /<meta[^>]*http-equiv="refresh"/.test(html);
+    const hasLiveMarkers = (html: string): boolean =>
+      html.includes("data-stream=") || hasMetaRefresh(html);
+    let livePage = page;
+    if (going) {
+      expect(livePage.includes("data-stream=")).toBe(true);
+      expect(hasMetaRefresh(livePage)).toBe(true);
+    } else {
+      // DB already terminal; poll until the page drops both live markers
+      // (one re-fetch was not always enough under CI timing).
+      const deadline = Date.now() + 3_000;
+      for (;;) {
+        livePage = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
+        if (!hasLiveMarkers(livePage)) break;
+        if (Date.now() >= deadline) {
+          throw new Error(
+            `run ${run!.id} is ${fresh.state} but the page still streams/refreshes after settle`,
+          );
+        }
+        await Bun.sleep(200);
+      }
+      expect(livePage.includes("data-stream=")).toBe(false);
+      expect(hasMetaRefresh(livePage)).toBe(false);
+    }
 
     const door = await web(alice, `/runs/${run!.id}`);
     expect(door.status).toBe(303);

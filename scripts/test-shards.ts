@@ -12,7 +12,9 @@
  * over a disjoint slice (`scripts/shards.ts` decides the slices); a
  * shard's output is written through whole when it finishes, so the log
  * reads one shard at a time, and the tail names every failing test from
- * every shard. Exits non-zero if any shard does.
+ * every shard. The first red shard stops the rest (fail-fast) so a known
+ * fail does not burn the remaining wall clock. Exits non-zero if any
+ * shard does.
  *
  * Files are weighed by how long they took, from `scripts/test-times.json`
  * (a file it does not name, or a table it refuses, falls back to bytes).
@@ -187,18 +189,28 @@ async function runShard(slice: string[], index: number): Promise<Timed> {
   };
 }
 
-/** Runs every slice, at most `width` at once, in the slices' order. */
+/** Runs every slice, at most `width` at once, in the slices' order.
+ * Stops starting new slices after the first non-zero exit and signals
+ * in-flight children so a red shard does not burn the rest of the wall. */
 async function pool(width: number): Promise<Timed[]> {
   const results: Timed[] = [];
   let next = 0;
+  let stop = false;
   async function worker(): Promise<void> {
     while (next < slices.length) {
+      if (stop) break;
       const index = next++;
+      if (stop) break;
       results[index] = await runShard(slices[index]!, index);
+      if (results[index]!.code !== 0) {
+        stop = true;
+        for (const child of children) child.kill("SIGTERM");
+      }
     }
   }
   await Promise.all(Array.from({ length: width }, worker));
-  return results;
+  // Only slices that ran (parallel fail-fast leaves holes for never-started).
+  return results.filter((result): result is Timed => result !== undefined);
 }
 
 const started = performance.now();
@@ -207,6 +219,12 @@ const started = performance.now();
 const results = await pool(
   serialFiles ? 1 : record ? count.value : slices.length,
 );
+if (results.length < slices.length) {
+  const skipped = slices.length - results.length;
+  console.log(
+    `test-shards: fail-fast — skipped ${skipped} remaining shard${skipped === 1 ? "" : "s"} after a red exit`,
+  );
+}
 const ending = tally(results, (performance.now() - started) / 1000);
 const spread = results.map((result) => result.seconds);
 console.log(`\n${ending.lines.join("\n")}`);
