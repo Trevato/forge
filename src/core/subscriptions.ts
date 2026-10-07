@@ -36,6 +36,12 @@ export interface Subscription {
   /** What the operator calls it: "personal", "work". Unique, case-blind. */
   readonly name: string;
   readonly kind: SubscriptionKind;
+  /**
+   * Anthropic-compatible API base URL (OpenRouter, etc.), or null for
+   * Anthropic itself. Plain text — not a secret. Claude Code reads it as
+   * `ANTHROPIC_BASE_URL` (without a trailing `/v1`; the SDK adds that).
+   */
+  readonly apiBase: string | null;
   /** Set while the provider's limit holds; the account is skipped until then. */
   readonly restingUntil: string | null;
   /** The provider's own words for why, one line. */
@@ -49,6 +55,7 @@ interface Row {
   id: string;
   name: string;
   kind: string;
+  api_base: string | null;
   resting_until: string | null;
   resting_said: string;
   last_used_at: string | null;
@@ -65,7 +72,11 @@ export const PLATFORM = "platform";
 /** Every crew member at a scope, as the grant's `agent_id`. */
 export const EVERYONE = "";
 
-export type SubscriptionError = "invalid_name" | "name_taken" | "invalid_token";
+export type SubscriptionError =
+  | "invalid_name"
+  | "name_taken"
+  | "invalid_token"
+  | "invalid_api_base";
 
 /** How soon an account out of budget is looked at again. */
 const BUDGET_RECHECK_MS = 3_600_000;
@@ -146,6 +157,7 @@ const toSubscription = (r: Row): Subscription => ({
   id: r.id,
   name: r.name,
   kind: r.kind === "oauth" ? "oauth" : "api_key",
+  apiBase: r.api_base && r.api_base.trim() !== "" ? r.api_base : null,
   restingUntil: r.resting_until,
   restingSaid: r.resting_said,
   lastUsedAt: r.last_used_at,
@@ -163,16 +175,95 @@ export const subscriptionAad = aad;
 export const envNameOf = (kind: SubscriptionKind): string =>
   kind === "oauth" ? "CLAUDE_CODE_OAUTH_TOKEN" : "ANTHROPIC_API_KEY";
 
+/** Longest accepted Anthropic-compatible base URL. */
+export const API_BASE_MAX = 200;
+
 /**
- * What kind of token this is, from its shape alone. A token from
- * `claude setup-token` begins `sk-ant-oat…`; an API key `sk-ant-api…`.
- * Anything else is not a Claude credential and is refused rather than sealed.
+ * What kind of token this is. A token from `claude setup-token` begins
+ * `sk-ant-oat…`; an Anthropic API key `sk-ant-api…`; an OpenRouter key
+ * `sk-or-v1-…`. With an API base URL set (OpenRouter or another Anthropic-
+ * compatible gateway), any other non-empty token is accepted as an API key
+ * so a gateway's own key shape can seal. OAuth tokens never take a base URL.
  */
-export function kindOfToken(token: string): SubscriptionKind | undefined {
+export function kindOfToken(
+  token: string,
+  opts?: { readonly apiBase?: string | null | undefined },
+): SubscriptionKind | undefined {
   if (token.length > TOKEN_MAX || /\s|\0/.test(token)) return undefined;
   if (/^sk-ant-oat\d*-/.test(token)) return "oauth";
   if (/^sk-ant-api\d*-/.test(token)) return "api_key";
+  if (/^sk-or-v1-/.test(token)) return "api_key";
+  const base = (opts?.apiBase ?? "").trim();
+  if (base !== "" && parseApiBase(base) !== undefined) return "api_key";
   return undefined;
+}
+
+/**
+ * An Anthropic-compatible base URL for Claude Code: https, no credentials,
+ * no query or hash. Trailing slashes and a trailing `/v1` are stripped — the
+ * Anthropic SDK appends `/v1/messages` itself (OpenRouter wants
+ * `https://openrouter.ai/api`, not `…/api/v1`).
+ */
+export function parseApiBase(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  if (trimmed === "") return undefined;
+  if (trimmed.length > API_BASE_MAX) return undefined;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:") return undefined;
+  if (url.username !== "" || url.password !== "") return undefined;
+  if (url.search !== "" || url.hash !== "") return undefined;
+  if (url.hostname === "") return undefined;
+  let path = url.pathname.replace(/\/+$/, "");
+  if (path.endsWith("/v1")) path = path.slice(0, -3).replace(/\/+$/, "");
+  return path === "" || path === "/"
+    ? `https://${url.host}`
+    : `https://${url.host}${path}`;
+}
+
+/** Hostname a run must be allowed to reach for this base URL, if any. */
+export function hostOfApiBase(apiBase: string | null | undefined): string | undefined {
+  if (apiBase === null || apiBase === undefined || apiBase.trim() === "")
+    return undefined;
+  try {
+    return new URL(apiBase).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Environment variables a crew run needs for a picked account: the token
+ * under the variable Claude Code reads, plus `ANTHROPIC_BASE_URL` (and
+ * OpenRouter's `ANTHROPIC_AUTH_TOKEN` dance) when the account has a gateway.
+ */
+export function credentialEnvOf(
+  picked: Extract<Pick, { kind: "ready" }>,
+): Record<string, string> {
+  const base = picked.apiBase;
+  if (base === null || base === undefined || base === "") {
+    return { [picked.envName]: picked.token };
+  }
+  const host = hostOfApiBase(base) ?? "";
+  const openrouter =
+    host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+  if (openrouter) {
+    // Claude Code + OpenRouter: AUTH_TOKEN carries the key; API_KEY must be
+    // an empty string so Claude Code does not fall back to api.anthropic.com.
+    return {
+      ANTHROPIC_BASE_URL: base,
+      ANTHROPIC_AUTH_TOKEN: picked.token,
+      ANTHROPIC_API_KEY: "",
+    };
+  }
+  return {
+    ANTHROPIC_BASE_URL: base,
+    [picked.envName]: picked.token,
+  };
 }
 
 export function isSubscriptionName(name: string): boolean {
@@ -186,22 +277,38 @@ export function isSubscriptionName(name: string): boolean {
 export function addSubscription(
   db: Database,
   dataDir: string,
-  input: { name: string; token: string; createdBy?: string | undefined },
+  input: {
+    name: string;
+    token: string;
+    /** Anthropic-compatible gateway URL; empty/omitted = Anthropic. */
+    apiBase?: string | undefined;
+    createdBy?: string | undefined;
+  },
 ): Result<Subscription, SubscriptionError> {
   const name = input.name.trim();
   if (!isSubscriptionName(name)) return err("invalid_name");
-  const kind = kindOfToken(input.token);
+  const rawBase = (input.apiBase ?? "").trim();
+  let apiBase: string | null = null;
+  if (rawBase !== "") {
+    const parsed = parseApiBase(rawBase);
+    if (parsed === undefined) return err("invalid_api_base");
+    apiBase = parsed;
+  }
+  const kind = kindOfToken(input.token, { apiBase });
   if (kind === undefined) return err("invalid_token");
+  // A Claude subscription token is Anthropic's own plan — never a gateway.
+  if (kind === "oauth" && apiBase !== null) return err("invalid_api_base");
   if (getSubscriptionByName(db, name) !== undefined) return err("name_taken");
   const subscriptionId = id();
   db.query(
-    `INSERT INTO subscription (id, name, kind, token_enc, created_by)
-     VALUES (?1, ?2, ?3, ?4, ?5)`,
+    `INSERT INTO subscription (id, name, kind, token_enc, api_base, created_by)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)`,
   ).run(
     subscriptionId,
     name,
     kind,
     seal(dataDir, input.token, aad(subscriptionId)),
+    apiBase,
     input.createdBy ?? null,
   );
   return ok(getSubscription(db, subscriptionId)!);
@@ -213,7 +320,7 @@ export function getSubscription(
 ): Subscription | undefined {
   const row = db
     .query<Row, [string]>(
-      `SELECT id, name, kind, resting_until, resting_said, last_used_at, created_by, created_at
+      `SELECT id, name, kind, api_base, resting_until, resting_said, last_used_at, created_by, created_at
        FROM subscription WHERE id = ?1`,
     )
     .get(subscriptionId);
@@ -226,7 +333,7 @@ export function getSubscriptionByName(
 ): Subscription | undefined {
   const row = db
     .query<Row, [string]>(
-      `SELECT id, name, kind, resting_until, resting_said, last_used_at, created_by, created_at
+      `SELECT id, name, kind, api_base, resting_until, resting_said, last_used_at, created_by, created_at
        FROM subscription WHERE name = ?1 COLLATE NOCASE`,
     )
     .get(name.trim());
@@ -236,7 +343,7 @@ export function getSubscriptionByName(
 export function listSubscriptions(db: Database): Subscription[] {
   return db
     .query<Row, []>(
-      `SELECT id, name, kind, resting_until, resting_said, last_used_at, created_by, created_at
+      `SELECT id, name, kind, api_base, resting_until, resting_said, last_used_at, created_by, created_at
        FROM subscription WHERE id <> 'platform' ORDER BY name COLLATE NOCASE`,
     )
     .all()
@@ -444,6 +551,8 @@ export type Pick =
       readonly subscription: Subscription;
       readonly envName: string;
       readonly token: string;
+      /** Anthropic-compatible gateway URL, or null for Anthropic itself. */
+      readonly apiBase: string | null;
       /** On a budgeted account: the most this run may spend, reserved for it. */
       readonly capUsd?: number;
     }
@@ -486,7 +595,7 @@ export function pickSubscription(
       },
       [string, string, string, string]
     >(
-      `SELECT g.scope_id, g.agent_id, s.id, s.name, s.kind, s.token_enc, s.resting_until,
+      `SELECT g.scope_id, g.agent_id, s.id, s.name, s.kind, s.token_enc, s.api_base, s.resting_until,
               s.resting_said, s.last_used_at, s.created_by, s.created_at, s.budget_usd,
               ${COMMITTED} AS spent_usd
        FROM subscription_grant g JOIN subscription s ON s.id = g.subscription_id
@@ -563,6 +672,7 @@ export function pickSubscription(
     subscription: { ...subscription, lastUsedAt: now.toISOString() },
     envName: envNameOf(subscription.kind),
     token: opened.value,
+    apiBase: subscription.apiBase,
     ...(capUsd === undefined ? {} : { capUsd }),
   };
 }

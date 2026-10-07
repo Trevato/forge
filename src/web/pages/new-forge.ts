@@ -34,6 +34,7 @@ interface Values {
   readonly crew: readonly string[];
   readonly keepAccess: boolean;
   readonly budgetUsd: string;
+  readonly modelEndpoint: string;
   /** The last post carried a key: it is never sent back, so it is asked for again. */
   readonly hadKey: boolean;
 }
@@ -46,6 +47,7 @@ const EMPTY: Values = {
   crew: [],
   keepAccess: false,
   budgetUsd: "",
+  modelEndpoint: "",
   hadKey: false,
 };
 
@@ -189,8 +191,16 @@ function formView(
           required: values.hadKey,
           hint: values.hadKey
             ? "Type the key again to spawn: it is never sent back to your browser."
-            : "An API-billed key (sk-ant-api…) from a workspace with its own spend limit; sealed in the child, never shown again. Never a subscription token.",
+            : "An API-billed key (sk-ant-api… or sk-or-v1-…) with its own spend limit; sealed in the child, never shown again. Never a subscription token.",
           ...(errors["modelKey"] ? { error: errors["modelKey"] } : {}),
+        })}
+        ${formField({
+          label: "API base URL (optional)",
+          name: "modelEndpoint",
+          type: "url",
+          value: values.modelEndpoint,
+          hint: "Anthropic-compatible gateway for the key. OpenRouter: https://openrouter.ai/api. Leave empty for Anthropic.",
+          ...(errors["modelEndpoint"] ? { error: errors["modelEndpoint"] } : {}),
         })}
         ${formField({
           label: `Its budget, in dollars (${MIN_BUDGET_USD}–${MAX_BUDGET_USD})`,
@@ -318,6 +328,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     crew: all(form, "crew"),
     keepAccess: asBool(form, "keepAccess"),
     budgetUsd: field(form, "budgetUsd").trim(),
+    modelEndpoint: field(form, "modelEndpoint").trim(),
     hadKey: field(form, "modelKey").trim() !== "",
   };
   const key = field(form, "modelKey").trim();
@@ -330,6 +341,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     ...(values.forWhom === "" ? {} : { for: values.forWhom }),
     ...(values.direction.trim() === "" ? {} : { direction: values.direction }),
     ...(key === "" ? {} : { modelKey: key }),
+    ...(values.modelEndpoint === "" ? {} : { modelEndpoint: values.modelEndpoint }),
     ...(values.budgetUsd === "" ? {} : { budgetUsd: Number(values.budgetUsd) }),
     dryRun: planOnly,
   });

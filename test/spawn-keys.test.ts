@@ -42,6 +42,7 @@ quietLogs();
 const author = { name: "a", email: "a@x.invalid" };
 const API_KEY = "sk-ant-api03-child-key-AAAAAAAAAAAAAAAAAAAAAAAA";
 const OAUTH = "sk-ant-oat01-a-persons-own-plan-BBBBBBBBBBBBBBBB";
+const OR_KEY = "sk-or-v1-child-openrouter-key-CCCCCCCCCCCCCCCC";
 
 describe("a spawned child's own keys and domain", () => {
   let dir = "";
@@ -156,6 +157,17 @@ describe("a spawned child's own keys and domain", () => {
         })
       ).status,
     ).toBe(422);
+    // OpenRouter key + gateway URL is a valid plan (dry run — no child yet).
+    const orPlan = await post({
+      name: "orchild",
+      apps: ["alice/bakery"],
+      dryRun: true,
+      modelKey: OR_KEY,
+      modelEndpoint: "https://openrouter.ai/api/v1",
+      budgetUsd: 5,
+    });
+    expect(orPlan.status).toBe(200);
+    expect(await orPlan.json()).toMatchObject({ dryRun: true });
   });
 
   test("the MCP refuses to carry a model key", async () => {

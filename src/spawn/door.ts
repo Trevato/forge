@@ -10,7 +10,7 @@ import { listChildren, reissueClaim, spawnForge, type SpawnError } from "../acti
 import type { App } from "../app.ts";
 import { getAgentByName } from "../core/agents.ts";
 import { canRead, getRepo } from "../core/repos.ts";
-import { kindOfToken } from "../core/subscriptions.ts";
+import { kindOfToken, parseApiBase } from "../core/subscriptions.ts";
 import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Ctx } from "../http/context.ts";
@@ -154,13 +154,31 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
   if (!Array.isArray(crew)) return crew;
   // The child's model key: an API-billed key with a whole-life budget, or none. A
   // subscription token is a person's own plan and never travels.
+  const modelEndpointRaw = raw["modelEndpoint"];
+  let modelEndpoint: string | undefined;
+  if (modelEndpointRaw !== undefined) {
+    if (typeof modelEndpointRaw !== "string")
+      return invalid("modelEndpoint", "must be an https URL (e.g. https://openrouter.ai/api)");
+    const parsed = parseApiBase(modelEndpointRaw);
+    if (parsed === undefined)
+      return invalid("modelEndpoint", "must be an https URL with no credentials, query, or hash (OpenRouter: https://openrouter.ai/api)");
+    modelEndpoint = parsed;
+  }
   const modelKey = raw["modelKey"];
   if (modelKey !== undefined) {
-    if (typeof modelKey !== "string" || kindOfToken(modelKey) !== "api_key")
-      return invalid("modelKey", "must be an API key (sk-ant-api…); a subscription token is a person's own plan and never goes to a child");
+    if (
+      typeof modelKey !== "string" ||
+      kindOfToken(modelKey, { apiBase: modelEndpoint }) !== "api_key"
+    )
+      return invalid(
+        "modelKey",
+        "must be an API key (sk-ant-api… or sk-or-v1-…); a subscription token is a person's own plan and never goes to a child",
+      );
     if (raw["budgetUsd"] === undefined) return invalid("budgetUsd", "a model key needs a budget in dollars, for its whole life");
   } else if (raw["budgetUsd"] !== undefined) {
     return invalid("budgetUsd", "a budget is for a model key; send modelKey with it");
+  } else if (modelEndpoint !== undefined) {
+    return invalid("modelEndpoint", "an API base URL is for a model key; send modelKey with it");
   }
 
   const db = ctx.app.db;
@@ -214,6 +232,7 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
     request: ctx.request,
     url: ctx.url,
     ...(typeof modelKey === "string" ? { modelKey } : {}),
+    ...(modelEndpoint === undefined ? {} : { modelEndpoint }),
   });
   if (!made.ok) return spawnWords(made.error);
   return {

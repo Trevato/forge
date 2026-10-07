@@ -8,6 +8,7 @@
 import { listAgents, type Agent } from "../../core/agents.ts";
 import {
   addSubscription,
+  API_BASE_MAX,
   BUDGET_MAX_USD,
   budgetsOf,
   deleteSubscription,
@@ -72,7 +73,9 @@ const kindText = (s: Subscription): string =>
     ? "The forge's own token, from its environment"
     : s.kind === "oauth"
       ? "Claude subscription"
-      : "API key";
+      : s.apiBase !== null
+        ? `API key via ${s.apiBase}`
+        : "API key";
 
 const usd = (n: number): string => `$${n.toFixed(2)}`;
 const mark = (f: Figure<unknown>): string => (f.source === "read" ? "" : "~");
@@ -298,14 +301,34 @@ export function subscriptionsPage(ctx: Ctx): Response {
           id="f-token"
           name="token"
           type="password"
-          placeholder="sk-ant-…"
+          placeholder="sk-ant-… or sk-or-v1-…"
           required
           autocomplete="off"
           spellcheck="false"
         />
         <span class="hint"
-          ><code>claude setup-token</code> prints a subscription's token; an API
-          key works too. It is sealed on this forge and never shown again.</span
+          ><code>claude setup-token</code> prints a subscription's token; an
+          Anthropic API key or an OpenRouter key (<code>sk-or-v1-…</code>)
+          works too. It is sealed on this forge and never shown again.</span
+        >
+      </div>
+      <div class="field">
+        <label for="f-api-base">API base URL (optional)</label>
+        <input
+          class="input"
+          id="f-api-base"
+          name="apiBase"
+          type="url"
+          maxlength="${API_BASE_MAX}"
+          placeholder="https://openrouter.ai/api"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <span class="hint"
+          >Anthropic-compatible gateway for Claude Code. OpenRouter:
+          <code>https://openrouter.ai/api</code> (no <code>/v1</code> — the
+          SDK adds it). Leave empty for Anthropic itself. With a base URL set,
+          non-<code>sk-ant</code> API keys are accepted.</span
         >
       </div>
       <div>${btn("Add", { variant: "primary", size: "sm", icon: "plus" })}</div>
@@ -389,6 +412,7 @@ export async function subscriptionAdd(ctx: Ctx): Promise<Response> {
   const added = addSubscription(ctx.app.db, ctx.app.config.dataDir, {
     name,
     token: field(form, "token").trim(),
+    apiBase: field(form, "apiBase").trim(),
     createdBy: ctx.auth.user!.id,
   });
   if (!added.ok) {
@@ -396,7 +420,9 @@ export async function subscriptionAdd(ctx: Ctx): Promise<Response> {
       invalid_name: `A name is a word or two, up to ${NAME_MAX} characters.`,
       name_taken: `There is already a subscription called ${name.trim()}.`,
       invalid_token:
-        "That is not a Claude token. One from `claude setup-token` begins sk-ant-oat; an API key begins sk-ant-api.",
+        "That is not a model token. One from `claude setup-token` begins sk-ant-oat; an Anthropic API key begins sk-ant-api; an OpenRouter key begins sk-or-v1. With an API base URL set, other API keys are accepted too.",
+      invalid_api_base:
+        "The API base URL must be https, with no credentials, query, or hash. For OpenRouter use https://openrouter.ai/api (a Claude subscription token cannot use a gateway).",
     };
     return flashTo(ctx, POOL, {
       tone: "danger",
