@@ -579,6 +579,8 @@ describe("themes", () => {
     }
     // System pair: light in :root, dark behind the media query.
     expect(css).toContain("prefers-color-scheme: dark");
+    // Root canvas colour (view-transition / Chromium nav frames use html).
+    expect(css).toMatch(/html\s*\{[^}]*background:\s*var\(--bg\)/);
     // Syntax colors are tokens, so every theme restyles code for free.
     expect(css).toContain("--tok-keyword");
     expect(css).toContain("color: var(--tok-keyword)");
@@ -591,6 +593,10 @@ describe("themes", () => {
     for (const name of THEME_NAMES) {
       expect(text).toContain(`value="${name}"`);
     }
+    // Critical paint before the stylesheet: system pair (light default + dark media).
+    expect(text).toMatch(
+      /<style nonce="[^"]+">html,body\{background-color:#fafafa;color-scheme:light\}@media \(prefers-color-scheme: dark\)\{html,body\{background-color:#09090b;color-scheme:dark\}\}<\/style>/,
+    );
   });
 
   test("choosing a theme sets the cookie and stamps the page", async () => {
@@ -610,6 +616,10 @@ describe("themes", () => {
     expect(text).toContain('data-theme="midnight"');
     // The switcher shows the active choice.
     expect(text).toMatch(/value="midnight"\s+checked/);
+    // Boot paint matches midnight, not the system pair.
+    expect(text).toMatch(
+      /<style nonce="[^"]+">html,body\{background-color:#16161e;color-scheme:dark\}<\/style>/,
+    );
   });
 
   test("system clears the cookie; junk never sticks", async () => {
