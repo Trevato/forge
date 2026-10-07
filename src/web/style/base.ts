@@ -34,7 +34,13 @@ export const base = /* css */ `
   --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Code", "JetBrains Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
-html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+html {
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+  /* Root canvas colour: Chromium view-transition / nav frames use html,
+     not body; leaving it transparent flashes the UA default (white). */
+  background: var(--bg);
+}
 body {
   font-family: var(--font);
   font-size: 14px;

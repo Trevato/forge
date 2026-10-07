@@ -422,3 +422,23 @@ export const swatchCss = [
 export function metaThemeColor(name: ThemeName): string {
   return THEMES[name].tokens.bg;
 }
+
+/**
+ * Critical paint for the document head: Chromium paints an unstyled frame
+ * white between same-origin navigations (worse with `@view-transition`),
+ * while Safari often keeps the prior paint. Matching `html`/`body` to the
+ * theme before the external stylesheet arrives kills that flash. Kept tiny
+ * and nonce'd — CSP forbids unnonce'd inline style.
+ */
+export function bootCss(theme: ThemeName | undefined): string {
+  if (theme !== undefined) {
+    const t = THEMES[theme];
+    return `html,body{background-color:${t.tokens.bg};color-scheme:${t.appearance}}`;
+  }
+  const light = THEMES.light;
+  const dark = THEMES.dark;
+  return (
+    `html,body{background-color:${light.tokens.bg};color-scheme:light}` +
+    `@media (prefers-color-scheme: dark){html,body{background-color:${dark.tokens.bg};color-scheme:dark}}`
+  );
+}
