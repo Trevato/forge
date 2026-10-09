@@ -194,6 +194,8 @@ export function migrateMessage(error: MigrateError): string {
       return "Sign in first.";
     case "unverified":
       return "Verify your email first: follow the link we sent, or ask for another under Settings.";
+    case "refused":
+      return "New accounts cannot create repositories yet.";
   }
 }
 

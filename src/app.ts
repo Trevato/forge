@@ -10,6 +10,7 @@ import type { Decider } from "./crew/decide.ts";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { migrations } from "./core/schema.ts";
+import { dropLegacyNewAccountGuards } from "./core/schema.ts";
 import { EventBus } from "./core/events.ts";
 import { follow } from "./core/following.ts";
 import { enqueueForEvent } from "./core/webhooks.ts";
@@ -138,6 +139,10 @@ export function createApp(config: ForgeConfig): App {
   mkdirSync(reposRoot, { recursive: true });
 
   const db = openDb(join(dataDir, "forge.db"), migrations);
+  // Hand-installed new-account guards become the `guard_new_accounts`
+  // setting (default off): drop the legacy triggers once, here, on boot.
+  // Idempotent — a forge without them changes nothing.
+  dropLegacyNewAccountGuards(db);
   const bus = new EventBus(db);
 
   // Every event durably enqueues webhook deliveries; the worker (main.ts)

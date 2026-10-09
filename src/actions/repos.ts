@@ -7,6 +7,8 @@
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { canSeeSealed } from "../core/sealed.ts";
+import { capacityValue } from "../core/capacity.ts";
+import { NEW_FOR_MS } from "./accounts.ts";
 import {
   createLabel as insertLabel,
   deleteLabel as removeLabel,
@@ -65,7 +67,24 @@ export interface CreateRepoInput {
 export type CreateRepoActionError =
   | CreateRepoError
   | "unauthorized"
-  | "forbidden_owner";
+  | "forbidden_owner"
+  | "refused";
+
+/**
+ * The new-account guard (`guard_new_accounts`): when it is on, an account
+ * younger than a week may not create repositories or forks. Agents run the
+ * crew's work and admins run the forge, so the guard is for untrusted
+ * newcomers, not them. Refuses in the legacy trigger's own words.
+ */
+function requireNewAccountGuard(
+  app: App,
+  user: User,
+): Result<User, "refused"> {
+  if (capacityValue(app.db, "guard_new_accounts") !== "on") return ok(user);
+  if (user.kind === "agent" || user.isAdmin) return ok(user);
+  const ageMs = Date.now() - new Date(user.createdAt).getTime();
+  return ageMs >= NEW_FOR_MS ? ok(user) : err("refused");
+}
 
 /** Resolve the owner id for a new repo: the actor, or an org they can write to. */
 function resolveOwner(
@@ -93,6 +112,8 @@ export async function createRepo(
   // An agent owns nothing it was not given (docs/APPS.md): it works on the
   // repositories whose crew it is on, and cannot make itself a new one.
   if (user.value.kind === "agent") return err("forbidden_owner");
+  const guarded = requireNewAccountGuard(app, user.value);
+  if (!guarded.ok) return guarded;
   const ownerId = resolveOwner(app, user.value, input.owner ?? "");
   if (ownerId === undefined) return err("forbidden_owner");
   const created = await initRepo(app.db, app.reposRoot, {
@@ -126,11 +147,13 @@ export async function forkRepo(
   parent: Repo,
   name?: string,
   options: { visibility?: "public" | "private"; now?: number } = {},
-): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified">> {
+): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified" | "refused">> {
   const user = requireParticipant(app, actor, parent);
   if (!user.ok) return user;
   const proven = requireVerified(app, user.value);
   if (!proven.ok) return proven;
+  const guarded = requireNewAccountGuard(app, user.value);
+  if (!guarded.ok) return guarded;
   const forked = await cloneRepo(
     app.db,
     app.reposRoot,

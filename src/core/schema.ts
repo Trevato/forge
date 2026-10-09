@@ -4,6 +4,8 @@
  * truth that lives in git wherever possible — small on purpose.
  */
 
+import type { Database } from "bun:sqlite";
+
 export const migrations: readonly string[] = [
   // 1 — foundation: users, sessions, tokens, repos, events, webhooks
   `
@@ -1541,3 +1543,32 @@ export const migrations: readonly string[] = [
   END;
   `,
 ];
+
+/**
+ * Drop hand-installed "operator's guard" triggers that refused new accounts
+ * from creating repositories. The guard is now the `guard_new_accounts`
+ * setting (default off, flippable by the forge admin); these legacy
+ * triggers would keep refusing with no toggle and no audit trail. Only
+ * triggers on the `repo` table whose SQL carries the guard's message are
+ * touched — every other trigger stays exactly as it was.
+ *
+ * Runs on boot, not as a tracked migration: a trigger's name is the
+ * operator's choice, so no fixed SQL can name it, and the drop is
+ * idempotent — a second boot finds nothing and changes nothing.
+ */
+export function dropLegacyNewAccountGuards(db: Database): string[] {
+  const names = db
+    .query<{ name: string }, []>(
+      `SELECT name FROM sqlite_master
+        WHERE type = 'trigger' AND tbl_name = 'repo'
+          AND sql LIKE '%new accounts cannot create repositories%'`,
+    )
+    .all()
+    .map((row) => row.name);
+  for (const name of names) {
+    // The name comes from the schema itself, but quote it anyway: a
+    // hand-installed trigger may be named anything at all.
+    db.exec(`DROP TRIGGER "${name.replace(/"/g, '""')}"`);
+  }
+  return names;
+}
