@@ -101,12 +101,13 @@ describe("spawn over the API and MCP", () => {
     expect((await post(rw, [1])).status).toBe(422);
   });
 
-  test("a non-admin person may plan and spawn; ro and no token may not make", async () => {
+  test("a non-admin person may plan and spawn; a stranger may plan; ro may not make", async () => {
     // Bob is not a site admin — self-serve spawn is allowed for any person.
     // Empty apps: bob cannot read alice's private notes.
     expect((await post(bobRw, { name: "bobs-kid", apps: [] })).status).toBe(200);
     expect((await post(ro, { name: "kid" })).status).toBe(403);
-    expect((await post(null, { name: "kid" })).status).toBe(401);
+    // A stranger may plan (dry-run); making is rate-limited in the door.
+    expect((await post(null, { name: "kid" })).status).toBe(200);
     // Listing forges sent stays an admin's.
     expect((await get(bobRw)).status).toBe(403);
     expect(placed).toBe(0);

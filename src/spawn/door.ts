@@ -22,6 +22,7 @@ import {
   type Placement,
 } from "./placement.ts";
 import { dryRun, planSpawn, KEY_BUDGET_NOTE, MAX_APPS, type CatalogApp, type CrewBrief, type SpawnSource } from "./plan.ts";
+import { ANON_SPAWNS_PER_DAY, checkAnonSpawn, noteAnonSpawn } from "./rate.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -143,8 +144,13 @@ async function bytesOf(dir: string): Promise<number> {
 }
 
 /** Plan a child (and make it unless `dryRun` is true, the default). */
-export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknown>): Promise<Door> {
-  if (user.kind !== "user") return spawnWords({ kind: "forbidden" });
+export async function spawnDoor(
+  ctx: Ctx,
+  user: User | undefined,
+  raw: Record<string, unknown>,
+): Promise<Door> {
+  const anon = user === undefined;
+  if (!anon && user.kind !== "user") return spawnWords({ kind: "forbidden" });
   if (raw["dryRun"] !== undefined && typeof raw["dryRun"] !== "boolean")
     return invalid("dryRun", "must be true or false");
   const dry = raw["dryRun"] !== false;
@@ -152,6 +158,15 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
   if (!Array.isArray(apps)) return apps;
   const crew = names(raw["crew"], "crew", MAX_CREW);
   if (!Array.isArray(crew)) return crew;
+  if (anon && crew.length > 0)
+    return invalid("crew", "anonymous spawns carry no crew; claim the forge and invite one there");
+  // A stranger has no key to seal and no account to keep: the key is
+  // refused outright, the rest simply do not apply.
+  if (anon && raw["modelKey"] !== undefined)
+    return invalid(
+      "modelKey",
+      "anonymous spawns carry no model key; claim the forge and add one there",
+    );
   // The child's model key: an API-billed key with a whole-life budget, or none. A
   // subscription token is a person's own plan and never travels.
   const modelEndpointRaw = raw["modelEndpoint"];
@@ -183,6 +198,7 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
 
   const db = ctx.app.db;
   // Only what the caller named and may read: an unreadable app is "not a known app".
+  // A stranger reads only public repositories; their crew list is empty.
   const catalog: CatalogApp[] = [];
   for (const ref of new Set(apps)) {
     const [o, n, ...rest] = ref.split("/");
@@ -196,10 +212,12 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
     });
   }
   const briefs: CrewBrief[] = [];
-  for (const name of new Set(crew)) {
-    const agent = getAgentByName(db, name);
-    if (!agent) return invalid("crew", `${name} is not on this forge's crew`);
-    briefs.push({ agent: agent.user.username, text: agent.brief });
+  if (!anon) {
+    for (const name of new Set(crew)) {
+      const agent = getAgentByName(db, name);
+      if (!agent) return invalid("crew", `${name} is not on this forge's crew`);
+      briefs.push({ agent: agent.user.username, text: agent.brief });
+    }
   }
   const source: SpawnSource = { catalog, briefs, subscriptions: [] };
   const input = {
@@ -209,9 +227,11 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
     carryBriefs: briefs.length > 0,
     carrySubscriptions: false,
     direction: raw["direction"],
-    keepAccess: raw["keepAccess"],
+    // No account to keep, and no "for whom": a stranger's child is claimed
+    // by whoever opens the link.
+    keepAccess: anon ? false : raw["keepAccess"],
     budgetUsd: raw["budgetUsd"],
-    for: raw["for"],
+    ...(anon ? {} : { for: raw["for"] }),
   };
 
   if (dry) {
@@ -227,6 +247,18 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
       },
     };
   }
+  // A stranger may start only a few children a day; the plan above is free.
+  if (anon) {
+    const limit = checkAnonSpawn(ctx.request);
+    if (!limit.allowed)
+      return {
+        status: 429,
+        body: {
+          error: "rate_limited",
+          message: `anonymous spawns are limited to ${ANON_SPAWNS_PER_DAY} per day; try again after ${limit.resetsAt}`,
+        },
+      };
+  }
   const made = await spawnForge(ctx.app, user, input, source, {
     placement: placementFor(ctx.app),
     request: ctx.request,
@@ -235,6 +267,7 @@ export async function spawnDoor(ctx: Ctx, user: User, raw: Record<string, unknow
     ...(modelEndpoint === undefined ? {} : { modelEndpoint }),
   });
   if (!made.ok) return spawnWords(made.error);
+  if (anon && !made.value.existed) noteAnonSpawn(ctx.request);
   return {
     status: made.value.existed ? 200 : 201,
     body: {

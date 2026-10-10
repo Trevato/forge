@@ -91,7 +91,7 @@ function checks(
 
 function formView(
   ctx: Ctx,
-  user: User,
+  user: User | undefined,
   values: Values,
   errors: Errors,
   plan: Html | null,
@@ -102,11 +102,16 @@ function formView(
       ${pageHead("New forge")}
       ${card(html`<p>This forge cannot hold another child: ${full}.</p>`)}
     </div>`;
+  // A stranger sees only public repositories, and no crew: nothing private
+  // travels to a child they have not claimed.
+  const anon = user === undefined;
   const repos = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
-  const crew = listAgents(ctx.app.db);
+  const crew = anon ? [] : listAgents(ctx.app.db);
   return html`<div class="narrow-wide">
     ${pageHead("New forge", {
-      sub: "Your own forge, or one for someone else: the apps you choose, a crew, and one link to claim.",
+      sub: anon
+        ? "Your own forge: pick a name, and the public apps to start from. Whoever opens the claim link becomes its admin."
+        : "Your own forge, or one for someone else: the apps you choose, a crew, and one link to claim.",
       actions: btn("Forges you sent", { href: "/forges", size: "sm" }),
     })}
     ${errors["form"]
@@ -124,13 +129,15 @@ function formView(
           hint: `Its address: <name>--${childHost(ctx.app)}. Lowercase letters, digits and dashes.`,
           ...(errors["name"] ? { error: errors["name"] } : {}),
         })}
-        ${formField({
-          label: "For whom",
-          name: "for",
-          value: values.forWhom,
-          hint: `A person, a client or an organisation, for your list of forges sent (at most ${MAX_FOR_CHARS} characters). Never copied into the child.`,
-          ...(errors["for"] ? { error: errors["for"] } : {}),
-        })}
+        ${anon
+          ? null
+          : formField({
+              label: "For whom",
+              name: "for",
+              value: values.forWhom,
+              hint: `A person, a client or an organisation, for your list of forges sent (at most ${MAX_FOR_CHARS} characters). Never copied into the child.`,
+              ...(errors["for"] ? { error: errors["for"] } : {}),
+            })}
         ${formField({
           label: "What it is for",
           name: "direction",
@@ -172,44 +179,52 @@ function formView(
                   >`
                 : null}
             </fieldset>`}
-        <fieldset class="field">
-          <legend>After it is claimed</legend>
-          <label class="check">
-            <input
-              type="checkbox"
-              name="keepAccess"
-              ${values.keepAccess ? html`checked` : null}
-            />
-            <span>Keep your owner access (the claim page tells them)</span>
-          </label>
-        </fieldset>
-        ${formField({
-          label: values.hadKey ? "Model key" : "Model key (optional)",
-          name: "modelKey",
-          type: "password",
-          autocomplete: "off",
-          required: values.hadKey,
-          hint: values.hadKey
-            ? "Type the key again to spawn: it is never sent back to your browser."
-            : "An API-billed key (sk-ant-api… or sk-or-v1-…) with its own spend limit; sealed in the child, never shown again. Never a subscription token.",
-          ...(errors["modelKey"] ? { error: errors["modelKey"] } : {}),
-        })}
-        ${formField({
-          label: "API base URL (optional)",
-          name: "modelEndpoint",
-          type: "url",
-          value: values.modelEndpoint,
-          hint: "Anthropic-compatible gateway for the key. OpenRouter: https://openrouter.ai/api. Leave empty for Anthropic.",
-          ...(errors["modelEndpoint"] ? { error: errors["modelEndpoint"] } : {}),
-        })}
-        ${formField({
-          label: `Its budget, in dollars (${MIN_BUDGET_USD}–${MAX_BUDGET_USD})`,
-          name: "budgetUsd",
-          type: "number",
-          value: values.budgetUsd,
-          hint: "For the key's whole life; the child cannot raise it. Needed with a key.",
-          ...(errors["budgetUsd"] ? { error: errors["budgetUsd"] } : {}),
-        })}
+        ${anon
+          ? null
+          : html`<fieldset class="field">
+              <legend>After it is claimed</legend>
+              <label class="check">
+                <input
+                  type="checkbox"
+                  name="keepAccess"
+                  ${values.keepAccess ? html`checked` : null}
+                />
+                <span>Keep your owner access (the claim page tells them)</span>
+              </label>
+            </fieldset>`}
+        ${anon
+          ? null
+          : formField({
+              label: values.hadKey ? "Model key" : "Model key (optional)",
+              name: "modelKey",
+              type: "password",
+              autocomplete: "off",
+              required: values.hadKey,
+              hint: values.hadKey
+                ? "Type the key again to spawn: it is never sent back to your browser."
+                : "An API-billed key (sk-ant-api… or sk-or-v1-…) with its own spend limit; sealed in the child, never shown again. Never a subscription token.",
+              ...(errors["modelKey"] ? { error: errors["modelKey"] } : {}),
+            })}
+        ${anon
+          ? null
+          : formField({
+              label: "API base URL (optional)",
+              name: "modelEndpoint",
+              type: "url",
+              value: values.modelEndpoint,
+              hint: "Anthropic-compatible gateway for the key. OpenRouter: https://openrouter.ai/api. Leave empty for Anthropic.",
+              ...(errors["modelEndpoint"] ? { error: errors["modelEndpoint"] } : {}),
+            })}
+        ${anon
+          ? null
+          : formField({
+              label: `Its budget, in dollars (${MIN_BUDGET_USD}–${MAX_BUDGET_USD})`,
+              name: "budgetUsd",
+              type: "number",
+              value: values.budgetUsd,
+              hint: "For the key's whole life; the child cannot raise it. Needed with a key.",
+              ...(errors["budgetUsd"] ? { error: errors["budgetUsd"] } : {}),
+            })}
         <p class="muted small">
           Never copied: ${LEFT_BEHIND.join(", ")}. The child mints its own.
         </p>
@@ -229,7 +244,7 @@ function formView(
  * (where, as whom, with whom still there, on what budget), then what is
  * copied — and the Spawn it confirms, so a phone need not scroll back down.
  */
-function planView(ctx: Ctx, values: Values, body: Record<string, unknown>): Html {
+function planView(ctx: Ctx, user: User | undefined, values: Values, body: Record<string, unknown>): Html {
   const copied = (body["copied"] as string[] | undefined) ?? [];
   const bytes = Number(body["bytes"] ?? 0);
   const note = body["keyNote"];
@@ -240,11 +255,13 @@ function planView(ctx: Ctx, values: Values, body: Record<string, unknown>): Html
     html`<ul class="mb">
         <li>A forge at <b>${address}</b>.</li>
         <li>Whoever opens the link becomes its admin.</li>
-        <li>
-          ${values.keepAccess
-            ? "You keep owner access after it is claimed; the claim page tells them."
-            : "You leave once it is claimed; they can invite you back."}
-        </li>
+        ${user === undefined
+          ? null
+          : html`<li>
+              ${values.keepAccess
+                ? "You keep owner access after it is claimed; the claim page tells them."
+                : "You leave once it is claimed; they can invite you back."}
+            </li>`}
         ${budget === null
           ? null
           : html`<li>Its crew runs on the key you give, up to $${budget} for the key's whole life.</li>`}
@@ -303,10 +320,10 @@ function madeView(body: Record<string, unknown>): Html {
 const asBool = (form: Form, name: string): boolean =>
   field(form, name) === "on";
 
-// GET /forges/new — any signed-in person; agents are refused.
+// GET /forges/new — any signed-in person, or a stranger (agents are refused).
 export function newForgePage(ctx: Ctx): Response {
   const user = ctx.auth.user;
-  if (!user || user.kind !== "user") return notFoundPage(ctx);
+  if (user && user.kind !== "user") return notFoundPage(ctx);
   return page({
     ctx,
     title: "New forge",
@@ -317,8 +334,9 @@ export function newForgePage(ctx: Ctx): Response {
 // POST /forges/new — `do=plan` shows the plan; anything else spawns.
 export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
-  if (!user || user.kind !== "user") return notFoundPage(ctx);
-  const form = await readForm(ctx, "admin");
+  if (user && user.kind !== "user") return notFoundPage(ctx);
+  // A stranger posts without a token scope; the same-origin check still holds.
+  const form = await readForm(ctx, user === undefined ? undefined : "admin");
   if (form instanceof Response) return form;
   const values: Values = {
     name: field(form, "name").trim(),
@@ -358,7 +376,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     return page({
       ctx,
       title: "New forge",
-      body: formView(ctx, user, values, {}, planView(ctx, values, door.body)),
+      body: formView(ctx, user, values, {}, planView(ctx, user, values, door.body)),
     });
   const response = page(
     { ctx, title: "New forge", body: madeView(door.body) },

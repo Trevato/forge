@@ -155,12 +155,16 @@ export async function spawnForge(
   deps: SpawnDeps,
 ): Promise<Result<Spawned, SpawnError>> {
   if (crossOrigin(deps.request, deps.url, app.log)) return err({ kind: "cross_origin" });
-  const user = requireUser(actor);
-  if (!user.ok) return err({ kind: "unauthorized" });
-  // Any signed-in person may start a child forge (claim it, become its
-  // admin). Agents and orgs cannot: a forge is a person's to open.
-  if (user.value.kind !== "user") return err({ kind: "forbidden" });
-  const owner = user.value;
+  // A stranger may spawn (and claim) a child; an agent may not. A signed-in
+  // person is the owner of record; a stranger's child names no owner until
+  // it is claimed.
+  let owner: User | undefined;
+  if (actor !== undefined) {
+    const user = requireUser(actor);
+    if (!user.ok) return err({ kind: "unauthorized" });
+    if (user.value.kind !== "user") return err({ kind: "forbidden" });
+    owner = user.value;
+  }
 
   // The dry-run is not trusted: the plan is made again, here.
   const planned = planSpawn(input, source);
@@ -194,7 +198,7 @@ export async function spawnForge(
 
 async function make(
   app: App,
-  owner: User,
+  owner: User | undefined,
   plan: SpawnPlan,
   deps: SpawnDeps,
 ): Promise<Result<Spawned, SpawnError>> {
@@ -248,7 +252,7 @@ async function make(
   await writeLedger(app, ledger);
   app.bus.append({
     kind: "forge.spawned",
-    actorId: owner.id,
+    actorId: owner?.id,
     payload: { name: plan.name, org: plan.org, url: liveChildUrl(app, plan.name), apps: plan.apps.map((a) => a.ref) },
   });
   return ok({
@@ -267,7 +271,7 @@ async function make(
  */
 async function copyInto(
   app: App,
-  owner: User,
+  owner: User | undefined,
   plan: SpawnPlan,
   ledger: Ledger,
   modelKey: string | undefined,
@@ -278,13 +282,15 @@ async function copyInto(
   const child = createApp({ dataDir: dir });
   try {
     // The founder is a name only: no password, no email worth mailing. The
-    // child's first boot hands the account to a person (#422).
+    // child's first boot hands the account to a person (#422). A stranger's
+    // child gets a placeholder; the claim names the real admin.
+    const founderName = owner?.username ?? "founder";
     const founder =
-      getUserByName(child.db, owner.username) ??
+      getUserByName(child.db, founderName) ??
       (await (async () => {
         const made = await createUser(child.db, {
-          username: owner.username,
-          email: `${owner.username}@spawn.forge.invalid`,
+          username: founderName,
+          email: `${founderName}@spawn.forge.invalid`,
           // Seeded by the parent's owner, who is proven there, under the
           // name they already hold there.
           trusted: true,
@@ -337,6 +343,14 @@ async function copyInto(
         repo = updateRepoSettings(child.db, repo, { autonomyDirection: plan.direction });
       copiedRepos.push({ parent, child: repo });
     }
+
+    // The forge's own code, forked into the child with its full history,
+    // so every child starts from the forge and can follow its parent.
+    // A cross-forge fork: the history is copied by git, and the upstream
+    // is recorded in parent.json for the child to pull from. Skipped when
+    // the forge does not name its code repository (`forgeRepo`).
+    const forgeCode = await forkForgeCode(app, child, org.username);
+    if (!forgeCode.ok) return err(forgeCode.error);
 
     for (const b of plan.briefs) {
       const existing = getAgentByName(child.db, b.agent);
@@ -405,6 +419,11 @@ async function copyInto(
         // The child's own address: <name>--<parent's host>.
         url: liveChildUrl(app, plan.name),
         keepAccess: plan.keepAccess,
+        // The forge's code, forked into the child: where it came from, so
+        // the child can follow its parent's updates.
+        ...(forgeCode.value === undefined
+          ? {}
+          : { forgeCode: { repo: `${plan.org}/forge`, upstream: forgeCode.value } }),
         // Only the hash: the parent alone holds what it answers to.
         ...(ledger.statusToken === undefined ? {} : { statusHash: sha256(ledger.statusToken) }),
       }),
@@ -413,6 +432,56 @@ async function copyInto(
   } finally {
     child.close();
   }
+}
+
+/**
+ * The parent's own code, forked into the child's organisation with its full
+ * history. Returns the parent's `owner/name` when forked, undefined when the
+ * forge does not name its code (`forgeRepo`) or the repo is not there —
+ * a child is still spawned, just without the fork.
+ *
+ * A cross-forge fork: git carries the history, and the upstream stays
+ * reachable through the parent's address in `parent.json`. The in-database
+ * follow (`fork_parent_id`) is for forks on one forge; across two, the
+ * child pulls the parent's default branch when its owner asks.
+ */
+async function forkForgeCode(
+  app: App,
+  child: App,
+  orgName: string,
+): Promise<Result<string | undefined, string>> {
+  const ref = app.config.forgeRepo;
+  if (ref === undefined) return ok(undefined);
+  const parts = ref.split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return ok(undefined);
+  const [o, n] = parts as [string, string];
+  const parent = getRepo(app.db, o, n);
+  if (!parent) return ok(undefined);
+  const name = "forge";
+  let repo = getRepo(child.db, orgName, name);
+  if (!repo) {
+    const made = await createRepo(child.db, child.reposRoot, {
+      ownerId: getOrg(child.db, orgName)!.id,
+      name,
+      visibility: "public",
+      description: `A fork of ${o}/${n}: the forge's own code, following its parent.`,
+      defaultBranch: parent.defaultBranch,
+    });
+    if (!made.ok) return err(`could not make the child's forge repo: ${made.error}`);
+    repo = made.value;
+  }
+  const fetched = await runGit(
+    [
+      "fetch",
+      "--no-write-fetch-head",
+      repoDir(app.reposRoot, o, n),
+      "+refs/heads/*:refs/heads/*",
+      "+refs/tags/*:refs/tags/*",
+    ],
+    { cwd: repoDir(child.reposRoot, orgName, name), timeoutMs: 600_000 },
+  );
+  if (!fetched.ok) return err(`could not copy the forge's code: ${fetched.error.stderr}`);
+  return ok(`${o}/${n}`);
 }
 
 /**

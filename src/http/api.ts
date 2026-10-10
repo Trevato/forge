@@ -3763,13 +3763,19 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   // `dryRun` is true unless it is `false`: the plan, and nothing is made.
+  // A stranger may spawn too (rate-limited in the door); a signed-in
+  // caller needs an `rw` token as before.
   router.add("POST", "/api/v1/forges", async (ctx) => {
     const input = await body(ctx.request);
-    const denied = requireScope(ctx, "rw");
-    if (denied) return denied;
+    if (ctx.auth.user !== undefined) {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+    } else if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) {
+      return forbidden();
+    }
     if (typeof input !== "object" || input === null || Array.isArray(input))
       return apiError("invalid", 422, "send a JSON object: name, apps, crew, dryRun");
-    const door = await spawnDoor(ctx, ctx.auth.user!, input as Record<string, unknown>);
+    const door = await spawnDoor(ctx, ctx.auth.user, input as Record<string, unknown>);
     return json(door.body, door.status);
   });
 
