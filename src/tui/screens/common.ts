@@ -817,6 +817,7 @@ const MESSAGES: Record<string, string> = {
   unauthorized: "sign in first",
   forbidden: "you do not have permission",
   forbidden_owner: "you cannot create repos for that owner",
+  refused: "new accounts cannot create repositories yet",
   empty_title: "a title is required",
   empty_body: "write something first",
   title_too_long: "that title is too long (256 characters at most)",

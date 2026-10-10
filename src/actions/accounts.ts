@@ -181,7 +181,8 @@ export function verifyAccount(
   return ok(user);
 }
 
-const NEW_FOR_MS = 7 * 24 * 3_600_000;
+/** An account counts as new for this long after it is made. */
+export const NEW_FOR_MS = 7 * 24 * 3_600_000;
 
 /**
  * The lines an admin's phone hears about accounts: one per person who

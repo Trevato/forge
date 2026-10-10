@@ -6,6 +6,7 @@
 
 import { bodyCapFor, readBounded } from "./limits.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
+import { NEW_ACCOUNT_GUARD_MESSAGE } from "../core/capacity.ts";
 import type { User } from "../core/users.ts";
 import { crossOrigin, type Ctx } from "./context.ts";
 
@@ -148,6 +149,11 @@ export function respondAccess(error: string, status: number): Response {
   // same words on every surface (\`actions/verify.ts\`).
   if (error === "unverified")
     return json({ error, message: "verify your email first" }, 403);
+  // The new-account guard (\`guard_new_accounts\`): refused the way the
+  // hand-installed database trigger used to refuse, in its own words, so
+  // clients see no difference between the trigger and the setting.
+  if (error === "refused")
+    return json({ error, message: NEW_ACCOUNT_GUARD_MESSAGE }, 403);
   if (error === "unauthorized") return unauthorized();
   if (error === "forbidden") return forbidden();
   return json({ error }, status);

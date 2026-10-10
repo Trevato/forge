@@ -17,7 +17,8 @@ export type CapacityKey =
   | "crew.concurrency"
   | "checks.concurrency"
   | "checks.shards"
-  | "cells.egress";
+  | "cells.egress"
+  | "guard_new_accounts";
 
 interface Definition {
   /** What the settings page and the API call it. */
@@ -62,9 +63,24 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     fallback: "enforce",
     help: "enforce refuses a host an app or check did not declare; report lets it through on 80 and 443 and lists it on the app's page. Takes effect on the next cell started.",
   },
+  "guard_new_accounts": {
+    label: "New-account repository guard",
+    env: "FORGE_GUARD_NEW_ACCOUNTS",
+    kind: { type: "choice", values: ["on", "off"] },
+    fallback: "off",
+    help: "on refuses repository creation and forks for accounts younger than 7 days (agents and admins are exempt); off leaves it to the usual permissions. Takes effect immediately. Replaces the hand-installed database trigger that used to do this with no toggle.",
+  },
 };
 
 export const CAPACITY_KEYS = Object.keys(CAPACITY) as CapacityKey[];
+
+/**
+ * The words a refused repository creation carries when the new-account
+ * guard stops it — the same words the hand-installed database trigger used,
+ * so clients see no difference between the old trigger and the setting.
+ */
+export const NEW_ACCOUNT_GUARD_MESSAGE =
+  "new accounts cannot create repositories yet";
 
 export function isCapacityKey(key: string): key is CapacityKey {
   return (CAPACITY_KEYS as string[]).includes(key);
