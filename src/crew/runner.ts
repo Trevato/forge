@@ -1290,6 +1290,15 @@ async function prepareClone(
         ok: false,
         error: `fetch failed: ${fetched.error.stderr.slice(0, 200)}`,
       };
+    // The remotes are the agent's, set again on every visit — a clone from
+    // before the forge changed where they point (a kept clone resumed after
+    // a release) would otherwise push to an address that is no longer the
+    // forge's for the sandbox.
+    await runGit(["config", "remote.origin.url", agentUrl], { cwd: dir, env });
+    await runGit(["config", "remote.origin.pushurl", agentForkUrl], {
+      cwd: dir,
+      env,
+    });
     // A paused run resumes in the tree it left — its uncommitted work is
     // part of the session that is about to continue — so long as the clone
     // is still on its branch.

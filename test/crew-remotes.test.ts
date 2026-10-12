@@ -13,7 +13,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { assignIssue, openIssue } from "../src/actions/issues.ts";
+import { addComment, assignIssue, openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
@@ -136,5 +136,41 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(pushUrl).toBe(`${publicUrl}/bot/garden.git`);
     const pull = listPulls(app.db, repo.id, { state: "open" })[0]!;
     expect(pull.headBranch).toBe(run.branch);
-  }, 60_000);
+
+    // A clone kept from before the forge changed where its remotes point —
+    // a run resumed after a release — is set right again on every visit,
+    // not only when it is first made.
+    const clone = join(
+      dataDir,
+      "crew",
+      "bot",
+      repo.id,
+      String(issue.value.number),
+    );
+    for (const key of ["remote.origin.url", "remote.origin.pushurl"]) {
+      const stale = Bun.spawnSync(
+        ["git", "config", key, "http://localhost:1/stale.git"],
+        { cwd: clone },
+      );
+      expect(stale.exitCode).toBe(0);
+    }
+    const said = addComment(
+      app,
+      alice,
+      repo,
+      issue.value,
+      "Also plant daffodils.",
+    );
+    if (!said.ok) throw new Error(String(said.error));
+    const again = await settled(
+      (r) => r.issueId === issue.value.id && r.id !== run.id,
+    );
+    expect(again.state).toBe("ok");
+    expect(again.summary).toMatch(/^updated pull #\d+/);
+    const [fetchAgain, pushAgain] = readFileSync(remotesFile, "utf8")
+      .trim()
+      .split("\n");
+    expect(fetchAgain).toBe(`${publicUrl}/alice/garden.git`);
+    expect(pushAgain).toBe(`${publicUrl}/bot/garden.git`);
+  }, 90_000);
 });
