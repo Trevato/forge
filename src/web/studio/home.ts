@@ -100,6 +100,7 @@ function yourApps(ctx: Ctx, user: User): Html {
           icon: "repo",
         })}
         ${btn("Map", { href: "/map", size: "sm", icon: "map" })}
+        ${btn("Audit", { href: "/audit", size: "sm", icon: "shield" })}
         ${btn("Board", { href: "/board", size: "sm", icon: "activity" })}
         ${when(user.isAdmin, () =>
           btn("Front page", { href: "/front", size: "sm", icon: "globe" }),

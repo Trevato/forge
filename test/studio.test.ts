@@ -305,7 +305,11 @@ describe("the studio", () => {
       expect(html).toContain(
         `<link rel="stylesheet" href="${stylesheetAsset().path}"`,
       );
-      expect(html).not.toContain("<style");
+      // The one style element every page carries is the boot style that paints
+      // the canvas before the stylesheet arrives (layout.ts, `bootCss`); the
+      // studio's own rules never ride inline.
+      expect(html.match(/<style/g)).toHaveLength(1);
+      expect(html).not.toMatch(/<style[^>]*>[^<]*\.(studio|dash|shelf)-/);
     }
 
     const sheet = await fetch(`${base}${stylesheetAsset().path}`);

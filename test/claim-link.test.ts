@@ -117,7 +117,7 @@ describe("the claim link in the fragment, and its re-issue", () => {
 
   test("the link carries its secret in the fragment, never in the path or a query", () => {
     expect(first).toMatch(
-      /^https:\/\/maria\.forge\.test\/claim#[A-Za-z0-9_-]{43}$/,
+      /^https:\/\/maria--forge\.test\/claim#[A-Za-z0-9_-]{43}$/,
     );
   });
 
