@@ -95,18 +95,22 @@ describe("+ New forge", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test("someone who is not an admin has no door: no link, no page, no post", async () => {
-    expect(await (await get(reader, "/")).text()).not.toContain(
+  test("anyone signed in finds the door; the list of forges and their claim links stay the admin's", async () => {
+    // Since 0.7.57 any signed-in person may start a forge (spawn/door.ts);
+    // what stays the admin's is the roster of children and re-issuing a
+    // claim link for one.
+    expect(await (await get(reader, "/")).text()).toContain(
       'href="/forges/new"',
     );
-    expect((await get(reader, "/forges/new")).status).toBe(404);
+    expect((await get(reader, "/forges/new")).status).toBe(200);
+    expect((await get(reader, "/forges")).status).toBe(404);
     expect(
       (
-        await post(reader, [
-          ["name", "kai"],
-          ["apps", "alice/bakery"],
-          ["do", "spawn"],
-        ])
+        await fetch(url("/forges/kai/claim-link"), {
+          method: "POST",
+          headers: { cookie: reader, origin: "https://forge.test" },
+          redirect: "manual",
+        })
       ).status,
     ).toBe(404);
     expect(await children()).toBe(0);

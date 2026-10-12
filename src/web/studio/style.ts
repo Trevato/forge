@@ -96,6 +96,8 @@ const rail = part(/* css */ `
 const phone = part(/* css */ `
 @media (max-width: 600px) {
   .studio-head { flex-wrap: wrap; }
+  .fcard-head { flex-wrap: wrap; row-gap: 2px; }
+  .fcard-head .fcard-app { flex: 1 1 100%; }
   .studio-head h1 { flex: 1 1 100%; flex-wrap: wrap; overflow-wrap: anywhere; }
   .studio-head .env-facts { flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; }
   .studio-head form, .studio-head form .btn { flex: 1 1 auto; }
