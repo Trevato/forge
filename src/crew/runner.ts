@@ -1470,8 +1470,17 @@ async function landWork(
       write(
         `pushing ${branch} (${ahead} commit${ahead === 1 ? "" : "s"} the agent did not push)`,
       );
+      // The forge pushes for the agent over its own local address — the
+      // clone's `origin` carries the public one, for the agent inside the
+      // sandbox (`prepareClone`), and this push is the forge's, not the
+      // agent's. The branch already tracks `origin`, set there.
       const pushed = await runGit(
-        ["push", "--quiet", "-u", "origin", `${branch}:${branch}`],
+        [
+          "push",
+          "--quiet",
+          `${options.localUrl}/${fork.ownerName}/${fork.name}.git`,
+          `${branch}:${branch}`,
+        ],
         { cwd: dir, env, timeoutMs: 2 * 60_000 },
       );
       if (!pushed.ok)

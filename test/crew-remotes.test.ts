@@ -109,12 +109,15 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
   }, 30_000);
 
   afterAll(async () => {
-    await crew.stop();
-    servers.stop();
-    app.close();
+    await crew?.stop();
+    servers?.stop();
+    app?.close();
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  // The stand-in runs outside any sandbox, so what this proves is the
+  // address the agent is handed and that a plain push over it lands — not
+  // the sandbox's own reach, which is Claude Code's to hold.
   test("carry the forge's public URL, fetch from the repository and push to the agent's fork, and a plain push lands", async () => {
     expect(publicUrl).not.toBe(servers.url);
     const issue = openIssue(app, alice, repo, {
