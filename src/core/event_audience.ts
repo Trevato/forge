@@ -42,6 +42,9 @@ export function eventAudience(kind: string): EventAudience {
     // theirs to see, never the readers' (`actions/reports.ts`).
     kind.startsWith("report.") ||
     kind === "repo.settings_updated" ||
+    // Which of a person's connected accounts a mirror now syncs through is
+    // the repository's configuration, as a webhook's URL is.
+    kind === "origin.mirror_reattached" ||
     kind === "repo.crew_outsiders"
   )
     return "admins";

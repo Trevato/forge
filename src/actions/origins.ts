@@ -24,11 +24,21 @@ import {
   cacheOriginRepos,
   createOrigin,
   deleteOrigin,
+  detachedMirror,
+  findOrigin,
+  getOriginById,
   getOriginFor,
+  hostOf,
+  linkRepoToOrigin,
+  listDetachedMirrors,
+  listMirrors,
   listOriginRepos,
+  mirrorOfRemote,
   listOrigins,
   markNeedsReauth,
   originForRepo,
+  rememberOriginRepo,
+  renewOrigin,
   sealedSecrets,
   type Origin,
   type OriginRepoRow,
@@ -40,10 +50,14 @@ import {
   type Pin,
 } from "../core/pins.ts";
 import { RateLimiter, type RateLimits } from "../core/ratelimit.ts";
-import type { Repo } from "../core/repos.ts";
+import { canAdmin, getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
+import { repoDir } from "../git/repos.ts";
+import { bustOrigin } from "../view/cache.ts";
 import { discover } from "../origins/discover.ts";
 import { providerForOrigin } from "../origins/credential.ts";
+import { safeRemoteUrl } from "../origins/credentials.ts";
+import { configureMirror, mirrorRemoteUrl } from "../origins/git-mirror.ts";
 import { getJob, type MirrorJob } from "../origins/jobs.ts";
 import { startMirror } from "../origins/mirror.ts";
 import {
@@ -83,7 +97,12 @@ import {
   type Provider,
 } from "../origins/types.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { requireUser, requireWriter } from "./access.ts";
+import {
+  requireRepoAdmin,
+  requireUser,
+  requireWriter,
+  type AccessError,
+} from "./access.ts";
 
 // ---- abuse control ----
 
@@ -140,7 +159,7 @@ export async function connectOrigin(
   app: App,
   actor: User | undefined,
   input: ConnectInput,
-): Promise<Result<Origin, ConnectError>> {
+): Promise<Result<Connected, ConnectError>> {
   const user = requireUser(actor);
   if (!user.ok) return user;
   if (tooManyAttempts(app, user.value.id)) return err("rate_limited");
@@ -166,7 +185,7 @@ export async function connectOrigin(
       identity.error.error === "unreachable" ? "unreachable" : "bad_token",
     );
 
-  return storeOrigin(app, user.value, {
+  const stored = storeOrigin(app, user.value, {
     kind: found.value.kind,
     apiUrl: found.value.apiUrl,
     webUrl: found.value.webUrl,
@@ -174,7 +193,17 @@ export async function connectOrigin(
     token: input.token.trim(),
     authKind: "pat",
   });
+  if (!stored.ok) return stored;
+  return ok({
+    ...stored.value,
+    reattached: await afterConnect(app, user.value, stored.value),
+  });
 }
+
+/** A connected origin, and the frozen mirrors connecting it brought back. */
+export type Connected = Origin & {
+  readonly reattached: readonly Reattachment[];
+};
 
 function storeOrigin(
   app: App,
@@ -190,6 +219,34 @@ function storeOrigin(
     expiresAt?: string | null;
   },
 ): Result<Origin, "already_connected"> {
+  // Connecting an account whose credential died is re-authorizing it: the
+  // row keeps its id, so its mirrors never detach and nothing freezes
+  // longer than the dead token already made it. A healthy account is still
+  // `already_connected` — a second token for it is a mistake, not a fix.
+  const existing = findOrigin(app.db, user.id, input.apiUrl, input.login);
+  if (existing?.needsReauth) {
+    renewOrigin(app.db, app.config.dataDir, existing.id, {
+      token: input.token,
+      authKind: input.authKind,
+      ...(input.refreshToken === undefined
+        ? {}
+        : { refreshToken: input.refreshToken }),
+      ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+    });
+    forgetProvider({ dataDir: app.config.dataDir, originId: existing.id });
+    app.bus.append({
+      kind: "origin.connected",
+      actorId: user.id,
+      payload: {
+        originId: existing.id,
+        host: existing.webUrl,
+        login: existing.login,
+        authKind: input.authKind,
+        renewed: true,
+      },
+    });
+    return ok(getOriginById(app.db, existing.id)!);
+  }
   const created = createOrigin(app.db, app.config.dataDir, {
     userId: user.id,
     kind: input.kind,
@@ -589,6 +646,7 @@ async function completeConnect(
   });
   if (!stored.ok)
     return { status: "failed", detail: "that account is already connected" };
+  await afterConnect(app, user, stored.value);
   return { status: "done", detail: "", originId: stored.value.id };
 }
 
@@ -755,6 +813,180 @@ export async function syncRepoNow(
   const link = originForRepo(app.db, repo.id);
   if (!link) return err("not_found");
   return ok(await syncOrigin(app, link.origin, { onlyRepoId: repo.id }));
+}
+
+// ---- reconnecting a frozen mirror ----
+
+export type ReattachError =
+  | AccessError
+  | "not_detached"
+  | "wrong_host"
+  | "origin_cannot_see"
+  | "not_the_same_repo"
+  | "already_mirrored"
+  | "needs_reauth"
+  | "unreachable";
+
+/** One detached mirror a connect tried to bring back, and how it went. */
+export interface Reattachment {
+  readonly owner: string;
+  readonly name: string;
+  readonly fullName: string;
+  /** Why it stayed frozen; null when it was re-attached. */
+  readonly refused: ReattachError | null;
+}
+
+/**
+ * Attach a detached mirror to one of the actor's origins, and start the
+ * sync that moves its refs (#1090). A mirror whose origin was disconnected
+ * keeps its provenance and refuses pushes; this is the one door back.
+ *
+ * Who may: an admin of the repo (anyone else is `not_found`, invariant 9)
+ * who owns the origin (another person's origin is `not_found` too — it
+ * would lend their credential to this mirror's every later sync and push).
+ * What must hold: the origin lives on the host the mirror came from, and
+ * its account can see the repository by the name the mirror remembers.
+ */
+export async function reattachMirror(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  originId: string,
+): Promise<Result<{ origin: Origin; fullName: string }, ReattachError>> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok) return admin;
+  if (!detachedMirror(app.db, repo.id)) return err("not_detached");
+  const origin = getOriginFor(app.db, admin.value.id, originId);
+  if (!origin) return err("not_found");
+  const attached = await attach(app, admin.value, repo, origin);
+  if (!attached.ok) return attached;
+  syncSoon(app, origin, repo.id);
+  return attached;
+}
+
+/**
+ * After a connect: every detached mirror the person owns that came from
+ * this origin's host is attached to it, and one sync moves them all. A
+ * refusal is reported beside the successes, never a failed connect — the
+ * account is connected either way. A mirror whose host could only be read
+ * from its git remote, and turns out to be elsewhere, is not this origin's
+ * and is not mentioned.
+ *
+ * Owns, not administers: re-attaching lends this credential to every later
+ * sync and push of the mirror, and an organization's mirror borrowing an
+ * admin's personal account is a choice that admin makes with the Reconnect
+ * button, never a side effect of connecting.
+ */
+async function afterConnect(
+  app: App,
+  user: User,
+  origin: Origin,
+): Promise<Reattachment[]> {
+  const out: Reattachment[] = [];
+  for (const mirror of listDetachedMirrors(app.db, {
+    host: hostOf(origin.webUrl),
+    ownerId: user.id,
+  })) {
+    const repo = getRepoById(app.db, mirror.repoId);
+    if (!repo || !canAdmin(app.db, repo, user)) continue;
+    const attached = await attach(app, user, repo, origin);
+    if (!attached.ok && attached.error === "wrong_host") continue;
+    out.push({
+      owner: repo.ownerName,
+      name: repo.name,
+      fullName: attached.ok ? attached.value.fullName : mirror.fullName,
+      refused: attached.ok ? null : attached.error,
+    });
+  }
+  // Whatever now hangs off it moves at once: the mirrors just re-attached,
+  // and a renewed origin's, which never detached but were only waiting.
+  if (listMirrors(app.db, origin.id).length > 0) syncSoon(app, origin);
+  return out;
+}
+
+/** The re-attach itself, for a caller that has already authorized it. */
+async function attach(
+  app: App,
+  user: User,
+  repo: Repo,
+  origin: Origin,
+): Promise<Result<{ origin: Origin; fullName: string }, ReattachError>> {
+  const mirror = detachedMirror(app.db, repo.id);
+  if (!mirror) return err("not_detached");
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const came =
+    mirror.htmlUrl !== "" ? mirror.htmlUrl : await mirrorRemoteUrl(dir);
+  if (hostOf(came) === "" || hostOf(came) !== hostOf(origin.webUrl))
+    return err("wrong_host");
+  if (origin.needsReauth) return err("needs_reauth");
+  const provider = providerForOrigin(app, origin);
+  if (!provider.ok) return err("needs_reauth");
+
+  const found = await provider.value.getRepo(mirror.fullName);
+  if (!found.ok)
+    return err(
+      found.error.error === "unreachable" ||
+        found.error.error === "rate_limited" ||
+        found.error.error === "invalid_response"
+        ? "unreachable"
+        : "origin_cannot_see",
+    );
+  const remote = found.value;
+  // A name can be reused: a repository deleted upstream and made again under
+  // the same name is not the one this mirror holds, and a sync would prune
+  // its history into the newcomer's.
+  if (mirror.remoteId !== "" && remote.remoteId !== mirror.remoteId)
+    return err("not_the_same_repo");
+  // The clone URL becomes a git remote; the origin's word is checked first.
+  if (remote.cloneUrl === "" || safeRemoteUrl(remote.cloneUrl) === undefined)
+    return err("unreachable");
+
+  // Re-mirrored in the meantime: two local repos syncing one remote would
+  // each think the other's writes were the origin's. Asked again after the
+  // one wait below, so the check and the link have no await between them.
+  const taken = () => mirrorOfRemote(app.db, origin.id, remote) !== undefined;
+  if (taken()) return err("already_mirrored");
+  const configured = await configureMirror(dir, remote.cloneUrl);
+  if (!configured.ok) return err("unreachable");
+  if (taken()) return err("already_mirrored");
+
+  // The picker row is where the sync reads the clone URL back from.
+  rememberOriginRepo(app.db, origin.id, remote);
+  linkRepoToOrigin(app.db, repo.id, {
+    originId: origin.id,
+    fullName: remote.fullName,
+    remoteId: remote.remoteId,
+    htmlUrl: remote.htmlUrl,
+  });
+  bustOrigin(origin.id, remote.fullName);
+  app.bus.append({
+    kind: "origin.mirror_reattached",
+    repoId: repo.id,
+    actorId: user.id,
+    payload: { origin: origin.id, fullName: remote.fullName },
+  });
+  return ok({ origin, fullName: remote.fullName });
+}
+
+/**
+ * Sync now, in the background: the caller has a page to answer and the
+ * refs follow within the request's shadow. A sync that throws is the
+ * sync's to report (`fetch_error`), never the caller's; the worker's due
+ * time is pulled in as well, so a sync this process loses still happens.
+ */
+function syncSoon(app: App, origin: Origin, onlyRepoId?: string): void {
+  requestSyncNow(app, origin.id);
+  const fresh = getOriginFor(app.db, origin.userId, origin.id) ?? origin;
+  void syncOrigin(
+    app,
+    fresh,
+    onlyRepoId === undefined ? {} : { onlyRepoId },
+  ).catch((error: unknown) => {
+    app.log.warn("sync after reconnect failed", {
+      origin: origin.id,
+      error: String(error),
+    });
+  });
 }
 
 // ---- pins ----

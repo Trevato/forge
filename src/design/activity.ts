@@ -126,6 +126,7 @@ const WORDS: Record<string, string> = {
   "origin.connected": "connected an origin",
   "origin.disconnected": "disconnected an origin",
   "origin.needs_reauth": "needs to reconnect an origin",
+  "origin.mirror_reattached": "reconnected a frozen mirror to its origin",
   "run.queued": "queued a run",
   "run.started": "started a run",
   "app.created": "made it an app",
