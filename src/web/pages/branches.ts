@@ -40,6 +40,7 @@ import {
   sha,
   time,
 } from "../ui.ts";
+import { frozenBlock } from "./frozen.ts";
 import { refSetFrom } from "./refs.ts";
 
 /**
@@ -229,7 +230,12 @@ function createForm(scope: RepoScope, refs: string[], from: string): Html {
 export async function branchesPage(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
-  return renderBranches(ctx, localScope(ctx, repo));
+  // A frozen mirror's branches are where it froze; the page says so first.
+  return renderBranches(
+    ctx,
+    localScope(ctx, repo),
+    frozenBlock(ctx, repo) ?? undefined,
+  );
 }
 
 /** The page itself, for either side of the world. */

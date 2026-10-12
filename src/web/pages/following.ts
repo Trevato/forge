@@ -37,6 +37,7 @@ import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { flashOrJson } from "../layout.ts";
 import { badge, btn, card, icon, type Tone } from "../ui.ts";
+import { disconnectedOn } from "./frozen.ts";
 
 /**
  * The family as a tree: nested lists, so the nesting a sighted reader sees
@@ -120,8 +121,14 @@ function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-/** The relationship as a badge: for a fork list, a header, a row. */
+/**
+ * The relationship as a badge: for a fork list, a header, a row. A parent
+ * whose origin was disconnected is frozen, and "in step" with something
+ * frozen says nothing about upstream — so it is never said (#1090).
+ */
 export function relationBadge(relation: ForkRelation): Html {
+  if (relation.parent.detached !== null)
+    return badge("parent frozen", { tone: "attn" });
   const [text, tone]: [string, Tone] =
     relation.state === "synced"
       ? ["in step", "success"]
@@ -135,9 +142,16 @@ export function relationBadge(relation: ForkRelation): Html {
   return badge(text, { tone });
 }
 
-/** The sentence a person reads first. */
+/**
+ * The sentence a person reads first. Behind a frozen parent, ahead and
+ * behind are counted against where it froze, not against its upstream, so
+ * the sentence says that instead of a count that only looks like news.
+ */
 export function relationSentence(relation: ForkRelation): string {
   const parent = `${relation.parent.ownerName}/${relation.parent.name}`;
+  const frozen = relation.parent.detached;
+  if (frozen !== null)
+    return `${parent} is frozen: its origin was disconnected${frozen.detachedAt === null ? "" : ` on ${frozen.detachedAt.slice(0, 10)}`}, so what is here may be behind. Reconnect it.`;
   switch (relation.state) {
     case "synced":
       return `Everything here is up to date with ${parent}.`;
@@ -280,7 +294,15 @@ export function followingCard(
             ? badge("converging", { tone: "attn" })
             : relationBadge(relation)}
       </div>
-      <p class="following-sentence">${relationSentence(relation)}</p>
+      <p class="following-sentence">
+        ${parent.detached === null
+          ? relationSentence(relation)
+          : html`${parentName} is frozen: its origin
+              ${disconnectedOn(parent.detached)}, so what is here may be behind.
+              <a href="/${parent.ownerName}/${parent.name}#frozen"
+                >Reconnect it.</a
+              >`}
+      </p>
       ${when(
         actions.length > 0,
         () => html`<div class="following-actions">${actions}</div>`,
@@ -300,6 +322,18 @@ export function followingCard(
       )}
     </div>
   </section>`;
+}
+
+/**
+ * What taking updates says when there was nothing to take. "Up to date"
+ * only of a parent that is itself up to date: a frozen one may be far
+ * behind its own upstream, and the take only knows the frozen copy.
+ */
+export function nothingNew(parent: Repo): string {
+  const name = `${parent.ownerName}/${parent.name}`;
+  return parent.detached === null
+    ? `Already up to date with ${name}.`
+    : `Nothing new from ${name}, which is frozen: its origin was disconnected, so upstream may have moved. Reconnect it.`;
 }
 
 /**
@@ -381,7 +415,7 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
   }
   return flashOrJson(ctx, base, {
     message: !took.value.updated
-      ? `Already up to date with ${parentName}.`
+      ? nothingNew(parent)
       : took.value.merged
         ? `Took ${parentName}'s updates: merged into ${repo.defaultBranch} at ${took.value.to.slice(0, 7)}.`
         : `Took ${parentName}'s updates: ${repo.defaultBranch} is at ${took.value.to.slice(0, 7)}.`,

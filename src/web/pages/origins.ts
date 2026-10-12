@@ -28,9 +28,16 @@ import {
   startMirrorJob,
   startOAuthConnect,
   syncOriginNow,
+  type Reattachment,
 } from "../../actions/origins.ts";
+import { reattachMessage } from "./frozen.ts";
 import { getFlowFor } from "../../origins/oauth.ts";
-import { getOriginFor, type Origin } from "../../core/origins.ts";
+import {
+  getOriginFor,
+  listDetachedMirrors,
+  mirrorsByOrigin,
+  type Origin,
+} from "../../core/origins.ts";
 import { pinnedRepoIds } from "../../core/pins.ts";
 import { getRepo, getReposByIds } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -227,7 +234,27 @@ function healthBadge(origin: Origin): Html {
   return badge("Healthy", { tone: "success", icon: "check" });
 }
 
-function originCard(origin: Origin): Html {
+/**
+ * What a dead credential costs, and the way to fix it: the mirrors that
+ * stopped with it, and connecting the same account again — which puts a
+ * new credential on this origin in place, so nothing detaches.
+ */
+function reauthNote(origin: Origin, mirrors: number): Html {
+  const frozen =
+    mirrors === 0
+      ? "Nothing syncs through it until it is re-authorized."
+      : `${mirrors === 1 ? "One mirror is" : `${mirrors} mirrors are`} frozen until it is re-authorized.`;
+  return html`<p class="small mt">
+    ${frozen}
+    <a
+      href="/settings/origins?host=${encodeURIComponent(origin.webUrl)}#connect"
+      >Re-authorize ${origin.login} at ${hostLabel(origin.webUrl)}</a
+    >
+    by connecting it again.
+  </p>`;
+}
+
+function originCard(origin: Origin, mirrors: number): Html {
   const base = `/settings/origins/${origin.id}`;
   return card(
     html`<div class="origin-row">
@@ -252,6 +279,7 @@ function originCard(origin: Origin): Html {
         origin.lastError !== "",
         () => html`<p class="error-note mt">${origin.lastError}</p>`,
       )}
+      ${when(origin.needsReauth, () => reauthNote(origin, mirrors))}
       <div class="bar mt">
         <form method="post" action="${base}/sync">
           ${btn("Sync now", { size: "sm", icon: "sync" })}
@@ -540,6 +568,7 @@ function tokenSection(values: ConnectValues): Html {
 function originsView(ctx: Ctx, values: ConnectValues): Html {
   const user = ctx.auth.user!;
   const origins = listUserOrigins(ctx.app, user);
+  const mirrors = mirrorsByOrigin(ctx.app.db, user.id);
   const apps = listOriginApps(ctx.app, user);
   const githubConfigured =
     (process.env.FORGE_GITHUB_CLIENT_ID ?? "").trim() !== "" ||
@@ -560,7 +589,10 @@ function originsView(ctx: Ctx, values: ConnectValues): Html {
           title: "No origins connected",
           note: "Connect GitHub, a Forgejo instance or a Gitea instance and its repositories become mirrorable here.",
         })
-      : html`<div class="stack">${origins.map(originCard)}</div>`}
+      : html`<div class="stack">
+          ${origins.map((o) => originCard(o, mirrors.get(o.id)?.count ?? 0))}
+        </div>`}
+    ${frozenCard(ctx)}
     ${card(
       html`${tokenSection(values)}
         <details
@@ -588,10 +620,53 @@ function originsView(ctx: Ctx, values: ConnectValues): Html {
           )}
         </details>`,
       {
+        id: "connect",
         head: html`${icon("plus")}
           <h2>Connect an origin</h2>`,
       },
     )}`;
+}
+
+/**
+ * The viewer's mirrors whose origin is gone, and where each came from:
+ * connecting an account on that host brings them back by itself, so this
+ * card's only verb is the connect form beneath it.
+ */
+function frozenCard(ctx: Ctx): Html | null {
+  const frozen = listDetachedMirrors(ctx.app.db, {
+    ownerId: ctx.auth.user!.id,
+  });
+  if (frozen.length === 0) return null;
+  const repos = getReposByIds(
+    ctx.app.db,
+    frozen.map((m) => m.repoId),
+  );
+  return listCard(
+    frozen.flatMap((m) => {
+      const repo = repos.get(m.repoId);
+      if (repo === undefined) return [];
+      const host = hostLabel(m.htmlUrl);
+      return [
+        row({
+          href: `/${repo.ownerName}/${repo.name}#frozen`,
+          lead: icon("repo"),
+          title: `${repo.ownerName}/${repo.name}`,
+          meta: html`mirrors <span class="mono">${m.fullName}</span>${host ===
+            ""
+              ? null
+              : html` at ${host}`}`,
+        }),
+      ];
+    }),
+    {
+      head: html`${icon("alert")}
+        <h2>Frozen mirrors</h2>
+        <span class="spacer"></span>
+        <span class="muted small"
+          >Connect an account where they came from to bring them back.</span
+        >`,
+    },
+  );
 }
 
 function shell(ctx: Ctx, body: Html, status = 200): Response {
@@ -621,6 +696,9 @@ export function originsPage(ctx: Ctx): Response {
   const host = params.get("host") ?? "";
   if (host !== "") {
     values.host = host.slice(0, 200);
+    // A re-authorize or a frozen mirror's link names the forge; the token
+    // form is the way that always works, so it comes prefilled too.
+    values.tokenHost = values.host;
     values.mode = params.get("register") === "1" ? "register" : "host";
   }
   // The callback lands here with one of these two, so its outcome is visible
@@ -667,8 +745,27 @@ export async function originConnectToken(ctx: Ctx): Promise<Response> {
     values.tokenError = connectMessage(connected.error);
     return shell(ctx, originsView(ctx, values), 422);
   }
+  const { reattached } = connected.value;
+  const back = reattached.filter((r) => r.refused === null);
+  const stuck = reattached.filter((r) => r.refused !== null);
+  const name = (r: Reattachment): string => `${r.owner}/${r.name}`;
   return flashTo(ctx, "/settings/origins", {
-    message: `Connected ${connected.value.login} at ${hostLabel(connected.value.webUrl)}.`,
+    ...(stuck.length > 0 ? { tone: "attn" as const } : {}),
+    message: [
+      `Connected ${connected.value.login} at ${hostLabel(connected.value.webUrl)}.`,
+      ...(back.length === 0
+        ? []
+        : [
+            `Reconnected ${back.length === 1 ? "1 mirror" : `${back.length} mirrors`}: ${back.map(name).join(", ")}.`,
+          ]),
+      ...stuck.map(
+        (r) =>
+          `${name(r)} stays frozen: ${reattachMessage(r.refused!, {
+            fullName: r.fullName,
+            htmlUrl: "",
+          })}`,
+      ),
+    ].join(" "),
   });
 }
 

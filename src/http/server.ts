@@ -80,6 +80,7 @@ import {
 } from "../web/pages/site.ts";
 import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { followingSubmit } from "../web/pages/following.ts";
+import { reconnectSubmit } from "../web/pages/frozen.ts";
 import { activityAtom } from "../web/feeds.ts";
 import { auditCsv, auditPage, auditProbeSubmit } from "../web/pages/audit.ts";
 import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
@@ -1097,6 +1098,11 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/settings/hooks/:id/delete", webhookDelete);
   router.add("GET", "/:owner/:name/settings/danger", dangerPage);
   router.add("POST", "/:owner/:name/settings/delete", repoDelete);
+  router.add(
+    "POST",
+    "/:owner/:name/settings/origin/reconnect",
+    reconnectSubmit,
+  );
 
   return router;
 }

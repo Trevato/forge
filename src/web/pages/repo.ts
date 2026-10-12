@@ -12,7 +12,13 @@ import { canRead, listForks, type Repo } from "../../core/repos.ts";
 import { FORKS_PER_DAY, forkRepo } from "../../actions/repos.ts";
 import { forkDrift, takeUpdates, type ForkDrift } from "../../actions/forks.ts";
 import { lineageOf } from "../../core/following.ts";
-import { followingCard, followingOf, lineageCard } from "./following.ts";
+import {
+  followingCard,
+  followingOf,
+  lineageCard,
+  nothingNew,
+} from "./following.ts";
+import { frozenBlock } from "./frozen.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import {
   canAdmin,
@@ -229,10 +235,13 @@ export async function repoSyncSubmit(ctx: Ctx): Promise<Response> {
                 : `Git could not take the updates: ${e.message}`,
       });
     }
+    const parent = forkParent(ctx, repo);
     return flashTo(ctx, repoBase(repo), {
       message: took.value.updated
         ? `${took.value.merged ? "Merged" : "Updated"} ${repo.defaultBranch} to ${took.value.to.slice(0, 7)}.`
-        : "Already up to date with the parent.",
+        : parent === undefined
+          ? "Already up to date with the parent."
+          : nothingNew(parent),
     });
   }
   const synced = await syncRepoNow(ctx.app, ctx.auth.user, repo);
@@ -240,9 +249,11 @@ export async function repoSyncSubmit(ctx: Ctx): Promise<Response> {
     return flashTo(ctx, repoBase(repo), {
       tone: "danger",
       message:
-        synced.error === "not_found"
-          ? "This repository does not mirror an origin."
-          : "You need write access to sync this mirror.",
+        synced.error !== "not_found"
+          ? "You need write access to sync this mirror."
+          : repo.detached !== null
+            ? "This mirror is frozen: its origin was disconnected. Reconnect it first."
+            : "This repository does not mirror an origin.",
     });
   return flashTo(ctx, repoBase(repo), {
     ...(synced.value.error === ""
@@ -979,7 +990,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
   })}${noApp}
-  ${appStrip(ctx, repo)}
+  ${frozenBlock(ctx, repo)} ${appStrip(ctx, repo)}
   ${following === undefined
     ? forkBar(ctx, repo)
     : followingCard(ctx, repo, following)}

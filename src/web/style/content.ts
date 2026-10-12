@@ -307,6 +307,12 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .following-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .following-foot { margin: 8px 0 0; }
 
+/* A mirror whose origin went: what froze, and the one way back. */
+.frozen { margin-top: 12px; }
+.frozen-sentence { margin: 0; text-wrap: pretty; }
+.frozen-form { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.frozen-form .field { margin: 0; min-width: 0; flex: 1 1 14rem; max-width: 22rem; }
+
 /* The audit: one app's policy as a table, an answer per cell. */
 .audit-sum { margin: 0 0 14px; font-size: 15px; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; }
 .audit-app { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--fg); margin: 0; font-size: 14px; }
