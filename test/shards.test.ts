@@ -4,7 +4,7 @@
  * red run whose tail names every failing test from every shard.
  */
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -422,6 +422,7 @@ test("says two things, a pause apart", async () => {
     const code = await child.exited;
     const ended = performance.now();
     await reading;
+    rmSync(dir, { recursive: true, force: true });
     expect(code).toBe(0);
     expect(firstAt).toBeGreaterThan(0);
     // The first line reached us while the test was still asleep.

@@ -14,8 +14,9 @@
  * list so Actions can matrix the gate across jobs without parallel bun
  * inside one container. Each shard is its own `bun test`
  * over a disjoint slice (`scripts/shards.ts` decides the slices). Shards
- * that run one after another (`FORGE_CHECK_SHARDS=1`, `--record`) write
- * each line the moment the test says it, so a check's log tails live;
+ * that run one after another (`FORGE_CHECK_SHARDS=1`, or `--record` with
+ * one worker) write each line the moment the test says it, so a check's
+ * log tails live;
  * shards that run side by side are written through whole as each
  * finishes, so the log reads one shard at a time. Either way the tail
  * names every failing test from every shard. The first red shard stops
