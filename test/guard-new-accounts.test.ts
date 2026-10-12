@@ -33,7 +33,9 @@ describe("guard_new_accounts", () => {
   let oldtimer: User;
   let agent: User;
 
-  const oldDate = new Date(Date.now() - NEW_FOR_MS - 24 * 3_600_000).toISOString();
+  const oldDate = new Date(
+    Date.now() - NEW_FOR_MS - 24 * 3_600_000,
+  ).toISOString();
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-guard-"));
@@ -101,21 +103,34 @@ describe("guard_new_accounts", () => {
     expect(forked).toEqual({ ok: false, error: "refused" });
 
     // Back to off for the other tests.
-    expect(changeCapacity(app, admin, "guard_new_accounts", "off").ok).toBe(true);
+    expect(changeCapacity(app, admin, "guard_new_accounts", "off").ok).toBe(
+      true,
+    );
   });
 
   test("on: an account older than a week may create and fork", async () => {
-    expect(changeCapacity(app, admin, "guard_new_accounts", "on").ok).toBe(true);
+    expect(changeCapacity(app, admin, "guard_new_accounts", "on").ok).toBe(
+      true,
+    );
     const created = await createRepo(app, oldtimer, { name: "seasoned" });
     expect(created.ok).toBe(true);
     if (!created.ok) return;
-    const forked = await forkRepo(app, oldtimer, created.value, "seasoned-fork");
+    const forked = await forkRepo(
+      app,
+      oldtimer,
+      created.value,
+      "seasoned-fork",
+    );
     expect(forked.ok).toBe(true);
-    expect(changeCapacity(app, admin, "guard_new_accounts", "off").ok).toBe(true);
+    expect(changeCapacity(app, admin, "guard_new_accounts", "off").ok).toBe(
+      true,
+    );
   });
 
   test("on: admins and agents are not held back", async () => {
-    expect(changeCapacity(app, admin, "guard_new_accounts", "on").ok).toBe(true);
+    expect(changeCapacity(app, admin, "guard_new_accounts", "on").ok).toBe(
+      true,
+    );
     // The admin here is new (just made) — the guard still lets them through.
     const created = await createRepo(app, admin, {
       name: "admin-made",
@@ -125,11 +140,15 @@ describe("guard_new_accounts", () => {
     if (!created.ok) return;
     const forked = await forkRepo(app, agent, created.value);
     expect(forked.ok).toBe(true);
-    expect(changeCapacity(app, admin, "guard_new_accounts", "off").ok).toBe(true);
+    expect(changeCapacity(app, admin, "guard_new_accounts", "off").ok).toBe(
+      true,
+    );
   });
 
   test("only on/off are valid values", () => {
-    expect(changeCapacity(app, admin, "guard_new_accounts", "maybe").ok).toBe(false);
+    expect(changeCapacity(app, admin, "guard_new_accounts", "maybe").ok).toBe(
+      false,
+    );
     expect(changeCapacity(app, admin, "guard_new_accounts", "maybe")).toEqual({
       ok: false,
       error: "invalid_value",
@@ -137,7 +156,9 @@ describe("guard_new_accounts", () => {
   });
 
   test("api: a refused creation is 403 with the guard's words", async () => {
-    expect(changeCapacity(app, admin, "guard_new_accounts", "on").ok).toBe(true);
+    expect(changeCapacity(app, admin, "guard_new_accounts", "on").ok).toBe(
+      true,
+    );
     const token = createToken(app.db, newcomer.id, "t", "rw").token;
     const res = await fetch(`${servers.url}/api/v1/repos`, {
       method: "POST",
@@ -152,7 +173,9 @@ describe("guard_new_accounts", () => {
       error: "refused",
       message: NEW_ACCOUNT_GUARD_MESSAGE,
     });
-    expect(changeCapacity(app, admin, "guard_new_accounts", "off").ok).toBe(true);
+    expect(changeCapacity(app, admin, "guard_new_accounts", "off").ok).toBe(
+      true,
+    );
   });
 
   test("api: the setting is flippable by an admin", async () => {
@@ -160,7 +183,10 @@ describe("guard_new_accounts", () => {
     const get = () =>
       fetch(`${servers.url}/api/v1/admin/capacity`, {
         headers: { authorization: `Bearer ${token}` },
-      }).then((r) => r.json() as Promise<{ settings: { key: string; value: string }[] }>);
+      }).then(
+        (r) =>
+          r.json() as Promise<{ settings: { key: string; value: string }[] }>,
+      );
     const keys = (await get()).settings.map((s) => s.key);
     expect(keys).toContain("guard_new_accounts");
 
@@ -209,9 +235,16 @@ describe("dropLegacyNewAccountGuards", () => {
       BEGIN
         SELECT RAISE(ABORT, 'nothing about new accounts cannot create repositories here');
       END;`);
+    // The second generation of the guard, as the live forge carried it: it
+    // waited for spending limits that have long since arrived, and refused
+    // the forge's own admin.
+    app.db.exec(`CREATE TRIGGER guard_paused BEFORE INSERT ON repo
+      BEGIN
+        SELECT RAISE(ABORT, 'This is paused for new accounts while the forge adds spending and resource limits. Ask the forge''s owner.');
+      END;`);
 
     const dropped = dropLegacyNewAccountGuards(app.db);
-    expect(dropped).toEqual(["guard_noobs"]);
+    expect(dropped.sort()).toEqual(["guard_noobs", "guard_paused"]);
 
     const remaining = app.db
       .query<{ name: string }, []>(
@@ -239,9 +272,10 @@ describe("dropLegacyNewAccountGuards", () => {
     // Reboot: a new App on the same data dir runs the cleanup.
     const second = createApp({ dataDir: dir2, port: 0 });
     const triggers = second.db
-      .query<{ name: string }, []>(
-        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'legacy_guard'",
-      )
+      .query<
+        { name: string },
+        []
+      >("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name = 'legacy_guard'")
       .all();
     expect(triggers).toEqual([]);
     await rm(dir2, { recursive: true, force: true });

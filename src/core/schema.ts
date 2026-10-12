@@ -1578,11 +1578,17 @@ export const migrations: readonly string[] = [
  * idempotent — a second boot finds nothing and changes nothing.
  */
 export function dropLegacyNewAccountGuards(db: Database): string[] {
+  // Two generations of the hand-installed guard said it two ways: the
+  // first "new accounts cannot create repositories", the second "paused
+  // for new accounts while the forge adds spending and resource limits".
+  // The second outlived the limits it waited for and refused the forge's
+  // own admin; both go.
   const names = db
     .query<{ name: string }, []>(
       `SELECT name FROM sqlite_master
         WHERE type = 'trigger' AND tbl_name = 'repo'
-          AND sql LIKE '%new accounts cannot create repositories%'`,
+          AND (sql LIKE '%new accounts cannot create repositories%'
+            OR sql LIKE '%paused for new accounts%')`,
     )
     .all()
     .map((row) => row.name);
