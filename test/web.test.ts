@@ -410,6 +410,20 @@ describe("web pages end to end", () => {
     expect(stale.status).toBe(404);
   });
 
+  test("the home carries no error-note for a setting that is not the default", async () => {
+    const { changeCapacity } = await import("../src/actions/capacity.ts");
+    const { getUserByName } = await import("../src/core/users.ts");
+    const ada = getUserByName(app.db, "ada")!;
+    expect(changeCapacity(app, ada, "cells.egress", "report").ok).toBe(true);
+    try {
+      const text = await (await fetch(base, { headers: { cookie } })).text();
+      expect(text).not.toContain("error-note");
+      expect(text).not.toContain("Egress is reported");
+    } finally {
+      changeCapacity(app, ada, "cells.egress", "enforce");
+    }
+  });
+
   test("new repo via the form, empty state renders", async () => {
     const response = await fetch(`${base}/new`, {
       method: "POST",

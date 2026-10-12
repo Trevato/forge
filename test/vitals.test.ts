@@ -148,8 +148,8 @@ test("the number of queries does not grow with runs", () => {
     if (i % 2) app.db.query("UPDATE run SET state='running' WHERE id=?1").run(r.id);
   }
   expect(count()).toBe(before);
-  // The queue, the running runs, and the egress mode (`core/capacity.ts`).
-  expect(before).toBe(3);
+  // The queue and the running runs.
+  expect(before).toBe(2);
 });
 
 test("errors are counted, bounded, redacted, and a burst is said", async () => {

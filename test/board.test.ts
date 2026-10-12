@@ -11,6 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { changeCapacity } from "../src/actions/capacity.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue } from "../src/actions/issues.ts";
@@ -455,6 +456,26 @@ describe("the board's forge strip", () => {
     expect(other).not.toContain("stuck.");
   });
 
+  test("a setting that is not the default is no incident: the strip stays fine and the cards render", async () => {
+    const made = await createRepo(app, admin, { name: "calm" });
+    if (!made.ok) throw new Error(String(made.error));
+    const enabled = await enableApp(app, admin, made.value, { slug: "calm" });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    claimRun(app.db, createRun(app.db, { repoId: made.value.id, kind: "agent" }).id);
+    // Clear the stuck run the first test left behind.
+    app.db.query("UPDATE run SET state = 'failed' WHERE heartbeat_at = ?1").run("2020-01-01T00:00:00.000Z");
+    expect(changeCapacity(app, admin, "cells.egress", "report").ok).toBe(true);
+    try {
+      const text = await board("root");
+      expect(text).toContain("All fine");
+      expect(text).not.toContain("board-forge-need");
+      expect(text).not.toContain("error-note");
+      expect(text).toContain("board-card board-run");
+    } finally {
+      changeCapacity(app, admin, "cells.egress", "enforce");
+    }
+  });
+
   test("a blocked rollout shows in the status line, escaped, for an admin only", async () => {
     const guard = mkdtempSync(join(tmpdir(), "forge-board-guard-"));
     process.env["FORGE_GUARD_DIR"] = guard;
@@ -467,6 +488,9 @@ describe("the board's forge strip", () => {
       const blocked = await board("root");
       expect(blocked).toContain("rollout blocked: quota refused &lt;i&gt;8Gi&lt;/i&gt;");
       expect(blocked).not.toContain("<i>8Gi</i>");
+      // One line, and the board beneath it still renders.
+      expect(blocked.match(/class="board-forge-need"/g)?.length).toBe(1);
+      expect(blocked).toContain("board-card board-run");
       expect(await board("bob")).not.toContain("rollout blocked");
     } finally {
       delete process.env["FORGE_GUARD_DIR"];

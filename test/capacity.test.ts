@@ -35,7 +35,6 @@ import { createUser, type User } from "../src/core/users.ts";
 import { startCrew } from "../src/crew/dispatch.ts";
 import { Gate } from "../src/git/env.ts";
 import { readHealth } from "../src/actions/health.ts";
-import { EGRESS_REPORTED } from "../src/kernel/vitals.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
 
@@ -344,12 +343,12 @@ describe("report mode is loud to admins, and to nobody else", () => {
   const needs = (who: User | undefined): string[] =>
     "needs" in readHealth(app, who) ? (readHealth(app, who) as { needs: string[] }).needs : [];
 
-  test("reported: the admin's vitals and the Capacity page name what is open", async () => {
+  test("reported: the Capacity page says it once, as a note; vitals do not", async () => {
     expect(changeCapacity(app, alice, "cells.egress", "report").ok).toBe(true);
-    expect(needs(alice)).toContain(EGRESS_REPORTED);
-    expect(EGRESS_REPORTED).toContain("any public host on ports 80 and 443");
+    expect(needs(alice)).toEqual([]);
     const shown = await page();
     expect(shown).toContain('id="egress-reported"');
+    expect(shown).not.toMatch(/error-note[^>]*id="egress-reported"/);
     expect(shown.replace(/\s+/g, " ")).toContain("may reach any public host on ports 80 and 443");
   });
 
@@ -365,7 +364,6 @@ describe("report mode is loud to admins, and to nobody else", () => {
 
   test("enforced: no warning anywhere", async () => {
     expect(changeCapacity(app, alice, "cells.egress", "enforce").ok).toBe(true);
-    expect(needs(alice)).not.toContain(EGRESS_REPORTED);
     expect(await page()).not.toContain('id="egress-reported"');
   });
 });

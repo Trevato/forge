@@ -1,5 +1,7 @@
 /**
- * The forge's standing: is it fine, and if not, what is off. Plain data in,
+ * The forge's standing: is it fine, and if not, what is off. Only what needs
+ * a person now is a need; a setting that is not the default is a note on its
+ * own page (`web/pages/capacity.ts`), never here. Plain data in,
  * plain data out — the disk under `FORGE_DATA`, this process's memory, the
  * queue, runs that stopped making progress, and how many apps are serving,
  * asleep or previewed. A fixed handful of queries however many runs and
@@ -12,11 +14,6 @@ import { freemem, totalmem } from "node:os";
 import { recentErrors, type ErrorLine } from "./log.ts";
 import { leaseLapsed, listRunning, queueDepth } from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
-import { egressSetting } from "../core/capacity.ts";
-
-/** What every new cell may reach while egress is only reported. */
-export const EGRESS_REPORTED =
-  "Egress is reported, not enforced: every new app, preview, terminal and check cell may reach any public host on ports 80 and 443. Set it back to enforce under Settings → Capacity.";
 
 /** Free disk under this share of the volume is something to say. */
 export const DISK_FREE_MIN = 0.1;
@@ -113,10 +110,6 @@ export function vitals(input: VitalsInput): Vitals {
     needs.push(
       `${seen.lastHour} errors in the last hour (${ERROR_BURST} or more is a burst).`,
     );
-
-  // Deliberate, and still to be said while it lasts (`core/capacity.ts`):
-  // only an admin sees vitals, so naming what is open here tells nobody else.
-  if (egressSetting(input.db) === "report") needs.push(EGRESS_REPORTED);
 
   return {
     ok: needs.length === 0,
