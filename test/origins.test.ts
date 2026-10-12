@@ -735,8 +735,13 @@ describe("origins: connecting, mirroring, writing through", () => {
       origin: unknown;
     };
     expect(repo.name).toBe("widgets");
-    // The link is gone; everything it pointed at is still here.
-    expect(repo.origin).toBeNull();
+    // The link is gone; everything it pointed at is still here, and the
+    // mirror says it is frozen rather than passing for a native repo.
+    expect(repo.origin).toMatchObject({
+      originId: null,
+      fullName: "octo/widgets",
+      detached: true,
+    });
     const row = app.db
       .query<
         { origin_id: string | null; origin_full_name: string | null },

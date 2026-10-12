@@ -67,6 +67,7 @@ import {
   mirrorJobFor,
   pinRepo,
   pollOAuthConnect,
+  reattachMirror,
   registerOriginApp,
   startMirrorJob,
   startOAuthConnect,
@@ -444,8 +445,10 @@ const NO_COUNTS: RepoCounts = { openIssues: 0, openPulls: 0 };
  * page; a single repo pays one grouped query for itself.
  */
 function repoJson(ctx: Ctx, repo: Repo) {
+  const { detached: _detached, ...rest } = repo;
   return {
-    ...repo,
+    ...rest,
+    origin: originFacts(repo),
     counts:
       repo.counts ??
       countsForRepos(ctx.app.db, [repo.id]).get(repo.id) ??
@@ -454,6 +457,36 @@ function repoJson(ctx: Ctx, repo: Repo) {
       ctx.auth.user !== undefined &&
       isPinned(ctx.app.db, ctx.auth.user.id, repo.id),
   };
+}
+
+/**
+ * Where a mirror comes from, attached or not, in one shape (#1090). A
+ * mirror whose origin was disconnected is still a mirror — `detached`, with
+ * no origin id and the moment it froze — so a client can never read a
+ * frozen copy as a quiet upstream. A native repository has none.
+ */
+function originFacts(repo: Repo) {
+  const host = (url: string): string => URL.parse(url)?.host ?? "";
+  if (repo.origin !== null)
+    return {
+      ...repo.origin,
+      host: host(repo.origin.htmlUrl),
+      detached: false,
+      frozenSince: null,
+      detachedAt: null,
+    };
+  if (repo.detached !== null)
+    return {
+      originId: null,
+      kind: null,
+      fullName: repo.detached.fullName,
+      htmlUrl: repo.detached.htmlUrl,
+      host: host(repo.detached.htmlUrl),
+      detached: true,
+      frozenSince: repo.detached.frozenSince,
+      detachedAt: repo.detached.detachedAt,
+    };
+  return null;
 }
 
 /** An origin as the API returns it: everything except the credential. */
@@ -1679,6 +1712,15 @@ export function apiRoutes(router: Router<Handler>): void {
     return json({
       parent: `${relation.parent.ownerName}/${relation.parent.name}`,
       parentBranch: relation.parent.defaultBranch,
+      // A parent whose origin was disconnected: the counts below are against
+      // where it froze, never against its upstream (#1090).
+      parentFrozen:
+        relation.parent.detached === null
+          ? null
+          : {
+              detachedAt: relation.parent.detached.detachedAt,
+              frozenSince: relation.parent.detached.frozenSince,
+            },
       branch: repo.defaultBranch,
       state: relation.state,
       behind: relation.behind,
@@ -3149,7 +3191,15 @@ export function apiRoutes(router: Router<Handler>): void {
         connected.error === "rate_limited" ? 429 : 422,
         connectMessage(connected.error),
       );
-    return json(originJson(connected.value), 201);
+    // The frozen mirrors connecting this account brought back, and the ones
+    // it could not, each with its reason.
+    return json(
+      {
+        ...originJson(connected.value),
+        reattached: connected.value.reattached,
+      },
+      201,
+    );
   });
 
   // OAuth: one start route for both flows, because which flow you get is a
@@ -3559,6 +3609,26 @@ export function apiRoutes(router: Router<Handler>): void {
     const synced = await syncRepoNow(ctx.app, ctx.auth.user, repo);
     if (!synced.ok) return respondAccess(synced.error, 404);
     return json(synced.value);
+  });
+
+  // Reconnect a frozen mirror through one of the caller's origins (#1090).
+  // It lends that origin's credential to every later sync and push, so it
+  // takes an admin token and an admin of the repository; anyone else, and
+  // anyone else's origin, is not found.
+  router.add("POST", "/api/v1/repos/:owner/:name/origin/reconnect", async (ctx) => {
+    const denied = requireScope(ctx, "admin");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const done = await reattachMirror(
+      ctx.app,
+      ctx.auth.user,
+      repo,
+      str(input.originId),
+    );
+    if (!done.ok) return respondAccess(done.error, 422);
+    return json(repoJson(ctx, getRepoById(ctx.app.db, repo.id) ?? repo));
   });
 
   // ── fleet operations — one action over every row a query selects ─────

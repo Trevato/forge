@@ -1272,12 +1272,13 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
         .status,
     ).toBe(404);
 
-    // Mirrors remain, readable, un-linked, and out of the sync sweep.
+    // Mirrors remain, readable, un-linked, and out of the sync sweep: frozen,
+    // and said to be (#1090), with no origin id left to name.
     for (const name of ["widgets", "secret"]) {
       const repo = await read<{ origin: unknown; visibility: string }>(
         await api(`/api/v1/repos/alice/${name}`),
       );
-      expect(repo.origin).toBeNull();
+      expect(repo.origin).toMatchObject({ originId: null, detached: true });
     }
     expect(getRepo(app.db, "alice", "secret")!.visibility).toBe("private");
     expect(
