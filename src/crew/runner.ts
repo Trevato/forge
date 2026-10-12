@@ -1250,8 +1250,17 @@ async function prepareClone(
   signal: AbortSignal,
   keep = false,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  // Two addresses for one forge. The forge itself clones and fetches over
+  // `localUrl`, on this machine. The agent's remotes carry `forgeUrl`, the
+  // forge as the agent is told it: inside the shell sandbox, `localhost` is
+  // the sandbox's own and reaches nothing, while a named host goes out
+  // through the sandbox's proxy — so a remote on the local address would
+  // leave `git push` nowhere to go, and the only way to push would be to
+  // leave the sandbox, which is not a way.
   const url = `${options.localUrl}/${repo.ownerName}/${repo.name}.git`;
   const forkUrl = `${options.localUrl}/${fork.ownerName}/${fork.name}.git`;
+  const agentUrl = `${options.forgeUrl}/${repo.ownerName}/${repo.name}.git`;
+  const agentForkUrl = `${options.forgeUrl}/${fork.ownerName}/${fork.name}.git`;
   if (signal.aborted) return { ok: false, error: "cancelled" };
   if (!existsSync(join(dir, ".git"))) {
     mkdirSync(dir, { recursive: true });
@@ -1266,11 +1275,16 @@ async function prepareClone(
         error: `clone failed: ${cloned.error.stderr.slice(0, 200)}`,
       };
   } else {
-    const fetched = await runGit(["fetch", "--quiet", "--prune", "origin"], {
-      cwd: dir,
-      env,
-      timeoutMs: 2 * 60_000,
-    });
+    const fetched = await runGit(
+      [
+        "fetch",
+        "--quiet",
+        "--prune",
+        url,
+        `+refs/heads/*:refs/remotes/origin/*`,
+      ],
+      { cwd: dir, env, timeoutMs: 2 * 60_000 },
+    );
     if (!fetched.ok)
       return {
         ok: false,
@@ -1290,7 +1304,11 @@ async function prepareClone(
       }
     }
   }
-  await runGit(["config", "remote.origin.pushurl", forkUrl], { cwd: dir, env });
+  await runGit(["config", "remote.origin.url", agentUrl], { cwd: dir, env });
+  await runGit(["config", "remote.origin.pushurl", agentForkUrl], {
+    cwd: dir,
+    env,
+  });
   // The branch, if it exists, lives in the fork; its tracking ref is fetched
   // from there so the checkout starts at what the agent last pushed.
   const forkBare = repoDir(app.reposRoot, fork.ownerName, fork.name);

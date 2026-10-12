@@ -51,6 +51,20 @@ describe("the shell sandbox", () => {
     expect(off.enabled).toBe(false);
   });
 
+  test("is a boundary: no command runs outside it on request, and a host that would enforce it fails rather than runs open", () => {
+    type Sandbox = {
+      allowUnsandboxedCommands: boolean;
+      failIfUnavailable: boolean;
+    };
+    const on = claudeSettings(sandboxPolicy(input)).sandbox as Sandbox;
+    const off = claudeSettings(sandboxPolicy({ ...input, enforced: false }))
+      .sandbox as Sandbox;
+    expect(on.allowUnsandboxedCommands).toBe(false);
+    expect(off.allowUnsandboxedCommands).toBe(false);
+    expect(on.failIfUnavailable).toBe(true);
+    expect(off.failIfUnavailable).toBe(false);
+  });
+
   test("the probe answers with a reason when it cannot", async () => {
     const probe = await sandboxAvailable();
     if (process.platform === "darwin") expect(probe).toEqual({ ok: true });
@@ -66,7 +80,8 @@ describe("the sandbox on a run's record", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-sandbox-run-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, {
+      trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -112,7 +127,9 @@ describe("the sandbox on a run's record", () => {
 
   test("a later progress note does not erase it", () => {
     const run = agentRun();
-    noteRunProgress(app.db, run.id, { sandbox: { enforced: false, note: "x" } });
+    noteRunProgress(app.db, run.id, {
+      sandbox: { enforced: false, note: "x" },
+    });
     noteRunProgress(app.db, run.id, { costUsd: 1 });
     expect(getRun(app.db, run.id)!.sandboxEnforced).toBe(false);
   });
@@ -135,13 +152,24 @@ describe("the shell sandbox denies the whole data directory but the agent's own 
       "crew/torque/01repo/9",
     ])
       mkdirSync(join(dataDir, dir), { recursive: true });
-    for (const file of ["forge.db", "secret.key", "steward-direction-parked.txt", "checks/01check/src/a.ts"])
+    for (const file of [
+      "forge.db",
+      "secret.key",
+      "steward-direction-parked.txt",
+      "checks/01check/src/a.ts",
+    ])
       writeFileSync(join(dataDir, file), "x");
   });
   afterAll(async () => {
     await rm(dataDir, { recursive: true, force: true });
-    await rm(join(tmpdir(), "fc-forge-sandbox-neighbour"), { recursive: true, force: true });
-    await rm(join(dataDir, "..", `forge-sandbox-locked-${process.pid}`), { recursive: true, force: true });
+    await rm(join(tmpdir(), "fc-forge-sandbox-neighbour"), {
+      recursive: true,
+      force: true,
+    });
+    await rm(join(dataDir, "..", `forge-sandbox-locked-${process.pid}`), {
+      recursive: true,
+      force: true,
+    });
   });
 
   const policy = () =>
@@ -151,7 +179,15 @@ describe("the shell sandbox denies the whole data directory but the agent's own 
 
   test("every entry of the data directory is denied but crew/, known or not", () => {
     const { denyRead } = policy();
-    for (const entry of ["checks", "looks", "repos", "apps", "forge.db", "secret.key", "steward-direction-parked.txt"])
+    for (const entry of [
+      "checks",
+      "looks",
+      "repos",
+      "apps",
+      "forge.db",
+      "secret.key",
+      "steward-direction-parked.txt",
+    ])
       expect(denied(join(dataDir, entry), denyRead)).toBe(true);
     expect(denyRead).not.toContain(join(dataDir, "crew"));
   });
@@ -160,7 +196,9 @@ describe("the shell sandbox denies the whole data directory but the agent's own 
     const { denyRead } = policy();
     expect(denied(join(dataDir, "crew/mason"), denyRead)).toBe(true);
     expect(denied(join(dataDir, "crew/torque"), denyRead)).toBe(true);
-    expect(denied(join(dataDir, "crew/scout/.t/older-run"), denyRead)).toBe(true);
+    expect(denied(join(dataDir, "crew/scout/.t/older-run"), denyRead)).toBe(
+      true,
+    );
   });
 
   test("the agent still reaches its own working directory and its own run's temp", () => {
@@ -176,18 +214,39 @@ describe("the shell sandbox denies the whole data directory but the agent's own 
     expect(denyRead).toContain(join(homedir(), ".claude.json"));
     // This data directory lives in the temp directory, so the forge's own
     // pieces of it are denied: the shared Claude Code directory and a cell's.
-    mkdirSync(join(tmpdir(), "fc-forge-sandbox-neighbour"), { recursive: true });
-    expect(denied(join(tmpdir(), "fc-forge-sandbox-neighbour"), policy().denyRead)).toBe(true);
-    expect(policy().denyRead).toContain(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`));
+    mkdirSync(join(tmpdir(), "fc-forge-sandbox-neighbour"), {
+      recursive: true,
+    });
+    expect(
+      denied(join(tmpdir(), "fc-forge-sandbox-neighbour"), policy().denyRead),
+    ).toBe(true);
+    expect(policy().denyRead).toContain(
+      join(tmpdir(), `claude-${process.getuid?.() ?? 0}`),
+    );
     expect(dataInTemp(dataDir)).toBe(true);
     expect(dataInTemp("/srv/forge-data-nowhere")).toBe(false);
-    const elsewhere = sandboxPolicy({ dataDir: "/srv/forge-data-nowhere", agentName: "scout", urls: [] });
+    const elsewhere = sandboxPolicy({
+      dataDir: "/srv/forge-data-nowhere",
+      agentName: "scout",
+      urls: [],
+    });
     expect(elsewhere.denyRead).toContain(tmpdir());
   });
 
   test("the paths that must never be read are denied by name, listed or not", () => {
-    const { denyRead } = sandboxPolicy({ dataDir: "/srv/forge-data-nowhere", agentName: "scout", urls: [] });
-    for (const name of ["forge.db", "secret.key", "repos", "checks", "looks", "ssh"])
+    const { denyRead } = sandboxPolicy({
+      dataDir: "/srv/forge-data-nowhere",
+      agentName: "scout",
+      urls: [],
+    });
+    for (const name of [
+      "forge.db",
+      "secret.key",
+      "repos",
+      "checks",
+      "looks",
+      "ssh",
+    ])
       expect(denyRead).toContain(join("/srv/forge-data-nowhere", name));
   });
 
