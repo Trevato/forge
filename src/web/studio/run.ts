@@ -52,7 +52,6 @@ export function stopForm(ctx: Ctx, repo: Repo, run: Run): Html | null {
   </form>`;
 }
 
-
 /**
  * GET /:owner/:name/runs/:id: who is on it, the tell it came from, the
  * commit a deploy or a check is about, how long it has gone and what it has
@@ -71,8 +70,7 @@ export async function runView(
   const db = ctx.app.db;
   const base = repoBase(repo);
   const writer = canSeeOwnerFacts(db, repo, ctx.auth.user);
-  const actor =
-    run.actorId === null ? undefined : getUserById(db, run.actorId);
+  const actor = run.actorId === null ? undefined : getUserById(db, run.actorId);
   const issue =
     run.issueId === null ? undefined : getIssueById(db, run.issueId);
   // A deploy or a check speaks for itself (`runVoice`, shared with the tail
@@ -166,11 +164,13 @@ export async function runView(
       held.length > 0,
       () =>
         html`<p class="muted small" id="run-secrets">
-          Secrets held: ${held.map((h) => h.name).join(", ")}${held.every(
+          Secrets held:
+          ${held.map((h) => h.name).join(", ")}${held.every(
             (h) => h.releasedAt !== null,
           )
             ? " (released)"
-            : ""}. Values are never shown.
+            : ""}.
+          Values are never shown.
         </p>`,
     )}
   </div>`;
@@ -221,7 +221,9 @@ export async function runView(
       ${logBox({
         id: "run-log",
         who,
-        cap: all ? Math.max(lines.length, RUN_TRANSCRIPT_CAP) : RUN_TRANSCRIPT_CAP,
+        cap: all
+          ? Math.max(lines.length, RUN_TRANSCRIPT_CAP)
+          : RUN_TRANSCRIPT_CAP,
         lines,
         allHref: `${base}/runs/${run.id}?all=1`,
         truncated,
@@ -294,8 +296,9 @@ export async function runView(
     palette: repoPalette(ctx, repo),
     body,
     scriptJs: studioRunJs,
-    // The no-script half of a live log: while the run is going, the page
-    // refreshes itself; the script above removes this the moment it runs.
+    // The no-script half of a live log: with JavaScript off, the page
+    // refreshes itself while the run is going (`layout.ts` writes it inside
+    // `<noscript>`, so a browser running the stream above never reloads).
     ...(unfinished ? { refresh: { seconds: 5 } } : {}),
   });
 }

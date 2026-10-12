@@ -102,10 +102,6 @@ export const mirrorJs = /* js */ `
   if (!list || typeof EventSource === 'undefined') return;
   var url = list.getAttribute('data-stream');
   if (!url) return;
-  // The no-JS fallback and this cannot both be running: a meta refresh two
-  // seconds from now would throw away everything the stream has painted.
-  var meta = document.querySelector('meta[http-equiv="refresh"]');
-  if (meta && !/url=/i.test(meta.getAttribute('content') || '')) meta.remove();
 
   var rows = Array.prototype.slice.call(list.querySelectorAll('li[data-stage-name]'));
   var order = rows.map(function (li) { return li.getAttribute('data-stage-name'); });
@@ -331,8 +327,6 @@ export const studioRunJs = /* js */ `
   }
 
   if (!url || typeof EventSource === 'undefined') return;
-  var meta = document.querySelector('meta[http-equiv="refresh"]');
-  if (meta && !/url=/i.test(meta.getAttribute('content') || '')) meta.remove();
   var source = new EventSource(url);
   var empty = document.getElementById('run-empty');
   var seeded = false;
@@ -391,10 +385,6 @@ export const appTailJs = /* js */ `
   if (!url) return;
   var who = tail.getAttribute('data-who') || 'the crew';
   var cap = parseInt(tail.getAttribute('data-cap') || '0', 10) || 0;
-  // The no-script half refreshed the whole page while this run went; the
-  // stream above does better, so it steps aside the moment it can run.
-  var meta = document.querySelector('meta[http-equiv="refresh"]');
-  if (meta) meta.remove();
 
   ${logLineJs}
   function add(el) {
@@ -1207,17 +1197,6 @@ export const shellJs = /* js */ `
   // Controls that only mean something with a script running stay hidden
   // until one is: no dead buttons on a page with JavaScript switched off.
   doc.documentElement.classList.add('js');
-
-  // A page that refreshes itself is the no-script fallback for something a
-  // script keeps current — a run's log, a job's stages, a live region. With
-  // a script and an event stream here, the reload goes: what changes on the
-  // page arrives as it happens, and the page stays exactly where the reader
-  // left it. A refresh that leads somewhere else (\`url=\`) is a redirect,
-  // and stays.
-  if (typeof EventSource !== 'undefined') {
-    var reload = doc.querySelector('meta[http-equiv="refresh"]');
-    if (reload && !/url=/i.test(reload.getAttribute('content') || '')) reload.remove();
-  }
 
   // ---- menus (details) ----
   function closeMenus(except) {

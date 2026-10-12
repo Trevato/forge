@@ -303,7 +303,6 @@ export async function studioApp(
         </div>
       </form>`;
 
-
   // ---- now: one row per thing, in the five words (studio/now.ts) ----
   const { card: now, running } = await nowCard(ctx, repo, record, {
     openPulls,
@@ -398,27 +397,27 @@ export async function studioApp(
               what is ready without being asked.
             </p>`
           : html`<dl>
-              <dt>Mode</dt>
-              <dd>
-                ${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"}
-              </dd>
-              <dt>Today</dt>
-              <dd>
-                $${autonomy.spentTodayUsd.toFixed(2)} of
-                $${autonomy.ceilingUsd.toFixed(0)}
-              </dd>
-              <dt>Slots</dt>
-              <dd>${autonomy.active} of ${autonomy.slots} in use</dd>
-              ${autonomy.paused
-                ? html`<dt>Paused</dt>
-                    <dd>
-                      ${autonomy.paused === "ceiling"
-                        ? "at the ceiling, until 00:00 UTC"
-                        : autonomy.paused}
-                    </dd>`
-                : null}
-            </dl>
-            ${when(crew.length === 0, () => noCrewLine(`${base}/settings`))}`,
+                <dt>Mode</dt>
+                <dd>
+                  ${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"}
+                </dd>
+                <dt>Today</dt>
+                <dd>
+                  $${autonomy.spentTodayUsd.toFixed(2)} of
+                  $${autonomy.ceilingUsd.toFixed(0)}
+                </dd>
+                <dt>Slots</dt>
+                <dd>${autonomy.active} of ${autonomy.slots} in use</dd>
+                ${autonomy.paused
+                  ? html`<dt>Paused</dt>
+                      <dd>
+                        ${autonomy.paused === "ceiling"
+                          ? "at the ceiling, until 00:00 UTC"
+                          : autonomy.paused}
+                      </dd>`
+                  : null}
+              </dl>
+              ${when(crew.length === 0, () => noCrewLine(`${base}/settings`))}`,
         {
           head: html`${icon("play")}
             <h2>On its own</h2>
@@ -447,12 +446,14 @@ export async function studioApp(
     })}
     ${following === undefined ? "" : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
-    ${await policyLine(ctx, repo, record)} ${ownerFacts ? crewKeyNote(ctx) : null}
+    ${await policyLine(ctx, repo, record)}
+    ${ownerFacts ? crewKeyNote(ctx) : null}
     ${ownerFacts
       ? egressNote(
           ctx.app.config.dataDir,
           repo.id,
-          appsRuntime(ctx.app)?.liveFor(record, "production")?.cell?.egress ?? [],
+          appsRuntime(ctx.app)?.liveFor(record, "production")?.cell?.egress ??
+            [],
           egressSetting(ctx.app.db),
         )
       : null}
@@ -474,9 +475,10 @@ export async function studioApp(
     palette: repoPalette(ctx, repo),
     body,
     scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${appTailJs}`,
-    // The no-script half of the tail: while the crew's run goes, the page
-    // refreshes itself, the way the run's own page does; the script above
-    // removes this the moment it can stream lines instead.
+    // The no-script half of the tail: with JavaScript off, the page
+    // refreshes itself while the crew's run goes, the way the run's own page
+    // does; a browser running the script streams lines instead and never
+    // reloads (`layout.ts` writes the refresh inside `<noscript>`).
     ...(running || tailing ? { refresh: { seconds: 5 } } : {}),
   });
 }

@@ -402,8 +402,10 @@ so a card that is answered goes and a new one arrives without a reload.
 ### Live regions
 
 A page with a script never reloads itself: the `meta refresh` some pages
-carry is the no-script fallback, and the script removes it the moment it
-can stream. Every live region listens to one `EventSource` (`/events`,
+carry is the no-script fallback, written inside `<noscript>` so a browser
+running the script never even schedules it (removing the tag afterwards
+would not cancel a refresh the parser had already set). Every live region
+listens to one `EventSource` (`/events`,
 everything the viewer may see) and works like this:
 
 - **An address of its own.** A region carries `data-live-src` — `/live/apps`

@@ -98,6 +98,13 @@ export interface PageOptions {
    * `<meta http-equiv="refresh">`, optionally to somewhere else. Only a page
    * whose content is genuinely still moving should set it — a refresh a
    * reader did not ask for steals their scroll position and their selection.
+   *
+   * A plain refresh (no `url`) is written inside `<noscript>`: a browser
+   * running the page's script never parses it, so the script's stream is
+   * the only thing moving the page. Removing the element afterwards would
+   * not do — a refresh is scheduled the moment the parser meets the tag,
+   * and the timer outlives the element. A refresh that leads somewhere
+   * (`url`) is a redirect and stays in force either way.
    */
   refresh?: { seconds: number; url?: string };
   /**
@@ -158,7 +165,11 @@ function asksLink(ctx: Ctx): Html {
 }
 
 /** A whole forge for someone (`/forges/new`): any signed-in person's. */
-const NEW_FORGE: MenuItem = { label: "New forge", href: "/forges/new", icon: "fork" };
+const NEW_FORGE: MenuItem = {
+  label: "New forge",
+  href: "/forges/new",
+  icon: "fork",
+};
 
 /** The door shows only to an admin, and only while a child still fits here. */
 const sendsForges = (ctx: Ctx): boolean =>
@@ -294,7 +305,10 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
     limit: 30,
     appsFirst: true,
   });
-  const apps = appsForRepos(ctx.app.db, repos.map((r) => r.id));
+  const apps = appsForRepos(
+    ctx.app.db,
+    repos.map((r) => r.id),
+  );
   const items: PaletteItem[] = [
     ...extra,
     ...repos.map((r) => ({
@@ -303,8 +317,12 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
       c: apps.has(r.id) ? "Apps" : "Repositories",
     })),
     ...STATIC_PALETTE,
-    ...(sendsForges(ctx) ? [{ t: "New forge", h: "/forges/new", c: "Create" }] : []),
-    ...(ctx.auth.user?.isAdmin ? [{ t: "Forges you sent", h: "/forges", c: "Go to" }] : []),
+    ...(sendsForges(ctx)
+      ? [{ t: "New forge", h: "/forges/new", c: "Create" }]
+      : []),
+    ...(ctx.auth.user?.isAdmin
+      ? [{ t: "Forges you sent", h: "/forges", c: "Go to" }]
+      : []),
   ];
   // `studio` rides along so the palette's *remote* rows — what the search
   // API found, folded in the browser — build the same addresses the server
@@ -424,7 +442,9 @@ function topbar(
       )}
       <span class="spacer"></span>
       <span class="topbar-tools">
-        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${asksLink(ctx)}${themeMenu(theme)}
+        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${asksLink(
+          ctx,
+        )}${themeMenu(theme)}
         ${user
           ? html`<span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
                 ctx,
@@ -482,6 +502,22 @@ function pageDescription(options: PageOptions): string {
   const own = options.description?.trim().split(/\r?\n/)[0]?.trim() ?? "";
   const line = own === "" ? SITE_LINE : own;
   return line.length <= 200 ? line : `${line.slice(0, 197).trimEnd()}…`;
+}
+
+/**
+ * The `<meta http-equiv="refresh">` for `PageOptions.refresh`. A redirect
+ * (`url`) is a bare tag; a reload is wrapped in `<noscript>`, so only a
+ * browser with no script ever schedules it.
+ */
+export function refreshMeta(r: { seconds: number; url?: string }): Html {
+  if (r.url !== undefined)
+    return html`<meta
+      http-equiv="refresh"
+      content="${r.seconds}; url=${r.url}"
+    />`;
+  return html`<noscript
+    ><meta http-equiv="refresh" content="${String(r.seconds)}"
+  /></noscript>`;
 }
 
 export function page(options: PageOptions, status = 200): Response {
@@ -567,16 +603,7 @@ export function page(options: PageOptions, status = 200): Response {
               href="${f.href}"
             />`,
         )}
-        ${when(
-          options.refresh,
-          (r) =>
-            html`<meta
-              http-equiv="refresh"
-              content="${r.url === undefined
-                ? String(r.seconds)
-                : `${r.seconds}; url=${r.url}`}"
-            />`,
-        )}
+        ${when(options.refresh, refreshMeta)}
         ${theme
           ? html`<meta name="theme-color" content="${metaThemeColor(theme)}" />`
           : html`<meta

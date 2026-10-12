@@ -37,6 +37,7 @@ export const GATE: readonly string[] = [
   "test/commit-identity.test.ts",
   "test/enterable-apps.test.ts",
   "test/event-order.test.ts",
+  "test/refresh-meta.test.ts",
   "test/returns.test.ts",
   "test/review-route.test.ts",
   "test/review-lines.test.ts",
@@ -219,7 +220,8 @@ export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/audit.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/board-windows.test.ts",
-    reason: "red: an app with spend and nothing shipped is missing from the board",
+    reason:
+      "red: an app with spend and nothing shipped is missing from the board",
     issue: 555,
   },
   { file: "test/branches.test.ts", reason: "not yet admitted", issue: 261 },
