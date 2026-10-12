@@ -43,6 +43,7 @@ import { listReviews } from "../src/core/reviews.ts";
 import { getIssue, listComments } from "../src/core/issues.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
+import { listPaths } from "../src/git/read.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { getForkOf, type Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
@@ -53,9 +54,9 @@ import { spellings, stripForgeDirs } from "../src/runs/paths.ts";
 
 describe("stripForgeDirs", () => {
   test("strips a known directory, leaves the rest of the path", () => {
-    expect(stripForgeDirs(["/data/crew/bot/1/2"], "/data/crew/bot/1/2/src/a.ts")).toBe(
-      "src/a.ts",
-    );
+    expect(
+      stripForgeDirs(["/data/crew/bot/1/2"], "/data/crew/bot/1/2/src/a.ts"),
+    ).toBe("src/a.ts");
   });
 
   test("a line with no match passes through whole", () => {
@@ -204,6 +205,9 @@ if grep -q "You are the reviewer on this crew" "${promptFile}"; then
 fi
 if grep -q "The check on your pull" "${promptFile}"; then echo "daffodils" >> CREW.md; fi
 echo "work by the crew $(date +%s%N)" >> CREW.md
+# What a sandboxed shell leaves beside the code: a temp directory with a
+# package cache in it. Never the work; the clone's exclude keeps it out.
+mkdir -p .tmp/cache && echo "junk" > .tmp/cache/leftover
 git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Added CREW.md."},{"type":"tool_use","name":"Read","input":{"file_path":"'"$(pwd)"'/CREW.md"}},{"type":"tool_use","name":"Bash","input":{"command":"cat /etc/hosts"}},{"type":"tool_use","name":"Bash","input":{"command":"git push"}}]}}'
 echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW.md as asked.","total_cost_usd":0.01,"num_turns":3,"session_id":"fake-1","terminal_reason":"completed"}'
@@ -219,7 +223,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       budgetUsd: 1,
       runTimeoutMs: 60_000,
     });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, {
+      trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -344,6 +349,16 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
         "refs/heads/bot/1-plant-tulips",
       ),
     ).toBe(pull.headOid);
+    // The work reached the pull; what the sandbox left beside it (`.tmp/`,
+    // added with the rest by `git add -A`) never did: the clone's exclude
+    // file keeps it out of every crew commit.
+    const pushed = await listPaths(
+      repoDir(app.reposRoot, fork.ownerName, fork.name),
+      pull.headOid,
+    );
+    if (!pushed.ok) throw new Error(String(pushed.error));
+    expect(pushed.value.paths).toContain("CREW.md");
+    expect(pushed.value.paths.some((p) => p.startsWith(".tmp/"))).toBe(false);
     expect(pull.body).toContain("Added CREW.md as asked.");
     expect(pull.body).toContain(`Closes #${issueNumber}`);
     // A tool line names the file the way the repository does — the run's
@@ -566,7 +581,9 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       (r) => r.issueId === issue.value.id && r.attempt === 0,
     );
     expect(paused.state).toBe("cancelled");
-    expect(paused.summary).toMatch(/^paused: the 5-hour window is full until 07:20 UTC; resumes 07:21 UTC/);
+    expect(paused.summary).toMatch(
+      /^paused: the 5-hour window is full until 07:20 UTC; resumes 07:21 UTC/,
+    );
     expect(paused.summary).toContain("resumes 07:21 UTC");
     expect(paused.sessionId).toBe("fake-1");
     // Nothing landed: no branch pushed, no pull.

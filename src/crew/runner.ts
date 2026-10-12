@@ -12,7 +12,7 @@
  */
 
 import { capacityEnv } from "../core/capacity.ts";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { addComment } from "../actions/issues.ts";
@@ -277,7 +277,14 @@ export async function executeAgentRun(
   };
   let outcome: Outcome;
   try {
-    outcome = await work(app, claimed, options, write, controller.signal, meter);
+    outcome = await work(
+      app,
+      claimed,
+      options,
+      write,
+      controller.signal,
+      meter,
+    );
   } catch (error) {
     log.error("agent run threw", { run: run.id, error: String(error) });
     outcome = {
@@ -311,9 +318,7 @@ export async function executeAgentRun(
     outcome.state === "failed"
       ? interruptedSummary(outcome.summary, outcome.resumesAt)
       : outcome.summary;
-  write(
-    outcome.state === "ok" ? `done: ${summary}` : `failed: ${summary}`,
-  );
+  write(outcome.state === "ok" ? `done: ${summary}` : `failed: ${summary}`);
   const done = finishRun(app.db, run.id, {
     state: outcome.state,
     summary,
@@ -521,18 +526,18 @@ function meterUsage(
   // deleted under the run) is logged, never the run's failure.
   try {
     recordUsage(app.db, {
-    runId: run.id,
-    repoId: run.repoId,
-    issueId: run.issueId,
-    agentId: run.actorId,
-    subscriptionId: meter.subscriptionId,
-    kind: meter.kind,
-    tokensIn: meter.tokensIn,
-    tokensOut: meter.tokensOut,
-    costUsd: outcome.costUsd ?? 0,
-    wallMs: ended.getTime() - started,
-    outcome: result,
-    at: ended.toISOString(),
+      runId: run.id,
+      repoId: run.repoId,
+      issueId: run.issueId,
+      agentId: run.actorId,
+      subscriptionId: meter.subscriptionId,
+      kind: meter.kind,
+      tokensIn: meter.tokensIn,
+      tokensOut: meter.tokensOut,
+      costUsd: outcome.costUsd ?? 0,
+      wallMs: ended.getTime() - started,
+      outcome: result,
+      at: ended.toISOString(),
     });
   } catch (error) {
     log.warn("usage not recorded", { run: run.id, error: String(error) });
@@ -931,32 +936,32 @@ async function work(
     ): Promise<ClaudeOutcome> => {
       const spent = redactResult(
         await runClaude({
-        binary: options.binary,
-        cwd: dir,
-        prompt,
-        appendSystemPrompt: systemPrompt(brief),
-        model: agent.model || undefined,
-        budgetUsd,
-        resume,
-        env,
-        sandbox: shellPolicy(),
-        timeoutMs: Math.max(deadline - Date.now(), 0),
-        log: write,
-        signal,
-        onSteer: (send) => steering.set(run.id, send),
-        onUsage: (so) =>
-          meterLive(
-            app,
-            run,
-            meter,
-            {
-              tokensIn: meter.tokensIn + so.tokensIn,
-              tokensOut: meter.tokensOut + so.tokensOut,
-              costUsd: meter.costUsd + so.costUsd,
-            },
-            started,
-            so.costUsd > 0,
-          ),
+          binary: options.binary,
+          cwd: dir,
+          prompt,
+          appendSystemPrompt: systemPrompt(brief),
+          model: agent.model || undefined,
+          budgetUsd,
+          resume,
+          env,
+          sandbox: shellPolicy(),
+          timeoutMs: Math.max(deadline - Date.now(), 0),
+          log: write,
+          signal,
+          onSteer: (send) => steering.set(run.id, send),
+          onUsage: (so) =>
+            meterLive(
+              app,
+              run,
+              meter,
+              {
+                tokensIn: meter.tokensIn + so.tokensIn,
+                tokensOut: meter.tokensOut + so.tokensOut,
+                costUsd: meter.costUsd + so.costUsd,
+              },
+              started,
+              so.costUsd > 0,
+            ),
         }),
       );
       meter.tokensIn += spent.tokensIn;
@@ -1331,6 +1336,13 @@ async function prepareClone(
     cwd: dir,
     env,
   });
+  // What a run leaves in its tree that is never the work: the temp
+  // directory a sandboxed shell keeps beside the code (`.tmp/`), with bun's
+  // install cache and a test's data in it, and `node_modules/`. The wrap-up
+  // commits leftovers with `git add -A`, so the clone says so once, in its
+  // own exclude file — the repository's `.gitignore` is the repository's.
+  mkdirSync(join(dir, ".git", "info"), { recursive: true });
+  writeFileSync(join(dir, ".git", "info", "exclude"), CLONE_EXCLUDES);
   write(
     remote === undefined
       ? `branch ${branch} from ${repo.defaultBranch}`
@@ -1338,6 +1350,14 @@ async function prepareClone(
   );
   return { ok: true };
 }
+
+/** Never the work, in any repository the crew clones: git's own exclude syntax. */
+export const CLONE_EXCLUDES = [
+  "# written by the forge for every crew clone",
+  ".tmp/",
+  "node_modules/",
+  "",
+].join("\n");
 
 /**
  * After the agent stops: push what it committed if it did not, open the
@@ -1471,9 +1491,11 @@ async function landWork(
 
   const existing =
     pull ??
-    listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 200 }).find(
-      (p) => p.headRepoId === fork.id && p.headBranch === branch,
-    );
+    listPulls(app.db, repo.id, {
+      sealed: true,
+      state: "open",
+      limit: 200,
+    }).find((p) => p.headRepoId === fork.id && p.headBranch === branch);
   if (existing !== undefined) {
     if (report !== "") addComment(app, agent.user, repo, existing, report);
     return {
