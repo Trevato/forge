@@ -245,6 +245,10 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
       htmlUrl: `${originServers.url}/octo/widgets`,
     });
     octo = serveFakeForge(octoState);
+    // The repository's page lives on the origin's own site, as it does on a
+    // real Forgejo; only the git clone comes from the forge standing in for
+    // its git host. A reconnect compares sites, scheme and port included.
+    octoState.repos[0]!.htmlUrl = `${octo.url}/octo/widgets`;
     mona = serveFakeForge(newFakeState("forgejo", "mona", MONA_TOKEN));
 
     app = createApp({ dataDir, port: 0 });
@@ -456,13 +460,34 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
     expect(await mirrorMain()).toBe(before);
   });
 
-  test("connecting an account that cannot see it reports the refusal and still connects", async () => {
+  test("another port is another site: not offered, not reattached, refused by hand", async () => {
+    // mona's forge shares the hostname and differs only by port.
     const connected = await connect(mona, MONA_TOKEN);
     expect(connected.status).toBe(201);
     const body = await read<{ id: string; reattached: Reattached[] }>(
       connected,
     );
     monaOriginId = body.id;
+    expect(body.reattached).toEqual([]);
+    expect((await repoJson()).origin?.detached).toBe(true);
+    // The page still says frozen, but offers nothing to reconnect with:
+    // mona's origin is another site, so it is not in the list.
+    const page = await words(await api("/alice/widgets"));
+    expect(page).toContain("frozen");
+    expect(page).not.toContain(`value="${monaOriginId}"`);
+    const refused = await reconnect(monaOriginId);
+    expect(refused.status).toBe(422);
+    expect((await read<{ error: string }>(refused)).error).toBe("wrong_host");
+  });
+
+  test("on the right site: an account that cannot see the repository is refused, and a mirror with no remembered id is never guessed", async () => {
+    // The account can no longer see octo/widgets.
+    const held = octo.state.repos.splice(0, octo.state.repos.length);
+    const connected = await connect(octo, ORIGIN_TOKEN);
+    expect(connected.status).toBe(201);
+    const body = await read<{ id: string; reattached: Reattached[] }>(
+      connected,
+    );
     expect(body.reattached).toEqual([
       {
         owner: "alice",
@@ -472,11 +497,30 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
       },
     ]);
     expect((await repoJson()).origin?.detached).toBe(true);
-    // Its origin is on the same host now, so the page offers it.
-    const page = await words(await api("/alice/widgets"));
-    expect(page).toContain("/alice/widgets/settings/origin/reconnect");
-    expect(page).toContain(`value="${monaOriginId}"`);
-    expect((await reconnect(monaOriginId)).status).toBe(422);
+    octo.state.repos.push(...held);
+    // A mirror from before remote ids were kept is not guessed at: the same
+    // name could be a repository made again.
+    const repoId = getRepo(app.db, "alice", "widgets")!.id;
+    const prior = app.db
+      .query<{ origin_remote_id: string }, [string]>(
+        "SELECT origin_remote_id FROM repo WHERE id = ?1",
+      )
+      .get(repoId)!.origin_remote_id;
+    expect(prior).not.toBe("");
+    app.db
+      .query("UPDATE repo SET origin_remote_id = '' WHERE id = ?1")
+      .run(repoId);
+    const guessed = await reconnect(body.id);
+    expect(guessed.status).toBe(422);
+    expect((await read<{ error: string }>(guessed)).error).toBe(
+      "remote_unknown",
+    );
+    app.db
+      .query("UPDATE repo SET origin_remote_id = ?1 WHERE id = ?2")
+      .run(prior, repoId);
+    // Leave things as the next test expects: the mirror frozen, this origin gone.
+    await disconnect(body.id);
+    expect((await repoJson()).origin?.detached).toBe(true);
   });
 
   test("an origin on another host is refused", async () => {
@@ -578,27 +622,23 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
   });
 
   test("reconnecting by hand, through the API and through the page", async () => {
-    // Mona can see it now, under the same remote id.
-    mona.state.repos.push({
-      ...widgetsRepo,
-      cloneUrl: `${originServers.url}/octo/widgets.git`,
-      htmlUrl: `${originServers.url}/octo/widgets`,
-    });
-
+    // Another connection of alice's on the same site — the way a person
+    // reconnects after making a fresh token for the same forge.
     await disconnect(originId);
     let tip = await advanceUpstream("api.txt");
-    const viaApi = await reconnect(monaOriginId);
+    const byApi = originRow(octo, octo.url);
+    const viaApi = await reconnect(byApi);
     expect(viaApi.status).toBe(200);
     const json = await read<RepoJson>(viaApi);
     expect(json.origin).toMatchObject({
-      originId: monaOriginId,
+      originId: byApi,
       detached: false,
     });
     await mirrorReaches(tip);
 
-    await disconnect(monaOriginId);
+    await disconnect(byApi);
     expect((await repoJson()).origin?.detached).toBe(true);
-    const again = originRow(mona, mona.url);
+    const again = originRow(octo, octo.url);
     tip = await advanceUpstream("page.txt");
     const viaPage = await api("/alice/widgets/settings/origin/reconnect", {
       method: "POST",
@@ -608,7 +648,7 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
     expect(viaPage.status).toBe(303);
     expect(
       decodeURIComponent(viaPage.headers.get("set-cookie") ?? ""),
-    ).toContain(`Reconnected to mona at ${new URL(mona.url).host}; syncing.`);
+    ).toContain(`Reconnected to ${octo.state.login} at ${new URL(octo.url).host}; syncing.`);
     await mirrorReaches(tip);
     expect((await repoJson()).origin).toMatchObject({
       originId: again,

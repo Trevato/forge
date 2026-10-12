@@ -28,7 +28,7 @@ import {
   findOrigin,
   getOriginById,
   getOriginFor,
-  hostOf,
+  hostOf, siteOf,
   linkRepoToOrigin,
   listDetachedMirrors,
   listMirrors,
@@ -821,6 +821,7 @@ export type ReattachError =
   | AccessError
   | "not_detached"
   | "wrong_host"
+  | "remote_unknown"
   | "origin_cannot_see"
   | "not_the_same_repo"
   | "already_mirrored"
@@ -884,7 +885,7 @@ async function afterConnect(
 ): Promise<Reattachment[]> {
   const out: Reattachment[] = [];
   for (const mirror of listDetachedMirrors(app.db, {
-    host: hostOf(origin.webUrl),
+    site: siteOf(origin.webUrl),
     ownerId: user.id,
   })) {
     const repo = getRepoById(app.db, mirror.repoId);
@@ -916,8 +917,12 @@ async function attach(
   const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
   const came =
     mirror.htmlUrl !== "" ? mirror.htmlUrl : await mirrorRemoteUrl(dir);
-  if (hostOf(came) === "" || hostOf(came) !== hostOf(origin.webUrl))
+  if (siteOf(came) === "" || siteOf(came) !== siteOf(origin.webUrl))
     return err("wrong_host");
+  // A mirror made before the forge kept the origin's id for it cannot be
+  // told apart from a repository made again under the same name, and a
+  // sync would prune its history into the newcomer's. It is not guessed.
+  if (mirror.remoteId === "") return err("remote_unknown");
   if (origin.needsReauth) return err("needs_reauth");
   const provider = providerForOrigin(app, origin);
   if (!provider.ok) return err("needs_reauth");

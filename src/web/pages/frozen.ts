@@ -16,7 +16,7 @@ import {
   reattachMirror,
   type ReattachError,
 } from "../../actions/origins.ts";
-import { hostOf } from "../../core/origins.ts";
+import { hostOf, siteOf } from "../../core/origins.ts";
 import { canAdmin, type Repo, type RepoDetached } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, notFoundPage, repoBase } from "../chrome.ts";
@@ -66,14 +66,16 @@ export function frozenBlock(ctx: Ctx, repo: Repo): Html | null {
   const user = ctx.auth.user;
   const admin = user !== undefined && canAdmin(ctx.app.db, repo, user);
   const host = hostOf(d.htmlUrl);
-  // Only the viewer's own working origins: reconnecting lends the mirror a
-  // credential, nobody can lend one that is not theirs, and one that needs
-  // re-authorizing has nothing to lend until it is (which, done under
-  // Settings → Origins, reconnects this mirror by itself).
+  const site = siteOf(d.htmlUrl);
+  // Only the viewer's own working origins on the same site — scheme, host
+  // and port: reconnecting lends the mirror a credential, nobody can lend
+  // one that is not theirs, and one that needs re-authorizing has nothing
+  // to lend until it is (which, done under Settings → Origins, reconnects
+  // this mirror by itself).
   const origins =
     admin && user !== undefined
       ? listUserOrigins(ctx.app, user).filter(
-          (o) => !o.needsReauth && (host === "" || hostOf(o.webUrl) === host),
+          (o) => !o.needsReauth && (site === "" || siteOf(o.webUrl) === site),
         )
       : [];
   // The forge's own origin, scheme and all, so the connect form it lands on
@@ -133,6 +135,8 @@ export function reattachMessage(
       return host === ""
         ? `That origin is not on the forge ${name} came from.`
         : `That origin is not on ${host}, where ${name} came from.`;
+    case "remote_unknown":
+      return `${name} was mirrored before this forge kept the origin's id for it, so it cannot be told apart from a repository made again under the same name. Mirror it again.`;
     case "origin_cannot_see":
       return `That account cannot see ${name}; connect one that can.`;
     case "not_the_same_repo":

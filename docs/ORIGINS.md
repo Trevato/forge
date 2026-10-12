@@ -418,6 +418,14 @@ every mirror it tried, re-attached or not and why
 that came back), and the page's flash says "Reconnected 1 mirror:
 trevato/forge-upstream".
 
+Two rules keep a reconnect honest. The origin must be on the same **site** as
+the mirror's remembered page — scheme, host and port — because `git.example`
+and `git.example:8443` are two servers, and a mirror reattached across them
+would sync from the wrong one. And a mirror made before the forge kept the
+origin's id for it is not reconnected (`remote_unknown`): it cannot be told
+apart from a repository made again under the same name, and a sync would
+prune its history into the newcomer's; mirror it again instead.
+
 ## Migrate — bringing a repository here for good
 
 A mirror keeps answering to its origin. A **migration** does not: it is a

@@ -3711,9 +3711,7 @@ export function apiRoutes(router: Router<Handler>): void {
             sshPort !== undefined && sshPort > 0
               ? `ssh://git@${host}:${sshPort}/${path}.git`
               : null,
-          origin: repo.origin
-            ? { fullName: repo.origin.fullName, htmlUrl: repo.origin.htmlUrl }
-            : null,
+          origin: originFacts(repo),
           pinnedAt: pin.createdAt,
         },
       ];

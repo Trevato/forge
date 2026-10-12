@@ -618,6 +618,16 @@ export function hostOf(url: string): string {
   return URL.parse(url)?.hostname.toLowerCase() ?? "";
 }
 
+/**
+ * The site a URL names — scheme, host and port — which is what "the same
+ * origin" means for a mirror: `git.example:8443` and `git.example` are two
+ * servers, and a mirror reattached across them would sync from the wrong
+ * one. `hostOf` is for reading; this is for deciding.
+ */
+export function siteOf(url: string): string {
+  return URL.parse(url)?.origin.toLowerCase() ?? "";
+}
+
 interface DetachedRow {
   id: string;
   owner_id: string;
@@ -658,13 +668,14 @@ export function detachedMirror(
 
 /**
  * Every detached mirror, oldest first — owned by `ownerId`, and remembered
- * on `host`, when those are given. The host is read from the remembered
- * page; a mirror whose page was never recorded is kept, because only its
- * git remote can say where it lived and that is the caller's to read.
+ * on `site` (scheme, host and port), when those are given. The site is read
+ * from the remembered page; a mirror whose page was never recorded is kept,
+ * because only its git remote can say where it lived and that is the
+ * caller's to read.
  */
 export function listDetachedMirrors(
   db: Database,
-  filter: { host?: string; ownerId?: string } = {},
+  filter: { site?: string; ownerId?: string } = {},
 ): DetachedMirror[] {
   const rows =
     filter.ownerId === undefined
@@ -675,12 +686,12 @@ export function listDetachedMirrors(
             [string]
           >(`${DETACHED_SELECT} AND owner_id = ?1 ORDER BY id`)
           .all(filter.ownerId);
-  const host = filter.host?.toLowerCase();
+  const site = filter.site?.toLowerCase();
   return rows
     .map(toDetached)
     .filter(
       (m) =>
-        host === undefined || m.htmlUrl === "" || hostOf(m.htmlUrl) === host,
+        site === undefined || m.htmlUrl === "" || siteOf(m.htmlUrl) === site,
     );
 }
 
