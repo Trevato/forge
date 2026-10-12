@@ -143,8 +143,12 @@ describe("the board", () => {
     expect(html).toContain("new EventSource('/events')");
     expect(html).toContain("requestFullscreen");
     // A wall left open all day fetches its 13 KB of rules once, with the rest
-    // of the design, instead of carrying them inline on every reload.
-    expect(html).not.toContain("<style");
+    // of the design, instead of carrying them inline on every reload. The one
+    // style element every page carries is the boot style that paints the
+    // canvas before the stylesheet arrives (layout.ts, `bootCss`): tiny, and
+    // never a rule of the board's own.
+    expect(html.match(/<style/g)).toHaveLength(1);
+    expect(html).not.toMatch(/<style[^>]*>[^<]*\.board-/);
     expect(html).toContain(
         `<link rel="stylesheet" href="${stylesheetAsset().path}"`,
       );

@@ -128,6 +128,8 @@ export const GATE: readonly string[] = [
   "test/standing.test.ts",
   "test/board.test.ts",
   "test/spawn-plan.test.ts",
+  "test/spawn-anon.test.ts",
+  "test/spawn-host.test.ts",
   "test/spawn.test.ts",
   "test/spawn-api.test.ts",
   "test/spawn-child-apps.test.ts",
