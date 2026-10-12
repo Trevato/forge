@@ -237,14 +237,29 @@ describe("dropLegacyNewAccountGuards", () => {
       END;`);
     // The second generation of the guard, as the live forge carried it: it
     // waited for spending limits that have long since arrived, and refused
-    // the forge's own admin.
-    app.db.exec(`CREATE TRIGGER guard_paused BEFORE INSERT ON repo
+    // the forge's own admin — on another table, in other words.
+    app.db.exec(`CREATE TRIGGER guard_paused BEFORE INSERT ON app
       BEGIN
         SELECT RAISE(ABORT, 'This is paused for new accounts while the forge adds spending and resource limits. Ask the forge''s owner.');
       END;`);
+    // The operator's family of 2026-10-05: named steward_…, on run and on
+    // repo_crew, refusing anyone outside a hand-kept table.
+    app.db.exec(
+      `CREATE TABLE IF NOT EXISTS steward_trusted_owner(user_id TEXT PRIMARY KEY, note TEXT);`,
+    );
+    app.db.exec(`CREATE TRIGGER steward_guard_crew BEFORE INSERT ON repo_crew
+      WHEN (SELECT owner_id FROM repo WHERE id = NEW.repo_id) NOT IN (SELECT user_id FROM steward_trusted_owner)
+      BEGIN SELECT RAISE(ABORT, 'crew is not enabled for this account yet'); END;`);
+    app.db.exec(`CREATE TRIGGER steward_hold_build_checks BEFORE INSERT ON run
+      BEGIN SELECT RAISE(ABORT, 'held by the steward'); END;`);
 
     const dropped = dropLegacyNewAccountGuards(app.db);
-    expect(dropped.sort()).toEqual(["guard_noobs", "guard_paused"]);
+    expect(dropped.sort()).toEqual([
+      "guard_noobs",
+      "guard_paused",
+      "steward_guard_crew",
+      "steward_hold_build_checks",
+    ]);
 
     const remaining = app.db
       .query<{ name: string }, []>(
