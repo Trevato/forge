@@ -207,9 +207,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const { run, fresh } = transact(app.db, () => {
       for (const active of listActive(app.db, "check")) {
         if (active.repoId !== repo.id || active.env !== env) continue;
-        if (active.commitOid === commitOid) return { run: active, fresh: false };
+        if (active.commitOid === commitOid)
+          return { run: active, fresh: false };
         if (active.state === "queued")
-          cancelRun(app.db, active.id, `superseded by ${commitOid.slice(0, 7)}`);
+          cancelRun(
+            app.db,
+            active.id,
+            `superseded by ${commitOid.slice(0, 7)}`,
+          );
       }
       const created = createRun(app.db, {
         repoId: repo.id,
@@ -425,6 +430,11 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         FORGE_URL: options.forgeUrl,
         FORGE_CHECK: run.id,
         FORGE_COMMIT: run.commitOid,
+        // A cell inside a cell is not a cell. This check's own cell is the
+        // boundary; a forge the tests boot inside it would wrap its apps in
+        // nested cells, and those never answer in time. Its children run as
+        // plain processes here — as they do on a runner without bwrap.
+        FORGE_CELLS: "off",
       });
       if (manifest.install !== null) {
         const installed = await runStep("install", manifest.install, {
@@ -521,7 +531,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
               undefined,
               actor,
             );
-          for (const pull of listPulls(app.db, repo.id, { sealed: true,
+          for (const pull of listPulls(app.db, repo.id, {
+            sealed: true,
             state: "open",
             limit: 200,
           })) {

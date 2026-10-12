@@ -67,7 +67,12 @@ describe("parseBunTestFailure: a convenience over one known runner, not a genera
   });
 
   test("a name arbitrary text from a subprocess, kept verbatim — escaping is the page's job, not the parser's", () => {
-    const lines = ["(fail) <script>alert(1)</script> [1.00ms]", " 0 pass", " 1 fail", "Ran 1 test across 1 file. [1.00ms]"];
+    const lines = [
+      "(fail) <script>alert(1)</script> [1.00ms]",
+      " 0 pass",
+      " 1 fail",
+      "Ran 1 test across 1 file. [1.00ms]",
+    ];
     expect(parseBunTestFailure(lines)?.names).toEqual([
       "<script>alert(1)</script>",
     ]);
@@ -91,12 +96,19 @@ describe("parseBunTestFailure: a convenience over one known runner, not a genera
 
   test("output that is not bun test's own shape is not guessed at", () => {
     expect(
-      parseBunTestFailure(["$ test -f NOPE.md", "test: NOPE.md: No such file or directory"]),
+      parseBunTestFailure([
+        "$ test -f NOPE.md",
+        "test: NOPE.md: No such file or directory",
+      ]),
     ).toBeUndefined();
     // A `pass` line with no `fail` line beside it is not this shape either.
-    expect(parseBunTestFailure([" 5 pass", "Ran 5 tests across 1 file."])).toBeUndefined();
+    expect(
+      parseBunTestFailure([" 5 pass", "Ran 5 tests across 1 file."]),
+    ).toBeUndefined();
     // All green: nothing failed, so there is nothing to summarise.
-    expect(parseBunTestFailure([" 5 pass", " 0 fail", "Ran 5 tests across 1 file."])).toBeUndefined();
+    expect(
+      parseBunTestFailure([" 5 pass", " 0 fail", "Ran 5 tests across 1 file."]),
+    ).toBeUndefined();
   });
 });
 
@@ -107,7 +119,7 @@ describe("summariseCheckFailure: what a failed check's summary says first", () =
       "",
       "check.test.ts:",
       "1 tests failed:",
-      '(fail) the forge\'s own restart never reads as this deploy\'s failure (issue #255) > an install still in flight when the runtime stops finishes cancelled, not failed [30000.49ms]',
+      "(fail) the forge's own restart never reads as this deploy's failure (issue #255) > an install still in flight when the runtime stops finishes cancelled, not failed [30000.49ms]",
       "  ^ this test timed out after 30000ms.",
       "",
       " 409 pass",
@@ -116,7 +128,7 @@ describe("summariseCheckFailure: what a failed check's summary says first", () =
     ];
     expect(summariseCheckFailure(lines, "check exited with code 1")).toEqual({
       summary:
-        '1 of 410 tests — "the forge\'s own restart never reads as this deploy\'s failure (issue #255) > an install still in flight when the runtime stops finishes cancelled, not failed"',
+        "1 of 410 tests — \"the forge's own restart never reads as this deploy's failure (issue #255) > an install still in flight when the runtime stops finishes cancelled, not failed\"",
       detail: {
         passed: 409,
         failed: 1,
@@ -129,9 +141,7 @@ describe("summariseCheckFailure: what a failed check's summary says first", () =
 
   test("output with no bun test shape yields the last non-empty line, not the bare exit code", () => {
     const lines = ["src/foo.ts(10,5): error TS2345: not assignable", ""];
-    expect(
-      summariseCheckFailure(lines, "check exited with code 2"),
-    ).toEqual({
+    expect(summariseCheckFailure(lines, "check exited with code 2")).toEqual({
       summary: "src/foo.ts(10,5): error TS2345: not assignable",
       detail: undefined,
     });
@@ -147,7 +157,10 @@ describe("summariseCheckFailure: what a failed check's summary says first", () =
   test("a very long name is bounded to one line", () => {
     const long = "x".repeat(500);
     const lines = [`(fail) ${long} [1.00ms]`, " 0 pass", " 1 fail"];
-    const { summary } = summariseCheckFailure(lines, "check exited with code 1");
+    const { summary } = summariseCheckFailure(
+      lines,
+      "check exited with code 1",
+    );
     expect(summary.length).toBeLessThanOrEqual(200);
     expect(summary.endsWith("…")).toBe(true);
   });
@@ -182,7 +195,8 @@ describe("checks", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, {
+      trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -190,7 +204,8 @@ describe("checks", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, {
+      trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -238,6 +253,28 @@ describe("checks", () => {
     expect(run.summary).toMatch(/^check passed in \d+s$/);
     const log = readRunLog(dataDir, run.id).lines.join("\n");
     expect(log).toContain("$ test -f OK.md");
+  });
+
+  test("a check's children hold no cells of their own: the check's cell is the boundary", async () => {
+    // A forge the tests boot inside a check cell must not wrap its apps in
+    // nested cells (they never answer in time); it is told so in its env.
+    const declared = await commitToBranch(app, alice, repo, {
+      message: "A check that reads its cell",
+      files: [
+        {
+          path: "forge.json",
+          content: checkJson(
+            'test "$FORGE_CELLS" = off && echo "cells: $FORGE_CELLS"',
+          ),
+        },
+      ],
+    });
+    if (!declared.ok) throw new Error(JSON.stringify(declared.error));
+    const run = await settled((r) => r.commitOid === declared.value.commitOid);
+    expect(run.state).toBe("ok");
+    expect(readRunLog(dataDir, run.id).lines.join("\n")).toContain(
+      "cells: off",
+    );
   });
 
   test("a pull is checked when it opens and each time its branch moves; a failure names the exit", async () => {
@@ -606,7 +643,8 @@ describe("a check its forge died under", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-checks-abandoned-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, {
+      trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -722,7 +760,9 @@ describe("a check its forge died under", () => {
     expect(requeueAbandonedChecks(app, STALE_AFTER_MS)).toBe(1);
     const failed = getRun(app.db, run.id)!;
     expect(failed.state).toBe("failed");
-    expect(failed.summary).toContain("the forge kept going away under this check");
+    expect(failed.summary).toContain(
+      "the forge kept going away under this check",
+    );
     expect(queuedFor(pull.headOid)).toHaveLength(0);
     expect((await word()).word).toBe("stopped");
   });
