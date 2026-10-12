@@ -11,6 +11,11 @@ import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../core/events.ts";
 import { getIssue } from "../core/issues.ts";
+import {
+  listDetachedMirrors,
+  listOrigins,
+  mirrorsByOrigin,
+} from "../core/origins.ts";
 import { getPull, toldBy } from "../core/pulls.ts";
 import {
   canSeeOwnerFacts,
@@ -80,6 +85,8 @@ const ASK_URGENCY_FLOOR = 5;
 /** What a person asked to watch sits above plain news, and its landing with a failure. */
 const WATCH_URGENCY = 2;
 const LANDED_URGENCY = 4;
+/** Something of the viewer's has stopped and only they can start it: a failure's weight. */
+const FROZEN_URGENCY = 4;
 
 /**
  * What the viewer watches (`core/watches.ts`), one item for each milestone:
@@ -111,6 +118,72 @@ function watchedCandidates(db: Database, viewer: User, now: number): Candidate[]
       what,
       urgency: w.state === "landed" ? LANDED_URGENCY : WATCH_URGENCY,
       // The sentence is the milestone's, whatever led the ranking.
+      said: what,
+    });
+  }
+  return out;
+}
+
+/**
+ * What froze on the viewer, as decisions only they can make (#1090): an
+ * origin of theirs whose credential died, with the mirrors that stopped
+ * with it, and each of their mirrors whose origin is gone. Read from what
+ * is true now rather than from an event, so the item goes the moment the
+ * thing is fixed and is there from the first boot that finds it.
+ */
+function frozenCandidates(
+  db: Database,
+  viewer: User,
+  now: number,
+): Candidate[] {
+  const out: Candidate[] = [];
+  const at = new Date(now).toISOString();
+  const detached = listDetachedMirrors(db, { ownerId: viewer.id });
+  const dead = listOrigins(db, viewer.id).filter((o) => o.needsReauth);
+  const mirrors = mirrorsByOrigin(db, viewer.id);
+  const repos = getReposByIds(db, [
+    ...detached.map((m) => m.repoId),
+    ...dead.flatMap((o) => {
+      const first = mirrors.get(o.id)?.first;
+      return first === undefined ? [] : [first];
+    }),
+  ]);
+  for (const origin of dead) {
+    const behind = mirrors.get(origin.id);
+    const repo = behind === undefined ? undefined : repos.get(behind.first);
+    if (behind === undefined || repo === undefined) continue;
+    const n = behind.count;
+    const host = URL.parse(origin.webUrl)?.host ?? origin.webUrl;
+    const what = `${origin.login} at ${host} needs re-authorizing; ${n === 1 ? "1 mirror is" : `${n} mirrors are`} frozen`;
+    out.push({
+      id: `reauth:${origin.id}`,
+      kind: "decision",
+      repoId: repo.id,
+      app: slug(repo),
+      actorId: null,
+      actor: null,
+      at,
+      link: "/settings/origins",
+      what,
+      urgency: FROZEN_URGENCY,
+      said: what,
+    });
+  }
+  for (const mirror of detached) {
+    const repo = repos.get(mirror.repoId);
+    if (repo === undefined) continue;
+    const what = `${slug(repo)} is frozen; reconnect its origin`;
+    out.push({
+      id: `frozen:${repo.id}`,
+      kind: "decision",
+      repoId: repo.id,
+      app: slug(repo),
+      actorId: null,
+      actor: null,
+      at: mirror.detachedAt ?? at,
+      link: `${base(repo)}#frozen`,
+      what,
+      urgency: FROZEN_URGENCY,
       said: what,
     });
   }
@@ -182,6 +255,7 @@ export function candidatesFor(
     });
   }
   out.push(...watchedCandidates(db, viewer, now));
+  out.push(...frozenCandidates(db, viewer, now));
   for (const d of decided) {
     const repo = repos.get(d.repoId);
     if (!repo) continue;
