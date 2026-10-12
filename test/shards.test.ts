@@ -4,7 +4,9 @@
  * red run whose tail names every failing test from every shard.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   SECONDS_PER_BYTE_DEFAULT,
   SHARDS_MAX,
@@ -280,7 +282,14 @@ describe("tally", () => {
 describe("splitArgs", () => {
   test("after --, a bare name is a file under test/", () => {
     expect(
-      splitArgs(["--timeout", "60000", "test/x.test.ts", "--", "crew", "fork-flow"]),
+      splitArgs([
+        "--timeout",
+        "60000",
+        "test/x.test.ts",
+        "--",
+        "crew",
+        "fork-flow",
+      ]),
     ).toEqual({
       ok: true,
       flags: ["--timeout", "60000"],
@@ -299,20 +308,30 @@ describe("splitArgs", () => {
   });
 
   test("forge.json's check fits the manifest and runs only files that exist", async () => {
-    const text = readFileSync(new URL("../forge.json", import.meta.url), "utf8");
+    const text = readFileSync(
+      new URL("../forge.json", import.meta.url),
+      "utf8",
+    );
     // The forge's own reading of the manifest, which is what refused it.
     const check = parseCheck(text, undefined);
     expect(check.ok).toBe(true);
     if (!check.ok || check.value === undefined) throw new Error("no check");
     const run = check.value.run;
-    const args = run.slice(run.indexOf("scripts/test-shards.ts ") + 23).split(" ");
+    const args = run
+      .slice(run.indexOf("scripts/test-shards.ts ") + 23)
+      .split(" ");
     const split = splitArgs(args);
     expect(split.ok).toBe(true);
     if (!split.ok) return;
-    const files = [...(split.flags.includes("--gate") ? GATE : []), ...split.files];
+    const files = [
+      ...(split.flags.includes("--gate") ? GATE : []),
+      ...split.files,
+    ];
     expect(files.length).toBeGreaterThan(0);
     for (const file of files)
-      expect(await Bun.file(new URL(`../${file}`, import.meta.url)).exists()).toBe(true);
+      expect(
+        await Bun.file(new URL(`../${file}`, import.meta.url)).exists(),
+      ).toBe(true);
   });
 });
 
@@ -363,4 +382,52 @@ describe("sliceFiles", () => {
     expect(sliceFiles(["a"], 2, 1).ok).toBe(false);
     expect(sliceFiles(["a"], 1, 0).ok).toBe(false);
   });
+});
+
+describe("the shard's output", () => {
+  // A check's log is this script's stdout, line by line, as the forge
+  // reads it (`checks/service.ts`). Holding a shard's output until it
+  // ended meant a forty-minute gate showed nothing at all until the end.
+  test("one shard at a time: a line is written when the test says it, not when the shard ends", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "shards-live-"));
+    writeFileSync(
+      join(dir, "live.test.ts"),
+      `import { test } from "bun:test";
+test("says two things, a pause apart", async () => {
+  console.log("tick-one");
+  await Bun.sleep(1500);
+  console.log("tick-two");
+});
+`,
+    );
+    const script = new URL("../scripts/test-shards.ts", import.meta.url)
+      .pathname;
+    const child = Bun.spawn(["bun", script, "live.test.ts"], {
+      cwd: dir,
+      env: { ...process.env, FORGE_CHECK_SHARDS: "1" },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let text = "";
+    let firstAt = -1;
+    const decoder = new TextDecoder();
+    const reading = (async () => {
+      for await (const chunk of child.stdout) {
+        text += decoder.decode(chunk, { stream: true });
+        if (firstAt < 0 && text.includes("tick-one"))
+          firstAt = performance.now();
+      }
+    })();
+    const code = await child.exited;
+    const ended = performance.now();
+    await reading;
+    expect(code).toBe(0);
+    expect(firstAt).toBeGreaterThan(0);
+    // The first line reached us while the test was still asleep.
+    expect(ended - firstAt).toBeGreaterThan(1000);
+    expect(text).toContain("tick-two");
+    expect(text).toContain("── shard 1/1: live.test.ts");
+    expect(text).toMatch(/── shard 1\/1 done \(exit 0, [\d.]+s\)/);
+  }, 30_000);
 });

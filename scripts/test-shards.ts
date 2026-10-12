@@ -13,12 +13,14 @@
  * `FORGE_CHECK_SHARD_TOTAL`) keeps only the Nth contiguous slice of that
  * list so Actions can matrix the gate across jobs without parallel bun
  * inside one container. Each shard is its own `bun test`
- * over a disjoint slice (`scripts/shards.ts` decides the slices); a
- * shard's output is written through whole when it finishes, so the log
- * reads one shard at a time, and the tail names every failing test from
- * every shard. The first red shard stops the rest (fail-fast) so a known
- * fail does not burn the remaining wall clock. Exits non-zero if any
- * shard does.
+ * over a disjoint slice (`scripts/shards.ts` decides the slices). Shards
+ * that run one after another (`FORGE_CHECK_SHARDS=1`, `--record`) write
+ * each line the moment the test says it, so a check's log tails live;
+ * shards that run side by side are written through whole as each
+ * finishes, so the log reads one shard at a time. Either way the tail
+ * names every failing test from every shard. The first red shard stops
+ * the rest (fail-fast) so a known fail does not burn the remaining wall
+ * clock. Exits non-zero if any shard does.
  *
  * Files are weighed by how long they took, from `scripts/test-times.json`
  * (a file it does not name, or a table it refuses, falls back to bytes).
@@ -214,23 +216,38 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
 async function drain(
   stream: ReadableStream<Uint8Array>,
   into: string[],
+  /** Where each piece also goes as it arrives: the live tail. */
+  through?: (text: string) => void,
 ): Promise<void> {
   const decoder = new TextDecoder();
+  const take = (text: string): void => {
+    into.push(text);
+    if (text !== "") through?.(text);
+  };
   for await (const chunk of stream)
-    into.push(decoder.decode(chunk, { stream: true }));
-  into.push(decoder.decode());
+    take(decoder.decode(chunk, { stream: true }));
+  take(decoder.decode());
 }
 
 type Timed = ShardResult & { seconds: number };
 
-async function runShard(slice: string[], index: number): Promise<Timed> {
+/**
+ * One shard. `live` (shards running one at a time) writes the shard's
+ * output as it arrives, between a header and a footer line; otherwise the
+ * output is held and written through whole when the shard ends, so shards
+ * running side by side never interleave.
+ */
+async function runShard(
+  slice: string[],
+  index: number,
+  live: boolean,
+): Promise<Timed> {
   const started = performance.now();
-  // Print before spawn so a mid-suite cgroup SIGKILL still leaves a breadcrumb
-  // (shard stdout is buffered until the child exits).
+  const where = `${index + 1}/${slices.length}`;
+  // Print before spawn so a mid-suite cgroup SIGKILL still leaves a breadcrumb.
   // stderr: Actions often block-buffers stdout until exit; an OOM never flushes.
-  process.stderr.write(
-    `test-shards: start ${index + 1}/${slices.length} ${slice.join(" ")}\n`,
-  );
+  process.stderr.write(`test-shards: start ${where} ${slice.join(" ")}\n`);
+  if (live) process.stdout.write(`\n── shard ${where}: ${slice.join(" ")}\n`);
   // An exact path, never a filter: `test/web.test.ts` alone would also
   // match any file whose path contains it, in some other shard.
   const paths = slice.map((file) =>
@@ -256,13 +273,23 @@ async function runShard(slice: string[], index: number): Promise<Timed> {
   // One buffer, in arrival order: `bun test` splits its report across
   // stdout and stderr.
   const output: string[] = [];
-  await Promise.all([drain(child.stdout, output), drain(child.stderr, output)]);
+  const through = live
+    ? (text: string): void => {
+        process.stdout.write(text);
+      }
+    : undefined;
+  await Promise.all([
+    drain(child.stdout, output, through),
+    drain(child.stderr, output, through),
+  ]);
   const code = await child.exited;
   children.delete(child);
   const text = output.join("");
   const seconds = ((performance.now() - started) / 1000).toFixed(1);
   process.stdout.write(
-    `\n── shard ${index + 1}/${slices.length} (exit ${code}, ${seconds}s): ${slice.join(" ")}\n${text}${text.endsWith("\n") ? "" : "\n"}`,
+    live
+      ? `${text.endsWith("\n") || text === "" ? "" : "\n"}── shard ${where} done (exit ${code}, ${seconds}s)\n`
+      : `\n── shard ${where} (exit ${code}, ${seconds}s): ${slice.join(" ")}\n${text}${text.endsWith("\n") ? "" : "\n"}`,
   );
   return {
     files: slice,
@@ -284,7 +311,7 @@ async function pool(width: number): Promise<Timed[]> {
       if (stop) break;
       const index = next++;
       if (stop) break;
-      results[index] = await runShard(slices[index]!, index);
+      results[index] = await runShard(slices[index]!, index, width === 1);
       if (results[index]!.code !== 0) {
         stop = true;
         for (const child of children) child.kill("SIGTERM");
