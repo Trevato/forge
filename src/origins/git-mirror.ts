@@ -86,6 +86,18 @@ export interface GitMirrorError {
 }
 
 /**
+ * Where this bare repo fetches from, as `configureMirror` wrote it, or ""
+ * for one that has no remote. What a detached mirror still knows of its
+ * origin when the page it came from was never remembered.
+ */
+export async function mirrorRemoteUrl(dir: string): Promise<string> {
+  const run = await runGitCapture(["config", "--get", "remote.origin.url"], {
+    cwd: dir,
+  });
+  return run.code === 0 ? run.stdout.trim() : "";
+}
+
+/**
  * Configure a bare repo as a mirror of `cloneUrl`. The URL is stored
  * credential-free — the token rides in the environment, per invocation — so
  * `cat`ing the data directory never yields a secret and a `tar` of it is not

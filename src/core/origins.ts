@@ -16,6 +16,7 @@ import { id } from "../kernel/id.ts";
 import { seal } from "../kernel/secret.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { Origin, OriginKind, RemoteRepo } from "../origins/types.ts";
+import type { RepoDetached } from "./repos.ts";
 
 export type { Origin, OriginKind } from "../origins/types.ts";
 
@@ -223,6 +224,54 @@ export function storeRefreshed(
     next.refresh === undefined || next.refresh === ""
       ? ""
       : seal(dataDir, next.refresh, originId),
+    next.expiresAt ?? null,
+    originId,
+  );
+}
+
+/** The origin a user already connected for this account on this forge. */
+export function findOrigin(
+  db: Database,
+  userId: string,
+  apiUrl: string,
+  login: string,
+): Origin | undefined {
+  const row = db
+    .query<
+      OriginRow,
+      [string, string, string]
+    >("SELECT * FROM origin WHERE user_id = ?1 AND api_url = ?2 AND login = ?3")
+    .get(userId, apiUrl, login);
+  return row ? toOrigin(row) : undefined;
+}
+
+/**
+ * Put a working credential on an origin that lost its own — the re-authorize
+ * path. The row, its id and every mirror hanging off it stay exactly as they
+ * were; only the sealed halves, their kind and the human flag change, in one
+ * statement, for the same reason `storeRefreshed` writes in one.
+ */
+export function renewOrigin(
+  db: Database,
+  dataDir: string,
+  originId: string,
+  next: {
+    token: string;
+    authKind: "pat" | "oauth";
+    refreshToken?: string;
+    expiresAt?: string | null;
+  },
+): void {
+  db.query(
+    `UPDATE origin SET token_enc = ?1, refresh_token_enc = ?2, auth_kind = ?3,
+       expires_at = ?4, needs_reauth = 0, last_error = ''
+     WHERE id = ?5`,
+  ).run(
+    seal(dataDir, next.token, originId),
+    next.refreshToken === undefined || next.refreshToken === ""
+      ? ""
+      : seal(dataDir, next.refreshToken, originId),
+    next.authKind,
     next.expiresAt ?? null,
     originId,
   );
@@ -544,8 +593,95 @@ export function linkRepoToOrigin(
 ): void {
   db.query(
     `UPDATE repo SET origin_id = ?1, origin_full_name = ?2,
-       origin_remote_id = ?3, origin_html_url = ?4 WHERE id = ?5`,
+       origin_remote_id = ?3, origin_html_url = ?4,
+       origin_detached_at = NULL WHERE id = ?5`,
   ).run(input.originId, input.fullName, input.remoteId, input.htmlUrl, repoId);
+}
+
+// ---- detached mirrors ----
+
+/**
+ * A mirror whose origin was disconnected: `origin_id` went NULL with the
+ * origin row, and the provenance stayed. It is frozen — nothing fetches
+ * into it and a push to it is refused (`origins/push-through.ts`) — until
+ * an origin on the same host is attached again (#1090).
+ */
+export interface DetachedMirror extends RepoDetached {
+  readonly repoId: string;
+  readonly ownerId: string;
+  /** The remote's id at the origin, when it was recorded. */
+  readonly remoteId: string;
+}
+
+/** The lowercase hostname of a URL, or "" when it is not one. */
+export function hostOf(url: string): string {
+  return URL.parse(url)?.hostname.toLowerCase() ?? "";
+}
+
+interface DetachedRow {
+  id: string;
+  owner_id: string;
+  origin_full_name: string;
+  origin_remote_id: string | null;
+  origin_html_url: string | null;
+  origin_detached_at: string | null;
+  last_fetch_at: string | null;
+}
+
+const DETACHED_SELECT = `
+  SELECT id, owner_id, origin_full_name, origin_remote_id, origin_html_url,
+         origin_detached_at, last_fetch_at
+  FROM repo
+  WHERE origin_id IS NULL AND origin_full_name IS NOT NULL
+    AND origin_full_name != ''`;
+
+const toDetached = (row: DetachedRow): DetachedMirror => ({
+  repoId: row.id,
+  ownerId: row.owner_id,
+  fullName: row.origin_full_name,
+  remoteId: row.origin_remote_id ?? "",
+  htmlUrl: row.origin_html_url ?? "",
+  detachedAt: row.origin_detached_at,
+  frozenSince: row.last_fetch_at,
+});
+
+/** This repo as a detached mirror, or undefined when it is not one. */
+export function detachedMirror(
+  db: Database,
+  repoId: string,
+): DetachedMirror | undefined {
+  const row = db
+    .query<DetachedRow, [string]>(`${DETACHED_SELECT} AND id = ?1`)
+    .get(repoId);
+  return row ? toDetached(row) : undefined;
+}
+
+/**
+ * Every detached mirror, oldest first — owned by `ownerId`, and remembered
+ * on `host`, when those are given. The host is read from the remembered
+ * page; a mirror whose page was never recorded is kept, because only its
+ * git remote can say where it lived and that is the caller's to read.
+ */
+export function listDetachedMirrors(
+  db: Database,
+  filter: { host?: string; ownerId?: string } = {},
+): DetachedMirror[] {
+  const rows =
+    filter.ownerId === undefined
+      ? db.query<DetachedRow, []>(`${DETACHED_SELECT} ORDER BY id`).all()
+      : db
+          .query<
+            DetachedRow,
+            [string]
+          >(`${DETACHED_SELECT} AND owner_id = ?1 ORDER BY id`)
+          .all(filter.ownerId);
+  const host = filter.host?.toLowerCase();
+  return rows
+    .map(toDetached)
+    .filter(
+      (m) =>
+        host === undefined || m.htmlUrl === "" || hostOf(m.htmlUrl) === host,
+    );
 }
 
 export function recordFetch(
@@ -570,6 +706,45 @@ export function listMirrors(
     .all(originId)
     .filter((r) => r.origin_full_name !== null)
     .map((r) => ({ repoId: r.id, fullName: r.origin_full_name! }));
+}
+
+/**
+ * The local mirrors hanging off each of a user's origins, in one query: how
+ * many, and the oldest, which is the one a surface names for them all.
+ */
+export function mirrorsByOrigin(
+  db: Database,
+  userId: string,
+): Map<string, { count: number; first: string }> {
+  const rows = db
+    .query<{ origin_id: string; n: number; first: string }, [string]>(
+      `SELECT repo.origin_id, COUNT(*) AS n, MIN(repo.id) AS first FROM repo
+       JOIN origin ON origin.id = repo.origin_id
+       WHERE origin.user_id = ?1 GROUP BY repo.origin_id`,
+    )
+    .all(userId);
+  return new Map(
+    rows.map((r) => [r.origin_id, { count: r.n, first: r.first }]),
+  );
+}
+
+/**
+ * The local repo already mirroring this remote at this origin, by its id
+ * there or by its name: either is the same repository to the sync.
+ */
+export function mirrorOfRemote(
+  db: Database,
+  originId: string,
+  remote: { remoteId: string; fullName: string },
+): string | undefined {
+  const row = db
+    .query<{ id: string }, [string, string, string]>(
+      `SELECT id FROM repo WHERE origin_id = ?1
+         AND (origin_remote_id = ?2 OR origin_full_name = ?3 COLLATE NOCASE)
+       LIMIT 1`,
+    )
+    .get(originId, remote.remoteId, remote.fullName);
+  return row?.id;
 }
 
 /**

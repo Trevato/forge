@@ -26,7 +26,7 @@
  */
 
 import type { App } from "../app.ts";
-import { originForRepo } from "../core/origins.ts";
+import { detachedMirror, originForRepo } from "../core/origins.ts";
 import type { Repo } from "../core/repos.ts";
 import { FORWARDED_GIT_ENV, type RefUpdate } from "../git/hook-protocol.ts";
 import { fetchInto, resolveOid, writeRef } from "../git/merge.ts";
@@ -167,7 +167,7 @@ async function wayThrough(
     // nowhere to forward to. Accepting the push would let it diverge from
     // an upstream it still claims to mirror, so it fails closed until the
     // origin is reconnected (or the repo is re-created as a native one).
-    if (detachedMirror(app, repo))
+    if (detachedMirror(app.db, repo.id) !== undefined)
       return err({
         message:
           "this repository mirrors an origin that was disconnected; reconnect the origin before pushing",
@@ -214,15 +214,4 @@ function quarantineEnv(
     if (value !== undefined && value !== "") env[name] = value;
   }
   return env;
-}
-
-/** Provenance without a live origin row: `origin_id` is null, the name remains. */
-function detachedMirror(app: App, repo: Repo): boolean {
-  const row = app.db
-    .query<
-      { n: string | null },
-      [string]
-    >("SELECT origin_full_name AS n FROM repo WHERE id = ?1")
-    .get(repo.id);
-  return row?.n !== null && row?.n !== undefined && row.n !== "";
 }

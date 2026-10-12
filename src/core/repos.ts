@@ -54,6 +54,18 @@ export interface RepoOrigin {
   readonly fetchError: string;
 }
 
+/** What a detached mirror still knows of where it came from. */
+export interface RepoDetached {
+  /** `owner/name` on the origin it mirrored. */
+  readonly fullName: string;
+  /** The origin's page for it; may be empty. */
+  readonly htmlUrl: string;
+  /** When the origin went; null when that was never recorded. */
+  readonly detachedAt: string | null;
+  /** The last fetch that reached it: the moment it froze. */
+  readonly frozenSince: string | null;
+}
+
 /**
  * What a repo list wants beside every row. Both numbers are open counts —
  * a closed conversation is history, not a queue.
@@ -117,6 +129,13 @@ export interface Repo {
   /** The origin this mirrors, or null for a native repo. */
   readonly origin: RepoOrigin | null;
   /**
+   * A mirror whose origin was disconnected: the provenance it kept, frozen
+   * until an origin is attached again (#1090). Null for a native repo and
+   * for a mirror that is still attached. Read off the same row as the rest,
+   * so a list says which of its rows are frozen without a query per row.
+   */
+  readonly detached: RepoDetached | null;
+  /**
    * Open issue and pull counts. Absent from a bare `getRepo` — a single
    * fetch on a hot path should not pay for a count nobody asked for — and
    * always present on a list, filled by `countsForRepos` in one query.
@@ -150,6 +169,7 @@ interface RepoRow {
   origin_html_url: string | null;
   last_fetch_at: string | null;
   fetch_error: string;
+  origin_detached_at: string | null;
 }
 
 // LEFT JOIN, because the origin may have been disconnected out from under a
@@ -189,6 +209,17 @@ function toRepo(row: RepoRow): Repo {
             htmlUrl: row.origin_html_url ?? "",
             lastFetchAt: row.last_fetch_at,
             fetchError: row.fetch_error,
+          }
+        : null,
+    detached:
+      row.origin_id === null &&
+      row.origin_full_name !== null &&
+      row.origin_full_name !== ""
+        ? {
+            fullName: row.origin_full_name,
+            htmlUrl: row.origin_html_url ?? "",
+            detachedAt: row.origin_detached_at,
+            frozenSince: row.last_fetch_at,
           }
         : null,
   };
