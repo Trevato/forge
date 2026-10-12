@@ -179,6 +179,7 @@ export const GATE: readonly string[] = [
   "test/org-owners.test.ts",
   "test/origins-oauth.test.ts",
   "test/origins-operator.test.ts",
+  "test/origins-reconnect.test.ts",
   "test/origins-security-auth.test.ts",
   "test/origins-security-provider.test.ts",
   "test/origins-security-push.test.ts",
