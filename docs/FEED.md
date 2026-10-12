@@ -32,6 +32,12 @@ Anything the viewer cannot read is a 404.
   merged since they last opened it, that it landed, or that it was dropped
   or split. Its id carries its progress, so the item is replaced, never
   repeated, as the milestone moves. Not muted with its app.
+- What froze on the viewer (#1090), read from what is true now: one
+  `decision` item for each of their origins that needs re-authorizing with
+  mirrors behind it ("octo at codeberg.org needs re-authorizing; 2 mirrors
+  are frozen"), and one for each of their mirrors whose origin was
+  disconnected ("alice/widgets is frozen; reconnect its origin"). Each goes
+  the moment it is fixed (`docs/ORIGINS.md`, "When a token expires").
 
 Runs already announce themselves on the outbox (`run.*`); looks did not, so
 `look.taken` was added.

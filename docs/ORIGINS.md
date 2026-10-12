@@ -41,6 +41,7 @@ origin_cursor per-origin sync watermarks and the next-due / paused-until times
 repo          + origin_id, origin_full_name, origin_remote_id, origin_html_url,
                 last_fetch_at, fetch_error      (origin_id set ⇒ mirrored)
               + origin_fork_of: the upstream `owner/name` this mirror forks
+              + origin_detached_at: when its origin went (mig. 72; trigger)
               + require_review (0/1): the merge gate                (mig. 13)
 issue/comment + origin_remote_id, origin_author, origin_html_url, synced_at
 label         + origin_remote_id
@@ -239,7 +240,7 @@ force everything and **delete upstream any ref missing locally**. Multi-ref
 pushes go `--atomic`, so an origin that would take one ref and refuse another
 takes neither. Once an origin is disconnected its mirrors fail closed: they
 stay readable and stop syncing, and a push is refused with the reason until
-the origin is reconnected.
+the origin is reconnected ("When a token expires", below).
 
 **Visibility narrows only.** A repo that goes private upstream goes private
 here on the next sweep, at once. One that goes public upstream stays as it
@@ -348,6 +349,75 @@ local client (`src/cli/`) reads them over the API, clones under
 `~/src/<host>/<owner>/<repo>`, keeps them fetched, and reports
 ahead/behind/dirty. The server never knows local state.
 
+## When a token expires
+
+A credential dies: a token is revoked, a refresh token is spent, an OAuth
+grant expires. The origin is marked `needs_reauth`, and its mirrors stop
+syncing — they are **frozen**, still attached, waiting. Settings → Origins
+says so on the origin ("2 mirrors are frozen until it is re-authorized") with
+a **Re-authorize** link, and the owner's feed carries one decision item.
+Re-authorizing is connecting the same account again: the forge finds the
+origin that lost its credential and puts the new one on the same row, in
+place (`renewOrigin`). Its id does not change, so its mirrors never detach;
+a sync starts at once.
+
+The other way out is to disconnect the origin and connect it again — which
+is what happened live in #1090. Disconnecting deletes the origin row, and the
+schema's `ON DELETE SET NULL` takes `repo.origin_id` with it while the
+provenance stays (`origin_full_name`, `origin_remote_id`, `origin_html_url`).
+That is a **detached mirror**: frozen like the first kind, but with no origin
+left to sync through, and `push-through.ts` refuses every push to it ("reconnect
+the origin before pushing") because accepting one would let it drift from an
+upstream it still claims. A trigger on that foreign key's `SET NULL` records
+the moment in `repo.origin_detached_at` (migration 72); `last_fetch_at` is
+when it froze.
+
+**What a person sees.** The repository home and its branches page carry one
+quiet block: "This repository mirrors `octo/widgets` at codeberg.org, but
+that origin was disconnected on 2026-10-11; it has been frozen since
+2026-10-02." Every reader gets the sentence. An admin of the repository also
+gets the **Reconnect** form — a select of their own working origins on the
+same host and a button — or, when they have none there, the link to
+Settings → Origins to connect one. Settings → Origins lists the account's
+frozen mirrors and where each came from, and the feed asks the owner to
+reconnect each one. A fork following a detached mirror never says it is up
+to date with it (`docs/FOLLOWING.md`).
+
+**The one click** is `reattachMirror` (`src/actions/origins.ts`), behind the
+form (`POST /:owner/:name/settings/origin/reconnect`) and the API. It
+re-attaches only when all of these hold, and says which one did not:
+
+- the repository is a detached mirror (`not_detached`);
+- the actor administers it and owns the origin — anything else is
+  `not_found`, because reconnecting lends that origin's credential to every
+  later sync and push of the mirror;
+- the origin lives on the host the mirror came from, read from the
+  remembered page or, failing that, the bare repository's git remote
+  (`wrong_host`);
+- that account can see the repository by the name the mirror remembers
+  (`origin_cannot_see`), it is the same repository (`not_the_same_repo`: a
+  name deleted and made again upstream is someone else's history, and a sync
+  would prune this one into it), and no other repository here already
+  mirrors it (`already_mirrored`).
+
+Then the remote is remembered, the repo is linked again (which clears
+`origin_detached_at`), the bare repository's remote URL is rewritten if the
+clone URL changed, `origin.mirror_reattached` is appended (for the repo's
+admins), and a sync starts in the background so the refs move now — the
+answer says "syncing", and the mirror's branches follow within seconds.
+
+**Connecting again re-attaches by itself.** After any connect — a token, a
+device grant, a code flow — the forge looks for the detached mirrors the
+person owns whose host is the new origin's, and re-attaches each with the
+same routine. Owns, not administers: re-attaching lends that account to
+every later sync and push, so an organization's mirror borrowing an admin's
+personal account is that admin's click on Reconnect, never a side effect of
+connecting. A refusal never fails the connect: the answer lists
+every mirror it tried, re-attached or not and why
+(`reattached: [{ owner, name, fullName, refused }]`, `refused` null for one
+that came back), and the page's flash says "Reconnected 1 mirror:
+trevato/forge-upstream".
+
 ## Migrate — bringing a repository here for good
 
 A mirror keeps answering to its origin. A **migration** does not: it is a
@@ -403,6 +473,9 @@ GET    /go/:code                               anonymous: 303 to a live flow's
                                                verification/authorize URL
 GET    /api/v1/user/origins                    list (no tokens, ever)
 POST   /api/v1/user/origins                    {host|kind, token}  → discovers, validates
+                                               → 201 origin + reattached [{owner,name,
+                                                 fullName,refused}]; renews in place
+                                                 an account that needs re-auth
 POST   /api/v1/user/origins/oauth              {host|kind} → starts device OR code flow
 GET    /api/v1/user/origins/oauth/:id          poll a flow (the forge does the polling)
 DELETE /api/v1/user/origins/:id                → { revokedUpstream }
@@ -431,6 +504,9 @@ GET    /api/v1/user/origin-apps                registered OAuth apps (no secrets
 POST   /api/v1/user/origin-apps                {host, clientId, clientSecret?}
 DELETE /api/v1/user/origin-apps/:id
 POST   /api/v1/repos/:o/:n/sync                sync this mirror now
+POST   /api/v1/repos/:o/:n/origin/reconnect    {originId} → repo JSON; re-attach a
+                                               detached mirror (admin token, repo
+                                               admin, own origin; else 404/422 code)
 GET    /api/v1/user/pins  PUT/DELETE /api/v1/user/pins/:owner/:name
 
 POST   /api/v1/migrate                         {source: {url} | {originId, fullName},
@@ -487,8 +563,11 @@ This is the one way the crew's reviewer brief posts a review.
 `GET …/pulls/:number` gains `status.reviews:
 { approved, changesRequested, required, mergeable }`.
 
-Repo JSON gains `origin: { kind, fullName, htmlUrl, lastFetchAt, fetchError } | null`
-and `pinned: boolean`; issue/comment JSON gain `originAuthor`, `originUrl`;
+Repo JSON gains `origin: { originId, kind, fullName, htmlUrl, host, lastFetchAt,
+fetchError, detached, frozenSince, detachedAt } | null` — a detached mirror
+keeps an `origin` with `detached: true`, `originId` and `kind` null, and the
+times it was disconnected and last fetched, so it never passes for a native
+repository — and `pinned: boolean`; issue/comment JSON gain `originAuthor`, `originUrl`;
 pull JSON gains `originHeadRepo`. Errors specific to this surface:
 `mirrored` (409), `origin_owner_only` (403), `origin_refused` (409),
 `origin_unreachable` (502), `origin_unauthorized` (502, the origin refused
@@ -497,7 +576,8 @@ so a client can tell "the forge said no" from "the origin said no", and
 "come back later" from "this will never work".
 
 Events added: `origin.connected`, `origin.refreshed`, `origin.needs_reauth`,
-`origin.disconnected`, `origin.app_registered`, `repo.mirrored`,
+`origin.disconnected`, `origin.app_registered`, `origin.mirror_reattached`
+(on the repo, for its admins: `{ origin, fullName }`), `repo.mirrored`,
 `repo.imported`, `repo.pinned`, `repo.unpinned`, `repo.forked`
 (`via: "origin"` for a fork made at an origin), `pull.reviewed` (with
 `state` for a verdict, `path`/`line` for a line comment) and

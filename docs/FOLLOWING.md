@@ -44,6 +44,28 @@ src/weapons.ts" — and offers exactly one thing to do. The forks page shows
 each fork's standing as a badge. The JSON is
 `GET /api/v1/repos/:owner/:name/following`.
 
+## A frozen parent
+
+A parent can itself be a mirror whose origin was disconnected — a detached
+mirror (`docs/ORIGINS.md`, "When a token expires"). It is frozen: nothing
+fetches into it, so it holds still while its upstream moves on. Measured
+against it, a fork reads `synced` or `ahead` with `behind 0` — true of the
+frozen copy and false of the world, which is how a fork came to read "ahead
+813, behind 0" while upstream had moved (#1090). So against a frozen parent
+the forge says neither the counts nor "up to date". The card says one honest
+sentence instead —
+
+> `trevato/forge-upstream` is frozen: its origin was disconnected on
+> 2026-10-11, so what is here may be behind. Reconnect it.
+
+— with the link to the parent's page, where its admin reconnects it in one
+click; the badge, here and on the family tree, reads "parent frozen"; taking
+updates with nothing to take says "Nothing new from … which is frozen"
+rather than "Already up to date"; and the JSON carries
+`parentFrozen: { detachedAt, frozenSince }` beside the counts so a client
+can say the same. Once the parent is reconnected its sync moves it, the fork
+follows as before, and the card goes back to its counts.
+
 ## The family
 
 `/:owner/:name/forks` draws the whole family as a tree, from the oldest
