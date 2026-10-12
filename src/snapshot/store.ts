@@ -49,7 +49,54 @@ export function s3FromEnv(
   };
 }
 
+/**
+ * A store that tries again. Object stores answer a burst, a flake or a
+ * moment of maintenance with a 5xx — Backblaze says so in its own docs —
+ * and one such answer in a thousand puts used to fail the whole snapshot
+ * with "S3Error: an unexpected error has occurred" and no key named. Every
+ * call is tried `attempts` times with doubling waits, and what finally
+ * fails says which key it was.
+ */
+export function withRetries(
+  inner: Store,
+  options: {
+    attempts?: number;
+    baseMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
+): Store {
+  const attempts = Math.max(1, options.attempts ?? 5);
+  const baseMs = options.baseMs ?? 500;
+  const sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
+  async function tried<T>(what: string, fn: () => Promise<T>): Promise<T> {
+    let last: unknown;
+    for (let n = 0; n < attempts; n++) {
+      try {
+        return await fn();
+      } catch (error) {
+        last = error;
+        if (n + 1 < attempts) await sleep(baseMs * 2 ** n);
+      }
+    }
+    throw new Error(
+      `${what} failed after ${attempts} attempt${attempts === 1 ? "" : "s"}: ${String(last instanceof Error ? last.message : last)}`,
+    );
+  }
+  return {
+    where: inner.where,
+    put: (key, body) => tried(`put ${key}`, () => inner.put(key, body)),
+    get: (key) => tried(`get ${key}`, () => inner.get(key)),
+    list: (prefix) => tried(`list ${prefix}`, () => inner.list(prefix)),
+    names: (prefix) => tried(`names ${prefix}`, () => inner.names(prefix)),
+    delete: (key) => tried(`delete ${key}`, () => inner.delete(key)),
+  };
+}
+
 export function s3Store(target: S3Target): Store {
+  return withRetries(rawS3Store(target));
+}
+
+function rawS3Store(target: S3Target): Store {
   const client = new Bun.S3Client({
     endpoint: target.endpoint,
     bucket: target.bucket,
