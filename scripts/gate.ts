@@ -9,7 +9,10 @@
  * cannot sit outside the gate silently.
  *
  * A file joins the gate by moving from `EXCLUDED` to `GATE` in a pull whose
- * check is green.
+ * check is green and whose description carries ten green runs in random
+ * order under load (`bun scripts/flake-hunt.ts admit <file>`). A flaky file
+ * leaves it only through `bun scripts/flake-hunt.ts quarantine`, under the
+ * issue the nightly hunt filed (`.forgejo/workflows/flake-hunt.yml`).
  */
 
 export type Exclusion = {
@@ -217,6 +220,7 @@ export const GATE: readonly string[] = [
   "test/counts.test.ts",
   "test/crew-loop.test.ts",
   "test/crew-totals.test.ts",
+  "test/flake.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
