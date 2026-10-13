@@ -217,6 +217,9 @@ export const GATE: readonly string[] = [
   "test/counts.test.ts",
   "test/crew-loop.test.ts",
   "test/crew-totals.test.ts",
+  "test/ssh-site.test.ts",
+  "test/web-code.test.ts",
+  "test/web-origins.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
@@ -287,12 +290,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     reason: "not yet admitted",
     issue: 261,
   },
-  {
-    file: "test/ssh-site.test.ts",
-    reason:
-      "red: asserts the dashboard and studio pages as they were before the redesign",
-    issue: 291,
-  },
   { file: "test/ssh.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/standards.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/studio-phone.test.ts", reason: "not yet admitted", issue: 261 },
@@ -326,19 +323,7 @@ export const EXCLUDED: readonly Exclusion[] = [
   },
   { file: "test/view-source.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/web-browse.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/web-code.test.ts",
-    reason:
-      "red: asserts the dashboard and studio pages as they were before the redesign",
-    issue: 291,
-  },
   { file: "test/web-editor.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/web-origins.test.ts",
-    reason:
-      "red: asserts the dashboard and studio pages as they were before the redesign",
-    issue: 291,
-  },
   { file: "test/web-phone.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/web-workflows.test.ts",
