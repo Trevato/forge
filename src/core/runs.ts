@@ -294,6 +294,30 @@ export function cancelRun(
   return changes > 0 ? getRun(db, runId) : undefined;
 }
 
+/**
+ * Every queued or running check and deploy of one pull, cancelled with the
+ * same summary: a pull that landed or closed has nothing left to check, and
+ * a queued run would hold the lane for nobody. Answers the runs it stopped.
+ */
+export function cancelRunsForPull(
+  db: Database,
+  issueId: string,
+  summary: string,
+): Run[] {
+  const ids = db
+    .query<{ id: string }, [string]>(
+      `SELECT id FROM run WHERE issue_id = ?1 AND kind IN ('check','deploy')
+         AND state IN ('queued','running') ORDER BY id`,
+    )
+    .all(issueId);
+  const out: Run[] = [];
+  for (const { id } of ids) {
+    const cancelled = cancelRun(db, id, summary);
+    if (cancelled) out.push(cancelled);
+  }
+  return out;
+}
+
 /** Record spend and the session as a run goes, so a cut-off run still reports it. */
 export function noteRunProgress(
   db: Database,

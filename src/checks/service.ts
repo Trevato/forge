@@ -23,6 +23,7 @@ import { issueMayRun } from "../core/pull_trust.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
   cancelRun,
+  cancelRunsForPull,
   checksForHead,
   claimRun,
   createRun,
@@ -681,15 +682,38 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         const pull = getPull(app.db, repo.id, number);
         if (!pull || pull.state !== "open") return;
         const head = await headOf(repo, pull);
-        if (head !== undefined)
-          await request(
-            repo,
-            `pull-${pull.number}`,
-            head,
-            "approved",
-            pull.id,
-            actor,
-          );
+        if (head === undefined) return;
+        // The approval was on a green head, on the base it was checked
+        // against: checking it again proves nothing. Only a base that
+        // moved (#1133) is worth the lane.
+        const env = `pull-${pull.number}`;
+        const green = checksForHead(app.db, pull.id, head).some(
+          (r) => r.kind === "check" && r.env === env && r.state === "ok",
+        );
+        if (green) {
+          const dir = await pullDir(app.db, app.reposRoot, repo, pull);
+          const tip = await resolveOid(dir, `refs/heads/${pull.baseBranch}`);
+          if (tip === undefined || tip === pull.baseOid) return;
+        }
+        await request(repo, env, head, "approved", pull.id, actor);
+        return;
+      }
+      // Landed or closed: nothing left to check, so nothing waits in the lane.
+      case "pull.merged":
+      case "pull.closed": {
+        const number = event.payload["number"];
+        if (typeof number !== "number") return;
+        const pull = getPull(app.db, repo.id, number);
+        if (!pull) return;
+        const cancelled = cancelRunsForPull(
+          app.db,
+          pull.id,
+          event.kind === "pull.merged" ? "pull landed" : "pull closed",
+        );
+        for (const run of cancelled) {
+          inFlight.get(run.id)?.abort.abort();
+          announceRun(app, run);
+        }
         return;
       }
       default:

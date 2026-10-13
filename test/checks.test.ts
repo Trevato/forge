@@ -9,7 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { openPull, submitReview } from "../src/actions/pulls.ts";
+import { mergePull, openPull, submitReview } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { parseBunTestFailure } from "../src/checks/bun-test.ts";
 import { summariseCheckFailure } from "../src/checks/summary.ts";
@@ -22,6 +22,7 @@ import {
 } from "../src/checks/service.ts";
 import {
   cancelRun,
+  cancelRunsForPull,
   CHECK_RESTART_LIMIT,
   checksForHead,
   claimRun,
@@ -42,6 +43,67 @@ import { readRunLog } from "../src/runs/log.ts";
 
 const checkJson = (run: string, extra = ""): string =>
   `{"check": {"run": ${JSON.stringify(run)}, "install": ""${extra}}}\n`;
+
+describe("cancelRunsForPull: a landed or closed pull leaves nothing in the lane", () => {
+  test("queued and running checks and deploys of that pull are cancelled, others kept", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-cancel-"));
+    const db = createApp({ dataDir: dir, port: 0 });
+    try {
+      const u = await createUser(db.db, {
+        trusted: true,
+        username: "alice",
+        email: "alice@forge.local",
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      if (!u.ok) throw new Error(u.error);
+      const made = await createRepo(db, u.value, { name: "lib" });
+      if (!made.ok) throw new Error(String(made.error));
+      const repoId = made.value.id;
+      const first = await commitToBranch(db, u.value, made.value, {
+        message: "Start",
+        files: [{ path: "README.md", content: "x\n" }],
+      });
+      if (!first.ok) throw new Error(JSON.stringify(first.error));
+      const pullOn = async (branch: string): Promise<string> => {
+        const c = await commitToBranch(db, u.value, made.value, {
+          branch,
+          message: branch,
+          files: [{ path: `${branch}.md`, content: "x\n" }],
+        });
+        if (!c.ok) throw new Error(JSON.stringify(c.error));
+        const o = await openPull(db, u.value, made.value, {
+          title: branch,
+          baseBranch: "main",
+          headBranch: branch,
+        });
+        if (!o.ok) throw new Error(String(o.error));
+        return o.value.id;
+      };
+      const p1 = await pullOn("one");
+      const p2 = await pullOn("two");
+      const mk = (kind: "check" | "deploy", issueId: string) =>
+        createRun(db.db, { repoId, kind, env: "pull-1", issueId });
+      const queued = mk("check", p1);
+      const running = mk("check", p1);
+      claimRun(db.db, running.id);
+      const deploy = mk("deploy", p1);
+      const other = mk("check", p2);
+      const stopped = cancelRunsForPull(db.db, p1, "pull landed");
+      expect(stopped.map((r) => r.id).sort()).toEqual(
+        [queued.id, running.id, deploy.id].sort(),
+      );
+      for (const r of [queued, running, deploy]) {
+        expect(getRun(db.db, r.id)?.state).toBe("cancelled");
+        expect(getRun(db.db, r.id)?.summary).toBe("pull landed");
+      }
+      expect(getRun(db.db, other.id)?.state).toBe("queued");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("parseBunTestFailure: a convenience over one known runner, not a general protocol", () => {
   test("bun test's own tail: the counts, and the failing names bounded to a few", () => {
@@ -451,6 +513,45 @@ describe("checks", () => {
     );
     expect(middle?.state).toBe("cancelled");
     expect(middle?.summary).toContain("superseded by");
+  }, 60_000);
+
+  test("merging a pull leaves no queued or running run for it", async () => {
+    const blocker = await commitToBranch(app, alice, repo, {
+      message: "Hold the lane",
+      files: [
+        { path: "forge.json", content: checkJson("sleep 2 && test -f OK.md") },
+      ],
+    });
+    if (!blocker.ok) throw new Error(JSON.stringify(blocker.error));
+    await checks.request(repo, "lane", blocker.value.commitOid, "push");
+    const branched = await commitToBranch(app, alice, repo, {
+      branch: "lands-soon",
+      message: "Lands before its check runs",
+      files: [{ path: "LANDS.md", content: "x\n" }],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Lands soon",
+      baseBranch: "main",
+      headBranch: "lands-soon",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const mine = (): Run[] =>
+      listRuns(app.db, repo.id, { kind: "check" }).filter(
+        (r) => r.issueId === pull.id,
+      );
+    const until = async (done: () => boolean): Promise<void> => {
+      const deadline = Date.now() + 10_000;
+      while (!done() && Date.now() < deadline) await Bun.sleep(25);
+    };
+    await until(() => mine().length > 0);
+    expect(mine().some((r) => r.state === "queued")).toBe(true);
+    const landed = await mergePull(app, alice, repo, pull, "merge");
+    if (!landed.ok) throw new Error(String(landed.error));
+    await until(() => mine().every((r) => r.state !== "queued"));
+    expect(mine().filter((r) => r.state === "queued")).toEqual([]);
+    expect(mine().some((r) => r.summary === "pull landed")).toBe(true);
   }, 60_000);
 
   test("pickNext takes the newest queued check, unless one has starved", () => {
