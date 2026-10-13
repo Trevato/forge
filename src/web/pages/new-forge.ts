@@ -202,7 +202,7 @@ function formView(
               required: values.hadKey,
               hint: values.hadKey
                 ? "Type the key again to spawn: it is never sent back to your browser."
-                : "An API-billed key (sk-ant-api… or sk-or-v1-…) with its own spend limit; sealed in the child, never shown again. Never a subscription token.",
+                : "An Anthropic key (sk-ant-api…, sk-ant-usr…), a `claude setup-token` token (sk-ant-oat…), or any gateway's key with its base URL below; with its own spend limit, sealed in the child, never shown again.",
               ...(errors["modelKey"] ? { error: errors["modelKey"] } : {}),
             })}
         ${anon
