@@ -223,7 +223,7 @@ export function dryRun(plan: SpawnPlan, source: SpawnSource): DryRun {
     ...(plan.keepAccess ? ["your owner access, kept after the child is claimed"] : []),
     ...(plan.budgetUsd === null
       ? []
-      : [`its own model key (API-billed, sealed, never shown again), with a $${plan.budgetUsd} budget it cannot raise`]),
+      : [`its own model key (sealed, never shown again), with a $${plan.budgetUsd} budget it cannot raise`]),
   ];
   const bytes =
     plan.apps.reduce((n, a) => n + a.bytes, 0) +

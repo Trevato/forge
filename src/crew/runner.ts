@@ -12,7 +12,7 @@
  */
 
 import { capacityEnv } from "../core/capacity.ts";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { addComment } from "../actions/issues.ts";
@@ -277,7 +277,14 @@ export async function executeAgentRun(
   };
   let outcome: Outcome;
   try {
-    outcome = await work(app, claimed, options, write, controller.signal, meter);
+    outcome = await work(
+      app,
+      claimed,
+      options,
+      write,
+      controller.signal,
+      meter,
+    );
   } catch (error) {
     log.error("agent run threw", { run: run.id, error: String(error) });
     outcome = {
@@ -311,9 +318,7 @@ export async function executeAgentRun(
     outcome.state === "failed"
       ? interruptedSummary(outcome.summary, outcome.resumesAt)
       : outcome.summary;
-  write(
-    outcome.state === "ok" ? `done: ${summary}` : `failed: ${summary}`,
-  );
+  write(outcome.state === "ok" ? `done: ${summary}` : `failed: ${summary}`);
   const done = finishRun(app.db, run.id, {
     state: outcome.state,
     summary,
@@ -521,18 +526,18 @@ function meterUsage(
   // deleted under the run) is logged, never the run's failure.
   try {
     recordUsage(app.db, {
-    runId: run.id,
-    repoId: run.repoId,
-    issueId: run.issueId,
-    agentId: run.actorId,
-    subscriptionId: meter.subscriptionId,
-    kind: meter.kind,
-    tokensIn: meter.tokensIn,
-    tokensOut: meter.tokensOut,
-    costUsd: outcome.costUsd ?? 0,
-    wallMs: ended.getTime() - started,
-    outcome: result,
-    at: ended.toISOString(),
+      runId: run.id,
+      repoId: run.repoId,
+      issueId: run.issueId,
+      agentId: run.actorId,
+      subscriptionId: meter.subscriptionId,
+      kind: meter.kind,
+      tokensIn: meter.tokensIn,
+      tokensOut: meter.tokensOut,
+      costUsd: outcome.costUsd ?? 0,
+      wallMs: ended.getTime() - started,
+      outcome: result,
+      at: ended.toISOString(),
     });
   } catch (error) {
     log.warn("usage not recorded", { run: run.id, error: String(error) });
@@ -931,32 +936,32 @@ async function work(
     ): Promise<ClaudeOutcome> => {
       const spent = redactResult(
         await runClaude({
-        binary: options.binary,
-        cwd: dir,
-        prompt,
-        appendSystemPrompt: systemPrompt(brief),
-        model: agent.model || undefined,
-        budgetUsd,
-        resume,
-        env,
-        sandbox: shellPolicy(),
-        timeoutMs: Math.max(deadline - Date.now(), 0),
-        log: write,
-        signal,
-        onSteer: (send) => steering.set(run.id, send),
-        onUsage: (so) =>
-          meterLive(
-            app,
-            run,
-            meter,
-            {
-              tokensIn: meter.tokensIn + so.tokensIn,
-              tokensOut: meter.tokensOut + so.tokensOut,
-              costUsd: meter.costUsd + so.costUsd,
-            },
-            started,
-            so.costUsd > 0,
-          ),
+          binary: options.binary,
+          cwd: dir,
+          prompt,
+          appendSystemPrompt: systemPrompt(brief),
+          model: agent.model || undefined,
+          budgetUsd,
+          resume,
+          env,
+          sandbox: shellPolicy(),
+          timeoutMs: Math.max(deadline - Date.now(), 0),
+          log: write,
+          signal,
+          onSteer: (send) => steering.set(run.id, send),
+          onUsage: (so) =>
+            meterLive(
+              app,
+              run,
+              meter,
+              {
+                tokensIn: meter.tokensIn + so.tokensIn,
+                tokensOut: meter.tokensOut + so.tokensOut,
+                costUsd: meter.costUsd + so.costUsd,
+              },
+              started,
+              so.costUsd > 0,
+            ),
         }),
       );
       meter.tokensIn += spent.tokensIn;
@@ -1245,8 +1250,17 @@ async function prepareClone(
   signal: AbortSignal,
   keep = false,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  // Two addresses for one forge. The forge itself clones and fetches over
+  // `localUrl`, on this machine. The agent's remotes carry `forgeUrl`, the
+  // forge as the agent is told it: inside the shell sandbox, `localhost` is
+  // the sandbox's own and reaches nothing, while a named host goes out
+  // through the sandbox's proxy — so a remote on the local address would
+  // leave `git push` nowhere to go, and the only way to push would be to
+  // leave the sandbox, which is not a way.
   const url = `${options.localUrl}/${repo.ownerName}/${repo.name}.git`;
   const forkUrl = `${options.localUrl}/${fork.ownerName}/${fork.name}.git`;
+  const agentUrl = `${options.forgeUrl}/${repo.ownerName}/${repo.name}.git`;
+  const agentForkUrl = `${options.forgeUrl}/${fork.ownerName}/${fork.name}.git`;
   if (signal.aborted) return { ok: false, error: "cancelled" };
   if (!existsSync(join(dir, ".git"))) {
     mkdirSync(dir, { recursive: true });
@@ -1261,16 +1275,30 @@ async function prepareClone(
         error: `clone failed: ${cloned.error.stderr.slice(0, 200)}`,
       };
   } else {
-    const fetched = await runGit(["fetch", "--quiet", "--prune", "origin"], {
-      cwd: dir,
-      env,
-      timeoutMs: 2 * 60_000,
-    });
+    const fetched = await runGit(
+      [
+        "fetch",
+        "--quiet",
+        "--prune",
+        url,
+        `+refs/heads/*:refs/remotes/origin/*`,
+      ],
+      { cwd: dir, env, timeoutMs: 2 * 60_000 },
+    );
     if (!fetched.ok)
       return {
         ok: false,
         error: `fetch failed: ${fetched.error.stderr.slice(0, 200)}`,
       };
+    // The remotes are the agent's, set again on every visit — a clone from
+    // before the forge changed where they point (a kept clone resumed after
+    // a release) would otherwise push to an address that is no longer the
+    // forge's for the sandbox.
+    await runGit(["config", "remote.origin.url", agentUrl], { cwd: dir, env });
+    await runGit(["config", "remote.origin.pushurl", agentForkUrl], {
+      cwd: dir,
+      env,
+    });
     // A paused run resumes in the tree it left — its uncommitted work is
     // part of the session that is about to continue — so long as the clone
     // is still on its branch.
@@ -1285,7 +1313,11 @@ async function prepareClone(
       }
     }
   }
-  await runGit(["config", "remote.origin.pushurl", forkUrl], { cwd: dir, env });
+  await runGit(["config", "remote.origin.url", agentUrl], { cwd: dir, env });
+  await runGit(["config", "remote.origin.pushurl", agentForkUrl], {
+    cwd: dir,
+    env,
+  });
   // The branch, if it exists, lives in the fork; its tracking ref is fetched
   // from there so the checkout starts at what the agent last pushed.
   const forkBare = repoDir(app.reposRoot, fork.ownerName, fork.name);
@@ -1331,6 +1363,13 @@ async function prepareClone(
     cwd: dir,
     env,
   });
+  // What a run leaves in its tree that is never the work: the temp
+  // directory a sandboxed shell keeps beside the code (`.tmp/`), with bun's
+  // install cache and a test's data in it, and `node_modules/`. The wrap-up
+  // commits leftovers with `git add -A`, so the clone says so once, in its
+  // own exclude file — the repository's `.gitignore` is the repository's.
+  mkdirSync(join(dir, ".git", "info"), { recursive: true });
+  writeFileSync(join(dir, ".git", "info", "exclude"), CLONE_EXCLUDES);
   write(
     remote === undefined
       ? `branch ${branch} from ${repo.defaultBranch}`
@@ -1338,6 +1377,14 @@ async function prepareClone(
   );
   return { ok: true };
 }
+
+/** Never the work, in any repository the crew clones: git's own exclude syntax. */
+export const CLONE_EXCLUDES = [
+  "# written by the forge for every crew clone",
+  ".tmp/",
+  "node_modules/",
+  "",
+].join("\n");
 
 /**
  * After the agent stops: push what it committed if it did not, open the
@@ -1432,8 +1479,17 @@ async function landWork(
       write(
         `pushing ${branch} (${ahead} commit${ahead === 1 ? "" : "s"} the agent did not push)`,
       );
+      // The forge pushes for the agent over its own local address — the
+      // clone's `origin` carries the public one, for the agent inside the
+      // sandbox (`prepareClone`), and this push is the forge's, not the
+      // agent's. The branch already tracks `origin`, set there.
       const pushed = await runGit(
-        ["push", "--quiet", "-u", "origin", `${branch}:${branch}`],
+        [
+          "push",
+          "--quiet",
+          `${options.localUrl}/${fork.ownerName}/${fork.name}.git`,
+          `${branch}:${branch}`,
+        ],
         { cwd: dir, env, timeoutMs: 2 * 60_000 },
       );
       if (!pushed.ok)
@@ -1471,9 +1527,11 @@ async function landWork(
 
   const existing =
     pull ??
-    listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 200 }).find(
-      (p) => p.headRepoId === fork.id && p.headBranch === branch,
-    );
+    listPulls(app.db, repo.id, {
+      sealed: true,
+      state: "open",
+      limit: 200,
+    }).find((p) => p.headRepoId === fork.id && p.headBranch === branch);
   if (existing !== undefined) {
     if (report !== "") addComment(app, agent.user, repo, existing, report);
     return {

@@ -82,8 +82,8 @@ export interface SpawnDeps {
   readonly request: Request;
   readonly url: URL;
   /**
-   * The child's own model key, when the spawner gives it one: an API-billed
-   * key (never a person's subscription token), sealed in the child with the
+   * The child's own model key, when the spawner gives it one: an API key, or
+   * a person's own setup-token under a budget (their choice), sealed in the child with the
    * child's own `secret.key`, granted to its organisation, and never shown
    * again or kept by the parent. Its whole-life budget is the plan's
    * `budgetUsd`, locked in the child.
