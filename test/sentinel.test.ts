@@ -7,9 +7,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { quietLogs } from "./helpers/globals.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { setCapacity } from "../src/core/capacity.ts";
+import { clearErrors, createLog } from "../src/kernel/log.ts";
 import { recordDecision } from "../src/core/decisions.ts";
 import { listComments, listIssues } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
@@ -18,11 +20,13 @@ import { createUser, type User } from "../src/core/users.ts";
 import {
   findFaults,
   hunt,
-  huntOn,
   sentinelLine,
+  scrub,
   sentinelStanding,
   sentinelTick,
 } from "../src/crew/sentinel.ts";
+
+quietLogs();
 
 let dataDir: string;
 let app: App;
@@ -174,10 +178,6 @@ describe("the schedule", () => {
       delete process.env.FORGE_SENTINEL_REPO;
     }
   });
-
-  test("no hunt is on when none runs", () => {
-    expect(huntOn()).toBe(false);
-  });
 });
 
 describe("the ledger", () => {
@@ -192,7 +192,120 @@ describe("the ledger", () => {
         by: "rule",
         ms: 1,
       });
-    const f = findFaults(app.db, Date.now()).find((x) => x.key === `stops:${getRepoById(app.db, repo.id)!.id}`);
+    const f = findFaults(app.db, NOW).find((x) => x.key === `stops:${getRepoById(app.db, repo.id)!.id}`);
     expect(f?.evidence[0]).toContain("3 of 3");
+  });
+});
+
+describe("the guard", () => {
+  test("twenty parks in a day are named; nineteen are not", () => {
+    const park = () =>
+      recordDecision(app.db, {
+        kind: "guard",
+        repoId: repo.id,
+        state: {},
+        answer: "park",
+        p: 1,
+        by: "rule",
+        ms: 1,
+      });
+    const parks = () => findFaults(app.db, Date.now()).find((x) => x.key === `parks:${repo.id}`);
+    for (let n = 0; n < 19; n++) park();
+    expect(parks()).toBeUndefined();
+    park();
+    expect(parks()?.evidence[0]).toContain("20 `guard` decisions");
+  });
+});
+
+describe("the log", () => {
+  test("the same ERROR line three times is named once, with the line", () => {
+    clearErrors();
+    const l = createLog("probe");
+    for (let n = 1; n <= 3; n++) l.error(`disk write failed after ${n}0 ms`);
+    const hits = findFaults(app.db, Date.now()).filter((x) => x.key.startsWith("log:"));
+    expect(hits.length).toBe(1);
+    expect(hits[0]!.evidence.join("\n")).toContain("3 ERROR lines");
+    expect(hits[0]!.evidence.join("\n")).toContain("disk write failed");
+    clearErrors();
+    l.error("once");
+    expect(findFaults(app.db, Date.now()).some((x) => x.key.startsWith("log:"))).toBe(false);
+  });
+});
+
+describe("what is filed", () => {
+  test("a token in a summary or a log line is not quoted", () => {
+    const token = "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+    const long = "Zm9yZ2Utc2VjcmV0LWtleS1ub3QtZm9yLWlzc3Vlcy0xMjM0NTY3ODkw";
+    for (let n = 0; n < 8; n++)
+      plantRun("check", "failed", `deploy failed with token ${token} and ${long}`, ago(n * HOUR));
+    const all = findFaults(app.db, NOW)
+      .map((f) => `${f.title}\n${f.evidence.join("\n")}`)
+      .join("\n");
+    expect(all).toContain("deploy failed");
+    expect(all).not.toContain(token);
+    expect(all).not.toContain(long);
+    expect(scrub(`password: ${long}`)).not.toContain(long);
+    hunt(app, "alice/forge", NOW + 2 * HOUR);
+    for (const i of listIssues(app.db, repo.id, { state: "open", limit: 200 })) {
+      expect(i.body).not.toContain(token);
+      expect(i.body).not.toContain(long);
+    }
+  });
+});
+
+describe("a comment that cannot be lost", () => {
+  test("an issue outside the newest 200 is still commented on, then remembered", () => {
+    const gate = listIssues(app.db, repo.id, { state: "open", limit: 200 }).find((i) =>
+      i.title.includes("has not been green"),
+    )!;
+    // Two hundred newer issues push it out of any list window.
+    for (let n = 0; n < 205; n++)
+      app.db
+        .query("INSERT INTO issue (id, repo_id, number, title, body, author_id, state, kind, created_at, updated_at) SELECT ?1, repo_id, ?2, 'filler', '', author_id, 'open', 'issue', ?3, ?3 FROM issue WHERE id = ?4")
+        .run(`filler-${n}`, 10_000 + n, new Date(NOW + 3 * HOUR + n).toISOString(), gate.id);
+    plantRun("check", "failed", "nested cell: no network namespace", ago(0));
+    const before = listComments(app.db, gate.id).length;
+    const r = hunt(app, "alice/forge", NOW + 4 * HOUR);
+    expect(r.commented).toBeGreaterThan(0);
+    expect(listComments(app.db, gate.id).length).toBe(before + 1);
+    const stored = app.db
+      .query<{ evidence: string }, [string]>("SELECT evidence FROM sentinel_finding WHERE issue_id = ?1")
+      .get(gate.id)!;
+    expect(stored.evidence).toContain("check runs failed");
+  });
+});
+
+describe("the signals inside the hour", () => {
+  const lastHunt = () => new Date(sentinelStanding(app.db).lastHuntAt!).getTime();
+  const withRepo = <T>(fn: () => T): T => {
+    process.env.FORGE_SENTINEL_REPO = "alice/forge";
+    try {
+      return fn();
+    } finally {
+      delete process.env.FORGE_SENTINEL_REPO;
+    }
+  };
+
+  test("a new setting away hunts after ten minutes; tracked, it does not", () => {
+    setCapacity(app.db, "cells.egress", "report", alice.id);
+    app.db
+      .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'cells.egress'")
+      .run(ago(10 * 24 * HOUR));
+    const l = lastHunt();
+    expect(withRepo(() => sentinelTick(app, l + 5 * 60_000))).toBeNull();
+    const r = withRepo(() => sentinelTick(app, l + 20 * 60_000));
+    expect(r?.filed).toBe(1);
+    expect(withRepo(() => sentinelTick(app, lastHunt() + 20 * 60_000))).toBeNull();
+  });
+
+  test("a newly held slot hunts too", () => {
+    const run = createRun(app.db, { repoId: repo.id, kind: "deploy" });
+    const l = lastHunt();
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(run.id, new Date(l - 2 * HOUR).toISOString());
+    const r = withRepo(() => sentinelTick(app, l + 20 * 60_000));
+    expect(r?.filed).toBe(1);
+    expect(withRepo(() => sentinelTick(app, lastHunt() + 20 * 60_000))).toBeNull();
   });
 });

@@ -12,7 +12,6 @@
  * repository's origin.
  */
 
-import { sentinelTick } from "./sentinel.ts";
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import {
@@ -42,6 +41,7 @@ import {
 import { getHold } from "../core/holds.ts";
 import { certain } from "./decide.ts";
 import { decideAndRecord } from "./ledger.ts";
+import { sentinelTick } from "./sentinel.ts";
 import { wallOf, wallSentence } from "../contract/policy.ts";
 import {
   getIssue,

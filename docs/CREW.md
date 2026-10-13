@@ -25,8 +25,13 @@ issue, and only when its evidence changed; one whose issue was closed and
 returned is filed again. It files in `FORGE_SENTINEL_REPO` (default
 `trevato/forge`) as the `sentinel` agent, else the first admin.
 
-**What it shows.** The board's forge strip: the last hunt's time and the count
-of open findings, or "hunting" while one is on.
+**What it shows.** To a site admin only: the board's forge strip and the
+terminal palette's `Sentinel` command show the count of open findings and the
+last hunt's time. A hunt is synchronous, so there is no "hunting" state to show.
+
+**What it never quotes.** Evidence passes through `scrub` (`redactSecrets` and
+any 32-character unbroken token) before it is filed, since the repository may
+be public.
 
 **Not done.** Ingress routes and other edge objects are not in this database,
 so the sentinel cannot see them. It does not open fix pulls: a finding with a

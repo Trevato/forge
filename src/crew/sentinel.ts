@@ -23,13 +23,13 @@ import {
 } from "../core/capacity.ts";
 import { decisionsSince } from "../core/decisions.ts";
 import { getAgentByName } from "../core/agents.ts";
-import { listIssues } from "../core/issues.ts";
+import { getIssueById } from "../core/issues.ts";
 import { getRepo } from "../core/repos.ts";
 import { leaseLapsed, listRunning } from "../core/runs.ts";
 import { migrations } from "../core/schema.ts";
 import { getUserByName, type User } from "../core/users.ts";
 import { migrate } from "../kernel/migrate.ts";
-import { createLog, recentErrors } from "../kernel/log.ts";
+import { createLog, recentErrors, redactSecrets } from "../kernel/log.ts";
 import { QUEUE_WAIT_MAX_MS } from "../kernel/vitals.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 
@@ -61,6 +61,12 @@ export interface Finding {
 
 const clip = (text: string, n = 200): string =>
   text.length > n ? `${text.slice(0, n - 1)}…` : text;
+/**
+ * Evidence is filed where others read it, and may be public: anything
+ * credential-shaped, or a long unbroken token, never leaves as quoted.
+ */
+export const scrub = (text: string): string =>
+  redactSecrets(text).replace(/[A-Za-z0-9_+/=-]{32,}/g, "[redacted]");
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
 const keyPart = (text: string): string =>
   text.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 60);
@@ -324,7 +330,7 @@ export function repeatedErrors(now: number): Finding[] {
 
 /** Everything the sentinel reads, in one pass. */
 export function findFaults(db: Database, now = Date.now()): Finding[] {
-  return [
+  const found = [
     ...heldSlots(db, now),
     ...settingsAway(db, now),
     ...strayTriggers(db),
@@ -332,6 +338,11 @@ export function findFaults(db: Database, now = Date.now()): Finding[] {
     ...runStreaks(db),
     ...repeatedErrors(now),
   ];
+  return found.map((f) => ({
+    ...f,
+    title: scrub(f.title),
+    evidence: f.evidence.map(scrub),
+  }));
 }
 
 // ---- filing ----
@@ -341,10 +352,6 @@ export interface HuntResult {
   readonly filed: number;
   readonly commented: number;
 }
-
-let hunting = false;
-/** Whether a hunt is under way: the home's one line while it is. */
-export const huntOn = (): boolean => hunting;
 
 function sentinelActor(app: App): User | undefined {
   if (getAgentByName(app.db, "sentinel") !== undefined)
@@ -382,65 +389,63 @@ export function hunt(
   repoPath: string,
   now = Date.now(),
 ): HuntResult {
-  hunting = true;
-  try {
-    const at = new Date(now).toISOString();
-    const findings = findFaults(app.db, now);
-    let filed = 0;
-    let commented = 0;
-    const [owner = "", name = ""] = repoPath.split("/");
-    const repo = getRepo(app.db, owner, name);
-    const actor = sentinelActor(app);
-    if (repo !== undefined && actor !== undefined) {
-      for (const f of findings) {
-        try {
-          const evidence = f.evidence.join("\n");
-          const tracked = app.db
-            .query<
-              { issue_id: string; evidence: string },
-              [string]
-            >(`SELECT t.issue_id, t.evidence FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
-                WHERE t.key = ?1 AND i.state = 'open' LIMIT 1`)
-            .get(f.key);
-          if (tracked !== null) {
-            app.db
-              .query("UPDATE sentinel_finding SET last_seen = ?1, evidence = ?2 WHERE key = ?3 AND issue_id = ?4")
-              .run(at, evidence, f.key, tracked.issue_id);
-            if (tracked.evidence !== evidence) {
-              const issue = listIssues(app.db, repo.id, { state: "open", limit: 200 }).find(
-                (i) => i.id === tracked.issue_id,
-              );
-              if (issue !== undefined) {
-                addComment(app, actor, repo, issue, `Still there at ${at}, evidence now:\n${f.evidence.map((e) => `- ${e}`).join("\n")}`);
-                commented++;
-              }
+  const at = new Date(now).toISOString();
+  const findings = findFaults(app.db, now);
+  let filed = 0;
+  let commented = 0;
+  const [owner = "", name = ""] = repoPath.split("/");
+  const repo = getRepo(app.db, owner, name);
+  const actor = sentinelActor(app);
+  if (repo !== undefined && actor !== undefined) {
+    for (const f of findings) {
+      try {
+        const evidence = f.evidence.join("\n");
+        const tracked = app.db
+          .query<
+            { issue_id: string; evidence: string },
+            [string]
+          >(`SELECT t.issue_id, t.evidence FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
+              WHERE t.key = ?1 AND i.state = 'open' LIMIT 1`)
+          .get(f.key);
+        if (tracked !== null) {
+          // The stored evidence moves only once the comment is made: a
+          // comment that failed is tried again by the next hunt.
+          if (tracked.evidence !== evidence) {
+            const issue = getIssueById(app.db, tracked.issue_id);
+            if (issue === undefined) continue;
+            const said = addComment(app, actor, repo, issue, `Still there at ${at}, evidence now:\n${f.evidence.map((e) => `- ${e}`).join("\n")}`);
+            if (!said.ok) {
+              log.warn("sentinel could not comment", { key: f.key, error: String(said.error) });
+              continue;
             }
-            continue;
-          }
-          const made = openIssue(app, actor, repo, {
-            title: `Sentinel: ${clip(f.title, 200)}`,
-            body: bodyOf(f, at),
-          });
-          if (!made.ok) {
-            log.warn("sentinel could not file", { key: f.key, error: String(made.error) });
-            continue;
+            commented++;
           }
           app.db
-            .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)")
-            .run(f.key, made.value.id, evidence, at);
-          filed++;
-        } catch (error) {
-          log.error("sentinel filing failed", { key: f.key, error: String(error) });
+            .query("UPDATE sentinel_finding SET last_seen = ?1, evidence = ?2 WHERE key = ?3 AND issue_id = ?4")
+            .run(at, evidence, f.key, tracked.issue_id);
+          continue;
         }
+        const made = openIssue(app, actor, repo, {
+          title: `Sentinel: ${clip(f.title, 200)}`,
+          body: bodyOf(f, at),
+        });
+        if (!made.ok) {
+          log.warn("sentinel could not file", { key: f.key, error: String(made.error) });
+          continue;
+        }
+        app.db
+          .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)")
+          .run(f.key, made.value.id, evidence, at);
+        filed++;
+      } catch (error) {
+        log.error("sentinel filing failed", { key: f.key, error: String(error) });
       }
     }
-    app.db
-      .query("INSERT INTO sentinel_hunt (at, found, filed) VALUES (?1, ?2, ?3)")
-      .run(at, findings.length, filed);
-    return { found: findings.length, filed, commented };
-  } finally {
-    hunting = false;
   }
+  app.db
+    .query("INSERT INTO sentinel_hunt (at, found, filed) VALUES (?1, ?2, ?3)")
+    .run(at, findings.length, filed);
+  return { found: findings.length, filed, commented };
 }
 
 // ---- standing ----
@@ -467,12 +472,19 @@ export function sentinelStanding(db: Database): SentinelStanding {
   };
 }
 
-/** The one line the home and the board show: while a hunt is on, or what the last found. */
+/** The one line the board and the terminal show: what is open, or nothing. */
 export function sentinelLine(db: Database): string | null {
-  if (hunting) return "The sentinel is hunting for faults…";
   const s = sentinelStanding(db);
   if (s.openFindings === 0) return null;
   return `The sentinel has ${s.openFindings} open ${s.openFindings === 1 ? "finding" : "findings"}`;
+}
+
+/** The line with its last hunt, for a site admin's board strip and terminal; null before the first hunt. */
+export function sentinelSummary(db: Database): string | null {
+  const s = sentinelStanding(db);
+  if (s.lastHuntAt === null) return sentinelLine(db);
+  const when = s.lastHuntAt.slice(0, 16).replace("T", " ");
+  return `${sentinelLine(db) ?? "The sentinel found nothing"} · last hunt ${when}`;
 }
 
 /**
