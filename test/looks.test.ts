@@ -472,8 +472,7 @@ describe("the look", () => {
     expect(serving?.payload["testsRunning"]).toBe(true);
 
     // The gate opens and the test finishes red; the run fails, but the
-    // picture already
-    // taken of what is serving is untouched.
+    // picture already taken of what is serving is untouched.
     writeFileSync(gate, "");
     const failed = await settled(
       (r) => r.env === env && r.commitOid === commitOid,
