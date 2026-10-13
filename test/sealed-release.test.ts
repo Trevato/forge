@@ -43,6 +43,14 @@ const ok = <T>(
   return r.value;
 };
 
+/**
+ * Each case that calls `reportAndFix` runs a commit, a pull and a merge
+ * through real git processes: on a loaded runner that is more than bun's
+ * 5 s default, and a case cut off there reads as red though nothing it
+ * asserts is wrong. They get the room `beforeAll` has.
+ */
+const GIT_WORK_MS = 30_000;
+
 /** A sealed report, and a merged pull that closes it. */
 async function reportAndFix(
   slug: string,
@@ -156,7 +164,7 @@ describe("the way out: its fix released", () => {
         { ref: "refs/heads/main", newOid: baseOid },
       ], alice),
     ).toEqual([]);
-  });
+  }, GIT_WORK_MS);
 
   test("a tag that contains the merged fix unseals the report and its pull, recorded as the release's", async () => {
     const { report, mergeOid, pull } = await reportAndFix("late");
@@ -172,7 +180,7 @@ describe("the way out: its fix released", () => {
         e.kind === "issue.unsealed" && e.payload["number"] === report.number,
     );
     expect(record?.payload["released"]).toBe("v1.0.1");
-  });
+  }, GIT_WORK_MS);
 });
 
 describe("a release is a person's", () => {
@@ -188,7 +196,7 @@ describe("a release is a person's", () => {
         ),
       ).toEqual([]);
     expect(getIssue(app.db, repo.id, report.number)!.sealed).toBe(true);
-  });
+  }, GIT_WORK_MS);
 
   test("through a real git push of a writer's tag, the report opens", async () => {
     const { report, mergeOid } = await reportAndFix("pushed");
@@ -215,7 +223,7 @@ describe("a release is a person's", () => {
       await Bun.sleep(100);
     expect(getIssue(app.db, repo.id, report.number)!.sealed).toBe(false);
     await rm(work, { recursive: true, force: true });
-  });
+  }, GIT_WORK_MS);
 });
 
 describe("what is assigned to you", () => {
