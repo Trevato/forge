@@ -344,9 +344,16 @@ describe("the tiers in the forge's own checks service", () => {
       JSON.stringify({
         check: { run: "echo HEAD-RUN", ...(fast ? { fast } : {}) },
       });
+    // The base declares the tier first: a head that then drops or weakens
+    // `check.fast` merges cleanly and is still judged with the base's.
+    const main = await commitToBranch(app, alice, repo, {
+      message: "Base declares the tier",
+      files: [{ path: "forge.json", content: forgeJson("echo FULL") }],
+    });
+    if (!main.ok) throw new Error(JSON.stringify(main.error));
     const old = await commitToBranch(app, alice, repo, {
       branch: "old",
-      message: "Branched before the fast tier",
+      message: "Drops the fast tier from its own manifest",
       files: [{ path: "forge.json", content: own(undefined) }],
     });
     if (!old.ok) throw new Error(JSON.stringify(old.error));
@@ -356,11 +363,6 @@ describe("the tiers in the forge's own checks service", () => {
       files: [{ path: "forge.json", content: own("echo HEAD-FAST") }],
     });
     if (!weak.ok) throw new Error(JSON.stringify(weak.error));
-    const main = await commitToBranch(app, alice, repo, {
-      message: "Base declares the tier",
-      files: [{ path: "forge.json", content: forgeJson("echo FULL") }],
-    });
-    if (!main.ok) throw new Error(JSON.stringify(main.error));
     for (const [head, oid] of [
       ["old", old.value.commitOid],
       ["weak", weak.value.commitOid],
