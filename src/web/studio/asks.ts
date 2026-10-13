@@ -647,7 +647,9 @@ function lineOf(c: AskCandidate): string {
 
 /** Why an agent's change waits for a person's review, in a clause. */
 const reviewWhy = (wait: ReviewWait | undefined): string =>
-  wait?.why === "lapsed"
+  wait?.why === "lapsed" && wait.lateCheckMinutes !== undefined
+    ? `review ran late: the check took ${wait.lateCheckMinutes} min, and the reviewer did not answer, since ${wait.since.slice(0, 10)}`
+    : wait?.why === "lapsed"
     ? `the reviewer did not answer, since ${wait.since.slice(0, 10)}`
     : `no reviewer on the crew, since ${wait?.since.slice(0, 10) ?? "it went green"}`;
 
