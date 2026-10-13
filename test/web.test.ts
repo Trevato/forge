@@ -593,10 +593,21 @@ describe("themes", () => {
     for (const name of THEME_NAMES) {
       expect(text).toContain(`value="${name}"`);
     }
-    // Critical paint before the stylesheet: system pair (light default + dark media).
-    expect(text).toMatch(
-      /<style nonce="[^"]+">html,body\{background-color:#fafafa;color-scheme:light\}@media \(prefers-color-scheme: dark\)\{html,body\{background-color:#09090b;color-scheme:dark\}\}<\/style>/,
+    // Critical paint before the stylesheet: system pair (light default + dark
+    // media), then a rule per theme so a toggle repaints without a reload.
+    const boot = text.match(/<style nonce="[^"]+">([^<]*)<\/style>/)?.[1];
+    expect(boot).toStartWith(
+      "html,body{background-color:#fafafa;color-scheme:light}@media (prefers-color-scheme: dark){html,body{background-color:#09090b;color-scheme:dark}}",
     );
+    expect(boot).toContain(
+      'html[data-theme="dark"],html[data-theme="dark"] body{background-color:#09090b;color-scheme:dark}',
+    );
+    expect(boot).toContain(
+      'html[data-theme="light"],html[data-theme="light"] body{background-color:#fafafa;color-scheme:light}',
+    );
+    for (const name of THEME_NAMES) {
+      expect(boot).toContain(`html[data-theme="${name}"] body{`);
+    }
   });
 
   test("choosing a theme sets the cookie and stamps the page", async () => {
@@ -616,10 +627,16 @@ describe("themes", () => {
     expect(text).toContain('data-theme="midnight"');
     // The switcher shows the active choice.
     expect(text).toMatch(/value="midnight"\s+checked/);
-    // Boot paint matches midnight, not the system pair.
-    expect(text).toMatch(
-      /<style nonce="[^"]+">html,body\{background-color:#16161e;color-scheme:dark\}<\/style>/,
+    // Boot paint follows the attribute: midnight's ground for this page, and
+    // the same rules as a system page, so switching away repaints at once.
+    const boot = text.match(/<style nonce="[^"]+">([^<]*)<\/style>/)?.[1];
+    expect(boot).toContain(
+      'html[data-theme="midnight"],html[data-theme="midnight"] body{background-color:#16161e;color-scheme:dark}',
     );
+    const system = (await (await fetch(base)).text()).match(
+      /<style nonce="[^"]+">([^<]*)<\/style>/,
+    )?.[1];
+    expect(boot).toBe(system!);
   });
 
   test("system clears the cookie; junk never sticks", async () => {
