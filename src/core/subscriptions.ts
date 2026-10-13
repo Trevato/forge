@@ -180,22 +180,19 @@ export const API_BASE_MAX = 200;
 
 /**
  * What kind of token this is. A token from `claude setup-token` begins
- * `sk-ant-oat…`; an Anthropic API key `sk-ant-api…`; an OpenRouter key
- * `sk-or-v1-…`. With an API base URL set (OpenRouter or another Anthropic-
- * compatible gateway), any other non-empty token is accepted as an API key
- * so a gateway's own key shape can seal. OAuth tokens never take a base URL.
+ * `sk-ant-oat…` and is a person's own plan: it goes under
+ * `CLAUDE_CODE_OAUTH_TOKEN` and never takes a base URL. Anything else that
+ * could be a key — one line, no spaces, not absurdly long — is an API key:
+ * Anthropic's `sk-ant-api…`, the `sk-ant-usr…` keys that come with a
+ * subscription's API credits, OpenRouter's `sk-or-v1-…`, or whatever shape
+ * a gateway hands out with its base URL. The forge keeps no list of shapes;
+ * the provider answers a bad key on the first call, and the run says so.
  */
-export function kindOfToken(
-  token: string,
-  opts?: { readonly apiBase?: string | null | undefined },
-): SubscriptionKind | undefined {
-  if (token.length > TOKEN_MAX || /\s|\0/.test(token)) return undefined;
+export function kindOfToken(token: string): SubscriptionKind | undefined {
+  if (token === "" || token.length > TOKEN_MAX || /\s|\0/.test(token))
+    return undefined;
   if (/^sk-ant-oat\d*-/.test(token)) return "oauth";
-  if (/^sk-ant-api\d*-/.test(token)) return "api_key";
-  if (/^sk-or-v1-/.test(token)) return "api_key";
-  const base = (opts?.apiBase ?? "").trim();
-  if (base !== "" && parseApiBase(base) !== undefined) return "api_key";
-  return undefined;
+  return "api_key";
 }
 
 /**
@@ -294,7 +291,7 @@ export function addSubscription(
     if (parsed === undefined) return err("invalid_api_base");
     apiBase = parsed;
   }
-  const kind = kindOfToken(input.token, { apiBase });
+  const kind = kindOfToken(input.token);
   if (kind === undefined) return err("invalid_token");
   // A Claude subscription token is Anthropic's own plan — never a gateway.
   if (kind === "oauth" && apiBase !== null) return err("invalid_api_base");
