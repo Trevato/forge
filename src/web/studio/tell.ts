@@ -11,6 +11,7 @@
 import { mayEditIssue } from "../../actions/issues.ts";
 import { marksByName } from "../../core/marks.ts";
 import { threadNote } from "../../crew/direct.ts";
+import { alreadyDone } from "../../crew/parks.ts";
 import type { Database } from "bun:sqlite";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
@@ -284,6 +285,32 @@ async function studioTell(
   const mayClose =
     user !== undefined &&
     (user.id === issue.authorId || canWrite(db, repo, user));
+  // The crew found it done on the base: one line, with the commits and the
+  // button that closes it. The person closes; nothing here does.
+  const doneBy = issue.state === "open" ? (alreadyDone(db, [issue.id]).get(issue.id) ?? []) : [];
+  const doneLine =
+    doneBy.length === 0
+      ? null
+      : card(
+          html`<form method="post" action="${thread}/state" class="row">
+            <input type="hidden" name="state" value="closed" />
+            <input type="hidden" name="reason" value="done" />
+            <span
+              >Done on main
+              ${doneBy.map(
+                (oid, n) =>
+                  html`${n > 0 ? ", " : "in "}<a
+                      href="${repoBase(repo)}/commit/${oid}"
+                      ><code>${oid.slice(0, 7)}</code></a
+                    >`,
+              )}, waiting for you to close it.</span
+            >
+            ${mayClose
+              ? btn("Close", { size: "sm", icon: "issueClosed" })
+              : null}
+          </form>`,
+          { extra: "mt", tone: "success" },
+        );
   const [wordInfo, runsCard, closingCard] = await Promise.all([
     direction ? undefined : tellWord(wordCtx, repo, issue, closingPull),
     tellRuns(wordCtx, repo, issue),
@@ -364,7 +391,7 @@ async function studioTell(
     ${head}
     <div class="split">
       <div>
-        ${talk.node}
+        ${talk.node} ${doneLine}
         ${composer(ctx, {
           action: `${thread}/comments`,
           ...(mayClose ? { stateAction: `${thread}/state` } : {}),

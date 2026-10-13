@@ -30,7 +30,8 @@ import {
   type Issue,
   type Label,
 } from "../../core/issues.ts";
-import { editIssue, type Closing } from "../../actions/issues.ts";
+import { addComment, editIssue, type Closing } from "../../actions/issues.ts";
+import { alreadyDone } from "../../crew/parks.ts";
 import {
   getIssue,
   labelsFor,
@@ -747,6 +748,11 @@ export async function stateSubmit(
           ...(why === "split" ? { into } : {}),
         }
       : {};
+  // Done on main already, by the commits the crew named: the close keeps them.
+  const doneBy =
+    wanted === "closed" && kind === "issue"
+      ? (alreadyDone(ctx.app.db, [found.issue.id]).get(found.issue.id) ?? [])
+      : [];
   // The `…Through` twin: identical on a native repo, and on a mirror it
   // closes the issue at the origin first and reflects what came back.
   const changed = await setIssueStateThrough(
@@ -773,6 +779,16 @@ export async function stateSubmit(
           : "That could not be changed.");
     return flashOrJson(ctx, dest, { tone: "danger", message });
   }
+  if (doneBy.length > 0 && changed.value.state === "closed")
+    addComment(
+      ctx.app,
+      ctx.auth.user,
+      found.repo,
+      changed.value,
+      `Closed: already done on main in ${doneBy
+        .map((o) => `[\`${o.slice(0, 7)}\`](${repoBase(found.repo)}/commit/${o})`)
+        .join(", ")}.`,
+    );
   return flashOrJson(ctx, dest, {
     message: wanted === "closed" ? "Closed." : "Reopened.",
   });

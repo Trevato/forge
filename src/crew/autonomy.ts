@@ -83,8 +83,10 @@ import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import { capReached, ISSUE_RUN_CAP } from "./guard.ts";
+import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
 import { interruptionOf } from "./interrupted.ts";
 import {
+  DONE_LIKE,
   PARK_NOTE,
   PARK_STRIKES,
   PLANNER_HINT,
@@ -536,7 +538,8 @@ function stalled(app: App, repo: Repo, issue: Issue): boolean {
   return !app.db
     .query<{ id: string }, [string, string]>(
       `SELECT DISTINCT author_id AS id FROM comment
-        WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL`,
+        WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL
+          AND body NOT LIKE '${DONE_LIKE}'`,
     )
     .all(issue.id, last.created_at)
     .some((r) => speaksForCrew(app.db, repo, getUserById(app.db, r.id)));
@@ -581,7 +584,7 @@ function declineOf(
     .query<{ id: string }, [string, string]>(
       `SELECT DISTINCT author_id AS id FROM comment
        WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL
-         AND body NOT LIKE 'Parked by the crew%'`,
+         AND body NOT LIKE 'Parked by the crew%' AND body NOT LIKE '${DONE_LIKE}'`,
     )
     .all(issueId, last.created_at)
     .map((r) => r.id);
@@ -747,12 +750,40 @@ export function settleAgentRun(
     crewRole(app.db, repo.id, run.actorId) !== "builder"
   )
     return false;
+  const done = alreadyDoneOids(run.summary);
+  if (run.state === "ok" && done.length > 0)
+    return noteAlreadyDone(app, repo, issue, done);
   return parkIssue(
     app,
     repo,
     issue,
     `the run ended without a pull: ${run.summary || run.state}`,
   );
+}
+
+/**
+ * A run found its issue done on the base, by commits that are there
+ * (`already.ts`): one note on the issue with the commits, the assignee
+ * cleared, and no park — it is no strike and never reaches the planner as
+ * parked twice. Closing it is the asker's. Said once per run.
+ */
+function noteAlreadyDone(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  oids: readonly string[],
+): boolean {
+  if (repo.autonomyBy === null) return false;
+  const by = getUserById(app.db, repo.autonomyBy);
+  if (!by) return false;
+  if (issue.assigneeId !== null) assignIssue(app, by, repo, issue, null);
+  addComment(app, by, repo, issue, `${ALREADY_NOTE}${oids.join(" ")}`);
+  log.info("already done", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    issue: issue.number,
+    commits: oids.length,
+  });
+  return true;
 }
 
 /**

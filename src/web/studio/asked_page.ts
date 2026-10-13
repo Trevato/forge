@@ -43,6 +43,9 @@ const WORD: Record<AskedState, { text: string; tone: Tone }> = {
 };
 
 function pullNote(a: Asked): string {
+  // The row is one link, so the commits are named here and linked on the ask.
+  if (a.doneBy.length > 0)
+    return `on main in ${a.doneBy.map((o) => o.slice(0, 7)).join(", ")}, waiting for you to close it`;
   const merged = a.pulls.find((p) => p.state === "merged");
   if (merged) return `pull #${merged.number} merged`;
   const open = a.pulls.find((p) => p.state === "open");
@@ -56,6 +59,7 @@ function pullNote(a: Asked): string {
  * open, which is the next thing a person asks.
  */
 function wordFor(a: Asked): { text: string; tone: Tone } {
+  if (a.doneBy.length > 0) return { text: "Done on main", tone: "success" };
   if (a.flagged) return { text: "Nothing built", tone: "danger" };
   const open = a.pulls.find((p) => p.state === "open");
   if (a.stale && open !== undefined)

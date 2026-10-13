@@ -22,6 +22,7 @@
 import type { Database } from "bun:sqlite";
 import { getIssueById, standsForPerson } from "../core/issues.ts";
 import type { Repo } from "../core/repos.ts";
+import { ALREADY_NOTE } from "./already.ts";
 import { directorsAmong, proposedWork } from "./direct.ts";
 
 /** Parks since the last word at which the clock no longer dispatches an issue. */
@@ -32,6 +33,16 @@ export const PARK_NOTE = "Parked by the crew: ";
 
 /** What every park note starts with, for `LIKE`. */
 const PARK = "Parked by the crew%";
+
+/** What an already-done note starts with, for `LIKE`. */
+export const DONE_LIKE = `${ALREADY_NOTE.slice(0, 20)}%`;
+
+/** `n` is an already-done note written by the crew: the one who set it going, or its own agent. */
+const BY_CREW = `n.origin_author IS NULL AND (n.author_id IN (
+    SELECT r.autonomy_by FROM issue i JOIN repo r ON r.id = i.repo_id WHERE i.id = n.issue_id)
+  OR n.author_id IN (
+    SELECT rc.user_id FROM repo_crew rc JOIN issue i ON i.repo_id = rc.repo_id
+     WHERE i.id = n.issue_id))`;
 
 /** After the reason on a first park that closed a pull: what the planner may do. */
 export const PLANNER_HINT =
@@ -53,6 +64,7 @@ const COUNTED = `p.body LIKE '${PARK}' AND p.origin_author IS NULL
   AND p.created_at > COALESCE((
     SELECT MAX(c.created_at) FROM comment c
      WHERE c.issue_id = p.issue_id AND c.body NOT LIKE '${PARK}'
+       AND c.body NOT LIKE '${DONE_LIKE}'
        AND c.origin_author IS NULL
        AND c.author_id IN (SELECT value FROM json_each(?1))
   ), '')`;
@@ -205,6 +217,10 @@ export function parkedTwice(
             SELECT 1 FROM issue_dependency d JOIN issue b ON b.id = d.blocked_by_id
              WHERE d.issue_id = o.id AND b.state = 'open')
           AND NOT EXISTS (
+            SELECT 1 FROM comment n WHERE n.issue_id = o.id AND n.body LIKE '${DONE_LIKE}' AND ${BY_CREW}
+               AND n.created_at > (SELECT MAX(p.created_at) FROM comment p
+                                    WHERE p.issue_id = o.id AND p.body LIKE '${PARK}'))
+          AND NOT EXISTS (
             SELECT 1 FROM run r
              WHERE r.issue_id = o.id AND r.kind = 'agent'
                AND r.state IN ('queued','running'))
@@ -276,6 +292,38 @@ export function parkedTwice(
     // An open pull that would close it is someone's answer already.
     const proposed = proposedWork(db, repo);
     out.push(...struck.filter((issue) => !proposed.has(issue.number)));
+  }
+  return out;
+}
+
+/**
+ * The commits an open issue was found done by, when the crew's newest word
+ * on it is an already-done note (`already.ts`) and nobody has closed it
+ * yet: one read for these issues, empty for the rest. A later park, or a
+ * later run that ends otherwise, is a newer word.
+ */
+export function alreadyDone(
+  db: Database,
+  issueIds: readonly string[],
+): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (let i = 0; i < issueIds.length; i += CHUNK) {
+    const batch = issueIds.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ id: string; body: string }, string[]>(
+        `SELECT n.issue_id AS id, n.body FROM comment n JOIN issue o ON o.id = n.issue_id
+          WHERE n.issue_id IN (${marksFrom(batch.length, 1)}) AND o.state = 'open'
+            AND n.body LIKE '${DONE_LIKE}' AND ${BY_CREW}
+            AND NOT EXISTS (SELECT 1 FROM comment q WHERE q.issue_id = n.issue_id
+                 AND q.body LIKE '${PARK}' AND q.created_at > n.created_at)
+          ORDER BY n.created_at, n.id`,
+      )
+      .all(...batch);
+    for (const row of rows) {
+      const oids = row.body.match(/\b[0-9a-f]{40}\b/g) ?? [];
+      if (oids.length > 0) out.set(row.id, oids.slice(0, 5));
+      else out.delete(row.id);
+    }
   }
   return out;
 }

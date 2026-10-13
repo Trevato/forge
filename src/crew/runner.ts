@@ -60,6 +60,7 @@ import { runGitCapture } from "../git/env.ts";
 import { looksForEnv } from "../core/looks.ts";
 import { aheadCount, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { alreadyDoneSummary, namedCommits, onBase } from "./already.ts";
 import { createLog, redactValues } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { holdLease } from "../runs/lease.ts";
@@ -1124,6 +1125,22 @@ async function work(
     if (declined) {
       const why = result.result.replace(/^\s*DECLINED:?\s*/i, "").trim();
       write(`declined: ${why.split("\n")[0] ?? ""}`);
+      // Done on the base already, by a commit that is there: its own
+      // outcome, not a park (`already.ts`). A claim without one is an
+      // ordinary decline.
+      const done = await onBase(
+        bare,
+        repo.defaultBranch,
+        namedCommits(why.split("\n")[0] ?? ""),
+      );
+      if (done.length > 0)
+        return {
+          state: "ok",
+          summary: alreadyDoneSummary(done),
+          sessionId: result.sessionId,
+          costUsd: result.costUsd,
+          turns: result.turns,
+        };
       // The reason lives on the run record (its summary) and the ledger
       // line, never as a comment: a comment on an assigned issue is the
       // thing that starts the next run.
