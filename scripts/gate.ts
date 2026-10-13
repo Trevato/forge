@@ -209,6 +209,12 @@ export const GATE: readonly string[] = [
   "test/pacing.test.ts",
   "test/palette.test.ts",
   "test/qr.test.ts",
+  "test/branches.test.ts",
+  "test/cli-sync.test.ts",
+  "test/code.test.ts",
+  "test/counts.test.ts",
+  "test/crew-loop.test.ts",
+  "test/crew-totals.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
@@ -231,17 +237,11 @@ export const EXCLUDED: readonly Exclusion[] = [
       "red: an app with spend and nothing shipped is missing from the board",
     issue: 555,
   },
-  { file: "test/branches.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/cli-sync.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/code.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/counts.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/crew-interrupted.test.ts",
     reason: "not yet admitted",
     issue: 261,
   },
-  { file: "test/crew-loop.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/crew-totals.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/parity.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/policy.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/probe.test.ts", reason: "not yet admitted", issue: 261 },
