@@ -11,7 +11,7 @@
 import { mayEditIssue } from "../../actions/issues.ts";
 import { marksByName } from "../../core/marks.ts";
 import { threadNote } from "../../crew/direct.ts";
-import { alreadyDone } from "../../crew/parks.ts";
+import { alreadyDone } from "../../core/done_on_main.ts";
 import type { Database } from "bun:sqlite";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";

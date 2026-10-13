@@ -309,6 +309,17 @@ changes, a line comment — and the agent picks it up in the background,
 resuming its session. A failed check re-engages it too, a bounded number of
 times before a person must speak.
 
+**Already done.** A builder that finds its issue already built on the base
+branch declines with `DECLINED: already done on main in <commit>`, naming the
+full or abbreviated id of each commit that did it (at most five). The forge
+checks that every commit named is on the base branch; only then is the run
+an "already done" outcome, with no strike and nothing parked. The issue stays
+open with a note naming the commits, the asked list and the issue page say
+"Done on main", and the person who asked closes it (the page's Close button,
+or `x` on the issue in the terminal); the close writes "Closed: already done
+on main in …" on the thread. A claim with no commit, or with one that is not
+on the base, is an ordinary decline and is parked as one.
+
 The forge asks the host for one more binary: `claude`, on `PATH` or at
 `FORGE_CLAUDE`, authenticated as the operator (an `ANTHROPIC_API_KEY` in the
 forge's environment is handed to runs; the machine's own Claude Code login

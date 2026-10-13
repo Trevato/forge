@@ -83,10 +83,10 @@ import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import { capReached, ISSUE_RUN_CAP } from "./guard.ts";
+import { BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
 import { interruptionOf } from "./interrupted.ts";
 import {
-  DONE_LIKE,
   PARK_NOTE,
   PARK_STRIKES,
   PLANNER_HINT,
@@ -537,9 +537,9 @@ function stalled(app: App, repo: Repo, issue: Issue): boolean {
   // an origin, whoever connected it (#619).
   return !app.db
     .query<{ id: string }, [string, string]>(
-      `SELECT DISTINCT author_id AS id FROM comment
-        WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL
-          AND body NOT LIKE '${DONE_LIKE}'`,
+      `SELECT DISTINCT n.author_id AS id FROM comment n
+        WHERE n.issue_id = ?1 AND n.created_at > ?2 AND n.origin_author IS NULL
+          AND NOT (n.body LIKE '${DONE_LIKE}' AND ${BY_CREW})`,
     )
     .all(issue.id, last.created_at)
     .some((r) => speaksForCrew(app.db, repo, getUserById(app.db, r.id)));
@@ -582,9 +582,10 @@ function declineOf(
     return undefined;
   const spoke = db
     .query<{ id: string }, [string, string]>(
-      `SELECT DISTINCT author_id AS id FROM comment
-       WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL
-         AND body NOT LIKE 'Parked by the crew%' AND body NOT LIKE '${DONE_LIKE}'`,
+      `SELECT DISTINCT n.author_id AS id FROM comment n
+       WHERE n.issue_id = ?1 AND n.created_at > ?2 AND n.origin_author IS NULL
+         AND n.body NOT LIKE 'Parked by the crew%'
+         AND NOT (n.body LIKE '${DONE_LIKE}' AND ${BY_CREW})`,
     )
     .all(issueId, last.created_at)
     .map((r) => r.id);

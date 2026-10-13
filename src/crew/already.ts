@@ -8,13 +8,14 @@
  * and is parked as one. The close is left to the person who asked.
  */
 
+import { DONE_NOTE } from "../core/done_on_main.ts";
 import { runGit } from "../git/env.ts";
 
 /** What a verified run's summary starts with, before the full commit ids. */
 export const ALREADY_DONE = "already done: ";
 
 /** What the note on the issue starts with, before the commit ids. */
-export const ALREADY_NOTE = "Done on main already, waiting for you to close it: ";
+export const ALREADY_NOTE = DONE_NOTE;
 
 /** The most commits one verdict names. */
 const MOST = 5;

@@ -197,6 +197,14 @@ if grep -q DECLINE-ME "${promptFile}"; then
   echo '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: this is out of scope for me.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-2","terminal_reason":"completed"}'
   exit 0
 fi
+if grep -q DONE-ON-MAIN "${promptFile}"; then
+  tip=$(git rev-parse HEAD)
+  if grep -q NAMED "${promptFile}"; then said="already done on main in $tip"
+  elif grep -q ABSENT "${promptFile}"; then said="already done on main in deadbeefdeadbeef"
+  else said="already done on main"; fi
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: %s","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-4","terminal_reason":"completed"}\n' "$said"
+  exit 0
+fi
 if grep -q "You are the reviewer on this crew" "${promptFile}"; then
   path=$(grep -o 'api/v1/repos/[^"\\]*/review-states' "${promptFile}" | head -1)
   curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "\${FORGE_URL%/}/$path" -d '{"state":"changes_requested","body":"Name the fence."}' > "${dataDir}/review.out"
@@ -454,6 +462,32 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     const comments = listComments(app.db, issue.value.id);
     expect(comments.some((c) => c.authorName === "bot")).toBe(false);
   }, 60_000);
+
+  test("a decline naming a commit on main is an already-done run; without one that is on the base it is a decline", async () => {
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const main = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
+    const ask = async (title: string, marker: string) => {
+      const issue = openIssue(app, alice, repo, {
+        title,
+        body: `DONE-ON-MAIN ${marker}`,
+      });
+      if (!issue.ok) throw new Error("issue");
+      expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+      return settled((r) => r.issueId === issue.value.id);
+    };
+    const named = await ask("Already built", "NAMED");
+    expect(named.state).toBe("ok");
+    expect(named.summary).toBe(`already done: ${main}`);
+    expect(named.summary).toMatch(/^already done: [0-9a-f]{40}$/);
+    const none = await ask("Built, says who", "NONE");
+    expect(none.state).toBe("failed");
+    expect(none.summary).toBe("declined: already done on main");
+    const absent = await ask("Built somewhere", "ABSENT");
+    expect(absent.state).toBe("failed");
+    expect(absent.summary).toBe(
+      "declined: already done on main in deadbeefdeadbeef",
+    );
+  }, 90_000);
 
   test("closing the pull removes the clone; a closed issue starts nothing", async () => {
     const pull = listPulls(app.db, repo.id, { state: "open" })[0]!;

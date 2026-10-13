@@ -60,8 +60,9 @@ import {
   onBase,
 } from "../src/crew/already.ts";
 import { repoDir } from "../src/git/repos.ts";
+import { alreadyDone } from "../src/core/done_on_main.ts";
+import { askedIn, askedJson } from "../src/core/asked.ts";
 import {
-  alreadyDone,
   handedOverAt,
   parkedTwice,
   parkReason,
@@ -1267,6 +1268,88 @@ describe("an issue found already done is the asker's to close, not a park", () =
         c.body.startsWith(`Closed: already done on main in [\`${oid.slice(0, 7)}\``),
       ),
     ).toBe(true);
+  });
+
+  test("the asked JSON carries the commits; closing through any door writes the note", async () => {
+    const work = e.issue("Asked and already built");
+    expect(settle(work, "ok", alreadyDoneSummary([oid]))).toBe(true);
+    const row = askedIn(e.app.db, [e.fresh()], { show: "all" }).find(
+      (a) => a.issue.id === work.id,
+    )!;
+    expect(askedJson(row).doneBy).toEqual([oid]);
+    // Not the web form: the same close the terminal makes.
+    expect(setIssueState(e.app, e.alice, e.fresh(), work, "closed").ok).toBe(true);
+    const comments = listComments(e.app.db, work.id).filter((c) =>
+      c.body.startsWith("Closed: already done on main in "),
+    );
+    expect(comments).toHaveLength(1);
+    expect(comments[0]!.body).toContain(oid.slice(0, 7));
+    // An issue with no note closes without one.
+    const plain = e.issue("Closed plainly");
+    expect(setIssueState(e.app, e.alice, e.fresh(), plain, "closed").ok).toBe(true);
+    expect(
+      listComments(e.app.db, plain.id).some((c) => c.body.startsWith("Closed:")),
+    ).toBe(false);
+  });
+
+  test("the asked page says done on main, with the commits", async () => {
+    const work = e.issue("Asked page");
+    expect(settle(work, "ok", alreadyDoneSummary([oid]))).toBe(true);
+    const signin = await fetch(`${e.servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({
+        username: "alice",
+        password: "a-good-passphrase",
+      }),
+      redirect: "manual",
+    });
+    const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const page = await (
+      await fetch(`${e.servers.url}/asked`, { headers: { cookie } })
+    ).text();
+    expect(page).toContain("Done on main");
+    expect(page).toContain(`on main in ${oid.slice(0, 7)}, waiting for you to close it`);
+  });
+
+  test("an issue parked twice and then found done leaves the planner's list", () => {
+    const work = e.issue("Parked, then built");
+    e.ended(work, "no changes pushed: DECLINED: out of scope");
+    e.ended(work, "no changes pushed: DECLINED: out of scope");
+    const listed = () =>
+      parkedTwice(e.app.db, [e.fresh()]).some((p) => p.issueId === work.id);
+    expect(listed()).toBe(true);
+    expect(settle(work, "ok", alreadyDoneSummary([oid]))).toBe(true);
+    expect(alreadyDone(e.app.db, [work.id]).get(work.id)).toEqual([oid]);
+    expect(listed()).toBe(false);
+  });
+
+  test("another person's comment that reads like the note is that person's word", async () => {
+    const carol = await createUser(e.app.db, {
+      trusted: true,
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!carol.ok) throw new Error(carol.error);
+    // Anyone who can read may direct the crew here, for this test only.
+    e.app.db.run("UPDATE repo SET visibility = 'public', crew_outsiders = 1 WHERE id = ?1", [e.repo.id]);
+    try {
+      const work = e.issue("Words");
+      e.ended(work, "no changes pushed: DECLINED: out of scope");
+      expect(parkedCount(e.app, e.fresh(), work.id)).toBe(1);
+      await tick();
+      addComment(
+        e.app,
+        carol.value,
+        e.fresh(),
+        work,
+        "Done on main already, waiting for you to close it: try again anyway",
+      );
+      expect(parkedCount(e.app, e.fresh(), work.id)).toBe(0);
+      expect(alreadyDone(e.app.db, [work.id]).has(work.id)).toBe(false);
+    } finally {
+      e.app.db.run("UPDATE repo SET visibility = 'private', crew_outsiders = 0 WHERE id = ?1", [e.repo.id]);
+    }
   });
 
   test("an ordinary decline, or a claim with no commit, still parks", () => {

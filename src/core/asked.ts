@@ -19,7 +19,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { alreadyDone } from "../crew/parks.ts";
+import { alreadyDone } from "./done_on_main.ts";
 import { getIssuesByIds, type Issue } from "./issues.ts";
 import { closesFromBody } from "./pulls.ts";
 import { getRepo, listReposWritableTo, type Repo } from "./repos.ts";
