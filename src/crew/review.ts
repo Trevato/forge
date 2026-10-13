@@ -21,7 +21,7 @@ import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { listCrewRoles, type Agent } from "../core/agents.ts";
 import { getHold, lastRelease } from "../core/holds.ts";
-import { getIssueById } from "../core/issues.ts";
+import { getIssueById, LIST_LIMIT_MAX } from "../core/issues.ts";
 import { listPulls, pullDiff, type Pull, pullDir} from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { reviewSummary } from "../core/reviews.ts";
@@ -220,10 +220,37 @@ export async function sendToReview(
   return "sent";
 }
 
+/** Review runs one sweep pass sends at most: the tick stays bounded by sends, never by which pulls it looks at. */
+export const SWEEP_SENDS = 10;
+
+/** The last skip line said for a pull, so a stall is said once, not every tick. */
+const said = new Map<string, string>();
+
+/** Every open pull of a repository, oldest first, paged past the list cap. */
+function openPullsOldestFirst(db: Database, repoId: string): Pull[] {
+  const all: Pull[] = [];
+  let cursor: number | undefined;
+  for (;;) {
+    const page = listPulls(db, repoId, {
+      sealed: true,
+      state: "open",
+      limit: LIST_LIMIT_MAX,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    all.push(...page);
+    if (page.length < LIST_LIMIT_MAX) break;
+    cursor = page[page.length - 1]!.number;
+  }
+  return all.reverse();
+}
+
 /**
  * Every open, green pull an agent wrote that has no verdict on its head,
- * in every repository with a reviewer on its crew, sent to review. The
- * tick's net under the check event; returns how many went.
+ * in every repository with a reviewer on its crew, sent to review, oldest
+ * first — the pull that has waited longest is reached first. At most
+ * `SWEEP_SENDS` go per pass; the rest wait for the next, never unseen. A
+ * pull passed over for a reason gets one line saying why. The tick's net
+ * under the check event; returns how many went.
  */
 export async function sweepReviews(app: App): Promise<number> {
   const repoIds = app.db
@@ -236,12 +263,23 @@ export async function sweepReviews(app: App): Promise<number> {
   for (const id of repoIds) {
     const repo = getRepoById(app.db, id);
     if (!repo) continue;
-    for (const pull of listPulls(app.db, repo.id, { sealed: true,
-      state: "open",
-      limit: 50,
-    })) {
+    for (const pull of openPullsOldestFirst(app.db, repo.id)) {
+      if (queued >= SWEEP_SENDS) return queued;
       if (!pull.authorIsAgent || !greenHead(app.db, pull)) continue;
-      if ((await sendToReview(app, repo, pull)) === "sent") queued++;
+      const result = await sendToReview(app, repo, pull);
+      if (result === "sent") queued++;
+      else if (result === "lapsed" || result === "wait") {
+        const key = `${pull.headOid}:${result}`;
+        if (said.get(pull.id) === key) continue;
+        said.set(pull.id, key);
+        const since = reviewAttempts(app.db, pull)?.greenAt;
+        log.info(
+          result === "lapsed"
+            ? `review: lapsed since ${since}`
+            : "review: waiting on the review sent",
+          { repo: `${repo.ownerName}/${repo.name}`, pull: pull.number },
+        );
+      }
     }
   }
   return queued;
