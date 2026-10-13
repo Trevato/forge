@@ -8,7 +8,10 @@
  * It refuses a data directory that is not empty: a restore over a live
  * forge is not a restore, it is a mess.
  *
- *   bun run src/snapshot/restore.ts <snapshot-name> <data-dir>
+ *   bun run src/snapshot/restore.ts <snapshot-name|latest> <data-dir>
+ *
+ * `latest` is the newest snapshot the store holds, for the person at a
+ * fresh machine who does not know the name (`docs/RESTORE.md`).
  *
  * with the same `S3_*` variables the forge runs under, or
  * `FORGE_SNAPSHOT_DIR` for a directory store.
@@ -24,7 +27,7 @@ import { dirname, join } from "node:path";
 import { runGit } from "../git/env.ts";
 import { installHooks } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
-import { keyOf, SNAPSHOT_PREFIX, type Manifest } from "./snapshot.ts";
+import { keyOf, listSnapshots, SNAPSHOT_PREFIX, type Manifest } from "./snapshot.ts";
 import { unwrapKey, WRAPPED_KEY } from "./wrap.ts";
 import { resolveDestination } from "./destination.ts";
 import type { Store } from "./store.ts";
@@ -159,7 +162,7 @@ if (import.meta.main) {
   if (!name || !dataDir) {
     // CLI usage on stderr for the person at the terminal, not a forge event.
     console.error(
-      "usage: bun run src/snapshot/restore.ts <snapshot-name> <data-dir>",
+      "usage: bun run src/snapshot/restore.ts <snapshot-name|latest> <data-dir>",
     );
     process.exit(2);
   }
@@ -173,7 +176,13 @@ if (import.meta.main) {
     );
     process.exit(2);
   }
-  const done = await restoreSnapshot(store, name, dataDir, {
+  const newest = name === "latest" ? (await listSnapshots(store))[0] : undefined;
+  if (name === "latest" && newest === undefined) {
+    // CLI message on stderr for the person at the terminal.
+    console.error(`no snapshot in ${store.where}`);
+    process.exit(1);
+  }
+  const done = await restoreSnapshot(store, newest?.name ?? name, dataDir, {
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
   });
   console.log(
