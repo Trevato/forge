@@ -1,6 +1,7 @@
 /**
- * `/claim/:token`: the page a spawned child's link opens (`spawn/claim.ts`).
- * The path: the person a forge was made for opens the link they were sent,
+ * `/claim`: the page a spawned child's link opens (`spawn/claim.ts`).
+ * The link is `/claim#<token>`, so the secret never leaves the browser in a
+ * request line. The path: the person a forge was made for opens the link they were sent,
  * reads who will be able to see it, makes their account, and lands in
  * their forge as its admin. The GET only shows the form — a link unfurled
  * in a chat app must not spend itself — and the POST, same-origin, makes
@@ -46,7 +47,7 @@ const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
 interface Values {
   readonly username?: string;
   readonly email?: string;
-  /** The claim code, when it came in the body (the fragment link). */
+  /** The claim code, from the form's body. */
   readonly token?: string;
 }
 type Errors = Partial<Record<"username" | "email" | "password", string>>;
@@ -133,18 +134,16 @@ function claimForm(
           is the forge's admin, so it can change everything here.
         </p>
         <p class="mb" id="claim-access">${accessSentence(spawned, spawner)}</p>
-        <form method="post" action="${ctx.url.pathname}">
-          ${ctx.params["token"] === undefined
-            ? html`<div id="claim-token-field">
-                ${formField({
-                  label: "Claim code",
-                  name: "token",
-                  value: values.token ?? "",
-                  required: true,
-                  hint: "The part of your link after the #. Opening the link fills it in.",
-                })}
-              </div>`
-            : null}
+        <form method="post" action="/claim">
+          <div id="claim-token-field">
+            ${formField({
+              label: "Claim code",
+              name: "token",
+              value: values.token ?? "",
+              required: true,
+              hint: "The part of your link after the #. Opening the link fills it in.",
+            })}
+          </div>
           ${formField({
             label: "Username",
             name: "username",
@@ -215,34 +214,16 @@ export async function claimFragmentPage(ctx: Ctx): Promise<Response> {
   });
 }
 
-// GET /claim/:token — the form, or why the link no longer works. Spends nothing.
-// Links sent before the fragment form keep working here.
-export async function claimPage(ctx: Ctx): Promise<Response> {
-  const spawned = await spawnedOrg(ctx.app);
-  if (spawned === undefined) return dead(ctx, "unknown");
-  const claim = readClaim(
-    ctx.app.db,
-    spawned.org.id,
-    ctx.params["token"] ?? "",
-  );
-  if (claim.state !== "ok") return dead(ctx, claim.state);
-  return page({
-    ctx,
-    title: "This forge is yours",
-    body: claimForm(ctx, spawned, owners(ctx, spawned).spawner, {}, {}),
-  });
-}
-
-// POST /claim/:token — make the account, burn the link, sign the person in.
+// POST /claim — make the account, burn the link, sign the person in.
 export async function claimSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx);
   if (form instanceof Response) return form;
   const spawned = await spawnedOrg(ctx.app);
   if (spawned === undefined) return dead(ctx, "unknown");
   const orgId = spawned.org.id;
-  // From the path for an old link, else from the form's body — never from
-  // a query string, which proxies and logs would keep.
-  const token = ctx.params["token"] ?? field(form, "token");
+  // From the form's body — never from the path or a query string, which
+  // proxies and logs would keep.
+  const token = field(form, "token");
   const before = readClaim(ctx.app.db, orgId, token);
   if (before.state !== "ok") return dead(ctx, before.state);
   const { team, spawner } = owners(ctx, spawned);
@@ -250,7 +231,7 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
   const values = {
     username: field(form, "username"),
     email: field(form, "email"),
-    ...(ctx.params["token"] === undefined ? { token } : {}),
+    token,
   };
   const password = field(form, "password");
   const errors: Errors = {};
