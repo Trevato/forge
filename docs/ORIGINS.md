@@ -551,6 +551,7 @@ Review states and threads, on any repo:
 ```
 GET    /api/v1/repos/:o/:n/pulls/:n/review-states   the verdicts
 POST   /api/v1/repos/:o/:n/pulls/:n/review-states   {state, body?, comments?} → 201
+POST   /api/v1/repos/:o/:n/pulls/:n/approve-here   a writer lets an origin fork's current head run here → 201
 GET    /api/v1/repos/:o/:n/pulls/:n/threads         anchors + resolution
 POST   /api/v1/repos/:o/:n/pulls/:n/threads/:anchor/resolve
 DELETE /api/v1/repos/:o/:n/pulls/:n/threads/:anchor/resolve
