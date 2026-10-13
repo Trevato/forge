@@ -1,4 +1,21 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { openPull } from "../src/actions/pulls.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { failuresOf } from "../src/checks/failures.ts";
+import { addLearned, readLearned } from "../src/checks/learned.ts";
+import { gateOnLand } from "../src/checks/landing.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { resolveOid } from "../src/git/merge.ts";
+import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
+import { listRuns, type Run } from "../src/core/runs.ts";
+import { listPulls } from "../src/core/pulls.ts";
+import type { Repo } from "../src/core/repos.ts";
+import { createUser, type User } from "../src/core/users.ts";
+import { readRunLog } from "../src/runs/log.ts";
 import {
   duration,
   fastSet,
@@ -144,5 +161,167 @@ describe("forge.json", () => {
     if (!plain.ok || plain.value === undefined) throw new Error("refused");
     expect(plain.value.fast).toBeNull();
     expect(plain.value.full).toBe("a");
+  });
+});
+
+describe("the tiers in the forge's own checks service", () => {
+  let dataDir: string;
+  let app: App;
+  let checks: ChecksHandle;
+  let alice: User;
+  let repo: Repo;
+
+  const cells = process.env["FORGE_CELLS"];
+
+  beforeAll(async () => {
+    // The tiers are not about the cell; where one cannot open, none is asked.
+    process.env["FORGE_CELLS"] = "off";
+    dataDir = await mkdtemp(join(tmpdir(), "forge-tiers-"));
+    app = createApp({ dataDir, port: 0 });
+    checks = startChecks(app, { forgeUrl: "http://127.0.0.1:1", concurrency: 1 });
+    const a = await createUser(app.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const made = await createRepo(app, alice, {
+      name: "tiered",
+      visibility: "public",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+  });
+
+  afterAll(async () => {
+    await checks.stop();
+    app.close();
+    if (cells === undefined) delete process.env["FORGE_CELLS"];
+    else process.env["FORGE_CELLS"] = cells;
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const forgeJson = (full: string): string =>
+    JSON.stringify({
+      check: {
+        run: "echo WHOLE",
+        fast:
+          'echo "FAST base=$FORGE_CHECK_BASE learned=$FORGE_CHECK_LEARNED"; git diff --name-only "$FORGE_CHECK_BASE"..HEAD',
+        full,
+      },
+    });
+
+  test("a pull's check runs the fast command with the fork point, and land runs the full one", async () => {
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [
+        { path: "forge.json", content: forgeJson("echo FULL-GREEN") },
+        { path: "a.txt", content: "a\n" },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const base = seeded.value.commitOid;
+    const branched = await commitToBranch(app, alice, repo, {
+      branch: "feature",
+      message: "Touch b",
+      files: [{ path: "b.txt", content: "b\n" }],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    // Main moves on after the fork: the diff is still the pull's own.
+    const moved = await commitToBranch(app, alice, repo, {
+      message: "Main moves",
+      files: [{ path: "c.txt", content: "c\n" }],
+    });
+    if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Feature",
+      baseBranch: "main",
+      headBranch: "feature",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+
+    const deadline = Date.now() + 30_000;
+    let run: Run | undefined;
+    while (Date.now() < deadline) {
+      run = listRuns(app.db, repo.id, { kind: "check", limit: 20 }).find(
+        (r) => r.issueId === pull.id && r.commitOid === branched.value.commitOid,
+      );
+      if (run && (run.state === "ok" || run.state === "failed")) break;
+      await Bun.sleep(50);
+    }
+    expect(run?.state).toBe("ok");
+    const log = readRunLog(dataDir, run!.id).lines.join("\n");
+    expect(log).toContain(`FAST base=${base}`);
+    expect(log).not.toContain("WHOLE");
+    expect(log).toContain("b.txt");
+    expect(log).not.toContain("c.txt");
+
+    const green = await checks.gate(repo, pull, branched.value.commitOid);
+    expect(green.ok).toBe(true);
+    expect(green.lines.join("\n")).toContain("FULL-GREEN");
+  });
+
+  test("a red full gate names its tests and the pull learns the files", async () => {
+    const red = await commitToBranch(app, alice, repo, {
+      branch: "probe",
+      message: "Full goes red",
+      files: [
+        {
+          path: "forge.json",
+          content: forgeJson(
+            "echo test/x.test.ts:; echo '(fail) boom [1.00ms]'; exit 1",
+          ),
+        },
+      ],
+    });
+    if (!red.ok) throw new Error(JSON.stringify(red.error));
+    const pull = listPulls(app.db, repo.id, { state: "open", limit: 5 })[0]!;
+    const done = await checks.gate(repo, pull, red.value.commitOid);
+    expect(done.ok).toBe(false);
+    const failed = failuresOf(done.lines);
+    expect(failed).toEqual({ tests: ["boom"], files: ["test/x.test.ts"] });
+    const verdict = landVerdict(false, failed.tests, failed.files);
+    if (verdict.lands) throw new Error("expected red");
+    expect(verdict.comment).toContain("- boom");
+    addLearned(dataDir, pull.id, verdict.learn);
+    expect(readLearned(dataDir, pull.id)).toEqual(["test/x.test.ts"]);
+    addLearned(dataDir, pull.id, ["../../etc/passwd", "x; rm -rf.test.ts"]);
+    expect(readLearned(dataDir, pull.id)).toEqual(["test/x.test.ts"]);
+  });
+
+  test("landing runs the full gate on the merge with its base; red is told and taught", async () => {
+    const pull0 = listPulls(app.db, repo.id, { state: "open", limit: 5 })[0]!;
+    const pushed = await commitToBranch(app, alice, repo, {
+      branch: "feature",
+      message: "Feature goes red on land",
+      files: [
+        {
+          path: "forge.json",
+          content: forgeJson(
+            "echo test/y.test.ts:; echo '(fail) lands red [1.00ms]'; exit 1",
+          ),
+        },
+      ],
+    });
+    if (!pushed.ok) throw new Error(JSON.stringify(pushed.error));
+    const pull = { ...pull0, headOid: pushed.value.commitOid };
+    const base = (await resolveOid(
+      repoDir(app.reposRoot, repo.ownerName, repo.name),
+      "refs/heads/main",
+    ))!;
+    const verdict = await gateOnLand(
+      app,
+      repo,
+      pull,
+      repoDir(app.reposRoot, repo.ownerName, repo.name),
+      base,
+    );
+    if (verdict.lands) throw new Error("expected the full gate to be red");
+    expect(verdict.comment).toContain("- lands red");
+    expect(readLearned(dataDir, pull.id)).toContain("test/y.test.ts");
   });
 });

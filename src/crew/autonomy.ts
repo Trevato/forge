@@ -21,6 +21,7 @@ import {
   setIssueState,
 } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
+import { gateOnLand } from "../checks/landing.ts";
 import { mergeable, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { mergePull } from "../actions/pulls.ts";
@@ -1193,6 +1194,32 @@ export async function landIfGreen(
   // review lapsed.
   const review = await reviewed(app, repo, pull);
   if (review === "hold") return false;
+  // The full tier, once, on the merge with its base (#1198). Red is told to
+  // the pull once per head and base, and the pull waits for a push.
+  const red = latestDecision(app.db, pull.id, "land");
+  const gatedAt = `${pull.headOid}:${baseTip}`;
+  if (
+    red?.answer === "red" &&
+    typeof red.state === "object" &&
+    red.state !== null &&
+    (red.state as { at?: unknown }).at === gatedAt
+  )
+    return false;
+  const verdict = await gateOnLand(app, repo, pull, dir, baseTip);
+  if (!verdict.lands) {
+    recordDecision(app.db, {
+      kind: "land",
+      repoId: repo.id,
+      issueId: pull.id,
+      state: { head: pull.headOid, at: gatedAt },
+      answer: "red",
+      p: 1,
+      by: "rule",
+      ms: 0,
+    });
+    addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, verdict.comment);
+    return false;
+  }
   // Green and clear of the wall lands. An autonomous repository does not
   // wait on a person; the ledger keeps the landing as the rule it is, once
   // per head, so the week's numbers still add up.
