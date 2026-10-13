@@ -582,29 +582,31 @@ export function activeRunFor(
   db: Database,
   kind: RunKind,
   issueId: string,
+  actorId?: string,
 ): Run | undefined {
   const row = db
     .query<
       RunRow,
-      [RunKind, string]
-    >("SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 AND issue_id = ?2 ORDER BY id LIMIT 1")
-    .get(kind, issueId);
+      [RunKind, string, string | null]
+    >("SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 AND issue_id = ?2 AND (?3 IS NULL OR actor_id = ?3) ORDER BY id LIMIT 1")
+    .get(kind, issueId, actorId ?? null);
   return row ? toRun(row) : undefined;
 }
 
-/** Whether a run of this kind already waits its turn for the issue. */
+/** Whether a run of this kind already waits its turn for the issue (for `actorId`'s agent, when given). */
 export function hasQueuedRun(
   db: Database,
   kind: RunKind,
   issueId: string,
+  actorId?: string,
 ): boolean {
   return (
     db
       .query<
         { n: number },
-        [RunKind, string]
-      >("SELECT COUNT(*) AS n FROM run WHERE state = 'queued' AND kind = ?1 AND issue_id = ?2")
-      .get(kind, issueId)!.n > 0
+        [RunKind, string, string | null]
+      >("SELECT COUNT(*) AS n FROM run WHERE state = 'queued' AND kind = ?1 AND issue_id = ?2 AND (?3 IS NULL OR actor_id = ?3)")
+      .get(kind, issueId, actorId ?? null)!.n > 0
   );
 }
 
