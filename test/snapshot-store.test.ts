@@ -85,6 +85,72 @@ describe("the snapshot store, with retries", () => {
     expect(f.calls).toHaveLength(3);
   });
 
+  test("a call that never answers is given up at the deadline, and the next attempt works", async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    const kept = new Map<string, Uint8Array | string>();
+    const stuckOnce: Store = {
+      where: "stuck once",
+      async put(key, body) {
+        calls++;
+        if (calls === 1) await new Promise<void>(() => {});
+        kept.set(key, body);
+      },
+      async get() {
+        return undefined;
+      },
+      async list(prefix) {
+        return [...kept.keys()].filter((k) => k.startsWith(prefix));
+      },
+      async names() {
+        return [];
+      },
+      async delete() {},
+    };
+    const store = withRetries(stuckOnce, {
+      attempts: 3,
+      baseMs: 10,
+      deadlineMs: 20,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+    });
+    const started = Date.now();
+    await store.put("snapshots/b/forge.db", "db");
+    expect(calls).toBe(2);
+    expect(waits).toEqual([10]);
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(await store.list("snapshots/")).toEqual(["snapshots/b/forge.db"]);
+  });
+
+  test("a call that never answers at all fails after the attempts and says so", async () => {
+    const stuck: Store = {
+      where: "stuck",
+      async put() {
+        await new Promise<void>(() => {});
+      },
+      async get() {
+        return undefined;
+      },
+      async list() {
+        return [];
+      },
+      async names() {
+        return [];
+      },
+      async delete() {},
+    };
+    const store = withRetries(stuck, {
+      attempts: 2,
+      baseMs: 1,
+      deadlineMs: 15,
+      sleep: async () => {},
+    });
+    await expect(store.put("snapshots/c/forge.db", "db")).rejects.toThrow(
+      /put snapshots\/c\/forge\.db failed after 2 attempts: no answer in 15 ms/,
+    );
+  });
+
   test("a store that works is called once, with no wait", async () => {
     const waits: number[] = [];
     const f = flaky(0);

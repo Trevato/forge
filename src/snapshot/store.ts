@@ -55,24 +55,30 @@ export function s3FromEnv(
  * and one such answer in a thousand puts used to fail the whole snapshot
  * with "S3Error: an unexpected error has occurred" and no key named. Every
  * call is tried `attempts` times with doubling waits, and what finally
- * fails says which key it was.
+ * fails says which key it was. An attempt that has not answered within
+ * `deadlineMs` counts as failed too: a connection that died quietly never
+ * settles on its own, and once held a snapshot on its first object for an
+ * hour with the network fine (2026-10-13), so the next attempt opens a
+ * fresh request instead.
  */
 export function withRetries(
   inner: Store,
   options: {
     attempts?: number;
     baseMs?: number;
+    deadlineMs?: number;
     sleep?: (ms: number) => Promise<void>;
   } = {},
 ): Store {
   const attempts = Math.max(1, options.attempts ?? 5);
   const baseMs = options.baseMs ?? 500;
+  const deadlineMs = options.deadlineMs ?? 180_000;
   const sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
   async function tried<T>(what: string, fn: () => Promise<T>): Promise<T> {
     let last: unknown;
     for (let n = 0; n < attempts; n++) {
       try {
-        return await fn();
+        return await answered(fn(), deadlineMs);
       } catch (error) {
         last = error;
         if (n + 1 < attempts) await sleep(baseMs * 2 ** n);
@@ -90,6 +96,20 @@ export function withRetries(
     names: (prefix) => tried(`names ${prefix}`, () => inner.names(prefix)),
     delete: (key) => tried(`delete ${key}`, () => inner.delete(key)),
   };
+}
+
+/**
+ * The attempt's answer, or a rejection once `ms` have passed without one.
+ * The abandoned attempt is left to settle on its own, its outcome ignored.
+ */
+function answered<T>(attempt: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const shown = ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer in ${shown}`)), ms);
+  });
+  attempt.catch(() => {});
+  return Promise.race([attempt, deadline]).finally(() => clearTimeout(timer));
 }
 
 export function s3Store(target: S3Target): Store {
