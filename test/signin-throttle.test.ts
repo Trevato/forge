@@ -36,6 +36,17 @@ describe("sign-in attempts are throttled", () => {
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
+    // The throttle counts before the hash runs, so what it counts need not be
+    // costly: alice's stored hash is the cheapest argon2id (verify reads the
+    // cost from the hash itself), keeping twenty guesses to milliseconds.
+    const cheap = await Bun.password.hash("a-good-passphrase", {
+      algorithm: "argon2id",
+      memoryCost: 8,
+      timeCost: 1,
+    });
+    app.db.run("UPDATE user SET password_hash = ?1 WHERE username = 'alice'", [
+      cheap,
+    ]);
   });
 
   afterAll(async () => {
