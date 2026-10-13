@@ -51,6 +51,7 @@ import {
   createRun,
   finishRun,
   getRun,
+  isTerminal,
   listRuns,
   markServing,
   noteRunProgress,
@@ -2540,6 +2541,41 @@ describe("every open pull's preview on the studio page", () => {
       redirect: "manual",
     });
 
+  const WAIT_MS = 60_000;
+
+  /** The deploys this repo has not finished, as "env:state" words. */
+  const unfinished = () =>
+    listRuns(app.db, repo.id, { kind: "deploy", limit: 50 })
+      .filter((r) => !isTerminal(r.state))
+      .map((r) => `${r.env}:${r.state}`);
+
+  /** Wait until the runtime has no deploy open or queued, so the next case
+   * does not queue behind this one's (concurrency is 1). */
+  async function deploysIdle(): Promise<void> {
+    const deadline = Date.now() + WAIT_MS;
+    while (unfinished().length > 0) {
+      if (Date.now() > deadline)
+        throw new Error(`deploys still open: ${unfinished().join(", ")}`);
+      await Bun.sleep(50);
+    }
+  }
+
+  /** Wait for `env` to serve; fail naming the state it reached. */
+  async function previewServes(record: AppRecord, env: EnvName): Promise<void> {
+    const deadline = Date.now() + WAIT_MS;
+    while (runtime.envStatus(record, env)?.state !== "running") {
+      if (Date.now() > deadline) {
+        const status = runtime.envStatus(record, env);
+        throw new Error(
+          `${env} did not serve within ${WAIT_MS} ms: state ${status?.state ?? "absent"}` +
+            (status?.error ? ` (${status.error})` : "") +
+            `; open deploys: ${unfinished().join(", ") || "none"}`,
+        );
+      }
+      await Bun.sleep(50);
+    }
+  }
+
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-studio-previews-"));
     app = createApp({ dataDir, port: 0 });
@@ -2637,7 +2673,10 @@ describe("every open pull's preview on the studio page", () => {
     const after = await (await get("/alice/widget")).text();
     expect(after).not.toContain("<h2>Previews</h2>");
     expect(after).not.toContain(`pull-${pull.number}/open`);
-  }, 30_000);
+    // The merge queues production's deploy and the pull's was cut short;
+    // leave the single deploy slot free for the next case.
+    await deploysIdle();
+  }, 120_000);
 
   test("a change's page names its preview's data as its own copy and gives the moment it was taken; production's card does not", async () => {
     const alice = getUserByName(app.db, "alice")!;
@@ -2659,12 +2698,7 @@ describe("every open pull's preview on the studio page", () => {
     const record = getAppByRepo(app.db, repo.id)!;
     const env = `pull-${pull.number}` as const;
 
-    const deadline = Date.now() + 30_000;
-    while (
-      Date.now() < deadline &&
-      runtime.envStatus(record, env)?.state !== "running"
-    )
-      await Bun.sleep(100);
+    await previewServes(record, env);
     expect(runtime.envStatus(record, env)?.state).toBe("running");
 
     const note = "its own copy of production's data, taken";
@@ -2680,7 +2714,7 @@ describe("every open pull's preview on the studio page", () => {
     ).text();
     expect(changePage).toContain("<h2>Preview</h2>");
     expect(changePage).toContain(note);
-  }, 30_000);
+  }, 120_000);
 });
 
 /**
