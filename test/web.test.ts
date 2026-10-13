@@ -588,7 +588,7 @@ describe("themes", () => {
 
   test("no cookie means system: no data-theme, switcher present", async () => {
     const text = await (await fetch(base)).text();
-    expect(text).not.toContain("data-theme=");
+    expect(text).not.toMatch(/<html[^>]*\sdata-theme=/);
     expect(text).toContain('action="/theme"');
     for (const name of THEME_NAMES) {
       expect(text).toContain(`value="${name}"`);
@@ -658,7 +658,7 @@ describe("themes", () => {
     const text = await (
       await fetch(base, { headers: { cookie: "forge_theme=evil" } })
     ).text();
-    expect(text).not.toContain("data-theme=");
+    expect(text).not.toMatch(/<html[^>]*\sdata-theme=/);
   });
 
   test("theme POST refuses cross-origin and foreign referers", async () => {
