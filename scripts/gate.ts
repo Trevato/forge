@@ -201,12 +201,11 @@ export const GATE: readonly string[] = [
   "test/report-discovery.test.ts",
   "test/apps-report.test.ts",
   "test/private-app.test.ts",
+  "test/actions.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
-  { file: "test/actions.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/api-errors.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/app-env.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-idle.test.ts", reason: "not yet admitted", issue: 261 },
   {
@@ -215,7 +214,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 261,
   },
   { file: "test/apps-sleep.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/apps-ssh.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-ws.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/audit.test.ts", reason: "not yet admitted", issue: 261 },
   {
