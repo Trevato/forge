@@ -56,6 +56,7 @@ export const GATE: readonly string[] = [
   "test/scale.test.ts",
   "test/sealed-private-work.test.ts",
   "test/settings.test.ts",
+  "test/signin-throttle.test.ts",
   "test/signins.test.ts",
   "test/sole-owner-suspend.test.ts",
   "test/standing-every-process.test.ts",
@@ -265,11 +266,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 261,
   },
   { file: "test/security-xss.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/signin-throttle.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
   {
     file: "test/snapshot-destination.test.ts",
     reason: "not yet admitted",
