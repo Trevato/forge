@@ -14,6 +14,7 @@
     }
   },
   "check": {
+    "fast": "node --max-old-space-size=1024 ./node_modules/typescript/lib/tsc.js --noEmit && FORGE_CHECK_SHARDS=1 bun scripts/test-shards.ts --timeout 60000 --tier fast --diff $FORGE_CHECK_BASE..HEAD --learned \"$FORGE_CHECK_LEARNED\"",
     "run": "node --max-old-space-size=1024 ./node_modules/typescript/lib/tsc.js --noEmit && FORGE_CHECK_SHARDS=1 bun scripts/test-shards.ts --timeout 60000 --gate",
     "timeout": 7200,
     "limits": {

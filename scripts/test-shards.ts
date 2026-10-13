@@ -4,6 +4,7 @@
  *   bun scripts/test-shards.ts [bun test flags…] --gate
  *   bun scripts/test-shards.ts [bun test flags…] --gate --shard 1/3
  *   bun scripts/test-shards.ts [bun test flags…] test/a.test.ts test/b.test.ts …
+ *   bun scripts/test-shards.ts [bun test flags…] --tier fast --diff <base>..<head>
  *   bun scripts/test-shards.ts --record [bun test flags…] test/a.test.ts …
  *   bun scripts/test-shards.ts [bun test flags…] -- a b …   (test/a.test.ts …)
  *
@@ -45,6 +46,7 @@ import {
   type ShardResult,
 } from "./shards.ts";
 import { GATE } from "./gate.ts";
+import { fastSet, importsOf, duration } from "../src/checks/tiers.ts";
 
 const TIMES = new URL("./test-times.json", import.meta.url).pathname;
 
@@ -83,9 +85,64 @@ function takeShardArg(raw: string[]): {
   return { rest, spec };
 }
 
-const taken = takeShardArg(
+/** Pull `--name value` / `--name=value` out of argv. */
+function takeValue(
+  raw: string[],
+  name: string,
+): { rest: string[]; value: string | undefined; error?: string } {
+  const rest: string[] = [];
+  let value: string | undefined;
+  for (let i = 0; i < raw.length; i++) {
+    const arg = raw[i]!;
+    let got: string | undefined;
+    if (arg === name) {
+      got = raw[++i];
+      if (got === undefined || got.startsWith("-"))
+        return { rest, value, error: `${name} needs a value` };
+    } else if (arg.startsWith(`${name}=`)) got = arg.slice(name.length + 1);
+    else {
+      rest.push(arg);
+      continue;
+    }
+    if (value !== undefined)
+      return { rest, value, error: `${name} named twice` };
+    value = got;
+  }
+  return { rest, value };
+}
+
+const tierArg = takeValue(
   argv.filter((arg) => arg !== "--record" && arg !== "--gate"),
+  "--tier",
 );
+const diffArg = takeValue(tierArg.rest, "--diff");
+const learnedArg = takeValue(diffArg.rest, "--learned");
+for (const error of [tierArg.error, diffArg.error, learnedArg.error])
+  if (error) {
+    console.error(`test-shards: ${error}`);
+    process.exit(2);
+  }
+if (tierArg.value !== undefined && !["fast", "full"].includes(tierArg.value)) {
+  console.error("test-shards: --tier is fast or full");
+  process.exit(2);
+}
+const tier = tierArg.value ?? "full";
+// A range is two plain revisions; nothing that git could read as a flag.
+const REV = /^[A-Za-z0-9_][A-Za-z0-9_./@^~-]*$/;
+const range = diffArg.value?.split("..");
+if (
+  diffArg.value !== undefined &&
+  (range?.length !== 2 || !range.every((rev) => REV.test(rev)))
+) {
+  console.error("test-shards: --diff is <base>..<head>");
+  process.exit(2);
+}
+if (tier === "fast" && diffArg.value === undefined) {
+  console.error("test-shards: --tier fast needs --diff <base>..<head>");
+  process.exit(2);
+}
+
+const taken = takeShardArg(learnedArg.rest);
 if (taken.error) {
   console.error(`test-shards: ${taken.error}`);
   process.exit(2);
@@ -113,7 +170,56 @@ if (!split.ok) {
   process.exit(2);
 }
 const flags = split.flags;
-let files = [...(gate ? GATE : []), ...split.files];
+let files = [...(gate || tier === "fast" ? GATE : []), ...split.files];
+if (tier === "fast") {
+  const diff = Bun.spawnSync(
+    ["git", "diff", "--name-only", "--no-renames", diffArg.value!],
+    { stderr: "pipe" },
+  );
+  if (diff.exitCode !== 0) {
+    console.error(`test-shards: git diff failed: ${diff.stderr.toString()}`);
+    process.exit(2);
+  }
+  const changed = diff.stdout.toString().split("\n").filter((f) => f !== "");
+  const timesTable = parseTimes(
+    (() => {
+      try {
+        return readFileSync(TIMES, "utf8");
+      } catch {
+        return "";
+      }
+    })(),
+  );
+  const cache = new Map<string, string[]>();
+  const imports = (file: string): string[] => {
+    let found = cache.get(file);
+    if (found === undefined) {
+      try {
+        found = importsOf(readFileSync(file, "utf8"), file).flatMap((path) =>
+          /\.[cm]?[jt]sx?$/.test(path) ? [path] : [path, `${path}.ts`],
+        );
+      } catch {
+        found = [];
+      }
+      cache.set(file, found);
+    }
+    return found;
+  };
+  const plan = fastSet({
+    changed,
+    tests: files,
+    imports,
+    times: timesTable.ok ? timesTable.value : new Map(),
+    learned: (learnedArg.value ?? "").split(",").filter((f) => f !== ""),
+  });
+  console.log(
+    `test-shards: fast tier, ${plan.files.length} of ${files.length} files for ${changed.length} changed ` +
+      `(expected ${duration(plan.expected)}${plan.overBudget ? ", over the 5m budget" : ""})`,
+  );
+  for (const file of plan.files)
+    console.log(`  ${file}: ${plan.why.get(file)}`);
+  files = plan.files;
+}
 
 if (files.length === 0) {
   console.error("test-shards: name the test files to run, or --gate");
