@@ -84,6 +84,8 @@ const REVIEW_TRIES = 2;
 export interface ReviewAttempt {
   readonly createdAt: string;
   readonly active: boolean;
+  /** The reviewer the run was sent to. */
+  readonly reviewerId: string | null;
 }
 
 /**
@@ -130,14 +132,18 @@ export function reviewAttempts(
   const released = lastRelease(db, pull.id);
   const since = released !== undefined && released > green ? released : green;
   const attempts = db
-    .query<{ created_at: string; state: string }, [string, string]>(
-      `SELECT created_at, state FROM run WHERE issue_id = ?1 AND kind = 'agent'
+    .query<
+      { created_at: string; state: string; actor_id: string | null },
+      [string, string]
+    >(
+      `SELECT created_at, state, actor_id FROM run WHERE issue_id = ?1 AND kind = 'agent'
          AND reason = 'review' AND created_at >= ?2 ORDER BY created_at, id`,
     )
     .all(pull.id, since)
     .map((r) => ({
       createdAt: r.created_at,
       active: r.state === "queued" || r.state === "running",
+      reviewerId: r.actor_id,
     }));
   return { greenAt: since, attempts };
 }
@@ -204,8 +210,12 @@ export async function sendToReview(
     await pullDir(app.db, app.reposRoot, repo, pull),
     pull,
   );
+  // A review that came back with no verdict is sent to the other reviewer
+  // when the crew has one; with only one, the same reviewer tries again.
+  const failed = history.attempts.at(-1)?.reviewerId;
+  const others = reviewers.filter((r) => r.user.id !== failed);
   const reviewer = pickReviewer(
-    reviewers,
+    others.length > 0 ? others : reviewers,
     diff.files.map((f) => f.path),
   );
   if (reviewer === undefined) return "wait";
