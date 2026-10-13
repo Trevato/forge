@@ -424,6 +424,8 @@ describe("the look", () => {
   });
 
   test("a look is taken from `app.serving`, while the deploy's tests are still running, and a red check afterward does not remove it", async () => {
+    // The app's test blocks on this file until the look has been taken.
+    const gate = join(dataDir, "slow-red-test.gate");
     const branch = await commitToBranch(app, alice, repo, {
       branch: "slow-red-test",
       base: repo.defaultBranch,
@@ -435,7 +437,7 @@ describe("the look", () => {
             {
               app: {
                 run: "bun run src/server.ts",
-                test: "sleep 2 && exit 1",
+                test: `while [ ! -e '${gate}' ]; do sleep 0.05; done; exit 1`,
                 tty: "bun run src/tty.ts",
               },
             },
@@ -455,8 +457,8 @@ describe("the look", () => {
     const env = `pull-${opened.value.number}`;
     const commitOid = branch.value.commitOid;
 
-    // Pictured well before the two-second test step could have finished —
-    // the run is still open, checking.
+    // Pictured while the test step is held at the gate — the run is still
+    // open, checking.
     const rows = await pictured(env, commitOid);
     expect(rows.every((l) => l.error === null)).toBe(true);
     const run = listRuns(app.db, repo.id, { env }).find(
@@ -469,8 +471,10 @@ describe("the look", () => {
     expect(serving?.payload["env"]).toBe(env);
     expect(serving?.payload["testsRunning"]).toBe(true);
 
-    // The test then finishes red; the run fails, but the picture already
+    // The gate opens and the test finishes red; the run fails, but the
+    // picture already
     // taken of what is serving is untouched.
+    writeFileSync(gate, "");
     const failed = await settled(
       (r) => r.env === env && r.commitOid === commitOid,
     );
