@@ -142,6 +142,7 @@ export const GATE: readonly string[] = [
   "test/spawn-first-boot.test.ts",
   "test/spawn-keys.test.ts",
   "test/web-apps.test.ts",
+  "test/web-ui.test.ts",
   "test/fleet-ops.test.ts",
   "test/meter.test.ts",
   "test/told-by.test.ts",
@@ -338,7 +339,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 291,
   },
   { file: "test/web-phone.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/web-ui.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/web-workflows.test.ts",
     reason: "not yet admitted",
