@@ -12,6 +12,7 @@
  * repository's origin.
  */
 
+import { sentinelTick } from "./sentinel.ts";
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import {
@@ -916,6 +917,12 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
         error: String(error),
       });
     }
+  }
+  // The forge hunts its own faults on the same clock (`crew/sentinel.ts`).
+  try {
+    sentinelTick(app, now.getTime());
+  } catch (error) {
+    log.error("sentinel failed", { error: String(error) });
   }
   // Review is not autonomy's alone: an agent's green pull is read by the
   // crew's reviewer in every repository that has one.

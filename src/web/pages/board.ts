@@ -14,6 +14,7 @@
  * pointer. The old big view (`/big`, every address it had) lands here.
  */
 
+import { sentinelLine, sentinelStanding } from "../../crew/sentinel.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { askMeasure } from "../../core/ask_ledger.ts";
 import { reviewersOf, waitsForPerson } from "../../crew/review.ts";
@@ -310,6 +311,18 @@ function needHref(need: string, v: Vitals): string | undefined {
   return undefined;
 }
 
+/** The sentinel's last hunt and its open findings, or the hunt that is on. */
+function sentinelSpan(app: Ctx["app"]): Html {
+  const line = sentinelLine(app.db);
+  const s = sentinelStanding(app.db);
+  if (line === null && s.lastHuntAt === null) return html``;
+  return html`<span class="board-forge-ok" id="sentinel"
+    >${line ?? "The sentinel found nothing"}${
+      s.lastHuntAt === null ? "" : html` · last hunt ${s.lastHuntAt.slice(0, 16).replace("T", " ")}`
+    }</span
+  >`;
+}
+
 /**
  * The forge's health as one line, for a site admin only: *All fine*, or
  * each thing that needs them. A live region of its own; nobody else gets
@@ -340,6 +353,7 @@ function forgeStrip(ctx: Ctx): Html | null {
     data-rollout="${fh.rollout.state}"
     role="status"
   >
+    ${sentinelSpan(app)}
     ${rollout === null ? "" : html`<span class="board-forge-need">${rollout}</span>`}
     ${others.map((i) => html`<span class="board-forge-need">${i.key}: ${i.message}</span>`)}
     ${
