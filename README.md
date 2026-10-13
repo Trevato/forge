@@ -527,3 +527,7 @@ a cookie — even that works script-free. Still **zero runtime dependencies**.
 
 Not yet: containers around apps, custom domains, and a gate that lands a
 pull on its own once review and checks agree.
+
+## Check tiers
+
+`forge.json`'s `check` may declare `fast` beside `run` (the full gate; `full` names it explicitly). `bun scripts/test-shards.ts --tier fast --diff <base>..<head>` runs the tests that touch the diff (changed, named for a changed source file, or importing one within two hops), every test the times table records under 1 s, and any named by `--learned a,b`. `src/checks/tiers.ts` decides; it adds no dependency.
