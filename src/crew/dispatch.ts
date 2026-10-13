@@ -8,6 +8,7 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { NO_MERGE } from "../checks/merged.ts";
 import { markHeard } from "../core/issues.ts";
 import { capacityCount, noteBooted } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
@@ -749,6 +750,10 @@ export async function judgeFailedCheck(
   const run = getRun(app.db, runId);
   const failingTest = run?.checkDetail?.names[0];
   if (app.config.decider === undefined)
+    return { retry: "again", cause: "change", failingTest };
+  // A pull that does not merge is the change's, whatever a decider might
+  // guess: the builder is handed it to rebase.
+  if (run?.summary.includes(NO_MERGE))
     return { retry: "again", cause: "change", failingTest };
   const tail = readRunLog(app.config.dataDir, runId, 8 * 1024).lines.slice(-25);
   const decided = await decideAndRecord(

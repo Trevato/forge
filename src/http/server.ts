@@ -250,6 +250,7 @@ import {
   pullCommentSubmit,
   pullFilesPage,
   pullMergeSubmit,
+  pullChecksSubmit,
   pullReviewStateSubmit,
   pullReviewSubmit,
   pullThreadFragment,
@@ -872,6 +873,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/tell", tellSubmit);
   // The home's composer without a script: a tell to the app it names (#599).
   router.add("POST", "/tell", composerSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/checks", pullChecksSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   router.add("POST", "/:owner/:name/pulls/:number/take-back", takeBackSubmit);

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { askCheck } from "../src/checks/again.ts";
 import { failuresOf } from "../src/checks/failures.ts";
 import { addLearned, readLearned } from "../src/checks/learned.ts";
 import { gateOnLand } from "../src/checks/landing.ts";
@@ -223,7 +224,6 @@ describe("the tiers in the forge's own checks service", () => {
       ],
     });
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    const base = seeded.value.commitOid;
     const branched = await commitToBranch(app, alice, repo, {
       branch: "feature",
       message: "Touch b",
@@ -255,7 +255,10 @@ describe("the tiers in the forge's own checks service", () => {
     }
     expect(run?.state).toBe("ok");
     const log = readRunLog(dataDir, run!.id).lines.join("\n");
-    expect(log).toContain(`FAST base=${base}`);
+    expect(log).toContain(`FAST base=${moved.value.commitOid}`);
+    expect(log).toContain(
+      `merge of ${branched.value.commitOid.slice(0, 7)} into main@${moved.value.commitOid.slice(0, 7)}`,
+    );
     expect(log).not.toContain("WHOLE");
     expect(log).toContain("b.txt");
     expect(log).not.toContain("c.txt");
@@ -375,5 +378,112 @@ describe("the tiers in the forge's own checks service", () => {
       expect(log).toContain("FAST base=");
       expect(log).not.toContain("HEAD-");
     }
+  });
+});
+
+describe("a pull's fast check is of the merge", () => {
+  let dataDir: string;
+  let app: App;
+  let checks: ChecksHandle;
+  let alice: User;
+  let repo: Repo;
+  const cells = process.env["FORGE_CELLS"];
+
+  beforeAll(async () => {
+    process.env["FORGE_CELLS"] = "off";
+    dataDir = await mkdtemp(join(tmpdir(), "forge-merged-"));
+    app = createApp({ dataDir, port: 0 });
+    checks = startChecks(app, { forgeUrl: "http://127.0.0.1:1", concurrency: 1 });
+    const a = await createUser(app.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const made = await createRepo(app, alice, { name: "merged", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+  });
+
+  afterAll(async () => {
+    await checks.stop();
+    app.close();
+    if (cells === undefined) delete process.env["FORGE_CELLS"];
+    else process.env["FORGE_CELLS"] = cells;
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const commit = async (
+    branch: string | undefined,
+    files: { path: string; content: string }[],
+  ): Promise<string> => {
+    const done = await commitToBranch(app, alice, repo, {
+      ...(branch === undefined ? {} : { branch }),
+      message: "change",
+      files,
+    });
+    if (!done.ok) throw new Error(JSON.stringify(done.error));
+    return done.value.commitOid;
+  };
+
+  const settled = async (commitOid: string): Promise<Run> => {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const run = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
+        (r) => r.commitOid === commitOid && r.issueId !== null,
+      );
+      if (run && (run.state === "ok" || run.state === "failed")) return run;
+      await Bun.sleep(50);
+    }
+    throw new Error("the check did not finish");
+  };
+
+  test("a head lacking what the base's fast command needs is green once merged; a conflict is red with its paths", async () => {
+    const manifest = JSON.stringify({
+      check: { run: "echo WHOLE", fast: "sh needs.sh; git diff --name-only $FORGE_CHECK_BASE..HEAD" },
+    });
+    await commit(undefined, [
+      { path: "forge.json", content: manifest },
+      { path: "shared.txt", content: "one\n" },
+    ]);
+    const fork = await commit("late", [{ path: "late.txt", content: "late\n" }]);
+    const conflicting = await commit("clash", [{ path: "shared.txt", content: "mine\n" }]);
+    // Main learns what the fast command needs, and moves a file the clash edits.
+    await commit(undefined, [
+      { path: "needs.sh", content: "echo NEEDS-FOUND\n" },
+      { path: "shared.txt", content: "theirs\n" },
+    ]);
+    for (const [title, branch] of [["Late", "late"], ["Clash", "clash"]] as const) {
+      const opened = await openPull(app, alice, repo, {
+        title,
+        baseBranch: "main",
+        headBranch: branch,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+    }
+
+    const late = await settled(fork);
+    expect(late.state).toBe("ok");
+    const log = readRunLog(dataDir, late.id).lines.join("\n");
+    expect(log).toContain("NEEDS-FOUND");
+    expect(log).toContain("late.txt");
+    expect(log).not.toContain("needs.sh\n");
+
+    const clash = await settled(conflicting);
+    expect(clash.state).toBe("failed");
+    expect(clash.summary).toContain("does not merge into main: shared.txt");
+  });
+
+  test("a writer asks for a check again at the current head", async () => {
+    const pull = listPulls(app.db, repo.id, { state: "open", limit: 5 }).find(
+      (p) => p.headBranch === "late",
+    )!;
+    const asked = await askCheck(app, alice, repo, pull);
+    if (!asked.ok) throw new Error(asked.message);
+    expect(asked.run.reason).toBe("asked");
+    expect(asked.run.commitOid).toBe(pull.headOid);
   });
 });
