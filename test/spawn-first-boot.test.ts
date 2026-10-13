@@ -242,7 +242,9 @@ describe("a spawned child's first boot", () => {
         expect(res.status).toBeLessThan(400);
       }
       times.sort((a, b) => a - b);
-      expect(times[2]!).toBeLessThan(50);
+      // What this guards against is a boot per request, which is seconds; a
+      // loaded runner's loopback round trip is tens of milliseconds.
+      expect(times[2]!).toBeLessThan(500);
     }
   });
 
