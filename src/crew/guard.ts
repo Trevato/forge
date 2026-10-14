@@ -3,7 +3,9 @@
  * before a run is queued, neither a model call:
  *
  * - A follow-up with nothing new (`news.ts`) is skipped: the agent would
- *   read its own reply as the newest word and decline, at full price.
+ *   read its own reply as the newest word and decline, at full price. So
+ *   is the clock giving the planner the direction again when nobody spoke
+ *   and the map has not moved since its last pass.
  * - An issue that has started `issueRunCap` runs inside a day since a
  *   person who may direct the crew last spoke is capped: parked with one
  *   note, raised as one ask, and given nothing more until that person
@@ -19,7 +21,7 @@ import { recordDecision } from "../core/decisions.ts";
 import type { Issue } from "../core/issues.ts";
 import type { Repo } from "../core/repos.ts";
 import { directorsAmong } from "./direct.ts";
-import { nothingNew } from "./news.ts";
+import { nothingNew, plannerNothingNew } from "./news.ts";
 
 /** Runs one issue may start in `CAP_WINDOW_MS` unless the setting says otherwise. */
 export const ISSUE_RUN_CAP = 6;
@@ -50,6 +52,40 @@ export function skipsFeedback(
     by: "rule",
     ms: 0,
   });
+  return true;
+}
+
+/**
+ * The clock giving `planner` the direction again with nothing new since its
+ * last pass (`plannerNothingNew`): skip it. The clock asks every minute, so
+ * one skip is recorded per pass, the first time it is asked after `since`.
+ */
+export function skipsReplan(
+  db: Database,
+  repo: Repo,
+  direction: Issue,
+  planner: Agent,
+  since: string,
+): boolean {
+  if (!plannerNothingNew(db, repo, direction, planner)) return false;
+  const recorded = db
+    .query<{ n: number }, [string, string]>(
+      `SELECT COUNT(*) AS n FROM decision
+        WHERE issue_id = ?1 AND kind = 'guard' AND answer = 'skipped'
+          AND state LIKE '%"reason":"replan"%' AND created_at > ?2`,
+    )
+    .get(direction.id, since);
+  if ((recorded?.n ?? 0) === 0)
+    recordDecision(db, {
+      kind: "guard",
+      repoId: repo.id,
+      issueId: direction.id,
+      state: { reason: "replan", agent: planner.user.username },
+      answer: "skipped",
+      p: 1,
+      by: "rule",
+      ms: 0,
+    });
   return true;
 }
 

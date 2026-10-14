@@ -24,11 +24,25 @@ export interface HookRequest {
   readonly gitEnv: Record<string, string>;
 }
 
+/** The header that carries the per-boot secret to the internal listener. */
+export const HOOK_SECRET_HEADER = "x-forge-hook-secret";
+
 export const FORWARDED_GIT_ENV = [
   "GIT_OBJECT_DIRECTORY",
   "GIT_ALTERNATE_OBJECT_DIRECTORIES",
   "GIT_QUARANTINE_PATH",
 ] as const;
+
+/** Only the quarantine variables a hook may forward reach git. */
+export function forwardedGitEnv(env: unknown): Record<string, string> {
+  const kept: Record<string, string> = {};
+  if (typeof env !== "object" || env === null) return kept;
+  for (const name of FORWARDED_GIT_ENV) {
+    const value = (env as Record<string, unknown>)[name];
+    if (typeof value === "string") kept[name] = value;
+  }
+  return kept;
+}
 
 export function parseHookStdin(text: string): RefUpdate[] {
   const updates: RefUpdate[] = [];

@@ -142,13 +142,12 @@ describe("the first login to a spawned forge", () => {
     await firstBoot(child);
     servers = await serve(child);
     const link = spawned.value.claimUrl!;
-    const token = link.includes("#")
-      ? link.split("#")[1]!
-      : link.split("/claim/")[1]!;
-    const claimed = await fetch(url(`/claim/${token}`), {
+    const token = link.split("/claim#")[1]!;
+    const claimed = await fetch(url("/claim"), {
       method: "POST",
       headers: { origin: servers.url },
       body: new URLSearchParams({
+        token,
         username: "maria",
         email: "maria@bakery.test",
         password: PASSWORD,

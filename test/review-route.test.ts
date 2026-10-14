@@ -25,6 +25,7 @@ import {
   REVIEW_LAPSE_MS,
   REVIEW_WAIT_MS,
   reviewStage,
+  SWEEP_SENDS,
   sweepReviews,
   touchesSecurity,
   watchesSecurity,
@@ -246,4 +247,20 @@ describe("every green pull an agent wrote is sent to review", () => {
     // The next tick sends nothing twice.
     expect(await sweepReviews(app)).toBe(0);
   });
+
+  test("60 open green agent pulls: the oldest is sent on the first pass, and a pass sends a bounded few", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const pulls: Pull[] = [];
+    for (let i = 0; i < 60; i++) {
+      const p = await pullBy(scout, `bulk-${i}`, `docs/bulk-${i}.md`);
+      pass(p);
+      pulls.push(p);
+    }
+    const sent = await sweepReviews(app);
+    expect(sent).toBe(SWEEP_SENDS);
+    expect(reviewer(pulls[0]!)).toHaveLength(1);
+    expect(reviewer(pulls[SWEEP_SENDS - 1]!)).toHaveLength(1);
+    expect(reviewer(pulls[SWEEP_SENDS]!)).toEqual([]);
+    expect(reviewer(pulls[59]!)).toEqual([]);
+  }, 120_000);
 });

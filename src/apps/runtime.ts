@@ -312,6 +312,8 @@ interface Environment {
   lastRequestAt?: number | undefined;
   /** Streams the proxy holds open to it: websockets, event streams. */
   openStreams: number;
+  /** Requests passed to it whose answer has not begun. */
+  openRequests: number;
   /** Why the last sweep spared it, while it still is. */
   keptAwake?: BusyReason | undefined;
   /** The deploy in flight, if one is. */
@@ -956,6 +958,7 @@ export class AppsRuntime {
         chain: Promise.resolve(),
         restarts: [],
         openStreams: 0,
+        openRequests: 0,
       };
       this.envs.set(k, state);
     }
@@ -1410,6 +1413,24 @@ export class AppsRuntime {
   }
 
   /**
+   * A request passed to the app is waiting on its answer: the environment
+   * is busy until the returned release is called — once; a second call
+   * does nothing. Still inside the busy grace, so a hung app sleeps anyway.
+   */
+  holdRequest(record: AppRecord, env: EnvName): () => void {
+    const state = this.envs.get(key(record.id, env));
+    if (state === undefined) return () => {};
+    state.openRequests++;
+    let held = true;
+    return () => {
+      if (!held) return;
+      held = false;
+      state.openRequests--;
+      state.lastRequestAt = Date.now();
+    };
+  }
+
+  /**
    * An environment asleep is started again, warm, from the checkout it
    * kept; one start serves every request that arrives while it happens.
    * Returns once it is live, or once it is clear it will not be.
@@ -1702,7 +1723,11 @@ export class AppsRuntime {
       if (now - last < limit) continue;
       // Idle by the clock; asked whether it is mid-work, and spared while
       // it is — but only for one grace past the window, never forever.
-      const busy = busyReason(live.handle.pid, state.openStreams);
+      const busy = busyReason(
+        live.handle.pid,
+        state.openStreams,
+        state.openRequests,
+      );
       const overdue = now - last - limit >= grace;
       if (busy !== undefined && !overdue) {
         if (spared !== busy && live.runId !== "")

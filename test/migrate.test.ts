@@ -17,7 +17,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { migrateRepo, migrateUrl } from "../src/actions/migrate.ts";
+import {
+  isPrivateHost,
+  migrateRepo,
+  migrateUrl,
+} from "../src/actions/migrate.ts";
 import { createAgent, listCrew } from "../src/actions/crew.ts";
 import {
   commitToBranch,
@@ -28,24 +32,18 @@ import { getAppByRepo } from "../src/core/apps.ts";
 import { listIssues } from "../src/core/issues.ts";
 import { listOrigins } from "../src/core/origins.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
-import { createUser, getUserByName, type User } from "../src/core/users.ts";
+import { createUser, type User } from "../src/core/users.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { createSession } from "../src/core/sessions.ts";
 import { settled } from "../src/origins/jobs.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { proveAll } from "./helpers/verified.ts";
 
 quietLogs();
-
-const PASSWORD = "a-long-migrate-passphrase";
-const UPSTREAM_LOGIN = "octo";
-const UPSTREAM_SECRET = "octo-upstream-secret-7c1d";
-
-const basic = (user: string, secret: string): string =>
-  `Basic ${Buffer.from(`${user}:${secret}`).toString("base64")}`;
 
 async function git(args: string[], cwd: string) {
   const proc = Bun.spawn(["git", ...args], {
@@ -86,33 +84,38 @@ async function allRefs(dir: string): Promise<string> {
 
 describe("migrate", () => {
   let dataDir: string;
-  let upstreamDir: string;
   let work: string;
   let app: App;
   let servers: Servers;
-  let upstream: App;
-  let upstreamServers: Servers;
   let forgejo: FakeForge;
   let base: string;
   let alice: User;
   let bob: User;
   let aliceCookie = "";
   let bobCookie = "";
-  let fixture: Repo;
+  let bobToken = "";
   let fixtureUrl = "";
+  let originId = "";
+  // octo's credential at the "upstream": a token, since a password would
+  // cost an argon2 verify on every git request.
+  let upstreamSecret = "";
 
-  const signUp = async (username: string): Promise<string> => {
-    const response = await fetch(`${base}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username,
-        email: `${username}@forge.test`,
-        password: PASSWORD,
-      }),
-      redirect: "manual",
+  const person = async (
+    username: string,
+    adminIfFirst = false,
+  ): Promise<User> => {
+    const made = await createUser(app.db, {
+      trusted: true,
+      username,
+      email: `${username}@forge.test`,
+      adminIfFirst,
     });
-    return (response.headers.get("set-cookie") ?? "").split(";")[0]!;
+    if (!made.ok) throw new Error(String(made.error));
+    return made.value;
   };
+
+  const cookieOf = (user: User): string =>
+    `forge_session=${createSession(app.db, user.id).token}`;
 
   const browser = (
     cookie: string,
@@ -132,34 +135,57 @@ describe("migrate", () => {
       ...(form === undefined ? {} : { body: new URLSearchParams(form) }),
     });
 
-  const api = (
-    user: string,
-    path: string,
-    payload: unknown,
-  ): Promise<Response> =>
-    fetch(`${base}${path}`, {
+  /** The same call with a bearer token: no cookie, no origin header. */
+  const apiToken = (token: string, payload: unknown): Promise<Response> =>
+    fetch(`${base}/api/v1/migrate`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: basic(user, PASSWORD),
+        authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(payload),
     });
 
+  const api = (cookie: string, payload: unknown): Promise<Response> =>
+    fetch(`${base}/api/v1/migrate`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie,
+        origin: new URL(base).origin,
+      },
+      body: JSON.stringify(payload),
+    });
+
+  /** Start a migration and wait for it; the job is returned as it ended. */
+  const migrate = async (
+    user: User,
+    input: Parameters<typeof migrateRepo>[2],
+  ) => {
+    const started = await migrateRepo(app, user, input);
+    if (!started.ok) throw new Error(started.error);
+    return settled(started.value.job.id);
+  };
+
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-migrate-"));
-    upstreamDir = await mkdtemp(join(tmpdir(), "forge-migrate-up-"));
     work = await mkdtemp(join(tmpdir(), "forge-migrate-work-"));
     // The fixture's source is the forge itself, on loopback: a private host,
-    // which a personal forge may say is fine.
+    // which a personal forge may say is fine. Its hook socket is what a
+    // real push needs; no argon2 per request (sessions and tokens, not
+    // passwords).
     app = createApp({ dataDir, port: 0, migrateFromPrivateHosts: true });
     servers = await serve(app);
-    base = servers.url;
-    aliceCookie = await signUp("alice");
-    bobCookie = await signUp("bob");
-    proveAll(app);
-    alice = getUserByName(app.db, "alice")!;
-    bob = getUserByName(app.db, "bob")!;
+    base = `http://127.0.0.1:${servers.port}`;
+    // No passwords: argon2 is the slow part of an account, and every
+    // request here rides a session or a token.
+    alice = await person("alice", true);
+    bob = await person("bob");
+    const octo = await person("octo");
+    upstreamSecret = createToken(app.db, octo.id, "upstream", "rw").token;
+    aliceCookie = cookieOf(alice);
+    bobCookie = cookieOf(bob);
+    bobToken = createToken(app.db, bob.id, "cli", "rw").token;
 
     // The fixture: alice's public repository with three branches, two tags
     // (one annotated), and `trunk` as its default — not the forge's `main`.
@@ -168,26 +194,30 @@ describe("migrate", () => {
       visibility: "public",
     });
     if (!made.ok) throw new Error(made.error);
-    fixture = made.value;
-    const commit = async (branch: string, path: string, message: string) => {
-      const done = await commitToBranch(app, alice, fixture, {
+    const fixture = made.value;
+    const commit = async (
+      user: User,
+      repo: Repo,
+      branch: string,
+      path: string,
+      message: string,
+    ) => {
+      const done = await commitToBranch(app, user, repo, {
         branch,
         message,
         files: [{ path, content: `${message}\n` }],
       });
       if (!done.ok) throw new Error(String(done.error));
-      return done.value;
     };
-    await commit("main", "README.md", "first");
-    await commit("main", "a.txt", "second");
-    await commit("trunk", "trunk.txt", "on trunk");
-    await commit("feature", "feature.txt", "a feature");
-    await commit("feature", "feature2.txt", "more feature");
+    await commit(alice, fixture, "main", "README.md", "first");
+    await commit(alice, fixture, "main", "a.txt", "second");
+    await commit(alice, fixture, "trunk", "trunk.txt", "on trunk");
+    await commit(alice, fixture, "feature", "feature.txt", "a feature");
+    await commit(alice, fixture, "feature", "feature2.txt", "more feature");
     const settings = await updateRepoSettings(app, alice, fixture, {
       defaultBranch: "trunk",
     });
     if (!settings.ok) throw new Error(settings.error);
-    fixture = settings.value;
     const dir = repoDir(app.reposRoot, "alice", "fixture");
     expect((await git(["tag", "v1", "main~1"], dir)).code).toBe(0);
     expect(
@@ -195,59 +225,48 @@ describe("migrate", () => {
     ).toBe(0);
     fixtureUrl = `${base}/alice/fixture.git`;
 
-    // A second forge holding a *private* repository, behind a fake origin
-    // whose clone URL points at it: only the origin's credential opens it.
-    upstream = createApp({ dataDir: upstreamDir, port: 0 });
-    upstreamServers = await serve(upstream);
-    await fetch(`${upstreamServers.url}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: UPSTREAM_LOGIN,
-        email: "octo@upstream.test",
-        password: UPSTREAM_SECRET,
-      }),
+    // A repository alice keeps private: no anonymous clone reaches it.
+    const hidden = await createRepo(app, alice, {
+      name: "hidden",
+      visibility: "private",
     });
-    const auth = { authorization: basic(UPSTREAM_LOGIN, UPSTREAM_SECRET) };
-    await fetch(`${upstreamServers.url}/api/v1/repos`, {
-      method: "POST",
-      headers: { "content-type": "application/json", ...auth },
-      body: JSON.stringify({ name: "secret-widgets", visibility: "private" }),
+    if (!hidden.ok) throw new Error(hidden.error);
+    await commit(alice, hidden.value, "main", "README.md", "secret");
+
+    // A private repository behind a fake origin whose clone URL points at
+    // it: only the origin's credential (octo's) opens it.
+    const widgets = await createRepo(app, octo, {
+      name: "secret-widgets",
+      visibility: "private",
     });
-    await fetch(
-      `${upstreamServers.url}/api/v1/repos/octo/secret-widgets/contents`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", ...auth },
-        body: JSON.stringify({
-          branch: "main",
-          message: "first",
-          files: [{ path: "README.md", content: "# widgets\n" }],
-        }),
-      },
-    );
-    const state = newFakeState("forgejo", UPSTREAM_LOGIN, UPSTREAM_SECRET);
+    if (!widgets.ok) throw new Error(widgets.error);
+    await commit(octo, widgets.value, "main", "README.md", "first");
+    const state = newFakeState("forgejo", "octo", upstreamSecret);
     state.repos.push({
       id: 77,
       fullName: "octo/secret-widgets",
       description: "gears, privately",
-      cloneUrl: `${upstreamServers.url}/octo/secret-widgets.git`,
-      htmlUrl: `${upstreamServers.url}/octo/secret-widgets`,
+      cloneUrl: `${base}/octo/secret-widgets.git`,
+      htmlUrl: `${base}/octo/secret-widgets`,
       defaultBranch: "main",
       private: true,
     });
     forgejo = serveFakeForge(state);
     forgetProviders(dataDir);
-  });
+    const connected = await browser(aliceCookie, "/settings/origins/token", {
+      host: forgejo.url,
+      token: upstreamSecret,
+    });
+    expect(connected.status).toBe(303);
+    originId = listOrigins(app.db, alice.id)[0]!.id;
+  }, 30_000);
 
   afterAll(async () => {
     forgejo.stop();
     servers.stop();
-    upstreamServers.stop();
     app.close();
-    upstream.close();
     forgetProviders(dataDir);
-    for (const dir of [dataDir, upstreamDir, work])
+    for (const dir of [dataDir, work])
       await rm(dir, { recursive: true, force: true });
   });
 
@@ -255,13 +274,12 @@ describe("migrate", () => {
     const sourceDir = repoDir(app.reposRoot, "alice", "fixture");
     const sourceRefs = await allRefs(sourceDir);
 
-    const response = await api("bob", "/api/v1/migrate", {
-      source: { url: fixtureUrl },
-    });
+    // By token, so the non-cookie door to the endpoint stays covered.
+    const response = await apiToken(bobToken, { source: { url: fixtureUrl } });
     expect(response.status).toBe(202);
     const started = (await response.json()) as {
-      repo: { full_name?: string; name: string };
-      job: { id: string; stage: string };
+      repo: { name: string };
+      job: { id: string };
     };
     expect(started.repo.name).toBe("fixture");
     const job = await settled(started.job.id);
@@ -282,7 +300,8 @@ describe("migrate", () => {
     expect((await git(["symbolic-ref", "HEAD"], dir)).out).toBe(
       "refs/heads/trunk",
     );
-    // Native: no origin row, no remote in its config — nothing to write through to.
+    // Native: no origin row, no remote in its config — nothing a push could
+    // write through to, so pushes land here and the source never hears.
     expect(migrated.origin).toBeNull();
     expect((await git(["config", "--get-regexp", "^remote\\."], dir)).out).toBe(
       "",
@@ -292,7 +311,7 @@ describe("migrate", () => {
     const clone = join(work, "bob-fixture");
     const url = new URL(`${base}/bob/fixture.git`);
     url.username = "bob";
-    url.password = PASSWORD;
+    url.password = bobToken;
     expect(
       (await git(["clone", "--quiet", url.toString(), clone], work)).code,
     ).toBe(0);
@@ -309,9 +328,9 @@ describe("migrate", () => {
       (await git(["rev-parse", "--verify", "refs/heads/bobs"], dir)).code,
     ).toBe(0);
     expect(await allRefs(sourceDir)).toBe(sourceRefs);
-  }, 60_000);
+  });
 
-  test("refusals are words, and nothing is made", async () => {
+  test("a URL git must not run is refused in words before anything exists", async () => {
     const count = () =>
       (app.db.query("SELECT COUNT(*) AS n FROM repo").get() as { n: number }).n;
     const before = count();
@@ -326,52 +345,56 @@ describe("migrate", () => {
       `--upload-pack=touch ${canary}`,
       "https://user:secret@example.com/a/b.git",
       "",
-    ]) {
-      const response = await api("bob", "/api/v1/migrate", { source: { url } });
-      expect(response.status).toBe(422);
-      const body = (await response.json()) as {
-        error: string;
-        message: string;
-      };
-      expect(body.error).toBe("invalid_url");
-      expect(body.message).toContain("not a URL this forge will clone from");
-    }
+    ])
+      expect(await migrateRepo(app, bob, { source: { url } })).toEqual({
+        ok: false,
+        error: "invalid_url",
+      });
     expect(existsSync(canary)).toBe(false);
+    // On the wire it is a 422 with words.
+    const response = await api(bobCookie, { source: { url: "file:///etc" } });
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as { error: string; message: string };
+    expect(body.error).toBe("invalid_url");
+    expect(body.message).toContain("not a URL this forge will clone from");
     // What a person meant is what they get.
     expect(migrateUrl("github.com/a/b")).toBe("https://github.com/a/b");
     expect(migrateUrl("git://example.com/a/b.git")).toBe(
       "git://example.com/a/b.git",
     );
+    expect(count()).toBe(before);
+  });
 
-    // bob already has a `fixture`.
-    const taken = await api("bob", "/api/v1/migrate", {
-      source: { url: fixtureUrl },
-    });
-    expect(taken.status).toBe(422);
-    expect(((await taken.json()) as { error: string }).error).toBe(
+  test("a name, an agent or a form that cannot work is refused before anything exists", async () => {
+    const made = await createRepo(app, bob, { name: "taken" });
+    expect(made.ok).toBe(true);
+    const count = () =>
+      (app.db.query("SELECT COUNT(*) AS n FROM repo").get() as { n: number }).n;
+    const before = count();
+    const refused = (input: Parameters<typeof migrateRepo>[2]) =>
+      migrateRepo(app, bob, input).then((r) => (r.ok ? "ok" : r.error));
+    expect(await refused({ source: { url: fixtureUrl }, name: "taken" })).toBe(
       "name_taken",
     );
-    const invalid = await api("bob", "/api/v1/migrate", {
-      source: { url: fixtureUrl },
-      name: "no spaces allowed",
-    });
-    expect(((await invalid.json()) as { error: string }).error).toBe(
-      "invalid_name",
-    );
-    const agent = await api("bob", "/api/v1/migrate", {
-      source: { url: fixtureUrl },
-      name: "other",
-      crew: { agent: "nobody-here", autonomous: false },
-    });
-    expect(((await agent.json()) as { error: string }).error).toBe(
-      "no_such_agent",
-    );
+    expect(
+      await refused({
+        source: { url: fixtureUrl },
+        name: "no spaces allowed",
+      }),
+    ).toBe("invalid_name");
+    expect(
+      await refused({
+        source: { url: fixtureUrl },
+        name: "other",
+        crew: { agent: "nobody-here", autonomous: false },
+      }),
+    ).toBe("no_such_agent");
 
     // The same refusal on the web: the form again, with the reason in it.
     const page = await browser(bobCookie, "/migrate", {
       url: fixtureUrl,
       owner: "bob",
-      name: "",
+      name: "taken",
     });
     expect(page.status).toBe(422);
     expect(await page.text()).toContain(
@@ -386,25 +409,16 @@ describe("migrate", () => {
   });
 
   test("a clone that fails leaves nothing behind", async () => {
-    // A private repository is not there for an anonymous clone.
-    const made = await createRepo(app, alice, {
-      name: "hidden",
-      visibility: "private",
-    });
-    expect(made.ok).toBe(true);
-    const started = await migrateRepo(app, bob, {
+    const job = await migrate(bob, {
       source: { url: `${base}/alice/hidden.git` },
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    const job = await settled(started.value.job.id);
     expect(job?.stage).toBe("failed");
     expect(job?.error).toContain("could not be read");
     expect(getRepo(app.db, "bob", "hidden")).toBeUndefined();
     expect(existsSync(repoDir(app.reposRoot, "bob", "hidden"))).toBe(false);
   });
 
-  test("with a crew: on the crew, an app, the importer's brief, autonomy when asked", async () => {
+  test("with a crew: on the crew, an app, the importer's brief, autonomy only when asked", async () => {
     const agent = await createAgent(app, alice, {
       username: "porter",
       model: "",
@@ -416,14 +430,11 @@ describe("migrate", () => {
       ["crewed", true],
       ["assisted", false],
     ] as const) {
-      const started = await migrateRepo(app, bob, {
+      const job = await migrate(bob, {
         source: { url: fixtureUrl },
         name,
         crew: { agent: "porter", autonomous },
       });
-      expect(started.ok).toBe(true);
-      if (!started.ok) return;
-      const job = await settled(started.value.job.id);
       expect(job?.error).toBeUndefined();
       expect(job?.stage).toBe("done");
       expect(job?.detail).toContain("porter is on it");
@@ -444,6 +455,8 @@ describe("migrate", () => {
       const issue = issues[0]!;
       expect(issue.title).toBe(`Make ${name} run here`);
       expect(issue.assigneeName).toBe("porter");
+      // The importer's brief is the same whether or not the crew is
+      // autonomous; autonomy is the repository's setting, asserted above.
       for (const words of [
         "Adapt, don't rewrite",
         "forge.json",
@@ -453,33 +466,29 @@ describe("migrate", () => {
         "FORGE_APP_DATA",
         "no Dockerfile, no compose",
         "could not fit",
+        "Its data:",
+        "Leave the old database untouched",
+        "one-shot import script",
+        "dump file in",
+        "how to make the dump",
+        "Never commit or read at boot a connection string",
         fixtureUrl,
       ])
         expect(issue.body).toContain(words);
     }
-  }, 60_000);
+  });
 
   test("from an origin: the origin's credential opens a private repository", async () => {
-    const connected = await browser(aliceCookie, "/settings/origins/token", {
-      host: forgejo.url,
-      token: UPSTREAM_SECRET,
-    });
-    expect(connected.status).toBe(303);
-    const origin = listOrigins(app.db, alice.id)[0]!;
-
     // Anonymous, by URL: refused by the upstream, and nothing left here.
-    const anon = await migrateRepo(app, alice, {
-      source: { url: `${upstreamServers.url}/octo/secret-widgets.git` },
+    const anon = await migrate(alice, {
+      source: { url: `${base}/octo/secret-widgets.git` },
     });
-    expect(anon.ok).toBe(true);
-    if (!anon.ok) return;
-    expect((await settled(anon.value.job.id))?.stage).toBe("failed");
+    expect(anon?.stage).toBe("failed");
 
     // Picked from the origin: the header opens it.
-    const response = await api("alice", "/api/v1/migrate", {
-      source: { originId: origin.id, fullName: "octo/secret-widgets" },
+    const response = await api(aliceCookie, {
+      source: { originId, fullName: "octo/secret-widgets" },
     });
-    // A password is the account itself; it clears the admin floor.
     expect(response.status).toBe(202);
     const started = (await response.json()) as { job: { id: string } };
     const job = await settled(started.job.id);
@@ -492,17 +501,17 @@ describe("migrate", () => {
     expect((await git(["log", "--format=%s", "main"], dir)).out).toBe("first");
     // The credential rode in the environment and stayed there.
     const config = await Bun.file(join(dir, "config")).text();
-    expect(config).not.toContain(UPSTREAM_SECRET);
+    expect(config).not.toContain(upstreamSecret);
     expect(config).not.toContain("extraHeader");
 
     // Someone else's origin is not a source.
-    const bobs = await api("bob", "/api/v1/migrate", {
-      source: { originId: origin.id, fullName: "octo/secret-widgets" },
+    const bobs = await api(bobCookie, {
+      source: { originId, fullName: "octo/secret-widgets" },
     });
     expect(((await bobs.json()) as { error: string }).error).toBe(
       "no_such_origin",
     );
-  }, 60_000);
+  });
 
   test("the page: the form, the plus menu, the job, and who may see it", async () => {
     const anonymous = await browser("", "/migrate");
@@ -559,10 +568,9 @@ describe("migrate", () => {
     ).text();
     expect(repoPage).toContain("Migrated as alice/copy");
     expect(getRepo(app.db, "alice", "copy")?.autonomy).toBe("autonomous");
-  }, 60_000);
+  });
 
   test("a pasted address inside the network is an admin's alone, unless the forge says otherwise", async () => {
-    const { isPrivateHost } = await import("../src/actions/migrate.ts");
     for (const h of [
       "127.0.0.1",
       "localhost",
@@ -593,33 +601,25 @@ describe("migrate", () => {
       "[2001:db8::1]",
     ])
       expect(isPrivateHost(h)).toBe(false);
-    const strictDir = await mkdtemp(join(tmpdir(), "forge-migrate-strict-"));
-    const strict = createApp({ dataDir: strictDir, port: 0 });
+    // The forge without the personal-forge switch: bob is refused, alice
+    // (the admin) is not. The flag is flipped in place: this only proves
+    // anything because migrateRepo reads it on every call, which the
+    // refusal below (the app was built with it true) fails without.
+    const config = app.config as { migrateFromPrivateHosts?: boolean };
+    config.migrateFromPrivateHosts = false;
     try {
-      const a = await createUser(strict.db, { trusted: true,
-        username: "ann",
-        email: "ann@forge.local",
-        password: "a-good-passphrase",
-        adminIfFirst: true,
-      });
-      const b = await createUser(strict.db, { trusted: true,
-        username: "ben",
-        email: "ben@forge.local",
-        password: "a-good-passphrase",
-      });
-      if (!a.ok || !b.ok) throw new Error("users");
-      const refused = await migrateRepo(strict, b.value, {
+      const refused = await migrateRepo(app, bob, {
         source: { url: `${base}/alice/hidden.git` },
       });
       expect(refused).toEqual({ ok: false, error: "private_host" });
-      const allowed = await migrateRepo(strict, a.value, {
+      const allowed = await migrateRepo(app, alice, {
         source: { url: `${base}/alice/hidden.git` },
         name: "peek",
       });
       expect(allowed.ok).toBe(true);
+      if (allowed.ok) await settled(allowed.value.job.id);
     } finally {
-      strict.close();
-      await rm(strictDir, { recursive: true, force: true });
+      config.migrateFromPrivateHosts = true;
     }
   });
 
@@ -646,13 +646,10 @@ describe("migrate", () => {
       },
     });
     try {
-      const started = await migrateRepo(app, alice, {
+      const job = await migrate(alice, {
         source: { url: `http://127.0.0.1:${hop.port}/hop.git` },
         name: "hopped",
       });
-      expect(started.ok).toBe(true);
-      if (!started.ok) return;
-      const job = await settled(started.value.job.id);
       expect(job?.stage).toBe("failed");
       expect(hits).toBe(0);
     } finally {

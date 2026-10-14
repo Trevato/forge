@@ -4,8 +4,10 @@
  * the newest word — is skipped before it is queued, and again as a queued
  * one starts; an issue that started its day's share of runs without a
  * person's word is parked once and asked about once; a reader's word
- * re-arms neither the cap nor the breaker. Each skip and cap is counted for
- * the token-return view.
+ * re-arms neither the cap nor the breaker. The clock does not give the
+ * planner the direction again when nobody spoke and the map has not moved
+ * since its last pass (#1097). Each skip and cap is counted for the
+ * token-return view.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -13,10 +15,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { addComment, openIssue } from "../src/actions/issues.ts";
-import { createRepo } from "../src/actions/repos.ts";
+import {
+  addComment,
+  assignIssue,
+  openIssue,
+} from "../src/actions/issues.ts";
+import {
+  commitToBranch,
+  createRepo,
+  updateRepoSettings,
+} from "../src/actions/repos.ts";
 import { readUsage } from "../src/actions/usage.ts";
-import { getAgent, type Agent } from "../src/core/agents.ts";
+import { getAgent, setCrewRole, type Agent } from "../src/core/agents.ts";
 import { listDecisions } from "../src/core/decisions.ts";
 import {
   getIssueById,
@@ -34,6 +44,7 @@ import {
   listRuns,
 } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
+import { driveRepo } from "../src/crew/autonomy.ts";
 import { breakerParked, breakerTripped } from "../src/crew/breaker.ts";
 import { queueAgentRun } from "../src/crew/dispatch.ts";
 import {
@@ -335,6 +346,78 @@ describe("an issue cannot loop", () => {
     expect(breakerTripped(app.db, fresh(), issue.id)).toBe(true);
     ok(addComment(app, alice, repo, issue, "Use a cache."));
     expect(breakerTripped(app.db, fresh(), issue.id)).toBe(false);
+  });
+});
+
+describe("the planner is not given the direction again with nothing new (#1097)", () => {
+  test("its own summary, posted as its run ends, starts nothing; a person's word does", async () => {
+    const atlas = ok(await createAgent(app, alice, { username: "atlas" }));
+    const round = ok(
+      await createRepo(app, alice, { name: "round", visibility: "public" }),
+    );
+    ok(
+      await commitToBranch(app, alice, round, {
+        message: "Start",
+        files: [{ path: "README.md", content: "# round\n" }],
+      }),
+    );
+    for (const name of ["bot", "atlas"])
+      expect(addToCrew(app, alice, round, name).ok).toBe(true);
+    setCrewRole(app.db, round.id, atlas.user.id, "planner");
+    ok(
+      await updateRepoSettings(app, alice, round, {
+        autonomy: "autonomous",
+        autonomyDirection: "Make the square rounder.",
+        autonomyCeilingUsd: 10,
+        autonomySlots: 2,
+        autonomyBy: alice.id,
+      }),
+    );
+    const now = (): Repo => getRepoById(app.db, round.id)!;
+    const skips = () =>
+      listDecisions(app.db, round.id, { kind: "guard" }).filter(
+        (d) => d.answer === "skipped",
+      ).length;
+    // The map is dry: the clock gives the planner the direction.
+    expect(await driveRepo(app, now())).toBe("planned");
+    const direction = getIssueById(app.db, now().directionIssueId!)!;
+    expect(direction.assigneeId).toBe(atlas.user.id);
+    // Its pass: it reads, posts its summary as it ends, and lets go.
+    const pass = createRun(app.db, {
+      repoId: round.id,
+      kind: "agent",
+      issueId: direction.id,
+      actorId: atlas.user.id,
+      reason: "assigned",
+    });
+    claimRun(app.db, pass.id);
+    await Bun.sleep(5);
+    ok(addComment(app, atlas.user, now(), direction, "I linked the map."));
+    finishRun(app.db, pass.id, { state: "ok", summary: "planned", costUsd: 0.5 });
+    ok(assignIssue(app, alice, now(), direction, null));
+    // Its own summary is no news: no follow-up is queued on it…
+    const unheld = getIssueById(app.db, direction.id)!;
+    expect(
+      queueAgentRun(app, now(), unheld, atlas, "feedback", alice.id),
+    ).toBeUndefined();
+    // …and the clock, past its interval, does not give it the direction
+    // again. The skip is the rule's, recorded once however often it asks.
+    const later = new Date(Date.now() + 30 * 60_000);
+    const before = skips();
+    expect(await driveRepo(app, now(), later)).not.toBe("planned");
+    expect(await driveRepo(app, now(), later)).not.toBe("planned");
+    expect(getIssueById(app.db, direction.id)!.assigneeId).toBeNull();
+    expect(skips()).toBe(before + 1);
+    const skip = listDecisions(app.db, round.id, { kind: "guard" }).find((d) =>
+      JSON.stringify(d.state).includes("replan"),
+    )!;
+    expect(skip.by).toBe("rule");
+    expect(skip.issueId).toBe(direction.id);
+    // A person's word on the direction is news: it is given again.
+    await Bun.sleep(5);
+    ok(addComment(app, alice, now(), unheld, "Rounder means radius 8."));
+    expect(await driveRepo(app, now(), later)).toBe("planned");
+    expect(getIssueById(app.db, direction.id)!.assigneeId).toBe(atlas.user.id);
   });
 });
 

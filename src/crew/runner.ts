@@ -926,6 +926,9 @@ async function work(
       env["CLAUDE_CODE_TMPDIR"] = runTmp;
       env["TMPDIR"] = runTmp;
     }
+    // The sandbox refuses a unix socket's bind; the forge's own servers take
+    // a loopback port instead (`git/hook-address.ts`), so `bun test` runs.
+    if (sandbox.enforced) env["FORGE_TEST_SOCKET"] = "port";
     // One deadline for the run, whatever it takes to get there: the token
     // dies ten minutes after it, so a second invocation gets what is left.
     const deadline = Date.now() + options.runTimeoutMs;

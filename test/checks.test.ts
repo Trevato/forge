@@ -341,10 +341,16 @@ describe("checks", () => {
   });
 
   test("a pull is checked when it opens and each time its branch moves; a failure names the exit", async () => {
+    // A pull is checked by the base's check, not its own.
+    const gate = await commitToBranch(app, alice, repo, {
+      message: "The base's check",
+      files: [{ path: "forge.json", content: checkJson("test -f NOPE.md") }],
+    });
+    if (!gate.ok) throw new Error(JSON.stringify(gate.error));
     const branched = await commitToBranch(app, alice, repo, {
       branch: "feature",
-      message: "Break the check",
-      files: [{ path: "forge.json", content: checkJson("test -f NOPE.md") }],
+      message: "Leave the check failing",
+      files: [{ path: "a.txt", content: "a\n" }],
     });
     if (!branched.ok) throw new Error(JSON.stringify(branched.error));
     // A branch that heads no pull is nobody's to check yet.
@@ -389,11 +395,17 @@ describe("checks", () => {
   }, 60_000);
 
   test("a bun test failure in the check step is summarised: how many passed, how many failed, and their names", async () => {
-    const branched = await commitToBranch(app, alice, repo, {
-      branch: "red-tests",
-      message: "A check that runs bun test, with two failures",
+    const gate = await commitToBranch(app, alice, repo, {
+      message: "The base's check runs bun test",
       files: [
         { path: "forge.json", content: checkJson("bun test check.test.ts") },
+      ],
+    });
+    if (!gate.ok) throw new Error(JSON.stringify(gate.error));
+    const branched = await commitToBranch(app, alice, repo, {
+      branch: "red-tests",
+      message: "Two failing tests",
+      files: [
         {
           path: "check.test.ts",
           content: [
@@ -429,6 +441,11 @@ describe("checks", () => {
   }, 30_000);
 
   test("a reader's fork pull is checked at the base's snapshot once a writer approves each head", async () => {
+    const gate = await commitToBranch(app, alice, repo, {
+      message: "The base's check passes",
+      files: [{ path: "forge.json", content: checkJson("true") }],
+    });
+    if (!gate.ok) throw new Error(JSON.stringify(gate.error));
     const forked = await forkRepo(app, bob, repo);
     if (!forked.ok) throw new Error(String(forked.error));
     const fork = forked.value;
@@ -720,13 +737,16 @@ describe("checks", () => {
   });
   test("an open pull whose head was never checked is checked when the service boots", async () => {
     await checks.stop();
+    // The pull is checked by the base's check, so the base must ask for it.
+    const gate = await commitToBranch(app, alice, repo, {
+      message: "The base's check wants QUIET.md",
+      files: [{ path: "forge.json", content: checkJson("test -f QUIET.md") }],
+    });
+    if (!gate.ok) throw new Error(JSON.stringify(gate.error));
     const branch = await commitToBranch(app, alice, repo, {
       branch: "quiet",
       message: "Quiet",
-      files: [
-        { path: "QUIET.md", content: "quiet\n" },
-        { path: "forge.json", content: checkJson("test -f QUIET.md") },
-      ],
+      files: [{ path: "QUIET.md", content: "quiet\n" }],
     });
     if (!branch.ok) throw new Error(JSON.stringify(branch.error));
     // Opened while no checks service was listening: nothing asked for a check.
