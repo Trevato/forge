@@ -25,7 +25,7 @@ import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
 import { releaseOrphans } from "./core/run_secret.ts";
 import { failAbandonedRuns } from "./core/runs.ts";
-import { health } from "./http/health.ts";
+import { startDraining } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
 import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
@@ -391,15 +391,14 @@ let draining = false;
  * flight finish and land, stops the apps and the checks, and keeps serving
  * whoever is connected over SSH until they leave. Only then does it go.
  */
-function shutdown(): void {
+function shutdown(signal: NodeJS.Signals): void {
   if (draining) return;
   draining = true;
-  health.draining = true;
+  const sessions = ssh?.sessions() ?? 0;
+  startDraining(app.log, signal, { sshSessions: sessions });
   // Streams end now, with a resume hint: their browsers reconnect to the
   // process that replaced this one, not to this one while it finishes.
   drainStreams();
-  const sessions = ssh?.sessions() ?? 0;
-  app.log.info("forge draining", { sshSessions: sessions });
   clearInterval(deliveryTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);

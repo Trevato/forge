@@ -361,7 +361,9 @@ asked, under **Settings → Autonomy**:
   missing reviewer never holds a pull silently. An agent's verdict stands
   only while the agent is a reviewer on the crew, and the reviewer gets two
   rounds of changes on a pull — a round is a head it asked changes on;
-  past them its request is advice. A builder's run that answers a change
+  past them its request is advice, and the third request hands the pull
+  to a person in one card summarising the three reviews (not parked, not
+  closed; a person's approval lands it). A builder's run that answers a change
   request without pushing parks the pull. A review run never resumes an
   earlier session, and the same verdict sent twice on one head is one. Nothing waits for a
   person: a pull whose check stays red past its tries, or whose branch
@@ -372,8 +374,8 @@ asked, under **Settings → Autonomy**:
   planned again within twenty minutes, and the planner is told the
   direction is never finished: when what it names is built, it proposes
   the next increment and leaves at least three ready issues. The reviewer
-  gets two rounds of changes on a pull; after that it lands and what is
-  left becomes an issue. The only pause is the day's ceiling. A person
+  gets two rounds of changes on a pull; the third hands the pull to a
+  person. The only pause is the day's ceiling. A person
   steers by editing the direction and the map; the crew does the rest. When nothing is
   ready and nothing is in flight, the map has run dry: the planner is
   given the direction.
@@ -395,7 +397,11 @@ it, assigns the planner, and the planner's brief says the rest: open
 issues each small enough for one run, link what waits for what, assign
 nobody, push nothing. The direction issue stays open, is never picked as
 work, and the planner is not asked again for twenty minutes unless its run
-ended.
+ended. Nor is it asked again with nothing new: when nobody but the planner
+has spoken on the direction since its last pass began, and no issue has
+been opened by anyone else or closed since that pass ended, the clock
+skips it and records one `guard` decision by rule. A busy crew counts the
+ready issues before it plans; full slots alone are not a thin map.
 
 **What counts as done and as taken.** A pull that says _Closes #12_
 closes #12 when it lands, as the person who landed it; that is what frees

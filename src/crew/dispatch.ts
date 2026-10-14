@@ -15,6 +15,7 @@ import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
 import type { App } from "../app.ts";
 import { transact } from "../kernel/db.ts";
+import { addComment } from "../actions/issues.ts";
 import { announceRun } from "../actions/runs.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import type { ForgeEvent } from "../core/events.ts";
@@ -31,7 +32,13 @@ import { accountActive } from "../core/accounts.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
-import { greenHead, sendToReview } from "./review.ts";
+import {
+  greenHead,
+  handedToPerson,
+  handoverNote,
+  reviewRounds,
+  sendToReview,
+} from "./review.ts";
 import {
   activeRunFor,
   hasQueuedRun,
@@ -282,7 +289,10 @@ export function queueAgentRun(
   // thing — a run checked for by one and inserted by the other would be the
   // same work twice (docs/ARCHITECTURE.md, "Two processes at once").
   const run = transact(app.db, () => {
-    const active = activeRunFor(app.db, "agent", issue.id);
+    // A follow-up is the builder's: a reviewer's own run on the pull, still
+    // running as it posts its verdict, is not the run that hears it.
+    const mine = reason === "feedback" ? agent.user.id : undefined;
+    const active = activeRunFor(app.db, "agent", issue.id, mine);
     // A follow-up with nothing new would only read the agent's own reply
     // and decline. With a run in flight the answer waits for it to end: the
     // queued run asks again as it starts (`runner.ts`).
@@ -298,7 +308,8 @@ export function queueAgentRun(
     // queued one may sit behind a running one, so it is looked for by itself.
     if (
       active !== undefined &&
-      (reason === "assigned" || hasQueuedRun(app.db, "agent", issue.id))
+      (reason === "assigned" ||
+        hasQueuedRun(app.db, "agent", issue.id, mine))
     )
       return undefined;
     return createRun(app.db, {
@@ -427,13 +438,32 @@ function route(app: App, event: ForgeEvent): void {
           );
         return;
       }
+      // The crew is off: a verdict is read by people, and wakes no one.
+      if (reviewerVerdict && repo.autonomy === "off") return;
+      if (reviewerVerdict) {
+        // The loop is bounded: the third round hands the pull to a person.
+        const pull = getPull(app.db, repo.id, number);
+        if (pull && handedToPerson(app.db, repo.id, pull)) {
+          // One card: a re-sent verdict does not post a second.
+          const last = listComments(app.db, issue.id, { kind: "comment" }).at(-1);
+          if (!last?.body.startsWith("Handed to a person"))
+            addComment(
+              app,
+              actor,
+              repo,
+              issue,
+              handoverNote(reviewRounds(app.db, repo.id, pull)),
+            );
+          return;
+        }
+      }
       const agent = agentFor(app, issue);
       if (!agent) return;
       // Said while the agent works: it hears the words now, as its next
       // turn, instead of a second run queuing up behind the first. A
       // session nobody can reach any more falls through to the queue.
       const said = event.payload["body"];
-      const active = activeRunFor(app.db, "agent", issue.id);
+      const active = activeRunFor(app.db, "agent", issue.id, agent.user.id);
       if (
         active?.state === "running" &&
         typeof said === "string" &&

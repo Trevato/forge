@@ -72,6 +72,8 @@ The store is `Bun.S3Client` or a directory behind one small interface
 
 ## Restore
 
+The printable card, seven lines, is [RESTORE.md](RESTORE.md); a test runs it.
+
 ```sh
 # same S3_* as the forge runs under, or FORGE_SNAPSHOT_DIR
 FORGE_SNAPSHOT_PASSPHRASE=… \

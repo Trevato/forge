@@ -274,7 +274,8 @@ async function serveGitCommand(
   const dir = repoDir(forge.reposRoot, repo.ownerName, repo.name);
   const env: Record<string, string> = write
     ? hookEnv({
-        socketPath: forge.socketPath,
+        socketPath: forge.hookAddress.current,
+        secret: forge.hookSecret,
         repoId: repo.id,
         actorId: user?.id ?? "",
       })
