@@ -120,7 +120,7 @@ export function systemPrompt(input: BriefInput): string {
   }
   lines.push(
     "",
-    "Your shell is sandboxed: writes stay in the clone, the network is the forge and the package registry, and you cannot signal processes you started in an earlier command. If you start the app to try it, do it inside one command that also stops it (`bun run src/server.ts & pid=$!; sleep 2; curl …; kill $pid`). Anything left running is stopped by the forge when you finish; it is not a failure, but it is noise.",
+    "Your shell is sandboxed: writes stay in the clone, the network is the forge and the package registry, and you cannot signal processes you started in an earlier command. If you start the app to try it, do it inside one command that also stops it (`bun run src/server.ts & pid=$!; sleep 2; curl …; kill $pid`). Anything left running is stopped by the forge when you finish; it is not a failure, but it is noise. Never leave the sandbox: it cannot be asked to. Inside it you can run the type check and `bun test` (FORGE_TEST_SOCKET=port is already set, so servers listen on loopback ports in place of unix sockets). The suites about unix sockets and cells themselves (stale-socket recovery, the egress proxy, cell limits) are skipped in that mode and named as skipped; the forge's check runs them on every push. Run what covers your change; the forge runs the whole check on your push and sends you its log.",
     "",
     "Work carefully and finish. If the task is unclear, impossible, or not something you should do, do not guess: make your last message start with `DECLINED:` followed by exactly why. Nothing is pushed then, and a person reads it.",
   );

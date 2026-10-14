@@ -53,6 +53,11 @@ import {
   serviceRpc,
   type GitService,
 } from "../git/smart-http.ts";
+import { timingSafeEqual } from "node:crypto";
+import {
+  forwardedGitEnv,
+  HOOK_SECRET_HEADER,
+} from "../git/hook-protocol.ts";
 import { lstat, readdir, rm } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -399,6 +404,7 @@ import {
   resolveAppHost,
 } from "../apps/proxy.ts";
 
+import { portInsteadOfSocket, tcpAddress } from "../git/hook-address.ts";
 import { closeHostedChildren, resolveHostedChild } from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 
@@ -810,7 +816,8 @@ export function buildRouter(): Router<Handler> {
     withGitAccess(ctx, "git-receive-pack", (dir, repoId) =>
       serviceRpc(dir, "git-receive-pack", ctx.request, {
         env: hookEnv({
-          socketPath: ctx.app.socketPath,
+          socketPath: ctx.app.hookAddress.current,
+          secret: ctx.app.hookSecret,
           repoId,
           actorId: ctx.auth.user?.id ?? "",
         }),
@@ -1377,8 +1384,16 @@ const fromStored = (stored: StoredResponse, replay: boolean): Response =>
 
 // ---- the internal server (unix socket, hooks only) ----
 
+/** Whether the request carries this boot's hook secret (constant-time). */
+function hookCallerAllowed(app: App, request: Request): boolean {
+  const given = Buffer.from(request.headers.get(HOOK_SECRET_HEADER) ?? "");
+  const want = Buffer.from(app.hookSecret);
+  return given.length === want.length && timingSafeEqual(given, want);
+}
+
 async function handleHook(app: App, request: Request): Promise<Response> {
-  const input = (await request.json()) as HookRequest;
+  const parsed = (await request.json()) as HookRequest;
+  const input: HookRequest = { ...parsed, gitEnv: forwardedGitEnv(parsed.gitEnv) };
   const repo = getRepoById(app.db, input.repoId);
   if (!repo) return new Response("unknown repository", { status: 400 });
 
@@ -1714,9 +1729,15 @@ export async function serve(app: App): Promise<Servers> {
     },
   });
 
+  const onPort = portInsteadOfSocket();
   const internal = Bun.serve({
-    unix: app.socketPath,
+    ...(onPort ? { hostname: "127.0.0.1", port: 0 } : { unix: app.socketPath }),
     fetch(request) {
+      // The socket's file mode used to be the only door check; a loopback
+      // port has none, so every internal request proves the boot secret.
+      if (!hookCallerAllowed(app, request)) {
+        return new Response("forbidden", { status: 403 });
+      }
       const url = new URL(request.url);
       if (request.method === "POST" && url.pathname === "/internal/hook") {
         return handleHook(app, request);
@@ -1725,6 +1746,7 @@ export async function serve(app: App): Promise<Servers> {
     },
   });
 
+  if (onPort) app.hookAddress.current = tcpAddress(internal.port ?? 0);
   const port = web.port ?? 0;
   return {
     url: `http://localhost:${port}`,
