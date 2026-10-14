@@ -104,6 +104,40 @@ function lastBegun(
   );
 }
 
+/**
+ * Whether the planner, given the direction again by the clock, would find
+ * nothing new since its last pass (#1097): no word on the direction but its
+ * own since that pass began, and no issue another opened, nor any closed,
+ * since it ended. The map is the planner's to read; when it has not moved
+ * and nobody spoke, another pass reads its own summary and changes nothing.
+ * With no ended pass yet, everything is new.
+ */
+export function plannerNothingNew(
+  db: Database,
+  repo: Repo,
+  direction: Issue,
+  planner: Agent,
+): boolean {
+  const pass = db
+    .query<{ ended: string }, [string, string]>(
+      `SELECT finished_at AS ended FROM run WHERE kind = 'agent' AND issue_id = ?1
+         AND actor_id = ?2 AND started_at IS NOT NULL AND finished_at IS NOT NULL
+         AND state IN ('ok','failed','cancelled')
+       ORDER BY started_at DESC LIMIT 1`,
+    )
+    .get(direction.id, planner.user.id);
+  if (pass === null || pass === undefined) return false;
+  if (!nothingNew(db, repo, direction, planner)) return false;
+  const moved = db
+    .query<{ n: number }, [string, string, string, string]>(
+      `SELECT COUNT(*) AS n FROM issue
+        WHERE repo_id = ?1 AND kind = 'issue' AND id != ?2
+          AND ((created_at > ?3 AND author_id != ?4) OR closed_at > ?3)`,
+    )
+    .get(repo.id, direction.id, pass.ended, planner.user.id);
+  return (moved?.n ?? 0) === 0;
+}
+
 /** Whether a feedback run of `agent` on `issue` would find nothing new to act on. */
 export function nothingNew(
   db: Database,

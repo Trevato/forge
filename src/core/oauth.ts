@@ -1,10 +1,13 @@
 /**
- * OAuth clients: who may later ask a person for a token. Step one stores the
- * registration (RFC 7591) and nothing else — no grant, no code, no token.
+ * OAuth for the MCP: clients (RFC 7591), the authorization request a person
+ * consents to, the one-time code, and its PKCE exchange for the same token
+ * Settings mints.
  */
 import type { Database } from "bun:sqlite";
-import { id } from "../kernel/id.ts";
+import { sha256 } from "../kernel/hash.ts";
+import { id, secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { createToken } from "./tokens.ts";
 
 export const NAME_MAX = 100;
 export const REDIRECTS_MAX = 10;
@@ -129,4 +132,161 @@ export function getClient(db: Database, clientId: string): OAuthClient | null {
         redirectUris: JSON.parse(row.redirect_uris) as string[],
         createdAt: row.created_at,
       };
+}
+
+// ---- the authorization request, the code, and the exchange ----
+
+/** A code is a minute's grace between consent and exchange, no more. */
+export const CODE_TTL_MS = 60_000;
+export const TOKEN_NAME_MAX = 100;
+/** What a person may choose for how long the minted token lives, in seconds. */
+export const LIFETIMES: Readonly<Record<string, number | null>> = {
+  never: null,
+  day: 86_400,
+  month: 30 * 86_400,
+  year: 365 * 86_400,
+};
+
+export type OAuthScope = "ro" | "rw";
+export const isOAuthScope = (v: string): v is OAuthScope =>
+  v === "ro" || v === "rw";
+
+/** A valid authorization request: the client is real and the redirect is one it registered. */
+export interface AuthRequest {
+  readonly client: OAuthClient;
+  readonly redirectUri: string;
+  readonly challenge: string;
+  readonly state: string;
+  readonly scope: OAuthScope;
+}
+
+const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+const VERIFIER = /^[A-Za-z0-9._~-]{43,128}$/;
+const STATE_MAX = 1000;
+
+/**
+ * Check the untrusted parameters of an authorization request. Anything wrong
+ * is a refusal shown to the person, never a redirect: an unregistered
+ * redirect must never be sent anywhere, and the rest are the client's bugs.
+ * The redirect must equal a registered one exactly — no prefix, no pattern.
+ */
+export function parseAuthRequest(
+  db: Database,
+  get: (name: string) => string,
+): Result<AuthRequest, string> {
+  const client = getClient(db, get("client_id"));
+  if (client === null) return err("This client is not registered here.");
+  const redirectUri = get("redirect_uri");
+  if (!client.redirectUris.includes(redirectUri))
+    return err("The redirect address is not one this client registered.");
+  if (get("response_type") !== "code")
+    return err("Only response_type=code is offered.");
+  if (get("code_challenge_method") !== "S256")
+    return err("PKCE with code_challenge_method=S256 is required.");
+  const challenge = get("code_challenge");
+  if (!CHALLENGE.test(challenge))
+    return err("The code_challenge is not a base64url SHA-256.");
+  const state = get("state");
+  if (state.length > STATE_MAX) return err("The state is too long.");
+  const asked = get("scope").split(/\s+/).find(isOAuthScope);
+  return ok({ client, redirectUri, challenge, state, scope: asked ?? "ro" });
+}
+
+/** The name a person gave a token: plain text, bounded, never empty. */
+export function tokenName(raw: string, fallback: string): string {
+  // eslint-disable-next-line no-control-regex
+  const name = raw.replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+  return (name === "" ? fallback : name).slice(0, TOKEN_NAME_MAX);
+}
+
+/** Where the person goes next: the registered redirect with the answer in its query. */
+export function redirectWith(
+  redirectUri: string,
+  params: Record<string, string>,
+): string {
+  const url = new URL(redirectUri);
+  for (const [k, v] of Object.entries(params))
+    if (v !== "") url.searchParams.set(k, v);
+  return url.toString();
+}
+
+/** Record a person's consent and return the one-time code that proves it. */
+export function issueCode(
+  db: Database,
+  userId: string,
+  request: AuthRequest,
+  grant: { scope: OAuthScope; name: string; lifetimeS: number | null },
+): string {
+  const code = secret();
+  db.query(
+    `INSERT INTO oauth_code (code_hash, client_id, user_id, redirect_uri, challenge, scope, name, lifetime_s, expires_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+  ).run(
+    sha256(code),
+    request.client.id,
+    userId,
+    request.redirectUri,
+    request.challenge,
+    grant.scope,
+    grant.name,
+    grant.lifetimeS,
+    new Date(Date.now() + CODE_TTL_MS).toISOString(),
+  );
+  db.query("DELETE FROM oauth_code WHERE expires_at <= ?1").run(
+    new Date().toISOString(),
+  );
+  return code;
+}
+
+export interface Minted {
+  readonly token: string;
+  readonly scope: OAuthScope;
+  /** Seconds the token lives, or null for one that does not expire. */
+  readonly expiresIn: number | null;
+}
+
+/**
+ * Exchange a code for a token. The code is spent before anything else is
+ * decided, so a replay, a wrong verifier or a wrong redirect all find it
+ * gone: one try per code. Every refusal is `invalid_grant`.
+ */
+export function redeemCode(
+  db: Database,
+  input: {
+    code: string;
+    clientId: string;
+    redirectUri: string;
+    verifier: string;
+  },
+): Result<Minted, "invalid_grant"> {
+  const row = db
+    .query<
+      {
+        client_id: string;
+        user_id: string;
+        redirect_uri: string;
+        challenge: string;
+        scope: OAuthScope;
+        name: string;
+        lifetime_s: number | null;
+        expires_at: string;
+      },
+      [string]
+    >("DELETE FROM oauth_code WHERE code_hash = ?1 RETURNING *")
+    .get(sha256(input.code));
+  if (row === null) return err("invalid_grant");
+  if (Date.parse(row.expires_at) <= Date.now()) return err("invalid_grant");
+  if (row.client_id !== input.clientId) return err("invalid_grant");
+  if (row.redirect_uri !== input.redirectUri) return err("invalid_grant");
+  if (!VERIFIER.test(input.verifier)) return err("invalid_grant");
+  const digest = new Bun.CryptoHasher("sha256")
+    .update(input.verifier)
+    .digest("base64url");
+  if (digest !== row.challenge) return err("invalid_grant");
+  const minted = createToken(db, row.user_id, row.name, row.scope, {
+    ...(row.lifetime_s === null
+      ? {}
+      : { expiresAt: new Date(Date.now() + row.lifetime_s * 1000).toISOString() }),
+  });
+  return ok({ token: minted.token, scope: row.scope, expiresIn: row.lifetime_s });
 }
