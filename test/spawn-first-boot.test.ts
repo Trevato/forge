@@ -31,6 +31,7 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, SHOWN_ONCE_NOTE, type Servers } from "../src/http/server.ts";
+import { readClaim } from "../src/spawn/claim.ts";
 import { firstBoot } from "../src/spawn/first-boot.ts";
 import { hostedPlacement } from "../src/spawn/placement.ts";
 import type { SpawnSource } from "../src/spawn/plan.ts";
@@ -58,12 +59,15 @@ describe("a spawned child's first boot", () => {
     form: Record<string, string>,
     origin: string | null = servers.url,
   ) =>
-    fetch(url(`/claim/${t}`), {
+    fetch(url("/claim"), {
       method: "POST",
       headers: origin === null ? {} : { origin },
-      body: new URLSearchParams(form),
+      body: new URLSearchParams({ token: t, ...form }),
       redirect: "manual",
     });
+  /** The link is still good: nothing claimed it yet. */
+  const unspent = (t: string) =>
+    readClaim(child.db, getOrg(child.db, "bakery")!.id, t).state === "ok";
   const maria = {
     username: "maria",
     email: "maria@bakery.test",
@@ -246,15 +250,30 @@ describe("a spawned child's first boot", () => {
     }
   });
 
-  test("a made-up link says it is not a claim link", async () => {
-    const page = await fetch(url(`/claim/${"x".repeat(43)}`));
-    expect(page.status).toBe(404);
-    expect(await page.text()).toContain("not a claim link");
-    expect((await claim("x".repeat(43), maria)).status).toBe(404);
+  test("a made-up code says it is not a claim link", async () => {
+    const res = await claim("x".repeat(43), maria);
+    expect(res.status).toBe(404);
+    expect(await res.text()).toContain("not a claim link");
+    expect(getUserByName(child.db, "maria")).toBeUndefined();
+  });
+
+  test("the old path form is gone: /claim/<anything> is a 404 and spends nothing", async () => {
+    for (const t of [token, "x".repeat(43)]) {
+      expect((await fetch(url(`/claim/${t}`))).status).toBe(404);
+      const res = await fetch(url(`/claim/${t}`), {
+        method: "POST",
+        headers: { origin: servers.url },
+        body: new URLSearchParams(maria),
+        redirect: "manual",
+      });
+      expect(res.status).toBe(404);
+    }
+    expect(getUserByName(child.db, "maria")).toBeUndefined();
+    expect(unspent(token)).toBe(true);
   });
 
   test("the link opens a page that asks before it acts: a GET claims nothing", async () => {
-    const page = await fetch(url(`/claim/${token}`));
+    const page = await fetch(url("/claim"));
     expect(page.status).toBe(200);
     const text = await page.text();
     expect(text).toContain("This forge is yours");
@@ -269,14 +288,14 @@ describe("a spawned child's first boot", () => {
     const res = await claim(token, maria, "https://evil.test");
     expect(res.status).toBe(403);
     expect(getUserByName(child.db, "maria")).toBeUndefined();
-    expect((await fetch(url(`/claim/${token}`))).status).toBe(200);
+    expect(unspent(token)).toBe(true);
   });
 
   test("a weak password is refused, and the link is not spent on it", async () => {
     const res = await claim(token, { ...maria, password: "short" });
     expect(res.status).toBe(422);
     expect(getUserByName(child.db, "maria")).toBeUndefined();
-    expect((await fetch(url(`/claim/${token}`))).status).toBe(200);
+    expect(unspent(token)).toBe(true);
   });
 
   test("claiming makes the person the child's admin and an owner of its organisation, signed in", async () => {
@@ -319,15 +338,13 @@ describe("a spawned child's first boot", () => {
   });
 
   test("a used link says so, and claims nothing a second time", async () => {
-    const page = await fetch(url(`/claim/${token}`));
-    expect(page.status).toBe(410);
-    expect(await page.text()).toContain("already been used");
     const res = await claim(token, {
       ...maria,
       username: "mallory",
       email: "m@evil.test",
     });
     expect(res.status).toBe(410);
+    expect(await res.text()).toContain("already been used");
     expect(getUserByName(child.db, "mallory")).toBeUndefined();
   });
 
@@ -340,13 +357,13 @@ describe("a spawned child's first boot", () => {
       org.id,
       Date.now() - 24 * 60 * 60 * 1000 - 60_000,
     );
-    const page = await fetch(url(`/claim/${old}`));
-    expect(page.status).toBe(410);
-    expect(await page.text()).toContain("expired");
-    expect(
-      (await claim(old, { ...maria, username: "late", email: "late@x.test" }))
-        .status,
-    ).toBe(410);
+    const res = await claim(old, {
+      ...maria,
+      username: "late",
+      email: "late@x.test",
+    });
+    expect(res.status).toBe(410);
+    expect(await res.text()).toContain("expired");
     expect(getUserByName(child.db, "late")).toBeUndefined();
   });
 
@@ -387,12 +404,12 @@ describe("claims are bound to a spawned forge, and the link is shown once", () =
     const { mintClaim } = await import("../src/spawn/claim.ts");
     const alice = getUserByName(parent.db, "alice")!;
     const crafted = mintClaim(parent.db, alice.id);
-    const page = await fetch(`${servers.url}/claim/${crafted}`);
+    const page = await fetch(`${servers.url}/claim`);
     expect(page.status).toBe(404);
-    const res = await fetch(`${servers.url}/claim/${crafted}`, {
+    const res = await fetch(`${servers.url}/claim`, {
       method: "POST",
       headers: { origin: "https://forge.test" },
-      body: new URLSearchParams({ username: "mallory", email: "m@evil.test", password: "a-long-mallory-passphrase" }),
+      body: new URLSearchParams({ token: crafted, username: "mallory", email: "m@evil.test", password: "a-long-mallory-passphrase" }),
       redirect: "manual",
     });
     expect(res.status).toBe(404);
@@ -428,12 +445,12 @@ describe("claims are bound to a spawned forge, and the link is shown once", () =
     await firstBoot(kid);
     const kidServers = await serve(kid);
     try {
-      const page = (await (await fetch(`${kidServers.url}/claim/${token}`)).text()).replace(/\s+/g, " ");
+      const page = (await (await fetch(`${kidServers.url}/claim`)).text()).replace(/\s+/g, " ");
       expect(page).toContain("alice keeps owner access to this forge; you can remove it in your organisation");
-      const res = await fetch(`${kidServers.url}/claim/${token}`, {
+      const res = await fetch(`${kidServers.url}/claim`, {
         method: "POST",
         headers: { origin: kidServers.url },
-        body: new URLSearchParams({ username: "kai-owner", email: "kai@x.test", password: "a-long-kai-passphrase" }),
+        body: new URLSearchParams({ token, username: "kai-owner", email: "kai@x.test", password: "a-long-kai-passphrase" }),
         redirect: "manual",
       });
       expect(res.status).toBe(303);
@@ -443,7 +460,14 @@ describe("claims are bound to a spawned forge, and the link is shown once", () =
       // A crafted row on any other account of the child is never consulted.
       const { mintClaim } = await import("../src/spawn/claim.ts");
       const other = mintClaim(kid.db, getUserByName(kid.db, "alice")!.id);
-      expect((await fetch(`${kidServers.url}/claim/${other}`)).status).toBe(404);
+      const crafted = await fetch(`${kidServers.url}/claim`, {
+        method: "POST",
+        headers: { origin: kidServers.url },
+        body: new URLSearchParams({ token: other, username: "mallory", email: "m@evil.test", password: "a-long-mallory-passphrase" }),
+        redirect: "manual",
+      });
+      expect(crafted.status).toBe(404);
+      expect(getUserByName(kid.db, "mallory")).toBeUndefined();
     } finally {
       kidServers.stop();
       kid.close();

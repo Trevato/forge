@@ -3,9 +3,11 @@
  * a server the way the tests that boot the forge do — a unix socket in a
  * fresh directory under the temp directory (`test/checks.test.ts`), one
  * under the working directory, and a loopback port — then connects to it
- * and reads the answer back.
+ * and reads the answer back. A sandboxed run refuses the sockets and sets
+ * FORGE_TEST_SOCKET=port, so the forge takes the loopback port there
+ * (`git/hook-address.ts`); only the port is required.
  *
- *   bun scripts/sandbox-probe.ts     # exits 1 when any of them is refused
+ *   bun scripts/sandbox-probe.ts     # exits 1 when the loopback port is refused
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
@@ -13,6 +15,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 type Verdict = { name: string; ok: boolean; detail: string };
+
+export const LOOPBACK = "loopback port";
 
 async function answer(
   listen: { unix: string } | { port: 0; hostname: "127.0.0.1" },
@@ -49,9 +53,9 @@ export async function probe(): Promise<Verdict[]> {
   ];
   try {
     const text = await answer({ port: 0, hostname: "127.0.0.1" });
-    verdicts.push({ name: "loopback port", ok: text === "ok", detail: "127.0.0.1" });
+    verdicts.push({ name: LOOPBACK, ok: text === "ok", detail: "127.0.0.1" });
   } catch (error) {
-    verdicts.push({ name: "loopback port", ok: false, detail: String(error) });
+    verdicts.push({ name: LOOPBACK, ok: false, detail: String(error) });
   }
   return verdicts;
 }
@@ -60,5 +64,6 @@ if (import.meta.main) {
   const verdicts = await probe();
   for (const v of verdicts)
     console.log(`${v.ok ? "ok     " : "refused"}  ${v.name}  (${v.detail})`);
-  process.exit(verdicts.every((v) => v.ok) ? 0 : 1);
+  console.log(`FORGE_TEST_SOCKET=${process.env["FORGE_TEST_SOCKET"] ?? "unset"}`);
+  process.exit(verdicts.some((v) => v.name === LOOPBACK && v.ok) ? 0 : 1);
 }

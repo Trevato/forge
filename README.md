@@ -327,11 +327,10 @@ one the provider rests hands its runs to the other until the reset.
 and the package registry, writes stay in the clone, the forge's data and the
 operator's credentials are unreadable — by bubblewrap and socat on Linux
 (both are in the image). Inside it a builder can install the declared
-packages, type-check, and run the tests that boot a server: a server may listen
-on a loopback port or a unix socket under the clone or its temp directory
-(`bun scripts/sandbox-probe.ts` prints each verdict). Linux cannot allow unix
-sockets by path, so all are allowed and the machine's `/run` is denied by path
-instead. A host that forbids unprivileged user namespaces
+packages, type-check, and run the tests that boot a server: no unix socket is
+let through, so the run carries `FORGE_TEST_SOCKET=port` and the forge listens
+on a loopback port instead (`bun scripts/sandbox-probe.ts` prints each
+verdict). A host that forbids unprivileged user namespaces
 (many container platforms' seccomp profiles) cannot hold it, and the policy is
 then switched off rather than faked. To tell which a deployment is in: the
 boot log carries `agent sandbox not available here` with the reason, Settings →

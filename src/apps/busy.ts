@@ -2,7 +2,8 @@
  * Whether a running environment is in the middle of something, asked of
  * the process itself rather than of the clock: a child it started still
  * working (a build, a crew run inside a hosted forge), or a stream the
- * proxy holds open to it (a websocket, an event stream). The sleep sweep
+ * proxy holds open to it (a websocket, an event stream), or a request it
+ * passed whose answer has not begun. The sleep sweep
  * leaves a busy environment awake — for a while, never forever
  * (`apps/runtime.ts`).
  *
@@ -13,12 +14,13 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 
-export type BusyReason = "children" | "stream";
+export type BusyReason = "children" | "stream" | "request";
 
 /** Busy, in the words a page says it with. */
 export const BUSY_WORDS: Record<BusyReason, string> = {
   children: "busy — its child processes are still working",
   stream: "busy — a stream to it is still open",
+  request: "busy — a request is still waiting on its answer",
 };
 
 /**
@@ -100,8 +102,10 @@ export function hasChildren(pid: number): boolean {
 export function busyReason(
   pid: number,
   openStreams: number,
+  openRequests = 0,
 ): BusyReason | undefined {
   if (openStreams > 0) return "stream";
+  if (openRequests > 0) return "request";
   if (hasChildren(pid)) return "children";
   return undefined;
 }

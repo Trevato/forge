@@ -131,10 +131,11 @@ describe("a spawned child's apps", () => {
     await firstBoot(child);
     servers = await serve(child);
     const token = spawned.value.claimUrl!.split("/claim#")[1]!;
-    const claimed = await fetch(`${servers.url}/claim/${token}`, {
+    const claimed = await fetch(`${servers.url}/claim`, {
       method: "POST",
       headers: { origin: servers.url },
       body: new URLSearchParams({
+        token,
         username: "maria",
         email: "maria@bakery.test",
         password: "a-long-bakery-passphrase",

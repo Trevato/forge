@@ -10,6 +10,7 @@ import {
   type Notifier,
 } from "../src/crew/notify.ts";
 import { queueAgentRun } from "../src/crew/dispatch.ts";
+import { fetchInternal } from "../src/git/hook-address.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
@@ -343,9 +344,9 @@ describe("accounts: the owner sees, suspends and removes", () => {
     // What git's pre-receive hook asks the forge once the pack is in: the
     // ref update, from the account that pushed it.
     const ask = () =>
-      fetch("http://forge/internal/hook", {
-        unix: app.socketPath,
+      fetchInternal(app.hookAddress.current, "/internal/hook", {
         method: "POST",
+        headers: { "x-forge-hook-secret": app.hookSecret },
         body: JSON.stringify({
           hook: "pre-receive",
           repoId: made.value.id,

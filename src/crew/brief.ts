@@ -64,8 +64,8 @@ export interface PolicyBrief {
  * it), so it never writes "I could not run" for something it could.
  */
 export const SANDBOX_LINES = [
-  "Your shell is sandboxed. It can run: `bun install` (the registry is reachable; run it first when there is a package.json and no node_modules, or the type check has no types), `bun x tsc --noEmit`, and `bun test` — servers may listen on a loopback port or a unix socket under the clone or `$TMPDIR` (`bun scripts/sandbox-probe.ts` says so where the repository has it).",
-  "It cannot: reach any host but the forge and the package registry, write outside the clone and `$TMPDIR`, read the forge's data or the machine's, or signal a process started in an earlier command. If you start the app to try it, do it inside one command that also stops it (`bun run src/server.ts & pid=$!; sleep 2; curl …; kill $pid`). Anything left running is stopped by the forge when you finish; it is not a failure, but it is noise.",
+  "Your shell is sandboxed. It can run: `bun install` (the registry is reachable; run it first when there is a package.json and no node_modules, or the type check has no types), `bun x tsc --noEmit`, and `bun test` — FORGE_TEST_SOCKET=port is already set, so servers listen on a loopback port in place of a unix socket (`bun scripts/sandbox-probe.ts` says so where the repository has it); the suites about unix sockets and cells themselves (stale-socket recovery, the egress proxy, cell limits) are skipped in that mode and named as skipped, and the forge's check runs them on every push. Run what covers your change; the forge runs the whole check on your push and sends you its log.",
+  "It cannot: reach any host but the forge and the package registry, write outside the clone and `$TMPDIR`, read the forge's data or the machine's, bind a unix socket, or signal a process started in an earlier command. Never leave the sandbox: it cannot be asked to. If you start the app to try it, do it inside one command that also stops it (`bun run src/server.ts & pid=$!; sleep 2; curl …; kill $pid`). Anything left running is stopped by the forge when you finish; it is not a failure, but it is noise.",
 ];
 
 export function systemPrompt(input: BriefInput): string {
@@ -358,10 +358,15 @@ function taskBody(input: TaskInput): string {
 
   // feedback
   const news = newsSince({ ...input, agentName: input.agent.user.username });
+  // An assignment that resumes the session is told here too, as what it
+  // is: the issue given again, not a message nobody wrote (#1097).
+  const again = input.reason === "assigned";
   out.push(
     input.pull !== undefined
       ? `There is feedback on your pull #${issue.number} (${issue.title}).`
-      : `There is a new message on issue #${issue.number} (${issue.title}).`,
+      : again
+        ? `You have been given issue #${issue.number} (${issue.title}) again.`
+        : `There is a new message on issue #${issue.number} (${issue.title}).`,
   );
   if (
     [...news.comments, ...news.reviews, ...news.lines].some((c) =>
@@ -397,7 +402,9 @@ function taskBody(input: TaskInput): string {
   ) {
     out.push(
       "",
-      "(The feedback was not captured in words; read the pull's conversation through the API.)",
+      again
+        ? "Nothing was said on it since your last run; what moved is in the repository's issues and map, through the API."
+        : "(The feedback was not captured in words; read the pull's conversation through the API.)",
     );
   }
   out.push(

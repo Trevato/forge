@@ -9,7 +9,6 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
-  realpathSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -21,16 +20,27 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createRun, getRun, noteRunProgress } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
 import { sandboxLine } from "../src/web/studio/sandbox.ts";
+import {
+  fetchInternal,
+  internalRequest,
+  tcpAddress,
+} from "../src/git/hook-address.ts";
+import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { assignIssue, openIssue } from "../src/actions/issues.ts";
+import { commitToBranch } from "../src/actions/repos.ts";
+import { startCrew } from "../src/crew/dispatch.ts";
+import { listRuns } from "../src/core/runs.ts";
+import { serve } from "../src/http/server.ts";
+import { readFileSync } from "node:fs";
 import { claudeSettings } from "../src/crew/claude.ts";
 import {
   SANDBOX_LINES,
   systemPrompt,
   type BriefInput,
 } from "../src/crew/brief.ts";
-import { probe } from "../scripts/sandbox-probe.ts";
+import { LOOPBACK, probe } from "../scripts/sandbox-probe.ts";
 import {
   dataInTemp,
-  hostRunDirs,
   SandboxListingError,
   sandboxAvailable,
   sandboxPolicy,
@@ -73,32 +83,17 @@ describe("the shell sandbox", () => {
     expect(off.failIfUnavailable).toBe(false);
   });
 
-  test("lets a test listen on a unix socket, and denies the machine's socket directories by path", () => {
-    type Sandbox = {
-      network: { allowAllUnixSockets: boolean; allowLocalBinding: boolean };
-    };
-    const policy = sandboxPolicy(input);
-    const on = claudeSettings(policy).sandbox as Sandbox;
-    expect(on.network.allowAllUnixSockets).toBe(true);
-    expect(on.network.allowLocalBinding).toBe(true);
-    // Linux cannot filter sockets by path, so what one could reach is held
-    // by the reads: the runtime directories, as real paths (a deny is a
-    // mount; `/var/run` is a link).
-    const dirs = hostRunDirs();
-    if (existsSync("/run")) expect(dirs).toContain(realpathSync("/run"));
-    if (existsSync("/var/run")) expect(dirs).toContain(realpathSync("/var/run"));
-    for (const dir of dirs) expect(policy.denyRead).toContain(dir);
-  });
-
-  test("a server binds and answers on a unix socket under the temp directory and the clone, and on loopback", async () => {
-    // What `test/checks.test.ts` does to boot the forge. In an enforced
-    // crew run, `bun scripts/sandbox-probe.ts` prints these verdicts.
+  test("the probe reports each listener and a server answers on loopback", async () => {
+    // What `test/checks.test.ts` does to boot the forge. A sandboxed run
+    // refuses the unix sockets and takes the port (FORGE_TEST_SOCKET=port);
+    // in a crew run, `bun scripts/sandbox-probe.ts` prints these verdicts.
     const verdicts = await probe();
-    expect(verdicts.map((v) => [v.name, v.ok])).toEqual([
-      ["unix socket under $TMPDIR", true],
-      ["unix socket under the clone", true],
-      ["loopback port", true],
+    expect(verdicts.map((v) => v.name)).toEqual([
+      "unix socket under $TMPDIR",
+      "unix socket under the clone",
+      LOOPBACK,
     ]);
+    expect(verdicts.find((v) => v.name === LOOPBACK)?.ok).toBe(true);
   });
 
   test("the brief says in two lines what the shell can and cannot run", () => {
@@ -106,9 +101,11 @@ describe("the shell sandbox", () => {
     const [can, cannot] = SANDBOX_LINES;
     expect(can).toContain("bun install");
     expect(can).toContain("bun x tsc --noEmit");
-    expect(can).toContain("unix socket under the clone or `$TMPDIR`");
+    expect(can).toContain("FORGE_TEST_SOCKET=port");
     expect(can).toContain("loopback");
     expect(cannot).toContain("It cannot:");
+    expect(cannot).toContain("bind a unix socket");
+    expect(cannot).toContain("Never leave the sandbox");
     const prompt = systemPrompt({
       agent: { user: { username: "bot", displayName: "" }, brief: "" },
       repo: { ownerName: "alice", name: "square", defaultBranch: "main" },
@@ -338,4 +335,188 @@ describe("the shell sandbox denies the whole data directory but the agent's own 
     mkdirSync(join(dataDir, "crew/quill"), { recursive: true });
     expect(denied(join(dataDir, "crew/quill"), policy().denyRead)).toBe(true);
   });
+});
+
+describe("a sandboxed run can run this repository's tests (#1107)", () => {
+  test("the settings keep the boundary: no unix socket is let through", () => {
+    const settings = claudeSettings(
+      sandboxPolicy({
+        dataDir: "/tmp/forge-sandbox-test",
+        agentName: "scout",
+        urls: [],
+        runId: "01abcdefghijklmnop",
+      }),
+    ).sandbox as { network: Record<string, unknown> };
+    expect(settings.network["allowAllUnixSockets"]).toBeUndefined();
+    expect(settings.network["allowUnixSockets"]).toBeUndefined();
+  });
+
+  test("in port mode no cell is offered: its proxy socket cannot be bound", async () => {
+    const script = `import { cellsAvailable } from "./src/apps/contain.ts"; console.log(JSON.stringify(await cellsAvailable()))`;
+    const run = Bun.spawnSync([process.execPath, "-e", script], {
+      env: { ...process.env, FORGE_TEST_SOCKET: "port", FORGE_CELLS: "" },
+      cwd: join(import.meta.dir, ".."),
+    });
+    const answer = JSON.parse(run.stdout.toString());
+    expect(answer.ok).toBe(false);
+    expect(answer.reason).toContain("FORGE_TEST_SOCKET=port");
+  });
+
+  test("the internal listener takes a loopback port where the socket cannot be bound, and gates it", async () => {
+    const was = process.env["FORGE_TEST_SOCKET"];
+    process.env["FORGE_TEST_SOCKET"] = "port";
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-sandbox-port-"));
+    const app = createApp({ dataDir, port: 0 });
+    const { serve } = await import("../src/http/server.ts");
+    const servers = await serve(app);
+    try {
+      const address = app.hookAddress.current;
+      expect(address).toMatch(/^tcp:127\.0\.0\.1:\d+$/);
+      expect(existsSync(app.socketPath)).toBe(false);
+      const post = (headers: Record<string, string>) =>
+        fetchInternal(address, "/internal/hook", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ hook: "pre-receive", repoId: "nope", actorId: "", updates: [], gitEnv: {} }),
+        });
+      expect((await post({})).status).toBe(403);
+      expect((await post({ "x-forge-hook-secret": "wrong" })).status).toBe(403);
+      expect((await fetchInternal(address, "/internal/nothing")).status).toBe(403);
+      // With the secret the hook is answered (an unknown repository: 400).
+      const ok = await post({ "x-forge-hook-secret": app.hookSecret });
+      expect(ok.status).toBe(400);
+      expect(await ok.text()).toBe("unknown repository");
+    } finally {
+      servers.stop();
+      app.close();
+      await rm(dataDir, { recursive: true, force: true });
+      if (was === undefined) delete process.env["FORGE_TEST_SOCKET"];
+      else process.env["FORGE_TEST_SOCKET"] = was;
+    }
+  });
+
+  test("a hook's git environment is cut to the quarantine variables", async () => {
+    const { forwardedGitEnv } = await import("../src/git/hook-protocol.ts");
+    expect(
+      forwardedGitEnv({
+        GIT_OBJECT_DIRECTORY: "/q",
+        GIT_DIR: "/etc",
+        GIT_CONFIG_COUNT: "1",
+        GIT_QUARANTINE_PATH: 5,
+      }),
+    ).toEqual({ GIT_OBJECT_DIRECTORY: "/q" });
+    expect(forwardedGitEnv(null)).toEqual({});
+  });
+
+  test("addresses are a socket path or loopback only", () => {
+    expect(internalRequest("/d/forge-x.sock", "/p")).toEqual({
+      url: "http://forge/p",
+      init: { unix: "/d/forge-x.sock" },
+    });
+    expect(internalRequest(tcpAddress(4321), "/p").url).toBe(
+      "http://127.0.0.1:4321/p",
+    );
+    // Not loopback: treated as a path, never as a host to dial.
+    expect(internalRequest("tcp:10.0.0.1:80", "/p").url).toBe("http://forge/p");
+  });
+
+  test("the brief tells the agent what it can run and never to leave the sandbox", async () => {
+    const { systemPrompt } = await import("../src/crew/brief.ts");
+    const prompt = systemPrompt({
+      agent: { user: { username: "bot", displayName: "" }, brief: "" },
+      repo: { ownerName: "alice", name: "square", defaultBranch: "main" },
+      issue: { number: 1 },
+      branch: "bot/1",
+      forgeUrl: "http://forge.test",
+      isApp: false,
+    } as never);
+    expect(prompt).toContain("Never leave the sandbox");
+    expect(prompt).toContain("FORGE_TEST_SOCKET=port");
+    expect(prompt).not.toMatch(/sandbox (off|disabled)|outside the sandbox/i);
+  });
+});
+
+describe("a sandboxed run pushes through a port-mode forge (#1107)", () => {
+  async function runWith() {
+    const was = process.env["FORGE_TEST_SOCKET"];
+    process.env["FORGE_TEST_SOCKET"] = "port";
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-sandbox-push-"));
+    const app = createApp({ dataDir, port: 0 });
+    const servers = await serve(app);
+    // Bound; from here only the runner may put it in a run's environment.
+    delete process.env["FORGE_TEST_SOCKET"];
+    const seen = join(dataDir, "seen");
+    const fake = join(dataDir, "fake-claude");
+    writeFileSync(
+      fake,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+IFS= read -r first
+echo "\${FORGE_TEST_SOCKET:-unset}" > "${seen}.env"
+echo "x" >> W.md; git add -A; git commit -qm w
+git push origin HEAD:refs/pull/9 > "${seen}.pull" 2>&1
+git push -q -u origin HEAD > "${seen}.branch" 2>&1
+echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","total_cost_usd":0.01,"num_turns":1,"session_id":"s","terminal_reason":"completed"}'
+`,
+    );
+    chmodSync(fake, 0o755);
+    const crew = await startCrew(app, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: fake,
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+    });
+    try {
+      const alice = await createUser(app.db, { trusted: true,
+        username: "alice",
+        email: "alice@forge.local",
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      if (!alice.ok) throw new Error(alice.error);
+      const made = await createAgent(app, alice.value, { username: "bot", brief: "b" });
+      if (!made.ok) throw new Error(String(made.error));
+      const repo = await createRepo(app, alice.value, { name: "garden" });
+      if (!repo.ok) throw new Error(String(repo.error));
+      const seeded = await commitToBranch(app, alice.value, repo.value, {
+        message: "Start",
+        files: [{ path: "README.md", content: "# g\n" }],
+      });
+      if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+      addToCrew(app, alice.value, repo.value, "bot");
+      const issue = openIssue(app, alice.value, repo.value, { title: "Plant", body: "x" });
+      if (!issue.ok) throw new Error(String(issue.error));
+      assignIssue(app, alice.value, repo.value, issue.value, made.value.user);
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const run = listRuns(app.db, repo.value.id, { kind: "agent" })[0];
+        if (run && ["ok", "failed", "cancelled"].includes(run.state)) break;
+        await Bun.sleep(100);
+      }
+      const read = (n: string) => (existsSync(`${seen}.${n}`) ? readFileSync(`${seen}.${n}`, "utf8") : "");
+      return { env: read("env").trim(), pull: read("pull"), branch: read("branch"), address: app.hookAddress.current };
+    } finally {
+      await crew.stop();
+      servers.stop();
+      app.close();
+      await rm(dataDir, { recursive: true, force: true });
+      if (was === undefined) delete process.env["FORGE_TEST_SOCKET"];
+      else process.env["FORGE_TEST_SOCKET"] = was;
+    }
+  }
+
+  // `startCrew` probes the host itself, so the run is sandboxed exactly
+  // where this host can hold it to one; the env must follow that.
+  test("a sandboxed run carries FORGE_TEST_SOCKET=port, an unsandboxed one does not; a real push meets the pre-receive verdict over the port", async () => {
+    const enforced = (await sandboxAvailable()).ok;
+    const r = await runWith();
+    expect(r.env).toBe(enforced ? "port" : "unset");
+    expect(r.address).toMatch(/^tcp:/);
+    expect(r.pull).toContain("refs/pull/* is reserved");
+    // The ordinary branch push went through the same door.
+    expect(r.branch).not.toContain("hook relay failed");
+    expect(r.branch).not.toContain("forbidden");
+  }, 60_000);
 });

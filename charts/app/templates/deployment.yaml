@@ -134,14 +134,20 @@ spec:
             httpGet: { path: /, port: http }
             periodSeconds: 3
             failureThreshold: 60
-          # Readiness is the forge's own word: 503 once it is draining.
+          # Readiness is the forge's own word: 503 once it is draining. It
+          # only routes, so it may stay quick.
           readinessProbe:
-            httpGet: { path: /healthz, port: http }
+            httpGet: { path: /readyz, port: http }
             periodSeconds: 5
+          # Liveness asks only "is the process up and does its database
+          # open", and tolerates a minute and a half of slowness: a busy
+          # forge (a check, four runs, a restore drill on the host) is not a
+          # dead one, and a restart re-queues every run it holds (#1221).
           livenessProbe:
-            httpGet: { path: /, port: http }
+            httpGet: { path: /healthz, port: http }
             periodSeconds: 15
-            failureThreshold: 4
+            timeoutSeconds: 10
+            failureThreshold: 6
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
       volumes:

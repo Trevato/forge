@@ -118,10 +118,6 @@ export function claudeSettings(
         allowedDomains: [...sandbox.allowHosts],
         // An app under test listens on a local port.
         allowLocalBinding: true,
-        // A test that boots a server listens on a unix socket. Linux can
-        // only allow them all or none; what one could reach is denied by
-        // path (`crew/sandbox.ts`).
-        allowAllUnixSockets: true,
       },
       filesystem: { denyRead: [...sandbox.denyRead] },
     },

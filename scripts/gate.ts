@@ -28,6 +28,10 @@ export const GATE: readonly string[] = [
   "test/app.test.ts",
   "test/apps-idle.test.ts",
   "test/body-limits.test.ts",
+  "test/chaos.test.ts",
+  "test/fuzz-found.test.ts",
+  "test/fuzz-parsers.test.ts",
+  "test/health.test.ts",
   "test/claim-link.test.ts",
   "test/client-address.test.ts",
   "test/client-list.test.ts",
@@ -202,6 +206,7 @@ export const GATE: readonly string[] = [
   "test/hollow.test.ts",
   "test/home-feed.test.ts",
   "test/oauth-discovery.test.ts",
+  "test/oauth-flow.test.ts",
   "test/data-home.test.ts",
   "test/tree.test.ts",
   "test/reports.test.ts",
@@ -331,21 +336,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 261,
   },
   { file: "test/webhooks.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/chaos.test.ts",
-    reason: "landed outside both lists; not yet admitted",
-    issue: 1244,
-  },
-  {
-    file: "test/fuzz-found.test.ts",
-    reason: "landed outside both lists; not yet admitted",
-    issue: 1244,
-  },
-  {
-    file: "test/fuzz-parsers.test.ts",
-    reason: "landed outside both lists; not yet admitted",
-    issue: 1244,
-  },
 ];
 
 /**

@@ -1,19 +1,22 @@
 /**
- * OAuth discovery for the MCP, step one: the two well-known documents and
- * dynamic client registration. The authorize page and the token endpoint
- * the documents name come next; until then a client can find the forge and
- * register, and still signs in with a bearer token.
+ * OAuth for the MCP: the two well-known documents, dynamic client
+ * registration, the authorize page (a person's session and consent) and the
+ * token endpoint (a one-time code and its PKCE verifier for a forge token).
  *
- * Registration takes no cookie and grants nothing, so there is no ambient
- * authority for a cross-site page to ride; it is limited per address instead.
+ * Registration and the token endpoint take no cookie, so there is no ambient
+ * authority for a cross-site page to ride; registration is limited per
+ * address instead. The authorize page is session-bound and same-origin
+ * checked on its POST.
  */
 import type { App } from "../app.ts";
-import { createClient, parseRegistration } from "../core/oauth.ts";
+import { createClient, parseRegistration, redeemCode } from "../core/oauth.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { Handler } from "./context.ts";
 import { clientBucket } from "./peer.ts";
+import { readBounded } from "./limits.ts";
 import { boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
+import { authorizePage, authorizeSubmit } from "../web/pages/oauth.ts";
 
 /** Registrations per address per minute. */
 const REGISTER_PER_MINUTE = 10;
@@ -40,7 +43,54 @@ export const resourceMetadataUrl = (origin: string): string =>
 const open = { "access-control-allow-origin": "*" };
 const docHeaders = { ...open, "cache-control": "public, max-age=300" };
 
+const noStore = { ...open, "cache-control": "no-store", pragma: "no-cache" };
+const grantError = (error: string, status = 400) =>
+  json({ error }, status, noStore);
+
+/** The token endpoint's parameters: a form (RFC 6749) or, leniently, JSON. */
+async function tokenParams(
+  request: Request,
+): Promise<((n: string) => string) | null> {
+  const type = request.headers.get("content-type") ?? "";
+  if (type.includes("application/json")) {
+    const raw = await boundedBody(request, BODY_MAX);
+    if (raw === "too_large") return null;
+    return (n) => (typeof raw[n] === "string" ? (raw[n] as string) : "");
+  }
+  const bytes = await readBounded(request, BODY_MAX);
+  if (bytes === "too_large") return null;
+  const form = new URLSearchParams(new TextDecoder().decode(bytes));
+  return (n) => form.get(n) ?? "";
+}
+
 export function oauthRoutes(router: Router<Handler>): void {
+  router.add("GET", "/oauth/authorize", authorizePage);
+  router.add("POST", "/oauth/authorize", authorizeSubmit);
+  router.add("POST", "/oauth/token", async (ctx) => {
+    const get = await tokenParams(ctx.request);
+    if (get === null) return grantError("invalid_request", 413);
+    if (get("grant_type") !== "authorization_code")
+      return grantError("unsupported_grant_type");
+    const minted = redeemCode(ctx.app.db, {
+      code: get("code"),
+      clientId: get("client_id"),
+      redirectUri: get("redirect_uri"),
+      verifier: get("code_verifier"),
+    });
+    if (!minted.ok) return grantError(minted.error);
+    return json(
+      {
+        access_token: minted.value.token,
+        token_type: "Bearer",
+        scope: minted.value.scope,
+        ...(minted.value.expiresIn === null
+          ? {}
+          : { expires_in: minted.value.expiresIn }),
+      },
+      200,
+      noStore,
+    );
+  });
   router.add("GET", "/.well-known/oauth-protected-resource", (ctx) =>
     json(
       {

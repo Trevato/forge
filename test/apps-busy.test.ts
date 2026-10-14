@@ -37,6 +37,11 @@ export const server = Bun.serve({
       });
       return new Response("working");
     }
+    if (url.pathname === "/slow") {
+      return new Promise((resolve) =>
+        setTimeout(() => resolve(new Response("late")), 2000),
+      );
+    }
     if (url.pathname === "/stream") {
       let timer: ReturnType<typeof setInterval> | undefined;
       const body = new ReadableStream({
@@ -227,6 +232,15 @@ describe("apps that are busy", () => {
     },
     30_000,
   );
+
+  test("a request still waiting on its answer keeps the app awake", async () => {
+    await freshlyAwake();
+    // The answer takes three windows; the sweep must not stop the app first.
+    const response = await viaHost("/slow");
+    expect(await response.text()).toBe("late");
+    expect(production().state).toBe("running");
+    await asleep();
+  }, 30_000);
 
   test("an open stream keeps the app awake until it closes", async () => {
     await freshlyAwake();
