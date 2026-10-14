@@ -85,7 +85,7 @@ export interface ReviewAttempt {
   readonly createdAt: string;
   readonly active: boolean;
   /** The reviewer the run was sent to. */
-  readonly reviewerId: string | null;
+  readonly reviewerId?: string | null;
 }
 
 /**
