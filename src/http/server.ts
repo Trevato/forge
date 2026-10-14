@@ -250,7 +250,11 @@ import {
   crewPage,
 } from "../web/pages/crew.ts";
 import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
-import { changePage, pullPage } from "../web/studio/change.ts";
+import {
+  changePage,
+  pullPage,
+  pullStateFragment,
+} from "../web/studio/change.ts";
 import {
   pullCommentSubmit,
   pullFilesPage,
@@ -919,6 +923,7 @@ export function buildRouter(): Router<Handler> {
   // box, one tab under the change itself.
   router.add("GET", "/:owner/:name/pulls/:number/files", pullFilesPage);
   router.add("GET", "/:owner/:name/pulls/:number/thread", pullThreadFragment);
+  router.add("GET", "/:owner/:name/pulls/:number/state", pullStateFragment);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/review", pullReviewSubmit);
   // The verdict on the change as a whole, and the threads it settles.
