@@ -24,7 +24,7 @@
   "test/helpers.test.ts": 0.7,
   "test/landing.test.ts": 9.4,
   "test/ledger.test.ts": 12.8,
-  "test/migrate.test.ts": 41.9,
+  "test/migrate.test.ts": 5.9,
   "test/offline.test.ts": 3.5,
   "test/pulls.test.ts": 14.6,
   "test/run-secrets.test.ts": 2.8,
