@@ -349,10 +349,15 @@ function taskBody(input: TaskInput): string {
 
   // feedback
   const news = newsSince({ ...input, agentName: input.agent.user.username });
+  // An assignment that resumes the session is told here too, as what it
+  // is: the issue given again, not a message nobody wrote (#1097).
+  const again = input.reason === "assigned";
   out.push(
     input.pull !== undefined
       ? `There is feedback on your pull #${issue.number} (${issue.title}).`
-      : `There is a new message on issue #${issue.number} (${issue.title}).`,
+      : again
+        ? `You have been given issue #${issue.number} (${issue.title}) again.`
+        : `There is a new message on issue #${issue.number} (${issue.title}).`,
   );
   if (
     [...news.comments, ...news.reviews, ...news.lines].some((c) =>
@@ -388,7 +393,9 @@ function taskBody(input: TaskInput): string {
   ) {
     out.push(
       "",
-      "(The feedback was not captured in words; read the pull's conversation through the API.)",
+      again
+        ? "Nothing was said on it since your last run; what moved is in the repository's issues and map, through the API."
+        : "(The feedback was not captured in words; read the pull's conversation through the API.)",
     );
   }
   out.push(

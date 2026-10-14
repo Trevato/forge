@@ -395,7 +395,11 @@ it, assigns the planner, and the planner's brief says the rest: open
 issues each small enough for one run, link what waits for what, assign
 nobody, push nothing. The direction issue stays open, is never picked as
 work, and the planner is not asked again for twenty minutes unless its run
-ended.
+ended. Nor is it asked again with nothing new: when nobody but the planner
+has spoken on the direction since its last pass began, and no issue has
+been opened by anyone else or closed since that pass ended, the clock
+skips it and records one `guard` decision by rule. A busy crew counts the
+ready issues before it plans; full slots alone are not a thin map.
 
 **What counts as done and as taken.** A pull that says _Closes #12_
 closes #12 when it lands, as the person who landed it; that is what frees
