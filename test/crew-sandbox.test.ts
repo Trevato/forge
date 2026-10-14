@@ -9,6 +9,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  realpathSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -22,7 +23,14 @@ import { createUser } from "../src/core/users.ts";
 import { sandboxLine } from "../src/web/studio/sandbox.ts";
 import { claudeSettings } from "../src/crew/claude.ts";
 import {
+  SANDBOX_LINES,
+  systemPrompt,
+  type BriefInput,
+} from "../src/crew/brief.ts";
+import { probe } from "../scripts/sandbox-probe.ts";
+import {
   dataInTemp,
+  hostRunDirs,
   SandboxListingError,
   sandboxAvailable,
   sandboxPolicy,
@@ -63,6 +71,53 @@ describe("the shell sandbox", () => {
     expect(off.allowUnsandboxedCommands).toBe(false);
     expect(on.failIfUnavailable).toBe(true);
     expect(off.failIfUnavailable).toBe(false);
+  });
+
+  test("lets a test listen on a unix socket, and denies the machine's socket directories by path", () => {
+    type Sandbox = {
+      network: { allowAllUnixSockets: boolean; allowLocalBinding: boolean };
+    };
+    const policy = sandboxPolicy(input);
+    const on = claudeSettings(policy).sandbox as Sandbox;
+    expect(on.network.allowAllUnixSockets).toBe(true);
+    expect(on.network.allowLocalBinding).toBe(true);
+    // Linux cannot filter sockets by path, so what one could reach is held
+    // by the reads: the runtime directories, as real paths (a deny is a
+    // mount; `/var/run` is a link).
+    const dirs = hostRunDirs();
+    if (existsSync("/run")) expect(dirs).toContain(realpathSync("/run"));
+    if (existsSync("/var/run")) expect(dirs).toContain(realpathSync("/var/run"));
+    for (const dir of dirs) expect(policy.denyRead).toContain(dir);
+  });
+
+  test("a server binds and answers on a unix socket under the temp directory and the clone, and on loopback", async () => {
+    // What `test/checks.test.ts` does to boot the forge. In an enforced
+    // crew run, `bun scripts/sandbox-probe.ts` prints these verdicts.
+    const verdicts = await probe();
+    expect(verdicts.map((v) => [v.name, v.ok])).toEqual([
+      ["unix socket under $TMPDIR", true],
+      ["unix socket under the clone", true],
+      ["loopback port", true],
+    ]);
+  });
+
+  test("the brief says in two lines what the shell can and cannot run", () => {
+    expect(SANDBOX_LINES).toHaveLength(2);
+    const [can, cannot] = SANDBOX_LINES;
+    expect(can).toContain("bun install");
+    expect(can).toContain("bun x tsc --noEmit");
+    expect(can).toContain("unix socket under the clone or `$TMPDIR`");
+    expect(can).toContain("loopback");
+    expect(cannot).toContain("It cannot:");
+    const prompt = systemPrompt({
+      agent: { user: { username: "bot", displayName: "" }, brief: "" },
+      repo: { ownerName: "alice", name: "square", defaultBranch: "main" },
+      issue: { number: 1 },
+      branch: "bot/1",
+      forgeUrl: "http://forge.test",
+      isApp: false,
+    } as unknown as BriefInput);
+    expect(prompt).toContain(`${can}\n${cannot}`);
   });
 
   test("the probe answers with a reason when it cannot", async () => {

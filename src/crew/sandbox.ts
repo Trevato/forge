@@ -26,9 +26,18 @@
  * the forge's own, is denied whole, and so are the agent's other runs'
  * temp directories. A run that ends removes its own; what a forge that
  * died left behind is swept at the next crew start (`sweepRunTmp`).
+ *
+ * The shell may make unix sockets: a test that boots a server listens on
+ * one under the clone or the temp directory, and a builder that cannot run
+ * it ships it untested. Linux's filter cannot tell one socket path from
+ * another, so it is off whole (`claudeSettings`), and what a socket could
+ * reach is held by the reads instead: a socket in a denied directory cannot
+ * be connected to, the network is the shell's own, and the machine's
+ * runtime directories — a container runtime's socket, the bus, a pod's
+ * service-account token — are denied by name (`hostRunDirs`).
  */
 
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { crewRoot } from "./workdir.ts";
@@ -102,6 +111,23 @@ const HOME_SECRETS = [
   ".claude",
   ".claude.json",
 ];
+
+/**
+ * Where the machine keeps its sockets, its daemons' state and a pod's
+ * token, as real paths: `/var/run` is a link to `/run` on Linux and to
+ * `/private/var/run` on macOS, and a deny is a mount over a directory.
+ */
+export function hostRunDirs(): string[] {
+  const dirs = new Set<string>();
+  for (const dir of ["/run", "/var/run"]) {
+    try {
+      dirs.add(realpathSync(dir));
+    } catch {
+      // Not on this machine: nothing to deny.
+    }
+  }
+  return [...dirs];
+}
 
 /** The data directory could not be listed: the run is refused, never left undenied. */
 export class SandboxListingError extends Error {}
@@ -239,6 +265,7 @@ export function sandboxPolicy(input: {
   ];
   const home = homedir();
   for (const secret of HOME_SECRETS) deny.push(join(home, secret));
+  deny.push(...hostRunDirs());
   return {
     allowHosts: [...hosts],
     denyRead: deny,
