@@ -24,7 +24,7 @@ import { getHold, lastRelease } from "../core/holds.ts";
 import { getIssueById, LIST_LIMIT_MAX } from "../core/issues.ts";
 import { listPulls, pullDiff, type Pull, pullDir} from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
-import { reviewSummary } from "../core/reviews.ts";
+import { listReviews, reviewSummary, type Review } from "../core/reviews.ts";
 import { checksForHead } from "../core/runs.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
@@ -84,6 +84,8 @@ const REVIEW_TRIES = 2;
 export interface ReviewAttempt {
   readonly createdAt: string;
   readonly active: boolean;
+  /** The reviewer the run was sent to. */
+  readonly reviewerId?: string | null;
 }
 
 /**
@@ -130,21 +132,71 @@ export function reviewAttempts(
   const released = lastRelease(db, pull.id);
   const since = released !== undefined && released > green ? released : green;
   const attempts = db
-    .query<{ created_at: string; state: string }, [string, string]>(
-      `SELECT created_at, state FROM run WHERE issue_id = ?1 AND kind = 'agent'
+    .query<
+      { created_at: string; state: string; actor_id: string | null },
+      [string, string]
+    >(
+      `SELECT created_at, state, actor_id FROM run WHERE issue_id = ?1 AND kind = 'agent'
          AND reason = 'review' AND created_at >= ?2 ORDER BY created_at, id`,
     )
     .all(pull.id, since)
     .map((r) => ({
       createdAt: r.created_at,
       active: r.state === "queued" || r.state === "running",
+      reviewerId: r.actor_id,
     }));
   return { greenAt: since, attempts };
 }
 
+/** Rounds of changes the crew's reviewer asks on one pull before it is handed to a person. */
+export const HANDOVER_ROUNDS = 3;
+
+/**
+ * The crew reviewer's rounds on a pull: its first request for changes on
+ * each head, oldest first. Two requests on one head are one round.
+ */
+export function reviewRounds(db: Database, repoId: string, pull: Pull): Review[] {
+  const reviewers = new Set(
+    reviewersOf(db, repoId).map((a) => a.user.id),
+  );
+  const heads = new Set<string>();
+  const rounds: Review[] = [];
+  for (const r of listReviews(db, pull.id)) {
+    if (r.state !== "changes_requested" || !reviewers.has(r.authorId)) continue;
+    if (heads.has(r.commitOid)) continue;
+    heads.add(r.commitOid);
+    rounds.push(r);
+  }
+  return rounds;
+}
+
+/**
+ * Whether the crew's review loop on this agent pull is spent: the
+ * reviewer asked for changes `HANDOVER_ROUNDS` times and no approval is on
+ * the head. Nothing more is sent or started by the crew; a person decides.
+ */
+export function handedToPerson(db: Database, repoId: string, pull: Pull): boolean {
+  if (!pull.authorIsAgent) return false;
+  if (reviewRounds(db, repoId, pull).length < HANDOVER_ROUNDS) return false;
+  return reviewSummary(db, pull.id, pull.headOid).approvals === 0;
+}
+
+/** The one card that hands a pull over: each round's verdict, in a line or two. */
+export function handoverNote(rounds: readonly Review[]): string {
+  const lines = rounds.map((r, i) => {
+    const said = r.body.trim().replace(/\s+/g, " ");
+    return `${i + 1}. ${r.authorName}: ${said === "" ? "(no words)" : said.length > 300 ? `${said.slice(0, 300)}…` : said}`;
+  });
+  return [
+    `Handed to a person: the reviewer asked for changes ${rounds.length} times without approving, so the crew stops here. Nothing is closed or parked; approve it, push a fix, or say what to do.`,
+    "",
+    ...lines,
+  ].join("\n");
+}
+
 /** Why an agent's green pull waits for a person, and since when. */
 export interface ReviewWait {
-  readonly why: "no reviewer" | "lapsed";
+  readonly why: "no reviewer" | "lapsed" | "rounds";
   /** When review became owed: the head went green, or the pull was let go. */
   readonly since: string;
 }
@@ -166,6 +218,8 @@ export function waitsForPerson(
   if (!pull.authorIsAgent || getHold(db, pull.id) !== undefined) return undefined;
   const seen = reviewSummary(db, pull.id, pull.headOid);
   if (seen.approvals > 0 || seen.changesRequested > 0) return undefined;
+  if (handedToPerson(db, repoId, pull))
+    return { why: "rounds", since: reviewRounds(db, repoId, pull).at(-1)!.createdAt };
   const history = reviewAttempts(db, pull);
   if (history === undefined) return undefined;
   if (reviewersOf(db, repoId).length === 0)
@@ -194,6 +248,7 @@ export async function sendToReview(
   if (reviewers.length === 0) return "none";
   const seen = reviewSummary(app.db, pull.id, pull.headOid);
   if (seen.approvals > 0 || seen.changesRequested > 0) return "done";
+  if (handedToPerson(app.db, repo.id, pull)) return "held";
   const history = reviewAttempts(app.db, pull);
   if (history === undefined) return "wait";
   const stage = reviewStage(history.greenAt, history.attempts, now);
@@ -204,8 +259,12 @@ export async function sendToReview(
     await pullDir(app.db, app.reposRoot, repo, pull),
     pull,
   );
+  // A review that came back with no verdict is sent to the other reviewer
+  // when the crew has one; with only one, the same reviewer tries again.
+  const failed = history.attempts.at(-1)?.reviewerId;
+  const others = reviewers.filter((r) => r.user.id !== failed);
   const reviewer = pickReviewer(
-    reviewers,
+    others.length > 0 ? others : reviewers,
     diff.files.map((f) => f.path),
   );
   if (reviewer === undefined) return "wait";

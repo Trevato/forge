@@ -457,7 +457,42 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       };
     if (declared.value === undefined)
       return { ok: false, error: "this commit declares no check" };
-    const manifest = declared.value;
+    // A pull does not choose its own gate: the commands and the timeout come
+    // from the base branch's `forge.json` where the pull left it. The
+    // branch's own supplies only what it needs to run (install, egress,
+    // limits).
+    let manifest = declared.value;
+    let baseTip: string | undefined;
+    if (x.pull !== undefined) {
+      baseTip = await resolveOid(bare, `refs/heads/${x.pull.baseBranch}`);
+      if (baseTip === undefined)
+        return { ok: false, error: "the pull's base branch could not be found" };
+      const [baseJson, basePackage] = await Promise.all([
+        readFileAt(bare, baseTip, "forge.json"),
+        readFileAt(bare, baseTip, "package.json"),
+      ]);
+      const gate = parseCheck(baseJson, basePackage);
+      if (!gate.ok)
+        return {
+          ok: false,
+          error:
+            gate.error.kind === "invalid"
+              ? `${x.pull.baseBranch}: ${gate.error.message}`
+              : "the base branch declares no check",
+        };
+      if (gate.value !== undefined) {
+        manifest = {
+          ...manifest,
+          run: gate.value.run,
+          fast: gate.value.fast,
+          full: gate.value.full,
+          timeout: gate.value.timeout,
+        };
+        write(
+          `tier ${x.tier} from ${x.pull.baseBranch}@${baseTip.slice(0, 7)}`,
+        );
+      }
+    }
     const command =
       x.tier === "full"
         ? manifest.full
@@ -469,8 +504,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const fast = x.tier === "fast" && manifest.fast !== null && x.pull !== undefined;
     let base: string | undefined;
     if (fast) {
-      const tip = await resolveOid(bare, `refs/heads/${x.pull!.baseBranch}`);
-      base = tip === undefined ? undefined : await mergeBase(bare, tip, run.commitOid);
+      base = await mergeBase(bare, baseTip!, run.commitOid);
       if (base === undefined)
         return { ok: false, error: "the pull's fork point could not be found" };
     }

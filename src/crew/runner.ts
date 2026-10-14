@@ -803,7 +803,16 @@ async function work(
             })()
           : undefined,
       ...(reason === "review" && pull
-        ? await reviewInputs(app, repo, pull, record, bare)
+        ? {
+            ...(await reviewInputs(app, repo, pull, record, bare)),
+            retry: app.db
+              .query<{ n: number }, [string, string, string]>(
+                `SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1 AND kind = 'agent'
+                   AND reason = 'review' AND state = 'failed' AND id <> ?2
+                   AND created_at < ?3`,
+              )
+              .get(issue.id, run.id, run.createdAt)!.n > 0,
+          }
         : {}),
       // A planning run is given what the crew handed over (`parks.ts`).
       ...(brief.role === "planner" && issue.id === repo.directionIssueId
@@ -926,6 +935,9 @@ async function work(
       env["CLAUDE_CODE_TMPDIR"] = runTmp;
       env["TMPDIR"] = runTmp;
     }
+    // The sandbox refuses a unix socket's bind; the forge's own servers take
+    // a loopback port instead (`git/hook-address.ts`), so `bun test` runs.
+    if (sandbox.enforced) env["FORGE_TEST_SOCKET"] = "port";
     // One deadline for the run, whatever it takes to get there: the token
     // dies ten minutes after it, so a second invocation gets what is left.
     const deadline = Date.now() + options.runTimeoutMs;

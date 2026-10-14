@@ -563,6 +563,8 @@ export async function proxyApp(
     );
   }
 
+  // Held from here until the answer begins: a slow answer is not idle.
+  const answered = runtime.holdRequest(target.app, target.env);
   let response: Response;
   try {
     response = await fetch(upstream, {
@@ -578,6 +580,7 @@ export async function proxyApp(
       decompress: false,
     } as RequestInit);
   } catch {
+    answered();
     return unavailable(runtime, target, status, "the app stopped answering");
   }
   const out = new Headers(response.headers);
@@ -591,8 +594,13 @@ export async function proxyApp(
     (response.headers.get("content-type") ?? "")
       .toLowerCase()
       .startsWith("text/event-stream");
+  // An event stream takes its own hold before this one lets go.
+  const body = eventStream
+    ? held(runtime, target, response.body!)
+    : response.body;
+  answered();
   return new Response(
-    eventStream ? held(runtime, target, response.body!) : response.body,
+    body,
     {
       status: response.status,
       statusText: response.statusText,

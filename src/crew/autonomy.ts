@@ -83,7 +83,12 @@ import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
-import { capReached, ISSUE_RUN_CAP } from "./guard.ts";
+import {
+  capReached,
+  ISSUE_RUN_CAP,
+  SKIP_SUMMARY,
+  skipsReplan,
+} from "./guard.ts";
 import { interruptionOf } from "./interrupted.ts";
 import {
   PARK_NOTE,
@@ -344,17 +349,7 @@ export async function driveRepo(
   // operator's; at a wall nothing new starts until the reset.
   const paced = repoPace(app, repo, now);
   if (paced.slots === 0 && slotted.length === 0) return "waiting";
-  if (slotted.length >= paced.slots) {
-    // The builders are busy; the planner can still refill the map.
-    if (await planIfThin(app, repo, by, crew, active, 0, now)) return "planned";
-    return "full";
-  }
-
   const busyIssues = new Set(active.map((r) => r.issueId));
-  const inFlight = new Map<string, number>();
-  for (const r of active)
-    if (r.actorId !== null)
-      inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
   const graph = repoGraph(app.db, repo.id, { sealed: true });
   const proposed = proposedWork(app.db, repo);
   const ready = readyNow(graph).filter(
@@ -367,6 +362,19 @@ export async function driveRepo(
       !atRunCap(app, repo, r.issue) &&
       parkedCount(app, repo, r.issue.id) < PARK_STRIKES,
   );
+  if (slotted.length >= paced.slots) {
+    // The builders are busy; the planner can still refill the map, when
+    // it is thin — counted, never assumed: a full crew with a full map is
+    // not a reason to plan (#1097).
+    if (await planIfThin(app, repo, by, crew, active, ready.length, now))
+      return "planned";
+    return "full";
+  }
+
+  const inFlight = new Map<string, number>();
+  for (const r of active)
+    if (r.actorId !== null)
+      inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
   const next = await nextOf(app, repo, ready);
   if (next !== undefined) {
     const routed = await routeIssue(app, repo, next.issue, crew, inFlight);
@@ -480,6 +488,13 @@ async function planIfThin(
       REPLAN_AFTER_MS
     )
       return notPlanned(repo, "planned recently");
+    // Nobody spoke and the map has not moved since the last pass: another
+    // would read its own summary and change nothing (#1097).
+    if (
+      owed.length === 0 &&
+      skipsReplan(app.db, repo, direction, planner, lastPlan.created_at)
+    )
+      return notPlanned(repo, SKIP_SUMMARY);
   } else if (direction.assigneeId === planner.user.id) {
     return notPlanned(repo, "the planner already holds the direction");
   }

@@ -206,6 +206,7 @@ export const GATE: readonly string[] = [
   "test/hollow.test.ts",
   "test/home-feed.test.ts",
   "test/oauth-discovery.test.ts",
+  "test/oauth-flow.test.ts",
   "test/data-home.test.ts",
   "test/tree.test.ts",
   "test/reports.test.ts",

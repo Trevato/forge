@@ -5,6 +5,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { portInsteadOfSocket } from "../src/git/hook-address.ts";
 import { lstat, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -82,7 +83,11 @@ describe("reconcile refreshes hooks (H-1)", () => {
   });
 });
 
-describe("two forges on one data directory", () => {
+// These two are about unix socket files themselves; where the sandbox
+// refuses the bind (FORGE_TEST_SOCKET=port) the check runs them instead.
+const bySocket = portInsteadOfSocket() ? describe.skip : describe;
+
+bySocket("two forges on one data directory", () => {
   test("a socket another forge still answers on is left alone, and this forge boots beside it", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-harden-share-"));
     const app = createApp({ dataDir, port: 0 });
@@ -142,7 +147,7 @@ describe("two forges on one data directory", () => {
   });
 });
 
-describe("stale socket recovery (H-2)", () => {
+bySocket("stale socket recovery (H-2)", () => {
   test("a real SIGKILL-orphaned socket inode does not block boot", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-harden-sock-"));
     const app = createApp({ dataDir, port: 0 });
