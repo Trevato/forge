@@ -638,7 +638,7 @@ The forge is one process on one volume, and a release replaces it. The new
 process comes up beside the old one and takes everything new once it is
 ready; the old one drains: it starts no new crew runs and lets the ones in
 flight finish and land (a run cut short is a person's money spent twice),
-stops its apps and its checks, says so on `/healthz`, and keeps serving
+stops its apps and its checks, says so on `/readyz`, and keeps serving
 whoever is connected over SSH until they leave — for up to an hour — and
 only then goes. A run that does have to be cut short, by a crash or the
 hour running out, is queued again to carry on in the clone it left, in the
