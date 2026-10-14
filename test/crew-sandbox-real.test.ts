@@ -12,9 +12,11 @@
  *
  * Outside localhost is checked twice: directly (the sandbox has a network of
  * its own, so it must fail) and through the sandbox's proxy, which is the
- * only way out. The proxy dials 127.0.0.1 for a shell because `allowHosts`
- * lists it; the test ties the result to that list rather than asserting a
- * refusal the policy does not make.
+ * only way out. The policy allows loopback as the forge's `host:port` alone
+ * (`sandboxPolicy`), so the proxy refuses every other port.
+ *
+ * Where a sandbox can be made, the runtime must be there too: a missing
+ * `rg` or `srt` fails the test rather than skipping it.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -28,16 +30,22 @@ const probe = await sandboxAvailable();
 const srt = join(import.meta.dir, "../node_modules/.bin/srt");
 const nestedReason = !probe.ok
   ? `no sandbox can be made here (nested in a crew sandbox or user namespaces refused): ${probe.reason}`
-  : Bun.which("rg") === null
-    ? "the sandbox runtime needs ripgrep (rg) and it is not installed"
-    : !existsSync(srt)
-      ? "the sandbox runtime is not installed (bun install)"
-      : undefined;
+  : undefined;
 if (nestedReason !== undefined) console.warn(`skipped: ${nestedReason}`);
+else if (Bun.which("rg") === null || !existsSync(srt))
+  throw new Error(
+    "a sandbox can be made here but its runtime is missing: install ripgrep (rg) and run bun install",
+  );
 
 const CANARY = "the-canary-must-not-be-read";
 
-/** Claude Code's sandbox settings as the runtime reads them. */
+/**
+ * Claude Code's sandbox settings as the runtime reads them. The gap from what
+ * Claude Code receives: the runtime wants `deniedDomains`, `denyRead` and
+ * `denyWrite` present (empty here), and `allowWrite` is the work directory
+ * alone, where Claude Code adds its own write grants. Network and denyRead
+ * are the generated ones, untouched.
+ */
 function runtimeSettings(
   sandbox: Record<string, any>,
   workDir: string,
@@ -58,11 +66,12 @@ describe.skipIf(nestedReason !== undefined)("a real sandboxed shell", () => {
   let work: string;
   let outside: ReturnType<typeof Bun.serve>;
   let denied: string[];
-  let allowHosts: readonly string[];
+  let forge: ReturnType<typeof Bun.serve>;
   let settings: string;
   let report: {
     own: string;
     outside: string;
+    forge: string;
     viaProxy: string;
     leaks: string[];
   };
@@ -82,6 +91,11 @@ describe.skipIf(nestedReason !== undefined)("a real sandboxed shell", () => {
     ])
       writeFileSync(join(dataDir, file), CANARY);
 
+    forge = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: () => new Response("forge"),
+    });
     outside = Bun.serve({
       hostname: "127.0.0.1",
       port: 0,
@@ -91,10 +105,9 @@ describe.skipIf(nestedReason !== undefined)("a real sandboxed shell", () => {
     const policy = sandboxPolicy({
       dataDir,
       agentName: "scout",
-      urls: [],
+      urls: [`http://127.0.0.1:${forge.port}`],
       runId: "01m46abcdefghjkmnpqrstvwxy",
     });
-    allowHosts = policy.allowHosts;
     denied = policy.denyRead.filter((p) => existsSync(p));
 
     writeFileSync(
@@ -120,6 +133,7 @@ for (const path of ${JSON.stringify(denied)}) walk(path);
 console.log(JSON.stringify({
   own: await get(own.port),
   outside: await get(${outside.port}),
+  forge: await get(${forge.port}, process.env.HTTP_PROXY),
   viaProxy: await get(${outside.port}, process.env.HTTP_PROXY),
   leaks,
 }));
@@ -145,6 +159,7 @@ own.stop(true);
   });
   afterAll(async () => {
     outside?.stop(true);
+    forge?.stop(true);
     await rm(dataDir, { recursive: true, force: true });
   });
 
@@ -163,12 +178,12 @@ own.stop(true);
     expect(report.outside).toBe("refused");
   });
 
-  test("reaches a localhost port outside through the proxy only as allowHosts says", () => {
-    // allowHosts always lists 127.0.0.1 (the agent reaches the forge there),
-    // so the proxy dials any loopback port; if that list is narrowed this
-    // flips to "refused" and the test says so.
-    const allowed = allowHosts.includes("127.0.0.1");
-    expect(report.viaProxy).toBe(allowed ? "outside" : "refused");
+  test("reaches the forge's host:port through the proxy", () => {
+    expect(report.forge).toBe("forge");
+  });
+
+  test("cannot reach a localhost port outside through the proxy", () => {
+    expect(report.viaProxy).toBe("refused");
   });
 
   test("cannot read any denyRead path", () => {

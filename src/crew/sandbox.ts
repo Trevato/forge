@@ -201,14 +201,17 @@ export function sandboxPolicy(input: {
   /** The run this is for: it gets a temp directory of its own (`tmpDir`). */
   runId?: string | undefined;
 }): SandboxPolicy {
-  const hosts = new Set<string>([
-    "127.0.0.1",
-    "localhost",
-    "registry.npmjs.org",
-  ]);
+  // Loopback is the host's own: every app, preview cell and internal listener
+  // sits there. It is allowed as host:port, the forge's port and no other.
+  const hosts = new Set<string>(["registry.npmjs.org"]);
   for (const url of input.urls) {
     try {
-      hosts.add(new URL(url).hostname);
+      const parsed = new URL(url);
+      const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(
+        parsed.hostname,
+      );
+      const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
+      hosts.add(loopback ? `${parsed.hostname}:${port}` : parsed.hostname);
     } catch {
       // Not a URL: nothing to allow.
     }
