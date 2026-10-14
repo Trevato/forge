@@ -248,7 +248,8 @@ describe("asks that earn their place", () => {
     expect(asks).toContain("<summary>1 more</summary>");
     // The phone's "more" opens in place to every ask: the wide screen's
     // "more" sits inside it, and the stylesheet hides each where it is not.
-    expect(wide!.indexOf('id="asks-more"')).toBeLessThan(wide!.indexOf("</details>"));
+    // (An ask's own "More" closes a details too: look past those, to the last.)
+    expect(wide!.indexOf('id="asks-more"')).toBeLessThan(wide!.lastIndexOf("</details>"));
     const css = await (await fetch(`${servers.url}${home.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
     // Only where the browser can hold a details element open: an older one
     // keeps both summaries, so no ask is out of reach.
@@ -258,7 +259,8 @@ describe("asks that earn their place", () => {
     expect(css.indexOf("#asks-more > summary")).toBeGreaterThan(css.indexOf("@supports selector(::details-content)"));
     // Arriving at #needs-you, the first Tab lands on an ask, not the bulk step.
     const bulk = asks.indexOf('id="asks-bulk"');
-    expect(bulk).toBeGreaterThan(asks.indexOf("</details>"));
+    expect(bulk).toBeGreaterThan(asks.indexOf('id="asks-phone-more"'));
+    expect(asks.slice(asks.indexOf('id="asks-phone-more"'), bulk)).toContain("</details>");
   });
 
   test("an unsigned reader gets no asks from the API", async () => {
