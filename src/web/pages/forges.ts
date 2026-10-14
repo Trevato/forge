@@ -28,11 +28,23 @@ function stateOf(r: ClientRow): keyof typeof STATE {
   return r.claimed === null ? "unknown" : r.claimed ? "yes" : "no";
 }
 
+/** "3 apps running", or which one is not and why. */
+function runningNote(r: ClientRow): Html | null {
+  const a = r.running;
+  if (a === null || a.total === 0) return null;
+  const word = `${a.running} ${a.running === 1 ? "app" : "apps"} running`;
+  if (a.notRunning.length === 0) return html`<span data-apps="up">${word}</span>`;
+  return html`<span data-apps="down"
+    >${word} · ${a.notRunning.map((n, i) => html`${i > 0 ? "; " : ""}${n.slug}: ${n.why}`)}</span
+  >`;
+}
+
 function forgeRow(r: ClientRow): Html {
   const state = stateOf(r);
   const meta = [
     r.for === null ? null : html`for ${r.for}`,
     r.apps.length === 0 ? null : html`${r.apps.join(", ")}`,
+    runningNote(r),
     r.sentAt === null ? null : html`sent ${time(r.sentAt)}`,
     r.lastActivityAt === null
       ? null

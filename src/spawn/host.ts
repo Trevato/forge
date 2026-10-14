@@ -7,10 +7,13 @@
 
 import { childDirOf } from "../actions/spawn.ts";
 import { createApp, type App } from "../app.ts";
+import { appsRuntime, type AppsRuntime } from "../apps/runtime.ts";
+import { resolveAppHost, type AppTarget } from "../apps/proxy.ts";
+import { childAppsSummary, startChildApps, stopChildApps, type ChildAppsSummary } from "./child-apps.ts";
 import { childHost } from "./door.ts";
 import { firstBoot } from "./first-boot.ts";
-import { childPublicUrl, parseHostedChildName } from "./placement.ts";
-import { readFileSync } from "node:fs";
+import { childHostSuffix, childPublicUrl, parseHostedChildName } from "./placement.ts";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 interface ChildLedger {
@@ -35,6 +38,8 @@ function readLedgerSync(app: App, name: string): ChildLedger | undefined {
 }
 
 const caches = new WeakMap<App, Map<string, App>>();
+/** Opens in flight, so two requests for one child open it once. */
+const opening = new WeakMap<App, Map<string, Promise<App>>>();
 
 function cacheOf(parent: App): Map<string, App> {
   let m = caches.get(parent);
@@ -49,9 +54,13 @@ function cacheOf(parent: App): Map<string, App> {
 export function closeHostedChildren(parent: App): void {
   const m = caches.get(parent);
   if (!m) return;
-  for (const child of m.values()) child.close();
+  const children = [...m.values()];
   m.clear();
   caches.delete(parent);
+  // A child's apps and checks use its database: they stop before it closes.
+  void stopChildApps(parent).finally(() => {
+    for (const child of children) child.close();
+  });
 }
 
 async function openChild(parent: App, ledger: ChildLedger): Promise<App> {
@@ -67,6 +76,8 @@ async function openChild(parent: App, ledger: ChildLedger): Promise<App> {
       : {}),
   });
   await firstBoot(child);
+  // Its apps run in this process's lanes, awake before the first visit.
+  await startChildApps(parent, child, ledger.name);
   return child;
 }
 
@@ -87,10 +98,95 @@ export async function resolveHostedChild(
   const ledger = readLedgerSync(parent, name);
   if (ledger === undefined || !ledger.done) return "unknown";
 
+  return openOnce(parent, ledger);
+}
+
+function openOnce(parent: App, ledger: ChildLedger): Promise<App> | App {
   const cache = cacheOf(parent);
   const hit = cache.get(ledger.bodyId);
   if (hit) return hit;
-  const opened = await openChild(parent, ledger);
-  cache.set(ledger.bodyId, opened);
-  return opened;
+  let flights = opening.get(parent);
+  if (!flights) opening.set(parent, (flights = new Map()));
+  let flight = flights.get(ledger.bodyId);
+  if (!flight) {
+    flight = openChild(parent, ledger).then((opened) => {
+      cache.set(ledger.bodyId, opened);
+      return opened;
+    });
+    flight.finally(() => flights.delete(ledger.bodyId)).catch(() => {});
+    flights.set(ledger.bodyId, flight);
+  }
+  return flight;
 }
+
+/**
+ * Open one finished child now, which starts its apps: after a spawn, so
+ * the first visit after a claim finds them awake. Never throws.
+ */
+export async function bootHostedChild(parent: App, name: string): Promise<void> {
+  const ledger = readLedgerSync(parent, name);
+  if (ledger === undefined || !ledger.done) return;
+  try {
+    await startChildApps(parent, await openOnce(parent, ledger), name);
+  } catch (error) {
+    parent.log.error("hosted child did not open", { name, error: String(error) });
+  }
+}
+
+/** Open every finished child, on boot: their apps come back with the parent's. */
+export async function bootHostedChildren(parent: App): Promise<void> {
+  let files: string[] = [];
+  try {
+    files = readdirSync(join(parent.config.dataDir, "spawn"));
+  } catch {
+    return;
+  }
+  for (const f of files) {
+    if (!f.endsWith(".json")) continue;
+    const name = f.slice(0, -".json".length);
+    if (parseHostedChildName(`${name}${childHostSuffix(childHost(parent))}`, childHost(parent)) !== name) continue;
+    await bootHostedChild(parent, name);
+  }
+}
+
+/** A hosted child's app, as a request names it: `<app>--<child>--<parentHost>`. */
+export interface ChildAppHit {
+  readonly runtime: AppsRuntime;
+  readonly target: AppTarget;
+}
+
+/**
+ * The child app a Host names, `"unknown"` when it is shaped like one of a
+ * child that exists but names no app of it, undefined when it is no child
+ * app's host. The child is whichever `--` split leaves a finished ledger.
+ */
+export async function resolveHostedChildApp(
+  parent: App,
+  request: Request,
+): Promise<ChildAppHit | "unknown" | undefined> {
+  const host = request.headers.get("host");
+  if (host === null) return undefined;
+  const label = parseHostedChildName(host, childHost(parent));
+  if (label === undefined) return undefined;
+  // A child that is named exactly so is the child itself, not an app of one.
+  const own = readLedgerSync(parent, label);
+  if (own !== undefined && own.done) return undefined;
+  for (let i = label.indexOf("--"); i > 0; i = label.indexOf("--", i + 2)) {
+    const name = label.slice(i + 2);
+    if (!CHILD_NAME_OK.test(name)) continue;
+    const ledger = readLedgerSync(parent, name);
+    if (ledger === undefined || !ledger.done) continue;
+    const child = await openOnce(parent, ledger);
+    const runtime = appsRuntime(child);
+    if (runtime === undefined) return "unknown";
+    const target = resolveAppHost(child, runtime.options.domain, request);
+    if (target === undefined || target === "unknown") return "unknown";
+    return { runtime, target };
+  }
+  return undefined;
+}
+
+const CHILD_NAME_OK = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
+
+/** What a child's apps are doing, for `/forges`; undefined when none run here. */
+export const hostedChildApps = childAppsSummary;

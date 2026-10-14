@@ -8,6 +8,7 @@ import { parseCidrs } from "./kernel/cidr.ts";
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
+import { bootHostedChildren } from "./spawn/host.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
@@ -276,6 +277,8 @@ const crew = appsOn && !crewHeldOff
         : { configDir: process.env.FORGE_CLAUDE_CONFIG_DIR }),
     })
   : undefined;
+// Hosted children come back with their apps, awake before the first visit.
+await bootHostedChildren(app);
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);

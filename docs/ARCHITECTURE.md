@@ -565,6 +565,14 @@ levels of nesting, so a child cannot spawn without bound. Bodies are held
 behind a `BodyStore`; the default is in memory, and persisting it under
 `FORGE_APP_DATA` is left to the wiring that calls spawn.
 
+A hosted child runs the apps it was given (`spawn/child-apps.ts`): opening
+the child also starts an `AppsRuntime` and a checks service over the child's
+own database and data directory, answering at
+`<app>--<child>--<parentHost>`. Its deploys wait at the parent's runtime gate
+and its checks at the parent's checks gate (one more tenant of the same
+lanes). A spawn boots them at once; a parent restart boots every finished
+child (`bootHostedChildren`).
+
 An external placement (Cloudflare Worker + container, Fly, metal — chosen by
 spike #339) implements the same interface and must provide:
 

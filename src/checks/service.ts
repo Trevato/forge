@@ -71,6 +71,10 @@ export interface ChecksOptions {
   readonly concurrency?: number | undefined;
   /** The forge's public URL, told to the check as `FORGE_URL`. */
   readonly forgeUrl: string;
+  /** The parent's gate, for a hosted child: its checks take their turn in the parent's lane. */
+  readonly gate?: Gate | undefined;
+  /** Whose checks these are, written first in each run's log (a hosted child's name). */
+  readonly label?: string | undefined;
 }
 
 export interface ChecksHandle {
@@ -94,6 +98,8 @@ export interface ChecksHandle {
     commitOid: string,
   ): Promise<{ ok: boolean; error: string; lines: string[] }>;
   stop(): Promise<void>;
+  /** The gate checks take their turn at; a hosted child's checks share it. */
+  readonly lane: Gate;
 }
 
 /** How often queued checks another forge left are looked for. */
@@ -175,7 +181,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   noteBooted(app.db, "checks.concurrency", String(options.concurrency ?? 1));
   const capacity = (): number =>
     capacityCount(app.db, "checks.concurrency", options.concurrency ?? 1);
-  const gate = new Gate(capacity());
+  const gate = options.gate ?? new Gate(capacity());
   /** Full gates on land in flight: not slots in the queue, but stopped with it. */
   const gates = new Set<AbortController>();
   const inFlight = new Map<
@@ -278,7 +284,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   function schedule(): void {
     if (stopped) return;
     const limit = capacity();
-    gate.resize(limit);
+    if (options.gate === undefined) gate.resize(limit);
     while (inFlight.size < limit) {
       const queued = listActive(app.db, "check").filter(
         (run) => run.state === "queued" && !inFlight.has(run.id),
@@ -354,6 +360,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       announceRun(app, claimed);
       const write = (line: string): void =>
         appendRunLog(app.config.dataDir, run.id, line);
+      if (options.label !== undefined)
+        write(`forge ${options.label} — checked in its parent's lane`);
       const started = Date.now();
       const outcome = await check(claimed, repo, write, signal).finally(lease);
       if (!outcome.ok && stopped && signal.aborted) {
@@ -734,6 +742,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         gates.delete(controller);
       }
     },
+    lane: gate,
     stop: async () => {
       stopped = true;
       clearInterval(timer);

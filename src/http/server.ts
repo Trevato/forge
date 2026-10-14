@@ -399,7 +399,7 @@ import {
   resolveAppHost,
 } from "../apps/proxy.ts";
 
-import { closeHostedChildren, resolveHostedChild } from "../spawn/host.ts";
+import { closeHostedChildren, resolveHostedChild, resolveHostedChildApp } from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 
 // ---- auth ----
@@ -1664,6 +1664,15 @@ export async function serve(app: App): Promise<Servers> {
           return proxyApp(runtime, request, target, server);
         if (target === "unknown")
           return securityFloor(new Response("not found", { status: 404 }));
+      }
+      // A hosted child's app (`<app>--<child>--<parentHost>`) is the child's
+      // own runtime's, as the parent's apps are the parent's.
+      {
+        const hit = await resolveHostedChildApp(app, request);
+        if (hit === "unknown")
+          return securityFloor(new Response("not found", { status: 404 }));
+        if (hit !== undefined)
+          return proxyApp(hit.runtime, request, hit.target, server);
       }
       // A hosted child's Host (`<name>--<parentHost>`) is answered by that
       // child's own App before the parent's pages. Ingress routes the label
