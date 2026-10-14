@@ -30,7 +30,7 @@ import {
   askSentence,
   ASK_WORDS,
   ROW_PLURAL,
-  decisionActions,
+  decisionButtons,
   decisionForm,
   decisionsFor,
   forgeNeedsFor,
@@ -88,10 +88,38 @@ const clause = (
   which?: string,
 ): Html =>
   html`<p>
-    ${weight(c, which)}${d === undefined ? null : html`${d.short.charAt(0).toUpperCase()}${d.short.slice(1)}. `}<span class="muted"
+    ${weight(c, which)}${d === undefined ? null : html`<span class="ask-short">${d.short.charAt(0).toUpperCase()}${d.short.slice(1)}. </span>`}<span class="muted"
       >If nobody acts, ${ASK_WORDS[kind].ifNothing}.</span
     >
   </p>`;
+
+/** The kind, in two words: what a phone's row says in place of the sentence under it. */
+const KIND_LABEL: Readonly<Record<Decision["kind"], string>> = {
+  look: "Ready to ship",
+  review: "Needs review",
+  stopped: "Stopped",
+  parked: "Parked",
+  declined: "Declined",
+  paused: "Paused",
+};
+
+/**
+ * An ask's actions: the one that decides, then the rest. A wide screen
+ * lays them in a line; a phone puts the decider at the trailing edge, 44 px
+ * tall, and the rest behind one tap ("More").
+ */
+function acts(ctx: Ctx, d: Decision): Html {
+  const { primary, others } = decisionButtons(ctx, d);
+  return html`<div class="ask-acts">
+    ${primary}
+    ${others.length === 0
+      ? null
+      : html`<details class="ask-more-acts">
+          <summary class="btn" data-size="sm">More</summary>
+          ${others}
+        </details>`}
+  </div>`;
+}
 
 function decisionCard(ctx: Ctx, d: Decision, picked: ReadonlySet<string>): Html {
   const base = repoBase(d.repo);
@@ -102,12 +130,15 @@ function decisionCard(ctx: Ctx, d: Decision, picked: ReadonlySet<string>): Html 
       : html`<a href="${base}/settings/autonomy">Paused</a>`;
   return card(
     html`${clause(d, d.kind, d.consequence)}
-      <div class="bar mt">${decisionActions(ctx, d)}</div>`,
+      ${acts(ctx, d)}`,
     {
       id: askAnchor(d.id),
-      head: html`${pick(d, picked) ?? icon(d.kind === "look" ? "eye" : "pull")}
+      extra: "ask-card",
+      head: html`${pick(d, picked)}
         <h2>${title}</h2>
-        <span class="muted small">${d.repo.ownerName}/${d.repo.name}</span>`,
+        <span class="ask-meta muted small"
+          ><b class="ask-kind">${KIND_LABEL[d.kind]}</b>${d.repo.ownerName}/${d.repo.name}</span
+        >`,
     },
   );
 }
@@ -132,7 +163,7 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
       return row({
         ...(box === null ? {} : { lead: box }),
         title: html`<a href="${href}">${d.pull?.title ?? d.issue?.title ?? ""}</a>`,
-        meta: html`<span class="bar">${decisionActions(ctx, d)}</span>`,
+        meta: acts(ctx, d),
       });
   });
   // On a phone a group is its head line, its asks one tap away, so two
@@ -148,6 +179,7 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
     {
       pad: false,
       id: askAnchor(r.id),
+      extra: "ask-card",
       head: html`${BULK_KINDS.has(r.kind)
           ? html`<input
               type="checkbox"
@@ -155,7 +187,7 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
               data-select-all
               aria-label="Select all ${r.items.length}"
             />`
-          : icon(r.kind === "look" ? "eye" : "pull")}
+          : null}
         <h2>${rowHead(r.kind, r.items.length)}</h2>
         <span class="muted small">${r.repo.ownerName}/${r.repo.name}</span>`,
       // The row ranks by its weightiest ask (first, `askRows`): name it.

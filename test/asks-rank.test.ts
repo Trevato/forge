@@ -337,6 +337,20 @@ describe("asks that earn their place", () => {
     recordAskLedger(app.db);
     expect((await mcpAsks()).measure.raised).toBe(6);
   });
+  test("a phone's ask is a full-width row: kind and repo on one line, the decider apart, the rest behind More", async () => {
+    const home = await page("/");
+    const asks = home.slice(home.indexOf('<section id="needs-you"'));
+    expect(asks).toContain("ask-card");
+    expect(asks).toContain('<b class="ask-kind">');
+    // No icon column: the row opens with its kind, not a picture.
+    expect(asks.slice(0, asks.indexOf("<h2", asks.indexOf("ask-card")))).not.toContain("<svg");
+    expect(asks).toContain('<details class="ask-more-acts">');
+    expect(asks).toMatch(/class="ask-acts">\s*<button[^>]*data-variant="primary"/);
+    const css = await (await fetch(`${servers.url}${home.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
+    expect(css).toContain(".ask-acts > .btn { min-height: 44px;");
+    expect(css).toContain(".needs-you .ask-card {\n    margin-inline: -16px;");
+  });
+
   test("a collapsed row that ranks for security names which of its asks it is", async () => {
     // The security pull went red above; a new green one joins it in a row of two.
     check(security, "ok");
