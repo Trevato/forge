@@ -32,7 +32,7 @@
  */
 
 import { availableParallelism } from "node:os";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import {
   formatTimes,
   parseShardSpec,
@@ -45,7 +45,7 @@ import {
   weigher,
   type ShardResult,
 } from "./shards.ts";
-import { GATE } from "./gate.ts";
+import { auditGate, EXCLUDED, GATE } from "./gate.ts";
 import { fastSet, importsOf, duration } from "../src/checks/tiers.ts";
 
 const TIMES = new URL("./test-times.json", import.meta.url).pathname;
@@ -170,6 +170,28 @@ if (!split.ok) {
   process.exit(2);
 }
 const flags = split.flags;
+// A test file in neither GATE nor EXCLUDED costs a whole gate run to find
+// out; say so before anything spawns. Explicit files alone are not audited.
+if (gate || tier === "fast") {
+  let present: string[] = [];
+  try {
+    present = readdirSync("test")
+      .filter((name) => name.endsWith(".test.ts"))
+      .map((name) => `test/${name}`)
+      .sort();
+  } catch {}
+  const problems = auditGate(present, GATE, EXCLUDED);
+  if (problems.length > 0) {
+    for (const problem of problems) console.error(`test-shards: ${problem}`);
+    const named = [
+      ...new Set(problems.map((p) => p.match(/^(test\/\S+\.test\.ts) /)?.[1])),
+    ].filter((f): f is string => f !== undefined);
+    console.error(
+      `test-shards: ${named.join(", ")}: list it in GATE or EXCLUDED in scripts/gate.ts`,
+    );
+    process.exit(2);
+  }
+}
 let files = [...(gate || tier === "fast" ? GATE : []), ...split.files];
 if (tier === "fast") {
   const diff = Bun.spawnSync(
