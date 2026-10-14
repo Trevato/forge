@@ -34,6 +34,7 @@ describe("a local writer approval lets an origin fork's pull run", () => {
   let alice: User;
   let carol: User;
   let lib: Repo;
+  let carolFork: Repo | undefined; // one fork of a parent per owner
   let n = 0;
 
   const settle = () => Bun.sleep(400);
@@ -45,10 +46,12 @@ describe("a local writer approval lets an origin fork's pull run", () => {
   /** Carol's fork pull, then marked as the origin's: its head is elsewhere. */
   async function originPull() {
     const branch = `b${++n}`;
-    const fork = (await forkRepo(app, carol, lib, `fork${n}`)) as {
-      ok: true;
-      value: Repo;
-    };
+    if (!carolFork) {
+      const forked = await forkRepo(app, carol, lib, "fork");
+      if (!forked.ok) throw new Error(String(forked.error));
+      carolFork = forked.value;
+    }
+    const fork = { value: carolFork };
     const committed = await commitToBranch(app, carol, fork.value, {
       branch,
       message: "From the origin's fork",
