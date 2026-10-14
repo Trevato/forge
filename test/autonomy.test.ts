@@ -233,6 +233,14 @@ describe("a repository on its own", () => {
       costUsd: 1,
     });
     expect(await driveRepo(app, fresh())).toBe("idle");
+    // Past the interval with nothing new since that pass — nobody spoke,
+    // the map has not moved — it is not asked again (#1097)…
+    expect(await driveRepo(app, fresh(), later)).toBe("idle");
+    // …and once a person speaks on the direction, it is.
+    const { addComment } = await import("../src/actions/issues.ts");
+    expect(
+      addComment(app, alice, fresh(), direction, "Rigid bodies next.").ok,
+    ).toBe(true);
     expect(await driveRepo(app, fresh(), later)).toBe("planned");
     expect(getIssueById(app.db, direction.id)!.assigneeId).toBe(atlas.id);
   });

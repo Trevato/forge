@@ -21,10 +21,10 @@ import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
 import { listCrewRoles, type Agent } from "../core/agents.ts";
 import { getHold, lastRelease } from "../core/holds.ts";
-import { getIssueById } from "../core/issues.ts";
+import { getIssueById, LIST_LIMIT_MAX } from "../core/issues.ts";
 import { listPulls, pullDiff, type Pull, pullDir} from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
-import { reviewSummary } from "../core/reviews.ts";
+import { listReviews, reviewSummary, type Review } from "../core/reviews.ts";
 import { checksForHead } from "../core/runs.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
@@ -142,9 +142,55 @@ export function reviewAttempts(
   return { greenAt: since, attempts };
 }
 
+/** Rounds of changes the crew's reviewer asks on one pull before it is handed to a person. */
+export const HANDOVER_ROUNDS = 3;
+
+/**
+ * The crew reviewer's rounds on a pull: its first request for changes on
+ * each head, oldest first. Two requests on one head are one round.
+ */
+export function reviewRounds(db: Database, repoId: string, pull: Pull): Review[] {
+  const reviewers = new Set(
+    reviewersOf(db, repoId).map((a) => a.user.id),
+  );
+  const heads = new Set<string>();
+  const rounds: Review[] = [];
+  for (const r of listReviews(db, pull.id)) {
+    if (r.state !== "changes_requested" || !reviewers.has(r.authorId)) continue;
+    if (heads.has(r.commitOid)) continue;
+    heads.add(r.commitOid);
+    rounds.push(r);
+  }
+  return rounds;
+}
+
+/**
+ * Whether the crew's review loop on this agent pull is spent: the
+ * reviewer asked for changes `HANDOVER_ROUNDS` times and no approval is on
+ * the head. Nothing more is sent or started by the crew; a person decides.
+ */
+export function handedToPerson(db: Database, repoId: string, pull: Pull): boolean {
+  if (!pull.authorIsAgent) return false;
+  if (reviewRounds(db, repoId, pull).length < HANDOVER_ROUNDS) return false;
+  return reviewSummary(db, pull.id, pull.headOid).approvals === 0;
+}
+
+/** The one card that hands a pull over: each round's verdict, in a line or two. */
+export function handoverNote(rounds: readonly Review[]): string {
+  const lines = rounds.map((r, i) => {
+    const said = r.body.trim().replace(/\s+/g, " ");
+    return `${i + 1}. ${r.authorName}: ${said === "" ? "(no words)" : said.length > 300 ? `${said.slice(0, 300)}…` : said}`;
+  });
+  return [
+    `Handed to a person: the reviewer asked for changes ${rounds.length} times without approving, so the crew stops here. Nothing is closed or parked; approve it, push a fix, or say what to do.`,
+    "",
+    ...lines,
+  ].join("\n");
+}
+
 /** Why an agent's green pull waits for a person, and since when. */
 export interface ReviewWait {
-  readonly why: "no reviewer" | "lapsed";
+  readonly why: "no reviewer" | "lapsed" | "rounds";
   /** When review became owed: the head went green, or the pull was let go. */
   readonly since: string;
 }
@@ -166,6 +212,8 @@ export function waitsForPerson(
   if (!pull.authorIsAgent || getHold(db, pull.id) !== undefined) return undefined;
   const seen = reviewSummary(db, pull.id, pull.headOid);
   if (seen.approvals > 0 || seen.changesRequested > 0) return undefined;
+  if (handedToPerson(db, repoId, pull))
+    return { why: "rounds", since: reviewRounds(db, repoId, pull).at(-1)!.createdAt };
   const history = reviewAttempts(db, pull);
   if (history === undefined) return undefined;
   if (reviewersOf(db, repoId).length === 0)
@@ -194,6 +242,7 @@ export async function sendToReview(
   if (reviewers.length === 0) return "none";
   const seen = reviewSummary(app.db, pull.id, pull.headOid);
   if (seen.approvals > 0 || seen.changesRequested > 0) return "done";
+  if (handedToPerson(app.db, repo.id, pull)) return "held";
   const history = reviewAttempts(app.db, pull);
   if (history === undefined) return "wait";
   const stage = reviewStage(history.greenAt, history.attempts, now);
@@ -220,10 +269,37 @@ export async function sendToReview(
   return "sent";
 }
 
+/** Review runs one sweep pass sends at most: the tick stays bounded by sends, never by which pulls it looks at. */
+export const SWEEP_SENDS = 10;
+
+/** The last skip line said for a pull, so a stall is said once, not every tick. */
+const said = new Map<string, string>();
+
+/** Every open pull of a repository, oldest first, paged past the list cap. */
+function openPullsOldestFirst(db: Database, repoId: string): Pull[] {
+  const all: Pull[] = [];
+  let cursor: number | undefined;
+  for (;;) {
+    const page = listPulls(db, repoId, {
+      sealed: true,
+      state: "open",
+      limit: LIST_LIMIT_MAX,
+      ...(cursor === undefined ? {} : { cursor }),
+    });
+    all.push(...page);
+    if (page.length < LIST_LIMIT_MAX) break;
+    cursor = page[page.length - 1]!.number;
+  }
+  return all.reverse();
+}
+
 /**
  * Every open, green pull an agent wrote that has no verdict on its head,
- * in every repository with a reviewer on its crew, sent to review. The
- * tick's net under the check event; returns how many went.
+ * in every repository with a reviewer on its crew, sent to review, oldest
+ * first — the pull that has waited longest is reached first. At most
+ * `SWEEP_SENDS` go per pass; the rest wait for the next, never unseen. A
+ * pull passed over for a reason gets one line saying why. The tick's net
+ * under the check event; returns how many went.
  */
 export async function sweepReviews(app: App): Promise<number> {
   const repoIds = app.db
@@ -233,16 +309,35 @@ export async function sweepReviews(app: App): Promise<number> {
     .all()
     .map((r) => r.repo_id);
   let queued = 0;
+  const stalled = new Set<string>();
   for (const id of repoIds) {
     const repo = getRepoById(app.db, id);
     if (!repo) continue;
-    for (const pull of listPulls(app.db, repo.id, { sealed: true,
-      state: "open",
-      limit: 50,
-    })) {
+    for (const pull of openPullsOldestFirst(app.db, repo.id)) {
+      if (queued >= SWEEP_SENDS) return forgetSettled(stalled, queued);
       if (!pull.authorIsAgent || !greenHead(app.db, pull)) continue;
-      if ((await sendToReview(app, repo, pull)) === "sent") queued++;
+      const result = await sendToReview(app, repo, pull);
+      if (result === "sent") queued++;
+      else if (result === "lapsed" || result === "wait") {
+        stalled.add(pull.id);
+        const key = `${pull.headOid}:${result}`;
+        if (said.get(pull.id) === key) continue;
+        said.set(pull.id, key);
+        const since = reviewAttempts(app.db, pull)?.greenAt;
+        log.info(
+          result === "lapsed"
+            ? `review: lapsed since ${since}`
+            : "review: not sent yet",
+          { repo: `${repo.ownerName}/${repo.name}`, pull: pull.number },
+        );
+      }
     }
   }
+  return forgetSettled(stalled, queued);
+}
+
+/** Drop the said-lines of pulls that no longer stall, so the map stays the size of the stall. */
+function forgetSettled(stalled: Set<string>, queued: number): number {
+  for (const id of said.keys()) if (!stalled.has(id)) said.delete(id);
   return queued;
 }

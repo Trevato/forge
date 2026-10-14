@@ -554,6 +554,31 @@ a cookie — even that works script-free. Still **zero runtime dependencies**.
 Not yet: containers around apps, custom domains, and a gate that lands a
 pull on its own once review and checks agree.
 
+## Fuzz and chaos
+
+Invariants are proven by faults, not by hope. No dependencies were added.
+
+- **Fuzz** (`test/fuzz-parsers.test.ts`, helper `test/helpers/fuzz.ts`): the
+  manifest and check parsers, `contract.json`, hostnames, slugs, markdown, the
+  diff reader and the API's JSON bodies take a seeded generator's cases. A
+  failure prints `FUZZ_SEED` and the shrunk case; rerun with
+  `FUZZ_SEED=<n> FUZZ_RUNS=<n> bun test test/fuzz-parsers.test.ts` and keep the
+  case as a fixed test in `test/fuzz-found.test.ts`.
+- **Chaos** (`src/chaos/`): a side instance on a fresh temporary data directory
+  (it cannot name the live forge or a customer's app) takes four faults —
+  SIGKILL mid-run, a dropped SQLite connection, a temp area that refuses writes
+  (a stand-in for a full disk; nothing is actually filled), a delayed loopback —
+  and after each asserts: no run vanished and all are in a known state, the
+  database is whole and every open pull's head is in its repo, a snapshot taken
+  afterwards restores, no sealed value is in any file in the clear.
+  `test/chaos.test.ts` runs a small version in the gate (`CHAOS_SEED=<n>`).
+- **Nightly**: `bun src/chaos/run.ts [--seed N] [--rounds N] --report` with
+  `FORGE_URL`, `FORGE_TOKEN`. A broken invariant files an issue (fault, seed,
+  log) and stands it under the umbrella `FORGE_CHAOS_PILLAR_ISSUE` (the
+  P0 Trust issue waits for it); a quiet night comments one line on
+  `FORGE_CHAOS_RECOVERY_ISSUE`. Scheduling it is the operator's: this repo
+  ships the command, not a timer.
+
 ## Check tiers
 
 `forge.json`'s `check` may declare `fast` beside `run` (the full gate; `full` names it explicitly). `bun scripts/test-shards.ts --tier fast --diff <base>..<head>` runs the tests that touch the diff (changed, named for a changed source file, or importing one within two hops), every test the times table records under 1 s, and any named by `--learned a,b`. `src/checks/tiers.ts` decides; it adds no dependency.

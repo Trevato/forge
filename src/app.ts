@@ -7,6 +7,7 @@
 import type { MailConfig, Mailer } from "./kernel/mail.ts";
 import type { Database } from "bun:sqlite";
 import type { Decider } from "./crew/decide.ts";
+import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { migrations } from "./core/schema.ts";
@@ -133,6 +134,10 @@ export interface App {
   readonly log: Log;
   readonly reposRoot: string;
   readonly socketPath: string;
+  /** Where the internal listener answers: `socketPath`, or a loopback port (`git/hook-address.ts`). */
+  readonly hookAddress: { current: string };
+  /** Per-boot secret every internal request must carry (`FORGE_HOOK_SECRET` in a hook's env). */
+  readonly hookSecret: string;
   close(): void;
 }
 
@@ -144,6 +149,7 @@ export function createApp(config: ForgeConfig): App {
   const dataDir = resolve(config.dataDir);
   const reposRoot = join(dataDir, "repos");
   mkdirSync(reposRoot, { recursive: true });
+  const socketPath = join(dataDir, `forge-${id()}.sock`);
 
   const db = openDb(join(dataDir, "forge.db"), migrations);
   // Hand-installed new-account guards become the `guard_new_accounts`
@@ -168,7 +174,9 @@ export function createApp(config: ForgeConfig): App {
     reposRoot,
     // This process's own: two forges share a data directory for the length
     // of a release, and each spawns git with its own socket in the env.
-    socketPath: join(dataDir, `forge-${id()}.sock`),
+    socketPath,
+    hookAddress: { current: socketPath },
+    hookSecret: randomBytes(32).toString("hex"),
     close: () => {
       // The pooled `cat-file` readers for this forge's repos are processes,
       // and processes outlive a closed database unless somebody says

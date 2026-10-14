@@ -33,6 +33,7 @@ import {
 } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { portInsteadOfSocket } from "../git/hook-address.ts";
 import { relay, startEgress, type Egress } from "./egress.ts";
 
 export interface Limits {
@@ -154,6 +155,10 @@ export function cellsAvailable(): Promise<
 async function probe(): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (process.env["FORGE_CELLS"] === "off")
     return { ok: false, reason: "FORGE_CELLS=off" };
+  // A cell reaches its proxy through a unix socket; a sandbox that put the
+  // forge on loopback ports (a crew run's `bun test`) cannot bind one.
+  if (portInsteadOfSocket())
+    return { ok: false, reason: "FORGE_TEST_SOCKET=port: no unix sockets" };
   if (process.platform !== "linux")
     return { ok: false, reason: `no cells on ${process.platform}` };
   for (const tool of ["bwrap", "socat"])

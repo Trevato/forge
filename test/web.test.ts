@@ -3,7 +3,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { health } from "../src/http/health.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { stylesheetAsset, stylesheetRedirect } from "../src/web/asset.ts";
 import { escapeHtml, html, raw, when } from "../src/web/html.ts";
@@ -675,34 +674,6 @@ describe("themes", () => {
     });
     expect(foreign.status).toBe(303);
     expect(foreign.headers.get("location")).toBe("/");
-  });
-});
-
-describe("readiness", () => {
-  let dataDir: string;
-  let app: App;
-  let servers: Servers;
-
-  beforeAll(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "forge-health-"));
-    app = createApp({ dataDir, port: 0 });
-    servers = await serve(app);
-  });
-
-  afterAll(async () => {
-    health.draining = false;
-    servers.stop();
-    app.close();
-    await rm(dataDir, { recursive: true, force: true });
-  });
-
-  test("/healthz says ok, and 503 once the forge is draining; the landing page stays up either way", async () => {
-    expect((await fetch(`${servers.url}/healthz`)).status).toBe(200);
-    health.draining = true;
-    const draining = await fetch(`${servers.url}/healthz`);
-    expect(draining.status).toBe(503);
-    expect(await draining.text()).toBe("draining");
-    expect((await fetch(`${servers.url}/`)).status).toBe(200);
   });
 });
 

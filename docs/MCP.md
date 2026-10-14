@@ -72,11 +72,40 @@ claude mcp add --transport http forge https://<your-forge>/mcp \
   --header "Authorization: Bearer <token>"
 ```
 
-Any MCP client that can send a header works the same way. The Claude apps on
-the web and the phone add custom connectors through OAuth, which the forge
-does not speak yet; that is the next step here, and it changes nothing above
-— the same tools, a token the forge mints for the connector instead of one a
-person pastes.
+Any MCP client that can send a header works the same way.
+
+## Attaching with OAuth
+
+Clients that cannot paste a header — the Claude apps, Grok's connectors —
+attach by OAuth. The forge publishes its discovery documents
+(`/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`),
+takes dynamic client registration at `/oauth/register`, and runs the
+authorization-code flow with PKCE `S256` (public clients, no secret, no
+refresh token).
+
+1. The client sends you to `/oauth/authorize`. If you are not signed in you
+   sign in and come back. The page names the client and the host it will
+   return to, and asks for **Read** (`ro`) or **Read and act** (`rw`), a name
+   for the token, and how long it lasts (until revoked by default).
+2. On **Allow** the forge redirects to the redirect address the client
+   registered — exactly, never a look-alike — with a one-time `code` and the
+   client's `state`. A code works once, for 60 seconds, and is stored hashed.
+3. The client posts the code and its PKCE verifier to `/oauth/token` and
+   receives a bearer token: the same kind Settings mints. It is listed under
+   Settings and revoking it there cuts the connector off.
+
+**The Claude app** (web or phone): Settings → Connectors → Add custom
+connector, URL `https://<your forge>/mcp`. Claude registers itself with the
+callback `https://claude.ai/api/mcp/auth_callback`; approve it on the forge's
+page. **Grok**: Connectors → Add custom connector, the same `/mcp` URL;
+approve the page it opens. Pick `ro` unless the connector should be able to
+`tell` and `plan`.
+
+The token's scope is the whole of its authority: a connector holding `ro`
+can call `apps` and is refused `tell`.
+
+`src/http/oauth.ts`, `src/core/oauth.ts`, `src/web/pages/oauth.ts`,
+`test/oauth-flow.test.ts`.
 
 `src/http/mcp.ts`, `src/actions/tell.ts`, `test/mcp.test.ts`.
 

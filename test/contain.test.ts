@@ -47,6 +47,11 @@ import type { Repo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
 import { missing } from "./helpers/tools.ts";
+import { portInsteadOfSocket } from "../src/git/hook-address.ts";
+
+// Cells and their egress proxy bind unix sockets, which a sandbox refuses
+// (FORGE_TEST_SOCKET=port); these run in the forge's check instead.
+const bySocket = portInsteadOfSocket() ? describe.skip : describe;
 
 describe("egress: what a cell may reach", () => {
   test("a declared name matches exactly, or below a *. wildcard, on 80 and 443", () => {
@@ -145,7 +150,7 @@ describe("egress: what a cell may reach", () => {
   });
 });
 
-describe("egress: the proxy forwards what is allowed, byte for byte, and refuses the rest", () => {
+bySocket("egress: the proxy forwards what is allowed, byte for byte, and refuses the rest", () => {
   let dir: string;
   let upstream: ReturnType<typeof Bun.serve>;
   let socket: string;
@@ -253,7 +258,7 @@ describe("egress: the proxy forwards what is allowed, byte for byte, and refuses
   });
 });
 
-describe("egress, reported: an undeclared public host goes through and is counted; a private one never does", () => {
+bySocket("egress, reported: an undeclared public host goes through and is counted; a private one never does", () => {
   let dir: string;
   let socket: string;
   let egress: { close(): void };
@@ -473,7 +478,8 @@ describe("cells hide every mount that may carry a secret", () => {
 const noCells =
   process.env["FORGE_CELLS"] === "off" ||
   missing("bwrap", "socat") ||
-  process.platform !== "linux";
+  process.platform !== "linux" ||
+  portInsteadOfSocket();
 
 /** What the probe tries, from inside a deploy or a check. */
 function probeSource(targets: {

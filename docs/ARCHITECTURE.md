@@ -606,7 +606,9 @@ queue, stuck, apps, at }` (`kernel/vitals.ts`), and the board shows
 10% free on the `FORGE_DATA` volume, a run running with a lapsed lease (or
 past six hours), a queue whose oldest run has waited over thirty minutes.
 It is a fixed handful of queries however many runs and apps exist, measured
-per request and never cached. `/healthz` stays the orchestrator's answer.
+per request and never cached. `/healthz` (alive: the process answers and
+its database opens) and `/readyz` (ready: not draining) stay the
+orchestrator's answers (`http/health.ts`).
 
 ## Search, and where semantic search would go
 

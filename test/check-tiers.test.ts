@@ -267,7 +267,6 @@ describe("the tiers in the forge's own checks service", () => {
 
   test("a red full gate names its tests and the pull learns the files", async () => {
     const red = await commitToBranch(app, alice, repo, {
-      branch: "probe",
       message: "Full goes red",
       files: [
         {
@@ -296,8 +295,7 @@ describe("the tiers in the forge's own checks service", () => {
   test("landing runs the full gate on the merge with its base; red is told and taught", async () => {
     const pull0 = listPulls(app.db, repo.id, { state: "open", limit: 5 })[0]!;
     const pushed = await commitToBranch(app, alice, repo, {
-      branch: "feature",
-      message: "Feature goes red on land",
+      message: "Main goes red on land",
       files: [
         {
           path: "forge.json",
@@ -308,7 +306,7 @@ describe("the tiers in the forge's own checks service", () => {
       ],
     });
     if (!pushed.ok) throw new Error(JSON.stringify(pushed.error));
-    const pull = { ...pull0, headOid: pushed.value.commitOid };
+    const pull = pull0;
     const base = (await resolveOid(
       repoDir(app.reposRoot, repo.ownerName, repo.name),
       "refs/heads/main",
@@ -323,5 +321,59 @@ describe("the tiers in the forge's own checks service", () => {
     if (verdict.lands) throw new Error("expected the full gate to be red");
     expect(verdict.comment).toContain("- lands red");
     expect(readLearned(dataDir, pull.id)).toContain("test/y.test.ts");
+  });
+
+  const finished = async (pullId: string, oid: string): Promise<Run> => {
+    const deadline = Date.now() + 30_000;
+    let run: Run | undefined;
+    while (Date.now() < deadline) {
+      run = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
+        (r) => r.issueId === pullId && r.commitOid === oid,
+      );
+      if (run && (run.state === "ok" || run.state === "failed")) return run;
+      await Bun.sleep(50);
+    }
+    throw new Error("the check did not finish");
+  };
+
+  test("the tier comes from the base: a head without check.fast, or editing it, is checked with the base's", async () => {
+    const own = (fast: string | undefined): string =>
+      JSON.stringify({
+        check: { run: "echo HEAD-RUN", ...(fast ? { fast } : {}) },
+      });
+    const old = await commitToBranch(app, alice, repo, {
+      branch: "old",
+      message: "Branched before the fast tier",
+      files: [{ path: "forge.json", content: own(undefined) }],
+    });
+    if (!old.ok) throw new Error(JSON.stringify(old.error));
+    const weak = await commitToBranch(app, alice, repo, {
+      branch: "weak",
+      message: "Weakens its own gate",
+      files: [{ path: "forge.json", content: own("echo HEAD-FAST") }],
+    });
+    if (!weak.ok) throw new Error(JSON.stringify(weak.error));
+    const main = await commitToBranch(app, alice, repo, {
+      message: "Base declares the tier",
+      files: [{ path: "forge.json", content: forgeJson("echo FULL") }],
+    });
+    if (!main.ok) throw new Error(JSON.stringify(main.error));
+    for (const [head, oid] of [
+      ["old", old.value.commitOid],
+      ["weak", weak.value.commitOid],
+    ] as const) {
+      const opened = await openPull(app, alice, repo, {
+        title: head,
+        baseBranch: "main",
+        headBranch: head,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      const run = await finished(opened.value.id, oid);
+      expect(run.state).toBe("ok");
+      const log = readRunLog(dataDir, run.id).lines.join("\n");
+      expect(log).toContain(`tier fast from main@${main.value.commitOid.slice(0, 7)}`);
+      expect(log).toContain("FAST base=");
+      expect(log).not.toContain("HEAD-");
+    }
   });
 });
