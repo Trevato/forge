@@ -175,7 +175,7 @@ import {
   tellSubmit,
 } from "../web/studio/actions.ts";
 import { everydayCreate, everydayKeep, everydaySwitch } from "../web/pages/everyday.ts";
-import { claimFragmentPage, claimPage, claimSubmit } from "../web/pages/claim.ts";
+import { claimFragmentPage, claimSubmit } from "../web/pages/claim.ts";
 import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
@@ -532,13 +532,11 @@ export function buildRouter(): Router<Handler> {
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
   router.add("GET", "/claim", claimFragmentPage);
   router.add("POST", "/claim", claimSubmit);
-  router.add("GET", "/claim/:token", claimPage);
   // "+ New forge": the spawn door as a page, any signed-in person (spawn/door.ts).
   router.add("GET", "/forges", forgesPage);
   router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
-  router.add("POST", "/claim/:token", claimSubmit);
   // The front page as a stranger sees it, for anyone; a site admin there
   // also gets the controls that decide it (#686).
   router.add("GET", "/front", studioDoor);
