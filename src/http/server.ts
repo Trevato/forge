@@ -43,7 +43,7 @@ import {
   verifyPassword,
 } from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
-import { healthResponse } from "./health.ts";
+import { liveResponse, readyResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
@@ -1746,7 +1746,7 @@ export async function serve(app: App): Promise<Servers> {
 }
 
 /**
- * One request against the forge's own routes: health, the route that
+ * One request against the forge's own routes: liveness and readiness, the route that
  * matched or the two shapes of "no route", the limiter, and the handler.
  * The response it returns has not been given the security floor yet — that
  * is the caller's single door, above.
@@ -1777,7 +1777,9 @@ async function answerGet(
   request: Request,
 ): Promise<Response> {
   const url = publicUrl(request, app.config.url);
-  if (url.pathname === "/healthz") return healthResponse();
+  if (url.pathname === "/healthz")
+    return liveResponse(() => app.db.query("select 1").get(), app.log);
+  if (url.pathname === "/readyz") return readyResponse();
   const routeMethod = request.method === "HEAD" ? "GET" : request.method;
   // The one place a path decides its own shape of miss: anything under
   // `/api` matches only against the API's own routes, so a studio route as
