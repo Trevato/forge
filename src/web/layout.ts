@@ -7,6 +7,7 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
+import { protectionNotice } from "../kernel/protection.ts";
 import { askCountFor } from "./studio/asks.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
@@ -473,6 +474,8 @@ function topbar(
  * else gets: the one person who is asked "which version is this?".
  */
 function footer(ctx: Ctx): Html {
+  const reduced =
+    ctx.auth.user?.isAdmin === true ? protectionNotice() : undefined;
   return html`<footer class="foot">
     <span class="mark"></span>
     <span
@@ -481,6 +484,11 @@ function footer(ctx: Ctx): Html {
         ? runningLine()
         : "— your code, your machine"}</span
     >
+    ${reduced === undefined
+      ? null
+      : html`<span class="error-note" id="reduced-protection"
+          >${reduced}</span
+        >`}
     <span class="spacer"></span>
     <button
       class="btn js-only"
