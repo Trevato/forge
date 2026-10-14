@@ -45,6 +45,7 @@ import {
 import { edgeIdentity } from "./edge.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
+import { noteRefusedInternal } from "../kernel/internal_refused.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import {
@@ -1736,6 +1737,12 @@ export async function serve(app: App): Promise<Servers> {
       // The socket's file mode used to be the only door check; a loopback
       // port has none, so every internal request proves the boot secret.
       if (!hookCallerAllowed(app, request)) {
+        const path = new URL(request.url).pathname;
+        if (noteRefusedInternal(request.method, path))
+          app.log.warn("internal call refused: no boot secret", {
+            method: request.method,
+            path: path.slice(0, 120),
+          });
         return new Response("forbidden", { status: 403 });
       }
       const url = new URL(request.url);
