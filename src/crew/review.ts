@@ -260,15 +260,17 @@ export async function sweepReviews(app: App): Promise<number> {
     .all()
     .map((r) => r.repo_id);
   let queued = 0;
+  const stalled = new Set<string>();
   for (const id of repoIds) {
     const repo = getRepoById(app.db, id);
     if (!repo) continue;
     for (const pull of openPullsOldestFirst(app.db, repo.id)) {
-      if (queued >= SWEEP_SENDS) return queued;
+      if (queued >= SWEEP_SENDS) return forgetSettled(stalled, queued);
       if (!pull.authorIsAgent || !greenHead(app.db, pull)) continue;
       const result = await sendToReview(app, repo, pull);
       if (result === "sent") queued++;
       else if (result === "lapsed" || result === "wait") {
+        stalled.add(pull.id);
         const key = `${pull.headOid}:${result}`;
         if (said.get(pull.id) === key) continue;
         said.set(pull.id, key);
@@ -276,11 +278,17 @@ export async function sweepReviews(app: App): Promise<number> {
         log.info(
           result === "lapsed"
             ? `review: lapsed since ${since}`
-            : "review: waiting on the review sent",
+            : "review: not sent yet",
           { repo: `${repo.ownerName}/${repo.name}`, pull: pull.number },
         );
       }
     }
   }
+  return forgetSettled(stalled, queued);
+}
+
+/** Drop the said-lines of pulls that no longer stall, so the map stays the size of the stall. */
+function forgetSettled(stalled: Set<string>, queued: number): number {
+  for (const id of said.keys()) if (!stalled.has(id)) said.delete(id);
   return queued;
 }
