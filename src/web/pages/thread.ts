@@ -30,7 +30,7 @@ import {
   type Issue,
   type Label,
 } from "../../core/issues.ts";
-import { addComment, editIssue, type Closing } from "../../actions/issues.ts";
+import { editIssue, type Closing } from "../../actions/issues.ts";
 import {
   getIssue,
   labelsFor,
