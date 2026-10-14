@@ -331,6 +331,21 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 261,
   },
   { file: "test/webhooks.test.ts", reason: "not yet admitted", issue: 261 },
+  {
+    file: "test/chaos.test.ts",
+    reason: "landed outside both lists; not yet admitted",
+    issue: 1244,
+  },
+  {
+    file: "test/fuzz-found.test.ts",
+    reason: "landed outside both lists; not yet admitted",
+    issue: 1244,
+  },
+  {
+    file: "test/fuzz-parsers.test.ts",
+    reason: "landed outside both lists; not yet admitted",
+    issue: 1244,
+  },
 ];
 
 /**
