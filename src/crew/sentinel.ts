@@ -425,18 +425,27 @@ export function hunt(
             .run(at, evidence, f.key, tracked.issue_id);
           continue;
         }
-        const made = openIssue(app, actor, repo, {
-          title: `Sentinel: ${clip(f.title, 200)}`,
-          body: bodyOf(f, at),
-        });
-        if (!made.ok) {
-          log.warn("sentinel could not file", { key: f.key, error: String(made.error) });
-          continue;
+        const title = `Sentinel: ${clip(f.title, 200)}`;
+        // An issue already filed under this title whose record was lost
+        // (the insert failed last hunt) is adopted, not filed twice.
+        const adopted = app.db
+          .query<{ id: string }, [string, string, string]>(
+            "SELECT id FROM issue WHERE repo_id = ?1 AND title = ?2 AND author_id = ?3 AND state = 'open' AND kind = 'issue' ORDER BY created_at DESC LIMIT 1",
+          )
+          .get(repo.id, title, actor.id);
+        let issueId = adopted?.id;
+        if (issueId === undefined) {
+          const made = openIssue(app, actor, repo, { title, body: bodyOf(f, at) });
+          if (!made.ok) {
+            log.warn("sentinel could not file", { key: f.key, error: String(made.error) });
+            continue;
+          }
+          issueId = made.value.id;
+          filed++;
         }
         app.db
           .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)")
-          .run(f.key, made.value.id, evidence, at);
-        filed++;
+          .run(f.key, issueId, evidence, at);
       } catch (error) {
         log.error("sentinel filing failed", { key: f.key, error: String(error) });
       }
@@ -452,13 +461,12 @@ export function hunt(
 
 export interface SentinelStanding {
   readonly lastHuntAt: string | null;
-  readonly lastFound: number;
   readonly openFindings: number;
 }
 
 export function sentinelStanding(db: Database): SentinelStanding {
   const last = db
-    .query<{ at: string; found: number }, []>("SELECT at, found FROM sentinel_hunt ORDER BY id DESC LIMIT 1")
+    .query<{ at: string }, []>("SELECT at FROM sentinel_hunt ORDER BY id DESC LIMIT 1")
     .get();
   const open = db
     .query<{ n: number }, []>(
@@ -467,7 +475,6 @@ export function sentinelStanding(db: Database): SentinelStanding {
     .get();
   return {
     lastHuntAt: last?.at ?? null,
-    lastFound: last?.found ?? 0,
     openFindings: open?.n ?? 0,
   };
 }

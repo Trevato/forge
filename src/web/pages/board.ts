@@ -315,7 +315,7 @@ function needHref(need: string, v: Vitals): string | undefined {
 function sentinelSpan(app: Ctx["app"]): Html {
   const line = sentinelSummary(app.db);
   if (line === null) return html``;
-  return html`<span class="board-forge-ok" id="sentinel">${line}</span>`;
+  return html`<span class="board-forge-need" id="sentinel">${line}</span>`;
 }
 
 /**
