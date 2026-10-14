@@ -398,7 +398,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const issue =
       run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
     const pull =
-      issue?.kind === "pull" ? getPull(app.db, repo.id, issue.number) : undefined;
+      issue?.kind === "pull"
+        ? getPull(app.db, repo.id, issue.number)
+        : undefined;
     const outcome = await runTier({
       bare,
       repo,
@@ -459,11 +461,15 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           : manifest.run;
     // The fast tier diffs against the fork point, which the clone is given
     // as a repository of its own: `origin/main` is not a ref there.
-    const fast = x.tier === "fast" && manifest.fast !== null && x.pull !== undefined;
+    const fast =
+      x.tier === "fast" && manifest.fast !== null && x.pull !== undefined;
     let base: string | undefined;
     if (fast) {
       const tip = await resolveOid(bare, `refs/heads/${x.pull!.baseBranch}`);
-      base = tip === undefined ? undefined : await mergeBase(bare, tip, run.commitOid);
+      base =
+        tip === undefined
+          ? undefined
+          : await mergeBase(bare, tip, run.commitOid);
       if (base === undefined)
         return { ok: false, error: "the pull's fork point could not be found" };
     }
@@ -682,20 +688,15 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         const pull = getPull(app.db, repo.id, number);
         if (!pull || pull.state !== "open") return;
         const head = await headOf(repo, pull);
-        if (head === undefined) return;
-        // The approval was on a green head, on the base it was checked
-        // against: checking it again proves nothing. Only a base that
-        // moved (#1133) is worth the lane.
-        const env = `pull-${pull.number}`;
-        const green = checksForHead(app.db, pull.id, head).some(
-          (r) => r.kind === "check" && r.env === env && r.state === "ok",
-        );
-        if (green) {
-          const dir = await pullDir(app.db, app.reposRoot, repo, pull);
-          const tip = await resolveOid(dir, `refs/heads/${pull.baseBranch}`);
-          if (tip === undefined || tip === pull.baseOid) return;
-        }
-        await request(repo, env, head, "approved", pull.id, actor);
+        if (head !== undefined)
+          await request(
+            repo,
+            `pull-${pull.number}`,
+            head,
+            "approved",
+            pull.id,
+            actor,
+          );
         return;
       }
       // Landed or closed: nothing left to check, so nothing waits in the lane.

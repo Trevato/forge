@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { mergePull, openPull, submitReview } from "../src/actions/pulls.ts";
+import { setIssueState } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { parseBunTestFailure } from "../src/checks/bun-test.ts";
 import { summariseCheckFailure } from "../src/checks/summary.ts";
@@ -515,44 +516,58 @@ describe("checks", () => {
     expect(middle?.summary).toContain("superseded by");
   }, 60_000);
 
-  test("merging a pull leaves no queued or running run for it", async () => {
-    const blocker = await commitToBranch(app, alice, repo, {
-      message: "Hold the lane",
-      files: [
-        { path: "forge.json", content: checkJson("sleep 2 && test -f OK.md") },
-      ],
-    });
-    if (!blocker.ok) throw new Error(JSON.stringify(blocker.error));
-    await checks.request(repo, "lane", blocker.value.commitOid, "push");
-    const branched = await commitToBranch(app, alice, repo, {
-      branch: "lands-soon",
-      message: "Lands before its check runs",
-      files: [{ path: "LANDS.md", content: "x\n" }],
-    });
-    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
-    const opened = await openPull(app, alice, repo, {
-      title: "Lands soon",
-      baseBranch: "main",
-      headBranch: "lands-soon",
-    });
-    if (!opened.ok) throw new Error(String(opened.error));
-    const pull = opened.value;
-    const mine = (): Run[] =>
-      listRuns(app.db, repo.id, { kind: "check" }).filter(
-        (r) => r.issueId === pull.id,
-      );
-    const until = async (done: () => boolean): Promise<void> => {
-      const deadline = Date.now() + 10_000;
-      while (!done() && Date.now() < deadline) await Bun.sleep(25);
-    };
-    await until(() => mine().length > 0);
-    expect(mine().some((r) => r.state === "queued")).toBe(true);
-    const landed = await mergePull(app, alice, repo, pull, "merge");
-    if (!landed.ok) throw new Error(String(landed.error));
-    await until(() => mine().every((r) => r.state !== "queued"));
-    expect(mine().filter((r) => r.state === "queued")).toEqual([]);
-    expect(mine().some((r) => r.summary === "pull landed")).toBe(true);
-  }, 60_000);
+  for (const ending of ["merge", "close"] as const)
+    test(`${ending === "merge" ? "merging" : "closing"} a pull leaves no queued or running run for it`, async () => {
+      const blocker = await commitToBranch(app, alice, repo, {
+        message: "Hold the lane",
+        files: [
+          {
+            path: "forge.json",
+            content: checkJson("sleep 2 && test -f OK.md"),
+          },
+        ],
+      });
+      if (!blocker.ok) throw new Error(JSON.stringify(blocker.error));
+      await checks.request(repo, "lane", blocker.value.commitOid, "push");
+      const branched = await commitToBranch(app, alice, repo, {
+        branch: `lands-${ending}`,
+        message: "Lands before its check runs",
+        files: [{ path: "LANDS.md", content: "x\n" }],
+      });
+      if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+      const opened = await openPull(app, alice, repo, {
+        title: "Lands soon",
+        baseBranch: "main",
+        headBranch: `lands-${ending}`,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      const pull = opened.value;
+      const mine = (): Run[] =>
+        listRuns(app.db, repo.id, { kind: "check" }).filter(
+          (r) => r.issueId === pull.id,
+        );
+      const until = async (done: () => boolean): Promise<void> => {
+        const deadline = Date.now() + 10_000;
+        while (!done() && Date.now() < deadline) await Bun.sleep(25);
+      };
+      await until(() => mine().length > 0);
+      expect(mine().some((r) => r.state === "queued")).toBe(true);
+      if (ending === "merge") {
+        const landed = await mergePull(app, alice, repo, pull, "merge");
+        if (!landed.ok) throw new Error(String(landed.error));
+      } else {
+        const closed = setIssueState(app, alice, repo, pull, "closed");
+        if (!closed.ok) throw new Error(String(closed.error));
+      }
+      await until(() => mine().every((r) => r.state !== "queued"));
+      expect(mine().filter((r) => r.state === "queued")).toEqual([]);
+      expect(
+        mine().some(
+          (r) =>
+            r.summary === (ending === "merge" ? "pull landed" : "pull closed"),
+        ),
+      ).toBe(true);
+    }, 60_000);
 
   test("pickNext takes the newest queued check, unless one has starved", () => {
     const a = createRun(app.db, { repoId: repo.id, kind: "check", env: "a" });
