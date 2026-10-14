@@ -24,6 +24,8 @@ import {
   retries,
   ROOT_CAUSES,
   shuffled,
+  tightBounds,
+  WALL_CLOCK_FLOOR_MS,
 } from "../scripts/flake.ts";
 
 const root = new URL("..", import.meta.url).pathname;
@@ -128,6 +130,7 @@ describe("the issue", () => {
       "order dependence",
       "a leaked server",
       "a timeout set near the real duration",
+      "a tight wall-clock bound",
     ]);
     for (const cause of ROOT_CAUSES)
       expect(body).toContain(`- [ ] ${cause.name}`);
@@ -251,5 +254,32 @@ describe("no retry in the gate", () => {
       ...GATE.filter((file) => file !== "test/flake.test.ts"),
     ];
     expect(named.flatMap((path) => retries(path, read(path)))).toEqual([]);
+  });
+});
+
+describe("no tight wall-clock bound in a test", () => {
+  test("the detector sees a measured time bounded below the floor", () => {
+    expect(WALL_CLOCK_FLOOR_MS).toBe(200);
+    expect(tightBounds("x", "expect(times[2]!).toBeLessThan(50);")).toHaveLength(1);
+    expect(
+      tightBounds("x", "expect(performance.now() - t0).toBeLessThanOrEqual(1_99);"),
+    ).toHaveLength(1);
+    expect(tightBounds("x", "expect(elapsed).toBeLessThan(100);")).toHaveLength(1);
+    expect(tightBounds("x", "expect(out.ms).toBeLessThan(150);")).toHaveLength(1);
+    // At the floor, or above it, is generous enough.
+    expect(tightBounds("x", "expect(times[2]!).toBeLessThan(200);")).toEqual([]);
+    expect(tightBounds("x", "expect(elapsed).toBeLessThan(2_000);")).toEqual([]);
+    // A count or a size is not a clock.
+    expect(tightBounds("x", "expect(lines.length).toBeLessThan(20);")).toEqual([]);
+    expect(tightBounds("x", "expect(res.status).toBeLessThan(400);")).toEqual([]);
+  });
+
+  test("no test file bounds a request or a spawn below the floor", () => {
+    const files = readdirSync(`${root}test`)
+      .filter((name) => name.endsWith(".test.ts"))
+      // This file holds the detector's own examples.
+      .filter((name) => name !== "flake.test.ts")
+      .map((name) => `test/${name}`);
+    expect(files.flatMap((path) => tightBounds(path, read(path)))).toEqual([]);
   });
 });

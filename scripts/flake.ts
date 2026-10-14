@@ -21,6 +21,13 @@ export const HUNT_RUNS = 5;
 /** The title prefix of the issue the hunt files; quarantine reads it back. */
 export const FLAKY_TITLE = "Flaky: ";
 
+/**
+ * The least a test may bound a request or a spawn by, in wall-clock ms. A
+ * loopback fetch on a loaded shared runner takes tens of milliseconds; a
+ * bound below this goes red on load, not on the regression it guards.
+ */
+export const WALL_CLOCK_FLOOR_MS = 200;
+
 /** The causes a flake has; the fix is the shape, never a retry. */
 export const ROOT_CAUSES: readonly { name: string; fix: string }[] = [
   {
@@ -42,6 +49,10 @@ export const ROOT_CAUSES: readonly { name: string; fix: string }[] = [
   {
     name: "a timeout set near the real duration",
     fix: "make the work fast, or wait on the event itself; never raise the number to fit a loaded box",
+  },
+  {
+    name: "a tight wall-clock bound",
+    fix: `assert a speed relative to a baseline measured in the same run, or bound it at ${WALL_CLOCK_FLOOR_MS} ms or more so only the failure the test names crosses it`,
   },
 ];
 
@@ -218,6 +229,24 @@ export function retries(name: string, source: string): string[] {
       /\{[^}"'`]*\bretry\s*:\s*\d/.test(line)
     )
       found.push(`${name}:${i + 1}: ${line.trim()}`);
+  });
+  return found;
+}
+
+const TIMED = /\b(?:now|elapsed|took|ms|duration|latency|times?|started|began)\b/i;
+const UPPER_BOUND =
+  /expect\(([^;]*?)\)\s*\.toBeLessThan(?:OrEqual)?\(\s*([\d_]+)\s*\)/g;
+
+/** Every line of `source` that bounds a measured time below the floor. */
+export function tightBounds(name: string, source: string): string[] {
+  const found: string[] = [];
+  source.split("\n").forEach((line, i) => {
+    for (const [, measured, bound] of line.matchAll(UPPER_BOUND))
+      if (
+        TIMED.test(measured!) &&
+        Number(bound!.replaceAll("_", "")) < WALL_CLOCK_FLOOR_MS
+      )
+        found.push(`${name}:${i + 1}: ${line.trim()}`);
   });
   return found;
 }

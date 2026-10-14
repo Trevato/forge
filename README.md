@@ -451,13 +451,17 @@ the files and (through `--randomize`) the tests inside them, nothing stopped
 early. A file red in some runs and green in others is flaky: the hunt files
 a `Flaky: test/x.test.ts` issue carrying the failure text, the seed and the
 run, with the usual root causes to tick (a shared port, a real clock, order
-dependence, a leaked server, a timeout set near the real duration); then
+dependence, a leaked server, a timeout set near the real duration, a tight
+wall-clock bound); then
 `bun scripts/flake-hunt.ts quarantine` moves every file an open `Flaky:`
 issue names from `GATE` to `EXCLUDED` under that issue and proposes the move
 as a pull. Nobody hand-edits the list. A file red in every run is broken,
 not flaky, and the check already says so. The fix is the test's shape, never
 a retry: `test/flake.test.ts` fails on `--retry`, `--rerun-each`, a bunfig
-`retry` or a `{ retry: N }` anywhere the gate runs. The workflow needs a
+`retry` or a `{ retry: N }` anywhere the gate runs, and on any test that
+bounds a measured time under 200 ms (a loopback fetch on a loaded runner
+takes tens of ms): assert relative to a baseline from the same run, or bound
+only the failure the test names. The workflow needs a
 `FORGE_TOKEN` secret and a `FORGE_URL` variable on the mirror.
 
 Bun's own `--randomize --seed=N` drives every hunt and admission run. Not
