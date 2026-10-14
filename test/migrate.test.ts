@@ -453,6 +453,12 @@ describe("migrate", () => {
         "FORGE_APP_DATA",
         "no Dockerfile, no compose",
         "could not fit",
+        "Its data:",
+        "Leave the old database untouched",
+        "one-shot import script",
+        "dump file in",
+        "how to make the dump",
+        "Never commit or read at boot a connection string",
         fixtureUrl,
       ])
         expect(issue.body).toContain(words);
