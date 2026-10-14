@@ -363,32 +363,28 @@ describe("apps, runs and the crew on the web", () => {
     // Match the real <meta> / data-stream= attributes — not the same
     // strings inside studioRunJs (a bare includes("http-equiv=…") stays
     // true after the meta is gone because the script still quotes it).
-    const fresh = listRuns(app.db, hello.id).find((r) => r.id === run!.id)!;
-    const going = fresh.state === "queued" || fresh.state === "running";
+    const isGoing = (): boolean => {
+      const s = listRuns(app.db, hello.id).find((r) => r.id === run!.id)!.state;
+      return s === "queued" || s === "running";
+    };
     const hasMetaRefresh = (html: string): boolean =>
       /<meta[^>]*http-equiv="refresh"/.test(html);
-    const hasLiveMarkers = (html: string): boolean =>
-      html.includes("data-stream=") || hasMetaRefresh(html);
-    let livePage = page;
-    if (going) {
-      expect(livePage.includes("data-stream=")).toBe(true);
-      expect(hasMetaRefresh(livePage)).toBe(true);
-    } else {
-      // DB already terminal; poll until the page drops both live markers
-      // (one re-fetch was not always enough under CI timing).
-      const deadline = Date.now() + 3_000;
-      for (;;) {
-        livePage = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
-        if (!hasLiveMarkers(livePage)) break;
-        if (Date.now() >= deadline) {
-          throw new Error(
-            `run ${run!.id} is ${fresh.state} but the page still streams/refreshes after settle`,
-          );
-        }
-        await Bun.sleep(200);
+    // Read the state before and after the render and assert only when they
+    // agree: a run that settles mid-render says nothing, so render again.
+    // A run only moves forward, so this ends once it is done.
+    const deadline = Date.now() + 5_000;
+    for (;;) {
+      const before = isGoing();
+      const html = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
+      const after = isGoing();
+      if (before === after) {
+        expect(html.includes("data-stream=")).toBe(before);
+        expect(hasMetaRefresh(html)).toBe(before);
+        break;
       }
-      expect(livePage.includes("data-stream=")).toBe(false);
-      expect(hasMetaRefresh(livePage)).toBe(false);
+      if (Date.now() >= deadline) {
+        throw new Error(`run ${run!.id} never held one state across a render`);
+      }
     }
 
     const door = await web(alice, `/runs/${run!.id}`);

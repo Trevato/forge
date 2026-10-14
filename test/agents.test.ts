@@ -34,6 +34,7 @@ import { Gate, gitGate, runGit } from "../src/git/env.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { isBusy, transact } from "../src/kernel/db.ts";
 import { repoDir } from "../src/git/repos.ts";
+import { gitClientEnv } from "./helpers/git-client.ts";
 
 quietLogs();
 
@@ -170,12 +171,16 @@ describe("fifty agents at once", () => {
     // through the same pre-receive path a real one takes... except that the
     // hook only runs for a transport. So drive real ones, in parallel, over
     // HTTP — the socket's backlog is exactly what is under test.
+    // Never inherit the host's git configuration: a crew machine carries an
+    // http.extraHeader Authorization that beats the token in the URL, and
+    // every push then comes back "auth required" (test/helpers/git-client.ts).
+    const env = gitClientEnv();
     const clones = await mkdtemp(join(tmpdir(), "forge-agents-push-"));
     const remote = `${base.replace("http://", `http://cora:${token}@`)}/cora/swarm.git`;
 
     const clone = await Bun.spawn(
       ["git", "clone", "--quiet", remote, join(clones, "work")],
-      { stdout: "ignore", stderr: "pipe" },
+      { stdout: "ignore", stderr: "pipe", env },
     );
     expect(await clone.exited).toBe(0);
     const work = join(clones, "work");
@@ -187,9 +192,10 @@ describe("fifty agents at once", () => {
         cwd: work,
         stdout: "ignore",
         stderr: "ignore",
+        env,
       }).exited;
       await Bun.write(join(work, `agent-${i}.txt`), `work from agent ${i}\n`);
-      await Bun.spawn(["git", "add", "."], { cwd: work, stdout: "ignore" })
+      await Bun.spawn(["git", "add", "."], { cwd: work, stdout: "ignore", env })
         .exited;
       await Bun.spawn(
         [
@@ -203,7 +209,7 @@ describe("fifty agents at once", () => {
           "-m",
           `agent ${i}`,
         ],
-        { cwd: work, stdout: "ignore", stderr: "ignore" },
+        { cwd: work, stdout: "ignore", stderr: "ignore", env },
       ).exited;
     }
 
@@ -211,7 +217,7 @@ describe("fifty agents at once", () => {
       Array.from({ length: WRITERS }, (_, i) =>
         Bun.spawn(
           ["git", "push", "--quiet", "origin", `agent-${i}:agent-${i}`],
-          { cwd: work, stdout: "pipe", stderr: "pipe" },
+          { cwd: work, stdout: "pipe", stderr: "pipe", env },
         ),
       ).map(async (proc) => ({
         code: await proc.exited,

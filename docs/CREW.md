@@ -1,39 +1,35 @@
-# The sentinel
+# The crew's shell
 
-The forge hunts its own faults (`src/crew/sentinel.ts`, #1131). It reads what
-the forge already holds and files what is wrong, with the evidence quoted.
+An agent's shell runs inside Claude Code's sandbox (`src/crew/sandbox.ts` is
+the policy, `src/crew/claude.ts` the settings): the network is the forge and
+the package registry, writes stay in the clone and the run's own `tmpDir`,
+and the machine's temp directory, the forge's data and the operator's
+credentials are unreadable. No command runs outside it on request.
 
-**When.** On the autonomy clock: a hunt an hour, and one sooner (never within
-ten minutes of the last) when a signal is new — queued checks waiting while no
-run uses a slot, or a capacity setting away from its default for over a day.
+## Running this repository's tests inside it
 
-**What it reads.**
+On Linux the sandbox refuses the bind of a unix socket, and the forge's
+internal listener (the git hooks' door) is one. Claude Code can only allow
+unix sockets all or none, which would open every socket the machine has, so
+the boundary is kept instead: a run's environment carries
+`FORGE_TEST_SOCKET=port`, and the forge listens on a loopback port
+(`tcp:127.0.0.1:<port>`, `src/git/hook-address.ts`) where it would use a
+socket. Loopback ports were already allowed (`allowLocalBinding`), and
+`localhost` outside the sandbox stays unreachable.
 
-| Fault | Read from |
-| --- | --- |
-| a slot held by a finished run | `run`: queued work older than 30 min, nothing running or every lease lapsed |
-| a check never green; pushes that cannot land | the last 20 `check` / `agent` run summaries per repository |
-| `retry` stops, guard parks | the decision ledger (`decisionsSince`) |
-| a setting left away from default | `forge_setting` against `capacityDefault` |
-| a hand-installed trigger | `sqlite_master` against a scratch database migrated from the schema |
-| the same ERROR line again and again | the error ring (`kernel/log.ts`) |
+What an agent can run: the type check and `bun test` over `test/`, with no
+failures. A cell reaches its egress proxy through a unix socket, which cannot
+be put on a port, so in port mode `cellsAvailable()` answers no
+(`FORGE_TEST_SOCKET=port: no unix sockets`) and deploys and checks run
+uncontained, as with `FORGE_CELLS=off`. The suites that are about sockets and
+cells themselves skip in port mode and show as skipped: stale-socket recovery
+and two forges on one data directory (`test/hardening.test.ts`), the egress
+proxy and the cell-limit and probe suites (`test/contain.test.ts`), and the
+socket-copy test in `test/apps-adversarial.test.ts`. The forge's check runs
+them on every push and sends the log back.
 
-**What it files.** One issue per finding, titled `Sentinel: …`, with the
-evidence, the pillar, and *what to look for when fixed*. `sentinel_finding`
-remembers the key and the issue: a finding still open is a comment on its
-issue, and only when its evidence changed; one whose issue was closed and
-returned is filed again. It files in `FORGE_SENTINEL_REPO` (default
-`trevato/forge`) as the `sentinel` agent, else the first admin.
-
-**What it shows.** To a site admin only: the board's forge strip and the
-terminal palette's `Sentinel` command show the count of open findings and the
-last hunt's time. A hunt is synchronous, so there is no "hunting" state to show.
-
-**What it never quotes.** Evidence passes through `scrub` (`redactSecrets` and
-any 32-character unbroken token) before it is filed, since the repository may
-be public.
-
-**Not done.** Ingress routes and other edge objects are not in this database,
-so the sentinel cannot see them. It does not open fix pulls: a finding with a
-mechanical fix says what it is, and a crew run takes the issue up. Direction at
-its cap and WARN lines are not read yet.
+Not proven from inside a sandbox: that a sandboxed shell reaches its own server
+and is still refused `localhost` outside the sandbox and every `denyRead` path.
+Nesting a sandbox is not possible there, so `test/crew-sandbox.test.ts` checks
+the settings that enforce it (`allowLocalBinding` on, `allowAllUnixSockets` off,
+the `denyRead` list) and not the boundary itself.

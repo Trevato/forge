@@ -43,7 +43,7 @@ import {
   verifyPassword,
 } from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
-import { healthResponse } from "./health.ts";
+import { liveResponse, readyResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
@@ -53,6 +53,11 @@ import {
   serviceRpc,
   type GitService,
 } from "../git/smart-http.ts";
+import { timingSafeEqual } from "node:crypto";
+import {
+  forwardedGitEnv,
+  HOOK_SECRET_HEADER,
+} from "../git/hook-protocol.ts";
 import { lstat, readdir, rm } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -175,7 +180,7 @@ import {
   tellSubmit,
 } from "../web/studio/actions.ts";
 import { everydayCreate, everydayKeep, everydaySwitch } from "../web/pages/everyday.ts";
-import { claimFragmentPage, claimPage, claimSubmit } from "../web/pages/claim.ts";
+import { claimFragmentPage, claimSubmit } from "../web/pages/claim.ts";
 import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
@@ -245,7 +250,11 @@ import {
   crewPage,
 } from "../web/pages/crew.ts";
 import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
-import { changePage, pullPage } from "../web/studio/change.ts";
+import {
+  changePage,
+  pullPage,
+  pullStateFragment,
+} from "../web/studio/change.ts";
 import {
   pullCommentSubmit,
   pullFilesPage,
@@ -399,6 +408,7 @@ import {
   resolveAppHost,
 } from "../apps/proxy.ts";
 
+import { portInsteadOfSocket, tcpAddress } from "../git/hook-address.ts";
 import { closeHostedChildren, resolveHostedChild } from "../spawn/host.ts";
 import { getVerifiedDomain } from "../core/domains.ts";
 
@@ -532,13 +542,11 @@ export function buildRouter(): Router<Handler> {
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
   router.add("GET", "/claim", claimFragmentPage);
   router.add("POST", "/claim", claimSubmit);
-  router.add("GET", "/claim/:token", claimPage);
   // "+ New forge": the spawn door as a page, any signed-in person (spawn/door.ts).
   router.add("GET", "/forges", forgesPage);
   router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
-  router.add("POST", "/claim/:token", claimSubmit);
   // The front page as a stranger sees it, for anyone; a site admin there
   // also gets the controls that decide it (#686).
   router.add("GET", "/front", studioDoor);
@@ -812,7 +820,8 @@ export function buildRouter(): Router<Handler> {
     withGitAccess(ctx, "git-receive-pack", (dir, repoId) =>
       serviceRpc(dir, "git-receive-pack", ctx.request, {
         env: hookEnv({
-          socketPath: ctx.app.socketPath,
+          socketPath: ctx.app.hookAddress.current,
+          secret: ctx.app.hookSecret,
           repoId,
           actorId: ctx.auth.user?.id ?? "",
         }),
@@ -914,6 +923,7 @@ export function buildRouter(): Router<Handler> {
   // box, one tab under the change itself.
   router.add("GET", "/:owner/:name/pulls/:number/files", pullFilesPage);
   router.add("GET", "/:owner/:name/pulls/:number/thread", pullThreadFragment);
+  router.add("GET", "/:owner/:name/pulls/:number/state", pullStateFragment);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/review", pullReviewSubmit);
   // The verdict on the change as a whole, and the threads it settles.
@@ -1379,8 +1389,16 @@ const fromStored = (stored: StoredResponse, replay: boolean): Response =>
 
 // ---- the internal server (unix socket, hooks only) ----
 
+/** Whether the request carries this boot's hook secret (constant-time). */
+function hookCallerAllowed(app: App, request: Request): boolean {
+  const given = Buffer.from(request.headers.get(HOOK_SECRET_HEADER) ?? "");
+  const want = Buffer.from(app.hookSecret);
+  return given.length === want.length && timingSafeEqual(given, want);
+}
+
 async function handleHook(app: App, request: Request): Promise<Response> {
-  const input = (await request.json()) as HookRequest;
+  const parsed = (await request.json()) as HookRequest;
+  const input: HookRequest = { ...parsed, gitEnv: forwardedGitEnv(parsed.gitEnv) };
   const repo = getRepoById(app.db, input.repoId);
   if (!repo) return new Response("unknown repository", { status: 400 });
 
@@ -1716,9 +1734,15 @@ export async function serve(app: App): Promise<Servers> {
     },
   });
 
+  const onPort = portInsteadOfSocket();
   const internal = Bun.serve({
-    unix: app.socketPath,
+    ...(onPort ? { hostname: "127.0.0.1", port: 0 } : { unix: app.socketPath }),
     fetch(request) {
+      // The socket's file mode used to be the only door check; a loopback
+      // port has none, so every internal request proves the boot secret.
+      if (!hookCallerAllowed(app, request)) {
+        return new Response("forbidden", { status: 403 });
+      }
       const url = new URL(request.url);
       if (request.method === "POST" && url.pathname === "/internal/hook") {
         return handleHook(app, request);
@@ -1727,6 +1751,7 @@ export async function serve(app: App): Promise<Servers> {
     },
   });
 
+  if (onPort) app.hookAddress.current = tcpAddress(internal.port ?? 0);
   const port = web.port ?? 0;
   return {
     url: `http://localhost:${port}`,
@@ -1746,7 +1771,7 @@ export async function serve(app: App): Promise<Servers> {
 }
 
 /**
- * One request against the forge's own routes: health, the route that
+ * One request against the forge's own routes: liveness and readiness, the route that
  * matched or the two shapes of "no route", the limiter, and the handler.
  * The response it returns has not been given the security floor yet — that
  * is the caller's single door, above.
@@ -1777,7 +1802,9 @@ async function answerGet(
   request: Request,
 ): Promise<Response> {
   const url = publicUrl(request, app.config.url);
-  if (url.pathname === "/healthz") return healthResponse();
+  if (url.pathname === "/healthz")
+    return liveResponse(() => app.db.query("select 1").get(), app.log);
+  if (url.pathname === "/readyz") return readyResponse();
   const routeMethod = request.method === "HEAD" ? "GET" : request.method;
   // The one place a path decides its own shape of miss: anything under
   // `/api` matches only against the API's own routes, so a studio route as

@@ -283,6 +283,10 @@ export interface CheckManifest {
   readonly run: string;
   /** Runs first, in the checkout. `null` skips it. */
   readonly install: string | null;
+  /** The fast tier, run on every push to a pull. `null`: `run` is the only tier. */
+  readonly fast: string | null;
+  /** The full tier, run once when a pull lands. Defaults to `run`. */
+  readonly full: string;
   /** Seconds the check may take before it fails. */
   readonly timeout: number;
   /** Hosts its steps may reach besides the forge and the npm registry. */
@@ -315,6 +319,10 @@ export function parseCheck(
     return invalid("forge.json: check.run is required");
   const install = command(check, "install", "check");
   if (!install.ok) return install;
+  const fast = command(check, "fast", "check");
+  if (!fast.ok) return fast;
+  const full = command(check, "full", "check");
+  if (!full.ok) return full;
   const pkg = packageJson === undefined ? undefined : readPackage(packageJson);
   if (pkg !== undefined && !pkg.ok) return pkg;
   const timeout = check["timeout"];
@@ -334,6 +342,8 @@ export function parseCheck(
   if (!limits.ok) return limits;
   return ok({
     run: run.value,
+    fast: fast.value || null,
+    full: full.value || run.value,
     egress: egress.value,
     limits: limits.value,
     install:

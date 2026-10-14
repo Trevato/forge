@@ -51,6 +51,7 @@ import {
   createRun,
   finishRun,
   getRun,
+  isTerminal,
   listRuns,
   markServing,
   noteRunProgress,
@@ -58,6 +59,7 @@ import {
   STOPPED_SUMMARY,
   type Run,
 } from "../src/core/runs.ts";
+import { liveClientJs } from "../src/web/live.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import type { Decider } from "../src/crew/decide.ts";
 import { CHECK_FAILED_LIMIT } from "../src/crew/dispatch.ts";
@@ -2540,6 +2542,41 @@ describe("every open pull's preview on the studio page", () => {
       redirect: "manual",
     });
 
+  const WAIT_MS = 60_000;
+
+  /** The deploys this repo has not finished, as "env:state" words. */
+  const unfinished = () =>
+    listRuns(app.db, repo.id, { kind: "deploy", limit: 50 })
+      .filter((r) => !isTerminal(r.state))
+      .map((r) => `${r.env}:${r.state}`);
+
+  /** Wait until the runtime has no deploy open or queued, so the next case
+   * does not queue behind this one's (concurrency is 1). */
+  async function deploysIdle(): Promise<void> {
+    const deadline = Date.now() + WAIT_MS;
+    while (unfinished().length > 0) {
+      if (Date.now() > deadline)
+        throw new Error(`deploys still open: ${unfinished().join(", ")}`);
+      await Bun.sleep(50);
+    }
+  }
+
+  /** Wait for `env` to serve; fail naming the state it reached. */
+  async function previewServes(record: AppRecord, env: EnvName): Promise<void> {
+    const deadline = Date.now() + WAIT_MS;
+    while (runtime.envStatus(record, env)?.state !== "running") {
+      if (Date.now() > deadline) {
+        const status = runtime.envStatus(record, env);
+        throw new Error(
+          `${env} did not serve within ${WAIT_MS} ms: state ${status?.state ?? "absent"}` +
+            (status?.error ? ` (${status.error})` : "") +
+            `; open deploys: ${unfinished().join(", ") || "none"}`,
+        );
+      }
+      await Bun.sleep(50);
+    }
+  }
+
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-studio-previews-"));
     app = createApp({ dataDir, port: 0 });
@@ -2637,7 +2674,10 @@ describe("every open pull's preview on the studio page", () => {
     const after = await (await get("/alice/widget")).text();
     expect(after).not.toContain("<h2>Previews</h2>");
     expect(after).not.toContain(`pull-${pull.number}/open`);
-  }, 30_000);
+    // The merge queues production's deploy and the pull's was cut short;
+    // leave the single deploy slot free for the next case.
+    await deploysIdle();
+  }, 120_000);
 
   test("a change's page names its preview's data as its own copy and gives the moment it was taken; production's card does not", async () => {
     const alice = getUserByName(app.db, "alice")!;
@@ -2659,12 +2699,7 @@ describe("every open pull's preview on the studio page", () => {
     const record = getAppByRepo(app.db, repo.id)!;
     const env = `pull-${pull.number}` as const;
 
-    const deadline = Date.now() + 30_000;
-    while (
-      Date.now() < deadline &&
-      runtime.envStatus(record, env)?.state !== "running"
-    )
-      await Bun.sleep(100);
+    await previewServes(record, env);
     expect(runtime.envStatus(record, env)?.state).toBe("running");
 
     const note = "its own copy of production's data, taken";
@@ -2680,7 +2715,7 @@ describe("every open pull's preview on the studio page", () => {
     ).text();
     expect(changePage).toContain("<h2>Preview</h2>");
     expect(changePage).toContain(note);
-  }, 30_000);
+  }, 120_000);
 });
 
 /**
@@ -3429,6 +3464,60 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(refusedFragment.status).toBe(404);
     const refusedPage = await get("/alice/vault", stranger);
     expect(refusedPage.status).toBe(404);
+  });
+
+  test("a change's page has a state fragment of its own: its current word, drawn by the page's own function, refused to whoever the page refuses, and named by the client script (#1094)", async () => {
+    const branch = await commitToBranch(app, getUserByName(app.db, "alice")!, repo, {
+      branch: "feature/ship-it",
+      base: "main",
+      message: "Ship it",
+      files: [{ path: "SHIP.md", content: "ship\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, getUserByName(app.db, "alice")!, repo, {
+      title: "Ship it",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/ship-it",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const n = opened.value.number;
+
+    const fragment = await get(`/alice/vault/pulls/${n}/state`, owner);
+    expect(fragment.status).toBe(200);
+    expect(fragment.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(fragment.headers.get("referrer-policy")).toBe("same-origin");
+    const text = await fragment.text();
+    expect(text).toContain('id="pull-check"');
+    expect(text).toContain('id="pull-preview"');
+    expect(text).toContain("studio-pull-check");
+    // The page's first paint carries the very same check line.
+    const pageText = await (await get(`/alice/vault/pulls/${n}`, owner)).text();
+    const line = (t: string) =>
+      t.match(/<p[^>]*studio-pull-check[^>]*>[\s\S]*?<\/p>/)?.[0];
+    expect(line(text)).toBeDefined();
+    expect(line(pageText)).toBe(line(text));
+    expect(pageText).toContain('id="pull-check"');
+    expect(pageText).toContain('data-head="');
+
+    expect((await get(`/alice/vault/pulls/${n}/state`, stranger)).status).toBe(404);
+    expect((await get(`/alice/vault/pulls/999/state`, owner)).status).toBe(404);
+
+    const merged = await mergePull(app, getUserByName(app.db, "alice")!, repo, opened.value, "squash");
+    if (!merged.ok) throw new Error(String(merged.error));
+    const after = await (await get(`/alice/vault/pulls/${n}/state`, owner)).text();
+    expect(line(after)).not.toBe(line(text));
+    // The squash lands a new commit; the fragment names it, so a page that
+    // saw the merge live can match production's serving against it.
+    const headOf = (t: string) => t.match(/data-head="([0-9a-f]{40})"/)?.[1];
+    expect(headOf(text)).toBeDefined();
+    expect(headOf(after)).toBeDefined();
+    expect(headOf(after)).not.toBe(headOf(text));
+    expect(liveClientJs).toContain("#pull-check [data-head]");
+
+    expect(liveClientJs).toContain("'/pulls/' + number + '/state'");
+    expect(liveClientJs).toContain("'pull.merged'");
+    expect(liveClientJs).toContain("'app.serving'");
   });
 
   test("Now has an address of its own: the page's region names it, the fragment answers with the same region, and unchanged bytes come back 304", async () => {
