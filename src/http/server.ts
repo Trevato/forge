@@ -240,6 +240,7 @@ import {
   runsList,
 } from "../web/pages/runs.ts";
 import { lookImage } from "../web/pages/looks.ts";
+import { ogCard } from "../web/pages/og.ts";
 import { bigRedirect, boardPage } from "../web/pages/board.ts";
 import { returnsPage } from "../web/pages/returns.ts";
 import {
@@ -992,6 +993,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/runs/:id", runPage);
   router.add("POST", "/:owner/:name/runs/:id/cancel", runCancel);
   router.add("POST", "/:owner/:name/runs/:id/steer", runSteer);
+  // The public social cards: a repo as owner~name, an app as its slug.
+  router.add("GET", "/og/repo/:ref.svg", ogCard("repo"));
+  router.add("GET", "/og/app/:ref.svg", ogCard("app"));
   // The pictures of an environment, read like the repository.
   router.add("GET", "/:owner/:name/looks/:env/:commit/:kind.png", lookImage);
 
