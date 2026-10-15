@@ -858,9 +858,13 @@ const askFormId = (d: Decision): string => `ask-${d.id}`;
  */
 export function decisionForm(d: Decision): Html | null {
   const pull = d.pull;
+  const own = html`id="${askFormId(d)}" method="post" hidden`;
+  if (d.kind === "parked")
+    return html`<form ${own} action="/asks/decide">
+      <input type="hidden" name="ask" value="${d.id}" />
+    </form>`;
   if (pull === undefined) return null;
   const base = repoBase(d.repo);
-  const own = html`id="${askFormId(d)}" method="post" hidden`;
   if (d.kind === "stopped")
     return html`<form ${own} action="${base}/pulls/${pull.number}/state">
       <input type="hidden" name="state" value="closed" />
@@ -932,7 +936,11 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
         size: "sm",
         variant: "primary",
       }),
-      others: [],
+      // Only where a decider is there to answer.
+      others:
+        ctx.app.config.decider === undefined
+          ? []
+          : [btn("Let the decider", { size: "sm", form: askFormId(d) })],
     };
   return {
     primary: btn("Settings", { href: `${base}/settings/autonomy`, size: "sm" }),
