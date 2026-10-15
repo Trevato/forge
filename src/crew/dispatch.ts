@@ -56,7 +56,7 @@ import { getUserById } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
-import { followDivergence } from "./converge.ts";
+import { followDivergence, settleAll, settleOnPush } from "./converge.ts";
 import { breakerTripped } from "./breaker.ts";
 import {
   CAP_NOTE,
@@ -187,6 +187,7 @@ export async function startCrew(
   });
   // A fork whose parent moved past it is the crew's to converge.
   const unfollow = followDivergence(app);
+  const unsettle = settleOnPush(app);
   // Repositories that run on their own take a turn once a minute, on the
   // same clock as the pump, so a pick becomes a run on the next tick.
   let lastAutonomy = 0;
@@ -195,6 +196,9 @@ export async function startCrew(
     requeueInterrupted(app);
     if (Date.now() - lastAutonomy >= AUTONOMY_TICK_MS) {
       lastAutonomy = Date.now();
+      settleAll(app).catch((error) =>
+        log.error("converge sweep failed", { error: String(error) }),
+      );
       autonomyTick(app).catch((error) =>
         log.error("autonomy tick failed", { error: String(error) }),
       );
@@ -214,6 +218,7 @@ export async function startCrew(
       clearInterval(timer);
       unsubscribe();
       unfollow();
+      unsettle();
       if (options.drain === true && inFlight.size > 0) {
         // Let what is in flight finish: a run cut short is a person's
         // money spent twice. The new forge takes new work meanwhile.
