@@ -119,29 +119,3 @@ export function carriedBy(db: Database, runId: string): number[] {
     .map((row) => row.pull_number);
 }
 
-/** The pull numbers each of these runs carries, in one read; runs that carry none are absent. */
-export function carriedByRuns(
-  db: Database,
-  runIds: readonly string[],
-): Map<string, number[]> {
-  const found = new Map<string, number[]>();
-  if (runIds.length === 0) return found;
-  const rows = db
-    .query<{ run_id: string; pull_number: number }, string[]>(
-      `SELECT run_id, pull_number FROM deploy_pull
-        WHERE run_id IN (${runIds.map((_, i) => `?${i + 1}`).join(",")})
-        ORDER BY run_id, pull_number`,
-    )
-    .all(...runIds);
-  for (const row of rows) {
-    const list = found.get(row.run_id) ?? [];
-    list.push(row.pull_number);
-    found.set(row.run_id, list);
-  }
-  return found;
-}
-
-/** `carries #3 #5`, or nothing when a deploy carries no pull. */
-export function carriesText(numbers: readonly number[]): string {
-  return numbers.length === 0 ? "" : `carries ${numbers.map((n) => `#${n}`).join(" ")}`;
-}
