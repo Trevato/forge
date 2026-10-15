@@ -40,6 +40,7 @@ import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
 import { field, readForm } from "../form.ts";
+import { passkeyJs } from "../passkey-client.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
@@ -77,7 +78,7 @@ export function sessionCookie(
  * protocol-relative `//evil.example` is a redirect off-site wearing a path's
  * clothes, so it is refused with everything else that isn't a plain path.
  */
-function safeNext(raw: string | null): string | undefined {
+export function safeNext(raw: string | null): string | undefined {
   if (raw === null || raw === "") return undefined;
   if (!raw.startsWith("/") || raw.startsWith("//")) return undefined;
   if (raw.includes("\\") || /[\n\r]/.test(raw)) return undefined;
@@ -460,6 +461,13 @@ function authForm(
   return html`<div class="narrow">
     ${pageHead(kind === "signin" ? "Sign in" : "Create your account")}
     ${card(body)}
+    ${when(
+      kind === "signin",
+      () => html`<p class="mt">
+        <button type="button" id="passkey-signin" class="btn" data-variant="outline">Sign in with a passkey</button>
+        <span class="error-note small" id="passkey-signin-note" role="status"></span>
+      </p>`,
+    )}
     ${claimable
       ? html`<p class="muted small mt" id="claim-door">
           Was this forge made for you? <a href="/claim">Claim it with your code</a>.
@@ -469,7 +477,12 @@ function authForm(
 }
 
 export function signinPage(ctx: Ctx): Response {
-  return page({ ctx, title: "Sign in", body: authForm(ctx, "signin") });
+  return page({
+    ctx,
+    title: "Sign in",
+    body: authForm(ctx, "signin"),
+    scriptJs: passkeyJs,
+  });
 }
 
 /** The widget's public site key, when signup is gated on Turnstile. */
@@ -499,7 +512,7 @@ export function signupPage(ctx: Ctx): Response {
  */
 const signinLimits = new WeakMap<Ctx["app"], RateLimiter>();
 
-function signinAllowed(ctx: Ctx, username: string): number | undefined {
+export function signinAllowed(ctx: Ctx, username: string): number | undefined {
   let limiter = signinLimits.get(ctx.app);
   if (limiter === undefined) {
     limiter = new RateLimiter({ perMinute: 0, adminPerMinute: 0, enabled: true });

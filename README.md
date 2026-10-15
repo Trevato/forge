@@ -84,6 +84,12 @@ sees `Reduced protection: …` in one line, under the filter on the terminal's
 first screen and in the web footer; nobody else does, and a fully protected
 forge shows nothing.
 
+Passkeys: Settings → Passkeys lists, adds and removes them (several per
+account; `src/auth/webauthn.ts` verifies, no dependency, `none` attestation).
+The sign-in page's "Sign in with a passkey" gives the same HttpOnly session a
+password does. The relying party is the address the browser used (or
+`FORGE_URL`), so a passkey does not follow a forge to another hostname.
+
 Your SSH key is your identity. A key the forge knows signs you straight in; any
 other key browses public repos as a guest and can press `s` to sign in with a
 username and password — which links that key to your account, so the next

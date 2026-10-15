@@ -54,7 +54,7 @@ import {
 } from "../ui.ts";
 import { everydayLine } from "./everyday.ts";
 
-type Section = "profile" | "password" | "tokens" | "keys";
+type Section = "profile" | "password" | "tokens" | "keys" | "passkeys";
 
 // The section list lives beside the newest page that joins it, so adding one
 // cannot leave the others pointing at a nav that has forgotten it.
@@ -68,11 +68,13 @@ export function accountShell(
   title: string,
   body: Html,
   status = 200,
+  scriptJs?: string,
 ): Response {
   return page(
     {
       ctx,
       title,
+      ...(scriptJs === undefined ? {} : { scriptJs }),
       body: html`<div class="page-head"><h1>${title}</h1></div>
         ${settingsLayout(sections(ctx, current), body, "Account settings")}`,
     },

@@ -89,6 +89,14 @@ import {
   verifyPage,
   themeSubmit,
 } from "../web/pages/site.ts";
+import {
+  passkeyAdd,
+  passkeyDelete,
+  passkeyOptions,
+  passkeysPage,
+  signinOptions,
+  signinPasskey,
+} from "../web/pages/passkeys.ts";
 import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { reconnectSubmit } from "../web/pages/frozen.ts";
@@ -655,6 +663,12 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
   router.add("POST", "/settings/sessions/:id/delete", sessionDelete);
+  router.add("GET", "/settings/passkeys", passkeysPage);
+  router.add("POST", "/settings/passkeys/options", passkeyOptions);
+  router.add("POST", "/settings/passkeys", passkeyAdd);
+  router.add("POST", "/settings/passkeys/:id/delete", passkeyDelete);
+  router.add("POST", "/signin/passkey/options", signinOptions);
+  router.add("POST", "/signin/passkey", signinPasskey);
   // The crew: a forge admin's section, hidden from everyone else.
   router.add("GET", "/settings/subscriptions", subscriptionsPage);
   router.add("POST", "/settings/subscriptions", subscriptionAdd);

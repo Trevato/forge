@@ -537,6 +537,15 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/settings\/passkeys\/([^/]+)\/delete$/,
+    describe: () => ({
+      verb: "Remove passkey",
+      title: "Remove this passkey?",
+      detail: "The device holding it can no longer sign in as you.",
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/-\/teams\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Delete team",
