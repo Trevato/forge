@@ -207,7 +207,7 @@ describe("the forge over MCP", () => {
       listed.body.result.tools.map((t: any) => [t.name, t]),
     );
     expect(byName.get("tell").annotations.readOnlyHint).toBe(false);
-    expect(byName.get("tell").inputSchema.required).toEqual(["repo", "text"]);
+    expect(byName.get("tell").inputSchema.required).toEqual(["text"]);
 
     expect((await call(rw, "nothing/here")).body.error.code).toBe(-32601);
     expect(
@@ -247,6 +247,22 @@ describe("the forge over MCP", () => {
     });
     expect(refused.error).toContain("forbidden");
     expect(listIssues(app.db, game.id, { state: "open" })).toHaveLength(0);
+  });
+
+  test("tell without a repo keeps a thought and returns its id", async () => {
+    const kept = await tool(rw, "tell", { text: "  a thought, as typed " });
+    expect(typeof kept.value.thought).toBe("string");
+    const row = app.db
+      .query("SELECT author, text, source FROM thought WHERE id = ?1")
+      .get(kept.value.thought) as any;
+    expect(row).toEqual({ author: alice.id, text: "  a thought, as typed ", source: "mcp" });
+    expect(listIssues(app.db, game.id, { state: "open" })).toHaveLength(0);
+    expect((await tool(rw, "tell", { text: 5 })).error).toContain("invalid");
+    expect((await tool(ro, "tell", { text: "x" })).error).toContain("forbidden");
+    // With a repo it is still an issue.
+    expect(
+      (await tool(rw, "tell", { repo: "nobody/none", text: "x" })).error,
+    ).toContain("not_found");
   });
 
   test("tell is the studio's tell: an issue, a builder, a run", async () => {

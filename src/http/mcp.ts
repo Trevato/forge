@@ -48,6 +48,7 @@ import {
   CARD_URI,
   cardFor,
 } from "../web/studio/cards.ts";
+import { keepThought } from "../actions/thought.ts";
 import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
 import { readReturns, reportSpend } from "../actions/returns.ts";
 import {
@@ -296,7 +297,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "tell",
     description:
-      "Tell an app's crew what should change. One sentence or several; the first line becomes the title. A builder is picked and starts on the crew's next tick.",
+      "Tell an app's crew what should change. One sentence or several; the first line becomes the title. A builder is picked and starts on the crew's next tick. A tell without a repo is kept, word for word, for the forge as a whole: nothing is built from it, and the answer is its thought id.",
     inputSchema: {
       type: "object",
       properties: {
@@ -314,10 +315,19 @@ const TOOLS: readonly Tool[] = [
           },
         },
       },
-      required: ["repo", "text"],
+      required: ["text"],
     },
     writes: true,
     async run(ctx, user, args) {
+      if (args["repo"] === undefined || args["repo"] === null) {
+        const kept = keepThought(ctx.app, user, args["text"], "mcp");
+        return kept.ok
+          ? good({ thought: kept.value.id })
+          : bad(
+              "invalid",
+              "text is a string of at most 20,000 characters",
+            );
+      }
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
       const where = parseContext(args["context"]);
