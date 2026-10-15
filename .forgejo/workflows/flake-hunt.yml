@@ -59,14 +59,18 @@ jobs:
     env:
       FORGE_API: ${{ vars.FORGE_URL }}/api/v1
       FORGE_REPO: ${{ github.repository }}
+      REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
     steps:
       - name: move every open flaky file out of the gate, as a pull
         env:
           FORGE_TOKEN: ${{ secrets.FORGE_TOKEN }}
           FORGE_URL: ${{ vars.FORGE_URL }}
+          TOKEN: ${{ github.token }}
         run: |
           set -eu
-          git clone -q "${FORGE_URL}/${FORGE_REPO}.git" src
+          # The internal registry with the job's token, as the hunt clones:
+          # a private repository answers no anonymous clone.
+          git clone -q "http://x-access-token:$TOKEN@$REGISTRY/$GITHUB_REPOSITORY.git" src
           cd src
           bun install --frozen-lockfile
           bun scripts/flake-hunt.ts quarantine
@@ -74,8 +78,9 @@ jobs:
           branch="flake-hunt/$(date -u +%Y-%m-%d)"
           git -c user.name=flake-hunt -c user.email=flake-hunt@forge.invalid \
             commit -qm "Quarantine the files the flake hunt found flaky" scripts/gate.ts
+          # The branch goes to the forge, where the pull is opened.
           git -c "http.extraHeader=Authorization: Bearer $FORGE_TOKEN" \
-            push -q origin "HEAD:refs/heads/$branch"
+            push -q "${FORGE_URL}/${FORGE_REPO}.git" "HEAD:refs/heads/$branch"
           curl -fsS -X POST "$FORGE_API/repos/$FORGE_REPO/pulls" \
             -H "Authorization: Bearer $FORGE_TOKEN" -H "Content-Type: application/json" \
             --data "$(BRANCH="$branch" bun -e 'const b = process.env.BRANCH; console.log(JSON.stringify({title: `Quarantine flaky tests (${b})`, head: b, base: "main", body: "Moved by `bun scripts/flake-hunt.ts quarantine`, not by hand: each file leaves GATE under the open `Flaky:` issue that carries its failure, seed and run."}))')"

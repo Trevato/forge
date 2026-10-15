@@ -187,6 +187,22 @@ export function flakyFile(title: string): string | undefined {
     : undefined;
 }
 
+/**
+ * The file an issue from the forge's list quarantines, or undefined. Only
+ * an issue the hunt filed counts: its author is the hunt's own user and the
+ * forge has not marked it `untrusted`. Anyone else's `Flaky:` title moves
+ * nothing out of GATE.
+ */
+export function huntedFile(
+  issue: { title?: unknown; authorId?: unknown; untrusted?: unknown },
+  huntUserId: string,
+): string | undefined {
+  if (huntUserId === "" || issue.authorId !== huntUserId) return undefined;
+  if (issue.untrusted !== undefined && issue.untrusted !== false)
+    return undefined;
+  return typeof issue.title === "string" ? flakyFile(issue.title) : undefined;
+}
+
 const entryFor = (file: string, reason: string, issue: number): string =>
   [
     "  {",
@@ -233,7 +249,8 @@ export function retries(name: string, source: string): string[] {
   return found;
 }
 
-const TIMED = /\b(?:now|elapsed|took|ms|duration|latency|times?|started|began)\b/i;
+const TIMED =
+  /\b(?:now|elapsed|took|ms|duration|latency|times?|started|began)\b/i;
 const UPPER_BOUND =
   /expect\(([^;]*?)\)\s*\.toBeLessThan(?:OrEqual)?\(\s*([\d_]+)\s*\)/g;
 

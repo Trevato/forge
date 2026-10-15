@@ -458,7 +458,8 @@ run, with the usual root causes to tick (a shared port, a real clock, order
 dependence, a leaked server, a timeout set near the real duration, a tight
 wall-clock bound); then
 `bun scripts/flake-hunt.ts quarantine` moves every file an open `Flaky:`
-issue names from `GATE` to `EXCLUDED` under that issue and proposes the move
+issue the hunt itself filed (its author is the token's user and the forge
+has not marked it untrusted) names from `GATE` to `EXCLUDED` under that issue and proposes the move
 as a pull. Nobody hand-edits the list. A file red in every run is broken,
 not flaky, and the check already says so. The fix is the test's shape, never
 a retry: `test/flake.test.ts` fails on `--retry`, `--rerun-each`, a bunfig

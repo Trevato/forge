@@ -10,8 +10,9 @@
  *       seed and the run (FORGE_API, FORGE_REPO, FORGE_TOKEN; FORGE_RUN_URL
  *       names the run). Exits 1 when it found one.
  *   bun scripts/flake-hunt.ts quarantine
- *       Moves every file an open `Flaky: test/….test.ts` issue names from
- *       GATE to EXCLUDED under that issue, in scripts/gate.ts. The issue is
+ *       Moves every file an open `Flaky: test/….test.ts` issue the hunt filed
+ *       (author is the token's user, not untrusted) names from GATE to
+ *       EXCLUDED under that issue, in scripts/gate.ts. The issue is
  *       the record; this is the only hand that edits the list for a flake.
  *   bun scripts/flake-hunt.ts admit test/x.test.ts [--runs 10]
  *       The file ADMISSION_RUNS times the same way; prints the record the
@@ -26,7 +27,7 @@ import {
   ADMISSION_RUNS,
   findBroken,
   findFlakes,
-  flakyFile,
+  huntedFile,
   HUNT_RUNS,
   issueFor,
   quarantine,
@@ -126,9 +127,22 @@ function forgeApi(): { api: string; repo: string; token: string } {
   return { api: api.replace(/\/+$/, ""), repo, token };
 }
 
-/** Open issues whose title names a flaky file: file → issue number. */
+/** The id of the user FORGE_TOKEN acts as: the hunt's own author. */
+async function huntUserId(api: string, token: string): Promise<string> {
+  const res = await fetch(`${api}/user`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) fail(`reading the token's user: ${res.status}`);
+  const user = (await res.json()) as { id?: unknown };
+  if (typeof user.id !== "string" || user.id === "")
+    fail("the token's user has no id");
+  return user.id;
+}
+
+/** Open issues the hunt filed naming a flaky file: file → issue number. */
 async function openFlakyIssues(): Promise<Map<string, number>> {
   const { api, repo, token } = forgeApi();
+  const self = await huntUserId(api, token);
   const found = new Map<string, number>();
   let cursor: string | number | null = "";
   for (let page = 0; page < 100 && cursor !== null; page++) {
@@ -139,12 +153,16 @@ async function openFlakyIssues(): Promise<Map<string, number>> {
     );
     if (!res.ok) fail(`listing issues: ${res.status}`);
     const body = (await res.json()) as {
-      items?: { number?: unknown; title?: unknown }[];
+      items?: {
+        number?: unknown;
+        title?: unknown;
+        authorId?: unknown;
+        untrusted?: unknown;
+      }[];
       next_cursor?: string | number | null;
     };
     for (const issue of body.items ?? []) {
-      const file =
-        typeof issue.title === "string" ? flakyFile(issue.title) : undefined;
+      const file = huntedFile(issue, self);
       if (file !== undefined && Number.isInteger(issue.number))
         found.set(file, issue.number as number);
     }
@@ -170,7 +188,9 @@ async function hunt(): Promise<number> {
   await underLoad(async () => {
     for (let i = 0; i < runs; i++) {
       const seed = freshSeed();
-      console.log(`hunt run ${i + 1}/${runs}: seed ${seed}, ${files.length} files`);
+      console.log(
+        `hunt run ${i + 1}/${runs}: seed ${seed}, ${files.length} files`,
+      );
       for (const file of shuffled(files, seed)) {
         const run = await runFile(file, seed);
         if (!run.green) console.log(`  red: ${file} (seed ${seed})`);
@@ -202,9 +222,7 @@ async function hunt(): Promise<number> {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify(
-        issueFor(flake, process.env["FORGE_RUN_URL"] ?? ""),
-      ),
+      body: JSON.stringify(issueFor(flake, process.env["FORGE_RUN_URL"] ?? "")),
     });
     const made = (await res.json().catch(() => ({}))) as { number?: unknown };
     if (!res.ok || !Number.isInteger(made.number))

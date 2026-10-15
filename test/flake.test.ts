@@ -17,6 +17,7 @@ import {
   findBroken,
   findFlakes,
   flakyFile,
+  huntedFile,
   HUNT_RUNS,
   issueFor,
   quarantine,
@@ -143,6 +144,22 @@ describe("the issue", () => {
     expect(flakyFile("Flaky: src/main.ts")).toBeUndefined();
     expect(flakyFile("Something else: test/a.test.ts")).toBeUndefined();
   });
+
+  test("only an issue the hunt itself filed quarantines a file", () => {
+    const hunt = "01huntuser";
+    expect(huntedFile({ title, authorId: hunt }, hunt)).toBe("test/a.test.ts");
+    expect(huntedFile({ title, authorId: hunt, untrusted: false }, hunt)).toBe(
+      "test/a.test.ts",
+    );
+    expect(
+      huntedFile({ title, authorId: "01someoneelse" }, hunt),
+    ).toBeUndefined();
+    expect(huntedFile({ title }, hunt)).toBeUndefined();
+    expect(
+      huntedFile({ title, authorId: hunt, untrusted: true }, hunt),
+    ).toBeUndefined();
+    expect(huntedFile({ title, authorId: "" }, "")).toBeUndefined();
+  });
 });
 
 describe("quarantine", () => {
@@ -218,7 +235,7 @@ describe("admission", () => {
     expect(out).toContain("admission: test/x.test.ts — 2/2 green");
     expect(out).toMatch(/run 2: seed \d+ green/);
     expect(code).toBe(1);
-  });
+  }, 120_000); // two `bun test` children beside busy loops: past the 5 s default
 });
 
 describe("random order", () => {
@@ -260,18 +277,35 @@ describe("no retry in the gate", () => {
 describe("no tight wall-clock bound in a test", () => {
   test("the detector sees a measured time bounded below the floor", () => {
     expect(WALL_CLOCK_FLOOR_MS).toBe(200);
-    expect(tightBounds("x", "expect(times[2]!).toBeLessThan(50);")).toHaveLength(1);
     expect(
-      tightBounds("x", "expect(performance.now() - t0).toBeLessThanOrEqual(1_99);"),
+      tightBounds("x", "expect(times[2]!).toBeLessThan(50);"),
     ).toHaveLength(1);
-    expect(tightBounds("x", "expect(elapsed).toBeLessThan(100);")).toHaveLength(1);
-    expect(tightBounds("x", "expect(out.ms).toBeLessThan(150);")).toHaveLength(1);
+    expect(
+      tightBounds(
+        "x",
+        "expect(performance.now() - t0).toBeLessThanOrEqual(1_99);",
+      ),
+    ).toHaveLength(1);
+    expect(tightBounds("x", "expect(elapsed).toBeLessThan(100);")).toHaveLength(
+      1,
+    );
+    expect(tightBounds("x", "expect(out.ms).toBeLessThan(150);")).toHaveLength(
+      1,
+    );
     // At the floor, or above it, is generous enough.
-    expect(tightBounds("x", "expect(times[2]!).toBeLessThan(200);")).toEqual([]);
-    expect(tightBounds("x", "expect(elapsed).toBeLessThan(2_000);")).toEqual([]);
+    expect(tightBounds("x", "expect(times[2]!).toBeLessThan(200);")).toEqual(
+      [],
+    );
+    expect(tightBounds("x", "expect(elapsed).toBeLessThan(2_000);")).toEqual(
+      [],
+    );
     // A count or a size is not a clock.
-    expect(tightBounds("x", "expect(lines.length).toBeLessThan(20);")).toEqual([]);
-    expect(tightBounds("x", "expect(res.status).toBeLessThan(400);")).toEqual([]);
+    expect(tightBounds("x", "expect(lines.length).toBeLessThan(20);")).toEqual(
+      [],
+    );
+    expect(tightBounds("x", "expect(res.status).toBeLessThan(400);")).toEqual(
+      [],
+    );
   });
 
   test("no test file bounds a request or a spawn below the floor", () => {
