@@ -145,6 +145,29 @@ describe("terminal On you: mutes and many in one move", () => {
     h.stop();
   });
 
+  test("chips: h hides the author of the row under the cursor, never yourself", async () => {
+    const theirs = openIssue(forge, bob, lamp, { title: "Bob's flicker" });
+    if (!theirs.ok) throw new Error("issue failed");
+    assignIssue(forge, alice, lamp, theirs.value, alice);
+    const own = issueIn(lamp, "Alice's own hum");
+    const h = await boot();
+    expect(h.text()).toContain("Bob's flicker");
+    // Walk the rows pressing h: alice's own are refused, bob's goes.
+    for (let i = 0; i < 12; i++) {
+      await h.press("h");
+      if (chipsOf(forge.db, alice.id).people.size > 0) break;
+      await h.press("j");
+    }
+    const people = chipsOf(forge.db, alice.id).people;
+    expect(people.has(alice.id)).toBe(false);
+    expect(people.has(bob.id)).toBe(true);
+    expect(h.text()).not.toContain("Bob's flicker");
+    await h.press("P");
+    expect(h.text()).toContain("Bob's flicker");
+    h.stop();
+    void own;
+  });
+
   test("a repository muted elsewhere (the web) is hidden here", async () => {
     issueIn(paint, "Paint peels");
     const h0 = await boot();

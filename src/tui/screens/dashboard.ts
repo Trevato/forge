@@ -188,7 +188,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       const repo = byId.get(id);
       if (repo !== undefined && canRead(f.db, repo, f.user)) silenced.set(id, repo);
     }
+    const off = chipsOf(f.db, f.user.id).people;
     const assigned = issues.flatMap((issue) => {
+      if (off.has(issue.authorId)) return [];
       const repo = byId.get(issue.repoId);
       if (
         repo === undefined ||
@@ -380,6 +382,18 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     setChip(f.db, f.user.id, { kind: "kind", value }, hidden);
     reload();
     ctx.toast(`${value} ${hidden ? "off" : "on"}`, "success");
+  };
+  /** `h` on an On you row switches its author off, as the web's person chip does; never yourself. */
+  const hideAuthor = (): void => {
+    const here = onYou[at("onyou").index];
+    if (f.user === undefined || here === undefined) return;
+    if (here.issue.authorId === f.user.id) {
+      ctx.toast("that one is yours", "attn");
+      return;
+    }
+    setChip(f.db, f.user.id, { kind: "person", value: here.issue.authorId }, true);
+    reload();
+    ctx.toast(`${here.issue.authorName} off`, "success");
   };
   const showPeople = (): void => {
     if (f.user === undefined) return;
@@ -615,6 +629,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         if (e.key === "m") return clear("mute"), true;
         if (e.key === "S") return shipSet(), true;
         if (e.key === "D" && item !== undefined) return handToDecider(), true;
+        if (e.key === "h") return hideAuthor(), true;
       }
       if (e.key === "u" && f.user) return undoSet(), true;
       if (e.key === "U" && f.user) return undoHand(), true;
@@ -718,8 +733,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       if (chips.people.size > 0) off.push(`${chips.people.size} people`);
       parts.push(
         off.length > 0
-          ? `off: ${off.join(", ")} · 1-4 chips${chips.people.size > 0 ? " · P people" : ""}`
-          : "1-4 chips",
+          ? `off: ${off.join(", ")} · 1-4 chips · h hide author${chips.people.size > 0 ? " · P people" : ""}`
+          : "1-4 chips · h hide author",
       );
     }
     if (marked.size > 0) parts.push(`${marked.size} marked`);
