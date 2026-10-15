@@ -48,6 +48,8 @@ import { emailVerified } from "../core/verify.ts";
 import { readHealth } from "../actions/health.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
+import { familyView } from "../spawn/family.ts";
+import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
@@ -3018,6 +3020,9 @@ export function apiRoutes(router: Router<Handler>): void {
       const wanted = input.state === undefined ? undefined : str(input.state);
       if (wanted !== undefined && wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
+      // A pull has no reason to give: "parked" is the crew's word alone.
+      if (input.reason !== undefined || input.into !== undefined)
+        return json({ error: "invalid_reason" }, 422);
       if (
         wanted === undefined &&
         text.title === undefined &&
@@ -4178,6 +4183,23 @@ export function apiRoutes(router: Router<Handler>): void {
     const state = await forgeState(ctx.app, shown);
     if (!state) return apiError("not_found", 404, "this forge was not spawned");
     return json(state);
+  });
+
+  // A child's signed heartbeat (docs/SPAWN.md): counts and version, never
+  // data. Every refusal is the same 404, so nothing says who is a child.
+  router.add("POST", "/api/v1/heartbeat", async (ctx) => {
+    const bytes = await readBounded(ctx.request, 1024);
+    if (bytes === "too_large") return apiError("not_found", 404, "no such door");
+    const raw = new TextDecoder().decode(bytes);
+    const kept = await receiveBeat(ctx.app, raw, ctx.request.headers.get(SIGNATURE_HEADER));
+    return kept ? json({ ok: true }) : apiError("not_found", 404, "no such door");
+  });
+
+  // The family (#425): the parent for anyone, the children for an admin.
+  router.add("GET", "/api/v1/family", async (ctx) => {
+    const denied = ctx.auth.user === undefined ? undefined : requireScope(ctx, "ro");
+    if (denied) return denied;
+    return json(await familyView(ctx.app, ctx.auth.user?.isAdmin === true));
   });
 
   // A forge's children (docs/SPAWN.md): an admin's, planned before made.

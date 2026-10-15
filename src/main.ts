@@ -14,6 +14,7 @@ import { backfillCarried } from "./core/carried.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
+import { startHeartbeat } from "./spawn/heartbeat.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
@@ -24,6 +25,7 @@ import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { resolveAppDomain } from "./apps/host.ts";
 import { requeueAbandonedChecks, startChecks } from "./checks/service.ts";
+import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { startLooks } from "./looks/service.ts";
 import { startProbes } from "./contract/probes.ts";
 import { startSnapshots } from "./snapshot/service.ts";
@@ -67,6 +69,27 @@ if (process.argv.includes("--preflight")) {
   const result = preflight(process.env, import.meta.dir, migrations);
   // CLI answer on the stream a person or a script reads.
   (result.ok ? console.log : console.error)(result.line);
+  process.exit(result.ok ? 0 : 1);
+}
+
+// `--rollback <sha>` starts a kept release beside the running forge and
+// exits once it reads healthy as that sha (release/rollback.ts).
+if (process.argv[2] === "--rollback") {
+  const { rollback } = await import("./release/rollback.ts");
+  const port = Number(process.env.PORT ?? 3000);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.error(`PORT must be a port number, not ${JSON.stringify(process.env.PORT ?? "").slice(0, 40)}`);
+    process.exit(1);
+  }
+  const result = await rollback({
+    dataDir: dataDirOf(process.env),
+    sha: process.argv[3] ?? "",
+    port,
+    env: process.env,
+  });
+  // CLI answer on the stream a person or a script reads.
+  if (result.ok) console.log(`rolled back: pid ${result.pid} is healthy; the previous forge is still running on the port, stop it yourself`);
+  else console.error(result.line);
   process.exit(result.ok ? 0 : 1);
 }
 
@@ -278,6 +301,7 @@ const checks =
     : startChecks(app, {
         forgeUrl,
         concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, 1),
+        redHoldMs: RED_HOLD_MS,
         // A roll lets running checks finish this long before cutting them off.
         drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 300) * 1000,
       });
@@ -331,6 +355,8 @@ const crew = appsOn && !crewHeldOff
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);
+// A spawned child reports its standing to its parent (spawn/heartbeat.ts).
+const heartbeatTimer = startHeartbeat(app);
 // Prompts from Instagram (docs/APPS.md): once a day, for each repository
 // that connected an account, the top comment on its latest Reel is told to
 // the crew. A minute's clock; nothing leaves the box until a source exists.
@@ -476,6 +502,7 @@ function shutdown(signal: NodeJS.Signals): void {
   // process that replaced this one, not to this one while it finishes.
   drainStreams();
   clearInterval(deliveryTimer);
+  clearInterval(heartbeatTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);
   clearInterval(leaseTimer);

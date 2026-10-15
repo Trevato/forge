@@ -37,7 +37,10 @@ import { startChecks } from "../src/checks/service.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 /** A decider that answers from a script: question name → choice. */
-function scripted(answers: Record<string, string>): Decider & {
+function scripted(
+  answers: Record<string, string>,
+  sureness: Record<string, number> = {},
+): Decider & {
   seen: unknown[];
 } {
   const seen: unknown[] = [];
@@ -51,7 +54,7 @@ function scripted(answers: Record<string, string>): Decider & {
         const choice = answers[key] ?? q.options[0]!;
         const probabilities: Record<string, number> = {};
         for (const o of q.options) probabilities[o] = o === choice ? 0.8 : 0.2;
-        out[key] = { choice, p: 0.8, probabilities };
+        out[key] = { choice, p: sureness[key] ?? 0.8, probabilities };
       }
       return out as { [K in keyof Q]: Answer };
     },
@@ -66,7 +69,8 @@ describe("the decision ledger", () => {
   let scout: User;
   let repo: Repo;
   const script: Record<string, string> = {};
-  const decider = scripted(script);
+  const sure: Record<string, number> = {};
+  const decider = scripted(script, sure);
   const fresh = () => getRepoById(app.db, repo.id)!;
 
   beforeAll(async () => {
@@ -419,6 +423,74 @@ describe("the decision ledger", () => {
       ).toBe(true);
     } finally {
       delete script["cause"];
+    }
+  });
+
+  test("a stop the decider is not sure of (p < 0.7) is a feedback run; a sure one parks, and the pull closes as parked", async () => {
+    const { getAgentByName } = await import("../src/core/agents.ts");
+    const scoutAgent = getAgentByName(app.db, "scout")!;
+    const redPull = async (name: string) => {
+      const branch = await commitToBranch(app, alice, repo, {
+        branch: `feature/${name}`,
+        base: "main",
+        message: name,
+        files: [{ path: `${name}.ts`, content: "export const x = 1;\n" }],
+      });
+      if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+      const opened = await openPull(app, scout, repo, {
+        title: name,
+        baseBranch: "main",
+        headBranch: `feature/${name}`,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      const pull = opened.value;
+      const run = createRun(app.db, {
+        repoId: repo.id,
+        kind: "check",
+        issueId: pull.id,
+        env: `pull-${pull.number}`,
+        commitOid: pull.headOid,
+        reason: "pull",
+      });
+      claimRun(app.db, run.id);
+      finishRun(app.db, run.id, { state: "failed", summary: "test failed: 1 of 9" });
+      return {
+        pull,
+        failure: {
+          runId: run.id,
+          kind: "check",
+          commitOid: pull.headOid,
+          env: `pull-${pull.number}`,
+          since: pull.createdAt,
+        },
+      };
+    };
+    script["retry"] = "stop";
+    script["cause"] = "change";
+    try {
+      sure["retry"] = 0.59;
+      const unsure = await redPull("unsure");
+      expect(
+        await answerFailedCheck(app, fresh(), unsure.pull, scoutAgent, unsure.failure),
+      ).toBe("reworked");
+      expect(getPull(app.db, repo.id, unsure.pull.number)?.state).toBe("open");
+      expect(
+        listRuns(app.db, repo.id, { kind: "agent" }).some(
+          (r) => r.issueId === unsure.pull.id && r.reason === "check_failed",
+        ),
+      ).toBe(true);
+
+      sure["retry"] = 0.77;
+      const certain = await redPull("certain");
+      expect(
+        await answerFailedCheck(app, fresh(), certain.pull, scoutAgent, certain.failure),
+      ).toBe("parked");
+      const closed = getIssueById(app.db, certain.pull.id)!;
+      expect(closed.state).toBe("closed");
+      expect(closed.closeReason).toBe("parked");
+    } finally {
+      delete script["cause"];
+      delete sure["retry"];
     }
   });
 

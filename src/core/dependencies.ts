@@ -188,7 +188,7 @@ export function dependenciesOf(
 export interface Held {
   readonly issueId: string;
   readonly blockedById: string;
-  readonly reason: Exclude<CloseReason, "done">;
+  readonly reason: Exclude<CloseReason, "done" | "parked">;
 }
 
 export interface Graph {

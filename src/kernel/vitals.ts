@@ -21,7 +21,8 @@ import {
 } from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { BUDGETS } from "./budgets.ts";
-import { failedSentence, lastVerdict } from "../snapshot/verdict.ts";
+import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
+import { heldChecks, redSentence } from "../checks/red_main.ts";
 
 /** Free disk under this share of the volume is something to say. */
 export const DISK_FREE_MIN = 0.1;
@@ -40,7 +41,7 @@ export interface EnvCount {
 /**
  * One cause of the forge being off: the `needs` sentence, a `cause` key that
  * holds for as long as its condition does (`disk`, `errors`, `internal`,
- * `queue:<kind>`, `stuck:<runId>`), when it began by the forge's own evidence
+ * `queue:<kind>`, `stuck:<runId>`, `red:<repoId>`), when it began by the forge's own evidence
  * (the oldest evidence the forge holds, else the first time this process saw
  * it, held until the cause clears; `at` is never the answer to a repeat
  * call), and where to look.
@@ -302,11 +303,20 @@ export function vitals(input: VitalsInput): Vitals {
       "/settings/capacity",
     );
 
-  // A failed restore drill is a card until a drill passes.
+  // A red main holding its pulls' checks is one card, naming the test.
+  for (const { red, held } of heldChecks(input.db))
+    need(
+      `red:${red.repoId}`,
+      redSentence(red, held),
+      red.since,
+      `/${red.repo}/runs/${red.runId}`,
+    );
+
+  // A red restore drill, or none in eight days, is a card until a drill passes.
   const drill = lastVerdict(input.dataDir);
-  const failed = failedSentence(drill);
-  if (failed !== undefined)
-    need("drill", failed, drill?.at, "/settings/backups");
+  const owed = drillNeed(drill, now, () => drillFirstSeen(input.dataDir));
+  if (owed !== undefined)
+    need("drill", owed.sentence, owed.since, "/settings/backups");
 
   const apps = { serving: 0, asleep: 0, previews: 0 };
   for (const e of input.envs ?? []) {

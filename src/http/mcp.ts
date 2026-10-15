@@ -41,6 +41,7 @@ import {
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
+import { familyView } from "../spawn/family.ts";
 import { clientRows } from "../spawn/clients.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { contextNote, parseContext } from "../actions/tell_context.ts";
@@ -1157,6 +1158,16 @@ const TOOLS: readonly Tool[] = [
         issue: "issue" in outcome ? outcome.issue.number : null,
         pull: "pull" in outcome ? outcome.pull.number : null,
       });
+    },
+  },
+  {
+    name: "family",
+    description:
+      "The forge's family across forges: the forge that sent this one (anyone) and, for a site admin, the forges it sent, each as last heard — reporting, quiet (silent for thirty minutes) or unheard — with version, releases behind, open proposals. The same data as /family and /api/v1/family.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    async run(ctx, user) {
+      return good(await familyView(ctx.app, user.isAdmin === true));
     },
   },
   {

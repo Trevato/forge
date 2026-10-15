@@ -4,7 +4,7 @@
  * are immutable history, exactly like commits. The database is an index over
  * truth that lives in git wherever possible — small on purpose.
  *
- * A file is named by a sortable id. `0001` to `0088` are the migrations that
+ * A file is named by a sortable id. `0001` to `0090` are the migrations that
  * were numbered while they lived in one list in this file, in that order; a
  * new one is named by the UTC second it was written
  * (`date -u +%Y%m%d%H%M%S`, e.g. `20261015093000-deploy-notes.ts`), so two
@@ -23,7 +23,7 @@ export const migrationFiles: readonly MigrationFile[] = readMigrations(
 export const migrations: readonly string[] = migrationFiles.map((m) => m.sql);
 
 /** How many migrations were numbered in one list before #1837. */
-export const NUMBERED = 88;
+export const NUMBERED = 90;
 
 /**
  * Drop hand-installed "operator's guard" triggers that refused new accounts

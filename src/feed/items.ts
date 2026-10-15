@@ -25,6 +25,7 @@ import {
 } from "../core/repos.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { watchedBy } from "../core/watches.ts";
+import { chooseCandidates } from "./choose.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
 export type FeedKind =
@@ -39,7 +40,9 @@ export type FeedKind =
   | "tell"
   | "reply"
   | "look"
-  | "milestone";
+  | "milestone"
+  // A variant group: one choice among open siblings, or that it was made.
+  | "choose";
 
 /** What a candidate is, before it is ranked and worded. */
 export interface Candidate {
@@ -256,6 +259,7 @@ export function candidatesFor(
   }
   out.push(...watchedCandidates(db, viewer, now));
   out.push(...frozenCandidates(db, viewer, now));
+  out.push(...chooseCandidates(db, writable));
   for (const d of decided) {
     const repo = repos.get(d.repoId);
     if (!repo) continue;

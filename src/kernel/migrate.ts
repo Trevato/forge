@@ -34,7 +34,7 @@ import { sha256 } from "./hash.ts";
 const QUOTE_MAX = 80;
 
 /**
- * A migration file's name: a sortable id — `0001` to `0088` for the ones
+ * A migration file's name: a sortable id — `0001` to `0090` for the ones
  * that were numbered in a list, a UTC `YYYYMMDDHHMMSS` for every one since
  * — then a slug. Both kinds sort as text: every numbered id starts `0`, every
  * stamped one `2`.

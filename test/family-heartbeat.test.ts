@@ -1,0 +1,247 @@
+/**
+ * The family across forges (#425): signed heartbeats carry counts and
+ * version only, unknown children and bad signatures are ignored alike, a
+ * silent child reads quiet, and only the parent's admins see children.
+ */
+
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createRepo } from "../src/actions/repos.ts";
+import { beatKeyOf, childDirOf } from "../src/actions/spawn.ts";
+import { createApp, type App } from "../src/app.ts";
+import { createUser } from "../src/core/users.ts";
+import { commitFiles } from "../src/git/write.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import {
+  childStandings,
+  parseBeat,
+  QUIET_MS,
+  sendBeat,
+  sign,
+  SIGNATURE_HEADER,
+} from "../src/spawn/heartbeat.ts";
+import { familyLines, familyView } from "../src/spawn/family.ts";
+import { firstBoot } from "../src/spawn/first-boot.ts";
+import { quietLogs } from "./helpers/globals.ts";
+
+quietLogs();
+
+const PASSWORD = "a-long-family-passphrase";
+
+describe("family heartbeats", () => {
+  let dir = "";
+  let parent: App;
+  let child: App;
+  let servers: Servers;
+  let key = "";
+  let adminCookie = "";
+  let bobCookie = "";
+
+  const post = (body: string, sig: string | null) =>
+    fetch(`${servers.url}/api/v1/heartbeat`, {
+      method: "POST",
+      headers: sig === null ? {} : { [SIGNATURE_HEADER]: sig },
+      body,
+    });
+  const beat = (o: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      name: "maria",
+      at: Date.now(),
+      version: "0.7.114",
+      openProposals: 3,
+      children: 0,
+      ...o,
+    });
+  const signIn = async (username: string) => {
+    const res = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({ username, password: PASSWORD }),
+      redirect: "manual",
+    });
+    return (res.headers.get("set-cookie") ?? "").split(";")[0]!;
+  };
+  const family = async (cookie?: string) =>
+    (
+      await fetch(`${servers.url}/family`, {
+        headers: cookie === undefined ? {} : { cookie },
+      })
+    ).text();
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-family-"));
+    parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
+    const alice = await createUser(parent.db, {
+      trusted: true,
+      username: "alice",
+      email: "a@x.test",
+      password: PASSWORD,
+      isAdmin: true,
+    });
+    const bob = await createUser(parent.db, {
+      trusted: true,
+      username: "bob",
+      email: "b@x.test",
+      password: PASSWORD,
+    });
+    if (!alice.ok || !bob.ok) throw new Error("users");
+    const token = createToken(parent.db, alice.value.id, "rw", "rw").token;
+    const repo = await createRepo(parent, alice.value, { name: "bakery" });
+    if (!repo.ok) throw new Error("repo");
+    const c = await commitFiles(repoDir(parent.reposRoot, "alice", "bakery"), {
+      branch: "main",
+      message: "bakery",
+      files: [{ path: "README.md", content: "# bakery\n" }],
+      author: { name: "a", email: "a@x.invalid" },
+    });
+    if (!c.ok) throw new Error("commit");
+    servers = await serve(parent);
+    const made = await fetch(`${servers.url}/api/v1/forges`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ name: "maria", apps: ["alice/bakery"], dryRun: false }),
+    });
+    if (made.status !== 201) throw new Error(`spawn ${made.status}`);
+    const { bodyId } = (await made.json()) as { bodyId: string };
+    child = createApp({ dataDir: childDirOf(parent, bodyId), port: 0 });
+    await firstBoot(child);
+    key = (await beatKeyOf(parent, "maria")) ?? "";
+    adminCookie = await signIn("alice");
+    bobCookie = await signIn("bob");
+  }, 60_000);
+
+  afterAll(async () => {
+    servers.stop();
+    child.close();
+    parent.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("before any report a child reads as not heard from, not as an error", async () => {
+    const html = await family(adminCookie);
+    expect(html).toContain("maria");
+    expect(html).toContain("has not reported yet");
+    expect(html).not.toContain("quiet");
+  });
+
+  test("a heartbeat holds only name, time, version and two counts", () => {
+    expect(parseBeat(beat())).toBeDefined();
+    expect(parseBeat(beat({ title: "secret plans" }))).toBeUndefined();
+    expect(parseBeat(beat({ openProposals: -1 }))).toBeUndefined();
+    expect(parseBeat(beat({ version: "<b>" }))).toBeUndefined();
+    expect(parseBeat(beat({ name: "../x" }))).toBeUndefined();
+    expect(parseBeat("x".repeat(5000))).toBeUndefined();
+  });
+
+  test("unknown children, bad signatures and stale times are ignored alike", async () => {
+    const stranger = beat({ name: "nobody" });
+    const a = await post(stranger, sign(key, stranger));
+    const own = beat();
+    const b = await post(own, sign("not-the-key", own));
+    const c = await post(own, null);
+    const old = beat({ at: Date.now() - 3_600_000 });
+    const d = await post(old, sign(key, old));
+    for (const r of [a, b, c, d]) expect(r.status).toBe(404);
+    const state = await childStandings(parent);
+    expect(state.items[0]?.state).toBe("unheard");
+  });
+
+  test("a signed heartbeat is kept, shown with its standing, and not replayable", async () => {
+    const at = Date.now();
+    const body = beat({ at });
+    expect((await post(body, sign(key, body))).status).toBe(200);
+    expect((await post(body, sign(key, body))).status).toBe(404);
+    const html = await family(adminCookie);
+    expect(html).toContain("reporting");
+    expect(html).toContain("version 0.7.114");
+    expect(html).toContain("3 open proposals");
+    expect(html).toMatch(/\d+ releases? behind/);
+    const stored = await readFile(join(dir, "beats", "maria.json"), "utf8");
+    expect(Object.keys(JSON.parse(stored).beat).sort()).toEqual([
+      "at",
+      "children",
+      "name",
+      "openProposals",
+      "version",
+    ]);
+  });
+
+  test("a child that stops reporting reads quiet", async () => {
+    const state = await childStandings(parent, Date.now() + QUIET_MS + 60_000);
+    expect(state.items[0]?.state).toBe("quiet");
+    expect(state.items[0]?.lastSeen).not.toBeNull();
+  });
+
+  test("only an admin of the parent sees children", async () => {
+    expect(await family(bobCookie)).not.toContain("maria");
+    expect(await family()).not.toContain("maria");
+    expect(await family(adminCookie)).toContain("maria");
+  });
+
+  test("a chunked body over 1 KiB is refused unread and keeps nothing", async () => {
+    const before = (await childStandings(parent)).items[0]?.lastSeen;
+    const big = beat({ version: "1".repeat(4000) });
+    const res = await fetch(`${servers.url}/api/v1/heartbeat`, {
+      method: "POST",
+      headers: { [SIGNATURE_HEADER]: sign(key, big) },
+      body: new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(big));
+          c.close();
+        },
+      }),
+      duplex: "half",
+    } as RequestInit);
+    expect(res.status).toBe(404);
+    expect((await childStandings(parent)).items[0]?.lastSeen).toBe(before);
+  });
+
+  test("two identical beats at once keep only one", async () => {
+    const body = beat({ at: Date.now() + 1000 });
+    const rs = await Promise.all([post(body, sign(key, body)), post(body, sign(key, body))]);
+    expect(rs.map((r) => r.status).sort()).toEqual([200, 404]);
+  });
+
+  test("the family has a JSON door and a terminal view with the same gate", async () => {
+    const read = async (cookie?: string) =>
+      (await (
+        await fetch(`${servers.url}/api/v1/family`, {
+          headers: cookie === undefined ? {} : { cookie },
+        })
+      ).json()) as { children: { name: string }[]; here: unknown };
+    expect((await read()).children).toEqual([]);
+    expect((await read(bobCookie)).children).toEqual([]);
+    expect((await read(adminCookie)).children.map((c) => c.name)).toEqual(["maria"]);
+    const guest = familyLines(await familyView(parent, false));
+    const admin = familyLines(await familyView(parent, true));
+    expect(guest.some(([k]) => k === "child maria")).toBe(false);
+    expect(admin.some(([k]) => k === "child maria")).toBe(true);
+  });
+
+  test("a child sends its own beat, signed with the key spawn gave it", async () => {
+    const sent: { url: string; body: string; sig: string }[] = [];
+    const ok = await sendBeat(child, async (url, init) => {
+      sent.push({
+        url,
+        body: String(init?.body),
+        sig: String((init?.headers as Record<string, string>)[SIGNATURE_HEADER]),
+      });
+      return new Response("{}");
+    });
+    expect(ok).toBe(true);
+    expect(sent[0]?.url).toBe("https://forge.test/api/v1/heartbeat");
+    expect(sent[0]?.sig).toBe(sign(key, sent[0]!.body));
+    expect(Object.keys(JSON.parse(sent[0]!.body)).sort()).toEqual([
+      "at",
+      "children",
+      "name",
+      "openProposals",
+      "version",
+    ]);
+    // A forge that was not spawned has no one to tell.
+    expect(await sendBeat(parent, async () => new Response("{}"))).toBe(false);
+  });
+});
