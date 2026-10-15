@@ -80,6 +80,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "mode",
   "new",
   "oauth",
+  "og",
   "organizations",
   "origins",
   "robots.txt",

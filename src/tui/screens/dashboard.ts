@@ -19,7 +19,9 @@ import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { forgeLane, forgeNeeds } from "../../actions/health.ts";
 import { mayView } from "../../core/sealed.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
-import { listAssignedTo, type Issue } from "../../core/issues.ts";
+import { getIssueById, listAssignedTo, type Issue } from "../../core/issues.ts";
+import { askLinesFor } from "../../web/studio/asks.ts";
+import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import {
   applyAsksBulk,
   latestUndoable,
@@ -35,6 +37,7 @@ import {
   getReposByIds,
   listReposVisibleTo,
   type Repo,
+  getRepoById,
 } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -89,6 +92,8 @@ const TITLES: Readonly<Record<PaneId, string>> = {
 interface OnYouItem {
   readonly issue: Issue;
   readonly repo: Repo;
+  /** A hand-over card that asks this person: the crew's issue, not assigned to them. */
+  readonly hand?: true;
 }
 
 /** The `tab` order, whichever of these the frame had room for. */
@@ -171,7 +176,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       const repo = byId.get(id);
       if (repo !== undefined && canRead(f.db, repo, f.user)) silenced.set(id, repo);
     }
-    return issues.flatMap((issue) => {
+    const assigned = issues.flatMap((issue) => {
       const repo = byId.get(issue.repoId);
       if (
         repo === undefined ||
@@ -182,12 +187,35 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       if (muted.has(repo.id)) return [];
       return [{ issue, repo }];
     });
+    return [...assigned, ...handOvers(assigned)];
+  };
+
+  /**
+   * The parked cards that ask this person, which the breaker leaves assigned
+   * to the agent: listed after their own work, only where a decider can take them.
+   */
+  const handOvers = (have: readonly OnYouItem[]): OnYouItem[] => {
+    if (f.user === undefined || f.app.config.decider === undefined) return [];
+    const ids = askLinesFor(f.db, f.user)
+      .filter((row) => row.kind === "parked")
+      .flatMap((row) => row.items)
+      .filter((id) => id.startsWith("parked:"))
+      .map((id) => id.slice("parked:".length));
+    const out: OnYouItem[] = [];
+    for (const id of new Set(ids)) {
+      if (have.some((item) => item.issue.id === id)) continue;
+      const issue = getIssueById(f.db, id);
+      const repo = issue === undefined ? undefined : getRepoById(f.db, issue.repoId);
+      if (issue !== undefined && repo !== undefined) out.push({ issue, repo, hand: true });
+    }
+    return out;
   };
 
   /** The marked rows, or the one under the cursor when none is marked. */
   const targets = (): OnYouItem[] => {
-    const picked = onYou.filter((item) => marked.has(item.issue.id));
-    const here = onYou[at("onyou").index];
+    const mine = onYou.filter((item) => item.hand !== true);
+    const picked = mine.filter((item) => marked.has(item.issue.id));
+    const here = mine.find((item) => item === onYou[at("onyou").index]);
     return picked.length > 0 ? picked : here === undefined ? [] : [here];
   };
 
@@ -267,6 +295,41 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         done.ok ? "success" : "danger",
       );
     });
+  };
+
+  /** The decision `U` undoes: the decider's latest set-aside this session. */
+  let lastHand: string | undefined;
+
+  /** Hand the row under the cursor to the decider, through the action the web and API use. */
+  const handToDecider = (): void => {
+    const here = onYou[at("onyou").index];
+    if (here === undefined) return;
+    if (here.hand !== true) {
+      ctx.toast("only a hand-over card goes to the decider", "attn");
+      return;
+    }
+    runAsync(ctx, async () => {
+      const done = await decideAsk(f.app, f.user, `issue:${here.issue.id}`);
+      if (!done.ok) {
+        ctx.toast(done.error.message, "danger");
+        return;
+      }
+      lastHand = done.value.setAside ? done.value.id : undefined;
+      reload();
+      ctx.toast(done.value.reason + (done.value.setAside ? " · U undoes" : ""), "success");
+    });
+  };
+
+  const undoHand = (): void => {
+    const id = lastHand;
+    if (id === undefined) {
+      ctx.toast("nothing to undo", "attn");
+      return;
+    }
+    const done = undoDecideAsk(f.app, f.user, id);
+    if (done.ok) lastHand = undefined;
+    reload();
+    ctx.toast(done.ok ? "back on your board" : done.error.message, done.ok ? "success" : "danger");
   };
 
   const listenAgain = (): void => {
@@ -383,6 +446,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         binding(["/"], "find"),
         binding(["p"], "pin", { disabled: !f.signedIn }),
         // The On you verbs show only where they act, so the bar stays short.
+        ...(focus === "onyou" && onYou[at("onyou").index]?.hand === true
+          ? [binding(["D"], "let the decider")]
+          : []),
+        ...(lastHand !== undefined ? [binding(["U"], "undo decider")] : []),
         ...(focus === "onyou" && onYou.length > 0
           ? [
               binding(["space"], "mark"),
@@ -494,15 +561,17 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       }
       if (focus === "onyou" && f.user !== undefined) {
         const item = onYou[at("onyou").index];
-        if (e.key === "space" && item !== undefined) {
+        if (e.key === "space" && item !== undefined && item.hand !== true) {
           if (!marked.delete(item.issue.id)) marked.add(item.issue.id);
           return true;
         }
         if (e.key === "x") return closeSet(), true;
         if (e.key === "m") return clear("mute"), true;
         if (e.key === "S") return shipSet(), true;
+        if (e.key === "D" && item !== undefined) return handToDecider(), true;
       }
       if (e.key === "u" && f.user) return undoSet(), true;
+      if (e.key === "U" && f.user) return undoHand(), true;
       if (e.key === "L" && f.user) return listenAgain(), true;
       if (e.key === "d" && focus === "machine") {
         unpin(pins[at("machine").index]);
@@ -574,7 +643,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               ? PULL_MARK
               : ISSUE_MARK;
         return {
-          title: `${marked.has(item.issue.id) ? "[x] " : ""}${mark} #${item.issue.number} ${item.issue.title}`,
+          title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : ""}${mark} #${item.issue.number} ${item.issue.title}`,
           meta: `${item.repo.ownerName}/${item.repo.name}`,
         };
       }),
@@ -600,6 +669,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         `${silenced.size} ${silenced.size === 1 ? "repository" : "repositories"} muted · L listen again`,
       );
     if (lastSet !== undefined) parts.push(`u undo ${lastSet.verb}`);
+    if (lastHand !== undefined) parts.push("U undo decider");
+    if (onYou[at("onyou").index]?.hand === true) parts.push("D let the decider");
     return parts.length > 0 ? parts.join(" · ") : undefined;
   }
 

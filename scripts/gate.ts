@@ -25,6 +25,7 @@ export type Exclusion = {
 };
 
 export const GATE: readonly string[] = [
+  "test/accounts-retire.test.ts",
   "test/accounts.test.ts",
   "test/agents.test.ts",
   "test/app-domains.test.ts",
@@ -32,7 +33,10 @@ export const GATE: readonly string[] = [
   "test/apps-idle.test.ts",
   "test/body-limits.test.ts",
   "test/boards-query.test.ts",
+  "test/webauthn.test.ts",
   "test/chaos.test.ts",
+  "test/flow-stage.test.ts",
+  "test/cluster-jobs.test.ts",
   "test/fuzz-found.test.ts",
   "test/fuzz-parsers.test.ts",
   "test/attach-look.test.ts",
@@ -41,6 +45,7 @@ export const GATE: readonly string[] = [
   "test/tui-onyou.test.ts",
   "test/claim-link.test.ts",
   "test/og-card.test.ts",
+  "test/og-route.test.ts",
   "test/health.test.ts",
   "test/client-address.test.ts",
   "test/client-list.test.ts",
@@ -55,6 +60,7 @@ export const GATE: readonly string[] = [
   "test/refresh-meta.test.ts",
   "test/restore-card.test.ts",
   "test/recovery-doc.test.ts",
+  "test/release-preflight.test.ts",
   "test/threats-doc.test.ts",
   "test/returns.test.ts",
   "test/review-route.test.ts",
@@ -146,6 +152,7 @@ export const GATE: readonly string[] = [
   "test/asked.test.ts",
   "test/asks.test.ts",
   "test/asks-bulk.test.ts",
+  "test/hand-decider.test.ts",
   "test/asks-expiry.test.ts",
   "test/asks-rank.test.ts",
   "test/plan-pillars.test.ts",

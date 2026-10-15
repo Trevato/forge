@@ -17,6 +17,8 @@ import {
 } from "./caller.ts";
 import {
   accountAct,
+  retireAct,
+  retirePage,
   accountsPage,
   personSignInsPage,
   signInAct,
@@ -191,6 +193,8 @@ import { askedPage } from "../web/studio/asked_page.ts";
 import {
   asksBulkSubmit,
   asksBulkUndo,
+  asksDecide,
+  asksDecideUndo,
   asksListen,
   asksPage,
 } from "../web/studio/asks_page.ts";
@@ -240,6 +244,7 @@ import {
   runsList,
 } from "../web/pages/runs.ts";
 import { lookImage } from "../web/pages/looks.ts";
+import { ogCard } from "../web/pages/og.ts";
 import { bigRedirect, boardPage } from "../web/pages/board.ts";
 import { returnsPage } from "../web/pages/returns.ts";
 import {
@@ -579,6 +584,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/asks/bulk", asksBulkSubmit);
   router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
   router.add("POST", "/asks/listen", asksListen);
+  router.add("POST", "/asks/decide", asksDecide);
+  router.add("POST", "/asks/decide/:id/undo", asksDecideUndo);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
   // The big view, folded into the board: every old address lands on its wall mode.
@@ -697,6 +704,8 @@ export function buildRouter(): Router<Handler> {
     accountAct("unsuspend"),
   );
   router.add("POST", "/settings/accounts/:username/remove", accountAct("remove"));
+  router.add("GET", "/settings/accounts/:username/retire", retirePage);
+  router.add("POST", "/settings/accounts/:username/retire", retireAct);
   router.add("POST", "/settings/accounts/:username/verify", accountAct("verify"));
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew", agentCreate);
@@ -992,6 +1001,9 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/runs/:id", runPage);
   router.add("POST", "/:owner/:name/runs/:id/cancel", runCancel);
   router.add("POST", "/:owner/:name/runs/:id/steer", runSteer);
+  // The public social cards: a repo as owner~name, an app as its slug.
+  router.add("GET", "/og/repo/:ref.svg", ogCard("repo"));
+  router.add("GET", "/og/app/:ref.svg", ogCard("app"));
   // The pictures of an environment, read like the repository.
   router.add("GET", "/:owner/:name/looks/:env/:commit/:kind.png", lookImage);
 

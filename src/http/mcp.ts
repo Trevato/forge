@@ -105,6 +105,7 @@ import {
   milestonesJson,
 } from "../web/pages/milestones.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
+import { decideAsk, undoDecideAsk } from "../actions/asks_decide.ts";
 import { applyAsksBulk, previewAsksBulk } from "../actions/asks_bulk.ts";
 import type { Ctx, Handler } from "./context.ts";
 import {
@@ -524,6 +525,36 @@ const TOOLS: readonly Tool[] = [
           ? await applyAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"])
           : previewAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"]);
       return answer.ok ? good(answer.value) : bad(answer.error.code, answer.error.message);
+    },
+  },
+  {
+    name: "asks_decide",
+    description:
+      "Let the decider answer a hand-over (a parked issue in `asks`): `item` is the row's `parked:<id>` item. The decider sees the direction, whether you pinned or muted the app, the day's spend against the ceiling, your last ten decisions there and the card's own evidence, and answers set_aside or ask_owner with a reason and a confidence. Only a sure set_aside (70%+) takes the card off your board; anything else stays with you. The answer and the context it saw are in the decision ledger. One card is handed over once in ten minutes. Undo a set_aside within a day with `asks_undecide`.",
+    inputSchema: {
+      type: "object",
+      properties: { item: { type: "string", maxLength: 80 } },
+      required: ["item"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const done = await decideAsk(ctx.app, user, args["item"]);
+      return done.ok ? good(done.value) : bad(done.error.code, done.error.message);
+    },
+  },
+  {
+    name: "asks_undecide",
+    description:
+      "Put a card the decider set aside back on your board, within a day of its answer. `id` is the decision's id from `asks_decide`.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", maxLength: 80 } },
+      required: ["id"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const done = undoDecideAsk(ctx.app, user, args["id"]);
+      return done.ok ? good(done.value) : bad(done.error.code, done.error.message);
     },
   },
   {
