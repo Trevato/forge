@@ -956,6 +956,7 @@ export function forgeNeedsFor(ctx: Ctx, user: User | undefined): Degraded[] {
   return vitals({
     db: ctx.app.db,
     dataDir: ctx.app.config.dataDir,
+    signals: ctx.app.signals,
     envs,
   }).degraded;
 }

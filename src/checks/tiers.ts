@@ -9,6 +9,8 @@
  * only decides.
  */
 
+import { needsFull, reach, reachLine, type Impact } from "./impact.ts";
+
 /** A test under this many seconds is always in the fast tier. */
 export const QUICK_SECONDS = 1;
 
@@ -75,6 +77,8 @@ export interface FastInput {
   readonly times: ReadonlyMap<string, number>;
   /** Tests a red full gate on land taught this pull. */
   readonly learned?: readonly string[];
+  /** Measured: the `src/**` files each test executed (`scripts/test-impact.json`). */
+  readonly impact?: Impact;
 }
 
 export interface FastPlan {
@@ -84,6 +88,8 @@ export interface FastPlan {
   /** Expected seconds, from the times table (a test it lacks counts 5). */
   readonly expected: number;
   readonly overBudget: boolean;
+  /** The line for the log: what the plan is by, and what the diff reaches. */
+  readonly line: string;
 }
 
 /**
@@ -96,6 +102,37 @@ export interface FastPlan {
 export function fastSet(input: FastInput): FastPlan {
   const tests = new Set(input.tests);
   const why = new Map<string, string>();
+  const finish = (line: string): FastPlan => {
+    const files = input.tests.filter((test) => why.has(test));
+    const expected = files.reduce(
+      (sum, file) => sum + (input.times.get(file) ?? UNKNOWN_SECONDS),
+      0,
+    );
+    return { files, why, expected, overBudget: expected > FAST_BUDGET_SECONDS, line };
+  };
+  // What the map cannot bound runs everything.
+  const unbounded = needsFull(input.changed);
+  if (unbounded !== undefined) {
+    for (const test of input.tests) why.set(test, `full: ${unbounded} changed`);
+    return finish(`full tier, ${unbounded} changed`);
+  }
+  const impact = input.impact !== undefined && input.impact.size > 0 ? input.impact : undefined;
+  const reached = impact && reach(input.changed, impact);
+  // A change the map cannot see (a src file no test executes, or a file
+  // outside src/ and test/) is judged by the guesses for every test.
+  const blind =
+    reached !== undefined &&
+    (reached.unreached.length > 0 ||
+      input.changed.some(
+        (f) =>
+          !f.startsWith("src/") &&
+          !f.startsWith("test/") &&
+          !f.endsWith("test-times.json") &&
+          !f.endsWith("test-impact.json"),
+      ));
+  // A test the map has never seen (a new one) is judged by the guesses.
+  const guessed = (test: string): boolean =>
+    impact === undefined || blind || !impact.has(test);
   const take = (test: string, reason: string): void => {
     if (tests.has(test) && !why.has(test)) why.set(test, reason);
   };
@@ -106,13 +143,17 @@ export function fastSet(input: FastInput): FastPlan {
   const names = new Map<string, string>();
   for (const source of sources)
     for (const name of namesOf(source)) names.set(name, source);
+  if (reached)
+    for (const [test, source] of reached.tests)
+      take(test, `executes ${source}`);
   for (const test of input.tests) {
+    if (!guessed(test)) continue;
     const hit = names.get(stemOf(test));
     if (hit !== undefined) take(test, `named for ${hit}`);
   }
 
   for (const test of input.tests) {
-    if (why.has(test)) continue;
+    if (why.has(test) || !guessed(test)) continue;
     let frontier: readonly string[] = input.imports(test);
     const seen = new Set<string>();
     for (let depth = 0; depth <= IMPORT_DEPTH && frontier.length > 0; depth++) {
@@ -134,16 +175,16 @@ export function fastSet(input: FastInput): FastPlan {
   for (const test of input.learned ?? []) take(test, "failed on land before");
   for (const test of input.tests) {
     const seconds = input.times.get(test);
-    if (seconds !== undefined && seconds < QUICK_SECONDS)
+    if (guessed(test) && seconds !== undefined && seconds < QUICK_SECONDS)
       take(test, "quick");
   }
 
-  const files = input.tests.filter((test) => why.has(test));
-  const expected = files.reduce(
-    (sum, file) => sum + (input.times.get(file) ?? UNKNOWN_SECONDS),
-    0,
+  const nChanged = input.changed.length;
+  return finish(
+    reached
+      ? `by coverage${blind ? " and imports" : ""}: ${reachLine(nChanged, reached.tests.size, reached.unreached)}`
+      : "by imports (no impact map)",
   );
-  return { files, why, expected, overBudget: expected > FAST_BUDGET_SECONDS };
 }
 
 /** `220` → `3m40s`, `45` → `45s`. */

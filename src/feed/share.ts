@@ -22,7 +22,6 @@ import { mutedRepos, recordInteraction } from "../core/interactions.ts";
 import { isOrgMember } from "../core/orgs.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
 import {
-  DAILY_BUDGET,
   addShare,
   deliveredToday,
   drainQueue,
@@ -34,6 +33,7 @@ import {
   type User,
 } from "../core/users.ts";
 import { candidatesFor, type Candidate } from "./items.ts";
+import { limitValue } from "../settings/limits.ts";
 
 export const RECIPIENTS_MAX = 10;
 
@@ -154,7 +154,7 @@ export async function share(
       continue;
     }
     drainQueue(db, w.id, now);
-    const room = deliveredToday(db, w.id, now) < DAILY_BUDGET;
+    const room = deliveredToday(db, w.id, now) < limitValue(db, "share.daily_max");
     addShare(db, {
       itemId: item.id,
       senderId: sender.id,

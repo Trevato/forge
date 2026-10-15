@@ -46,6 +46,7 @@ export const GATE: readonly string[] = [
   "test/contents-api.test.ts",
   "test/crew-agents-only.test.ts",
   "test/crew-brief-audience.test.ts",
+  "test/run-log-audience.test.ts",
   "test/crew.test.ts",
   "test/commit-identity.test.ts",
   "test/enterable-apps.test.ts",
@@ -90,6 +91,7 @@ export const GATE: readonly string[] = [
   "test/decide.test.ts",
   "test/ledger.test.ts",
   "test/capacity.test.ts",
+  "test/limits.test.ts",
   "test/guard-new-accounts.test.ts",
   "test/checks.test.ts",
   "test/dependencies.test.ts",
@@ -107,6 +109,7 @@ export const GATE: readonly string[] = [
   "test/fork-pull-approval.test.ts",
   "test/cross-repo-pull.test.ts",
   "test/pull-mergeable.test.ts",
+  "test/pull-checks-line.test.ts",
   "test/pulls.test.ts",
   "test/api-reader-marks.test.ts",
   "test/app-members.test.ts",
@@ -233,6 +236,7 @@ export const GATE: readonly string[] = [
   "test/home-feed.test.ts",
   "test/oauth-discovery.test.ts",
   "test/oauth-flow.test.ts",
+  "test/oidc.test.ts",
   "test/data-home.test.ts",
   "test/tree.test.ts",
   "test/reports.test.ts",
@@ -258,6 +262,7 @@ export const GATE: readonly string[] = [
   "test/ssh-site.test.ts",
   "test/web-code.test.ts",
   "test/web-origins.test.ts",
+  "test/roll.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [

@@ -20,7 +20,10 @@ any URL — and it is the rest of this page.
 
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
-stays that way. Everything worth having is written here: the Result type, the
+stays that way. The one exception is dev-only: `@anthropic-ai/sandbox-runtime`
+(a devDependency, with its own few transitive packages) lets
+`test/crew-sandbox-real.test.ts` run a shell under the very sandbox Claude Code
+builds from the crew's settings; it never ships and the app never imports it. Everything worth having is written here: the Result type, the
 router, the SSR templates, the design system, the markdown renderer. The only
 thing forge asks of the host is a `git` binary.
 
@@ -519,6 +522,15 @@ shard's output is written whole as it finishes; the log ends with every
 failing test from every shard, or on green with one line — how many tests,
 across how many files, in how long, then the slowest and fastest shard.
 
+The fast tier picks by measurement. The full gate runs each file under
+Bun's coverage (`--impact`) and writes `scripts/test-impact.json`: test
+file → the `src/**` files it executed. A diff intersected with it is the
+set of tests the change reaches; the check line says `N changed files
+reach M tests; src/x.ts reaches none` (a coverage gap). Tests the map has
+never seen fall back to the import-hop guess, and a change to `forge.json`,
+`package.json`, `scripts/**` or `src/kernel/**` runs everything. Until a
+release commits the map, the fast tier guesses by imports as before.
+
 Files go to shards by how long they take, not how big they are: longest
 first onto the least-loaded shard, weighed from `scripts/test-times.json`
 (file → seconds, from one recorded run). A file the table does not name
@@ -713,3 +725,7 @@ Invariants are proven by faults, not by hope. No dependencies were added.
 `forge.json`'s `check` may declare `fast` beside `run` (the full gate; `full` names it explicitly). `bun scripts/test-shards.ts --tier fast --diff <base>..<head>` runs the tests that touch the diff (changed, named for a changed source file, or importing one within two hops), every test the times table records under 1 s, and any named by `--learned a,b`. `src/checks/tiers.ts` decides; it adds no dependency.
 
 In the forge itself: a pull's check runs `fast` when the manifest has one, in a clone holding the fork point and the head as `FORGE_CHECK_BASE` and `HEAD` (`origin/main` is not a ref there), with `FORGE_CHECK_LEARNED` naming tests earlier land attempts taught the pull (`src/checks/history.ts`, `learned.ts`). Landing (`landIfGreen`) runs `full` once on the merge with its base before merging (`src/checks/landing.ts`); red comments on the pull with the tests named, is remembered per head and base, and the files ride the pull's next fast run. The pull page's checks line shows the tier words.
+
+## Limits
+
+Every limit the owner can hit is declared in `src/settings/limits.ts` with its default, bounds and reason, and changed live by a forge admin at `/admin/limits`, `PUT /api/v1/admin/limits/:key` or the `limits` MCP tool (never by an agent). Each change is kept with who made it.

@@ -8,8 +8,6 @@
 
 import { changeCapacity, listCapacity } from "../../actions/capacity.ts";
 import { CAPACITY, type CapacityKey } from "../../core/capacity.ts";
-import { refusedInternal } from "../../kernel/internal_refused.ts";
-import { recentErrors } from "../../kernel/log.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -103,8 +101,8 @@ export function capacityPage(ctx: Ctx): Response {
   const reported = settings.some(
     (s) => s.key === "cells.egress" && s.value === "report",
   );
-  const errs = recentErrors(10);
-  const refused = refusedInternal();
+  const errs = ctx.app.signals.errors.recent(10);
+  const refused = ctx.app.signals.refused.recent();
   const happened = card(
     html`<div class="card-body">
       <p class="muted small" id="errors">

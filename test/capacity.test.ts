@@ -7,7 +7,7 @@
  * read-only token — and every change is kept: who, when, from what to what.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -94,6 +94,12 @@ describe("capacity: only a forge admin reads or changes it", () => {
       text: body.result.content[0]!.text,
     };
   };
+
+  // Module loggers reach every forge in the process: each test starts from a quiet ledger.
+  beforeEach(() => {
+    app.signals.errors.clear();
+    app.signals.refused.clear();
+  });
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-capacity-"));
@@ -303,6 +309,12 @@ describe("report mode is loud to admins, and to nobody else", () => {
   let servers: Servers;
   let alice: User;
   let bob: User;
+
+  // Module loggers reach every forge in the process: each test starts from a quiet ledger.
+  beforeEach(() => {
+    app.signals.errors.clear();
+    app.signals.refused.clear();
+  });
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-capacity-loud-"));

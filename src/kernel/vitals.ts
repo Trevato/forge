@@ -11,8 +11,8 @@
 import type { Database } from "bun:sqlite";
 import { statfsSync } from "node:fs";
 import { freemem, totalmem } from "node:os";
-import { refusedInternal } from "./internal_refused.ts";
-import { recentErrors, type ErrorLine } from "./log.ts";
+import { refusedInternal, type RefusedLedger } from "./internal_refused.ts";
+import { recentErrors, type ErrorLedger, type ErrorLine } from "./log.ts";
 import {
   budgetFailures,
   leaseLapsed,
@@ -93,6 +93,8 @@ export interface VitalsInput {
   readonly now?: number;
   /** The free-disk share below which the disk is a need; `DISK_FREE_MIN` unless a test says. */
   readonly diskFreeMin?: number;
+  /** One forge's own signals (`App.signals`). */
+  readonly signals: { errors: ErrorLedger; refused: RefusedLedger };
 }
 
 /**
@@ -263,7 +265,7 @@ export function vitals(input: VitalsInput): Vitals {
     else if (e.state === "running") apps.serving++;
   }
 
-  const seen = recentErrors(5, now);
+  const seen = recentErrors(5, now, input.signals.errors);
   if (seen.lastHour >= ERROR_BURST)
     need(
       "errors",
@@ -272,7 +274,7 @@ export function vitals(input: VitalsInput): Vitals {
       "/settings/capacity#errors",
     );
 
-  const refused = refusedInternal(now);
+  const refused = refusedInternal(now, input.signals.refused);
   if (refused.lastHour > 0)
     need(
       "internal",

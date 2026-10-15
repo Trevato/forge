@@ -21,9 +21,7 @@ import { canWrite, type Repo } from "../core/repos.ts";
 import { getUserByName, isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireReader } from "./access.ts";
-
-/** The most names one app may hold. */
-export const MAX_APP_MEMBERS = 100;
+import { limitValue } from "../settings/limits.ts";
 
 export type AppMembersError =
   | { readonly kind: "not_found" }
@@ -84,10 +82,10 @@ export function setAppMembersThrough(
   const names = [
     ...new Set(input.members.map((n) => n.trim()).filter((n) => n !== "")),
   ];
-  if (names.length > MAX_APP_MEMBERS)
+  if (names.length > limitValue(app.db, "app.members_max"))
     return err({
       kind: "invalid",
-      message: `name at most ${MAX_APP_MEMBERS} people`,
+      message: `name at most ${limitValue(app.db, "app.members_max")} people`,
     });
   const people: User[] = [];
   for (const name of names) {

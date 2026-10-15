@@ -7,8 +7,8 @@
 
 import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
+import { limitValue } from "../settings/limits.ts";
 
-export const DAILY_BUDGET = 5;
 export const QUEUE_TTL_MS = 48 * 3600 * 1000;
 const DAY_MS = 24 * 3600 * 1000;
 const WEIGHT_WINDOW_MS = 90 * DAY_MS;
@@ -189,7 +189,7 @@ export function drainQueue(
     )
     .all(recipientId);
   if (waiting.length === 0) return 0;
-  let room = DAILY_BUDGET - deliveredToday(db, recipientId, now);
+  let room = limitValue(db, "share.daily_max") - deliveredToday(db, recipientId, now);
   const weights = new Map<string, number>();
   const w = (s: string): number => {
     if (!weights.has(s)) weights.set(s, senderWeight(db, s, now));

@@ -24,7 +24,6 @@ import {
   type AgentPatch,
   type CrewRole,
   BRIEF_MAX,
-  BUDGET_MAX_USD,
   MODEL_MAX,
 } from "../core/agents.ts";
 import { canWrite, type Repo } from "../core/repos.ts";
@@ -36,6 +35,7 @@ import {
 } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireReader, requireRepoAdmin, requireUser } from "./access.ts";
+import { limitValue } from "../settings/limits.ts";
 
 export interface CreateAgentInput {
   username: string;
@@ -63,6 +63,7 @@ function requireForgeAdmin(
 }
 
 function checkPatch(
+  app: App,
   patch: AgentPatch,
 ): Result<AgentPatch, "invalid_model" | "brief_too_long" | "invalid_budget"> {
   if (patch.model !== undefined) {
@@ -75,7 +76,7 @@ function checkPatch(
     patch.budgetUsd !== undefined &&
     (!Number.isFinite(patch.budgetUsd) ||
       patch.budgetUsd < 0 ||
-      patch.budgetUsd > BUDGET_MAX_USD)
+      patch.budgetUsd > limitValue(app.db, "agent.budget_max_usd"))
   )
     return err("invalid_budget");
   return ok(patch);
@@ -89,7 +90,7 @@ export async function createAgent(
 ): Promise<Result<Agent, CreateAgentError>> {
   const admin = requireForgeAdmin(actor);
   if (!admin.ok) return admin;
-  const patch = checkPatch({
+  const patch = checkPatch(app, {
     ...(input.model === undefined ? {} : { model: input.model }),
     ...(input.brief === undefined ? {} : { brief: input.brief }),
     ...(input.budgetUsd === undefined ? {} : { budgetUsd: input.budgetUsd }),
@@ -128,7 +129,7 @@ export function updateAgent(
   if (!admin.ok) return admin;
   const agent = getAgentByName(app.db, username);
   if (!agent) return err("not_found");
-  const checked = checkPatch(patch);
+  const checked = checkPatch(app, patch);
   if (!checked.ok) return checked;
   const updated = patchAgent(app.db, agent.user.id, checked.value);
   if (!updated) return err("not_found");

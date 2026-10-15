@@ -8,6 +8,7 @@
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
+import { limitsPage, limitsSet } from "../web/pages/admin-limits.ts";
 import {
   closeStreamsOf,
   closeStreamsOfSession,
@@ -666,6 +667,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/cloud/remove", cloudRemove);
   router.add("GET", "/settings/capacity", capacityPage);
   router.add("POST", "/settings/capacity", capacitySet);
+  router.add("GET", "/admin/limits", limitsPage);
+  router.add("POST", "/admin/limits", limitsSet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
   router.add("POST", "/settings/backups/destination", backupsDestination);
@@ -1758,7 +1761,7 @@ export async function serve(app: App): Promise<Servers> {
       // port has none, so every internal request proves the boot secret.
       if (!hookCallerAllowed(app, request)) {
         const path = new URL(request.url).pathname;
-        if (noteRefusedInternal(request.method, path))
+        if (noteRefusedInternal(request.method, path, Date.now(), app.signals.refused))
           app.log.warn("internal call refused: no boot secret", {
             method: request.method,
             path: path.slice(0, 120),

@@ -8,6 +8,7 @@
  * typed still in it. A dead end that loses input is a bug, not a message.
  */
 
+import { limitValue } from "../../settings/limits.ts";
 import { mayView } from "../../core/sealed.ts";
 import { signOutHere } from "../../actions/signins.ts";
 import { clientAddress } from "../../http/peer.ts";
@@ -463,19 +464,19 @@ export function signupPage(ctx: Ctx): Response {
  * limiter per forge, so a test's forge never throttles another's.
  */
 const signinLimits = new WeakMap<Ctx["app"], RateLimiter>();
-const SIGNIN_PER_ACCOUNT = 20;
-const SIGNIN_PER_FORGE = 200;
 
 function signinAllowed(ctx: Ctx, username: string): number | undefined {
   let limiter = signinLimits.get(ctx.app);
   if (limiter === undefined) {
-    limiter = new RateLimiter({
-      perMinute: SIGNIN_PER_ACCOUNT,
-      adminPerMinute: SIGNIN_PER_FORGE,
-      enabled: true,
-    });
+    limiter = new RateLimiter({ perMinute: 0, adminPerMinute: 0, enabled: true });
     signinLimits.set(ctx.app, limiter);
   }
+  // Read on every attempt, so a change on /admin/limits governs the next one.
+  limiter.setLimits({
+    perMinute: limitValue(ctx.app.db, "signin.per_account"),
+    adminPerMinute: limitValue(ctx.app.db, "signin.per_forge"),
+    enabled: true,
+  });
   const whole = limiter.take("forge", "admin");
   if (!whole.allowed) return whole.retryAfter;
   const one = limiter.take(`account:${username.toLowerCase()}`, "ro");

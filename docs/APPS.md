@@ -124,6 +124,12 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    follows the same rule: its environments' state and errors (`envsFor`),
    its runs and their logs (`mayReadRuns`) and its run and serving events
    reach only those who may enter it.
+   On any repository, public too, a run's **log** (the agent's
+   transcript, a deploy's output) is read only by its writers and crew
+   (`mayReadRunLog`); a stranger reads the run and its summary, not the
+   log, on the page, the API and the live tails (#1075). Check runs share
+   the rule: on a public repository the author of a pull from outside it
+   reads a failed check's summary, not its output.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never
@@ -1081,6 +1087,11 @@ the data directory `FORGE_APP_DATA`, and the defaults become
 `FORGE_SSH_PORT=0`, `FORGE_CREW_CONCURRENCY=1` and
 `FORGE_APP_DOMAIN=--<its own host>`.
 
+Every limit an owner can hit (crew runs and checks at once, budget
+ceilings, per-account caps, sign-in rates) is listed with its value and its
+reason under **Settings → Limits** (`/admin/limits`, forge admin only),
+declared in `settings/limits.ts` and read on every use.
+
 Four of these are the forge's capacity and change while it runs: crew runs
 at once, checks at once, shards per check, and the cells' egress mode. A
 forge admin sets them under **Settings → Capacity**, through
@@ -1111,3 +1122,14 @@ refused), `placement` (`"metal"` or `"cloud"`, optional) and `volumes`
 sync cadence in seconds, 10–86400). `src/apps/service.ts` validates it; the
 manifest carries it as `service`, `null` for a web app. Running it, exposing
 the ports and syncing volumes are not built yet (issue #391).
+
+## The forge as an OpenID Connect provider
+
+Discovery is at `/.well-known/openid-configuration`. Register a client at
+`/oauth/register`, send a person to `/oauth/authorize` with `scope=openid`
+(optionally `profile email`), a `nonce`, and a PKCE S256 challenge. The
+`/oauth/token` answer carries an `id_token` (ES256) beside the ordinary
+ro/rw access token — the same grant, not a second credential. Present that
+access token to `/oauth/userinfo` for the claims. `/oauth/jwks` publishes the
+current signing key and the previous one; keys rotate every 30 days and live
+in the database, never in the repository.

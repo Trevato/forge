@@ -4,7 +4,7 @@
  * in the header.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -59,6 +59,12 @@ describe("the asks page", () => {
 
   const sentence = (page: string): string =>
     /<h2 id="asks-sentence"[^>]*>([^<]*)<\/h2>/.exec(page)?.[1] ?? "";
+
+  // Module loggers reach every forge in the process: each test starts from a quiet ledger.
+  beforeEach(() => {
+    app.signals.errors.clear();
+    app.signals.refused.clear();
+  });
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-"));

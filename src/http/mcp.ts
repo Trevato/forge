@@ -19,6 +19,8 @@
 
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
+import { changeLimit, listLimits } from "../actions/limits.ts";
+import { LIMIT_KEYS } from "../settings/limits.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
 import { watchMilestone } from "../actions/watches.ts";
 import {
@@ -1051,7 +1053,7 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         repo: REPO_ARG,
-        members: { type: "array", items: { type: "string" }, maxItems: 100 },
+        members: { type: "array", items: { type: "string" } },
         dryRun: { type: "boolean" },
       },
       required: ["repo"],
@@ -1178,8 +1180,8 @@ const TOOLS: readonly Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        pinned: { type: "array", items: { type: "string" }, maxItems: 12 },
-        hidden: { type: "array", items: { type: "string" }, maxItems: 200 },
+        pinned: { type: "array", items: { type: "string" } },
+        hidden: { type: "array", items: { type: "string" } },
         weights: {
           type: "object",
           description: "What counts toward an app's place, each 0 to 10: forks, ships, use, fresh. One left out keeps what is set.",
@@ -1786,6 +1788,42 @@ const TOOLS: readonly Tool[] = [
       if (!changed.ok) return bad(changed.error, "that value is outside what this setting takes");
       return good({
         says: `${key}: ${changed.value.from || "auto"} → ${changed.value.to || "auto"}, from the next pick on.`,
+        ...changed.value,
+      });
+    },
+  },
+  {
+    name: "limits",
+    description:
+      "Every limit the forge's owner can hit, with its value, bounds and the reason it is there (people per app, pins, hidden repositories, budget ceilings, daily shares, sign-in attempts, crew and check concurrency). Without `key`, each limit and the recent changes. With `key` and `value` (\"\" goes back to the default), the change it would make; with dryRun false, made, by a forge admin with an admin-scope token, never an agent. Honoured by the next use, never by a restart. The same as /admin/limits and /api/v1/admin/limits.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key: { type: "string", enum: [...LIMIT_KEYS] },
+        value: { type: "string", maxLength: 16 },
+        dryRun: { type: "boolean", description: "Plan only (the default). Send false to change it." },
+      },
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const listed = listLimits(ctx.app, user);
+      if (!listed.ok) return bad("not_found", "no such tool here");
+      const key = typeof args["key"] === "string" ? args["key"] : undefined;
+      if (key === undefined) return good(listed.value);
+      const value = typeof args["value"] === "string" ? args["value"] : "";
+      const now = listed.value.limits.find((l) => l.key === key);
+      if (now === undefined) return bad("no_such_limit", `no limit ${key}`);
+      if (args["dryRun"] !== false)
+        return good({
+          says: `Would set ${key} from ${now.value} to ${value || `its default, ${now.defaultValue}`}. Send dryRun: false to change it.`,
+        });
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing the forge's limits needs an admin-scope token");
+      const changed = changeLimit(ctx.app, user, key, value === "" ? null : value);
+      if (!changed.ok) return bad(changed.error.kind, changed.error.kind === "out_of_bounds" ? changed.error.message : "no such limit");
+      return good({
+        says: `${key}: ${changed.value.from} → ${changed.value.to}, from the next use on.`,
         ...changed.value,
       });
     },

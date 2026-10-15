@@ -8,6 +8,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { limitValue } from "../settings/limits.ts";
 import { getUserById, type User } from "./users.ts";
 
 export interface Agent {
@@ -33,7 +34,6 @@ interface AgentRow {
 
 export const MODEL_MAX = 80;
 export const BRIEF_MAX = 4_000;
-export const BUDGET_MAX_USD = 100;
 
 function toAgent(db: Database, row: AgentRow): Agent | undefined {
   const user = getUserById(db, row.user_id);
@@ -128,7 +128,7 @@ export function updateAgent(
     sets.push(`brief = ?${params.length}`);
   }
   if (patch.budgetUsd !== undefined) {
-    params.push(Math.min(Math.max(patch.budgetUsd, 0), BUDGET_MAX_USD));
+    params.push(Math.min(Math.max(patch.budgetUsd, 0), limitValue(db, "agent.budget_max_usd")));
     sets.push(`budget_usd = ?${params.length}`);
   }
   if (sets.length > 0) {

@@ -80,6 +80,7 @@ export type AccountSection =
   | "backups"
   | "secrets"
   | "capacity"
+  | "limits"
   | "cloud";
 
 /**
@@ -130,6 +131,12 @@ export function accountSections(
             href: "/settings/capacity",
             icon: "activity" as const,
             current: current === "capacity",
+          },
+          {
+            label: "Limits",
+            href: "/admin/limits",
+            icon: "activity" as const,
+            current: current === "limits",
           },
           {
             label: "Backups",

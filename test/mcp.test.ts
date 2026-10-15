@@ -18,6 +18,7 @@ import { createRun, listRuns } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { limitChanges, limitValue } from "../src/settings/limits.ts";
 
 describe("the forge over MCP", () => {
   let dataDir: string;
@@ -197,6 +198,7 @@ describe("the forge over MCP", () => {
       "hold",
       "plan",
       "capacity",
+      "limits",
       "report",
     ]);
     const byName = new Map<string, any>(
@@ -548,6 +550,36 @@ describe("the forge over MCP", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
     });
     expect(res.status).toBe(401);
+  });
+  test("limits: admins only, dry by default, an admin-scope token to change", async () => {
+    const key = "front.pinned_max";
+    const admin = createToken(app.db, alice.id, "admin", "admin").token;
+    // A non-admin and an agent (even one marked admin) are told nothing.
+    expect((await tool(bobRw, "limits")).error).toContain("no such tool");
+    const made = await createAgent(app, alice, { username: "limitbot", brief: "x" });
+    if (!made.ok) throw new Error(String(made.error));
+    app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(made.value.user.id);
+    const botToken = createToken(app.db, made.value.user.id, "bot", "admin").token;
+    expect((await tool(botToken, "limits")).error).toContain("no such tool");
+
+    const before = limitValue(app.db, key);
+    const listed = await tool(ro, "limits");
+    expect(listed.value.limits.map((l: any) => l.key)).toContain(key);
+
+    // The default is a dry run: nothing changes, even with an admin token.
+    const dry = await tool(admin, "limits", { key, value: "13" });
+    expect(dry.value.says).toContain("Would set");
+    expect(limitValue(app.db, key)).toBe(before);
+
+    // Writing needs the admin scope.
+    const refused = await tool(ro, "limits", { key, value: "13", dryRun: false });
+    expect(refused.error).toContain("forbidden");
+    expect(limitValue(app.db, key)).toBe(before);
+
+    const done = await tool(admin, "limits", { key, value: "13", dryRun: false });
+    expect(done.value).toMatchObject({ key, from: before, to: 13 });
+    expect(limitValue(app.db, key)).toBe(13);
+    expect(limitChanges(app.db)[0]).toMatchObject({ key });
   });
 
   test("ui:// card resources are listed, read, and tied to their tools", async () => {
