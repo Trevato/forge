@@ -526,6 +526,17 @@ export function getForkOf(
   return row ? toRepo(row) : undefined;
 }
 
+/** Every fork on the forge, whichever repository it follows. */
+export function listAllForks(db: Database): Repo[] {
+  return db
+    .query<
+      RepoRow,
+      []
+    >(`${SELECT} WHERE repo.fork_parent_id IS NOT NULL ORDER BY repo.id`)
+    .all()
+    .map(toRepo);
+}
+
 export function listForks(db: Database, repoId: string): Repo[] {
   return db
     .query<
