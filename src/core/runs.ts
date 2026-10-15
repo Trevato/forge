@@ -667,6 +667,17 @@ export function activeRunFor(
   return row ? toRun(row) : undefined;
 }
 
+/** The variant group an issue's earlier runs were started in, if any. */
+export function variantGroupOf(db: Database, issueId: string): string | undefined {
+  const row = db
+    .query<
+      { variant_group: string },
+      [string]
+    >("SELECT variant_group FROM run WHERE issue_id = ?1 AND variant_group IS NOT NULL ORDER BY id LIMIT 1")
+    .get(issueId);
+  return row?.variant_group;
+}
+
 /** Whether a run of this kind already waits its turn for the issue (for `actorId`'s agent, when given). */
 export function hasQueuedRun(
   db: Database,

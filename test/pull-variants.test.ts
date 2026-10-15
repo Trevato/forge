@@ -9,10 +9,12 @@ import { listPulls } from "../src/core/pulls.ts";
 import { chmodSync } from "node:fs";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import type { Repo } from "../src/core/repos.ts";
-import { listRuns } from "../src/core/runs.ts";
+import { cancelRun, listRuns } from "../src/core/runs.ts";
+import { getAgentByName } from "../src/core/agents.ts";
+import { getIssueById } from "../src/core/issues.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
+import { queueAgentRun, startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 
 const gitEnv = gitClientEnv();
@@ -263,6 +265,27 @@ describe("a tell asks for variants", () => {
     expect(fresh[0]!.variantGroup).toBe(got.variantGroup);
     expect(fresh[1]!.variantGroup).toBe(got.variantGroup);
     expect(new Set(fresh.map((r) => r.issueId)).size).toBe(2);
+  });
+
+  test("a variant run queued again keeps its group, paused or swept", async () => {
+    const got = (await (await tellOver({ variants: 2 })).json()) as any;
+    const mine = await until(() => {
+      const f = runs().filter((r) => r.variantGroup === got.variantGroup && r.state === "queued");
+      return f.length === 2 ? f : undefined;
+    });
+    const first = mine[0]!;
+    cancelRun(app.db, first.id, "paused");
+    const issue = getIssueById(app.db, first.issueId!)!;
+    const agent = getAgentByName(app.db, "bot")!;
+    const again = queueAgentRun(app, repo, issue, agent, "assigned", undefined, {
+      notBefore: new Date().toISOString(),
+      attempt: 2,
+      summary: "carries on",
+    });
+    expect(again?.variantGroup).toBe(got.variantGroup);
+    cancelRun(app.db, again!.id, "swept");
+    const swept = queueAgentRun(app, repo, issue, agent, "assigned");
+    expect(swept?.variantGroup).toBe(got.variantGroup);
   });
 
 });

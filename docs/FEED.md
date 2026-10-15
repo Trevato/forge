@@ -88,7 +88,12 @@ a card, and paging past the first 20.
 - Browser sessions now honour `Idempotency-Key` on `/api/v1/` mutations, scoped
   to the person (as tokens' are to the token): a replay returns the first
   answer. `POST /api/v1/feed/tells { app, text }` is the JSON tell the outbox
-  sends.
+  sends. `variants` (an integer, 1 to 4; anything else is a 400 and opens
+  nothing) opens that many issues from the one tell, each handed to a builder
+  run, all in one server-made group their pulls carry (`variant_group`), kept
+  when a run is queued again. With more than one, the 201 also carries
+  `issues` (the numbers opened), `assigned` (those handed to a builder) and
+  `variantGroup`; a plain tell has none of the three.
 - The live client reopens `/events?since=<last id>` when the browser gives up
   on the stream, and on `online`, and refreshes every region once.
 - Not done: steering a run offline (a plain form post, needs the network),

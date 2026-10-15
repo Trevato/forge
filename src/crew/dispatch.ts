@@ -43,6 +43,7 @@ import {
 import {
   activeRunFor,
   hasQueuedRun,
+  variantGroupOf,
   automaticRunsSince,
   cancelRun,
   createRun,
@@ -321,6 +322,7 @@ export function queueAgentRun(
         hasQueuedRun(app.db, "agent", issue.id, mine))
     )
       return undefined;
+    const group = variantGroup ?? variantGroupOf(app.db, issue.id);
     return createRun(app.db, {
       repoId: repo.id,
       kind: "agent",
@@ -328,7 +330,9 @@ export function queueAgentRun(
       actorId: agent.user.id,
       reason,
       ...again,
-      ...(variantGroup ? { variantGroup } : {}),
+      // A run queued again (a restart, a pause, the sweep) stays in the
+      // group its issue was started in.
+      ...(group ? { variantGroup: group } : {}),
     });
   });
   if (run !== undefined) announceRun(app, run, actorId);
