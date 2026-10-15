@@ -63,10 +63,6 @@ export function ogCard(kind: "repo" | "app") {
       etag,
       "cache-control": "public, max-age=300",
       "content-type": "image/svg+xml; charset=utf-8",
-      "x-content-type-options": "nosniff",
-      "referrer-policy": "same-origin",
-      "content-security-policy":
-        "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; style-src 'unsafe-inline'",
     };
     if (ctx.request.headers.get("if-none-match") === etag)
       return new Response(null, { status: 304, headers });

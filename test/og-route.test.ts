@@ -30,13 +30,14 @@ describe("og cards", () => {
     for (const [name, visibility, slug] of [
       ["shown", "public", "shown-app"],
       ["hidden", "private", "hidden-app"],
+      ["quiet", "public", "quiet-app"],
     ] as const) {
       const made = await createRepo(app, u.value, { name, visibility });
       if (!made.ok) throw new Error(String(made.error));
       const rec = createApp(app.db, {
         repoId: made.value.id,
         slug,
-        access: "public",
+        access: slug === "quiet-app" ? "private" : "public",
       });
       if (!rec.ok) throw new Error(rec.error);
     }
@@ -85,6 +86,14 @@ describe("og cards", () => {
 
       test("a private repo is 404", async () => {
         expect((await get(`/og/${kind}/${private_}.svg`)).status).toBe(404);
+      });
+
+      test("a private app on a public repo is 404", async () => {
+        const ref = kind === "app" ? "quiet-app" : "alice~quiet";
+        // The repo card is public (the repo is); only the app's is refused.
+        expect((await get(`/og/${kind}/${ref}.svg`)).status).toBe(
+          kind === "app" ? 404 : 200,
+        );
       });
 
       test("an unknown or malformed ref is 404", async () => {
