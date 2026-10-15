@@ -12,11 +12,14 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { readFileSync } from "node:fs";
+import { totalmem } from "node:os";
 
 export type CapacityKey =
   | "crew.concurrency"
   | "checks.concurrency"
   | "checks.shards"
+  | "children.max"
   | "cells.egress"
   | "guard_new_accounts";
 
@@ -55,6 +58,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "count", min: 1, max: 32 },
     fallback: "",
     help: "How many parallel shards a check's test run uses (handed to checks and crew shells as FORGE_CHECK_SHARDS). Empty: as many as the machine has cores.",
+  },
+  "children.max": {
+    label: "Forges this one may send",
+    env: "FORGE_CHILDREN_MAX",
+    kind: { type: "count", min: 1, max: 1000 },
+    fallback: "",
+    help: "How many hosted child forges this one holds at once. Empty: one per 512 MiB of memory above this forge's own 2 GiB, from the pod's limit. Raising it lets the New forge door open again at once.",
   },
   "cells.egress": {
     label: "Egress from cells",
@@ -98,7 +108,30 @@ export function validCapacity(key: CapacityKey, value: string): boolean {
 /** The boot default: the environment, when it holds a valid value. */
 export function capacityDefault(key: CapacityKey): string {
   const env = process.env[CAPACITY[key].env]?.trim() ?? "";
-  return env !== "" && validCapacity(key, env) ? env : CAPACITY[key].fallback;
+  if (env !== "" && validCapacity(key, env)) return env;
+  return key === "children.max" ? String(childrenForMemory(memoryLimitBytes())) : CAPACITY[key].fallback;
+}
+
+const GIB = 1024 ** 3;
+const MIB = 1024 ** 2;
+
+/** One hosted child per 512 MiB of room above the forge's own 2 GiB (32 GiB gives 60), at least one. */
+export function childrenForMemory(bytes: number): number {
+  const n = Math.floor((bytes - 2 * GIB) / (512 * MIB));
+  return Math.min(1000, Math.max(1, Number.isFinite(n) ? n : 1));
+}
+
+/** The pod's memory limit (cgroup v2, then v1), else the machine's memory. */
+export function memoryLimitBytes(): number {
+  for (const f of ["/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"]) {
+    try {
+      const n = Number(readFileSync(f, "utf8").trim());
+      if (Number.isFinite(n) && n > 0 && n < totalmem()) return n;
+    } catch {
+      // No such cgroup file: try the next.
+    }
+  }
+  return totalmem();
 }
 
 /** The value stored by an admin, if any. */
@@ -151,6 +184,11 @@ export function capacityCount(
   const stored = storedCapacity(db, key);
   const n = stored === undefined ? Number.NaN : Number(stored);
   return Number.isInteger(n) && n > 0 ? n : fallback;
+}
+
+/** How many hosted children this forge may hold now; read on every use. */
+export function maxChildren(db: Database): number {
+  return Number(capacityValue(db, "children.max"));
 }
 
 /** The egress mode a cell starts with now. */

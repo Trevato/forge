@@ -34,6 +34,7 @@ import {
 } from "../core/issues.ts";
 import { listCrewRoles } from "../core/agents.ts";
 import { joinMany } from "../core/pulls.ts";
+import { seating, type Seating } from "../core/limb_seats.ts";
 import { pillarsOf, type Pillars } from "../core/pillars.ts";
 import {
   canAdmin,
@@ -180,6 +181,16 @@ function loadTargets(
   const pillars = new Map<string, Pillars>();
   for (const [repoId, repo] of repos) pillars.set(repoId, pillarsOf(app.db, repo));
   const under = umbrellasOver(app, ids, [...pillars.values()]);
+  // Read on the first ask, once for a repository: only `place` wants it.
+  const seatings = new Map<string, Seating>();
+  const seatingOf = (repo: Repo) => () => {
+    let seats = seatings.get(repo.id);
+    if (seats === undefined) {
+      seats = seating(app.db, repo);
+      seatings.set(repo.id, seats);
+    }
+    return seats;
+  };
   const peers: ReadonlySet<string> = new Set(ids);
   const muted = viewer === undefined ? new Set<string>() : mutedRepos(app.db, viewer.id);
   const pull = (id: string) => {
@@ -210,6 +221,7 @@ function loadTargets(
         planner: planners.get(repo.id) ?? null,
         pillars: pillars.get(repo.id)!,
         under: under.get(id) ?? [],
+        seating: seatingOf(repo),
         peers,
         ...(viewer === undefined
           ? {}

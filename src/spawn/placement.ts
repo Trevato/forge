@@ -53,10 +53,9 @@ export function memoryBodies(): BodyStore {
   };
 }
 
-// The owner decides how many forges this one sends (2026-10-15: "i should have
-// unlimited forges"). This constant is the ceiling until #1454 makes it a
-// capacity setting sized by the node; the hosted placement still refuses
-// when the node has no room.
+// How many forges this one sends is the `children.max` capacity setting
+// (src/core/capacity.ts), sized by the node and read live; this constant is
+// only the ceiling for a placement built without one.
 export const MAX_CHILDREN = 1_000;
 export const MAX_DEPTH = 2;
 
@@ -98,7 +97,8 @@ export interface HostedOptions {
   readonly host: string;
   /** How deep this forge itself is: 0 for a root forge. */
   readonly depth?: number;
-  readonly maxChildren?: number;
+  /** A number, or a function read on every check so a setting applies live. */
+  readonly maxChildren?: number | (() => number);
   readonly maxDepth?: number;
   readonly store?: BodyStore;
   /** Injectable so tests need no randomness. */
@@ -111,7 +111,8 @@ const refuse = (reason: PlacementRefusal["reason"], message: string) =>
 export function hostedPlacement(opts: HostedOptions): Placement {
   const store = opts.store ?? memoryBodies();
   const depth = opts.depth ?? 0;
-  const maxChildren = opts.maxChildren ?? MAX_CHILDREN;
+  const limit = opts.maxChildren ?? MAX_CHILDREN;
+  const maxChildren = () => (typeof limit === "function" ? limit() : limit);
   const maxDepth = opts.maxDepth ?? MAX_DEPTH;
   const newId = opts.newId ?? (() => `hosted-${crypto.randomUUID()}`);
 
@@ -119,8 +120,13 @@ export function hostedPlacement(opts: HostedOptions): Placement {
     // A child lives one level below this forge; it may not exceed the limit.
     if (depth + 1 > maxDepth)
       return { reason: "depth", message: `forges nest at most ${maxDepth} deep; this one is already at ${depth}` };
-    if (store.list().length >= maxChildren)
-      return { reason: "children", message: `a forge holds at most ${maxChildren} hosted children` };
+    const max = maxChildren();
+    const held = store.list().length;
+    if (held >= max)
+      return {
+        reason: "children",
+        message: `${held} of ${max} forges sent on this node — retire one, or raise the room in settings`,
+      };
     return undefined;
   };
 

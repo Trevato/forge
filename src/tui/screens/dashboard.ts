@@ -14,6 +14,7 @@
  * whole of this screen's design.
  */
 
+import { forgeNeeds } from "../../actions/health.ts";
 import { mayView } from "../../core/sealed.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
 import { listAssignedTo, type Issue } from "../../core/issues.ts";
@@ -102,6 +103,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** The rows marked for one verb, by issue id. */
   const marked = new Set<string>();
   let lastSet: Operation | undefined;
+  let forge: string[] | undefined;
   const filter = new Filter();
   /** One cursor per pane: moving in one must never move another. */
   const cursors: Record<PaneId, ListState> = {
@@ -121,6 +123,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     for (const id of [...marked])
       if (!onYou.some((item) => item.issue.id === id)) marked.delete(id);
     lastSet = f.user ? latestUndoable(f.app, f.user) : undefined;
+    forge = forgeNeeds(f.app, f.user);
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.
     const orgs = f.user
@@ -394,7 +397,24 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     render(area, s) {
       const c = ctx.theme.c;
       const set = ctx.icons;
-      const { main, aside, stacked } = beside(area, ctx.twoPane, {
+      // A site admin's forge strip, as the board's: "All fine" or a line
+      // per cause. Anyone else gets no rows and no reads.
+      let body = area;
+      if (forge !== undefined) {
+        const lines = forge.length === 0 ? ["All fine"] : forge.slice(0, 3);
+        const [strip, rest] = split(area, "v", [len(lines.length), fill(1)]);
+        lines.forEach((line, i) =>
+          s.text(
+            strip!.x,
+            strip!.y + i,
+            truncate(line, strip!.w),
+            style(forge!.length === 0 ? c.mutedFg : c.fg, c.bg),
+            strip!.x + strip!.w,
+          ),
+        );
+        body = rest!;
+      }
+      const { main, aside, stacked } = beside(body, ctx.twoPane, {
         main: fill(3),
         aside: fill(2),
       });

@@ -52,7 +52,7 @@ import { waitsForPerson, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { vitals } from "../../kernel/vitals.ts";
 import { repoBase } from "../chrome.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, type Html } from "../html.ts";
 import { btn, card, icon, row } from "../ui.ts";
 import { lookUrl } from "../../core/looks.ts";
 import { lookThumb, thumbLook } from "../pages/looks.ts";
@@ -879,6 +879,12 @@ export function decisionForm(d: Decision): Html | null {
  * where the conversation is — not in a box in a list.
  */
 export function decisionActions(ctx: Ctx, d: Decision): Html {
+  const { primary, others } = decisionButtons(ctx, d);
+  return html`${primary} ${others}`;
+}
+
+/** An ask's actions in two parts: the one that decides, and the rest. */
+export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others: Html[] } {
   const base = repoBase(d.repo);
   const pull = d.pull;
   const preview =
@@ -888,53 +894,50 @@ export function decisionActions(ctx: Ctx, d: Decision): Html {
         ? undefined
         : `${base}/app/pull-${pull.number}/open`;
   if (d.kind === "stopped" && pull)
-    return html`${btn("Tell them", {
-      href: `${changeHref(base, pull.number)}#comment-body`,
-      size: "sm",
-      variant: "primary",
-    })}
-    ${btn("Close", {
-      size: "sm",
-      form: askFormId(d),
-    })}
-    ${btn("See", {
-      href: changeHref(base, pull.number),
-      size: "sm",
-    })}`;
+    return {
+      primary: btn("Tell them", {
+        href: `${changeHref(base, pull.number)}#comment-body`,
+        size: "sm",
+        variant: "primary",
+      }),
+      others: [
+        btn("Close", { size: "sm", form: askFormId(d) }),
+        btn("See", { href: changeHref(base, pull.number), size: "sm" }),
+      ],
+    };
   if ((d.kind === "look" || d.kind === "review") && pull)
-    return html`${btn("Ship", {
-      size: "sm",
-      form: askFormId(d),
-      variant: "primary",
-    })}
-    ${when(
-      preview,
-      (href) =>
-        html`${btn("Preview", {
-          href,
+    return {
+      primary: btn("Ship", { size: "sm", form: askFormId(d), variant: "primary" }),
+      others: [
+        ...(preview === undefined ? [] : [btn("Preview", { href: preview, size: "sm" })]),
+        btn("Not like this", {
+          href: `${changeHref(base, pull.number)}#comment-body`,
           size: "sm",
-        })}`,
-    )}
-    ${btn("Not like this", {
-      href: `${changeHref(base, pull.number)}#comment-body`,
-      size: "sm",
-    })}`;
+        }),
+      ],
+    };
   if (d.kind === "declined" && d.issue)
-    return html`${btn("Answer", {
-      href: `${base}/issues/${d.issue.number}#comment-body`,
-      size: "sm",
-      variant: "primary",
-    })}`;
+    return {
+      primary: btn("Answer", {
+        href: `${base}/issues/${d.issue.number}#comment-body`,
+        size: "sm",
+        variant: "primary",
+      }),
+      others: [],
+    };
   if (d.kind === "parked" && d.issue)
-    return html`${btn("Tell them", {
-      href: `${base}/issues/${d.issue.number}#comment-body`,
-      size: "sm",
-      variant: "primary",
-    })}`;
-  return html`${btn("Settings", {
-    href: `${base}/settings/autonomy`,
-    size: "sm",
-  })}`;
+    return {
+      primary: btn("Tell them", {
+        href: `${base}/issues/${d.issue.number}#comment-body`,
+        size: "sm",
+        variant: "primary",
+      }),
+      others: [],
+    };
+  return {
+    primary: btn("Settings", { href: `${base}/settings/autonomy`, size: "sm" }),
+    others: [],
+  };
 }
 
 /**
