@@ -773,6 +773,13 @@ work here.
 
 ## What works today
 
+- **Cut a wave** — Settings → *Cut a wave* (repository admins, same-origin
+  POST; web-only, the terminal's settings hand over to the web) opens a pull
+  adding `waves/<next>.md`, listing the pulls merged since the last wave and
+  not already in an earlier wave. The headline and highlights are `TODO`
+  placeholders; no model is called. It refuses, writing nothing, when an
+  earlier wave does not parse (naming the file) or nothing new has merged.
+
 - **Accounts & access** — register/sign in, personal access tokens with coarse
   scopes (ro/rw/admin), public and private repositories.
 - **Git** — push and pull over HTTPS **and SSH**, browse code (tree, blob with line anchors,
