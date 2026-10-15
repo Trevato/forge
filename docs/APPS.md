@@ -1087,6 +1087,11 @@ the data directory `FORGE_APP_DATA`, and the defaults become
 `FORGE_SSH_PORT=0`, `FORGE_CREW_CONCURRENCY=1` and
 `FORGE_APP_DOMAIN=--<its own host>`.
 
+Every limit an owner can hit (crew runs and checks at once, budget
+ceilings, per-account caps, sign-in rates) is listed with its value and its
+reason under **Settings → Limits** (`/admin/limits`, forge admin only),
+declared in `settings/limits.ts` and read on every use.
+
 Four of these are the forge's capacity and change while it runs: crew runs
 at once, checks at once, shards per check, and the cells' egress mode. A
 forge admin sets them under **Settings → Capacity**, through

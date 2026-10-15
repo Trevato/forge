@@ -15,7 +15,8 @@ import { listComments } from "../src/core/issues.ts";
 import { recordInteraction } from "../src/core/interactions.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { pin } from "../src/core/pins.ts";
-import { DAILY_BUDGET, QUEUE_TTL_MS, senderWeight } from "../src/core/shares.ts";
+import { LIMITS } from "../src/settings/limits.ts";
+import { QUEUE_TTL_MS, senderWeight } from "../src/core/shares.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { readFeed } from "../src/feed/feed.ts";
@@ -24,6 +25,7 @@ import { parseTargets } from "../src/http/feed.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 const HOUR = 3600_000;
+const DAILY_BUDGET = LIMITS["share.daily_max"].default;
 
 describe("share", () => {
   let dataDir: string;

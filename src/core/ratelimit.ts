@@ -96,10 +96,15 @@ export class RateLimiter {
   private readonly windowMs: number;
 
   constructor(
-    private readonly limits: RateLimits = limitsFromEnv(),
+    private limits: RateLimits = limitsFromEnv(),
     private readonly now: () => number = Date.now,
   ) {
     this.windowMs = limits.windowMs ?? WINDOW_MS;
+  }
+
+  /** Take new numbers, honoured by the next `take`; counted hits are kept. */
+  setLimits(limits: RateLimits): void {
+    this.limits = limits;
   }
 
   get enabled(): boolean {

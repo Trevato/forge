@@ -46,13 +46,11 @@ import { canRead, getRepo, getReposByIds, type Repo } from "../core/repos.ts";
 import { listActiveRuns } from "../core/runs.ts";
 import { getUsersByIds, isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { limitValue } from "../settings/limits.ts";
 
 /** How many public apps are read, and how many the shelf shows. */
 const READ = 200;
 export const SHELF = 12;
-/** The most a site admin may pin, and hide. */
-export const MAX_PINNED = 12;
-export const MAX_HIDDEN = 200;
 /** How long a ranking is kept before it is worked out again. */
 const SCORES_MS = 60_000;
 
@@ -355,10 +353,10 @@ export function setFront(
     use: weights["use"] as number,
     fresh: weights["fresh"] as number,
   };
-  if (input.pinned.length > MAX_PINNED)
-    return err({ kind: "invalid", message: `pin at most ${MAX_PINNED}` });
-  if (input.hidden.length > MAX_HIDDEN)
-    return err({ kind: "invalid", message: `hide at most ${MAX_HIDDEN}` });
+  if (input.pinned.length > limitValue(app.db, "front.pinned_max"))
+    return err({ kind: "invalid", message: `pin at most ${limitValue(app.db, "front.pinned_max")}` });
+  if (input.hidden.length > limitValue(app.db, "front.hidden_max"))
+    return err({ kind: "invalid", message: `hide at most ${limitValue(app.db, "front.hidden_max")}` });
   const resolve = (
     names: readonly string[],
   ): Result<Repo[], SetFrontError> => {

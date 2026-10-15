@@ -11,6 +11,7 @@
 import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
+import { changeLimit, listLimits } from "../actions/limits.ts";
 import {
   accountSignIns,
   endAccountSession,
@@ -1267,6 +1268,36 @@ export function apiRoutes(router: Router<Handler>): void {
       changed.error === "no_such_setting"
         ? "no such capacity setting"
         : "that value is outside what this setting takes",
+    );
+  });
+
+  // The forge's limits (`settings/limits.ts`): the same door as capacity.
+  router.add("GET", "/api/v1/admin/limits", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const listed = listLimits(ctx.app, ctx.auth.user);
+    return listed.ok ? json(listed.value) : notFound();
+  });
+
+  router.add("PUT", "/api/v1/admin/limits/:key", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const value =
+      input.value === null
+        ? null
+        : typeof input.value === "number" && Number.isFinite(input.value)
+          ? String(input.value)
+          : str(input.value);
+    const changed = changeLimit(ctx.app, ctx.auth.user, ctx.params.key!, value);
+    if (changed.ok) return json(changed.value);
+    if (changed.error.kind === "not_found") return notFound();
+    return apiError(
+      changed.error.kind,
+      422,
+      changed.error.kind === "no_such_limit"
+        ? "no such limit"
+        : changed.error.message,
     );
   });
 
