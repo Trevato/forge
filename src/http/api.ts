@@ -340,6 +340,7 @@ import {
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
+import { passportRoutes } from "./passport_edge.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -1093,6 +1094,7 @@ function membersAnswer<T>(result: Result<T, AppMembersError>): Response {
   }
 }
 export function apiRoutes(router: Router<Handler>): void {
+  passportRoutes(router);
   // ── accounts ─────────────────────────────────────────────────────────
 
   router.add("POST", "/api/v1/users", async (ctx) => {

@@ -400,6 +400,21 @@ The terminal has no backups view, so it has no readout.
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.
 
+### Passports
+
+A crew run's environment carries `FORGE_PASSPORT`, a 15-minute credential
+scoped to `health:read` for the forge alone (`src/kernel/passport.ts`, no
+dependency: Node crypto's HMAC and HKDF). It opens one route and nothing else:
+
+    curl -H "authorization: Passport $FORGE_PASSPORT" "$FORGE_URL/api/v1/passport/health"
+
+Missing, expired, wrong-audience, wrong-scope or forged passports get a 401. A
+passport has exactly one valid encoding (padded or altered variants are refused).
+
+This route proves the mechanism and is not a privilege: it returns what the
+anonymous `GET /api/v1/health` already returns. The next edge should guard
+something only a passport may reach.
+
 ## Cloud accounts
 
 **Settings → Cloud accounts** (admins) holds provider keys — Cloudflare,

@@ -110,6 +110,7 @@ import { workdirFor } from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
 import { feedbackSince } from "./news.ts";
 import { SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
+import { passportEnv } from "./passport_env.ts";
 
 const log = createLog("crew");
 
@@ -929,6 +930,7 @@ async function work(
       ...identity,
       FORGE_URL: options.forgeUrl,
       FORGE_TOKEN: token.token,
+      ...passportEnv(app.config.dataDir),
       ...credentialEnv(picked),
       ...grant.env,
       ...(options.configDir === undefined
