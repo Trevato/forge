@@ -17,10 +17,13 @@ type Segment =
 export interface Match<H> {
   handler: H;
   params: Params;
+  /** The pattern string given to `add`, so callers can name the route. */
+  pattern: string;
 }
 
 interface CompiledRoute<H> {
   method: string;
+  pattern: string;
   segments: Segment[];
   handler: H;
 }
@@ -66,7 +69,7 @@ export class Router<H> {
   }
 
   add(method: string, pattern: string, handler: H): this {
-    this.routes.push({ method, segments: compile(pattern), handler });
+    this.routes.push({ method, pattern, segments: compile(pattern), handler });
     return this;
   }
 
@@ -80,7 +83,7 @@ export class Router<H> {
           const decoded = parts.slice(i).map(decodeSegment);
           if (decoded.some((d) => d === undefined)) continue outer;
           params[segment.name] = decoded.join("/");
-          return { handler: route.handler, params };
+          return { handler: route.handler, params, pattern: route.pattern };
         }
         const part = parts[i];
         if (part === undefined) continue outer;
@@ -99,7 +102,7 @@ export class Router<H> {
         }
       }
       if (parts.length !== route.segments.length) continue;
-      return { handler: route.handler, params };
+      return { handler: route.handler, params, pattern: route.pattern };
     }
     return undefined;
   }
