@@ -151,6 +151,7 @@ describe("the word on a row", () => {
 
     const page = await (await fetch(`${servers.url}/`, { headers: { cookie } })).text();
     expect(page).toContain('data-waiting="ready to land"');
+    expect(page).toContain('<span class="sr-only">waiting for </span>ready to land');
     expect(page).toContain("ready to land · on you");
     expect(page).not.toContain("Feature <b>");
   });

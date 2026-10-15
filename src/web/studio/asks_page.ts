@@ -211,7 +211,7 @@ function decisionCard(ctx: Ctx, d: Decision, picked: ReadonlySet<string>): Html 
 /** What the row waits for and on whom: "ready to land · on you". */
 const waitChip = (w: WaitingFor): Html =>
   html`<span class="ask-waiting small" data-waiting="${w.word}"
-    >${w.word} · on ${w.on}</span
+    ><span class="sr-only">waiting for </span>${w.word} · on ${w.on}</span
   >`;
 
 /** What a collapsed row says it holds. */
