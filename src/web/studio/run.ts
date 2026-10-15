@@ -11,6 +11,7 @@
 import { directionNote } from "../../crew/direct.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
+import { carriedBy } from "../../core/carried.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { getPull, openPullsClosing } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
@@ -100,6 +101,7 @@ export async function runView(
   const duration = durationText(run);
   const all = ctx.url.searchParams.get("all") === "1";
   const held = listHeldSecrets(db, run.id);
+  const carried = carriedBy(db, run.id);
   const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log?follow=1`;
 
   // The pull this run's tell has become, once one exists: the tell itself
@@ -160,6 +162,19 @@ export async function runView(
       )}
     </div>
     <p class="run-summary" id="run-summary">${run.summary}</p>
+    ${when(
+      carried.length > 0,
+      () =>
+        html`<p class="muted small" id="run-carries">
+          Carries
+          ${carried.map(
+            (n, i) =>
+              html`${i === 0 ? "" : ", "}<a href="${changeHref(base, n)}"
+                  >#${n}</a
+                >`,
+          )}.
+        </p>`,
+    )}
     ${sandboxLine(run)}
     ${when(
       held.length > 0,

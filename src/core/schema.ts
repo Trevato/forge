@@ -1741,6 +1741,19 @@ export const migrations: readonly string[] = [
   ALTER TABLE repo ADD COLUMN decisions_by TEXT NOT NULL DEFAULT 'me'
     CHECK (decisions_by IN ('me', 'decider', 'decider_tell'));
   `,
+  // 86 — what a production deploy carries (pull #1753, issue #1600): one row per merged pull
+  // whose merge commit the deployed commit contains, written when the deploy
+  // finishes. An index over git, so no foreign key outlives a deleted run.
+  `
+  CREATE TABLE deploy_pull (
+    run_id      TEXT NOT NULL,
+    issue_id    TEXT NOT NULL,
+    pull_number INTEGER NOT NULL,
+    merged_oid  TEXT NOT NULL,
+    PRIMARY KEY (run_id, issue_id)
+  );
+  CREATE INDEX deploy_pull_issue ON deploy_pull(issue_id);
+  `,
 ];
 
 /**

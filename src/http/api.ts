@@ -305,6 +305,7 @@ import { resolveOid } from "../git/merge.ts";
 import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
+import { carriedBy } from "../core/carried.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
@@ -4750,7 +4751,12 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const run = getRepoRun(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
-    return run.ok ? json(runForViewer(ctx, repo)(run.value)) : notFound();
+    if (!run.ok) return notFound();
+    // The merged pulls a finished production deploy carries (`core/carried.ts`).
+    return json({
+      ...runForViewer(ctx, repo)(run.value),
+      carries: carriedBy(ctx.app.db, run.value.id),
+    });
   });
 
   // The log: text, or a live tail as server-sent events (`?follow=1`, or

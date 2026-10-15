@@ -13,6 +13,7 @@
  * commit, once.
  */
 
+import { recordCarried } from "../core/carried.ts";
 import { pullDir, runDir } from "../core/pulls.ts";
 import { accountActive } from "../core/accounts.ts";
 import { sshCommand } from "../ssh/command.ts";
@@ -1114,6 +1115,7 @@ export class AppsRuntime {
         summary: `running at ${url}`,
       });
       write(`done: ${url}`);
+      if (done && state.env === "production") await this.noteCarried(repo, done);
       if (done) announceRun(this.app, done);
       return;
     }
@@ -1128,6 +1130,21 @@ export class AppsRuntime {
     write(`failed: test: ${tested.error}`);
     write(`serving ${url} anyway — its tests failed`);
     if (done) announceRun(this.app, done);
+  }
+
+  /** Note the merged pulls a finished production deploy carries; never fails the deploy. */
+  private async noteCarried(repo: Repo, run: Run): Promise<void> {
+    try {
+      const dir = await runDir(this.app.db, this.app.reposRoot, repo, null);
+      await recordCarried(this.app.db, {
+        runId: run.id,
+        repoId: repo.id,
+        commitOid: run.commitOid,
+        dir,
+      });
+    } catch (error) {
+      log.error("could not record what a deploy carries", { error: String(error) });
+    }
   }
 
   private async bringUp(
