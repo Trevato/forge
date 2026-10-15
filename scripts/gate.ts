@@ -73,6 +73,7 @@ export const GATE: readonly string[] = [
   "test/crew-check-failed.test.ts",
   "test/crew-continues.test.ts",
   "test/crew-declines.test.ts",
+  "test/crew-network.test.ts",
   "test/crew-pause.test.ts",
   "test/crew-review.test.ts",
   "test/crew-review-budget.test.ts",

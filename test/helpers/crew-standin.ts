@@ -62,6 +62,11 @@ echo "half-done" > PAUSED.md
 echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You\u2019ve hit your session limit \u00b7 resets 7:20am (UTC)","total_cost_usd":0.02,"num_turns":2,"session_id":"fake-1","terminal_reason":"api_error"}'
 exit 0
 fi
+if grep -q NET-FLAKE "${promptFile}" && [ ! -f "${dataDir}/flaked" ]; then
+touch "${dataDir}/flaked"
+echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: Can'"'"'t reach the API server — check your internet or DNS (EAI_AGAIN)","total_cost_usd":0,"num_turns":0,"session_id":"fake-1","terminal_reason":"api_error"}'
+exit 0
+fi
 if grep -q "Carry on from where you stopped" "${promptFile}"; then
 if [ -f PAUSED.md ]; then kept=yes; else kept=no; fi
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"PAUSED.md present: '"$kept"'"}]}}'
@@ -105,6 +110,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     concurrency: 1,
     budgetUsd: 1,
     runTimeoutMs: 60_000,
+    networkRetryScale: 0,
     reviewBudgetMs: 4_000,
   });
   const a = await createUser(app.db, {
