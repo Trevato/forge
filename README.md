@@ -82,6 +82,13 @@ ssh -p 2222 localhost                        # the terminal UI
 git clone ssh://localhost:2222/you/hello.git # git, same port
 ```
 
+On a forge made for a client (one that was spawned, signed in by its claim
+link), the home is their apps, one plain sentence each and one more saying
+whether its agents are working, about to start, or waiting: no map, board or
+settings until asked. `/?all=1` is the whole home, and its "Just my apps" link
+comes back. The terminal's first screen opens with the same lines, from the
+same query (`src/core/client-apps.ts`).
+
 On a host that cannot hold cells or the crew's shell sandbox, a site admin
 sees `Reduced protection: …` in one line, under the filter on the terminal's
 first screen and in the web footer; nobody else does, and a fully protected
