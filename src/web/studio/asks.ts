@@ -490,12 +490,21 @@ function notDismissed<T extends AskCandidate>(
 ): T[] {
   const muted = mutedRepos(db, user.id);
   const dismissed = askDismissals(db, user.id);
-  if (dismissed.size === 0 && muted.size === 0) return [...asks];
   const holds = (id: string, since: string): boolean =>
     (dismissed.get(`ask:${id}`) ?? "") > since;
+  // A hand-over the decider or the standing rule set aside is closed for
+  // everyone it asks, not for one viewer: the ledger holds it.
+  const setAside = (a: T): boolean => {
+    if (a.kind !== "parked" || a.issue === undefined) return false;
+    const last = latestDecision(db, a.issue.id, "hand");
+    return last?.outcome === "set_aside" && last.createdAt >= a.since;
+  };
   return asks.filter(
     (a) =>
-      !muted.has(a.repo.id) && !holds(a.id, a.since) && !holds(groupId(a), a.since),
+      !muted.has(a.repo.id) &&
+      !holds(a.id, a.since) &&
+      !holds(groupId(a), a.since) &&
+      !setAside(a),
   );
 }
 

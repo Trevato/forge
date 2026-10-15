@@ -282,6 +282,24 @@ configured leaves it with you. Undo for a day (`/api/v1/asks/decide/<id>/undo`,
 `asks_undecide`, `U`). Each tap is a paid call, so one card is handed over
 once in ten minutes.
 
+**The standing rule** says who answers a repository's hand-overs without a
+tap, three ways: `me` (the default: they wait for you), `decider` (the sweep
+asks the decider about each parked card and its word stands, whatever its
+confidence), or `decider_tell` (the decider's sure set-asides, 70% or more,
+take the card off your board; the unsure ones stay with you). The tap on the
+card follows the same rule. A shelved repository, one whose autonomy is `off`,
+has its parked cards closed by rule with no model call whenever the rule is
+not `me`, so turning the crew off on a ruled repository closes what it had
+parked. The sweep spends at most five model calls a tick and never re-asks a
+card already answered or undone. Only a repository admin who is a person sets
+it, never an agent. Set it in the repository's settings (Autonomy → Decisions
+here); over the API with `PATCH /api/v1/repos/<owner>/<name>`
+`{"decisionsBy": "me" | "decider" | "decider_tell"}` (admin token; it is in the
+repository JSON too); over MCP with `decisions_by` (`repo`; without `by` it
+says how the rule is set, with `by` it plans unless `dryRun: false`); in the
+terminal with `R` in the repository's workspace, which cycles me → decider →
+decider_tell.
+
 ## On your machine
 
 The forge holds the truth; `forge` keeps a copy of the parts you work on, the

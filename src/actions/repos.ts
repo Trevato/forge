@@ -23,6 +23,7 @@ import {
   getSealedFork,
   updateRepoSettings as writeSettings,
   type CreateRepoError,
+  type DecisionsBy,
   type ForkRepoError,
   type Repo,
   type RepoSettings,
@@ -246,7 +247,11 @@ export async function updateRepoSettings(
   if (!admin.ok) return admin;
   // Who the crew obeys is a person's call: an agent never widens it, even
   // one on a team that administers the repository (`crew/direct.ts`).
-  if (settings.crewOutsiders !== undefined && admin.value.kind === "agent")
+  if (
+    (settings.crewOutsiders !== undefined ||
+      settings.decisionsBy !== undefined) &&
+    admin.value.kind === "agent"
+  )
     return err("not_found");
   // The work on a sealed report stays private until it merges into its
   // base, whoever owns it (`core/sealed.ts`).
@@ -270,6 +275,7 @@ export async function updateRepoSettings(
       "requireReview",
       "requireChecks",
       "crewOutsiders",
+      "decisionsBy",
     ] as const
   ).filter((k) => settings[k] !== undefined && settings[k] !== repo[k]);
   app.bus.append({
@@ -319,6 +325,37 @@ export async function setCrewOutsiders(
   });
   if (!updated.ok) return err("not_found");
   return ok({ on: updated.value.crewOutsiders, was: repo.crewOutsiders, dryRun });
+}
+
+export interface DecisionsAnswer {
+  /** Who answers the repository's decisions, after this call. */
+  readonly by: DecisionsBy;
+  /** Who did before it. */
+  readonly was: DecisionsBy;
+  /** Nothing changed: this was the plan. */
+  readonly dryRun: boolean;
+}
+
+/**
+ * The standing rule for the decisions a repository asks of its owner, for
+ * the MCP and the terminal — the web form's choice. A repository admin's,
+ * never an agent's; a dry run answers what would change and changes nothing.
+ */
+export async function setDecisionsBy(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  by: DecisionsBy,
+  dryRun: boolean,
+): Promise<Result<DecisionsAnswer, "not_found">> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok || admin.value.kind === "agent") return err("not_found");
+  if (dryRun) return ok({ by, was: repo.decisionsBy, dryRun });
+  const updated = await updateRepoSettings(app, actor, repo, {
+    decisionsBy: by,
+  });
+  if (!updated.ok) return err("not_found");
+  return ok({ by: updated.value.decisionsBy, was: repo.decisionsBy, dryRun });
 }
 
 export async function deleteRepo(

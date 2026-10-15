@@ -116,6 +116,8 @@ export interface Repo {
    * default; on a public repository it hands strangers the owner's budget.
    */
   readonly crewOutsiders: boolean;
+  /** The standing rule for decisions here: `me`, `decider`, or `decider_tell`. */
+  readonly decisionsBy: DecisionsBy;
   /** The issue the planner is given, when the map has run dry. */
   readonly directionIssueId: string | null;
   /** The repo this was forked from, or null. */
@@ -160,6 +162,7 @@ interface RepoRow {
   autonomy_slots: number;
   autonomy_by: string | null;
   crew_outsiders: number;
+  decisions_by: string;
   direction_issue_id: string | null;
   fork_parent_id: string | null;
   sealed_for: string | null;
@@ -197,6 +200,7 @@ function toRepo(row: RepoRow): Repo {
     autonomySlots: row.autonomy_slots,
     autonomyBy: row.autonomy_by,
     crewOutsiders: row.crew_outsiders === 1,
+    decisionsBy: isDecisionsBy(row.decisions_by) ? row.decisions_by : "me",
     directionIssueId: row.direction_issue_id,
     forkParentId: row.fork_parent_id,
     sealedFor: row.sealed_for,
@@ -1007,6 +1011,12 @@ export function canAdmin(
   return accessAllows(orgAccessFor(db, repo, user), "admin");
 }
 
+/** Who answers the decisions a repository asks of its owner. */
+export const DECISIONS_BY = ["me", "decider", "decider_tell"] as const;
+export type DecisionsBy = (typeof DECISIONS_BY)[number];
+export const isDecisionsBy = (v: unknown): v is DecisionsBy =>
+  typeof v === "string" && (DECISIONS_BY as readonly string[]).includes(v);
+
 export interface RepoSettings {
   visibility?: "public" | "private";
   description?: string;
@@ -1025,6 +1035,7 @@ export interface RepoSettings {
   autonomyBy?: string | null;
   /** Whether someone who cannot write here may start or steer a run. */
   crewOutsiders?: boolean;
+  decisionsBy?: DecisionsBy;
 }
 
 /** Update the mutable repo fields, leaving unspecified ones untouched. */
@@ -1037,7 +1048,7 @@ export function updateRepoSettings(
     `UPDATE repo SET visibility = ?1, description = ?2, protect_default = ?3,
        default_branch = ?4, require_review = ?5, require_checks = ?7,
        autonomy = ?8, autonomy_direction = ?9, autonomy_ceiling_usd = ?10,
-       autonomy_slots = ?11, autonomy_by = ?12, crew_outsiders = ?13
+       autonomy_slots = ?11, autonomy_by = ?12, crew_outsiders = ?13, decisions_by = ?14
      WHERE id = ?6`,
   ).run(
     settings.visibility ?? repo.visibility,
@@ -1053,6 +1064,7 @@ export function updateRepoSettings(
     settings.autonomySlots ?? repo.autonomySlots,
     settings.autonomyBy === undefined ? repo.autonomyBy : settings.autonomyBy,
     (settings.crewOutsiders ?? repo.crewOutsiders) ? 1 : 0,
+    settings.decisionsBy ?? repo.decisionsBy,
   );
   return getRepoById(db, repo.id)!;
 }

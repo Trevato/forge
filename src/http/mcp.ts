@@ -90,6 +90,7 @@ import {
   canWrite,
   forkParentFor,
   getRepo,
+  isDecisionsBy,
   ownerFactRepoIds,
   type Repo,
 } from "../core/repos.ts";
@@ -106,7 +107,7 @@ import {
   directionNote,
   OUTSIDERS_NOTE,
 } from "../crew/direct.ts";
-import { setCrewOutsiders } from "../actions/repos.ts";
+import { setCrewOutsiders, setDecisionsBy } from "../actions/repos.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { undoFleetOp } from "../actions/fleet.ts";
 import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
@@ -871,6 +872,45 @@ const TOOLS: readonly Tool[] = [
           : set.value.on
             ? OUTSIDERS_NOTE
             : DIRECTION_NOTE,
+      });
+    },
+  },
+  {
+    name: "decisions_by",
+    description:
+      "The standing rule for the decisions a repository asks of its owner (parked hand-over cards): `me` (they wait for the owner), `decider` (the decider answers each, and a repository whose crew is off closes its parked cards by rule, with no model call), or `decider_tell` (the decider answers, and the owner is told about the ones it is unsure of). Without `by`, says how it is set. With `by`, it plans — `dryRun` is true unless you say false — and only an admin of the app, with an admin token and never as an agent, sets it. Each change is recorded in the app's activity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        by: { type: "string", enum: ["me", "decider", "decider_tell"] },
+        dryRun: {
+          type: "boolean",
+          description: "Plan only (the default). Send false to set it.",
+        },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    dryByDefault: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const by = args["by"];
+      if (by === undefined) return good({ by: repo.decisionsBy });
+      if (!isDecisionsBy(by))
+        return bad("bad_action", "`by` is me, decider or decider_tell");
+      const dryRun = args["dryRun"] !== false;
+      if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "setting the standing rule needs an admin token");
+      const set = await setDecisionsBy(ctx.app, user, repo, by, dryRun);
+      if (!set.ok)
+        return bad("forbidden", "only an admin of this app sets its standing rule");
+      return good({
+        ...set.value,
+        says: dryRun
+          ? `This is the plan; nothing changed. Decisions go by "${set.value.was}" now; send dryRun: false to make it "${set.value.by}".`
+          : `Decisions here now go by "${set.value.by}".`,
       });
     },
   },

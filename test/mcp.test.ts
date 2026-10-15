@@ -175,6 +175,7 @@ describe("the forge over MCP", () => {
       "health",
       "audit",
       "outsiders",
+      "decisions_by",
       "probe",
       "following",
       "spawn",

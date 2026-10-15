@@ -144,6 +144,7 @@ import { audienceFilter } from "../core/event_audience.ts";
 import {
   forkParentFor,
   getReposByIds,
+  isDecisionsBy,
 } from "../core/repos.ts";
 import {
   commentCounts,
@@ -1733,6 +1734,12 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const input = await body(ctx.request);
+    if (input.decisionsBy !== undefined && !isDecisionsBy(input.decisionsBy))
+      return apiError(
+        "bad_decisions_by",
+        422,
+        "decisionsBy is me, decider or decider_tell",
+      );
     const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
       ...(input.visibility === "public" || input.visibility === "private"
         ? { visibility: input.visibility }
@@ -1755,6 +1762,10 @@ export function apiRoutes(router: Router<Handler>): void {
       // "Outsiders may trigger the crew" (`crew/direct.ts`): an admin's, never an agent's.
       ...(typeof input.crewOutsiders === "boolean"
         ? { crewOutsiders: input.crewOutsiders }
+        : {}),
+      // The standing rule for its decisions: also an admin's, never an agent's.
+      ...(isDecisionsBy(input.decisionsBy)
+        ? { decisionsBy: input.decisionsBy }
         : {}),
     });
     if (!updated.ok) return respondAccess(updated.error, 422);

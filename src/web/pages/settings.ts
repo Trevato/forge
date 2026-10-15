@@ -39,7 +39,7 @@ import {
 } from "../../core/app_env.ts";
 import { addToCrew, listCrew, removeFromCrew } from "../../actions/crew.ts";
 import { getAgentByName, isCrewRole, setCrewRole } from "../../core/agents.ts";
-import { isAutonomy } from "../../core/repos.ts";
+import { isAutonomy, isDecisionsBy } from "../../core/repos.ts";
 import {
   createLabel,
   createWebhook,
@@ -1759,12 +1759,21 @@ export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
       message:
         "Mode is off, assisted or autonomous; the ceiling is a number of dollars; slots are 1 to 8.",
     });
+  const rule = field(form, "decisions");
+  const decisionsBy = rule === "" ? repo.decisionsBy : rule;
+  if (!isDecisionsBy(decisionsBy))
+    return flashTo(ctx, `${base}/settings#autonomy`, {
+      tone: "danger",
+      message: "Decisions here go to you, the decider, or the decider telling you.",
+    });
   const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
     autonomy: mode,
     autonomyDirection: field(form, "direction").trim().slice(0, 2000),
     autonomyCeilingUsd: ceiling,
     autonomySlots: slots,
     autonomyBy: mode === "off" ? null : (ctx.auth.user?.id ?? null),
+    // Only a change is sent: an agent admin may save the rest of the form.
+    ...(decisionsBy === repo.decisionsBy ? {} : { decisionsBy }),
   });
   return flashTo(ctx, `${base}/settings#autonomy`, {
     ...(updated.ok

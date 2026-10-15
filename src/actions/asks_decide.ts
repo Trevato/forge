@@ -11,13 +11,12 @@ import { getDecision, latestDecision } from "../core/decisions.ts";
 import { getIssueById } from "../core/issues.ts";
 import { getRepoById } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
-import { letDeciderHandle, undoHandled } from "../crew/handover.ts";
+import { guardedHand, letDeciderHandle, undoHandled } from "../crew/handover.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { askTargetsFor } from "../web/studio/asks.ts";
 import type { FleetError } from "./fleet.ts";
 
-/** Every hand-over is a paid model call: one card is handed over once in this long. */
-export const HAND_COOLDOWN_MS = 10 * 60_000;
+export { HAND_COOLDOWN_MS } from "../crew/handover.ts";
 
 /** What the decider did with a card: plain data for any door. */
 export interface HandAnswer {
@@ -34,9 +33,6 @@ export interface HandAnswer {
 
 const fail = (code: FleetError["code"], message: string) =>
   err<FleetError>({ code, message });
-
-/** Cards whose model call is in flight: a second tap must not pay again. */
-const handing = new Set<string>();
 
 const ASK_ID = /^(parked|issue):[A-Za-z0-9_-]{1,64}$/;
 
@@ -73,22 +69,15 @@ export async function decideAsk(
   const repo = issue === undefined ? undefined : getRepoById(app.db, issue.repoId);
   if (issue === undefined || repo === undefined)
     return fail("not_found", "it no longer asks you");
-  const last = latestDecision(app.db, issue.id, "hand");
-  if (
-    handing.has(issue.id) ||
-    (last !== undefined && now - Date.parse(last.createdAt) < HAND_COOLDOWN_MS)
-  )
+  const handed = await guardedHand(app, issue.id, now, () =>
+    letDeciderHandle(app, actor, repo, issue, repo.decisionsBy),
+  );
+  if (handed === "busy")
     return fail(
       "too_many",
       "the decider answered this a moment ago; try again in a few minutes",
     );
-  handing.add(issue.id);
-  try {
-    const { decision } = await letDeciderHandle(app, actor, repo, issue);
-    return ok(describe(ask, decision));
-  } finally {
-    handing.delete(issue.id);
-  }
+  return ok(describe(ask, handed.decision));
 }
 
 /** Put a set-aside card back on the board, within a day. */

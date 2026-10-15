@@ -16,6 +16,7 @@ import type { App } from "../app.ts";
 import { recentEnds } from "../core/ask_ledger.ts";
 import {
   getDecision,
+  latestDecision,
   recordDecision,
   setOutcome,
   type Decision,
@@ -28,7 +29,7 @@ import {
 } from "../core/interactions.ts";
 import type { Issue } from "../core/issues.ts";
 import { isPinned } from "../core/pins.ts";
-import type { Repo } from "../core/repos.ts";
+import { canAdmin, getRepoById, type DecisionsBy, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { spentTodayForRepos } from "./autonomy.ts";
 import { certain, decideOr, type Answers, type Questions } from "./decide.ts";
@@ -39,6 +40,36 @@ export const HAND_UNDO_MS = 86_400_000;
 
 /** The least confidence at which an answer takes a card off the board. */
 export const SURE = 0.7;
+
+/** A card is handed to the decider at most once in this long. */
+export const HAND_COOLDOWN_MS = 10 * 60_000;
+
+/** Cards whose model call is in flight: a tap and a tick must not both pay. */
+const handing = new Set<string>();
+
+/**
+ * Run `go` for one card unless it was answered in the last ten minutes or a
+ * call for it is in flight; then nothing runs and this says `"busy"`.
+ */
+export async function guardedHand<T>(
+  app: App,
+  issueId: string,
+  now: number,
+  go: () => Promise<T>,
+): Promise<T | "busy"> {
+  const last = latestDecision(app.db, issueId, "hand");
+  if (
+    handing.has(issueId) ||
+    (last !== undefined && now - Date.parse(last.createdAt) < HAND_COOLDOWN_MS)
+  )
+    return "busy";
+  handing.add(issueId);
+  try {
+    return await go();
+  } finally {
+    handing.delete(issueId);
+  }
+}
 
 const SET_ASIDE = "set_aside";
 const ASK_OWNER = "ask_owner";
@@ -102,6 +133,23 @@ export function handContext(
   };
 }
 
+/**
+ * The actor on a decision the standing rule took: no person's, so no one
+ * viewer's dismissal. The ledger's `set_aside` outcome closes the card for
+ * everyone it asks (`notDismissed` in `web/studio/asks.ts`).
+ */
+export const STANDING = "standing";
+
+function dismissFor(app: App, owner: User, repo: Repo, issue: Issue): void {
+  recordInteraction(app.db, {
+    viewerId: owner.id,
+    itemId: itemOf(issue),
+    kind: "dismissed",
+    repoId: repo.id,
+    actorId: owner.id,
+  });
+}
+
 /** The dismissal item a parked card is set aside under (`askItemsOf`). */
 const itemOf = (issue: Issue): string => `ask:parked:${issue.id}`;
 
@@ -120,6 +168,8 @@ export async function letDeciderHandle(
   owner: User,
   repo: Repo,
   issue: Issue,
+  mode: DecisionsBy,
+  standing = false,
 ): Promise<Handled> {
   const context = handContext(app, owner, repo, issue);
   const rule = (): Answers<typeof QUESTIONS> => ({
@@ -132,10 +182,14 @@ export async function letDeciderHandle(
     rule,
   );
   const answer = decided.answers.hand;
-  const sure = answer.choice === SET_ASIDE && answer.p >= SURE;
+  // Ruled "decider", its word stands; otherwise only a sure one does.
+  const sure =
+    answer.choice === SET_ASIDE && (mode === "decider" || answer.p >= SURE);
   const percent = Math.round(answer.p * 100);
   const reason = sure
-    ? `Set aside, ${percent}% sure: nothing in the direction, the budget or your past decisions here asks for it now.`
+    ? mode === "decider" && answer.p < SURE
+      ? `Set aside, ${percent}% sure: this repository is ruled "decider", so its word stands.`
+      : `Set aside, ${percent}% sure: nothing in the direction, the budget or your past decisions here asks for it now.`
     : decided.by === "rule"
       ? "No decider answered, so it stays with you."
       : `Unsure (${percent}% for ${answer.choice === SET_ASIDE ? "setting it aside" : "asking you"}), so it stays with you.`;
@@ -143,20 +197,14 @@ export async function letDeciderHandle(
     kind: "hand",
     repoId: repo.id,
     issueId: issue.id,
-    state: { ...context, reason, actor: owner.id },
+    state: { ...context, reason, actor: standing ? STANDING : owner.id },
     answer: sure ? SET_ASIDE : ASK_OWNER,
     p: answer.p,
     by: decided.by,
     ms: decided.ms,
   });
   if (sure) {
-    recordInteraction(app.db, {
-      viewerId: owner.id,
-      itemId: itemOf(issue),
-      kind: "dismissed",
-      repoId: repo.id,
-      actorId: owner.id,
-    });
+    if (!standing) dismissFor(app, owner, repo, issue);
     setOutcome(app.db, decision.id, "set_aside");
   } else setOutcome(app.db, decision.id, "asked");
   return { decision: getDecision(app.db, decision.id)!, setAside: sure };
@@ -183,10 +231,15 @@ export function undoHandled(
   // Someone else's set-aside is not found: only the dismissal's owner undoes it.
   const item = `ask:parked:${decision.issueId}`;
   const said = decision.state as { actor?: unknown } | null;
-  if (said?.actor !== owner.id) return "not_found";
-  if (!askDismissals(app.db, owner.id).has(item)) return "not_found";
+  const byRule = said?.actor === STANDING;
+  if (!byRule && said?.actor !== owner.id) return "not_found";
+  if (byRule) {
+    // The rule's set-aside is the repository's: any admin of it may take it back.
+    const repo = getRepoById(app.db, decision.repoId);
+    if (repo === undefined || !canAdmin(app.db, repo, owner)) return "not_found";
+  } else if (!askDismissals(app.db, owner.id).has(item)) return "not_found";
   if (now - Date.parse(decision.createdAt) > HAND_UNDO_MS) return "too_late";
-  removeDismissals(app.db, owner.id, [item]);
+  if (!byRule) removeDismissals(app.db, owner.id, [item]);
   setOutcome(app.db, decision.id, "undone");
   return getDecision(app.db, decision.id)!;
 }
@@ -205,4 +258,36 @@ export function forReader(d: Decision, reader: User | undefined): Decision {
     ...d,
     state: { ...rest, repository: { name: repository?.name } },
   };
+}
+
+/**
+ * A hand-over on a shelved repository — its crew is off, so nothing will
+ * pick the issue up again — closes without a model call: the rule answers,
+ * in the ledger, with the same context and the same undo. Only the standing
+ * sweep calls it, so it is recorded as the standing rule's and dismisses for
+ * no one.
+ */
+export function setAsideShelved(
+  app: App,
+  owner: User,
+  repo: Repo,
+  issue: Issue,
+): Handled {
+  const context = handContext(app, owner, repo, issue);
+  const decision = recordDecision(app.db, {
+    kind: "hand",
+    repoId: repo.id,
+    issueId: issue.id,
+    state: {
+      ...context,
+      reason: "Set aside: the crew is off here, so nothing will pick it up.",
+      actor: STANDING,
+    },
+    answer: SET_ASIDE,
+    p: 1,
+    by: "rule",
+    ms: 0,
+  });
+  setOutcome(app.db, decision.id, "set_aside");
+  return { decision: getDecision(app.db, decision.id)!, setAside: true };
 }

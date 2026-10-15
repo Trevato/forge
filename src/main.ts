@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { sweepStanding } from "./crew/standing.ts";
 import { handover } from "./release/swap.ts";
 import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
@@ -364,6 +365,12 @@ runSync(app); // one pass on boot: a forge that was down has fetching to do
 // expired: what asked each person, and how it ended.
 const tickAsks = async (): Promise<void> => {
   await sweepStaleAsks(app);
+  // Repositories ruled "decider" have their hand-overs answered here.
+  try {
+    await sweepStanding(app);
+  } catch (error) {
+    app.log.error("standing rule sweep failed", { error: String(error) });
+  }
   try {
     recordAskLedger(app.db);
   } catch (error) {
