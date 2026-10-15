@@ -38,7 +38,7 @@ import { readSpend } from "../../actions/spend.ts";
 import { spendView } from "./spend.ts";
 import { listApps } from "../../core/apps.ts";
 import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
-import { vitals, type Vitals } from "../../kernel/vitals.ts";
+import { laneLine, vitals, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
 import {
@@ -334,6 +334,7 @@ function forgeStrip(ctx: Ctx): Html | null {
     (i) => i.key !== "stuck" && i.key !== "held",
   );
   const ok = v.ok && fh.ok;
+  const lane = laneLine(v.lane);
   return html`<div
     class="board-forge"
     id="forge"
@@ -344,6 +345,7 @@ function forgeStrip(ctx: Ctx): Html | null {
   >
     ${rollout === null ? "" : html`<span class="board-forge-need">${rollout}</span>`}
     ${others.map((i) => html`<span class="board-forge-need">${i.key}: ${i.message}</span>`)}
+    ${lane === null ? "" : html`<span class="board-forge-lane">Lane: ${lane}</span>`}
     ${
       ok
         ? html`<span class="board-forge-ok">All fine</span>`

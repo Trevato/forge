@@ -13,7 +13,7 @@ import { appsRuntime } from "../apps/runtime.ts";
 import { listApps } from "../core/apps.ts";
 import type { User } from "../core/users.ts";
 import { forgeHealth, rolloutLine, type ForgeHealth } from "../kernel/guard.ts";
-import { vitals, type Vitals } from "../kernel/vitals.ts";
+import { laneLine, vitals, type Vitals } from "../kernel/vitals.ts";
 
 export function readHealth(
   app: App,
@@ -46,4 +46,14 @@ export function forgeNeeds(app: App, actor: User | undefined): string[] | undefi
       .map((i) => `${i.key}: ${i.message}`),
     ...h.needs,
   ];
+}
+
+/**
+ * The check lane as one line for a site admin, as the board's forge strip
+ * prints it; `null` for anyone else, and when no check is queued.
+ */
+export function forgeLane(app: App, actor: User | undefined): string | null {
+  if (!actor?.isAdmin) return null;
+  const h = readHealth(app, actor) as Vitals & ForgeHealth;
+  return laneLine(h.lane);
 }

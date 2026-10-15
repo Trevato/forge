@@ -607,6 +607,10 @@ work here.
   flags new activity, no refresh.
 - **Commit pages** — every commit's diff through the same viewer.
 - **Settings** — visibility, branch protection, and labels.
+- **The check lane is visible.** Checks run one at a time; an admin's home
+  strip, the terminal dashboard's strip and `GET /api/v1/health` (`lane`) show
+  the queue depth, the running check and its age, the median of the last
+  twenty and the time to clear, and the 30-minute queue card names that cause.
 - **A terminal UI** — `ssh` in for the whole forge: dashboard, code browsing
   with syntax highlighting, issues and pulls with live-updating threads, the
   diff viewer with inline review comments, merges, settings, orgs, tokens and

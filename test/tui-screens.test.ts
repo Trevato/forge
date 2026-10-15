@@ -10,6 +10,7 @@
  * session rather than the process.
  */
 
+import { createRun } from "../src/core/runs.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -741,11 +742,21 @@ describe("the forge's health in the terminal", () => {
       await admin.settle();
       expect(admin.text()).toContain("rollout blocked: quota refused");
       expect(admin.text()).not.toContain("All fine");
+      expect(admin.text()).not.toContain("Lane:");
       admin.stop();
+
+      const made = await createRepo(forge, a.value, { name: "laned" });
+      if (!made.ok) throw new Error("repo creation failed");
+      for (let i = 0; i < 2; i++) createRun(forge.db, { repoId: made.value.id, kind: "check" });
+      const laned = boot(forge, as(a.value));
+      await laned.settle();
+      expect(laned.text()).toContain("Lane: 2 checks queued");
+      laned.stop();
 
       const other = boot(forge, as(b.value));
       await other.settle();
       expect(other.text()).not.toContain("rollout blocked");
+      expect(other.text()).not.toContain("Lane:");
       expect(other.text()).not.toContain("All fine");
       other.stop();
     } finally {

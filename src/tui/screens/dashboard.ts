@@ -15,7 +15,7 @@
  */
 
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
-import { forgeNeeds } from "../../actions/health.ts";
+import { forgeLane, forgeNeeds } from "../../actions/health.ts";
 import { mayView } from "../../core/sealed.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
 import { listAssignedTo, type Issue } from "../../core/issues.ts";
@@ -93,6 +93,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** Why planning is paused, for the autonomous apps where it is; as on the board. */
   let holds = new Map<string, string>();
   let forge: string[] | undefined;
+  /** The check lane, as the board's strip says it; null when nothing is queued. */
+  let lane: string | null = null;
   const filter = new Filter();
   /** One cursor per pane: moving in one must never move another. */
   const cursors: Record<PaneId, ListState> = {
@@ -118,6 +120,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       }),
     );
     forge = forgeNeeds(f.app, f.user);
+    lane = forgeLane(f.app, f.user);
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.
     const orgs = f.user
@@ -281,6 +284,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       let body = area;
       if (forge !== undefined) {
         const lines = forge.length === 0 ? ["All fine"] : forge.slice(0, 3);
+        if (lane !== null) lines.push(`Lane: ${lane}`);
         const [strip, rest] = split(area, "v", [len(lines.length), fill(1)]);
         lines.forEach((line, i) =>
           s.text(
