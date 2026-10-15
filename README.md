@@ -682,7 +682,8 @@ work here.
   do it: apps are stopped, repositories deleted, organizations retired (the
   name stays taken), then the account. If a repository will not go, the answer
   is 500 with `failed` and `removed`; what is left is intact and the same call
-  again finishes the job.
+  again finishes the job. The accounts page offers the same flow: Remove →
+  "Remove the organization too" → a confirm page listing everything that goes.
 - **Apps** — a repository that runs: production on the default branch, a
   preview per open pull with its own copy of the data, served by hostname
   from the forge's own port, every deploy a run and every run a check.

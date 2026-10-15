@@ -8,6 +8,8 @@
 import {
   listAccounts,
   removeAccount,
+  retirementPlan,
+  retireAndRemoveAccount,
   suspendAccount,
   unsuspendAccount,
   verifyAccount,
@@ -216,11 +218,36 @@ function confirmSuspend(username: string, orgs: readonly string[]): Html {
       <form method="post" action="${at}/suspend" class="form-actions">
         <input type="hidden" name="confirm" value="1" />
         ${btn("Suspend anyway", { type: "submit", size: "sm", variant: "danger" })}
+        ${btn("Remove the organization too", {
+          href: `${at}/retire`,
+          size: "sm",
+          variant: "danger",
+        })}
         ${orgs[0] === undefined
           ? null
           : btn("Add an owner first", { href: ownersTeam(orgs[0]), size: "sm" })}
         ${btn("Keep them", { href: "/settings/accounts", size: "sm", variant: "ghost" })}
       </form>`,
+    { tone: "attn" },
+  );
+}
+
+/** A removal refused for a sole-owned organization: the way through, once. */
+function refuseRemove(username: string): Html {
+  return card(
+    html`<p>
+        <strong>${username}</strong> is the only owner of an organization
+        (named in their row). Make someone else an owner first, or remove the
+        organization too after seeing everything that would go. Nothing was
+        changed.
+      </p>
+      <div class="form-actions">
+        ${btn("Remove the organization too", {
+          href: `/settings/accounts/${encodeURIComponent(username)}/retire`,
+          size: "sm",
+          variant: "danger",
+        })}
+      </div>`,
     { tone: "attn" },
   );
 }
@@ -295,6 +322,12 @@ export function signInAct(what: "token" | "session") {
   };
 }
 
+const cannotDo = (ctx: Ctx): Response =>
+  flashTo(ctx, "/settings/accounts", {
+    message: "You cannot do that to yourself, another admin, or an agent.",
+    tone: "danger",
+  });
+
 type Act = "suspend" | "unsuspend" | "remove" | "verify";
 
 const DONE: Readonly<Record<Act, string>> = {
@@ -324,6 +357,8 @@ export function accountAct(act: Act) {
             : await removeAccount(ctx.app, ctx.auth.user, username);
     if (!done.ok) {
       if (done.error === "not_found") return notFoundPage(ctx);
+      if (act === "remove" && done.error === "last_owner")
+        return accountsView(ctx, refuseRemove(username), 409);
       if (act === "suspend" && done.error === "last_owner") {
         const user = getUserByName(ctx.app.db, username);
         const orgs =
@@ -346,4 +381,110 @@ export function accountAct(act: Act) {
       message: `${username} ${DONE[act]}.`,
     });
   };
+}
+
+// GET /settings/accounts/:username/retire — everything removal would take; removes nothing
+export function retirePage(ctx: Ctx): Response {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  const username = ctx.params.username ?? "";
+  const plan = retirementPlan(ctx.app, ctx.auth.user, username);
+  if (!plan.ok)
+    return plan.error === "not_allowed" ? cannotDo(ctx) : notFoundPage(ctx);
+  const at = `/settings/accounts/${encodeURIComponent(username)}`;
+  return shell(
+    ctx,
+    card(
+      html`<p>
+          ${plan.value.length === 0
+            ? html`Removing <strong>${username}</strong> removes only the account.`
+            : html`Removing <strong>${username}</strong> also removes the
+                ${plan.value.length === 1 ? "organization" : "organizations"} they
+                alone own, with everything below.`}
+          This cannot be undone.
+        </p>
+        ${plan.value.length === 0
+          ? html`<p class="muted">They own no organization alone.</p>`
+          : html`<ul class="rows">
+              ${plan.value.map(
+                (o) => html`<li class="row">
+                  <div class="row-main">
+                    <strong>${o.org}</strong>
+                    <div class="row-meta">
+                      ${o.repos.length === 0
+                        ? "no repositories"
+                        : o.repos.map(
+                            (r, i) =>
+                              html`${i > 0 ? ", " : ""}${r.name}${r.app === null
+                                ? null
+                                : html` (app ${r.app})`}`,
+                          )}
+                    </div>
+                    <div class="row-meta">
+                      teams: ${o.teams.length === 0 ? "none" : o.teams.join(", ")}
+                    </div>
+                  </div>
+                </li>`,
+              )}
+            </ul>`}
+        <form method="post" action="${at}/retire" class="form-actions">
+          <input type="hidden" name="confirm" value="1" />
+          ${btn("Remove everything", { type: "submit", size: "sm", variant: "danger" })}
+          ${btn("Keep them", { href: "/settings/accounts", size: "sm", variant: "ghost" })}
+        </form>`,
+      { tone: "attn" },
+    ),
+  );
+}
+
+// POST /settings/accounts/:username/retire
+export async function retireAct(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const username = ctx.params.username ?? "";
+  const done = await retireAndRemoveAccount(ctx.app, ctx.auth.user, username, {
+    confirmed: field(form, "confirm") === "1",
+  });
+  if (!done.ok) {
+    if (done.error === "confirm_required")
+      return flashTo(ctx, `/settings/accounts/${encodeURIComponent(username)}/retire`, {
+        message: "Confirm to remove; nothing was changed.",
+        tone: "danger",
+      });
+    return done.error === "not_allowed" ? cannotDo(ctx) : notFoundPage(ctx);
+  }
+  const { removed, failed } = done.value;
+  const list = html`<ul>
+    ${removed.map((n) => html`<li>${n}</li>`)}
+  </ul>`;
+  const back = btn("Back to accounts", { href: "/settings/accounts", size: "sm" });
+  if (failed !== null)
+    return shell(
+      ctx,
+      card(
+        html`<p>
+            <strong>${failed}</strong> would not go, so the removal stopped
+            there. ${removed.length === 0 ? "Nothing was removed yet." : "Removed so far:"}
+            Trying again finishes the job.
+          </p>
+          ${removed.length === 0 ? null : list}
+          <form method="post" action="/settings/accounts/${encodeURIComponent(username)}/retire" class="form-actions">
+            <input type="hidden" name="confirm" value="1" />
+            ${btn("Try again", { type: "submit", size: "sm", variant: "danger" })} ${back}
+          </form>`,
+        { tone: "danger" },
+      ),
+      500,
+    );
+  return shell(
+    ctx,
+    card(
+      html`<p>
+          ${removed.length === 0 ? `${username} was already removed.` : "Removed:"}
+        </p>
+        ${removed.length === 0 ? null : list} ${back}`,
+    ),
+  );
 }
