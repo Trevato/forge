@@ -29,7 +29,6 @@ export async function bootWorld(dataDir: string): Promise<World> {
     trusted: true,
     username: "chaos",
     email: "chaos@forge.local",
-    password: "a-good-passphrase",
     adminIfFirst: true,
   });
   if (!made.ok) throw new Error(made.error);
