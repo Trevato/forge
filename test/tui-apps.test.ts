@@ -415,6 +415,8 @@ describe("terminal: apps, runs and the crew", () => {
     try {
       await h.until("On you");
       expect(h.text()).toContain("Tune the drums");
+      // The word the web's asks row shows, and on whom (#1825).
+      expect(h.text()).toContain("assigned to you · on you");
       expect(h.text()).not.toContain("Apps");
       // repos → on you.
       await h.press("tab", "enter");
