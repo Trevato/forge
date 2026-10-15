@@ -1,0 +1,3 @@
+# One line per dark roll the owner has said yes to, never more:
+#   <version> yes <owner> <YYYY-MM-DD>
+# A yes names one version and is spent on it. No wildcards, no standing yes.
