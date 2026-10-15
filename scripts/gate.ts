@@ -27,6 +27,7 @@ export type Exclusion = {
 };
 
 export const GATE: readonly string[] = [
+  "test/domain-drill.test.ts",
   "test/accounts-retire.test.ts",
   "test/cloud-use.test.ts",
   "test/accounts.test.ts",
