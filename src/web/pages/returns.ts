@@ -94,6 +94,22 @@ export function returnsPage(ctx: Ctx): Response {
         ],
         { head: html`<h2>What did not land, and why</h2>` },
       )}
+      ${r.byPillar.length === 0
+        ? null
+        : listCard(
+            r.byPillar.map((b) =>
+              row({
+                title: b.pillar,
+                meta: html`${runs(b)} · ${b.changes}
+                ${b.changes === 1 ? "change" : "changes"} landed${b.changes === 0
+                  ? ""
+                  : ` · ${usd(b.perChange)} a change`} ·
+                ${usd(b.closed.usd)} closed with nothing · ${usd(b.open.usd)} still open`,
+                trail: html`<b>${usd(b.usd)}</b>`,
+              }),
+            ),
+            { head: html`<h2 id="returns-by-pillar">By pillar</h2>` },
+          )}
       ${listCard(
         r.costliest.map((c) => {
           const repo = repos.get(c.repoId);

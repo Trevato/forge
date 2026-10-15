@@ -15,7 +15,9 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { NO_PILLAR, pillarsOf, servedBy } from "./pillars.ts";
 import { closesFromBody } from "./pulls.ts";
+import { getReposByIds } from "./repos.ts";
 
 export interface ReturnsWindow {
   readonly since: string;
@@ -40,6 +42,19 @@ export interface CostlyIssue extends Money {
   readonly title: string;
   /** Landed: a change for it merged. Closed: it closed with nothing merged. Open: still nothing merged. */
   readonly outcome: Outcome;
+}
+
+/** What one pillar's work cost and came to; "no pillar" is the work that serves none. */
+export interface PillarReturn extends Money {
+  readonly pillar: string;
+  /** Distinct changes that merged for this pillar's runs. */
+  readonly changes: number;
+  /** Dollars on work that landed. */
+  readonly landedUsd: number;
+  /** Dollars on work that landed, over those changes; 0 when none landed. */
+  readonly perChange: number;
+  readonly closed: Money;
+  readonly open: Money;
 }
 
 export interface Returns {
@@ -72,6 +87,8 @@ export interface Returns {
     readonly usd: { readonly median: number; readonly p90: number };
     readonly minutes: { readonly median: number; readonly p90: number };
   };
+  /** The same dollars by the pillar each run's issue serves: pillars in order, no pillar last. */
+  readonly byPillar: readonly PillarReturn[];
   /** The issues that cost the most, with what came of each. */
   readonly costliest: readonly CostlyIssue[];
 }
@@ -206,6 +223,43 @@ export function tokenReturns(
       issues.set(row.id, row);
   }
 
+  // Which pillar each issue serves, per repository: one read of the plan each.
+  const repoById = getReposByIds(db, repoIds);
+  const order: string[] = [];
+  const served = new Map<string, string>();
+  for (const repo of repoById.values()) {
+    const set = pillarsOf(db, repo);
+    for (const [id, name] of servedBy(db, set)) served.set(id, name);
+    for (const pillar of set.pillars)
+      if (!order.includes(pillar.name)) order.push(pillar.name);
+    if ((set.gate !== undefined || set.later !== undefined) && !order.includes("Later"))
+      order.push("Later");
+  }
+  const byNumber = db.query<{ id: string }, [string, number]>(
+    "SELECT id FROM issue WHERE repo_id = ?1 AND number = ?2",
+  );
+  /** The pillar a run's issue serves; a pull takes the first pillar of what it closes. */
+  const pillarOfIssue = (issue: IssueRow | undefined): string => {
+    if (issue === undefined) return NO_PILLAR;
+    const own = served.get(issue.id);
+    if (own !== undefined || issue.kind !== "pull") return own ?? NO_PILLAR;
+    for (const k of closesFromBody(pullById.get(issue.id)?.body ?? "")) {
+      const target = byNumber.get(issue.repo_id, k);
+      const name = target === null ? undefined : served.get(target.id);
+      if (name !== undefined) return name;
+    }
+    return NO_PILLAR;
+  };
+  interface Tally {
+    runs: number;
+    usd: number;
+    landedUsd: number;
+    changes: Set<string>;
+    closed: { runs: number; usd: number };
+    open: { runs: number; usd: number };
+  }
+  const tallies = new Map<string, Tally>();
+
   /** The change a run worked toward: the merged pull if any of its candidates merged, else what is left. */
   const changeOf = (r: RunRow): { merged?: PullRow; candidates: PullRow[] } => {
     const issue = r.issue_id === null ? undefined : issues.get(r.issue_id);
@@ -273,6 +327,24 @@ export function tokenReturns(
         add(failures, reasonOf(r.summary), usd);
       } else if (r.state === "cancelled") add(nothing, "cancelled", usd);
     }
+    const tally = tallies.get(pillarOfIssue(issue)) ?? {
+      runs: 0,
+      usd: 0,
+      landedUsd: 0,
+      changes: new Set<string>(),
+      closed: { runs: 0, usd: 0 },
+      open: { runs: 0, usd: 0 },
+    };
+    tally.runs++;
+    tally.usd += usd;
+    if (outcome === "landed") {
+      tally.landedUsd += usd;
+      tally.changes.add(change.merged!.id);
+    } else {
+      tally[outcome].runs++;
+      tally[outcome].usd += usd;
+    }
+    tallies.set(pillarOfIssue(issue), tally);
     if (issue !== undefined) {
       const m = perIssue.get(issue.id) ?? { runs: 0, usd: 0, outcome };
       m.runs++;
@@ -354,6 +426,23 @@ export function tokenReturns(
         ),
       },
     },
+    byPillar: [...order, NO_PILLAR].flatMap((pillar) => {
+      const t = tallies.get(pillar);
+      return t === undefined
+        ? []
+        : [
+            {
+              pillar,
+              ...money(t),
+              changes: t.changes.size,
+              landedUsd: cents(t.landedUsd),
+              perChange:
+                t.changes.size === 0 ? 0 : cents(t.landedUsd / t.changes.size),
+              closed: money(t.closed),
+              open: money(t.open),
+            },
+          ];
+    }),
     costliest: [...perIssue]
       .sort((a, b) => b[1].usd - a[1].usd)
       .slice(0, TOP_ISSUES)

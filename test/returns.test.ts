@@ -14,9 +14,10 @@ import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openIssue, setIssueState } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { addDependency } from "../src/core/dependencies.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
-import { reasonOf, tokenReturns } from "../src/core/returns.ts";
+import { reasonOf, tokenReturns, type PillarReturn } from "../src/core/returns.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -390,5 +391,49 @@ describe("what the tokens bought", () => {
     });
     expect(r.landedNothing.open).toEqual({ runs: 2, usd: 0.8 });
     expect(r.landedNothing.closed).toEqual({ runs: 2, usd: 2.4 });
+  });
+
+  test("by pillar: dollars, landed changes, closed and open add up; a reader gets none", async () => {
+    const byTitle = (t: string): Issue =>
+      getIssueById(
+        app.db,
+        app.db.query<{ id: string }, [string]>("SELECT id FROM issue WHERE title = ?1").get(t)!.id,
+      )!;
+    for (const [umbrella, children] of [
+      ["P1 Ship: it", ["Landed work", "Declined work"]],
+      ["P2 Tidy: up", ["Dropped work", "Open work"]],
+    ] as const) {
+      const made = openIssue(app, alice, repo, { title: umbrella });
+      if (!made.ok) throw new Error(String(made.error));
+      for (const c of children)
+        addDependency(app.db, made.value, byTitle(c), alice.id);
+    }
+    const now = new Date(Date.now() + 1000);
+    const r = tokenReturns(app.db, [repo.id], {
+      since: new Date(now.getTime() - 7 * 86_400_000).toISOString(),
+      until: now.toISOString(),
+    });
+    expect(r.byPillar.map((b) => b.pillar)).toEqual(["P1 Ship", "P2 Tidy", "no pillar"]);
+    const [p1, p2, none] = r.byPillar as [PillarReturn, PillarReturn, PillarReturn];
+    expect([p1.runs, p1.usd, p1.changes, p1.perChange]).toEqual([3, 3.5, 1, 1.5]);
+    expect(p1.closed).toEqual({ runs: 1, usd: 2 });
+    expect(p1.open).toEqual({ runs: 0, usd: 0 });
+    expect([p2.runs, p2.usd, p2.changes, p2.perChange]).toEqual([2, 0.5, 0, 0]);
+    expect(p2.closed).toEqual({ runs: 1, usd: 0.4 });
+    expect(p2.open).toEqual({ runs: 1, usd: 0.1 });
+    expect(none.usd).toBe(0.7);
+    expect(r.byPillar.reduce((sum, b) => sum + b.usd, 0)).toBeCloseTo(r.spent.usd, 2);
+
+    const page = await (await get("/board/returns", { cookie: aliceCookie })).text();
+    expect(page).toContain("By pillar");
+    expect(page).toContain("P1 Ship");
+    const bobs = (await (await get("/api/v1/returns", { token: bobRw })).json()) as {
+      byPillar: unknown[];
+    };
+    expect(bobs.byPillar).toEqual([]);
+    const theirs = await (await get("/board/returns", { cookie: bobCookie })).text();
+    expect(theirs).not.toContain("By pillar");
+    expect(theirs).not.toContain("P1 Ship");
+    expect((await get("/board/returns")).status).not.toBe(200);
   });
 });
