@@ -131,30 +131,39 @@ export interface OrgRetirement {
   teams: string[];
 }
 
+/** Everything removing an account takes: its own repositories and its sole-owned organizations. */
+export interface RetirementPlan {
+  own: { name: string; app: string | null }[];
+  orgs: OrgRetirement[];
+}
+
 /**
- * What removing `username` with `retireOrgs` would take: every organization
- * the account alone owns, its repositories (with the app each runs, if any)
- * and its teams. Reads only.
+ * What removing `username` with `retireOrgs` would take: the account's own
+ * repositories, and every organization it alone owns with that organization's
+ * repositories (with the app each runs, if any) and teams. Reads only.
  */
 export function retirementPlan(
   app: App,
   actor: User | undefined,
   username: string,
-): Result<OrgRetirement[], AccountActionError> {
+): Result<RetirementPlan, AccountActionError> {
   const admin = requireForgeAdmin(actor);
   if (!admin.ok) return admin;
   const found = target(app, admin.value, username);
   if (!found.ok) return found;
-  return ok(
-    soleOwnedOrgs(app.db, found.value.id).map((org) => ({
+  const repos = (owner: User) =>
+    listReposOwnedBy(app.db, owner.id).map((r) => ({
+      name: `${owner.username}/${r.name}`,
+      app: getAppByRepo(app.db, r.id)?.slug ?? null,
+    }));
+  return ok({
+    own: repos(found.value),
+    orgs: soleOwnedOrgs(app.db, found.value.id).map((org) => ({
       org: org.username,
-      repos: listReposOwnedBy(app.db, org.id).map((r) => ({
-        name: `${org.username}/${r.name}`,
-        app: getAppByRepo(app.db, r.id)?.slug ?? null,
-      })),
+      repos: repos(org),
       teams: listTeams(app.db, org.id).map((t) => t.name),
     })),
-  );
+  });
 }
 
 /**
