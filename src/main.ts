@@ -13,6 +13,7 @@ import { createApp } from "./app.ts";
 import { backfillCarried } from "./core/carried.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
+import { bootHostedChildren } from "./spawn/host.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
 import { startHeartbeat } from "./spawn/heartbeat.ts";
 import { pruneSessions } from "./core/sessions.ts";
@@ -352,6 +353,9 @@ const crew = appsOn && !crewHeldOff
         : { configDir: process.env.FORGE_CLAUDE_CONFIG_DIR }),
     })
   : undefined;
+// Hosted children come back with their apps, awake before the first visit.
+// The listener is up; the children open behind it, not in front of /healthz.
+void bootHostedChildren(app);
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);

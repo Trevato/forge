@@ -87,6 +87,10 @@ export interface ChecksOptions {
   readonly concurrency?: number | undefined;
   /** The forge's public URL, told to the check as `FORGE_URL`. */
   readonly forgeUrl: string;
+  /** The parent's gate, for a hosted child: its checks take their turn in the parent's lane. */
+  readonly gate?: Gate | undefined;
+  /** Whose checks these are, written first in each run's log (a hosted child's name). */
+  readonly label?: string | undefined;
   /** How long a check may run before it is killed. @default BUDGETS.gate */
   readonly budgetMs?: number | undefined;
   /**
@@ -130,6 +134,8 @@ export interface ChecksHandle {
     commitOid: string,
   ): Promise<{ ok: boolean; error: string; lines: string[] }>;
   stop(): Promise<void>;
+  /** The gate checks take their turn at; a hosted child's checks share it. */
+  readonly lane: Gate;
 }
 
 /** How often queued checks another forge left are looked for. */
@@ -230,7 +236,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   noteBooted(app.db, "checks.concurrency", String(options.concurrency ?? 1));
   const capacity = (): number =>
     capacityCount(app.db, "checks.concurrency", options.concurrency ?? 1);
-  const gate = new Gate(capacity());
+  const gate = options.gate ?? new Gate(capacity());
   const placement = options.placement ?? placementFromEnv();
   /** Full gates on land in flight: not slots in the queue, but stopped with it. */
   const gates = new Set<AbortController>();
@@ -346,7 +352,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   function schedule(): void {
     if (stopped) return;
     const limit = capacity();
-    gate.resize(limit);
+    if (options.gate === undefined) gate.resize(limit);
     while (inFlight.size < limit) {
       // A pull's check waits while its main is red (`checks/red_main.ts`).
       const queued = unheld(
@@ -427,6 +433,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       announceRun(app, claimed);
       const write = (line: string): void =>
         appendRunLog(app.config.dataDir, run.id, line);
+      if (options.label !== undefined)
+        write(`forge ${options.label} — checked in its parent's lane`);
       const started = Date.now();
       // The budget: past it the check is aborted, whatever it is doing.
       const limit = options.budgetMs ?? BUDGETS.gate;
@@ -1036,6 +1044,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         gates.delete(controller);
       }
     },
+    lane: gate,
     stop: async () => {
       stopped = true;
       clearInterval(timer);

@@ -23,6 +23,7 @@ import {
   type Placement,
 } from "./placement.ts";
 import { dryRun, planSpawn, KEY_BUDGET_NOTE, MAX_APPS, type CatalogApp, type CrewBrief, type SpawnSource } from "./plan.ts";
+import { bootHostedChild } from "./host.ts";
 import { ANON_SPAWNS_PER_DAY, checkAnonSpawn, noteAnonSpawn } from "./rate.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
@@ -270,6 +271,8 @@ export async function spawnDoor(
   });
   if (!made.ok) return spawnWords(made.error);
   if (anon && !made.value.existed) noteAnonSpawn(ctx.request);
+  // Its apps come up now, so the first visit after a claim finds them awake.
+  if (!made.value.existed) void bootHostedChild(ctx.app, made.value.name);
   return {
     status: made.value.existed ? 200 : 201,
     body: {

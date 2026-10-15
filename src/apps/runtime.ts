@@ -139,6 +139,12 @@ export interface RuntimeOptions {
   readonly placement?: Placement | undefined;
   /** How often storage is sampled for the meter. @default one hour */
   readonly storageEveryMs?: number | undefined;
+  /**
+   * The gate deploys take their turn at. A hosted child's runtime is handed
+   * its parent's, so a child's deploys count against the parent's capacity
+   * instead of beside it. @default a gate of `concurrency`
+   */
+  readonly gate?: Gate | undefined;
 }
 
 export type EnvState =
@@ -395,8 +401,13 @@ export class AppsRuntime {
     readonly app: App,
     readonly options: RuntimeOptions,
   ) {
-    this.gate = new Gate(options.concurrency ?? 2);
+    this.gate = options.gate ?? new Gate(options.concurrency ?? 2);
     runtimes.set(app, this);
+  }
+
+  /** The gate this runtime's deploys wait at; a hosted child shares it. */
+  get lane(): Gate {
+    return this.gate;
   }
 
   // ---- addressing ----

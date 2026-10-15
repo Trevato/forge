@@ -13,6 +13,8 @@ import type { App } from "../app.ts";
 import { listChildren, statusTokenOf, type Child } from "../actions/spawn.ts";
 import { timingSafeEqual } from "node:crypto";
 import { sha256 } from "../kernel/hash.ts";
+import type { ChildAppsSummary } from "./child-apps.ts";
+import { hostedChildApps } from "./host.ts";
 import { hasAdmin, spawnedOrg } from "./claim.ts";
 
 /** What a spawned forge says about itself to anyone: nothing more. */
@@ -32,6 +34,8 @@ export interface ClientRow {
   readonly made: boolean;
   readonly claimed: boolean | null;
   readonly lastActivityAt: string | null;
+  /** The apps this parent runs for the child; null when it runs none here. */
+  readonly running: ChildAppsSummary | null;
 }
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -159,6 +163,7 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
       made: c.done,
       claimed: states[i]?.claimed ?? null,
       lastActivityAt: states[i]?.lastActivityAt ?? null,
+      running: hostedChildApps(app, c.name) ?? null,
     }))
     .sort(
       (a, b) =>
