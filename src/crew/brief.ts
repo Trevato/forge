@@ -59,6 +59,15 @@ export interface PolicyBrief {
   readonly problems?: readonly string[] | undefined;
 }
 
+/**
+ * What a builder can and cannot run in its shell (`crew/sandbox.ts` holds
+ * it), so it never writes "I could not run" for something it could.
+ */
+export const SANDBOX_LINES = [
+  "Your shell is sandboxed. It can run: `bun install` (the registry is reachable; run it first when there is a package.json and no node_modules, or the type check has no types), `bun x tsc --noEmit`, and `bun test` — FORGE_TEST_SOCKET=port is already set, so servers listen on a loopback port in place of a unix socket; the suites about unix sockets and cells themselves (stale-socket recovery, the egress proxy, cell limits) are skipped in that mode and named as skipped, and the forge's check runs them on every push. Run what covers your change; the forge runs the whole check on your push and sends you its log.",
+  "It cannot: reach any host but the forge and the package registry, write outside the clone and `$TMPDIR`, read the forge's data or the machine's, bind a unix socket, or signal a process started in an earlier command. Never leave the sandbox: it cannot be asked to. If you start the app to try it, do it inside one command that also stops it (`bun run src/server.ts & pid=$!; sleep 2; curl …; kill $pid`). Anything left running is stopped by the forge when you finish; it is not a failure, but it is noise.",
+];
+
 export function systemPrompt(input: BriefInput): string {
   const { agent, repo } = input;
   const lines = [
@@ -126,7 +135,7 @@ export function systemPrompt(input: BriefInput): string {
   }
   lines.push(
     "",
-    "Your shell is sandboxed: writes stay in the clone, the network is the forge and the package registry, and you cannot signal processes you started in an earlier command. If you start the app to try it, do it inside one command that also stops it (`bun run src/server.ts & pid=$!; sleep 2; curl …; kill $pid`). Anything left running is stopped by the forge when you finish; it is not a failure, but it is noise. Never leave the sandbox: it cannot be asked to. Inside it you can run the type check and `bun test` (FORGE_TEST_SOCKET=port is already set, so servers listen on loopback ports in place of unix sockets). The suites about unix sockets and cells themselves (stale-socket recovery, the egress proxy, cell limits) are skipped in that mode and named as skipped; the forge's check runs them on every push. Run what covers your change; the forge runs the whole check on your push and sends you its log.",
+    ...SANDBOX_LINES,
     "",
     "Work carefully and finish. If the task is unclear, impossible, or not something you should do, do not guess: make your last message start with `DECLINED:` followed by exactly why. Nothing is pushed then, and a person reads it.",
   );
