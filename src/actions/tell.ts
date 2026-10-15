@@ -27,6 +27,8 @@ export interface Told {
   readonly assigned: boolean;
   /** Every issue the tell opened: one, or one per variant. */
   readonly issues: readonly Issue[];
+  /** The numbers among them that a builder took, so a run starts for each. */
+  readonly assignedNumbers: readonly number[];
   /** The group the variants share; null for an ordinary tell. */
   readonly variantGroup: string | null;
 }
@@ -85,6 +87,7 @@ export async function tell(
   const issues: Issue[] = [];
   let routed: Routed | undefined;
   let assigned = false;
+  const assignedNumbers: number[] = [];
   for (let k = 1; k <= variants; k++) {
     const note = many ? `Variant ${k} of ${variants}.` : "";
     const rest = text === firstLine ? "" : text;
@@ -106,6 +109,7 @@ export async function tell(
       variantGroup ?? undefined,
     );
     if (k === 1) assigned = made.ok;
+    if (made.ok) assignedNumbers.push(opened.value.number);
     inFlight.set(
       taker.builder.user.id,
       (inFlight.get(taker.builder.user.id) ?? 0) + 1,
@@ -114,7 +118,7 @@ export async function tell(
   return ok(told());
 
   function told(): Told {
-    return { issue: issues[0]!, routed, assigned, issues, variantGroup };
+    return { issue: issues[0]!, routed, assigned, issues, assignedNumbers, variantGroup };
   }
 }
 

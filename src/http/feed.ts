@@ -186,6 +186,7 @@ export function feedRoutes(router: Router<Handler>): void {
           ? {}
           : {
               issues: told.value.issues.map((i) => i.number),
+              assigned: told.value.assignedNumbers,
               variantGroup: told.value.variantGroup,
             }),
       },

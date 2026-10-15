@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
-import { openPull } from "../src/actions/pulls.ts";
+import { listPulls } from "../src/core/pulls.ts";
+import { chmodSync } from "node:fs";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { listRuns } from "../src/core/runs.ts";
@@ -264,26 +265,103 @@ describe("a tell asks for variants", () => {
     expect(new Set(fresh.map((r) => r.issueId)).size).toBe(2);
   });
 
-  test("the pull a variant run opens carries the group", async () => {
-    const commit = await commitToBranch(app, alice, repo, {
-      branch: "try",
-      message: "Try",
-      files: [{ path: "README.md", content: "# purple\n" }],
-    });
-    expect(commit.ok).toBe(true);
-    const opened = await openPull(app, alice, repo, {
-      title: "Try",
-      baseBranch: "main",
-      headBranch: "try",
-      variantGroup: "g-1",
-    });
-    if (!opened.ok) throw new Error(String(opened.error));
-    expect(opened.value.variantGroup).toBe("g-1");
-  });
 });
 
-async function until<T>(probe: () => T | undefined): Promise<T> {
-  const deadline = Date.now() + 10_000;
+describe("a variant run opens a pull that carries its group", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let crew: CrewHandle;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-tellpull-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    const fake = join(dataDir, "fake-claude");
+    await Bun.write(
+      fake,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+IFS= read -r first
+echo '{"type":"system","subtype":"init","session_id":"fake-1","model":"fake"}'
+echo "work by the crew" >> CREW.md
+git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW.md.","total_cost_usd":0.01,"num_turns":2,"session_id":"fake-1","terminal_reason":"completed"}'
+`,
+    );
+    chmodSync(fake, 0o755);
+    crew = await startCrew(app, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: fake,
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+    });
+  }, 30_000);
+
+  afterAll(async () => {
+    await crew?.stop();
+    servers?.stop();
+    app?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("two variants open two pulls in the returned group, on different branches", async () => {
+    const alice = await createUser(app.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!alice.ok) throw new Error(alice.error);
+    const agent = await createAgent(app, alice.value, { username: "bot" });
+    if (!agent.ok) throw new Error(String(agent.error));
+    const created = await createRepo(app, alice.value, {
+      name: "garden",
+      visibility: "private",
+    });
+    if (!created.ok) throw new Error(String(created.error));
+    const repo = created.value;
+    const seeded = await commitToBranch(app, alice.value, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# garden\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    expect(addToCrew(app, alice.value, repo, "bot").ok).toBe(true);
+
+    const res = await fetch(`${servers.url}/api/v1/feed/tells`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createToken(app.db, alice.value.id, "tells", "rw").token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ app: "alice/garden", text: "Plant tulips", variants: 2 }),
+    });
+    expect(res.status).toBe(201);
+    const got = (await res.json()) as any;
+    expect(got.assigned).toEqual(got.issues);
+
+    const pulls = await until(
+      () => {
+        const open = listPulls(app.db, repo.id, { state: "open" });
+        return open.length === 2 ? open : undefined;
+      },
+      30_000,
+    );
+    expect(pulls.map((p) => p.variantGroup)).toEqual([got.variantGroup, got.variantGroup]);
+    expect(new Set(pulls.map((p) => p.headBranch)).size).toBe(2);
+    const runs = listRuns(app.db, repo.id, { kind: "agent" });
+    expect(runs.every((r) => r.variantGroup === got.variantGroup)).toBe(true);
+  }, 60_000);
+});
+
+async function until<T>(
+  probe: () => T | undefined,
+  ms = 10_000,
+): Promise<T> {
+  const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     const got = probe();
     if (got !== undefined) return got;
