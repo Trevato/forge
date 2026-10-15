@@ -8,6 +8,10 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { readFlow } from "../flow/read.ts";
+import { runQuery } from "../boards/query.ts";
+import { SOURCES } from "../boards/sources.ts";
+import { bodyCapFor, readBounded } from "./limits.ts";
 import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
@@ -266,6 +270,7 @@ import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
+import { forReader } from "../crew/handover.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import {
   milestoneData,
@@ -1245,6 +1250,43 @@ export function apiRoutes(router: Router<Handler>): void {
         : apiError(error, 500, "the account could not be removed");
   const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
     ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
+
+  // Boards (`boards/query.ts`): a site admin who is a person, never an agent.
+  const boardsAdmin = (ctx: Ctx): Response | undefined => {
+    if (!ctx.auth.user) return unauthorized();
+    return ctx.auth.user.isAdmin && ctx.auth.user.kind !== "agent"
+      ? undefined
+      : forbidden();
+  };
+
+  router.add("GET", "/api/v1/boards/sources", (ctx) => {
+    const denied = boardsAdmin(ctx);
+    if (denied) return denied;
+    return json({
+      sources: Object.entries(SOURCES).map(([name, s]) => ({
+        name,
+        time: s.time,
+        columns: s.columns,
+      })),
+    });
+  });
+
+  router.add("POST", "/api/v1/boards/query", async (ctx) => {
+    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const bytes = await readBounded(ctx.request, bodyCapFor(ctx.request));
+    if (bytes === "too_large") return apiError("too_large", 413, "that is too large to read here");
+    let query: unknown;
+    try {
+      query = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      return apiError("bad_json", 400, "the body must be a JSON query object");
+    }
+    const answer = runQuery(ctx.app.db, query, { repoIds: "all" });
+    return answer.ok
+      ? json({ rows: answer.rows })
+      : apiError("bad_query", 400, answer.error);
+  });
 
   // The forge's capacity (`core/capacity.ts`): read and changed live by an
   // admin, never by an agent; anyone else is told the door is not there.
@@ -2446,6 +2488,18 @@ export function apiRoutes(router: Router<Handler>): void {
       );
     },
   );
+  // Which stage of the one flow each open issue is in, and what went live in
+  // the last day (src/flow).
+  router.add("GET", "/api/v1/repos/:owner/:name/flow", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    return json(
+      readFlow(ctx.app.db, repo, {
+        now: new Date(),
+        scope: sealedScope(ctx.app.db, repo, ctx.auth.user),
+      }),
+    );
+  });
   // A plan, all or nothing: the same action as the MCP `plan` tool, so the
   // same items and the same refusals (docs/PLANNING.md).
   router.add("POST", "/api/v1/repos/:owner/:name/plan", async (ctx) => {
@@ -2672,7 +2726,9 @@ export function apiRoutes(router: Router<Handler>): void {
         // What the decider saw about a sealed report is the report's (`sealed.ts`).
         .filter(
           (d) => mayViewId(ctx.app.db, repo, d.issueId, ctx.auth.user),
-        ),
+        )
+        // A hand-over's state carries its tapper's private preferences.
+        .map((d) => forReader(d, ctx.auth.user)),
       week: decisionStats(ctx.app.db, repo.id, week),
     });
   });

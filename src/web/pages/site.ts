@@ -17,6 +17,8 @@ import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo } from "../../actions/repos.ts";
 import { signUp } from "../../actions/users.ts";
 import { listAssignedTo, type Issue } from "../../core/issues.ts";
+import { joinMany } from "../../core/pulls.ts";
+import { conflictsOf } from "../../crew/stale_asks.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins } from "../../core/pins.ts";
 import {
@@ -212,8 +214,16 @@ export function onYouCard(ctx: Ctx, user: User): Html | undefined {
   }
   // Two or more can be given one move: a box each, and one form for the set.
   const bulk = shown.length >= 2;
-  const rows = shown.map(({ issue, repo }) =>
-    row({
+  const heads = new Map(
+    joinMany(
+      db,
+      shown.map((s) => s.issue).filter((i) => i.kind === "pull"),
+    ).map((p) => [p.id, p.headOid]),
+  );
+  const rows = shown.map(({ issue, repo }) => {
+    // A pull the last sweep found unable to merge is never shown as ready.
+    const conflicts = conflictsOf(db, issue.id, heads.get(issue.id) ?? "");
+    return row({
       ...(bulk ? {} : { href: threadPath(repo, issue), nav: true as const }),
       state: "open",
       lead: bulk
@@ -233,9 +243,12 @@ export function onYouCard(ctx: Ctx, user: User): Html | undefined {
         : issue.title,
       titleAttr: issue.title,
       meta: html`${repo.ownerName}/${repo.name} #${issue.number} · updated
-      ${time(issue.updatedAt)}`,
-    }),
-  );
+      ${time(issue.updatedAt)}${conflicts > 0
+        ? html` · <span class="conflicts">Conflicts in ${conflicts}
+            ${conflicts === 1 ? "file" : "files"}</span>`
+        : null}`,
+    });
+  });
   if (rows.length === 0 && silenced.size === 0) return undefined;
   const last = latestUndoable(ctx.app, user);
   const byKind = [...new Set(shown.map((s) => s.issue.kind))].map((k) => ({

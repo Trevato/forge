@@ -13,6 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { setAssignee } from "../src/core/issues.ts";
 import { recordInteraction } from "../src/core/interactions.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -21,7 +22,7 @@ import { getUserByName, type User } from "../src/core/users.ts";
 import { sweepStaleAsks } from "../src/crew/stale_asks.ts";
 import { readFeed } from "../src/feed/feed.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { ASK_WORDS, ROW_PLURAL, askLinesFor } from "../src/web/studio/asks.ts";
+import { ASK_WORDS, ROW_PLURAL, askLinesFor, asksAnswer } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -237,6 +238,17 @@ describe("asks that expire, hold and collapse", () => {
     await sweepStaleAsks(app);
     expect(askLinesFor(app.db, aliceUser)).toHaveLength(0);
     expect(sentence(await get("/"))).toBe("All fine");
+    // The feed and the MCP's asks carry no green line for it either.
+    expect(
+      readFeed(app.db, aliceUser, { limit: 50 }).items.some(
+        (i) => i.kind === "ask" || i.what.includes("green"),
+      ),
+    ).toBe(false);
+    expect(JSON.stringify(asksAnswer({ app, auth: { user: aliceUser } } as never, aliceUser))).not.toContain("is green");
+    // Assigned to alice, the home's On you says it conflicts, never ready.
+    setAssignee(app.db, plums.id, aliceUser.id);
+    const home = await get("/");
+    expect(home).toContain("Conflicts in 1 file");
     // Its own page still says why it cannot ship.
     const change = await get(
       `/${repo.ownerName}/${repo.name}/pulls/${plums.number}`,

@@ -1243,6 +1243,7 @@ async function work(
         : `Budget reached at $${stoppedAt.toFixed(2)}; this is where it stopped.`,
       write,
       Object.values(grant.env),
+      run.variantGroup,
     );
     return {
       state: result.ok || landed.pushed ? "ok" : "failed",
@@ -1511,6 +1512,7 @@ async function landWork(
   note: string | undefined,
   write: (line: string) => void,
   granted: readonly string[] = [],
+  variantGroup: string | null = null,
 ): Promise<{ pushed: boolean; summary: string }> {
   // A model may echo a granted value into a file; the tree is scrubbed
   // before the forge commits it, and the agent's own commits are searched
@@ -1655,6 +1657,7 @@ async function landWork(
     baseBranch: repo.defaultBranch,
     headBranch: branch,
     headRepo: fork,
+    ...(variantGroup === null ? {} : { variantGroup }),
   });
   if (!opened.ok) {
     write(`could not open the pull: ${JSON.stringify(opened.error)}`);

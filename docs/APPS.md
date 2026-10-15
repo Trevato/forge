@@ -1103,6 +1103,30 @@ made it, when, and from what to what (`core/capacity.ts`). The shard count
 reaches a check's commands and an agent's shell as `FORGE_CHECK_SHARDS`,
 from the setting, never from the forge's own environment.
 
+### Boards: counting the forge's own tables
+
+A site admin who is a person (never an agent, whatever its token's scope)
+reads the forge's tables as counts through two routes; anyone else gets
+403, a signed-out caller 401. `GET /api/v1/boards/sources` lists each
+source with its `time` column and its columns' types (`boards/sources.ts`;
+a column holding a secret or free text is never listed).
+`POST /api/v1/boards/query` takes
+`{source, from, to, filter, groupBy, aggregate, column}`:
+
+- `source`: a name from the list; `aggregate`: `count`, `sum`, `avg` or `max`
+  (the last three need a numeric `column`).
+- `from` (inclusive) and `to` (exclusive): dates, applied to the source's time column.
+- `filter`: up to 16 of `{column, op, value}`, `op` one of `eq ne lt lte gt gte`.
+- `groupBy`: a column, or `{"bucket": "minute" | "hour" | "day"}`.
+
+It answers `{"rows": [{"group", "value"}]}`, at most 1000 rows. A query the
+module refuses is `400 bad_query` with its message; a body that is not JSON
+is `400 bad_json`; a body over the cap is `413 too_large`.
+
+    POST /api/v1/boards/query
+    {"source": "runs", "aggregate": "count", "groupBy": "state"}
+    -> {"rows": [{"group": "failed", "value": 1}, {"group": "ok", "value": 7}]}
+
 ## What is deliberately not here
 
 Containers. A cell (rule 9) is namespaces and a watch, not an image: an

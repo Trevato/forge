@@ -4,7 +4,6 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
-import { parseCidrs } from "./kernel/cidr.ts";
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
@@ -37,8 +36,10 @@ import { sweepStaleAsks } from "./crew/stale_asks.ts";
 import { recordAskLedger } from "./web/studio/asks.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
 import { pruneTokens } from "./core/tokens.ts";
-import { dataHomeRefusal } from "./kernel/data_home.ts";
+import { configProblem, dataDirOf, preflight } from "./kernel/preflight.ts";
 import { running } from "./kernel/version.ts";
+import { record as recordDegraded } from "./kernel/degraded_history.ts";
+import { vitals } from "./kernel/vitals.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -50,6 +51,17 @@ if (process.argv[2] === "hook") {
     process.exit(1);
   }
   await runHookClient(name);
+}
+
+// `--preflight` asks whether this tree can boot and answers in one line:
+// config parsed, migrations run on a copy of the database. No socket, no
+// timers, and the live database is never opened.
+if (process.argv.includes("--preflight")) {
+  const { migrations } = await import("./core/schema.ts");
+  const result = preflight(process.env, import.meta.dir, migrations);
+  // CLI answer on the stream a person or a script reads.
+  (result.ok ? console.log : console.error)(result.line);
+  process.exit(result.ok ? 0 : 1);
 }
 
 // A forge can be an app of a forge (docs/APPS.md, "The forge as an app of
@@ -72,31 +84,21 @@ const canonicalUrl = hosted ? hostedAt : (process.env.FORGE_URL ?? "").trim();
 // identity headers sign people in; without it they are ignored.
 const edgeToken = (process.env.FORGE_EDGE_TOKEN ?? "").trim();
 
-const dataDir =
-  process.env.FORGE_DATA ??
-  (hosted ? process.env.FORGE_APP_DATA : undefined) ??
-  "data";
-// State never lands in the tree the forge runs from (#622): a database or a
-// host key there is one `git add -A` from every clone.
-const refusal = dataHomeRefusal(dataDir, import.meta.dir);
-if (refusal !== null) {
-  console.error(refusal);
+const dataDir = dataDirOf(process.env);
+// One answer for boot and `--preflight` (kernel/preflight.ts): the data
+// directory is not the tree itself (#622: a database or a host key there is
+// one `git add -A` from every clone), FORGE_TRUSTED_PROXIES parses (a typo
+// fails the boot, not a limit that quietly counts every stranger as one),
+// and the forge's URL is one.
+const problem = configProblem(process.env, import.meta.dir);
+if (problem !== null) {
+  console.error(problem);
   process.exit(1);
 }
-
-// FORGE_TRUSTED_PROXIES is checked here so a typo fails the boot, not a
-// limit that quietly counts every stranger as one.
 const trustedProxies = (process.env.FORGE_TRUSTED_PROXIES ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter((s) => s !== "");
-{
-  const parsed = parseCidrs(trustedProxies.join(","));
-  if (!parsed.ok) {
-    console.error(`FORGE_TRUSTED_PROXIES: "${parsed.error}" is not an address or range`);
-    process.exit(1);
-  }
-}
 
 const app = createApp({
   dataDir,
@@ -328,6 +330,21 @@ const tickAsks = async (): Promise<void> => {
     recordAskLedger(app.db);
   } catch (error) {
     app.log.error("asks ledger failed", { error: String(error) });
+  }
+  // The degraded history rides the same tick; it catches its own errors.
+  try {
+    recordDegraded(
+      app.db,
+      vitals({
+        db: app.db,
+        dataDir: app.config.dataDir,
+        signals: app.signals,
+      }).degraded,
+      Date.now(),
+      app.log,
+    );
+  } catch (error) {
+    app.log.warn("degraded history: vitals failed", { error: String(error) });
   }
 };
 const staleTimer = setInterval(() => void tickAsks(), 120_000);

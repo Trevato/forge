@@ -5,9 +5,10 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseYeses, yesLine } from "../scripts/dark-roll.ts";
 import { run } from "../scripts/roll-preflight.ts";
 import { parseQuantity, podRequest, report, surge } from "../scripts/roll.ts";
 
@@ -261,5 +262,100 @@ describe("what this pull leaves alone", () => {
     const doc = readFileSync(join(import.meta.dir, "../docs/ops/ROLL.md"), "utf8");
     expect(doc).toContain("bun scripts/roll-preflight.ts");
     expect(doc).toContain("short by");
+  });
+});
+
+describe("a dark roll waits for the owner's yes (#1589)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dark-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const base = (cpu: string, memory: string) => {
+    writeFileSync(join(dir, "node.json"), JSON.stringify(node(cpu, memory)));
+    writeFileSync(join(dir, "pods.json"), JSON.stringify(PODS));
+    return ["--node", join(dir, "node.json"), "--pods", join(dir, "pods.json"), "--pod", "forge/forge-abc", "--steady", "3712Mi"];
+  };
+  const log = (text: string) => {
+    writeFileSync(join(dir, "yes.log"), text);
+    return ["--yes-file", join(dir, "yes.log")];
+  };
+  const tight = () => base("3900m", "7680Mi");
+
+  test("no headroom and no yes: no roll, and it says the seconds and the headroom", () => {
+    const { code, out } = run([...tight(), "--version", "0.7.104", ...log(""), "--dark-seconds", "90"]);
+    expect(code).toBe(3);
+    expect(out).toContain("NOT rolling 0.7.104");
+    expect(out).toContain("dark for about 90s");
+    expect(out).toContain("1792 MiB and 200m cpu");
+  });
+
+  test("a yes for another version does not count", () => {
+    for (const text of [
+      "0.7.103 yes alice 2026-10-15\n",
+      "0.7.1040 yes alice 2026-10-15\n",
+      "* yes alice 2026-10-15\n",
+      "# 0.7.104 yes alice 2026-10-15\n",
+      "0.7.104 no alice 2026-10-15\n",
+      "0.7.104 yes alice\n",
+    ]) {
+      expect(run([...tight(), "--version", "0.7.104", ...log(text)]).code).toBe(3);
+    }
+  });
+
+  test("no version at all: no roll", () => {
+    expect(run([...tight(), ...log("0.7.104 yes alice 2026-10-15\n")]).code).toBe(3);
+  });
+
+  test("a yes for exactly this version lets the dark roll go, and says whose", () => {
+    const { code, out } = run([...tight(), "--version", "0.7.104", ...log("0.7.103 yes bob 2026-10-01\n0.7.104 yes alice 2026-10-15\n")]);
+    expect(code).toBe(0);
+    expect(out).toContain("dark roll of 0.7.104 allowed: alice said yes on 2026-10-15");
+  });
+
+  test("with headroom a yes is not needed", () => {
+    expect(run([...base("7900m", "12Gi"), "--version", "0.7.104"]).code).toBe(0);
+  });
+
+  test("bad version or seconds is refused", () => {
+    expect(run([...tight(), "--version", "latest"]).code).toBe(2);
+    expect(run([...tight(), "--dark-seconds", "-1"]).code).toBe(2);
+  });
+
+  test("the yes log holds no yes it was not given", () => {
+    const text = readFileSync(join(import.meta.dir, "../docs/ops/dark-rolls.log"), "utf8");
+    expect(parseYeses(text)).toEqual([]);
+  });
+
+  test("no yes line is a standing one", () => {
+    expect(parseYeses("latest yes a 2026-01-01\nall yes a 2026-01-01\n1.2 yes a 2026-01-01\n")).toEqual([]);
+    expect(() => yesLine("*", "alice", "2026-10-15")).toThrow();
+    expect(parseYeses(yesLine("0.7.104", "alice", "2026-10-15"))).toHaveLength(1);
+  });
+
+  test("the gitops overlay and the chart never carry maxSurge: 0", () => {
+    const root = join(import.meta.dir, "..");
+    const seen: string[] = [];
+    const walk = (d: string) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, e.name);
+        if (e.isDirectory()) {
+          if (e.name !== "node_modules" && e.name !== ".git") walk(p);
+        } else if (/\.(ya?ml|tpl|json)$/.test(e.name)) seen.push(p);
+      }
+    };
+    for (const d of ["charts", "infra", "gitops", "deploy"]) {
+      try {
+        walk(join(root, d));
+      } catch {}
+    }
+    expect(seen.length).toBeGreaterThan(0);
+    for (const f of seen) {
+      expect(readFileSync(f, "utf8")).not.toMatch(/maxSurge["']?\s*:\s*["']?(0|0%)["']?\s*($|[,\n}])/m);
+    }
+  });
+
+  test("the recipe makes the yes a per-version, recorded step", () => {
+    const doc = readFileSync(join(import.meta.dir, "../docs/ops/ROLL.md"), "utf8");
+    expect(doc).toContain("dark-rolls.log");
+    expect(doc).toContain("yes to **that version**");
+    expect(doc).toContain("no standing");
   });
 });

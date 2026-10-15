@@ -157,6 +157,8 @@ export interface CreatePullInput {
   headDir?: string;
   /** The issue id of the pull this one reverts ("Take it back"). */
   revertsIssueId?: string;
+  /** The variant group the pull joins; absent for an ordinary pull. */
+  variantGroup?: string;
 }
 
 /**
@@ -271,8 +273,8 @@ export async function createPull(
 
   const headRepoId = input.headRepoId ?? input.repoId;
   db.query(
-    `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id, reverts_issue_id)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+    `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id, reverts_issue_id, variant_group)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
   ).run(
     issue.value.id,
     input.baseBranch,
@@ -281,6 +283,7 @@ export async function createPull(
     headOid,
     headRepoId,
     input.revertsIssueId ?? null,
+    input.variantGroup ?? null,
   );
 
   // A durable, fetchable ref for the PR head — the way tooling addresses it,
