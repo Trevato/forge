@@ -164,11 +164,11 @@ describe("the asks page", () => {
       .query("UPDATE run SET created_at = ?1 WHERE state = 'queued'")
       .run(new Date(Date.now() - 3 * 3_600_000).toISOString());
     const admin = await get(alice, "/");
-    expect(admin).toContain("queue has waited over");
+    expect(admin).toContain("behind one lane");
     expect(sentence(admin)).toBe("2 things need you");
     expect(headerCount(admin)).toBe(2);
     const other = await get(bob, "/");
-    expect(other).not.toContain("queue has waited");
+    expect(other).not.toContain("behind one lane");
     expect(sentence(other)).toBe("All fine");
   });
 

@@ -327,7 +327,13 @@ file), and if you named an agent, the sentence became issue #1, assigned.
   `budget: <what> took <n> min, limit <m>`, queued again once, and failed
   the second time, which the vitals carry as a need for a day. `gate` is 60
   min because this repository's own gate takes 18–25 min alone and 45 beside
-  another check; it comes down when the gate does.
+  another check; it comes down when the gate does. A check waiting in the lane
+  past `laneWait` (10 min) or a run silent past `heartbeat` (3 min) turns the
+  health degraded with one sentence naming the cause ("22 checks wait behind
+  one lane; the oldest since 04:13; the lane runs #1212 for 31 min (limit
+  60)"). The sentinel files each such breach at once, not once per tick:
+  labelled P0 Trust and assigned to the sentinel, whose run the dispatcher
+  queues on the assignment.
 - **Every deploy is a run**, and the run is the check on the pull. Turn on
   **require checks** and a pull cannot merge until its head is green.
 - A **private** app answers only to someone the forge has vouched for
