@@ -161,3 +161,22 @@ answers
   "opened": [{ "key": "board", "number": 7 }, { "key": "moves", "number": 8 }, { "key": "play", "number": 9 }],
   "ready": [7, 8], "later": [] }
 ```
+
+## Cards, the contract and the plugins (#1116)
+
+- **Cards.** `apps`, `now`, `asks` and `milestones` name a `ui://` resource in
+  `_meta.ui.resourceUri` (MCP Apps, SEP-1865): `ui://forge/app`, `run`,
+  `decision`, `wave`. `resources/list` and `resources/read` serve one small
+  sandboxed page, which draws the `structuredContent.card` model that the
+  tool result carries, with `textContent` only. The model is built in
+  `src/web/studio/cards.ts`. A card's
+  buttons ask the host to call a tool (`asks_act`, `say`, `stop`, `tell`); the
+  host decides, and every call is checked as any other.
+- **Contract.** `GET /contract/openapi.json` is OpenAPI 3.1 for the routes
+  the manifest (`here`) names, plus `POST /mcp`. `test/openapi.test.ts` fails
+  when the manifest names a route it lacks.
+- **Where a tell came from.** `tell` takes `context`: `page` (http/https),
+  `run`, `commit` (hex) and `said` (the person's words). Malformed context is
+  refused; the rest is appended to the issue body.
+- **Plugins.** `plugins/opencode` and `plugins/claude-code` register this
+  server and add a `forge` command (tell, status, decide). They hold no logic.
