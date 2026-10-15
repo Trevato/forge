@@ -14,6 +14,7 @@
   "devDependencies": {
     "@anthropic-ai/sandbox-runtime": "^0.0.79",
     "@types/bun": "^1.2.0",
-    "typescript": "^5.9.0"
+    "typescript": "^7.0.2",
+    "typescript-api": "npm:typescript@^5.9.0"
   }
 }
