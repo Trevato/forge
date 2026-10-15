@@ -58,6 +58,7 @@ import {
 } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
+import { approveHereCard } from "../pages/pull.ts";
 import { pullState } from "../pages/pulls.ts";
 import { workSpent } from "../pages/runs.ts";
 import {
@@ -549,6 +550,7 @@ async function changeConversation(
     })}
     ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "change")}
     <div id="pull-check">${checkLine}</div> ${holdCard(ctx, repo, pull, { act: true })}
+    ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
     ${when(wall, (w) => wallCard(w))} ${decisionSection}
     ${takeBackSection}
     ${when(record, (r) => lookCard(ctx, repo, r, pull, pull.headOid))}

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, renameSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,10 +14,12 @@ import { fetchInternal } from "../src/git/hook-address.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
+import { createOrg } from "../src/core/orgs.ts";
 import { getAgent } from "../src/core/agents.ts";
 import { listEvents } from "../src/core/events.ts";
 import { addKey, fingerprint, parseAuthorizedKey } from "../src/core/keys.ts";
 import { repoDir } from "../src/git/repos.ts";
+import { listReposOwnedBy } from "../src/core/repos.ts";
 import { createRun, getRun } from "../src/core/runs.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -469,6 +471,88 @@ describe("accounts: the owner sees, suspends and removes", () => {
       { token: ownerToken },
     );
     expect(JSON.stringify(await thread.json())).toContain("hi from oscar");
+  });
+
+  test("retiring a last owner's organizations needs retireOrgs and an explicit confirm", async () => {
+    const { user: boss, token: bossToken } = await outsider("rex");
+    const org = createOrg(app.db, "rexco", boss.id);
+    if (!org.ok) throw new Error(org.error);
+    const made = await createRepo(app, org.value, { name: "ledger" });
+    if (!made.ok) throw new Error(made.error);
+    const bare = repoDir(app.reposRoot, "rexco", "ledger");
+    expect(existsSync(bare)).toBe(true);
+    const del = (payload: object, token = ownerToken) =>
+      api("/api/v1/admin/accounts/rex", {
+        method: "DELETE",
+        token,
+        body: JSON.stringify(payload),
+      });
+
+    // The plain path is as it was.
+    expect((await del({})).status).toBe(409);
+    // A non-admin is refused.
+    expect((await del({ retireOrgs: true, confirm: true }, bossToken)).status).toBe(404);
+    // Without confirm: the list, and nothing changes.
+    const preview = await del({ retireOrgs: true });
+    expect(preview.status).toBe(200);
+    const plan = (await preview.json()) as { retire: { org: string; repos: { name: string }[]; teams: string[] }[] };
+    expect(plan.retire[0]!.org).toBe("rexco");
+    expect(plan.retire[0]!.repos.map((r) => r.name)).toEqual(["rexco/ledger"]);
+    expect(plan.retire[0]!.teams).toEqual(["Owners"]);
+    expect(existsSync(bare)).toBe(true);
+    expect(getUserByName(app.db, "rex")?.removedAt).toBeNull();
+    expect(getUserByName(app.db, "rexco")?.removedAt).toBeNull();
+
+    // Confirmed: everything goes, and the bus remembers.
+    const done = await del({ retireOrgs: true, confirm: true });
+    expect(done.status).toBe(200);
+    expect(existsSync(bare)).toBe(false);
+    expect(getUserByName(app.db, "rexco")?.removedAt).not.toBeNull();
+    expect(getUserByName(app.db, "rex")?.removedAt).not.toBeNull();
+    const kinds = listEvents(app.db, {}).map((e) => e.kind);
+    expect(kinds).toContain("org.retired");
+    expect(kinds).toContain("account.removed");
+    expect(kinds).toContain("repo.deleted");
+  });
+
+  test("a retirement that stops partway says what went, keeps the rest, and a second call finishes", async () => {
+    const { user: boss } = await outsider("sam");
+    const org = createOrg(app.db, "samco", boss.id);
+    if (!org.ok) throw new Error(org.error);
+    for (const name of ["one", "two"]) {
+      const made = await createRepo(app, org.value, { name });
+      if (!made.ok) throw new Error(made.error);
+    }
+    const order = listReposOwnedBy(app.db, org.value.id).map((r) => r.name);
+    const [first, second] = order as [string, string];
+    // The second repository's directory is gone, so it cannot be removed.
+    const secondDir = repoDir(app.reposRoot, "samco", second);
+    const parked = `${secondDir}.parked`;
+    renameSync(secondDir, parked);
+    const del = () =>
+      api("/api/v1/admin/accounts/sam", {
+        method: "DELETE",
+        token: ownerToken,
+        body: JSON.stringify({ retireOrgs: true, confirm: true }),
+      });
+
+    const failed = await del();
+    expect(failed.status).toBe(500);
+    const result = (await failed.json()) as { failed: string; removed: string[] };
+    expect(result.failed).toBe(`samco/${second}`);
+    expect(result.removed).toEqual([`samco/${first}`]);
+    expect(existsSync(repoDir(app.reposRoot, "samco", first))).toBe(false);
+    expect(getUserByName(app.db, "samco")?.removedAt).toBeNull();
+    expect(getUserByName(app.db, "sam")?.removedAt).toBeNull();
+    expect(getUserByName(app.db, "sam")?.suspendedAt).not.toBeNull();
+
+    // Call again: the repository's row went with the first attempt, so the
+    // job finishes.
+    const again = await del();
+    expect(again.status).toBe(200);
+    expect(listReposOwnedBy(app.db, org.value.id)).toEqual([]);
+    expect(getUserByName(app.db, "samco")?.removedAt).not.toBeNull();
+    expect(getUserByName(app.db, "sam")?.removedAt).not.toBeNull();
   });
 
   test("an account with nothing in it can be removed too", async () => {

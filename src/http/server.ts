@@ -264,6 +264,7 @@ import {
   pullMergeSubmit,
   pullChecksSubmit,
   pullReviewStateSubmit,
+  pullApproveHereSubmit,
   pullReviewSubmit,
   pullThreadFragment,
   threadResolveSubmit,
@@ -939,6 +940,11 @@ export function buildRouter(): Router<Handler> {
     "POST",
     "/:owner/:name/pulls/:number/review-state",
     pullReviewStateSubmit,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/pulls/:number/approve-here",
+    pullApproveHereSubmit,
   );
   router.add(
     "POST",

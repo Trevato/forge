@@ -12,6 +12,7 @@ import { sealedByNumber } from "./sealed.ts";
 import type { Database } from "bun:sqlite";
 import { diffRange, type Diff } from "../git/diff.ts";
 import { isSafeRef } from "../git/guard.ts";
+import { listRefs } from "../git/read.ts";
 import {
   aheadCount,
   fetchInto,
@@ -627,29 +628,112 @@ export async function pullStatus(
     : `refs/heads/${pull.headBranch}`;
   const headOid = (await resolveOid(dir, headRef)) ?? pull.headOid;
   const reviews = gate === undefined ? null : reviewGate(gate, pull, headOid);
+  const { ahead, mergeable: clean, conflicts } = await mergeReading(
+    dir,
+    baseOid,
+    headOid,
+  );
+  return { baseOid, headOid, ahead, mergeable: clean, conflicts, reviews };
+}
+
+interface MergeReading {
+  readonly ahead: number;
+  readonly mergeable: boolean;
+  readonly conflicts: string[];
+}
+
+/** Readings by `head:base` oid: a merge-tree over two commits never changes. */
+const readings = new Map<string, MergeReading>();
+const READINGS_MAX = 500;
+
+async function mergeReading(
+  dir: string,
+  baseOid: string,
+  headOid: string,
+): Promise<MergeReading> {
+  const key = `${headOid}:${baseOid}`;
+  const known = readings.get(key);
+  if (known !== undefined) return { ...known, conflicts: [...known.conflicts] };
   const ahead = await aheadCount(dir, baseOid, headOid);
-  if (ahead === 0) {
-    return {
-      baseOid,
-      headOid,
-      ahead,
-      mergeable: false,
-      conflicts: [],
-      reviews,
-    };
+  let reading: MergeReading;
+  if (ahead === 0) reading = { ahead, mergeable: false, conflicts: [] };
+  else {
+    const check = await mergeable(dir, baseOid, headOid);
+    reading = check.ok
+      ? { ahead, mergeable: true, conflicts: [] }
+      : {
+          ahead,
+          mergeable: false,
+          conflicts: check.error.kind === "conflict" ? check.error.files : [],
+        };
+    // A git failure is not a verdict about the commits: do not remember it.
+    if (!check.ok && check.error.kind !== "conflict") return reading;
   }
-  const check = await mergeable(dir, baseOid, headOid);
-  if (check.ok)
-    return {
-      baseOid,
-      headOid,
-      ahead,
-      mergeable: true,
-      conflicts: [],
-      reviews,
-    };
-  const conflicts = check.error.kind === "conflict" ? check.error.files : [];
-  return { baseOid, headOid, ahead, mergeable: false, conflicts, reviews };
+  if (readings.size >= READINGS_MAX)
+    readings.delete(readings.keys().next().value!);
+  readings.set(key, reading);
+  return { ...reading, conflicts: [...reading.conflicts] };
+}
+
+/**
+ * Whether an open pull merges into its base's current head, and the paths
+ * that stop it — what the API and the MCP say on every reading of a pull.
+ * Null for a pull that is no longer open: there is nothing left to merge.
+ */
+export async function pullMergeState(
+  dir: string,
+  pull: Pull,
+): Promise<{ mergeable: boolean; conflicts: string[] } | null> {
+  if (pull.state !== "open" || pull.mergedAt !== null) return null;
+  const { mergeable: clean, conflicts } = await pullStatus(dir, pull);
+  return { mergeable: clean, conflicts };
+}
+
+/** How many merge readings a list runs at once: a page is never a fork bomb. */
+const READ_AT_ONCE = 4;
+
+/**
+ * `pullMergeState` for a page of pulls: one `for-each-ref` per repository
+ * directory instead of two `rev-parse` per pull, and at most `READ_AT_ONCE`
+ * readings in flight. Same answers, same order as the input.
+ */
+export async function pullMergeStates(
+  items: readonly { dir: string; pull: Pull }[],
+): Promise<({ mergeable: boolean; conflicts: string[] } | null)[]> {
+  const tips = new Map<string, Promise<Map<string, string>>>();
+  const tipsOf = (dir: string): Promise<Map<string, string>> => {
+    let known = tips.get(dir);
+    if (known === undefined) {
+      known = listRefs(dir).then((refs) => {
+        const out = new Map<string, string>();
+        if (refs.ok) for (const r of refs.value) out.set(r.name, r.oid);
+        return out;
+      });
+      tips.set(dir, known);
+    }
+    return known;
+  };
+  const out: ({ mergeable: boolean; conflicts: string[] } | null)[] =
+    new Array(items.length).fill(null);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    for (let i = next++; i < items.length; i = next++) {
+      const { dir, pull } = items[i]!;
+      if (pull.state !== "open" || pull.mergedAt !== null) continue;
+      const live = await tipsOf(dir);
+      const baseOid = live.get(`refs/heads/${pull.baseBranch}`) ?? pull.baseOid;
+      const headRef = pull.crossRepo
+        ? `refs/pull/${pull.number}/head`
+        : `refs/heads/${pull.headBranch}`;
+      const headOid = live.get(headRef) ?? pull.headOid;
+      const r = await mergeReading(dir, baseOid, headOid);
+      out[i] = { mergeable: r.mergeable, conflicts: r.conflicts };
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(READ_AT_ONCE, items.length) }, worker),
+  );
+  return out;
 }
 
 /**

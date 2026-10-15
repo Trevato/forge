@@ -131,6 +131,7 @@ describe("the forge over MCP", () => {
     expect(init.body.result.protocolVersion).toBe("2025-03-26");
     expect(init.body.result.serverInfo.name).toBe("forge");
     expect(init.body.result.capabilities.tools).toEqual({});
+    expect(init.body.result.capabilities.resources).toEqual({});
     // A version it has never heard of gets the one it prefers.
     const future = await call(rw, "initialize", {
       protocolVersion: "2031-01-01",
@@ -159,6 +160,7 @@ describe("the forge over MCP", () => {
       "tell",
       "share",
       "say",
+      "pull",
       "edit",
       "asks",
       "asks_act",
@@ -546,5 +548,100 @@ describe("the forge over MCP", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
     });
     expect(res.status).toBe(401);
+  });
+
+  test("ui:// card resources are listed, read, and tied to their tools", async () => {
+    const list = await call(rw, "resources/list");
+    const uris = list.body.result.resources.map((r: any) => r.uri).sort();
+    expect(uris).toEqual([
+      "ui://forge/app",
+      "ui://forge/decision",
+      "ui://forge/run",
+      "ui://forge/wave",
+    ]);
+    const read = await call(rw, "resources/read", { uri: "ui://forge/app" });
+    const c = read.body.result.contents[0];
+    expect(c.mimeType).toBe("text/html;profile=mcp-app");
+    expect(c.text).toContain("ui/notifications/tool-result");
+    expect(c.text).not.toContain("innerHTML");
+    const nope = await call(rw, "resources/read", { uri: "ui://forge/nope" });
+    expect(nope.body.error.code).toBe(-32002);
+    const tools = (await call(rw, "tools/list")).body.result.tools;
+    const meta = (n: string) => tools.find((t: any) => t.name === n)._meta?.ui?.resourceUri;
+    expect(meta("apps")).toBe("ui://forge/app");
+    expect(meta("now")).toBe("ui://forge/run");
+    expect(meta("asks")).toBe("ui://forge/decision");
+    expect(meta("milestones")).toBe("ui://forge/wave");
+  });
+
+  test("a tool result carries the card it renders", async () => {
+    const { body } = await call(rw, "tools/call", { name: "apps", arguments: {} });
+    const card = body.result.structuredContent.card;
+    expect(card.kind).toBe("app");
+    expect(card.rows.some((r: any) => r.label === "alice/game")).toBe(true);
+    const asks = await call(rw, "tools/call", { name: "asks", arguments: {} });
+    expect(asks.body.result.structuredContent.card.kind).toBe("decision");
+  });
+
+  test("ship and close card actions never apply at once and always meet the target tool's required fields", async () => {
+    const { cardFor } = await import("../src/web/studio/cards.ts");
+    const tools = (await call(rw, "tools/list")).body.result.tools;
+    const cards = [
+      cardFor("apps", [{ app: "alice/game", live: "up" }]),
+      cardFor("now", [{ who: "scout", app: "alice/game", run: "r1", on: "#1", state: "going" }]),
+      cardFor("asks", {
+        rows: [
+          { line: "a", kind: "look", items: ["x:1"], words: {} },
+          { line: "b", kind: "review", items: ["x:2"], words: {} },
+        ],
+      }),
+    ];
+    let actions = 0;
+    for (const card of cards)
+      for (const a of card!.actions) {
+        actions++;
+        expect(a.args["dryRun"]).not.toBe(false);
+        const t = tools.find((x: any) => x.name === a.tool);
+        for (const f of t.inputSchema.required ?? []) {
+          expect(a.args[f]).toBeDefined();
+          expect(a.args[f]).not.toBe("");
+        }
+      }
+    expect(actions).toBeGreaterThan(2);
+  });
+
+  test("a tell carries where it was told from, and refuses a malformed context", async () => {
+    const told = await tool(rw, "tell", {
+      repo: "alice/game",
+      text: "make the button blue",
+      context: {
+        page: "https://game.example/play?level=2",
+        run: "run_abc",
+        commit: "deadbeef1",
+        said: "the button is hard to see",
+      },
+    });
+    const issues = listIssues(app.db, game.id, {});
+    const issue = issues.find((i) => i.title === "make the button blue");
+    expect(issue?.body).toContain("page: https://game.example/play?level=2");
+    expect(issue?.body).toContain("commit: deadbeef1");
+    expect(issue?.body).toContain("their words: the button is hard to see");
+    expect(told).toBeDefined();
+    for (const context of [
+      { page: "javascript:alert(1)" },
+      { commit: "--upload-pack=x" },
+      "text",
+    ]) {
+      const refused = await tool(rw, "tell", { repo: "alice/game", text: "x", context });
+      expect(refused.error).toContain("invalid");
+    }
+  });
+
+  test("GET /contract/openapi.json describes the public API", async () => {
+    const res = await fetch(`${base}/contract/openapi.json`);
+    expect(res.status).toBe(200);
+    const doc = (await res.json()) as any;
+    expect(doc.openapi).toBe("3.1.0");
+    expect(doc.paths["/mcp"].post).toBeDefined();
   });
 });
