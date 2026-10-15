@@ -749,6 +749,13 @@ describe("checks", () => {
       files: [{ path: "QUIET.md", content: "quiet\n" }],
     });
     if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    // The pull's check is the base's (#1275): give main a valid one.
+    const base = await commitToBranch(app, alice, repo, {
+      branch: "main",
+      message: "The base's check",
+      files: [{ path: "forge.json", content: checkJson("test -f QUIET.md") }],
+    });
+    if (!base.ok) throw new Error(JSON.stringify(base.error));
     // Opened while no checks service was listening: nothing asked for a check.
     const opened = await openPull(app, alice, repo, {
       title: "Quiet",

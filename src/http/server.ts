@@ -66,6 +66,7 @@ import { sha256 } from "../kernel/hash.ts";
 import {
   assetResponse,
   highlightAsset,
+  shellAsset,
   stylesheetAsset,
   stylesheetRedirect,
   stylesheetResponse,
@@ -250,11 +251,16 @@ import {
   crewPage,
 } from "../web/pages/crew.ts";
 import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
-import { changePage, pullPage } from "../web/studio/change.ts";
+import {
+  changePage,
+  pullPage,
+  pullStateFragment,
+} from "../web/studio/change.ts";
 import {
   pullCommentSubmit,
   pullFilesPage,
   pullMergeSubmit,
+  pullChecksSubmit,
   pullReviewStateSubmit,
   pullReviewSubmit,
   pullThreadFragment,
@@ -527,6 +533,8 @@ export function buildRouter(): Router<Handler> {
   // than a redirect: the page that asked for it names the hash it was built
   // with, so a miss means an old tab, and an old tab should reload.
   router.add("GET", "/assets/:name.js", async (ctx) => {
+    const shell = shellAsset();
+    if (ctx.params.name === shell.name) return assetResponse(shell);
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();
     return assetResponse(asset);
@@ -877,6 +885,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/tell", tellSubmit);
   // The home's composer without a script: a tell to the app it names (#599).
   router.add("POST", "/tell", composerSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/checks", pullChecksSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   router.add("POST", "/:owner/:name/pulls/:number/take-back", takeBackSubmit);
@@ -919,6 +928,7 @@ export function buildRouter(): Router<Handler> {
   // box, one tab under the change itself.
   router.add("GET", "/:owner/:name/pulls/:number/files", pullFilesPage);
   router.add("GET", "/:owner/:name/pulls/:number/thread", pullThreadFragment);
+  router.add("GET", "/:owner/:name/pulls/:number/state", pullStateFragment);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/review", pullReviewSubmit);
   // The verdict on the change as a whole, and the threads it settles.

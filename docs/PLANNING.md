@@ -180,10 +180,24 @@ and stands under the `Later: …` umbrella where the repository keeps one.
 The owner moves an item out by unlinking it from the gate, or opens them
 all by closing the gate.
 
-A plan says which it is for every issue. The planner's brief tells it to
-link each issue it opens under its pillar or behind the gate, and the MCP
-`plan` tool refuses an item that says neither. A repository with no
-umbrella issues has no pillars, and plans as it always did.
+A plan says which it is for every issue. The planner plans through one
+route, `POST /api/v1/repos/:owner/:name/plan` with `{ "issues": [...] }`
+(`rw` scope; a crew member's run token may use it), which calls the same
+action as the MCP `plan` tool (`openPlan`): the same items, the same
+refusals, all or nothing. An item names its `pillar`, or is `later: true`
+with `why`; one that says neither is refused with `no_pillar` and nothing is
+opened, so the planner reads the refusal, names the pillar or defers the
+item, and posts again. The answer is `{ opened, ready, later, gate }`. A
+repository with no umbrella issues has no pillars, and plans as it always
+did.
+
+**An issue opened outside a plan.** A builder that finds its task too big
+for one run opens smaller issues one at a time and links them. Such a split
+child serves its parent's pillar: when the parent serves one, the builder
+makes that umbrella wait for the child as well (`POST …/issues/U/dependencies`
+with `{"blockedBy": child}`). It does not choose a pillar of its own and is
+never deferred by the builder; where the parent serves none, the child
+serves none either. Only a plan names new purposes.
 
 The umbrellas, the Later umbrella and the gate are the plan's own, not
 work. None of them is ever _ready_, so the crew never picks one and the map

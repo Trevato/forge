@@ -803,7 +803,16 @@ async function work(
             })()
           : undefined,
       ...(reason === "review" && pull
-        ? await reviewInputs(app, repo, pull, record, bare)
+        ? {
+            ...(await reviewInputs(app, repo, pull, record, bare)),
+            retry: app.db
+              .query<{ n: number }, [string, string, string]>(
+                `SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1 AND kind = 'agent'
+                   AND reason = 'review' AND state = 'failed' AND id <> ?2
+                   AND created_at < ?3`,
+              )
+              .get(issue.id, run.id, run.createdAt)!.n > 0,
+          }
         : {}),
       // A planning run is given what the crew handed over (`parks.ts`).
       ...(brief.role === "planner" && issue.id === repo.directionIssueId
