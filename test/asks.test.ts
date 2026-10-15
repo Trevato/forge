@@ -55,7 +55,7 @@ describe("the asks page", () => {
 
   /** The number the header's link carries, or 0 when it carries none. */
   const headerCount = (page: string): number =>
-    Number(/>Asks<span class="pill"[^>]*>(\d+)</.exec(page)?.[1] ?? 0);
+    Number(/<h2 id="asks-sentence"[^>]*>\s*(\d+)\b/.exec(page)?.[1] ?? 0);
 
   const sentence = (page: string): string =>
     /<h2 id="asks-sentence"[^>]*>([^<]*)<\/h2>/.exec(page)?.[1] ?? "";

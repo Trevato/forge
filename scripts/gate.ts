@@ -266,11 +266,7 @@ export const GATE: readonly string[] = [
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
-  {
-    file: "test/crew-sandbox-real.test.ts",
-    reason: "needs a real sandbox; skips itself where one cannot be made",
-    issue: 1234,
-  },
+  { file: "test/crew-sandbox-real.test.ts", reason: "landed unlisted and red locally; the builder admits it", issue: 1238 },
   { file: "test/api-errors.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
   {

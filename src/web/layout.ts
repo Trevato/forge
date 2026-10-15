@@ -148,23 +148,6 @@ function themeMenu(active: ThemeName | undefined): Html {
   </details>`;
 }
 
-/**
- * The way to what needs you, with how many things ask the viewer — the very
- * count the home's pinned section leads with (`askCountFor`).
- */
-export function asksLink(ctx: Ctx): Html {
-  if (!ctx.auth.user) return html``;
-  const count = askCountFor(ctx, ctx.auth.user);
-  return html`<a
-    id="asks-link"
-    class="btn"
-    data-size="sm"
-    href="/#needs-you"
-    title="${count === 0 ? "All fine" : `${count} need you`}"
-    >Asks${count === 0 ? null : pill(count, "accent")}</a
-  >`;
-}
-
 /** A whole forge for someone (`/forges/new`): any signed-in person's. */
 const NEW_FORGE: MenuItem = {
   label: "New forge",
@@ -281,7 +264,6 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Apps", h: "/apps", c: "Go to" },
   { t: "Explore", h: "/explore", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
-  { t: "Asks you", h: "/#needs-you", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
   { t: "Front page", h: "/front", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
@@ -449,9 +431,7 @@ function topbar(
       )}
       <span class="spacer"></span>
       <span class="topbar-tools">
-        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${asksLink(
-          ctx,
-        )}${themeMenu(theme)}
+        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${themeMenu(theme)}
         ${user
           ? html`<span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
                 ctx,
