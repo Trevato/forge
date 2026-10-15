@@ -858,7 +858,12 @@ export async function judgeFailedCheck(
       cause: certain(CAUSE_OPTIONS, "change"),
     }),
   );
-  const retry = decided.answers.retry.choice === "stop" ? "stop" : "again";
+  // A stop is a pull closed on a person's behalf: it takes the same
+  // confidence as a cause. Below it the builder gets its one more try.
+  const retry =
+    decided.answers.retry.choice === "stop" && decided.answers.retry.p >= 0.7
+      ? "stop"
+      : "again";
   // The change is what a half-sure answer means: an environment called
   // that way on a hunch is how a broken change escapes a rework.
   const cause =

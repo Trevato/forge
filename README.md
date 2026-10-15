@@ -476,6 +476,15 @@ or `x` on the issue in the terminal); the close writes "Closed: already done
 on main in …" on the thread. A claim with no commit, or with one that is not
 on the base, is an ordinary decline and is parked as one.
 
+**A red pull.** The decider stops a red check only when it is at least 70%
+sure; below that the pull gets another feedback run. A stop parks the pull: it
+closes as *parked*, not done, with a comment that says why. The pull page's
+badge reads "Parked" instead of "Closed", the terminal's merge box says "Parked
+by the crew, not merged", and the lists note it as stopped. Reopening it clears
+the mark. Only the crew parks: the API and the page refuse `reason: "parked"`.
+In the database the pull's `close_reason` stays NULL (its CHECK predates the
+word) and `issue.parked = 1` carries it, so raw SQL never reads it as done.
+
 An autonomous app's planner is **held** while nothing is landing or the plate
 is full: no pull has merged in 48 h while one was closed unmerged, or more than
 `slots × 3` ready, unassigned issues are waiting. The tick log says which

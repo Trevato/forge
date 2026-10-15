@@ -1241,7 +1241,9 @@ function drawMergeBox(
     state === "merged"
       ? `Merged ${relTime(pull?.mergedAt ?? "")} into ${pull?.baseBranch ?? ""}`
       : state === "closed"
-        ? "Closed without merging"
+        ? issue.parked === true
+          ? "Parked by the crew, not merged"
+          : "Closed without merging"
         : state === "mirrored"
           ? `Merge on the origin${issue.originUrl === null ? "" : ` — ${issue.originUrl}`}`
           : state === "conflicts"
