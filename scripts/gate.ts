@@ -262,6 +262,7 @@ export const GATE: readonly string[] = [
   "test/ssh-site.test.ts",
   "test/web-code.test.ts",
   "test/web-origins.test.ts",
+  "test/roll.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
