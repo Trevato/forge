@@ -1278,6 +1278,7 @@ export function apiRoutes(router: Router<Handler>): void {
         name,
         time: s.time,
         columns: s.columns,
+        ...(s.docs ? { docs: s.docs } : {}),
       })),
     });
   });

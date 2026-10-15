@@ -1138,6 +1138,17 @@ It answers `{"rows": [{"group", "value"}]}`, at most 1000 rows. A query the
 module refuses is `400 bad_query` with its message; a body that is not JSON
 is `400 bad_json`; a body over the cap is `413 too_large`.
 
+The `machine` source is what the machine itself used (`boards/sampler.ts`):
+every 15 s the forge reads its pod's cgroup v2 (`cpu.stat` `usage_usec` as a
+rate, `memory.current`), each labelled check and app cell's process tree
+(`check:<run id>`, `app:<slug>/<env>`), and the node (`/proc/stat`,
+`/proc/meminfo`, `/proc/loadavg`). `boards/ring.ts` keeps it in
+`machine_sample`: 15-s points for 24 h and 5-min mean and max for 30 days,
+dropping what leaves its window on every write. A file this machine lacks
+leaves its series absent, never zero, and `/boards/data?source=machine`
+names each one. Its rows belong to no repo, so only an every-repo scope
+reads them; the sources list carries each column's unit in `docs`.
+
     POST /api/v1/boards/query
     {"source": "runs", "aggregate": "count", "groupBy": "state"}
     -> {"rows": [{"group": "failed", "value": 1}, {"group": "ok", "value": 7}]}

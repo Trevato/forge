@@ -622,6 +622,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           onUndeclared: (host, port) =>
             noteReached(app.config.dataDir, repo.id, host, port),
           egressMode: egressSetting(app.db),
+          label: `check:${run.id}`,
         }
       : undefined;
     try {
