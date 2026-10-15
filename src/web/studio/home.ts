@@ -50,8 +50,9 @@ import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
 import { homeTabs } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
 import { everydayCard } from "../pages/everyday.ts";
-import { nextStepsCard } from "../pages/next-steps.ts";
+import { nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
+import { clientApps } from "./client_home.ts";
 
 /** The events that can change what is on you. */
 const ON_YOU_LIVE =
@@ -185,9 +186,36 @@ export async function studioHome(
   );
   // On a spawned forge its owner's first steps come first, and carry the
   // everyday account themselves (#600); anywhere else, #803's card asks.
-  const firstSteps = await nextStepsCard(ctx, user);
+  const steps = await nextStepsOf(ctx, user);
+  const firstSteps = await nextStepsCard(ctx, user, steps);
+  // Its owner sees their apps first and nothing else until they ask (#1812).
+  if (
+    ctx.url.searchParams.get("all") === null &&
+    steps !== undefined
+  ) {
+    const apps = await clientApps(ctx, user);
+    const lean = html`<h1 class="sr-only">Home</h1>
+      ${firstSteps} ${address} ${crewKeyNote(ctx)} ${apps}
+      <div class="stack">
+        ${composer(ctx, user)}
+        <p class="small muted">
+          <a href="/?all=1">Show everything</a>
+        </p>
+      </div>`;
+    return page({
+      ctx,
+      title: "Home",
+      body: lean,
+    });
+  }
   const body = html`<h1 class="sr-only">Home</h1>
     ${firstSteps ?? everydayCard(ctx, user)} ${address}
+    ${when(
+      steps,
+      () => html`<p class="small muted" id="lean-home">
+        <a href="/">Just my apps</a>
+      </p>`,
+    )}
     ${homeTabs("feed")}
     <div class="dash">
       <div class="dash-main stack">

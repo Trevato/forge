@@ -14,7 +14,7 @@ import { egressSetting } from "../../core/capacity.ts";
 import { egressNote } from "./egress.ts";
 import { audit } from "../../contract/audit.ts";
 import { latestProbes } from "../../contract/probes.ts";
-import { appsRuntime } from "../../apps/runtime.ts";
+import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { decisionStats, type DecisionStat } from "../../core/decisions.ts";
@@ -31,6 +31,7 @@ import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { appTailJs, liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
+import { appLine } from "../describe.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import { followingCard, followingOf } from "../pages/following.ts";
@@ -38,6 +39,7 @@ import {
   avatar,
   btn,
   card,
+  envPhrase,
   icon,
   listCard,
   row,
@@ -485,6 +487,16 @@ export async function studioApp(
   return page({
     ctx,
     title: `${repo.name}`,
+    description: appLine({
+      private: repo.visibility === "private",
+      name: repo.name,
+      description: repo.description,
+      state: envPhrase(
+        envsFor(ctx.app, ctx.auth.user, record).find(
+          (e) => e.env === "production",
+        ),
+      ).word,
+    }),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,

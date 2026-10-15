@@ -84,8 +84,8 @@ function stepRow(step: NextStep, primary: boolean, body: Html | null): Html {
 export async function nextStepsCard(
   ctx: Ctx,
   user: User,
+  steps: readonly NextStep[] | undefined,
 ): Promise<Html | null> {
-  const steps = await nextStepsFor(ctx.app, user);
   if (!steps || steps.every((s) => s.done)) return null;
   const repos = await spawnedRepos(ctx.app, user);
   const crew = crewAtWork(ctx, repos);
@@ -133,4 +133,12 @@ export async function nextStepsCard(
       </ol>`,
     { id: "next-steps", head: html`<h2>Your next steps</h2>` },
   );
+}
+
+/** The steps once per request, for the card and for the lean home to share. */
+export function nextStepsOf(
+  ctx: Ctx,
+  user: User,
+): Promise<readonly NextStep[] | undefined> {
+  return nextStepsFor(ctx.app, user);
 }

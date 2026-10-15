@@ -28,12 +28,14 @@ import {
   openOnWeb,
   runAsync,
 } from "./screens/common.ts";
+import { askedScreen } from "./screens/asked.ts";
 import { familyScreen } from "./screens/family.ts";
 import { familyLines, familyView } from "../spawn/family.ts";
 import { issueScreen } from "./screens/issue.ts";
 import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
+import { accessScreen } from "./screens/access.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
@@ -167,6 +169,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               ctx.push(signInScreen(session, ctx, () => ctx.invalidate())),
           },
     );
+    // What you asked for and what became of it, as /asked says it: a signed-in person's.
+    if (session.signedIn)
+      commands.push({
+        id: "asked",
+        title: "Asked",
+        hint: "your thoughts and what became of them",
+        run: () => ctx.push(askedScreen(session, ctx)),
+      });
     if (session.signedIn)
       commands.push(
         {
@@ -194,6 +204,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Flow",
         hint: "the pipeline's bottleneck and throughput",
         run: () => ctx.push(flowScreen(ctx, flowLines(session.db))),
+      });
+    // What outside agents tried, as Settings → Access says it: a site admin's (#1768).
+    if (session.user?.isAdmin === true && session.user.kind !== "agent")
+      commands.push({
+        id: "access",
+        title: "Access",
+        hint: "what outside agents tried",
+        run: () => ctx.push(accessScreen(session, ctx)),
       });
     commands.push({
       id: "family",

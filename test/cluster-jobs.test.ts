@@ -86,3 +86,41 @@ test("a log larger than the cap comes back truncated, by bytes, and is asked for
   expect(r.lines).toEqual(["ééééé"]);
   expect(k.calls.some((c) => c.url.endsWith("/log?limitBytes=10"))).toBe(true);
 });
+
+test("the pod's node is reported, and a volume is mounted where the container works", async () => {
+  const k = kube([{ succeeded: 1 }]);
+  const base = k.fetch;
+  const fetch = async (url: string, init: any) =>
+    new URL(url).pathname.endsWith("/pods")
+      ? Response.json({ items: [{ metadata: { name: "p1" }, spec: { nodeName: "n3" } }] })
+      : base(url, init);
+  const r = await runJob({ ...spec, volume: { claim: "root", mountPath: "/data/checks/x", subPath: "x" } }, { fetch, credentials, ...clock() });
+  expect(r.node).toBe("n3");
+  const pod = JSON.parse(k.calls[0]!.body!).spec.template.spec;
+  expect(pod.containers[0].workingDir).toBe("/data/checks/x");
+  expect(pod.volumes).toEqual([{ name: "work", persistentVolumeClaim: { claimName: "root" } }]);
+  expect(pod.containers[0].volumeMounts).toEqual([{ name: "work", mountPath: "/data/checks/x", subPath: "x" }]);
+  expect(() => manifest({ ...spec, volume: { claim: "root", mountPath: "/a/b", subPath: "../other" } })).toThrow("bad volume");
+  expect(() => manifest({ ...spec, volume: { claim: "root", mountPath: "/a/b", subPath: "a/b" } })).toThrow("bad volume");
+  expect(() => manifest({ ...spec, volume: { claim: "root", mountPath: "/a/../b", subPath: "x" } })).toThrow("bad volume");
+});
+
+test("an aborted call deletes the Job and throws", async () => {
+  const k = kube([{ active: 1 }]);
+  const ac = new AbortController();
+  ac.abort();
+  await expect(runJob(spec, { fetch: k.fetch, credentials, signal: ac.signal, ...clock() })).rejects.toThrow("cancelled");
+  expect(deleted(k.calls)).toBe(1);
+});
+
+test("the pod holds no service-account token, no privilege, and the declared limits", () => {
+  const pod = (manifest({ ...spec, limits: { memoryMiB: 2048, cpus: 2, diskMiB: 1024 }, labels: { "forge-check": "true" } }) as any).spec.template;
+  expect(pod.spec.automountServiceAccountToken).toBe(false);
+  expect(pod.spec.securityContext).toEqual({ runAsNonRoot: true });
+  const c = pod.spec.containers[0];
+  expect(c.securityContext).toEqual({ allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } });
+  expect(c.resources.limits).toEqual({ memory: "2048Mi", cpu: "2", "ephemeral-storage": "1024Mi" });
+  expect(pod.metadata.labels).toEqual({ "forge-check": "true", "job-name": "build-1" });
+  expect(() => manifest({ ...spec, limits: { memoryMiB: 0, cpus: 1, diskMiB: 1 } })).toThrow("bad limits");
+  expect(() => manifest({ ...spec, labels: { "a b": "c" } })).toThrow("bad label");
+});

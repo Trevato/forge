@@ -19,7 +19,7 @@
     "timeout": 7200,
     "limits": {
       "memory": 8192,
-      "cpus": 8,
+      "cpus": 16,
       "disk": 8192
     }
   }

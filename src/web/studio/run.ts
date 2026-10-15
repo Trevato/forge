@@ -23,11 +23,12 @@ import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { studioRunJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
+import { runLine } from "../describe.ts";
 import { page } from "../layout.ts";
 import { btn, sha } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
 import { costText, durationText, runTitle, runTokens } from "../pages/runs.ts";
-import { sandboxLine } from "./sandbox.ts";
+import { placementLine, sandboxLine } from "./sandbox.ts";
 import { logBox, runVoice, RUN_TRANSCRIPT_CAP } from "./log.ts";
 import { changeHref, tellHref } from "./nouns.ts";
 import { unnamedRun, voiceFor, type Actor } from "./voice.ts";
@@ -176,6 +177,7 @@ export async function runView(
         </p>`,
     )}
     ${sandboxLine(run)}
+    ${placementLine(run)}
     ${when(
       held.length > 0,
       () =>
@@ -315,6 +317,12 @@ export async function runView(
   return page({
     ctx,
     title: `${title} · ${repo.name}`,
+    description: runLine({
+      private: repo.visibility === "private",
+      word,
+      commitOid: run.kind === "agent" ? "" : run.commitOid,
+      summary: run.summary,
+    }),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,

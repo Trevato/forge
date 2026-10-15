@@ -76,6 +76,11 @@ import {
   type RunReason,
 } from "./brief.ts";
 import { policyBrief } from "../contract/audit.ts";
+import {
+  isNetworkError,
+  NETWORK_RETRY_SECONDS,
+  pause,
+} from "./network.ts";
 import { BUDGET_REACHED, runClaude, type ClaudeOutcome } from "./claude.ts";
 import {
   isRateLimited,
@@ -125,6 +130,8 @@ export interface CrewOptions {
   /** Spend per run when the agent's own budget is 0. */
   readonly budgetUsd: number;
   readonly runTimeoutMs: number;
+  /** Scales the wait before a network retry; tests pass 0. @default 1 */
+  readonly networkRetryScale?: number | undefined;
   /** How long a review run may take. @default BUDGETS.review */
   readonly reviewBudgetMs?: number | undefined;
   /** A `CLAUDE_CONFIG_DIR` for runs, when the operator wants one. */
@@ -1049,6 +1056,25 @@ async function work(
     ) {
       write("the session could not be resumed; starting fresh");
       result = await invoke(prompt, working, undefined);
+    }
+    // A dropped connection says nothing about the work: ask again, in the
+    // same session when there is one, before the run is judged.
+    for (const seconds of NETWORK_RETRY_SECONDS) {
+      if (!isNetworkError(result) || signal.aborted) break;
+      write(`network error; retrying in ${seconds}s`);
+      await pause(seconds * 1000 * (options.networkRetryScale ?? 1), signal);
+      if (signal.aborted || Date.now() >= deadline) break;
+      const again = await invoke(
+        result.sessionId === "" ? prompt : "Continue where you stopped.",
+        working,
+        result.sessionId === "" ? undefined : result.sessionId,
+      );
+      result = {
+        ...again,
+        sessionId: again.sessionId || result.sessionId,
+        costUsd: result.costUsd + again.costUsd,
+        turns: result.turns + again.turns,
+      };
     }
     noteRunProgress(app.db, run.id, {
       sessionId: result.sessionId,

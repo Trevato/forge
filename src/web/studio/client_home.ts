@@ -1,0 +1,47 @@
+/**
+ * A client's first screen (#1812): signed in on a forge that was made for
+ * them, the home is their apps, each in one plain sentence and one more that
+ * says whether its agents are working or waiting. No map, board or settings
+ * until asked (`/?all=1` is the whole home). Words only a developer knows
+ * stay off it; `test/client-home.test.ts` holds the list.
+ */
+
+import { clientAppRows } from "../../core/client-apps.ts";
+import type { User } from "../../core/users.ts";
+import type { Ctx } from "../../http/context.ts";
+import { repoBase } from "../chrome.ts";
+import { html, type Html } from "../html.ts";
+import { card } from "../ui.ts";
+
+/** The sentence about the agents, from how many are going and how many are lined up. */
+export function agentsLine(working: number, queued: number): string {
+  if (working > 0)
+    return working === 1
+      ? "One agent is working on it now."
+      : `${working} agents are working on it now.`;
+  if (queued > 0) return "Its agents are about to start.";
+  return "Its agents are waiting for something to do.";
+}
+
+/** The card of apps; an empty one says they will appear. The caller decides who is a client. */
+export async function clientApps(ctx: Ctx, user: User): Promise<Html> {
+  const apps = await clientAppRows(ctx.app, user);
+  const rows = apps.map(({ repo, working, queued }) => {
+    const about = repo.description !== "" ? repo.description : "An app of yours.";
+    return html`<li class="client-app">
+      <a href="${repoBase(repo)}"><b>${repo.name}</b></a>
+      <span class="client-app-about">${about}</span>
+      <span class="client-app-agents muted" data-agents="${working > 0 ? "working" : "waiting"}"
+        >${agentsLine(working, queued)}</span
+      >
+    </li>`;
+  });
+  return card(
+    rows.length === 0
+      ? html`<p class="muted">Your apps will appear here.</p>`
+      : html`<ul class="list client-apps">
+          ${rows}
+        </ul>`,
+    { id: "client-apps", head: html`<h2>Your apps</h2>` },
+  );
+}
