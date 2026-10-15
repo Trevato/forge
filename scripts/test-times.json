@@ -1,8 +1,12 @@
 {
   "test/apps-adversarial.test.ts": 145.9,
   "test/apps-busy.test.ts": 26.4,
+  "test/apps-crew.test.ts": 3.8,
+  "test/apps-identity.test.ts": 3.2,
+  "test/apps-new.test.ts": 8,
+  "test/apps-slow-test.test.ts": 9.7,
   "test/apps-token.test.ts": 19.8,
-  "test/apps.test.ts": 148.5,
+  "test/apps.test.ts": 10.9,
   "test/asks.test.ts": 7.3,
   "test/autonomy.test.ts": 18,
   "test/board-windows.test.ts": 6,
