@@ -81,6 +81,16 @@ username and password — which links that key to your account, so the next
 connection is instant. `j`/`k` to move, `enter` to open, `esc` to go back, `/`
 to filter, `?` for the keys, `:` for the command palette, `t` for the theme.
 
+**Milestones.** `:` → *Milestones in a repository* → `owner/name` lists a
+repository's limbs in the order the crew takes ready work (`enter` opens a
+limb's own limbs). A person who administers the repository presses `r` to
+Raise or `l` to Lower the limb under the cursor: a preview of the new order
+and of the top of the ready list first, then `enter` to apply (`esc` backs
+out), then `u` to undo the last move. It is the same fleet operation the web
+milestones page uses, and a move is heard by that page when it is open.
+Anyone else sees the order and no keys to change it; a guest sees only what
+the web shows them.
+
 Working on the UI itself? `bun run src/tui/main.ts --user alice` runs it over
 stdio against your local data directory. That `--user` flag is a development
 convenience and exists only there: over SSH, the key decides who you are and

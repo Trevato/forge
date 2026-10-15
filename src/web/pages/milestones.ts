@@ -41,6 +41,7 @@ import {
 import { html, when, type Html } from "../html.ts";
 import { field, readForm } from "../form.ts";
 import { page, redirect } from "../layout.ts";
+import { liveClientJs, liveMount } from "../live.ts";
 import { btn, time } from "../ui.ts";
 
 /** Where a milestone is: its own page. */
@@ -201,7 +202,8 @@ export function milestonesPage(ctx: Ctx): Response {
         </p>`
       : html`<ul class="ms-limbs" id="ms-limbs">
           ${plan.limbs.map((limb) => limbLine(base, limb, move?.(limb.issue, "top") ?? null))}
-        </ul>`}`;
+        </ul>`}
+    ${liveMount({ repo: base })}`;
   return page({
     ctx,
     title: `Milestones · ${repo.name}`,
@@ -209,6 +211,7 @@ export function milestonesPage(ctx: Ctx): Response {
     palette: repoPalette(ctx, repo),
     body,
     styleCss: milestonesCss,
+    scriptJs: liveClientJs,
   });
 }
 
@@ -472,8 +475,10 @@ export function milestonePage(ctx: Ctx): Response {
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body: html`${repoHeader(ctx, repo, "map")}
-    ${milestoneBody(repo, milestone, owner, actions, move)}`,
+    ${milestoneBody(repo, milestone, owner, actions, move)}
+    ${liveMount({ repo: repoBase(repo) })}`,
     styleCss: milestonesCss,
+    scriptJs: liveClientJs,
   });
 }
 
