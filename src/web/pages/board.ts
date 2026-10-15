@@ -38,6 +38,7 @@ import {
 } from "../../core/subscriptions.ts";
 import { readSpend } from "../../actions/spend.ts";
 import { spendView } from "./spend.ts";
+import type { HandContext } from "../../crew/handover.ts";
 import { listApps } from "../../core/apps.ts";
 import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
 import { laneLine, vitals, type Vitals } from "../../kernel/vitals.ts";
@@ -117,6 +118,7 @@ const KIND_WORDS: Record<DecisionKind, string> = {
   land: "ship or show",
   retry: "try again",
   lean: "which way",
+  hand: "hand-over",
   // Never listed (`listDecisionsForRepos` leaves guards out); named for the type.
   guard: "not started",
 };
@@ -830,6 +832,22 @@ function byPillar(ctx: Ctx, scope: BoardScope): Html | null {
 
 // ---- decided ----
 
+/** A hand-over's row says why, and what the decider saw (`crew/handover.ts`). */
+function handContextLine(d: Decision): Html {
+  const s = d.state as Partial<HandContext> & { reason?: string };
+  const seen = [
+    // One person's pins and mutes stay out of a line other owners read.
+    s.spend === undefined
+      ? null
+      : `${money(s.spend.todayUsd)} of ${money(s.spend.ceilingUsd)} today`,
+    `${s.recent?.length ?? 0} past decisions`,
+    `${s.evidence?.reasons.length ?? 0} park notes`,
+  ].filter((x): x is string => x !== null);
+  return html`<p class="muted small board-context">
+    ${s.reason ?? d.answer} Saw: ${s.direction ? `the direction, ` : ""}${seen.join(", ")}.
+  </p>`;
+}
+
 function decided(ctx: Ctx, scope: BoardScope): Html {
   const db = ctx.app.db;
   // The decision ledger is the owner's own record of what the crew chose —
@@ -883,6 +901,7 @@ function decided(ctx: Ctx, scope: BoardScope): Html {
         >
         <span class="board-when">${time(d.createdAt)}</span>
       </a>
+      ${d.kind === "hand" ? handContextLine(d) : null}
     </li>`;
   });
   return region(

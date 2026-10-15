@@ -193,6 +193,8 @@ import { askedPage } from "../web/studio/asked_page.ts";
 import {
   asksBulkSubmit,
   asksBulkUndo,
+  asksDecide,
+  asksDecideUndo,
   asksListen,
   asksPage,
 } from "../web/studio/asks_page.ts";
@@ -582,6 +584,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/asks/bulk", asksBulkSubmit);
   router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
   router.add("POST", "/asks/listen", asksListen);
+  router.add("POST", "/asks/decide", asksDecide);
+  router.add("POST", "/asks/decide/:id/undo", asksDecideUndo);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
   // The big view, folded into the board: every old address lands on its wall mode.

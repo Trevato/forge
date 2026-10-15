@@ -15,6 +15,10 @@ import {
   previewAsksBulk,
   type Skipped,
 } from "../../actions/asks_bulk.ts";
+import { getDecision } from "../../core/decisions.ts";
+import { getIssueById } from "../../core/issues.ts";
+import { getRepoById, ownerFactRepoIds } from "../../core/repos.ts";
+import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import type { FleetValue } from "../../core/fleet_ops.ts";
 import { removeMutes } from "../../core/interactions.ts";
 import { needLine } from "../../actions/health.ts";
@@ -286,8 +290,34 @@ export function asksPage(ctx: Ctx): Response {
 
 /** The receipt `?op=<id>` names on the home, when it is the viewer's own. */
 export function homeTop(ctx: Ctx): AsksTop | undefined {
+  const decided = ctx.url.searchParams.get("decided");
+  if (decided !== null) return handedTop(ctx, decided);
   const op = ctx.url.searchParams.get("op");
   return op === null ? undefined : receiptTop(ctx, op);
+}
+
+/** What the decider said about a hand-over, and the day's undo; only for the one who asked it. */
+function handedTop(ctx: Ctx, decisionId: string): AsksTop | undefined {
+  const user = ctx.auth.user;
+  const d = getDecision(ctx.app.db, decisionId);
+  if (!user || d === undefined || d.kind !== "hand") return undefined;
+  const repo = getRepoById(ctx.app.db, d.repoId);
+  if (repo === undefined || !ownerFactRepoIds(ctx.app.db, [repo], user).has(repo.id))
+    return undefined;
+  const reason = (d.state as { reason?: unknown } | null)?.reason;
+  const undoable = d.outcome === "set_aside";
+  return {
+    banner: card(
+      html`<p>${typeof reason === "string" ? reason : d.answer}</p>
+        ${undoable
+          ? html`<form method="post" action="/asks/decide/${d.id}/undo" class="bar">
+              ${btn("Undo", { size: "sm" })}
+              <span class="muted small">kept for a day</span>
+            </form>`
+          : null}`,
+      { id: "asks-bulk-result", head: html`<h2>The decider: ${d.outcome === "undone" ? "undone" : d.outcome ?? d.answer}</h2>` },
+    ),
+  };
 }
 
 /** What needs you, as the home's pinned section: what asks you, with a
@@ -596,6 +626,29 @@ export async function asksBulkUndo(ctx: Ctx): Promise<Response> {
       ? notFoundPage(ctx)
       : await asksScreen(ctx, nothingDone(op.error.message));
   return redirect(`/?op=${op.value.id}#asks-bulk-result`);
+}
+
+/** POST /asks/decide — hand one hand-over card to the decider; the ledger keeps what it saw. */
+export async function asksDecide(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const done = await decideAsk(ctx.app, ctx.auth.user, field(form, "ask"));
+  if (!done.ok) return await asksScreen(ctx, nothingDone(done.error.message));
+  return redirect(`/?decided=${done.value.id}#asks-bulk-result`);
+}
+
+/** POST /asks/decide/:id/undo — put a set-aside card back on the board, within a day. */
+export async function asksDecideUndo(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const undone = undoDecideAsk(ctx.app, ctx.auth.user, ctx.params.id);
+  if (!undone.ok)
+    return undone.error.code === "not_found"
+      ? notFoundPage(ctx)
+      : await asksScreen(ctx, nothingDone(undone.error.message));
+  return redirect(`/?decided=${undone.value.id}#asks-bulk-result`);
 }
 
 /** POST /asks/listen — take back the viewer's own mute of the repositories named. */
