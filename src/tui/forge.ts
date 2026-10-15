@@ -10,6 +10,7 @@
 
 import type { App as Forge } from "../app.ts";
 import { search } from "../actions/search.ts";
+import { sentinelSummary } from "../crew/sentinel.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import { sourceFor } from "../view/source.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
@@ -25,11 +26,15 @@ import {
   errorText,
   promptScreen,
   openOnWeb,
+  runAsync,
 } from "./screens/common.ts";
+import { familyScreen } from "./screens/family.ts";
+import { familyLines, familyView } from "../spawn/family.ts";
 import { issueScreen } from "./screens/issue.ts";
 import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
+import { flowLines, flowScreen } from "./screens/flow.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
 import { newPullScreen } from "./screens/newpull.ts";
@@ -170,6 +175,36 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
           run: () => openOnWeb(session, ctx, "/settings", "Account settings"),
         },
       );
+    // The forge's own faults, as the board's strip shows them: a site admin's.
+    if (session.user?.isAdmin === true)
+      commands.push({
+        id: "sentinel",
+        title: "Sentinel",
+        hint: "the forge's open faults",
+        run: () =>
+          ctx.toast(
+            sentinelSummary(session.db) ?? "The sentinel has not hunted yet",
+            "default",
+          ),
+      });
+    // The pipeline's bottleneck and throughput, as /flow says them: a site admin's (#1554, #1786).
+    if (session.user?.isAdmin === true)
+      commands.push({
+        id: "flow",
+        title: "Flow",
+        hint: "the pipeline's bottleneck and throughput",
+        run: () => ctx.push(flowScreen(ctx, flowLines(session.db))),
+      });
+    commands.push({
+      id: "family",
+      title: "Family",
+      hint: "the forge that sent this one, and the forges it sent",
+      run: () =>
+        runAsync(ctx, async () => {
+          const view = await familyView(session.app, session.user?.isAdmin === true);
+          ctx.push(familyScreen(ctx, familyLines(view)));
+        }),
+    });
     commands.push({
       id: "quit",
       title: "Quit",

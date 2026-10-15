@@ -21,7 +21,7 @@ import {
   setIssueState,
 } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
-import { gateOnLand } from "../checks/landing.ts";
+import { gateOnLand, releaseOnLand } from "../checks/landing.ts";
 import { mergeable, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { mergePull } from "../actions/pulls.ts";
@@ -42,6 +42,8 @@ import {
 import { getHold } from "../core/holds.ts";
 import { certain } from "./decide.ts";
 import { decideAndRecord } from "./ledger.ts";
+import { sentinelTick } from "./sentinel.ts";
+import { triageTick } from "./triage.ts";
 import { wallOf, wallSentence } from "../contract/policy.ts";
 import {
   getIssue,
@@ -90,6 +92,8 @@ import {
   SKIP_SUMMARY,
   skipsReplan,
 } from "./guard.ts";
+import { BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
+import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
 import { interruptionOf } from "./interrupted.ts";
 import {
   PARK_NOTE,
@@ -654,8 +658,9 @@ function stalled(app: App, repo: Repo, issue: Issue): boolean {
   // an origin, whoever connected it (#619).
   return !app.db
     .query<{ id: string }, [string, string]>(
-      `SELECT DISTINCT author_id AS id FROM comment
-        WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL`,
+      `SELECT DISTINCT n.author_id AS id FROM comment n
+        WHERE n.issue_id = ?1 AND n.created_at > ?2 AND n.origin_author IS NULL
+          AND NOT (n.body LIKE '${DONE_LIKE}' AND ${BY_CREW})`,
     )
     .all(issue.id, last.created_at)
     .some((r) => speaksForCrew(app.db, repo, getUserById(app.db, r.id)));
@@ -698,9 +703,10 @@ function declineOf(
     return undefined;
   const spoke = db
     .query<{ id: string }, [string, string]>(
-      `SELECT DISTINCT author_id AS id FROM comment
-       WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL
-         AND body NOT LIKE 'Parked by the crew%'`,
+      `SELECT DISTINCT n.author_id AS id FROM comment n
+       WHERE n.issue_id = ?1 AND n.created_at > ?2 AND n.origin_author IS NULL
+         AND n.body NOT LIKE 'Parked by the crew%'
+         AND NOT (n.body LIKE '${DONE_LIKE}' AND ${BY_CREW})`,
     )
     .all(issueId, last.created_at)
     .map((r) => r.id);
@@ -866,12 +872,40 @@ export function settleAgentRun(
     crewRole(app.db, repo.id, run.actorId) !== "builder"
   )
     return false;
+  const done = alreadyDoneOids(run.summary);
+  if (run.state === "ok" && done.length > 0)
+    return noteAlreadyDone(app, repo, issue, done);
   return parkIssue(
     app,
     repo,
     issue,
     `the run ended without a pull: ${run.summary || run.state}`,
   );
+}
+
+/**
+ * A run found its issue done on the base, by commits that are there
+ * (`already.ts`): one note on the issue with the commits, the assignee
+ * cleared, and no park — it is no strike and never reaches the planner as
+ * parked twice. Closing it is the asker's. Said once per run.
+ */
+function noteAlreadyDone(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  oids: readonly string[],
+): boolean {
+  if (repo.autonomyBy === null) return false;
+  const by = getUserById(app.db, repo.autonomyBy);
+  if (!by) return false;
+  if (issue.assigneeId !== null) assignIssue(app, by, repo, issue, null);
+  addComment(app, by, repo, issue, `${ALREADY_NOTE}${oids.join(" ")}`);
+  log.info("already done", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    issue: issue.number,
+    commits: oids.length,
+  });
+  return true;
 }
 
 /**
@@ -923,7 +957,9 @@ export function parkPull(
   const issue = getIssueById(app.db, pull.id);
   if (!issue || issue.state !== "open") return false;
   addComment(app, by, repo, issue, `${PARK_NOTE}${why}`);
-  const closed = setIssueState(app, by, repo, issue, "closed");
+  const closed = setIssueState(app, by, repo, issue, "closed", {
+    reason: "parked",
+  });
   if (!closed.ok) return false;
   for (const number of closesFromBody(pull.body)) {
     const about = getIssue(app.db, repo.id, number);
@@ -1035,6 +1071,18 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
         error: String(error),
       });
     }
+  }
+  // Every thought is placed within minutes (`crew/triage.ts`).
+  try {
+    await triageTick(app, now);
+  } catch (error) {
+    log.error("triage failed", { error: String(error) });
+  }
+  // The forge hunts its own faults on the same clock (`crew/sentinel.ts`).
+  try {
+    sentinelTick(app, now.getTime());
+  } catch (error) {
+    log.error("sentinel failed", { error: String(error) });
   }
   // Review is not autonomy's alone: an agent's green pull is read by the
   // crew's reviewer in every repository that has one.
@@ -1381,6 +1429,14 @@ export async function landIfGreen(
   }
   conflicted.delete(pull.id);
   resolveOpen(app.db, pull.id, "land", "shipped");
+  // On the forge's own code, the landed tree is checked out and preflighted
+  // off to the side; the landing does not wait on it (#1662).
+  void releaseOnLand(app, by, repo, pull, merged.value.mergeOid).catch((error) =>
+    log.warn("release checkout failed", {
+      pull: pull.number,
+      why: error instanceof Error ? error.message : String(error),
+    }),
+  );
   // Said once it has landed, so the note wakes no builder: the review was
   // asked for and never came.
   if (review === "lapsed") {

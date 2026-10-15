@@ -10,6 +10,7 @@
 
 import type { App } from "../app.ts";
 import { createLog } from "../kernel/log.ts";
+import { reportVerdict, seedFirstSeen } from "./verdict.ts";
 import {
   KEEP,
   listSnapshots,
@@ -18,6 +19,8 @@ import {
   type Manifest,
   type Progress,
 } from "./snapshot.ts";
+import { runDrill, type DrillDeps, type DrillResult } from "./drill.ts";
+import { recordDrill } from "./drills.ts";
 import type { Store } from "./store.ts";
 
 const log = createLog("snapshots");
@@ -38,6 +41,8 @@ export interface SnapshotsHandle {
   readonly list: () => Promise<Manifest[]>;
   /** The last one taken by this process, and what it said. */
   readonly last: () => { manifest?: Manifest; error?: string; at?: string };
+  /** Drill the newest snapshot now and keep the result; waits for any snapshot in flight. */
+  readonly drill: () => Promise<DrillResult>;
   /** Forget the resolved store; the next use resolves again (a new destination was saved). */
   readonly forget: () => void;
   readonly stop: () => Promise<void>;
@@ -46,6 +51,18 @@ export interface SnapshotsHandle {
 const handles = new WeakMap<App, SnapshotsHandle>();
 export const snapshotsOf = (app: App): SnapshotsHandle | undefined =>
   handles.get(app);
+
+/** The weekly restore drill: Sunday, an hour after the nightly snapshot. */
+const DRILL_DAY_UTC = 0;
+const DRILL_HOUR_UTC = 9;
+
+export function untilDrill(now = Date.now()): number {
+  const next = new Date(now);
+  next.setUTCHours(DRILL_HOUR_UTC, 0, 0, 0);
+  while (next.getTime() <= now || next.getUTCDay() !== DRILL_DAY_UTC)
+    next.setUTCDate(next.getUTCDate() + 1);
+  return next.getTime() - now;
+}
 
 export function untilNightly(now = Date.now()): number {
   const next = new Date(now);
@@ -61,6 +78,8 @@ export function startSnapshots(
     readonly version: string;
     readonly nightly?: boolean;
     readonly passphrase?: string | undefined;
+    /** Test seam: the drill itself. */
+    readonly drill?: ((deps: DrillDeps) => Promise<DrillResult>) | undefined;
   } = {
     version: "0",
   },
@@ -118,6 +137,32 @@ export function startSnapshots(
     return inFlight;
   };
 
+  // Single-flight: a restore of every repository is heavy, so a second call
+  // while one runs joins it instead of filling the disk with another.
+  let drilling: Promise<DrillResult> | undefined;
+  const drill = (): Promise<DrillResult> => {
+    drilling ??= (async (): Promise<DrillResult> => {
+      await (inFlight ?? Promise.resolve()).catch(() => {});
+      const store = current();
+      if (store === undefined)
+        throw new Error("this forge has nowhere to drill from");
+      const result = await (options.drill ?? runDrill)({
+        store,
+        dataDir: app.config.dataDir,
+        passphrase: options.passphrase,
+      });
+      recordDrill(app.db, result);
+      // The card and the recovery issue hear of every drill, whoever asked.
+      const posted = await reportVerdict(app.config.dataDir, result);
+      app.bus.append({ kind: "drill.finished", payload: { verdict: result.verdict, step: result.failedStep } });
+      log.info("restore drill", { verdict: result.verdict, step: result.failedStep ?? "none", posted });
+      return result;
+    })().finally(() => {
+      drilling = undefined;
+    });
+    return drilling;
+  };
+
   let timer: ReturnType<typeof setTimeout> | undefined;
   const schedule = (): void => {
     if (options.nightly === false || stopped) return;
@@ -129,12 +174,31 @@ export function startSnapshots(
   };
   schedule();
 
+  // The board only reads; the time the forge first owed a drill is kept here.
+  try {
+    seedFirstSeen(app.config.dataDir);
+  } catch (error) {
+    log.warn("drill: first-seen time not kept; a missing drill will not be flagged", { error: String(error) });
+  }
+
+  let drillTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleDrill = (): void => {
+    if (options.nightly === false || stopped) return;
+    drillTimer = setTimeout(() => {
+      drill()
+        .catch((error) => log.error("restore drill failed to run", { error: String(error) }))
+        .finally(scheduleDrill);
+    }, untilDrill());
+  };
+  scheduleDrill();
+
   const handle: SnapshotsHandle = {
     get store() {
       return current();
     },
     wraps: !!options.passphrase,
     now: take,
+    drill,
     list: async () => {
       const store = current();
       return store === undefined ? [] : listSnapshots(store);
@@ -147,6 +211,7 @@ export function startSnapshots(
     stop: async () => {
       stopped = true;
       if (timer !== undefined) clearTimeout(timer);
+      if (drillTimer !== undefined) clearTimeout(drillTimer);
       if (inFlight !== undefined) await inFlight.catch(() => {});
       if (handles.get(app) === handle) handles.delete(app);
     },

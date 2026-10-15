@@ -10,6 +10,7 @@
  * session rather than the process.
  */
 
+import { createRun } from "../src/core/runs.ts";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -29,6 +30,7 @@ import { getIssue, listComments } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { getUserSetting } from "../src/core/settings.ts";
+import { noteProtection, resetProtection } from "../src/kernel/protection.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { parseGitCommand, splitCommand } from "../src/git/smart-ssh.ts";
@@ -218,6 +220,28 @@ describe("the terminal UI, against a real forge", () => {
     expect(text).not.toContain("Recent activity");
     expect(text).not.toContain("Organizations");
     expect(text).not.toMatch(/issue\.opened|repo\.created|label\.created/);
+    h.stop();
+  });
+
+  test("the dashboard tells a site admin, and only them, that protection is reduced", async () => {
+    noteProtection("apps", { ok: false, reason: "bwrap is not installed" });
+    try {
+      const admin = boot(forge, asAlice());
+      await admin.settle();
+      expect(admin.text()).toContain("Reduced protection: apps (bwrap is not");
+      admin.stop();
+      for (const identity of [{ ...asAlice(), user: bob }, asGuest()]) {
+        const h = boot(forge, identity);
+        await h.settle();
+        expect(h.text()).not.toContain("Reduced protection");
+        h.stop();
+      }
+    } finally {
+      resetProtection();
+    }
+    const h = boot(forge, asAlice());
+    await h.settle();
+    expect(h.text()).not.toContain("Reduced protection");
     h.stop();
   });
 
@@ -741,11 +765,21 @@ describe("the forge's health in the terminal", () => {
       await admin.settle();
       expect(admin.text()).toContain("rollout blocked: quota refused");
       expect(admin.text()).not.toContain("All fine");
+      expect(admin.text()).not.toContain("Lane:");
       admin.stop();
+
+      const made = await createRepo(forge, a.value, { name: "laned" });
+      if (!made.ok) throw new Error("repo creation failed");
+      for (let i = 0; i < 2; i++) createRun(forge.db, { repoId: made.value.id, kind: "check" });
+      const laned = boot(forge, as(a.value));
+      await laned.settle();
+      expect(laned.text()).toContain("Lane: 2 checks queued");
+      laned.stop();
 
       const other = boot(forge, as(b.value));
       await other.settle();
       expect(other.text()).not.toContain("rollout blocked");
+      expect(other.text()).not.toContain("Lane:");
       expect(other.text()).not.toContain("All fine");
       other.stop();
     } finally {

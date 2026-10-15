@@ -10,6 +10,7 @@
 
 import { BODY_MAX, readBounded, STRANGER_MAX } from "../http/limits.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
+import { isLocalPath } from "./flash.ts";
 import { crossOrigin, type Ctx } from "../http/context.ts";
 
 export type Form = Awaited<ReturnType<Request["formData"]>>;
@@ -56,6 +57,16 @@ export async function readForm(
 export function field(form: Form, name: string): string {
   const value = form.get(name);
   return typeof value === "string" ? value : "";
+}
+
+/**
+ * Where a form asks to land back: its `back` field when that is a path on
+ * this origin, otherwise `fallback`. Never a URL — a caller writes this
+ * field, so anything with a scheme or host is dropped.
+ */
+export function backTo(form: Form, fallback: string): string {
+  const back = field(form, "back");
+  return isLocalPath(back) ? back : fallback;
 }
 
 /** Whether the client asked for JSON — a script keeping the page in place —

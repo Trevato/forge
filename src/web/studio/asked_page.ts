@@ -19,6 +19,12 @@ import {
   type AskedShow,
   type AskedState,
 } from "../../core/asked.ts";
+import {
+  flagDays,
+  thoughtStream,
+  type StreamThought,
+  type ThoughtState,
+} from "../../core/thought_stream.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
@@ -42,7 +48,63 @@ const WORD: Record<AskedState, { text: string; tone: Tone }> = {
   closed: { text: "Closed", tone: "default" },
 };
 
+const THOUGHT_WORD: Record<ThoughtState, { text: string; tone: Tone }> = {
+  unplaced: { text: "Heard", tone: "default" },
+  placed: { text: "Placed", tone: "default" },
+  building: { text: "Building", tone: "attn" },
+  shipped: { text: "Shipped", tone: "success" },
+  superseded: { text: "Superseded", tone: "default" },
+};
+
+/** Where a thought went: each issue it touched, linked when the viewer may read it. */
+function placedLinks(t: StreamThought): Html {
+  const links = t.placed.map((x) =>
+    !x.readable
+      ? html`${x.action} in a repository you cannot read`
+      : x.title === null
+      ? html`${x.action} ${x.repo} #${x.number}`
+      : html`${x.action} <a href="/${x.repo}/issues/${x.number}">${x.repo} #${x.number}</a>`,
+  );
+  return links.length === 0
+    ? html`${t.reply ?? "the planner has not placed it yet"}`
+    : html`${links.map((l, i) => html`${i > 0 ? " · " : ""}${l}`)}`;
+}
+
+export function thoughtRow(t: StreamThought, days: number): Html {
+  const word = t.flagged
+    ? { text: "Nothing built", tone: "danger" as Tone }
+    : THOUGHT_WORD[t.state];
+  return row({
+    title: t.text,
+    titleAttr: t.flagged
+      ? t.placedAt === null
+        ? `Not placed ${days} days after it was sent`
+        : `Nothing merged ${days} days after it was placed`
+      : t.text,
+    meta: html`${time(t.receivedAt)} · ${t.source} · ${placedLinks(t)}${t.supersededBy
+      ? html` · superseded by “${t.supersededBy.text.slice(0, 80)}” ${time(t.supersededBy.receivedAt)}`
+      : null}${t.repeats ? html` · said again, first on ${time(t.repeats.receivedAt)}` : null}${t.supersedes.length > 0
+      ? html` · takes back “${t.supersedes[0]!.text.slice(0, 80)}” ${time(t.supersedes[0]!.receivedAt)}`
+      : null}`,
+    trail: badge(word.text, { tone: word.tone }),
+  });
+}
+
+/** The first placed issue of the oldest flagged thought: the one next action. */
+function oldestFlaggedHref(stream: readonly StreamThought[]): string | null {
+  for (let i = stream.length - 1; i >= 0; i--) {
+    const t = stream[i]!;
+    if (!t.flagged) continue;
+    const to = t.placed.find((x) => x.title !== null);
+    if (to) return `/${to.repo}/issues/${to.number}`;
+  }
+  return null;
+}
+
 function pullNote(a: Asked): string {
+  // The row is one link, so the commits are named here and linked on the ask.
+  if (a.doneBy.length > 0)
+    return `on main in ${a.doneBy.map((o) => o.slice(0, 7)).join(", ")}, waiting for you to close it`;
   const merged = a.pulls.find((p) => p.state === "merged");
   if (merged) return `pull #${merged.number} merged`;
   const open = a.pulls.find((p) => p.state === "open");
@@ -56,6 +118,7 @@ function pullNote(a: Asked): string {
  * open, which is the next thing a person asks.
  */
 function wordFor(a: Asked): { text: string; tone: Tone } {
+  if (a.doneBy.length > 0) return { text: "Done on main", tone: "success" };
   if (a.flagged) return { text: "Nothing built", tone: "danger" };
   const open = a.pulls.find((p) => p.state === "open");
   if (a.stale && open !== undefined)
@@ -110,6 +173,26 @@ export function askedPage(ctx: Ctx): Response {
     ].filter(Boolean);
     return `/asked${parts.length > 0 ? `?${parts.join("&")}` : ""}`;
   };
+  const stream = thoughtStream(ctx.app.db, ctx.auth.user, { limit: 50 });
+  const days = flagDays(ctx.app.db, ctx.auth.user.id);
+  const next = oldestFlaggedHref(stream);
+  const flaggedThoughts = stream.filter((t) => t.flagged).length;
+  const thoughts =
+    stream.length === 0
+      ? null
+      : html`<section id="thoughts" aria-labelledby="thoughts-h">
+          <div class="bar mb">
+            <h2 id="thoughts-h">Your thoughts</h2>
+            <span class="spacer"></span>
+            ${next === null
+              ? null
+              : html`<a class="btn" data-variant="primary" href="${next}"
+                  >Open the oldest of ${flaggedThoughts} with nothing built</a
+                >`}
+          </div>
+          ${listCard(stream.map((t) => thoughtRow(t, days)))}
+        </section>
+        <h2 class="mt">Asked in issues</h2>`;
   const { asked, shipped, unshipped, flagged } = counts;
   const sentence =
     asked === 0
@@ -119,6 +202,7 @@ export function askedPage(ctx: Ctx): Response {
   const body = html`${homeTabs("asked")}
     <h1 id="asked-sentence">What you asked for</h1>
     <p class="muted">${sentence}</p>
+    ${thoughts}
     <div class="filters bar mb mt">
       ${seg([
         {

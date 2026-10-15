@@ -15,14 +15,24 @@ import {
   previewAsksBulk,
   type Skipped,
 } from "../../actions/asks_bulk.ts";
+import { getDecision } from "../../core/decisions.ts";
+import { getIssueById } from "../../core/issues.ts";
+import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import type { FleetValue } from "../../core/fleet_ops.ts";
-import { removeMutes } from "../../core/interactions.ts";
+import { muteRepo, removeMutes } from "../../core/interactions.ts";
+import { needLine } from "../../actions/health.ts";
+import type { Degraded } from "../../kernel/vitals.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { User } from "../../core/users.ts";
 import { onYouAnswer, studioHome } from "./home.ts";
 import { notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { listReposVisibleTo } from "../../core/repos.ts";
+import {
+  canRead,
+  getRepoById,
+  listReposVisibleTo,
+  ownerFactRepoIds,
+} from "../../core/repos.ts";
 import { html, type Html } from "../html.ts";
 import { redirect } from "../layout.ts";
 import { btn, card, icon, row } from "../ui.ts";
@@ -36,6 +46,7 @@ import {
   decisionForm,
   decisionsFor,
   forgeNeedsFor,
+  silencedRepos,
   type AskRow,
   type Consequence,
   type Decision,
@@ -51,7 +62,7 @@ const ASK_KIND_WORDS: Readonly<Record<string, string>> = {
 };
 
 /** The kinds a bulk action takes: a ceiling and a planner's decline are decided where they live. */
-const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "review", "stopped", "parked"]);
+const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "review", "stopped", "handover", "parked"]);
 
 /** A row's box for the bulk form, which sits apart (`form="asks-bulk"`): forms do not nest. */
 const pick = (d: Decision, picked: ReadonlySet<string>): Html | null =>
@@ -111,10 +122,7 @@ document.addEventListener('submit', function (e) {
       var t = document.createElement('template');
       t.innerHTML = text;
       var fresh = t.content.getElementById('live-on-you');
-      var link = t.content.getElementById('asks-link');
       if (region && fresh) region.innerHTML = fresh.innerHTML;
-      var mine = document.getElementById('asks-link');
-      if (mine && link) mine.innerHTML = link.innerHTML;
     })
     .catch(function () { f.removeAttribute('data-bulk'); f.submit(); })
     .then(function () { if (region) region.removeAttribute('data-busy'); });
@@ -153,6 +161,7 @@ const KIND_LABEL: Readonly<Record<Decision["kind"], string>> = {
   look: "Ready to ship",
   review: "Needs review",
   stopped: "Stopped",
+  handover: "Handed over",
   parked: "Parked",
   declined: "Declined",
   paused: "Paused",
@@ -203,6 +212,20 @@ const rowHead = (kind: Decision["kind"], n: number): string => {
   const line = ROW_PLURAL[kind](n);
   return `${line.charAt(0).toUpperCase()}${line.slice(1)}`;
 };
+
+/** A row and, under it, the chip that mutes its repository (`asksMute`). */
+function mutableRow(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Html {
+  return html`${rowCard(ctx, r, picked)}
+    <form class="bar" method="post" action="/asks/mute">
+      <input type="hidden" name="repo" value="${r.repo.id}" />
+      <button
+        type="submit"
+        class="btn btn-sm btn-ghost"
+        title="Stop its asks reaching your home, inbox and phone"
+        >Mute ${r.repo.ownerName}/${r.repo.name}</button
+      >
+    </form>`;
+}
 
 /** One card for one kind in one repository: a line per ask, each with its own actions. */
 function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Html {
@@ -256,8 +279,8 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
   );
 }
 
-const forgeCard = (sentence: string): Html =>
-  card(html`<p>${sentence}</p>`, {
+const forgeCard = (d: Degraded): Html =>
+  card(html`<p><a href="${d.href}">${needLine(d)}</a></p>`, {
     tone: "danger",
     head: html`${icon("shield")}
       <h2>The forge</h2>
@@ -287,8 +310,34 @@ export function asksPage(ctx: Ctx): Response {
 
 /** The receipt `?op=<id>` names on the home, when it is the viewer's own. */
 export function homeTop(ctx: Ctx): AsksTop | undefined {
+  const decided = ctx.url.searchParams.get("decided");
+  if (decided !== null) return handedTop(ctx, decided);
   const op = ctx.url.searchParams.get("op");
   return op === null ? undefined : receiptTop(ctx, op);
+}
+
+/** What the decider said about a hand-over, and the day's undo; only for the one who asked it. */
+function handedTop(ctx: Ctx, decisionId: string): AsksTop | undefined {
+  const user = ctx.auth.user;
+  const d = getDecision(ctx.app.db, decisionId);
+  if (!user || d === undefined || d.kind !== "hand") return undefined;
+  const repo = getRepoById(ctx.app.db, d.repoId);
+  if (repo === undefined || !ownerFactRepoIds(ctx.app.db, [repo], user).has(repo.id))
+    return undefined;
+  const reason = (d.state as { reason?: unknown } | null)?.reason;
+  const undoable = d.outcome === "set_aside";
+  return {
+    banner: card(
+      html`<p>${typeof reason === "string" ? reason : d.answer}</p>
+        ${undoable
+          ? html`<form method="post" action="/asks/decide/${d.id}/undo" class="bar">
+              ${btn("Undo", { size: "sm" })}
+              <span class="muted small">kept for a day</span>
+            </form>`
+          : null}`,
+      { id: "asks-bulk-result", head: html`<h2>The decider: ${d.outcome === "undone" ? "undone" : d.outcome ?? d.answer}</h2>` },
+    ),
+  };
 }
 
 /** What needs you, as the home's pinned section: what asks you, with a
@@ -307,10 +356,21 @@ export function needsYouSection(
   );
   const needs = forgeNeedsFor(ctx, user);
   const rows = askRows(decisions);
+  const silenced = silencedRepos(ctx.app.db, user);
+  const silencedNote =
+    silenced.length === 0
+      ? null
+      : html`<form class="bar" method="post" action="/asks/listen">
+          ${silenced.map((r) => html`<input type="hidden" name="repo" value="${r.id}" />`)}
+          <span class="muted small" title="${silenced.map((r) => `${r.ownerName}/${r.name}`).join(", ")}"
+            >${silenced.length} muted ${silenced.length === 1 ? "repository still asks" : "repositories still ask"}</span
+          >
+          <button type="submit" class="btn btn-sm btn-ghost">Listen again</button>
+        </form>`;
   const count = rows.length + needs.length;
   if (count === 0 && top === undefined)
     return {
-      body: html`<h2 id="asks-sentence" class="sr-only">${askSentence(0)}</h2>`,
+      body: html`<h2 id="asks-sentence" class="sr-only">${askSentence(0)}</h2>${silencedNote}`,
       scriptJs: "",
     };
   // The forge's own health first, then the few asks that matter most;
@@ -330,19 +390,19 @@ export function needsYouSection(
   const restMore =
     rest.length === 0
       ? null
-      : more("asks-more", rest.length, html`${rest.map((r) => rowCard(ctx, r, picked))}`);
+      : more("asks-more", rest.length, html`${rest.map((r) => mutableRow(ctx, r, picked))}`);
   // The asks come first, so the first Tab after #needs-you lands on one;
   // the bulk step acts on what was picked, after them.
   const body = html`<section id="needs-you" class="needs-you stack">
     <h2 id="asks-sentence">${askSentence(count)}</h2>
     ${top?.banner ?? null}
-    ${needs.map(forgeCard)} ${first.map((r) => rowCard(ctx, r, picked))}
+    ${needs.map(forgeCard)} ${first.map((r) => mutableRow(ctx, r, picked))}
     ${middle.length === 0
       ? null
       : more(
           "asks-phone-more",
           rows.length - first.length,
-          html`${middle.map((r) => rowCard(ctx, r, picked))} ${restMore}`,
+          html`${middle.map((r) => mutableRow(ctx, r, picked))} ${restMore}`,
         )}
     ${pickable < 2
       ? null
@@ -361,7 +421,7 @@ export function needsYouSection(
           ${reasonInput(top?.reason)} ${btn("Preview", { size: "sm" })}
           <span class="muted small">on the selected asks</span>
         </form>`}
-    ${decisions.map((d) => decisionForm(d))}
+    ${decisions.map((d) => decisionForm(d, ctx.url.pathname))}
   </section>`;
   return { body, scriptJs: SELECT_JS };
 }
@@ -599,6 +659,29 @@ export async function asksBulkUndo(ctx: Ctx): Promise<Response> {
   return redirect(`/?op=${op.value.id}#asks-bulk-result`);
 }
 
+/** POST /asks/decide — hand one hand-over card to the decider; the ledger keeps what it saw. */
+export async function asksDecide(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const done = await decideAsk(ctx.app, ctx.auth.user, field(form, "ask"));
+  if (!done.ok) return await asksScreen(ctx, nothingDone(done.error.message));
+  return redirect(`/?decided=${done.value.id}#asks-bulk-result`);
+}
+
+/** POST /asks/decide/:id/undo — put a set-aside card back on the board, within a day. */
+export async function asksDecideUndo(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const undone = undoDecideAsk(ctx.app, ctx.auth.user, ctx.params.id);
+  if (!undone.ok)
+    return undone.error.code === "not_found"
+      ? notFoundPage(ctx)
+      : await asksScreen(ctx, nothingDone(undone.error.message));
+  return redirect(`/?decided=${undone.value.id}#asks-bulk-result`);
+}
+
 /** POST /asks/listen — take back the viewer's own mute of the repositories named. */
 export async function asksListen(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
@@ -609,5 +692,19 @@ export async function asksListen(ctx: Ctx): Promise<Response> {
     .filter((r): r is string => typeof r === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(r))
     .slice(0, BULK_MAX);
   removeMutes(ctx.app.db, ctx.auth.user.id, repos.map((r) => `repo:${r}`));
+  return redirect("/");
+}
+
+/** POST /asks/mute — the viewer mutes one repository they can read: its asks leave their home, inbox and phone. */
+export async function asksMute(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const id = form.get("repo");
+  if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(id))
+    return notFoundPage(ctx);
+  const repo = getRepoById(ctx.app.db, id);
+  if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
+  muteRepo(ctx.app.db, ctx.auth.user.id, repo.id);
   return redirect("/");
 }

@@ -39,7 +39,7 @@ import {
 } from "../../core/app_env.ts";
 import { addToCrew, listCrew, removeFromCrew } from "../../actions/crew.ts";
 import { getAgentByName, isCrewRole, setCrewRole } from "../../core/agents.ts";
-import { isAutonomy } from "../../core/repos.ts";
+import { isAutonomy, isDecisionsBy } from "../../core/repos.ts";
 import {
   createLabel,
   createWebhook,
@@ -100,6 +100,7 @@ import {
   time,
   timeAgo,
 } from "../ui.ts";
+import { cutWaveFor } from "../../actions/cut_wave.ts";
 import { secretsSection } from "./secrets.ts";
 import { saveGrants } from "./subscriptions.ts";
 
@@ -308,12 +309,23 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     { head: html`${icon("branch")}<h2>Branch and gates</h2>` },
   );
   const secrets = secretsSection(ctx, "repo", `${repo.ownerName}/${repo.name}`);
+  const wave = card(
+    html`<form method="post" action="${base}/settings/wave">
+      <p class="muted">
+        Opens a pull that adds the next <code>waves/&lt;version&gt;.md</code>,
+        listing every pull merged since the last wave. The headline and
+        highlights are left as TODO for you to write.
+      </p>
+      <div class="form-actions">${btn("Cut a wave", { variant: "primary" })}</div>
+    </form>`,
+    { head: html`${icon("rocket")}<h2>Cut a wave</h2>` },
+  );
   return settingsPageResponse(
     ctx,
     repo,
     "general",
     "Settings",
-    html`${lead}<div class="mt">${body}</div>${secrets
+    html`${lead}<div class="mt">${body}</div><div class="mt">${wave}</div>${secrets
       ? html`<div class="mt">${secrets}</div>`
       : null}`,
   );
@@ -367,6 +379,22 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
             : "Those settings could not be saved.",
       };
   return flashTo(ctx, `${base}/settings`, flash);
+}
+
+/** POST /:owner/:name/settings/wave — open the draft of the next wave. */
+export async function waveCut(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo } = gate;
+  const cut = await cutWaveFor(ctx.app, ctx.auth.user, repo);
+  if (!cut.ok)
+    return flashTo(ctx, `${repoBase(repo)}/settings`, {
+      tone: "danger",
+      message: cut.error,
+    });
+  return flashTo(ctx, `${repoBase(repo)}/pulls/${cut.value.number}`, {
+    message: `Wave ${cut.value.version} is open as a draft.`,
+  });
 }
 
 // ---- app ----
@@ -1759,12 +1787,21 @@ export async function autonomySettingsUpdate(ctx: Ctx): Promise<Response> {
       message:
         "Mode is off, assisted or autonomous; the ceiling is a number of dollars; slots are 1 to 8.",
     });
+  const rule = field(form, "decisions");
+  const decisionsBy = rule === "" ? repo.decisionsBy : rule;
+  if (!isDecisionsBy(decisionsBy))
+    return flashTo(ctx, `${base}/settings#autonomy`, {
+      tone: "danger",
+      message: "Decisions here go to you, the decider, or the decider telling you.",
+    });
   const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
     autonomy: mode,
     autonomyDirection: field(form, "direction").trim().slice(0, 2000),
     autonomyCeilingUsd: ceiling,
     autonomySlots: slots,
     autonomyBy: mode === "off" ? null : (ctx.auth.user?.id ?? null),
+    // Only a change is sent: an agent admin may save the rest of the form.
+    ...(decisionsBy === repo.decisionsBy ? {} : { decisionsBy }),
   });
   return flashTo(ctx, `${base}/settings#autonomy`, {
     ...(updated.ok

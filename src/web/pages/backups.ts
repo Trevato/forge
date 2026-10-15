@@ -16,6 +16,7 @@ import {
 } from "../../actions/destination.ts";
 import { resolveDestination, sealedSet } from "../../snapshot/destination.ts";
 import { keyOf } from "../../snapshot/snapshot.ts";
+import { lastDrill } from "../../snapshot/drills.ts";
 import { snapshotsOf } from "../../snapshot/service.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
@@ -85,6 +86,31 @@ function keyNote(
       </p>`;
 }
 
+/** The last drill in one line, and the button to run another. */
+function drillLine(ctx: Ctx): Html {
+  const d = lastDrill(ctx.app.db);
+  const line =
+    d === undefined
+      ? html`<p class="backups-drill">No restore drill has run yet.</p>`
+      : d.verdict === "green"
+        ? html`<p class="backups-drill">
+            ${icon("check")} Last drill ${time(d.at)}: snapshot
+            <code>${d.snapshotId ?? ""}</code> restored green in ${d.ms} ms —
+            ${d.counts.repositories} repositories, ${d.counts.issues} issues.
+          </p>`
+        : html`<p class="backups-error backups-drill">
+            ${icon("alert")} Last drill ${time(d.at)}: snapshot
+            <code>${d.snapshotId ?? "none"}</code> failed at
+            ${d.failedStep ?? "an unknown step"} after ${d.ms} ms${d.reason
+              ? html`: ${d.reason}`
+              : ""}.
+          </p>`;
+  return html`${line}
+    <form method="post" action="/settings/backups/drill" class="backups-now">
+      ${btn("Run a drill", { type: "submit", icon: "clock" })}
+    </form>`;
+}
+
 export async function backupsPage(ctx: Ctx): Promise<Response> {
   const denied = requireAdmin(ctx);
   if (denied) return denied;
@@ -147,6 +173,7 @@ bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
               ${icon("alert")} The store could not be listed just now: ${error}
             </p>`,
         )}
+        ${drillLine(ctx)}
         <form method="post" action="/settings/backups/now" class="backups-now">
           ${btn("Snapshot now", {
             type: "submit",
@@ -364,6 +391,39 @@ export async function backupsNow(ctx: Ctx): Promise<Response> {
     return flashTo(ctx, "/settings/backups", {
       tone: "danger",
       message: `The snapshot failed: ${String(error)}`,
+    });
+  }
+}
+
+/** POST /settings/backups/drill — restore the newest snapshot, keep what came of it. */
+export async function backupsDrill(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user.isAdmin)
+    return new Response("Forbidden", {
+      status: 403,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const svc = snapshotsOf(ctx.app);
+  if (svc === undefined || svc.store === undefined)
+    return flashTo(ctx, "/settings/backups", {
+      tone: "danger",
+      message: "This forge has no snapshots to drill.",
+    });
+  try {
+    const d = await svc.drill();
+    return flashTo(
+      ctx,
+      "/settings/backups",
+      d.verdict === "green"
+        ? { message: "The drill restored green." }
+        : { tone: "danger", message: `The drill failed at ${d.failedStep}.` },
+    );
+  } catch (error) {
+    return flashTo(ctx, "/settings/backups", {
+      tone: "danger",
+      message: `The drill could not run: ${String(error)}`,
     });
   }
 }

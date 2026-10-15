@@ -8,6 +8,9 @@ export const feedCss = /* css */ `
 .fcard[hidden] { display: none; }
 .fcard-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .fcard-reason { margin: 8px 0 4px; font-size: 1.05em; overflow-wrap: anywhere; }
+.fcard-text { white-space: pre-wrap; }
+/* The planner's reply sits under the thought, indented, one or two lines. */
+.fcard-reply { margin: 4px 0 0 12px; padding-left: 10px; border-left: 2px solid var(--border); overflow-wrap: anywhere; }
 .fcard-who { font-weight: 600; }
 /* One quiet control under the post: say something, dismiss, mute. */
 .fcard-more summary { cursor: pointer; list-style: none; padding: 2px 0; }

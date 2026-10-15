@@ -25,10 +25,48 @@ export interface Told {
   readonly routed: Routed | undefined;
   /** Whether the builder could be assigned (and so a run will start). */
   readonly assigned: boolean;
+  /** Every issue the tell opened: one, or one per variant. */
+  readonly issues: readonly Issue[];
+  /** The numbers among them that a builder took, so a run starts for each. */
+  readonly assignedNumbers: readonly number[];
+  /** The group the variants share; null for an ordinary tell. */
+  readonly variantGroup: string | null;
 }
+
+/** The most tries one tell may ask for at once. */
+export const VARIANTS_MAX = 4;
+
+/** `variants` as the API takes it: absent is 1; otherwise an integer 1–4, or undefined for no. */
+export function parseVariants(raw: unknown): number | undefined {
+  if (raw === undefined) return 1;
+  if (typeof raw !== "number" || !Number.isInteger(raw)) return undefined;
+  return raw >= 1 && raw <= VARIANTS_MAX ? raw : undefined;
+}
+
+/** The longest `from` a tell may carry. */
+export const FROM_MAX = 512;
+
+/**
+ * `from` as the doors take it: absent is none; otherwise a same-forge path
+ * (leading single `/`, no scheme, no backslash, no control or space) of at
+ * most 512 characters. Undefined for no.
+ */
+export function parseFrom(raw: unknown): string | null | undefined {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > FROM_MAX)
+    return undefined;
+  if (!raw.startsWith("/") || raw.startsWith("//")) return undefined;
+  if (/[\\\s\x00-\x1f\x7f<>()\[\]`"'*]/.test(raw)) return undefined;
+  return raw;
+}
+
+/** What a bad `from` is refused with, at every door. */
+export const FROM_WORDS =
+  "from is a path on this forge, like /alice/notes/pulls/3, at most 512 characters";
 
 export type TellError =
   | "empty"
+  | "bad_from"
   | "not_found"
   | "unauthorized"
   /** Someone who may not direct the crew here (`crew/direct.ts`). */
@@ -44,6 +82,8 @@ export async function tell(
   actor: User | undefined,
   repo: Repo,
   said: string,
+  variants = 1,
+  from: string | null = null,
 ): Promise<Result<Told, TellError>> {
   // A tell is a run: only someone who may direct the crew here says one,
   // and a refused tell opens nothing (`crew/direct.ts`).
@@ -55,30 +95,56 @@ export async function tell(
   if (!requireVerified(app, participant.value).ok) return err("unverified");
   const text = said.trim();
   if (text === "") return err("empty");
+  if (from !== null && parseFrom(from) !== from) return err("bad_from");
   const firstLine = text.split(/\n/)[0]!.trim();
   const title =
     firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;
-  const opened = openIssue(app, actor, repo, {
-    title,
-    body: text === firstLine ? "" : text,
-  });
-  if (!opened.ok) return opened;
+  // Several tries are several issues, each its own branch and pull, sharing
+  // one group the pulls carry (`variant_group`).
+  const many = variants > 1;
+  const variantGroup = many ? crypto.randomUUID() : null;
   const crew = listCrewRoles(app.db, repo.id);
   const inFlight = new Map<string, number>();
   for (const r of listRuns(app.db, repo.id, { kind: "agent", limit: 50 }))
     if ((r.state === "running" || r.state === "queued") && r.actorId !== null)
       inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
-  const routed = await routeIssue(app, repo, opened.value, crew, inFlight);
-  if (routed === undefined)
-    return ok({ issue: opened.value, routed: undefined, assigned: false });
-  const assigned = assignIssue(
-    app,
-    actor,
-    repo,
-    opened.value,
-    routed.builder.user,
-  );
-  return ok({ issue: opened.value, routed, assigned: assigned.ok });
+  const issues: Issue[] = [];
+  let routed: Routed | undefined;
+  let assigned = false;
+  const assignedNumbers: number[] = [];
+  for (let k = 1; k <= variants; k++) {
+    const note = many ? `Variant ${k} of ${variants}.` : "";
+    const origin = from === null ? "" : `Told from [${from}](${from})`;
+    const rest = text === firstLine ? "" : text;
+    const opened = openIssue(app, actor, repo, {
+      title,
+      body: [rest, note, origin].filter((s) => s !== "").join("\n\n"),
+    });
+    if (!opened.ok) return issues.length === 0 ? opened : ok(told());
+    issues.push(opened.value);
+    const taker = await routeIssue(app, repo, opened.value, crew, inFlight);
+    if (taker === undefined) continue;
+    routed ??= taker;
+    const made = assignIssue(
+      app,
+      actor,
+      repo,
+      opened.value,
+      taker.builder.user,
+      variantGroup ?? undefined,
+    );
+    if (k === 1) assigned = made.ok;
+    if (made.ok) assignedNumbers.push(opened.value.number);
+    inFlight.set(
+      taker.builder.user.id,
+      (inFlight.get(taker.builder.user.id) ?? 0) + 1,
+    );
+  }
+  return ok(told());
+
+  function told(): Told {
+    return { issue: issues[0]!, routed, assigned, issues, assignedNumbers, variantGroup };
+  }
 }
 
 /** What every door says when a tell is refused for an unverified address. */

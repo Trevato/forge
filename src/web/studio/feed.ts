@@ -11,6 +11,8 @@
 import { marksByName, type Mark } from "../../core/marks.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
+import { placementsOf, type Placement } from "../../core/placements.ts";
+import { recentThoughts, type Thought } from "../../core/thoughts.ts";
 import { readFeed } from "../../feed/feed.ts";
 import type { FeedItem } from "../../feed/rank.ts";
 import { html, type Html } from "../html.ts";
@@ -21,7 +23,7 @@ import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
 export const FEED_LIVE =
-  "run.finished,issue.opened,issue.commented,pull.commented,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,issue.closed,decision.*";
+  "run.finished,issue.opened,issue.commented,pull.commented,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,issue.closed,decision.*,thought.received,thought.placed";
 
 export const FEED_FIRST_PAGE = 20;
 
@@ -35,6 +37,7 @@ const KIND_LABEL: Record<FeedItem["kind"], string> = {
   map: "Map",
   cost: "Cost",
   milestone: "Watching",
+  choose: "Choose",
   tell: "Told",
   reply: "Reply",
   look: "Look",
@@ -86,10 +89,47 @@ export function feedCard(
       </form>
       <span class="fcard-acts">
         <button type="button" class="btn btn-sm btn-ghost" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
-        ${item.kind === "ask" || item.kind === "milestone" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
+        ${item.kind === "ask" || item.kind === "milestone" || item.kind === "choose" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
       </span>
     </details>
   </article>`;
+}
+
+/** The composer's app value for "the forge": no app, so no slash to collide with one. */
+export const FORGE_TARGET = "forge";
+
+/** How many thoughts stand at the top of the feed. */
+const THOUGHTS_SHOWN = 3;
+
+/** A thought stays at the top for a day, then leaves the feed (it is still kept). */
+const THOUGHT_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A thought as the owner's post: their own words, verbatim (escaped here,
+ * once; line breaks kept by CSS), marked "received". It has no controls.
+ */
+export function thoughtCard(thought: Thought, who: string, placement?: Placement): Html {
+  return html`<article class="fcard fcard-thought" data-kind="thought" data-thought="${thought.id}">
+    <div class="fcard-head">
+      ${avatar(who)}
+      <strong class="fcard-who">${who}</strong>
+      <span class="fcard-app muted small">${timeAgo(thought.receivedAt)}</span>
+      <span class="spacer"></span>
+      <span class="badge">Received</span>
+    </div>
+    <p class="fcard-reason fcard-text">${thought.text}</p>
+    ${placement ? replyUnder(placement) : ""}
+  </article>`;
+}
+
+/** The planner's answer under a thought: one or two lines, `#N` linking to the issue it names. */
+export function replyUnder(placement: Placement): Html {
+  const where = new Map(placement.placed.map((p) => [p.number, p.repo]));
+  const parts = placement.reply.split(/(#\d+)/).map((part) => {
+    const repo = /^#(\d+)$/.test(part) ? where.get(Number(part.slice(1))) : undefined;
+    return repo === undefined ? part : html`<a href="/${repo}/issues/${part.slice(1)}">${part}</a>`;
+  });
+  return html`<p class="fcard-reply small" data-placement="${placement.kind}"><span class="muted">Planner · ${placement.kind}</span> ${parts}</p>`;
 }
 
 /** The longest tell the composer takes (its textarea's `maxlength`). */
@@ -120,28 +160,28 @@ export function sharedDraft(params: URLSearchParams): string {
  */
 export function composer(ctx: Ctx, user: User): Html {
   const { repos } = writableAppsOf(ctx, user);
-  if (repos.length === 0)
-    return empty({
-      icon: "rocket",
-      title: "No apps yet",
-      note: "Make one, tell the crew what it is, and watch it come up here.",
-      action: html`${btn("New app", { href: "/apps/new", variant: "primary" })}
-        ${btn("Repositories", { href: `/${user.username}` })}`,
-    });
   const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
-  const first = slug(repos[0]!);
-  return html`<form id="composer" class="composer" method="post" action="/tell">
+  const noApps = html`${empty({
+    icon: "rocket",
+    title: "No apps yet",
+    note: "Make one, tell the crew what it is, and watch it come up here.",
+    action: html`${btn("New app", { href: "/apps/new", variant: "primary" })}
+      ${btn("Repositories", { href: `/${user.username}` })}`,
+  })}`;
+  const form = html`<form id="composer" class="composer" method="post" action="/tell">
     <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew">${sharedDraft(ctx.url.searchParams)}</textarea>
     <div class="composer-bar">
-      ${repos.length === 1
-        ? html`<input type="hidden" name="app" value="${first}" /><span class="muted small">${first}</span>`
-        : html`<select name="app" class="input" aria-label="Which app">
-            ${repos.map((r) => html`<option value="${slug(r)}">${slug(r)}</option>`)}
-          </select>`}
+      ${repos.length === 0
+        ? html`<input type="hidden" name="app" value="${FORGE_TARGET}" /><span class="muted small">the forge</span>`
+        : html`<select name="app" class="input" aria-label="Send to">
+        ${repos.map((r) => html`<option value="${slug(r)}">${slug(r)}</option>`)}
+        <option value="${FORGE_TARGET}">the forge</option>
+      </select>`}
       <span class="spacer"></span>
       ${btn("Post", { variant: "primary" })}
     </div>
   </form>`;
+  return repos.length === 0 ? html`${form}${noApps}` : form;
 }
 
 /**
@@ -167,6 +207,8 @@ export function feedRegion(user: User, ctx: Ctx): Html {
   const items = readFeed(ctx.app.db, user, { limit: FEED_FIRST_PAGE }).items.filter(
     (item) => item.kind !== "ask",
   );
+  const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN, new Date(Date.now() - THOUGHT_AGE_MS).toISOString());
+  const placed = placementsOf(ctx.app.db, thoughts.map((t) => t.id));
   // Who each poster is, asked once for the page (`core/marks.ts`).
   const marks = marksByName(
     ctx.app.db,
@@ -179,7 +221,8 @@ export function feedRegion(user: User, ctx: Ctx): Html {
     data-live="${FEED_LIVE}"
     data-live-src="/live/feed"
   >
-    ${items.length === 0
+    ${thoughts.map((t) => thoughtCard(t, user.username, placed.get(t.id)))}
+    ${items.length === 0 && thoughts.length === 0
       ? empty({
           icon: "activity",
           title: "Nothing new",
@@ -277,7 +320,7 @@ ${outboxJs}
     var box = composer.elements.text;
     var app = composer.elements.app;
     var text = box ? box.value.trim() : '';
-    if (!text || !app) return;
+    if (!text || !app || app.value === '${FORGE_TARGET}') return;
     if (!queue('/api/v1/feed/tells', { app: app.value, text: text })) return;
     e.preventDefault();
     box.value = '';

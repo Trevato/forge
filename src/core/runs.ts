@@ -76,8 +76,14 @@ export interface Run {
   readonly sandboxEnforced: boolean | null;
   /** Why it was not, when it was not. */
   readonly sandboxNote: string;
+  /** Where a check ran: `process`, `job`, or empty when unrecorded. */
+  readonly placement: string;
+  /** The node a `job` check's pod ran on; empty otherwise. */
+  readonly node: string;
   /** A failed check's own detail, when its output was recognised; null otherwise. */
   readonly checkDetail: CheckDetail | null;
+  /** The variant group this run belongs to; null for an ordinary run. */
+  readonly variantGroup: string | null;
   readonly createdAt: string;
   readonly startedAt: string | null;
   /** When this deploy's environment started serving — set once, at the swap-in. */
@@ -106,6 +112,9 @@ interface RunRow {
   sandbox_enforced: number | null;
   sandbox_note: string;
   check_detail: string;
+  placement: string;
+  node: string;
+  variant_group: string | null;
   created_at: string;
   started_at: string | null;
   serving_at: string | null;
@@ -133,7 +142,10 @@ const toRun = (r: RunRow): Run => ({
   sandboxEnforced:
     r.sandbox_enforced === null ? null : r.sandbox_enforced !== 0,
   sandboxNote: r.sandbox_note,
+  placement: r.placement,
+  node: r.node,
   checkDetail: r.check_detail ? (JSON.parse(r.check_detail) as CheckDetail) : null,
+  variantGroup: r.variant_group,
   createdAt: r.created_at,
   startedAt: r.started_at,
   servingAt: r.serving_at,
@@ -154,14 +166,16 @@ export interface CreateRunInput {
   attempt?: number | undefined;
   /** What the card says while it waits. */
   summary?: string | undefined;
+  /** The variant group the run belongs to, when it is one of several tries. */
+  variantGroup?: string | undefined;
 }
 
 export function createRun(db: Database, input: CreateRunInput): Run {
   const runId = id();
   db.query(
     `INSERT INTO run (id, repo_id, kind, issue_id, env, commit_oid, branch, actor_id, reason,
-                      not_before, attempt, summary)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
+                      not_before, attempt, summary, variant_group)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
   ).run(
     runId,
     input.repoId,
@@ -175,6 +189,7 @@ export function createRun(db: Database, input: CreateRunInput): Run {
     input.notBefore ?? null,
     input.attempt ?? 0,
     input.summary ?? "",
+    input.variantGroup ?? null,
   );
   return getRun(db, runId)!;
 }
@@ -245,6 +260,12 @@ export function markServing(db: Database, runId: string): Run | undefined {
  * Finish a run. Only a running run finishes; a cancelled one stays
  * cancelled however late its worker reports in. Returns the final row, or
  * undefined when nothing changed.
+ *
+ * A deploy's `summary` ends with `TESTS_PASSED_TAIL` or `NO_TESTS_TAIL`
+ * (`apps/runtime.ts`); `testsClause` (`web/studio/words.ts`) reads it back by
+ * suffix. That is a contract kept in free text, chosen over a new column to
+ * avoid a migration; both sides use the exported constants, never literals,
+ * and a run without either tail (older runs) simply says nothing.
  */
 export function finishRun(
   db: Database,
@@ -295,6 +316,34 @@ export function cancelRun(
   return changes > 0 ? getRun(db, runId) : undefined;
 }
 
+/**
+ * Every queued or running check, and every queued deploy, of one pull,
+ * cancelled with the same summary: a pull that landed or closed has nothing
+ * left to check, and a queued run would hold the lane for nobody. A running
+ * deploy is left alone: nothing here stops the build in the runtime, and a
+ * row marked cancelled under a build that goes live would lie. Answers the
+ * runs it stopped.
+ */
+export function cancelRunsForPull(
+  db: Database,
+  issueId: string,
+  summary: string,
+): Run[] {
+  const ids = db
+    .query<{ id: string }, [string]>(
+      `SELECT id FROM run WHERE issue_id = ?1 AND 
+         ((kind = 'check' AND state IN ('queued','running'))
+          OR (kind = 'deploy' AND state = 'queued')) ORDER BY id`,
+    )
+    .all(issueId);
+  const out: Run[] = [];
+  for (const { id } of ids) {
+    const cancelled = cancelRun(db, id, summary);
+    if (cancelled) out.push(cancelled);
+  }
+  return out;
+}
+
 /** Record spend and the session as a run goes, so a cut-off run still reports it. */
 export function noteRunProgress(
   db: Database,
@@ -307,13 +356,18 @@ export function noteRunProgress(
     subscriptionId?: string | undefined;
     /** Whether the shell is held to the sandbox, and why not when it is not. */
     sandbox?: { enforced: boolean; note: string } | undefined;
+    /** Where a check ran, and the node when a cluster Job did. */
+    placement?: string | undefined;
+    node?: string | undefined;
   },
 ): void {
   db.query(
     `UPDATE run SET session_id = COALESCE(?2, session_id), cost_usd = COALESCE(?3, cost_usd),
        branch = COALESCE(?4, branch), subscription_id = COALESCE(?5, subscription_id),
        sandbox_enforced = COALESCE(?6, sandbox_enforced),
-       sandbox_note = COALESCE(?7, sandbox_note)
+       sandbox_note = COALESCE(?7, sandbox_note),
+       placement = COALESCE(?8, placement),
+       node = COALESCE(?9, node)
      WHERE id = ?1`,
   ).run(
     runId,
@@ -323,6 +377,8 @@ export function noteRunProgress(
     progress.subscriptionId ?? null,
     progress.sandbox === undefined ? null : progress.sandbox.enforced ? 1 : 0,
     progress.sandbox?.note.slice(0, 300) ?? null,
+    progress.placement?.slice(0, 20) ?? null,
+    progress.node?.slice(0, 253) ?? null,
   );
 }
 
@@ -630,6 +686,17 @@ export function activeRunFor(
     >("SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1 AND issue_id = ?2 AND (?3 IS NULL OR actor_id = ?3) ORDER BY id LIMIT 1")
     .get(kind, issueId, actorId ?? null);
   return row ? toRun(row) : undefined;
+}
+
+/** The variant group an issue's earlier runs were started in, if any. */
+export function variantGroupOf(db: Database, issueId: string): string | undefined {
+  const row = db
+    .query<
+      { variant_group: string },
+      [string]
+    >("SELECT variant_group FROM run WHERE issue_id = ?1 AND variant_group IS NOT NULL ORDER BY id LIMIT 1")
+    .get(issueId);
+  return row?.variant_group;
 }
 
 /** Whether a run of this kind already waits its turn for the issue (for `actorId`'s agent, when given). */

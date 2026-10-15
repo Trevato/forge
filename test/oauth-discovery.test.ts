@@ -133,4 +133,25 @@ describe("oauth discovery and registration", () => {
     expect(() => app.db.exec(ddl)).not.toThrow();
     expect(() => app.db.exec(ddl)).not.toThrow();
   });
+
+  test("the OpenID configuration lists the issuer, endpoints, scopes and algorithm", async () => {
+    const res = await fetch(`${base}/.well-known/openid-configuration`);
+    expect(res.status).toBe(200);
+    const doc = (await res.json()) as any;
+    expect(doc.issuer).toBe(base);
+    expect(doc.authorization_endpoint).toBe(`${base}/oauth/authorize`);
+    expect(doc.token_endpoint).toBe(`${base}/oauth/token`);
+    expect(doc.userinfo_endpoint).toBe(`${base}/oauth/userinfo`);
+    expect(doc.jwks_uri).toBe(`${base}/oauth/jwks`);
+    for (const scope of ["openid", "profile", "email", "ro", "rw", "admin"])
+      expect(doc.scopes_supported).toContain(scope);
+    expect(doc.id_token_signing_alg_values_supported).toEqual(["ES256"]);
+  });
+
+  test("the JWKS publishes a public ES256 key and no private part", async () => {
+    const doc = (await (await fetch(`${base}/oauth/jwks`)).json()) as any;
+    expect(doc.keys.length).toBe(1);
+    expect(doc.keys[0]).toMatchObject({ kty: "EC", crv: "P-256", alg: "ES256", use: "sig" });
+    expect(doc.keys[0].d).toBeUndefined();
+  });
 });

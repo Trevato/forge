@@ -11,6 +11,7 @@
 import { directionNote } from "../../crew/direct.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
+import { carriedBy } from "../../core/carried.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { getPull, openPullsClosing } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
@@ -26,7 +27,7 @@ import { page } from "../layout.ts";
 import { btn, sha } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
 import { costText, durationText, runTitle, runTokens } from "../pages/runs.ts";
-import { sandboxLine } from "./sandbox.ts";
+import { placementLine, sandboxLine } from "./sandbox.ts";
 import { logBox, runVoice, RUN_TRANSCRIPT_CAP } from "./log.ts";
 import { changeHref, tellHref } from "./nouns.ts";
 import { unnamedRun, voiceFor, type Actor } from "./voice.ts";
@@ -66,6 +67,7 @@ export async function runView(
   run: Run,
   lines: readonly string[],
   truncated: boolean,
+  logHidden = false,
 ): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
@@ -99,6 +101,7 @@ export async function runView(
   const duration = durationText(run);
   const all = ctx.url.searchParams.get("all") === "1";
   const held = listHeldSecrets(db, run.id);
+  const carried = carriedBy(db, run.id);
   const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log?follow=1`;
 
   // The pull this run's tell has become, once one exists: the tell itself
@@ -159,7 +162,21 @@ export async function runView(
       )}
     </div>
     <p class="run-summary" id="run-summary">${run.summary}</p>
+    ${when(
+      carried.length > 0,
+      () =>
+        html`<p class="muted small" id="run-carries">
+          Carries
+          ${carried.map(
+            (n, i) =>
+              html`${i === 0 ? "" : ", "}<a href="${changeHref(base, n)}"
+                  >#${n}</a
+                >`,
+          )}.
+        </p>`,
+    )}
     ${sandboxLine(run)}
+    ${placementLine(run)}
     ${when(
       held.length > 0,
       () =>
@@ -204,6 +221,13 @@ export async function runView(
     )}
     ${when(pull, (p) => previewCard(ctx, repo, p))}
     ${when(
+      logHidden,
+      () =>
+        html`<p class="muted small" id="run-log-hidden">
+          The log is for this repository's writers and crew.
+        </p>`,
+    )}
+    ${when(
       truncated,
       () =>
         html`<p class="muted small mb">
@@ -211,14 +235,14 @@ export async function runView(
         </p>`,
     )}
     ${when(
-      lines.length === 0,
+      lines.length === 0 && !logHidden,
       () =>
         html`<p class="muted small" id="run-empty">
           Nothing has been logged yet.
         </p>`,
     )}
     <div class="run-live" id="run-live" data-state="${run.state}">
-      ${logBox({
+      ${when(!logHidden, () => logBox({
         id: "run-log",
         who,
         cap: all
@@ -232,7 +256,7 @@ export async function runView(
         extra: html`<button type="button" class="run-jump" id="run-jump" hidden>
           newer below
         </button>`,
-      })}
+      }))}
       ${when(
         run.kind === "agent",
         () => html`<p class="muted small crew-note">${directionNote(repo)}</p>`,

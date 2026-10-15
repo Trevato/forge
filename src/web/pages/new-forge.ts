@@ -17,6 +17,7 @@ import { childHost, childUrlOf, noRoom, spawnDoor, type Door } from "../../spawn
 import {
   LEFT_BEHIND,
   MAX_FOR_CHARS,
+  MAX_FRESH_CHARS,
   MAX_BUDGET_USD,
   MIN_BUDGET_USD,
 } from "../../spawn/plan.ts";
@@ -32,6 +33,7 @@ interface Values {
   readonly direction: string;
   readonly apps: readonly string[];
   readonly crew: readonly string[];
+  readonly fresh: string;
   readonly keepAccess: boolean;
   readonly budgetUsd: string;
   readonly modelEndpoint: string;
@@ -45,6 +47,7 @@ const EMPTY: Values = {
   direction: "",
   apps: [],
   crew: [],
+  fresh: "",
   keepAccess: false,
   budgetUsd: "",
   modelEndpoint: "",
@@ -153,7 +156,7 @@ function formView(
           ...(errors["direction"] ? { error: errors["direction"] } : {}),
         })}
         <fieldset class="field" ${errors["apps"] ? html`data-invalid` : null}>
-          <legend>Apps to copy, with their history</legend>
+          <legend>Apps to fork, with their history</legend>
           ${checks(
             "apps",
             repos.map((r) => ({
@@ -166,6 +169,13 @@ function formView(
             ? html`<span class="error" id="f-apps-err">${errors["apps"]}</span>`
             : null}
         </fieldset>
+        ${formField({
+          label: "Or a fresh app (optional)",
+          name: "fresh",
+          value: values.fresh,
+          hint: `One line on what it is; the child gets a small app to start from (at most ${MAX_FRESH_CHARS} characters).`,
+          ...(errors["fresh"] ? { error: errors["fresh"] } : {}),
+        })}
         ${crew.length === 0
           ? null
           : html`<fieldset class="field">
@@ -349,6 +359,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     direction: field(form, "direction"),
     apps: all(form, "apps"),
     crew: all(form, "crew"),
+    fresh: field(form, "fresh").trim(),
     keepAccess: asBool(form, "keepAccess"),
     budgetUsd: field(form, "budgetUsd").trim(),
     modelEndpoint: field(form, "modelEndpoint").trim(),
@@ -361,6 +372,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     apps: values.apps,
     crew: values.crew,
     keepAccess: values.keepAccess,
+    ...(values.fresh === "" ? {} : { fresh: values.fresh }),
     ...(values.forWhom === "" ? {} : { for: values.forWhom }),
     ...(values.direction.trim() === "" ? {} : { direction: values.direction }),
     ...(key === "" ? {} : { modelKey: key }),

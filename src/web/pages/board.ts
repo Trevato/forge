@@ -14,10 +14,12 @@
  * pointer. The old big view (`/big`, every address it had) lands here.
  */
 
+import { sentinelNotice } from "../../crew/sentinel.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { askMeasure } from "../../core/ask_ledger.ts";
 import { reviewersOf, waitsForPerson } from "../../crew/review.ts";
 import { tokenReturns } from "../../core/returns.ts";
+import { needLine } from "../../actions/health.ts";
 import { returnsRepos } from "../../actions/returns.ts";
 import {
   listDecisionsForRepos,
@@ -36,9 +38,10 @@ import {
 } from "../../core/subscriptions.ts";
 import { readSpend } from "../../actions/spend.ts";
 import { spendView } from "./spend.ts";
+import type { HandContext } from "../../crew/handover.ts";
 import { listApps } from "../../core/apps.ts";
 import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
-import { vitals, type Vitals } from "../../kernel/vitals.ts";
+import { laneLine, vitals, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
 import {
@@ -115,6 +118,7 @@ const KIND_WORDS: Record<DecisionKind, string> = {
   land: "ship or show",
   retry: "try again",
   lean: "which way",
+  hand: "hand-over",
   // Never listed (`listDecisionsForRepos` leaves guards out); named for the type.
   guard: "not started",
 };
@@ -305,11 +309,11 @@ export function bigRedirect(ctx: Ctx): Response {
 
 // ---- the forge ----
 
-/** Where a need can be acted on, when it can: a stuck run's page. */
-function needHref(need: string, v: Vitals): string | undefined {
-  if (/ stuck\.$/.test(need) && v.stuck[0] !== undefined)
-    return `/${v.stuck[0].repo}/runs/${v.stuck[0].runId}`;
-  return undefined;
+/** The sentinel's open findings, a link to them; nothing when there are none. */
+function sentinelSpan(app: Ctx["app"]): Html {
+  const n = sentinelNotice(app.db);
+  if (n === null) return html``;
+  return html`<a class="board-forge-need" id="sentinel" href="${n.href}">${n.text}</a>`;
 }
 
 /**
@@ -324,6 +328,7 @@ function forgeStrip(ctx: Ctx): Html | null {
   const v = vitals({
     db: app.db,
     dataDir: app.config.dataDir,
+    signals: app.signals,
     envs: runtime
       ? listApps(app.db).flatMap((record) => runtime.status(record))
       : [],
@@ -334,6 +339,7 @@ function forgeStrip(ctx: Ctx): Html | null {
     (i) => i.key !== "stuck" && i.key !== "held",
   );
   const ok = v.ok && fh.ok;
+  const lane = laneLine(v.lane);
   return html`<div
     class="board-forge"
     id="forge"
@@ -342,17 +348,17 @@ function forgeStrip(ctx: Ctx): Html | null {
     data-rollout="${fh.rollout.state}"
     role="status"
   >
+    ${sentinelSpan(app)}
     ${rollout === null ? "" : html`<span class="board-forge-need">${rollout}</span>`}
     ${others.map((i) => html`<span class="board-forge-need">${i.key}: ${i.message}</span>`)}
+    ${lane === null ? "" : html`<span class="board-forge-lane">Lane: ${lane}</span>`}
     ${
       ok
         ? html`<span class="board-forge-ok">All fine</span>`
-        : v.needs.map((need) => {
-            const href = needHref(need, v);
-            return href === undefined
-              ? html`<span class="board-forge-need">${need}</span>`
-              : html`<a class="board-forge-need" href="${href}">${need}</a>`;
-          })
+        : v.degraded.map(
+            (d) =>
+              html`<a class="board-forge-need" href="${d.href}">${needLine(d)}</a>`,
+          )
     }
   </div>`;
 }
@@ -826,6 +832,22 @@ function byPillar(ctx: Ctx, scope: BoardScope): Html | null {
 
 // ---- decided ----
 
+/** A hand-over's row says why, and what the decider saw (`crew/handover.ts`). */
+function handContextLine(d: Decision): Html {
+  const s = d.state as Partial<HandContext> & { reason?: string };
+  const seen = [
+    // One person's pins and mutes stay out of a line other owners read.
+    s.spend === undefined
+      ? null
+      : `${money(s.spend.todayUsd)} of ${money(s.spend.ceilingUsd)} today`,
+    `${s.recent?.length ?? 0} past decisions`,
+    `${s.evidence?.reasons.length ?? 0} park notes`,
+  ].filter((x): x is string => x !== null);
+  return html`<p class="muted small board-context">
+    ${s.reason ?? d.answer} Saw: ${s.direction ? `the direction, ` : ""}${seen.join(", ")}.
+  </p>`;
+}
+
 function decided(ctx: Ctx, scope: BoardScope): Html {
   const db = ctx.app.db;
   // The decision ledger is the owner's own record of what the crew chose —
@@ -879,6 +901,7 @@ function decided(ctx: Ctx, scope: BoardScope): Html {
         >
         <span class="board-when">${time(d.createdAt)}</span>
       </a>
+      ${d.kind === "hand" ? handContextLine(d) : null}
     </li>`;
   });
   return region(

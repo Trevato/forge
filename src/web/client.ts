@@ -1551,6 +1551,53 @@ export const shellJs = /* js */ `
     return rows;
   }
 
+  // "Tell the crew" from a page: the server's own composer (the thread's
+  // comment box saying a tell) laid over the bottom of the page, fixed, so
+  // nothing shifts. Enter sends it with the page's path as \`from\`; no
+  // navigation. Any failure falls back to the plain link.
+  function tellInPlace(href) {
+    var old = doc.getElementById('tell-here');
+    if (old) old.remove();
+    fetch(href + '&in=place', { credentials: 'same-origin' }).then(function (r) {
+      if (!r.ok) throw new Error('no');
+      return r.text();
+    }).then(function (h) {
+      var box = doc.createElement('div');
+      box.id = 'tell-here';
+      box.className = 'tell-here';
+      box.innerHTML = h;
+      var form = box.querySelector('form');
+      var ta = box.querySelector('textarea');
+      var note = box.querySelector('.form-actions .muted');
+      if (!form || !ta) throw new Error('no');
+      doc.body.appendChild(box);
+      var sending = false;
+      function send() {
+        if (sending || ta.value.trim() === '') return;
+        sending = true;
+        fetch(form.action, {
+          method: 'POST', credentials: 'same-origin',
+          headers: { accept: 'application/json' },
+          body: new URLSearchParams(new FormData(form))
+        }).then(function (r) { return r.json(); }).then(function (d) {
+          if (note) note.textContent = d.ok ? d.flash : d.error;
+          if (d.ok) { ta.value = ''; window.setTimeout(function () { box.remove(); }, 2500); }
+        }).catch(function () {
+          if (note) note.textContent = 'That could not be told.';
+        }).then(function () { sending = false; });
+      }
+      form.addEventListener('submit', function (e) { e.preventDefault(); send(); });
+      box.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { e.stopPropagation(); box.remove(); }
+        else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target === ta) {
+          e.preventDefault();
+          send();
+        }
+      });
+      ta.focus();
+    }).catch(function () { location.href = href; });
+  }
+
   var closePalette = null;
   function openPalette() {
     var dlg = doc.getElementById('palette');
@@ -1726,7 +1773,14 @@ export const shellJs = /* js */ `
     list.onclick = function (e) {
       var a = e.target && e.target.closest ? e.target.closest('.palette-item') : null;
       var i = a ? nodes.indexOf(a) : -1;
-      if (i !== -1) remember(shown[i]);
+      if (i === -1) return;
+      remember(shown[i]);
+      var h = a.getAttribute('href') || '';
+      if (/^\\/[^\\/?#]+\\/[^\\/?#]+\\/tell\\?from=/.test(h) && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+        e.preventDefault();
+        close();
+        tellInPlace(h);
+      }
     };
     input.focus();
   }
@@ -1985,6 +2039,13 @@ export const liveRegionsJs = /* js */ `
     if (hit && timer === null)
       timer = setTimeout(refresh, Math.max(600, last + MIN_GAP - Date.now()));
   }
+  // A region with data-live-every="<seconds>" is also due on that beat, for
+  // what no event announces; it rides the same fetch, etag and swap.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-live-every]'), function (r) {
+    var s = parseInt(r.getAttribute('data-live-every'), 10);
+    if (!r.id || !(s > 0)) return;
+    window.setInterval(function () { due[r.id] = true; if (timer === null) timer = setTimeout(refresh, 0); }, s * 1000);
+  });
   connect();
   // Back online: reconnect from the last id and look at every region once,
   // in case the replay window no longer reaches back that far.

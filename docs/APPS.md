@@ -124,6 +124,12 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    follows the same rule: its environments' state and errors (`envsFor`),
    its runs and their logs (`mayReadRuns`) and its run and serving events
    reach only those who may enter it.
+   On any repository, public too, a run's **log** (the agent's
+   transcript, a deploy's output) is read only by its writers and crew
+   (`mayReadRunLog`); a stranger reads the run and its summary, not the
+   log, on the page, the API and the live tails (#1075). Check runs share
+   the rule: on a public repository the author of a pull from outside it
+   reads a failed check's summary, not its output.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never
@@ -225,6 +231,16 @@ that before the deploy fails; `tty` is the app's terminal interface (below);
 file is read from the commit being deployed, never from the database — a
 pull that changes how the app runs is previewed the way it will run.
 
+`toolbar`, at the top level, is `true` unless you set it to `false`. The
+forge adds one `<script>` tag to the HTML pages your app serves (before
+`</body>`, or at the end): a small pill in the bottom-right corner, collapsed
+until pressed, drawn in a shadow root so it never touches your styles. The
+script comes from the forge's own origin, immutable-cached, with no inline
+code; a `Content-Security-Policy` that forbids it just leaves the pill out.
+Only `text/html` responses the app sends uncompressed with a `Content-Length`
+(up to 4 MiB) are rewritten; JSON, images, compressed or chunked HTML and
+`HEAD` requests pass through byte for byte. `"toolbar": false` keeps it out.
+
 Two more fields say what the app's code may use (rule 9):
 
 ```json
@@ -244,6 +260,11 @@ reach `registry.npmjs.org`. `limits` (MiB, cores, MiB) default to 512 MiB,
 are capped by the machine (`FORGE_CELL_MEMORY_MAX_MIB`, default 4096; the
 number of cores; `FORGE_CELL_DISK_MAX_MIB`, default 16384). A cell's `/tmp`
 holds at most 256 MiB.
+
+Where the host cannot hold cells (or the crew's shell sandbox), the forge
+runs uncontained and says so in one line: a boot warning, and, in the foot of
+every page a site admin reads, `Reduced protection: apps (<reason>) runs
+uncontained.` (`kernel/protection.ts`). A fully protected forge shows nothing.
 
 A release that turns egress on must not break an app whose writers have
 not declared what it uses yet, so the operator can start it reported:
@@ -336,6 +357,23 @@ declares dependencies; `timeout` is seconds, twenty minutes by default.
 A `check` that is present and wrong fails with the reason, so a commit is
 never silently unchecked. A check under way when the forge restarts is
 queued again, and the forge that carries on runs it from the start.
+
+**Placement.** `FORGE_CHECKS_PLACEMENT=process` (the default) runs a check
+in a cell on the forge's machine. `job` runs install and check as one
+Kubernetes Job (`src/cluster/jobs.ts`) instead: `FORGE_CHECKS_IMAGE` is its
+image, `FORGE_CHECKS_CLAIM` a ReadWriteMany claim holding the forge's checks
+root (mounted at the same path, where the checkout is exported),
+`FORGE_CHECKS_NODE_SELECTOR` (`key=value,…`) and `FORGE_CHECKS_TOLERATIONS`
+(a JSON list) say where it may land. Only `CI` and `FORGE_*` variables cross
+to the Job. Its log is written into the run's log when it ends, and the run
+records `placement` and the `node` its pod ran on. A malformed setting leaves
+`process` in place. No cell wraps a Job. The pod mounts only its own
+checkout (`subPath` = the run id), mounts no service-account token, runs
+non-root without privilege escalation, and carries the check's limits as
+`resources.limits`. **Egress is not enforced by the forge on a Job**: the
+run is recorded as uncontained ("egress not enforced on a cluster job"), and
+the pod carries the label `forge-check=true` so an operator's NetworkPolicy
+can select it and hold what `egress` declares.
 
 Checks share `FORGE_CHECKS_CONCURRENCY` slots (default `1`), and when one
 frees, it goes to the most recently requested check waiting, not the one
@@ -467,6 +505,20 @@ and `admin`; a role such as a team's (`manage`) waits on the forge
 signing one (see [CONTRACT.md](CONTRACT.md)).
 
 ## Who is there: identity from the forge
+
+**Sign-in is OpenID Connect.** The scaffold's "Sign in" (`/signin`) is the
+code flow with PKCE against `FORGE_URL` (see the last section). On first boot
+it registers its own redirect address, `<FORGE_APP_URL>/signin/callback`, and
+keeps the client id in `FORGE_APP_DATA/oidc-client.json`, so production and
+each preview are separate clients. It verifies the `id_token` itself and keeps
+a session in an HttpOnly cookie; a person signed in this way is a `user`. The
+headers below remain only until a follow-up change retires them: once no app
+reads `x-forge-identity` and `x-forge-signature`, the forge stops sending them
+and `FORGE_APP_IDENTITY_KEY` goes with them (that change also settles where
+`admin` comes from, which an `id_token` does not carry, and the scaffold's
+sign-out, which still ends at the header-era `/__forge/signout`). Until then a
+valid signed header outranks a session, so an admin who signs in this way stays
+an admin.
 
 An app never writes sign-in. The forge tells it who is there, on every
 request it proxies, in two headers:
@@ -1044,6 +1096,8 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_PREVIEW_IDLE_DAYS` | `3`                             | days a pull may sit untouched before its preview sleeps; `0` = never |
 | `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once (live: Settings → Capacity)    |
 | `FORGE_CHECKS_CONCURRENCY` | `1`                            | checks at once (live: Settings → Capacity)        |
+| `FORGE_CHECKS_PLACEMENT`  | `process`                       | `job` runs a check's commands as a cluster Job (see Placement above) |
+| `FORGE_CHECKS_DRAIN_S`       | `300`                          | seconds a roll lets running checks finish first   |
 | `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
 | `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |
 | `FORGE_CREW_BUDGET_USD`   | `5`                             | spend per run unless the agent says otherwise     |
@@ -1066,6 +1120,11 @@ the data directory `FORGE_APP_DATA`, and the defaults become
 `FORGE_SSH_PORT=0`, `FORGE_CREW_CONCURRENCY=1` and
 `FORGE_APP_DOMAIN=--<its own host>`.
 
+Every limit an owner can hit (crew runs and checks at once, budget
+ceilings, per-account caps, sign-in rates) is listed with its value and its
+reason under **Settings → Limits** (`/admin/limits`, forge admin only),
+declared in `settings/limits.ts` and read on every use.
+
 Four of these are the forge's capacity and change while it runs: crew runs
 at once, checks at once, shards per check, and the cells' egress mode. A
 forge admin sets them under **Settings → Capacity**, through
@@ -1076,6 +1135,41 @@ until a value is set, and every change is listed on that page with who
 made it, when, and from what to what (`core/capacity.ts`). The shard count
 reaches a check's commands and an agent's shell as `FORGE_CHECK_SHARDS`,
 from the setting, never from the forge's own environment.
+
+### Boards: counting the forge's own tables
+
+A site admin who is a person (never an agent, whatever its token's scope)
+reads the forge's tables as counts through two routes; anyone else gets
+403, a signed-out caller 401. `GET /api/v1/boards/sources` lists each
+source with its `time` column and its columns' types (`boards/sources.ts`;
+a column holding a secret or free text is never listed).
+`POST /api/v1/boards/query` takes
+`{source, from, to, filter, groupBy, aggregate, column}`:
+
+- `source`: a name from the list; `aggregate`: `count`, `sum`, `avg` or `max`
+  (the last three need a numeric `column`).
+- `from` (inclusive) and `to` (exclusive): dates, applied to the source's time column.
+- `filter`: up to 16 of `{column, op, value}`, `op` one of `eq ne lt lte gt gte`.
+- `groupBy`: a column, or `{"bucket": "minute" | "hour" | "day"}`.
+
+It answers `{"rows": [{"group", "value"}]}`, at most 1000 rows. A query the
+module refuses is `400 bad_query` with its message; a body that is not JSON
+is `400 bad_json`; a body over the cap is `413 too_large`.
+
+The `machine` source is what the machine itself used (`boards/sampler.ts`):
+every 15 s the forge reads its pod's cgroup v2 (`cpu.stat` `usage_usec` as a
+rate, `memory.current`), each labelled check and app cell's process tree
+(`check:<run id>`, `app:<slug>/<env>`), and the node (`/proc/stat`,
+`/proc/meminfo`, `/proc/loadavg`). `boards/ring.ts` keeps it in
+`machine_sample`: 15-s points for 24 h and 5-min mean and max for 30 days,
+dropping what leaves its window on every write. A file this machine lacks
+leaves its series absent, never zero, and `/boards/data?source=machine`
+names each one. Its rows belong to no repo, so only an every-repo scope
+reads them; the sources list carries each column's unit in `docs`.
+
+    POST /api/v1/boards/query
+    {"source": "runs", "aggregate": "count", "groupBy": "state"}
+    -> {"rows": [{"group": "failed", "value": 1}, {"group": "ok", "value": 7}]}
 
 ## What is deliberately not here
 
@@ -1096,3 +1190,27 @@ refused), `placement` (`"metal"` or `"cloud"`, optional) and `volumes`
 sync cadence in seconds, 10–86400). `src/apps/service.ts` validates it; the
 manifest carries it as `service`, `null` for a web app. Running it, exposing
 the ports and syncing volumes are not built yet (issue #391).
+
+## The access log
+
+The forge keeps one compact JSON line per request that is not a static asset
+(or `/healthz`) under `<data>/access/access-YYYY-MM-DD.log`: time, host,
+method, path without its query string (secret-looking segments blanked),
+status, duration, user agent (200 characters), whether a credential came with
+it, and a hash of the client address keyed with the data directory's secret
+and the day. Lines are queued in memory and appended in one write a second (or per 200 lines), so a request pays for no disk write. No token, cookie or query string is ever written. Files go after
+14 days, a day's file stops at 4 MB and the directory at 32 MB, oldest first.
+Nothing serves the files. A forge admin reads the last day's non-browser
+requests to public paths at Settings → Access, or with the `access` MCP tool
+(`since`, `ua`, `path`; write-scope token).
+
+## The forge as an OpenID Connect provider
+
+Discovery is at `/.well-known/openid-configuration`. Register a client at
+`/oauth/register`, send a person to `/oauth/authorize` with `scope=openid`
+(optionally `profile email`), a `nonce`, and a PKCE S256 challenge. The
+`/oauth/token` answer carries an `id_token` (ES256) beside the ordinary
+ro/rw access token — the same grant, not a second credential. Present that
+access token to `/oauth/userinfo` for the claims. `/oauth/jwks` publishes the
+current signing key and the previous one; keys rotate every 30 days and live
+in the database, never in the repository.

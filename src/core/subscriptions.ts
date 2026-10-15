@@ -28,6 +28,7 @@ import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { open, seal } from "../kernel/secret.ts";
+import { limitValue } from "../settings/limits.ts";
 
 export type SubscriptionKind = "oauth" | "api_key";
 
@@ -95,7 +96,6 @@ const COMMITTED = `(s.spent_usd + (SELECT COALESCE(SUM(
     MAX(0, COALESCE(r.budget_reserved_usd, 0) - r.cost_usd)), 0)
   FROM run r WHERE r.subscription_id = s.id
     AND r.state IN ('queued', 'running') AND r.id <> ?4))`;
-export const BUDGET_MAX_USD = 100_000;
 
 /** An account's whole-life budget and what its runs have spent, in dollars. */
 export interface Budget {
@@ -124,7 +124,7 @@ export function budgetsOf(db: Database): Map<string, Budget> {
  * whoever made this forge is never changed from inside it.
  */
 export function setBudget(db: Database, subscriptionId: string, usd: number | null): boolean {
-  if (usd !== null && !(Number.isFinite(usd) && usd > 0 && usd <= BUDGET_MAX_USD)) return false;
+  if (usd !== null && !(Number.isFinite(usd) && usd > 0 && usd <= limitValue(db, "subscription.budget_max_usd"))) return false;
   const value = usd === null ? null : Math.round(usd * 100) / 100;
   // A locked budget may only come down: never up, never cleared.
   return (
@@ -143,7 +143,7 @@ export function setBudget(db: Database, subscriptionId: string, usd: number | nu
  * a child's starter key, so the spawner's money ends where they said.
  */
 export function lockBudget(db: Database, subscriptionId: string, usd: number): boolean {
-  if (!(Number.isFinite(usd) && usd > 0 && usd <= BUDGET_MAX_USD)) return false;
+  if (!(Number.isFinite(usd) && usd > 0 && usd <= limitValue(db, "subscription.budget_max_usd"))) return false;
   return (
     db
       .query(

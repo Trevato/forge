@@ -17,8 +17,14 @@
  * no page. `ro` tokens read; `rw` tokens act.
  */
 
+import { voteVariant } from "../actions/variants.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
+import { listAccess } from "../actions/access_log.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
+import { readPipeline, verdict } from "../flow/pipeline.ts";
+import { readThroughput, stageOut, throughputSays } from "../flow/throughput.ts";
+import { changeLimit, listLimits } from "../actions/limits.ts";
+import { LIMIT_KEYS } from "../settings/limits.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
 import { watchMilestone } from "../actions/watches.ts";
 import {
@@ -35,9 +41,27 @@ import {
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
+import { familyView } from "../spawn/family.ts";
 import { clientRows } from "../spawn/clients.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
-import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
+import { contextNote, parseContext } from "../actions/tell_context.ts";
+import {
+  CARD_KINDS,
+  CARD_MIME,
+  CARD_OF_TOOL,
+  CARD_SHELL,
+  CARD_URI,
+  cardFor,
+} from "../web/studio/cards.ts";
+import { keepThought } from "../actions/thought.ts";
+import {
+  FROM_WORDS,
+  parseFrom,
+  tell,
+  toldWords,
+  UNVERIFIED_WORDS,
+} from "../actions/tell.ts";
+import { placementJson, placementOf, thoughtAuthor } from "../core/placements.ts";
 import { readReturns, reportSpend } from "../actions/returns.ts";
 import {
   readUsage,
@@ -59,7 +83,7 @@ import { getIssue, getIssueById, listOpenAgentPullsVisibleTo } from "../core/iss
 import { waitsForPerson } from "../crew/review.ts";
 import { attachLook } from "../actions/attach_look.ts";
 import { lookUrl } from "../core/looks.ts";
-import { getPull } from "../core/pulls.ts";
+import { getPull, pullDir, pullMergeState } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
@@ -69,6 +93,7 @@ import {
   canWrite,
   forkParentFor,
   getRepo,
+  isDecisionsBy,
   ownerFactRepoIds,
   type Repo,
 } from "../core/repos.ts";
@@ -76,6 +101,7 @@ import { plannerDeclines } from "../crew/autonomy.ts";
 import { listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { getUsersByIds, type User } from "../core/users.ts";
+import { openapi } from "../contract/openapi.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
@@ -84,7 +110,7 @@ import {
   directionNote,
   OUTSIDERS_NOTE,
 } from "../crew/direct.ts";
-import { setCrewOutsiders } from "../actions/repos.ts";
+import { setCrewOutsiders, setDecisionsBy } from "../actions/repos.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { undoFleetOp } from "../actions/fleet.ts";
 import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
@@ -93,6 +119,7 @@ import {
   milestonesJson,
 } from "../web/pages/milestones.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
+import { decideAsk, undoDecideAsk } from "../actions/asks_decide.ts";
 import { applyAsksBulk, previewAsksBulk } from "../actions/asks_bulk.ts";
 import type { Ctx, Handler } from "./context.ts";
 import {
@@ -102,6 +129,8 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import { linksFrom, linksTo } from "../core/thought_links.ts";
+import { streamJson, thoughtStream } from "../core/thought_stream.ts";
 import {
   readAppMembers,
   setAppMembersThrough,
@@ -114,6 +143,7 @@ import {
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { readHealth } from "../actions/health.ts";
 import { running } from "../kernel/version.ts";
+import { parentForgeFor } from "../core/parent_releases.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
@@ -123,6 +153,7 @@ import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
+import { placementWords } from "../checks/placement.ts";
 import { everydayOf } from "../core/everyday.ts";
 import { nextStepsFor } from "../core/next-steps.ts";
 
@@ -283,17 +314,63 @@ const TOOLS: readonly Tool[] = [
   {
     name: "tell",
     description:
-      "Tell an app's crew what should change. One sentence or several; the first line becomes the title. A builder is picked and starts on the crew's next tick.",
+      "Tell an app's crew what should change. One sentence or several; the first line becomes the title. A builder is picked and starts on the crew's next tick. A tell without a repo is kept, word for word, for the forge as a whole: nothing is built from it, and the answer is its thought id.",
     inputSchema: {
       type: "object",
-      properties: { repo: REPO_ARG, text: { type: "string", maxLength: 8000 } },
-      required: ["repo", "text"],
+      properties: {
+        repo: REPO_ARG,
+        text: { type: "string", maxLength: 8000 },
+        from: {
+          type: "string",
+          maxLength: 512,
+          description:
+            "The page this was told from: a path on this forge, like /alice/notes/pulls/3. The issue links to it.",
+        },
+        context: {
+          type: "object",
+          description:
+            "Where this was told from, so the builder sees it: page (http/https address), run (id), commit (hex), said (the person's own words).",
+          properties: {
+            page: { type: "string" },
+            run: { type: "string" },
+            commit: { type: "string" },
+            said: { type: "string", maxLength: 2000 },
+          },
+        },
+      },
+      required: ["text"],
     },
     writes: true,
     async run(ctx, user, args) {
+      if (args["repo"] === undefined || args["repo"] === null) {
+        const kept = keepThought(ctx.app, user, args["text"], "mcp");
+        return kept.ok
+          ? good({ thought: kept.value.id })
+          : bad(
+              "invalid",
+              "text is a string of at most 20,000 characters",
+            );
+      }
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
-      const told = await tell(ctx.app, user, repo, str(args["text"]));
+      const where = parseContext(args["context"]);
+      if (where === null)
+        return bad(
+          "invalid",
+          "context is { page?: http(s) address, run?: id, commit?: hex, said?: words }",
+        );
+      const from = parseFrom(args["from"]);
+      if (from === undefined) return bad("invalid", FROM_WORDS);
+      const told = await tell(
+        ctx.app,
+        user,
+        repo,
+        str(args["text"]) === ""
+          ? ""
+          : `${str(args["text"])}${contextNote(where)}`,
+        1,
+        from,
+      );
       if (!told.ok)
         return bad(
           told.error,
@@ -373,6 +450,84 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "pull",
+    description:
+      "Read a pull: its title, state and head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`). The same two fields as GET /api/v1/repos/:owner/:name/pulls/:number.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "integer", minimum: 1 },
+      },
+      required: ["repo", "number"],
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = args["number"];
+      const pull =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getPull(ctx.app.db, repo.id, n)
+          : undefined;
+      if (pull === undefined || !mayView(ctx.app.db, repo, pull, user))
+        return bad("no_such_pull", `no pull #${String(n)}`);
+      const state = await pullMergeState(
+        await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull),
+        pull,
+      );
+      return good({
+        number: pull.number,
+        title: pull.title,
+        state: pull.mergedAt !== null ? "merged" : pull.state,
+        base: pull.baseBranch,
+        head: pull.headBranch,
+        ...(state ?? {}),
+      });
+    },
+  },
+  {
+    name: "variant",
+    description:
+      "Like or dislike one pull among its variant siblings (the pull JSON's `variantSiblings`). Each person has one vote per pull; a later one replaces the earlier. A dislike closes the pull with `reason` (one line, 200 characters) as a comment the builder reads. For a person who can write the repository. The same as POST /api/v1/repos/:owner/:name/pulls/:number/variant.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "integer", minimum: 1 },
+        answer: { type: "string", enum: ["like", "dislike"] },
+        reason: { type: "string", maxLength: 200 },
+      },
+      required: ["repo", "number", "answer"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = args["number"];
+      const pull =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getPull(ctx.app.db, repo.id, n)
+          : undefined;
+      if (pull === undefined || !mayView(ctx.app.db, repo, pull, user))
+        return bad("no_such_pull", `no pull #${String(n)}`);
+      const answer = args["answer"];
+      if (answer !== "like" && answer !== "dislike")
+        return bad("invalid_answer", "answer is like or dislike");
+      const voted = voteVariant(
+        ctx.app,
+        user,
+        repo,
+        pull,
+        answer,
+        str(args["reason"]),
+      );
+      return voted.ok
+        ? good({ answer, closed: voted.value.closed })
+        : bad(voted.error, "that vote could not be recorded");
+    },
+  },
+  {
     name: "edit",
     description:
       "Give an issue or a pull a new title or body: the pull whose body still says work in progress, the issue whose title no longer says what it asks. Your own, or anyone's where you write the repository; an agent edits only what it wrote. Send what changes; the other stands.",
@@ -448,6 +603,36 @@ const TOOLS: readonly Tool[] = [
           ? await applyAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"])
           : previewAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"]);
       return answer.ok ? good(answer.value) : bad(answer.error.code, answer.error.message);
+    },
+  },
+  {
+    name: "asks_decide",
+    description:
+      "Let the decider answer a hand-over (a parked issue in `asks`): `item` is the row's `parked:<id>` item. The decider sees the direction, whether you pinned or muted the app, the day's spend against the ceiling, your last ten decisions there and the card's own evidence, and answers set_aside or ask_owner with a reason and a confidence. Only a sure set_aside (70%+) takes the card off your board; anything else stays with you. The answer and the context it saw are in the decision ledger. One card is handed over once in ten minutes. Undo a set_aside within a day with `asks_undecide`.",
+    inputSchema: {
+      type: "object",
+      properties: { item: { type: "string", maxLength: 80 } },
+      required: ["item"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const done = await decideAsk(ctx.app, user, args["item"]);
+      return done.ok ? good(done.value) : bad(done.error.code, done.error.message);
+    },
+  },
+  {
+    name: "asks_undecide",
+    description:
+      "Put a card the decider set aside back on your board, within a day of its answer. `id` is the decision's id from `asks_decide`.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", maxLength: 80 } },
+      required: ["id"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const done = undoDecideAsk(ctx.app, user, args["id"]);
+      return done.ok ? good(done.value) : bad(done.error.code, done.error.message);
     },
   },
   {
@@ -571,6 +756,7 @@ const TOOLS: readonly Tool[] = [
             since: r.startedAt ?? r.createdAt,
             // What a run costs is the owner's fact (`canSeeOwnerFacts`).
             costUsd: owned.has(r.repoId) ? r.costUsd : 0,
+            ...(placementWords(r) === "" ? {} : { ran: placementWords(r) }),
           };
         }),
       ]);
@@ -696,6 +882,45 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "decisions_by",
+    description:
+      "The standing rule for the decisions a repository asks of its owner (parked hand-over cards): `me` (they wait for the owner), `decider` (the decider answers each, and a repository whose crew is off closes its parked cards by rule, with no model call), or `decider_tell` (the decider answers, and the owner is told about the ones it is unsure of). Without `by`, says how it is set. With `by`, it plans — `dryRun` is true unless you say false — and only an admin of the app, with an admin token and never as an agent, sets it. Each change is recorded in the app's activity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        by: { type: "string", enum: ["me", "decider", "decider_tell"] },
+        dryRun: {
+          type: "boolean",
+          description: "Plan only (the default). Send false to set it.",
+        },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    dryByDefault: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const by = args["by"];
+      if (by === undefined) return good({ by: repo.decisionsBy });
+      if (!isDecisionsBy(by))
+        return bad("bad_action", "`by` is me, decider or decider_tell");
+      const dryRun = args["dryRun"] !== false;
+      if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "setting the standing rule needs an admin token");
+      const set = await setDecisionsBy(ctx.app, user, repo, by, dryRun);
+      if (!set.ok)
+        return bad("forbidden", "only an admin of this app sets its standing rule");
+      return good({
+        ...set.value,
+        says: dryRun
+          ? `This is the plan; nothing changed. Decisions go by "${set.value.was}" now; send dryRun: false to make it "${set.value.by}".`
+          : `Decisions here now go by "${set.value.by}".`,
+      });
+    },
+  },
+  {
     name: "probe",
     description:
       "Knock on every door of a running app as nobody, a user and an admin, and compare each answer with its contract.json: ok, or the doors that disobey, each as a sentence. Writes nothing; sends `{}` and an id no row has.",
@@ -756,6 +981,7 @@ const TOOLS: readonly Tool[] = [
         ahead: relation.ahead,
         clean: relation.clean,
         conflicts: relation.conflicts,
+        parentForge: parentForgeFor(ctx.app.config),
         converge: converge?.kind ?? null,
       });
     },
@@ -785,6 +1011,11 @@ const TOOLS: readonly Tool[] = [
           type: "string",
           description:
             "What the child is for, in your words (at most 2000 characters): its apps' direction, opened as the planner's first issue when the child first boots.",
+        },
+        fresh: {
+          type: "string",
+          description:
+            "One line (at most 200 characters) on a fresh app to start in the child beside the copied ones: it gets a README and a small app that runs.",
         },
         keepAccess: {
           type: "boolean",
@@ -932,6 +1163,16 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "family",
+    description:
+      "The forge's family across forges: the forge that sent this one (anyone) and, for a site admin, the forges it sent, each as last heard — reporting, quiet (silent for thirty minutes) or unheard — with version, releases behind, open proposals. The same data as /family and /api/v1/family.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    async run(ctx, user) {
+      return good(await familyView(ctx.app, user.isAdmin === true));
+    },
+  },
+  {
     name: "next_steps",
     description:
       "On a forge made for you (spawned), your first three steps and whether each is done: make your everyday account, open your apps, tell the crew something — the same card the home shows. Empty anywhere else, or for anyone but the forge's owner.",
@@ -943,9 +1184,39 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "thought",
+    description:
+      "Where one of your thoughts went: its id (from `tell` without a repo) answers with the planner's placement — the kind (work, amendment, vision, decision, reversal), the issues it opened, amended, deferred or marked superseded, and the one-or-two-line reply, with a question when it was unsure. `placement` is null while the planner has not reached it (within a few minutes). `repeats` and `supersedes` list the earlier thought ids this one says again or takes back; `repeatedBy` and `supersededBy` the later ones that did the same to it.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", maxLength: 64 } },
+      required: ["id"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const thoughtId = args["id"];
+      if (typeof thoughtId !== "string" || thoughtId === "")
+        return bad("invalid", "id is a thought id");
+      // Not yours and not there answer alike (a thought belongs to its author).
+      if (thoughtAuthor(ctx.app.db, thoughtId) !== user.id)
+        return bad("not_found", "no such thought");
+      const links = linksFrom(ctx.app.db, thoughtId);
+      const back = linksTo(ctx.app.db, thoughtId);
+      return good({
+        id: thoughtId,
+        placement: placementJson(placementOf(ctx.app.db, thoughtId)),
+        // The earlier thoughts this one repeats or takes back, and the later one that took it back.
+        repeats: links.repeats,
+        supersedes: links.supersedes,
+        supersededBy: back.supersededBy,
+        repeatedBy: back.repeatedBy,
+      });
+    },
+  },
+  {
     name: "asked",
     description:
-      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, whether it is stale (not shipped after three days), and whether it is flagged (stale with nothing built: no pull open or merged, and nobody on it). Each pull says when it was opened. `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
+      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, whether it is stale (not shipped after three days), and whether it is flagged (stale with nothing built: no pull open or merged, and nobody on it). Each pull says when it was opened. `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. Also `thoughts`: every thought you sent, newest first, verbatim, with time, source, where the planner put it, and one state (unplaced, placed, building, shipped, superseded — with the later thought that superseded it); `flagged` when nothing merged more than your `thoughtFlagDays` setting (three by default) after it was placed. Yours only. The same data as the /asked page and /api/v1/asked.",
     inputSchema: {
       type: "object",
       properties: {
@@ -966,7 +1237,10 @@ const TOOLS: readonly Tool[] = [
       const repos = askedRepos(ctx.app.db, user, spec);
       if (spec !== null && repos.length === 0)
         return bad("not_found", "no such app or repository you can write (owner/name)");
-      return good({ asked: askedIn(ctx.app.db, repos, { show, order }).map(askedJson) });
+      return good({
+        asked: askedIn(ctx.app.db, repos, { show, order }).map(askedJson),
+        thoughts: thoughtStream(ctx.app.db, user).map(streamJson),
+      });
     },
   },
   {
@@ -977,7 +1251,7 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         repo: REPO_ARG,
-        members: { type: "array", items: { type: "string" }, maxItems: 100 },
+        members: { type: "array", items: { type: "string" } },
         dryRun: { type: "boolean" },
       },
       required: ["repo"],
@@ -1104,8 +1378,8 @@ const TOOLS: readonly Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        pinned: { type: "array", items: { type: "string" }, maxItems: 12 },
-        hidden: { type: "array", items: { type: "string" }, maxItems: 200 },
+        pinned: { type: "array", items: { type: "string" } },
+        hidden: { type: "array", items: { type: "string" } },
         weights: {
           type: "object",
           description: "What counts toward an app's place, each 0 to 10: forks, ships, use, fresh. One left out keeps what is set.",
@@ -1171,7 +1445,7 @@ const TOOLS: readonly Tool[] = [
             listActiveRuns(ctx.app.db, [repo.id]),
           ),
           pillars,
-          await askToLiveFor(ctx.app, repo, pillars, user),
+          askToLiveFor(ctx.app, repo, pillars, user),
         ),
       );
     },
@@ -1333,7 +1607,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "returns",
     description:
-      "What the crew's tokens bought over the last days (1–90, default 7), so you can ask before you plan: dollars and runs by state; changes landed; dollars on work that landed and the median per landed change; dollars that landed nothing (closed without a merge, or still open), with failed and cancelled runs and the costliest failure reasons; what a good run costs and takes; and the costliest issues with what came of each. Over every app whose owner facts you hold, or `repo` (owner/name). Read-only; an app you cannot write is not found.",
+      "What the crew's tokens bought over the last days (1–90, default 7), so you can ask before you plan: dollars and runs by state; changes landed; dollars on work that landed and the median per landed change; dollars that landed nothing (closed without a merge, or still open), with failed and cancelled runs and the costliest failure reasons; what a good run costs and takes; and the costliest issues with what came of each; and the same dollars `byPillar`, by the pillar each run's issue serves. Over every app whose owner facts you hold, or `repo` (owner/name). Read-only; an app you cannot write is not found.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1678,6 +1952,34 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "access",
+    description:
+      "What outside agents tried: the forge's own request log, redacted, for a forge admin. Non-browser requests to public paths (/issues, /api/, /mcp, /.well-known/, /llms.txt, sign-in, sign-up), newest first, at most 500: time, host, method, path without query, status, duration in ms, user agent, whether a credential came with it, and a daily hash of the caller (never an address). `since` is an ISO time (the last day when absent; at most 14 days back), `ua` a part of the user agent, `path` the start of the path. Needs a write-scope token. The same as Settings → Access.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        since: { type: "string", maxLength: 40 },
+        ua: { type: "string", maxLength: 100 },
+        path: { type: "string", maxLength: 200 },
+      },
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const text = (k: string): string | undefined =>
+        typeof args[k] === "string" && args[k] !== "" ? (args[k] as string) : undefined;
+      const since = text("since");
+      const ua = text("ua");
+      const path = text("path");
+      const listed = listAccess(ctx.app, user, {
+        ...(since === undefined ? {} : { since: since.slice(0, 40) }),
+        ...(ua === undefined ? {} : { ua: ua.slice(0, 100) }),
+        ...(path === undefined ? {} : { path: path.slice(0, 200) }),
+      });
+      if (!listed.ok) return bad("not_found", "no such tool here");
+      return good({ requests: listed.value });
+    },
+  },
+  {
     name: "capacity",
     description:
       "The forge's capacity and guards, live: crew runs at once (crew.concurrency), checks at once (checks.concurrency), test shards per check (checks.shards), whether a cell's undeclared egress is refused or reported (cells.egress), and whether new accounts may create repositories and forks (guard_new_accounts: on refuses accounts younger than 7 days, off is the default). Without `key`, each setting, its value and where it comes from, and the recent changes. With `key` and `value` (\"\" goes back to the boot default), the change it would make; with dryRun false, made, by a forge admin with an admin-scope token, never an agent. A change is honoured by the next run, check or cell, never by a restart. The same as Settings → Capacity and /api/v1/admin/capacity.",
@@ -1716,6 +2018,65 @@ const TOOLS: readonly Tool[] = [
       });
     },
   },
+  {
+    name: "flow",
+    description:
+      "The forge's pipeline, for a forge admin: ready, building, check queue, checking, review, approved, landed and live, each with how many wait, how many are being worked, when the oldest waiting one entered (oldestWaiting) and what limits it (capacity), and one sentence (says) naming the stage whose oldest has waited longest — the bottleneck. Beside it, throughput: per stage how many left it in the last hour (lastHour), in 24 hours (day) and in each of the last 24 hours (hours, 0 the last), the median ask→live in ms over the last 24 hours, and its own sentence (says). Read-only; the knobs are the `capacity` tool. The same as /flow.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run(ctx, user) {
+      if (!user.isAdmin)
+        return bad("forbidden", "only an admin of this forge reads its pipeline");
+      const now = new Date();
+      const stages = readPipeline(ctx.app.db, now);
+      const flow = readThroughput(ctx.app.db, stages.map((s) => s.key), now);
+      return good({
+        says: verdict(stages, now.getTime()),
+        stages,
+        throughput: {
+          says: throughputSays(flow),
+          medianAskToLiveMs: flow.medianAskToLiveMs,
+          stages: flow.stages.map(stageOut),
+        },
+      });
+    },
+  },
+  {
+    name: "limits",
+    description:
+      "Every limit the forge's owner can hit, with its value, bounds and the reason it is there (people per app, pins, hidden repositories, budget ceilings, daily shares, sign-in attempts, crew and check concurrency). Without `key`, each limit and the recent changes. With `key` and `value` (\"\" goes back to the default), the change it would make; with dryRun false, made, by a forge admin with an admin-scope token, never an agent. Honoured by the next use, never by a restart. The same as /admin/limits and /api/v1/admin/limits.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key: { type: "string", enum: [...LIMIT_KEYS] },
+        value: { type: "string", maxLength: 16 },
+        dryRun: { type: "boolean", description: "Plan only (the default). Send false to change it." },
+      },
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const listed = listLimits(ctx.app, user);
+      if (!listed.ok) return bad("not_found", "no such tool here");
+      const key = typeof args["key"] === "string" ? args["key"] : undefined;
+      if (key === undefined) return good(listed.value);
+      const value = typeof args["value"] === "string" ? args["value"] : "";
+      const now = listed.value.limits.find((l) => l.key === key);
+      if (now === undefined) return bad("no_such_limit", `no limit ${key}`);
+      if (args["dryRun"] !== false)
+        return good({
+          says: `Would set ${key} from ${now.value} to ${value || `its default, ${now.defaultValue}`}. Send dryRun: false to change it.`,
+        });
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing the forge's limits needs an admin-scope token");
+      const changed = changeLimit(ctx.app, user, key, value === "" ? null : value);
+      if (!changed.ok) return bad(changed.error.kind, changed.error.kind === "out_of_bounds" ? changed.error.message : "no such limit");
+      return good({
+        says: `${key}: ${changed.value.from} → ${changed.value.to}, from the next use on.`,
+        ...changed.value,
+      });
+    },
+  },
 ];
 
 /**
@@ -1730,6 +2091,12 @@ function adminNote(ctx: Ctx, user: User): string {
       ? " Daily work belongs on an everyday account, apart from admin."
       : ` Daily work belongs on ${daily.username}, their everyday account.`
   }`;
+}
+
+/** A card's model beside the text, for a host that draws `ui://` resources. */
+function cardResult(name: string, value: unknown): Record<string, unknown> {
+  const card = cardFor(name, value);
+  return card === undefined ? {} : { structuredContent: { card } };
 }
 
 function rpcOne(
@@ -1763,7 +2130,7 @@ function rpcOne(
         protocolVersion: (PROTOCOLS as readonly string[]).includes(asked)
           ? asked
           : PROTOCOLS[0],
-        capabilities: { tools: {} },
+        capabilities: { tools: {}, resources: {} },
         serverInfo: server(),
         instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options.${adminNote(ctx, user)}`,
       });
@@ -1778,10 +2145,33 @@ function rpcOne(
             description: t.description,
             inputSchema: t.inputSchema,
             annotations: { readOnlyHint: !t.writes },
+            ...(CARD_OF_TOOL[t.name] === undefined
+              ? {}
+              : {
+                  _meta: {
+                    ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) },
+                  },
+                }),
           })),
           REPORT_TOOL,
         ],
       });
+    case "resources/list":
+      return reply({
+        resources: CARD_KINDS.map((k) => ({
+          uri: CARD_URI(k),
+          name: `forge-${k}-card`,
+          mimeType: CARD_MIME,
+        })),
+      });
+    case "resources/read": {
+      const uri = str(params["uri"]);
+      const kind = CARD_KINDS.find((k) => CARD_URI(k) === uri);
+      if (kind === undefined) return refuse(-32002, `no resource ${uri}`);
+      return reply({
+        contents: [{ uri, mimeType: CARD_MIME, text: CARD_SHELL(kind) }],
+      });
+    }
     case "tools/call": {
       const tool = TOOLS.find((t) => t.name === params["name"]);
       if (tool === undefined)
@@ -1803,6 +2193,7 @@ function rpcOne(
           answer.ok
             ? {
                 content: [{ type: "text", text: JSON.stringify(answer.value) }],
+                ...cardResult(String(params["name"]), answer.value),
               }
             : {
                 content: [
@@ -1962,4 +2353,10 @@ export function mcpRoutes(router: Router<Handler>): void {
   // for a proxy to cut.
   router.add("GET", "/mcp", () => NOT_HERE("POST"));
   router.add("DELETE", "/mcp", () => NOT_HERE("POST"));
+  // The public API as OpenAPI, for any client that reads it.
+  router.add("GET", "/contract/openapi.json", (ctx) =>
+    json(openapi(ctx.url.origin, running().version), 200, {
+      "cache-control": "public, max-age=300",
+    }),
+  );
 }

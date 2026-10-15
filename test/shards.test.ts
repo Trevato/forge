@@ -11,7 +11,10 @@ import {
   SECONDS_PER_BYTE_DEFAULT,
   SHARDS_MAX,
   formatTimes,
+  heaviestFirst,
+  overlayTimes,
   parseTimes,
+  refreshTimes,
   parseShardSpec,
   shardCount,
   sliceFiles,
@@ -23,6 +26,7 @@ import {
 } from "../scripts/shards.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
 import { EXCLUDED, GATE } from "../scripts/gate.ts";
+import { CHECK_CACHE } from "../src/checks/cache.ts";
 
 const files = Array.from({ length: 23 }, (_, i) => `test/f${i}.test.ts`);
 
@@ -477,4 +481,81 @@ describe("the gate audit before any shard", () => {
     const explicit = await run(["test/zz-new.test.ts"], ["test/zz-new.test.ts"]);
     expect(explicit.err).not.toContain("list it in GATE");
   }, 30_000);
+});
+
+describe("the gate audit alone, first in the check", () => {
+  const script = new URL("../scripts/gate.ts", import.meta.url).pathname;
+  const listed = [...GATE, ...EXCLUDED.map((e) => e.file)];
+  const run = async (extra: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), "forge-gate-"));
+    mkdirSync(join(dir, "test"));
+    for (const file of [...listed, ...extra]) writeFileSync(join(dir, file), "");
+    const child = Bun.spawn(["bun", script], { cwd: dir, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+    const err = await new Response(child.stderr).text();
+    const code = await child.exited;
+    rmSync(dir, { recursive: true, force: true });
+    return { code, err };
+  };
+
+  test("an unlisted file fails it by name; a listed set passes", async () => {
+    const red = await run(["test/zz-new.test.ts"]);
+    expect(red.code).toBe(2);
+    expect(red.err.trim().split("\n").pop()).toContain(
+      "test/zz-new.test.ts: list it in GATE or EXCLUDED in scripts/gate.ts",
+    );
+    const green = await run([]);
+    expect(green.code).toBe(0);
+    expect(green.err).toBe("");
+  }, 30_000);
+
+  test("forge.json audits before tsc, and the native tsc runs incremental from the check's cache", async () => {
+    const check = parseCheck(readFileSync(new URL("../forge.json", import.meta.url), "utf8"), undefined);
+    if (!check.ok || check.value === undefined) throw new Error("no check");
+    for (const command of [check.value.run, check.value.fast ?? ""]) {
+      expect(command.startsWith("bun scripts/gate.ts && ")).toBe(true);
+      // TypeScript 7 (#1864): a Go binary, so its heap bound is GOMEMLIMIT, not node's.
+      expect(command).toContain(" && GOMEMLIMIT=2GiB ./node_modules/typescript/bin/tsc --noEmit ");
+      expect(command.indexOf("scripts/gate.ts")).toBeLessThan(command.indexOf("bin/tsc"));
+      expect(command).toContain(`--incremental --tsBuildInfoFile ${CHECK_CACHE}/tsc.tsbuildinfo`);
+    }
+  });
+
+  test("`typescript` is the native 7.x checker; 5.x stays only as the compiler API hollow.ts walks", async () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    expect(pkg.dependencies ?? {}).toEqual({});
+    expect(pkg.devDependencies["typescript"]).toMatch(/^\^7\./);
+    expect(pkg.devDependencies["typescript-api"]).toMatch(/^npm:typescript@\^5\./);
+    const checker = await import("typescript/package.json");
+    expect(checker.version).toMatch(/^7\./);
+  });
+});
+
+describe("one file per worker, timed", () => {
+  test("heaviest first, ties in list order", () => {
+    const w = new Map([["a", 1], ["b", 9], ["c", 1], ["d", 5]]);
+    expect(heaviestFirst(["a", "b", "c", "d"], (f) => w.get(f)!)).toEqual(["b", "d", "a", "c"]);
+  });
+
+  test("the cache's times win over the committed table, file by file", () => {
+    const merged = overlayTimes(
+      new Map([["test/a.test.ts", 5], ["test/b.test.ts", 7]]),
+      new Map([["test/b.test.ts", 2], ["test/c.test.ts", 3]]),
+    );
+    expect([...merged].sort()).toEqual([
+      ["test/a.test.ts", 5],
+      ["test/b.test.ts", 2],
+      ["test/c.test.ts", 3],
+    ]);
+  });
+
+  test("a green run refreshes what it ran, keeps the rest, forgets what is gone", () => {
+    const fresh = refreshTimes(
+      new Map([["test/a.test.ts", 5], ["test/b.test.ts", 7], ["test/gone.test.ts", 1]]),
+      [{ file: "./test/b.test.ts", seconds: 2.04 }, { file: "test/new.test.ts", seconds: 3 }],
+      (file) => file !== "test/gone.test.ts",
+    );
+    expect(formatTimes(fresh)).toBe(
+      '{\n  "test/a.test.ts": 5,\n  "test/b.test.ts": 2,\n  "test/new.test.ts": 3\n}\n',
+    );
+  });
 });

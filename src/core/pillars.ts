@@ -259,6 +259,7 @@ export function mergedByPillar(
 }
 
 interface MergedPull {
+  readonly id: string;
   readonly closes: readonly number[];
   readonly mergedAt: string;
   readonly mergedOid: string;
@@ -291,8 +292,8 @@ function mergedPulls(
   scope: SealedScope = {},
 ): { pulls: MergedPull[]; issues: Map<number, ClosedIssue> } {
   const rows = db
-    .query<{ body: string; at: string; oid: string | null }, string[]>(
-      `SELECT i.body, p.merged_at AS at, p.merged_oid AS oid
+    .query<{ id: string; body: string; at: string; oid: string | null }, string[]>(
+      `SELECT i.id, i.body, p.merged_at AS at, p.merged_oid AS oid
          FROM pull p JOIN issue i ON i.id = p.issue_id
         WHERE i.repo_id = ?1 AND p.merged_at IS NOT NULL AND p.merged_at >= ?2
           AND ${sealedClause("i", scope, 3)}
@@ -300,6 +301,7 @@ function mergedPulls(
     )
     .all(repoId, since, ...sealedParams(scope));
   const pulls = rows.map((row) => ({
+    id: row.id,
     closes: closesFromBody(row.body),
     mergedAt: row.at,
     mergedOid: row.oid ?? "",
@@ -342,9 +344,6 @@ function pillarOf(
 
 // ---- ask-to-live: an issue opening to its change in production (#1185) ----
 
-/** Whether `ancestor` is reachable from `descendant`; false when unsure. The git lives in src/git, handed in. */
-export type Reaches = (ancestor: string, descendant: string) => Promise<boolean>;
-
 /** How long the asking took, for one pillar's merged work. */
 export interface AskToLive {
   /** Median hours from an issue opening to its change live in production. */
@@ -359,54 +358,55 @@ export interface AskToLiveCount {
   readonly askToLive: AskToLive | undefined;
 }
 
-/** Most ancestry questions one request may put to git; a pull left unanswered counts for nothing. */
-const ASK_GIT_CALLS = 120;
-
 /**
  * Per pillar, over the pulls merged since an instant: the median and the
  * slowest ask-to-live, from the creation of the issue that pull closed to
- * the first production deploy that went live on a commit containing the
- * pull's merge. A pull not yet live counts for nothing. Every name has a
- * row, in order; one read of deploys however many pulls merged.
+ * the first production deploy that went live carrying the pull (the
+ * `deploy_pull` record, so no git runs here). A pull not yet live counts
+ * for nothing; an issue closed by several pulls counts once, at its first
+ * time live. Every name has a row, in order; two reads however many pulls.
  */
-export async function askToLiveByPillar(
+export function askToLiveByPillar(
   db: Database,
   repoId: string,
   set: Pillars,
   served: ReadonlyMap<string, string>,
   since: string,
-  reaches: Reaches,
   scope: SealedScope = {},
-): Promise<AskToLiveCount[]> {
+): AskToLiveCount[] {
   const { pulls, issues } = mergedPulls(db, repoId, since, scope);
-  const deploys = db
-    .query<{ oid: string; at: string }, [string, string]>(
-      `SELECT commit_oid AS oid, COALESCE(serving_at, finished_at) AS at FROM run
-        WHERE repo_id = ?1 AND kind = 'deploy' AND env = 'production' AND state = 'ok'
-          AND commit_oid != '' AND COALESCE(serving_at, finished_at) >= ?2
-        ORDER BY COALESCE(serving_at, finished_at), id`,
+  const live = new Map<string, string[]>();
+  for (const row of db
+    .query<{ id: string; at: string }, [string, string]>(
+      `SELECT dp.issue_id AS id, COALESCE(r.serving_at, r.finished_at) AS at
+         FROM deploy_pull dp JOIN run r ON r.id = dp.run_id
+        WHERE r.repo_id = ?1 AND r.kind = 'deploy' AND r.env = 'production' AND r.state = 'ok'
+          AND COALESCE(r.serving_at, r.finished_at) >= ?2
+        ORDER BY COALESCE(r.serving_at, r.finished_at), r.id`,
     )
-    .all(repoId, since);
-  const asked = new Map<string, { number: number; hours: number }[]>();
-  let budget = ASK_GIT_CALLS;
+    .all(repoId, since)) {
+    const list = live.get(row.id) ?? [];
+    list.push(row.at);
+    live.set(row.id, list);
+  }
+  // One entry per asked issue: its first time live over every pull that closed it.
+  const first = new Map<number, { pillar: string; createdAt: string; at: string }>();
   for (const pull of pulls) {
     const ask = pillarOf(pull.closes, issues, served);
-    if (ask === undefined || pull.mergedOid === "") continue;
-    let live: { oid: string; at: string } | undefined;
-    for (const d of deploys) {
-      if (d.at < pull.mergedAt) continue;
-      if (budget-- <= 0) break;
-      if (await reaches(pull.mergedOid, d.oid)) {
-        live = d;
-        break;
-      }
-    }
-    if (live === undefined) continue;
-    const hours = (Date.parse(live.at) - Date.parse(ask.createdAt)) / 3_600_000;
+    if (ask === undefined) continue;
+    const at = live.get(pull.id)?.find((t) => t >= pull.mergedAt);
+    if (at === undefined) continue;
+    const seen = first.get(ask.number);
+    if (seen === undefined || at < seen.at)
+      first.set(ask.number, { pillar: ask.pillar, createdAt: ask.createdAt, at });
+  }
+  const asked = new Map<string, { number: number; hours: number }[]>();
+  for (const [number, f] of first) {
+    const hours = (Date.parse(f.at) - Date.parse(f.createdAt)) / 3_600_000;
     if (!Number.isFinite(hours)) continue;
-    const list = asked.get(ask.pillar) ?? [];
-    list.push({ number: ask.number, hours: Math.max(0, hours) });
-    asked.set(ask.pillar, list);
+    const list = asked.get(f.pillar) ?? [];
+    list.push({ number, hours: Math.max(0, hours) });
+    asked.set(f.pillar, list);
   }
   return pillarNames(set).map((pillar) => {
     const list = (asked.get(pillar) ?? []).sort((a, b) => a.hours - b.hours);
@@ -488,22 +488,20 @@ export function pillarView(
   };
 }
 
-/** A view's ask-to-live over the last `PILLAR_DAYS` days; opt-in, for it reads git. */
+/** A view's ask-to-live over the last `PILLAR_DAYS` days; opt-in, for it reads the deploy record. */
 export function askToLiveOf(
   db: Database,
   repo: Repo,
   view: PillarView,
-  reaches: Reaches,
   scope: SealedScope = {},
   now = new Date(),
-): Promise<AskToLiveCount[]> {
+): AskToLiveCount[] {
   return askToLiveByPillar(
     db,
     repo.id,
     view.set,
     view.of,
     pillarWindowStart(now),
-    reaches,
     scope,
   );
 }

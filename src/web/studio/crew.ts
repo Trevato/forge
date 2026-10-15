@@ -326,6 +326,24 @@ ${repo.autonomyDirection}</textarea
                 map is only what people write.`}
           </p>
         </div>
+        ${selectField({
+          label: "Decisions here",
+          name: "decisions",
+          hint: "Who answers the hand-overs this asks of you. The decider answers in the ledger with its reason and context; ‘tell me’ sets a card aside only when it is sure and leaves the unsure ones on your board. A shelved repository (autonomy off) has its parked cards closed by rule, with no model call, when decisions go to the decider. Needs a decider set up on this forge.",
+          options: [
+            { value: "me", label: "Me", selected: repo.decisionsBy === "me" },
+            {
+              value: "decider",
+              label: "The decider",
+              selected: repo.decisionsBy === "decider",
+            },
+            {
+              value: "decider_tell",
+              label: "The decider, and tell me the ones it was unsure of",
+              selected: repo.decisionsBy === "decider_tell",
+            },
+          ],
+        })}
         ${field({
           label: "Ceiling per day",
           name: "ceiling",

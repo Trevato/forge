@@ -11,6 +11,7 @@
  * the summary that says what failed.
  */
 
+import { placementWords } from "../../checks/placement.ts";
 import { getIssuesByIds, type Issue } from "../../core/issues.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Run, RunState } from "../../core/runs.ts";
@@ -108,6 +109,7 @@ export function runRows(
       meta: metaOf(
         run.commitOid === "" ? "" : run.commitOid.slice(0, 7),
         costText(run.costUsd),
+        placementWords(run),
         relTime(runWhen(run)),
       ),
     };

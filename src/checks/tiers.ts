@@ -9,6 +9,8 @@
  * only decides.
  */
 
+import { GATE_FILE, needsFull, reach, reachLine, type Impact } from "./impact.ts";
+
 /** A test under this many seconds is always in the fast tier. */
 export const QUICK_SECONDS = 1;
 
@@ -71,10 +73,14 @@ export interface FastInput {
   readonly tests: readonly string[];
   /** A file's relative imports; `[]` for one that cannot be read. */
   readonly imports: (file: string) => readonly string[];
+  /** The tests a diff of scripts/gate.ts adds (`gateListAdds`); `undefined` when it is logic or unread. */
+  readonly gateAdds?: readonly string[];
   /** Seconds each test took last time (`scripts/test-times.json`). */
   readonly times: ReadonlyMap<string, number>;
   /** Tests a red full gate on land taught this pull. */
   readonly learned?: readonly string[];
+  /** Measured: the `src/**` files each test executed (`scripts/test-impact.json`). */
+  readonly impact?: Impact;
 }
 
 export interface FastPlan {
@@ -84,6 +90,8 @@ export interface FastPlan {
   /** Expected seconds, from the times table (a test it lacks counts 5). */
   readonly expected: number;
   readonly overBudget: boolean;
+  /** The line for the log: what the plan is by, and what the diff reaches. */
+  readonly line: string;
 }
 
 /**
@@ -96,27 +104,86 @@ export interface FastPlan {
 export function fastSet(input: FastInput): FastPlan {
   const tests = new Set(input.tests);
   const why = new Map<string, string>();
+  const finish = (line: string): FastPlan => {
+    const files = input.tests.filter((test) => why.has(test));
+    const expected = files.reduce(
+      (sum, file) => sum + (input.times.get(file) ?? UNKNOWN_SECONDS),
+      0,
+    );
+    return { files, why, expected, overBudget: expected > FAST_BUDGET_SECONDS, line };
+  };
+  // What the map cannot bound runs everything.
+  const unbounded = needsFull(input.changed, input.gateAdds);
+  if (unbounded !== undefined) {
+    for (const test of input.tests) why.set(test, `full: ${unbounded} changed`);
+    return finish(`full tier, ${unbounded} changed`);
+  }
+  // A gate.ts that only lists tests is those tests, nothing more.
+  const diffed =
+    input.gateAdds === undefined
+      ? input.changed
+      : [...input.changed.filter((f) => f !== GATE_FILE), ...input.gateAdds];
+  const impact = input.impact !== undefined && input.impact.size > 0 ? input.impact : undefined;
+  const reached = impact && reach(diffed, impact);
+  // A change the map cannot see (a src file no test executes, or a file
+  // outside src/ and test/) is judged by the guesses for every test.
+  const blind =
+    reached !== undefined &&
+    (reached.unreached.length > 0 ||
+      diffed.some(
+        (f) =>
+          !f.startsWith("src/") &&
+          !f.startsWith("test/") &&
+          !f.endsWith("test-times.json") &&
+          !f.endsWith("test-impact.json"),
+      ));
+  // A test the map has never seen (a new one) is judged by the guesses.
+  const guessed = (test: string): boolean =>
+    impact === undefined || blind || !impact.has(test);
   const take = (test: string, reason: string): void => {
     if (tests.has(test) && !why.has(test)) why.set(test, reason);
   };
-  const changed = new Set(input.changed);
+  const changed = new Set(diffed);
   for (const file of changed) take(file, "changed");
+  // What a guess looks for. A test the map has measured already answered
+  // for every change the map can see, by what it executes; it is guessed
+  // only against the changes the map cannot see, so one unreached file
+  // does not bring back every importer of the rest of the diff.
+  const unseen = new Set(
+    diffed.filter(
+      (f) => reached === undefined || reached.unreached.includes(f) || !f.startsWith("src/"),
+    ),
+  );
+  const lookFor = (test: string): ReadonlySet<string> =>
+    impact === undefined || !impact.has(test) ? changed : unseen;
+  const namesFor = (from: ReadonlySet<string>): Map<string, string> => {
+    const names = new Map<string, string>();
+    for (const source of from)
+      if (!tests.has(source))
+        for (const name of namesOf(source)) names.set(name, source);
+    return names;
+  };
+  const allNames = namesFor(changed);
+  const unseenNames = namesFor(unseen);
 
-  const sources = input.changed.filter((file) => !tests.has(file));
-  const names = new Map<string, string>();
-  for (const source of sources)
-    for (const name of namesOf(source)) names.set(name, source);
+  if (reached)
+    for (const [test, source] of reached.tests)
+      take(test, `executes ${source}`);
   for (const test of input.tests) {
+    if (!guessed(test)) continue;
+    const names = lookFor(test) === changed ? allNames : unseenNames;
     const hit = names.get(stemOf(test));
     if (hit !== undefined) take(test, `named for ${hit}`);
   }
 
   for (const test of input.tests) {
-    if (why.has(test)) continue;
+    if (why.has(test) || !guessed(test)) continue;
+    const from = lookFor(test);
+    if (from.size === 0) continue;
     let frontier: readonly string[] = input.imports(test);
     const seen = new Set<string>();
     for (let depth = 0; depth <= IMPORT_DEPTH && frontier.length > 0; depth++) {
-      const hit = frontier.find((file) => changed.has(file));
+      const hit = frontier.find((file) => from.has(file));
       if (hit !== undefined) {
         take(test, `imports ${hit}`);
         break;
@@ -134,16 +201,16 @@ export function fastSet(input: FastInput): FastPlan {
   for (const test of input.learned ?? []) take(test, "failed on land before");
   for (const test of input.tests) {
     const seconds = input.times.get(test);
-    if (seconds !== undefined && seconds < QUICK_SECONDS)
+    if (guessed(test) && seconds !== undefined && seconds < QUICK_SECONDS)
       take(test, "quick");
   }
 
-  const files = input.tests.filter((test) => why.has(test));
-  const expected = files.reduce(
-    (sum, file) => sum + (input.times.get(file) ?? UNKNOWN_SECONDS),
-    0,
+  const nChanged = diffed.length;
+  return finish(
+    reached
+      ? `by coverage${blind ? " and imports" : ""}: ${reachLine(nChanged, reached.tests.size, reached.unreached)}`
+      : "by imports (no impact map)",
   );
-  return { files, why, expected, overBudget: expected > FAST_BUDGET_SECONDS };
 }
 
 /** `220` → `3m40s`, `45` → `45s`. */

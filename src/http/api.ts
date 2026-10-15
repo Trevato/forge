@@ -8,9 +8,17 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { voteVariant } from "../actions/variants.ts";
+import { parentForgeFor } from "../core/parent_releases.ts";
+import { readFlow } from "../flow/read.ts";
+import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
+import { runQuery } from "../boards/query.ts";
+import { SOURCES } from "../boards/sources.ts";
+import { bodyCapFor, readBounded } from "./limits.ts";
 import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
+import { changeLimit, listLimits } from "../actions/limits.ts";
 import {
   accountSignIns,
   endAccountSession,
@@ -24,9 +32,12 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import { streamJson, thoughtStream } from "../core/thought_stream.ts";
 import {
   listAccounts,
   removeAccount,
+  retireAndRemoveAccount,
+  retirementPlan,
   suspendAccount,
   unsuspendAccount,
   verifyAccount,
@@ -37,6 +48,8 @@ import { emailVerified } from "../core/verify.ts";
 import { readHealth } from "../actions/health.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
+import { familyView } from "../spawn/family.ts";
+import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
@@ -95,6 +108,7 @@ import {
   refreshPullHead,
   resolveReviewThread,
   submitReview,
+  approveHere,
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
@@ -103,6 +117,7 @@ import { lookUrl } from "../core/looks.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
+import { THOUGHT_MAX, keepThought } from "../actions/thought.ts";
 import { search } from "../actions/search.ts";
 import {
   commitToBranch,
@@ -123,6 +138,7 @@ import {
   createToken,
   deleteSshKey,
   deleteToken,
+  HUMAN_CHECK_MESSAGE,
   signUp,
   updateProfile,
 } from "../actions/users.ts";
@@ -131,6 +147,7 @@ import { audienceFilter } from "../core/event_audience.ts";
 import {
   forkParentFor,
   getReposByIds,
+  isDecisionsBy,
 } from "../core/repos.ts";
 import {
   commentCounts,
@@ -158,8 +175,10 @@ import {
 import {
   getPull,
   listPulls,
+  variantSiblings,
   pullDiff,
   pullDir,
+  pullMergeStates,
   type Pull,
 } from "../core/pulls.ts";
 import {
@@ -260,6 +279,7 @@ import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
+import { forReader } from "../crew/handover.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import {
   milestoneData,
@@ -288,6 +308,7 @@ import { resolveOid } from "../git/merge.ts";
 import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
 import { fleetSelection, readFleetGraph } from "../actions/fleet-graph.ts";
+import { carriedBy } from "../core/carried.ts";
 import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
@@ -339,6 +360,7 @@ import {
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
+import { passportRoutes } from "./passport_edge.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -1092,6 +1114,7 @@ function membersAnswer<T>(result: Result<T, AppMembersError>): Response {
   }
 }
 export function apiRoutes(router: Router<Handler>): void {
+  passportRoutes(router);
   // ── accounts ─────────────────────────────────────────────────────────
 
   router.add("POST", "/api/v1/users", async (ctx) => {
@@ -1105,9 +1128,12 @@ export function apiRoutes(router: Router<Handler>): void {
         username: str(input.username),
         email: str(input.email),
         password: str(input.password),
+        humanToken: str(input.turnstile_token),
       },
       { address: clientAddress(ctx.request) },
     );
+    if (!created.ok && created.error === "human_check")
+      return apiError("human_check", 422, HUMAN_CHECK_MESSAGE);
     if (!created.ok) return json({ error: created.error }, 422);
     return json(publicUser(created.value), 201);
   });
@@ -1145,7 +1171,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!verified.ok) return unauthorized();
     const session = createSession(ctx.app.db, verified.value.id);
     return json(publicUser(verified.value), 201, {
-      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url),
+      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
     });
   });
 
@@ -1155,7 +1181,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
     return json({}, 200, {
-      "set-cookie": sessionCookie("", new Date(0), ctx.url),
+      "set-cookie": sessionCookie("", new Date(0), ctx.url, ctx.app.config.url),
     });
   });
 
@@ -1238,6 +1264,88 @@ export function apiRoutes(router: Router<Handler>): void {
   const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
     ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
 
+  // Boards (`boards/query.ts`): a site admin who is a person, never an agent.
+  const boardsAdmin = (ctx: Ctx): Response | undefined => {
+    if (!ctx.auth.user) return unauthorized();
+    return ctx.auth.user.isAdmin && ctx.auth.user.kind !== "agent"
+      ? undefined
+      : forbidden();
+  };
+
+  router.add("GET", "/api/v1/boards/sources", (ctx) => {
+    const denied = boardsAdmin(ctx);
+    if (denied) return denied;
+    return json({
+      sources: Object.entries(SOURCES).map(([name, s]) => ({
+        name,
+        time: s.time,
+        columns: s.columns,
+        ...(s.docs ? { docs: s.docs } : {}),
+      })),
+    });
+  });
+
+  router.add("POST", "/api/v1/boards/query", async (ctx) => {
+    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const bytes = await readBounded(ctx.request, bodyCapFor(ctx.request));
+    if (bytes === "too_large") return apiError("too_large", 413, "that is too large to read here");
+    let query: unknown;
+    try {
+      query = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      return apiError("bad_json", 400, "the body must be a JSON query object");
+    }
+    const answer = runQuery(ctx.app.db, query, { repoIds: "all" });
+    return answer.ok
+      ? json({ rows: answer.rows })
+      : apiError("bad_query", 400, answer.error);
+  });
+
+  const boardFailed = (e: BoardError): Response => {
+    if (e === "not_found") return notFound();
+    if (typeof e === "object") return apiError("refused", 422, e.refused);
+    return apiError(e, e === "exists" || e === "branch_moved" ? 409 : 422, "that board could not be saved");
+  };
+
+  router.add("GET", "/api/v1/boards", async (ctx) => {
+    const denied = boardsAdmin(ctx);
+    if (denied) return denied;
+    const listed = await listAllBoards(ctx.app, ctx.auth.user);
+    return listed.ok
+      ? json({ boards: listed.value.map((b) => ({ slug: b.slug, ...b.board })) })
+      : notFound();
+  });
+
+  router.add("GET", "/api/v1/boards/:slug", async (ctx) => {
+    const denied = boardsAdmin(ctx);
+    if (denied) return denied;
+    const shown = await showBoard(ctx.app, ctx.auth.user, ctx.params.slug!);
+    return shown.ok ? json({ slug: ctx.params.slug, ...shown.value }) : notFound();
+  });
+
+  router.add("PUT", "/api/v1/boards/:slug", async (ctx) => {
+    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const bytes = await readBounded(ctx.request, bodyCapFor(ctx.request));
+    if (bytes === "too_large") return apiError("too_large", 413, "that is too large to read here");
+    let input: unknown;
+    try {
+      input = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      return apiError("bad_json", 400, "the body must be a JSON board");
+    }
+    const done = await writeBoard(ctx.app, ctx.auth.user, ctx.params.slug!, input);
+    return done.ok ? json({ slug: ctx.params.slug, ...done.value }) : boardFailed(done.error);
+  });
+
+  router.add("DELETE", "/api/v1/boards/:slug", async (ctx) => {
+    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const done = await deleteBoard(ctx.app, ctx.auth.user, ctx.params.slug!);
+    return done.ok ? json({ deleted: true }) : boardFailed(done.error);
+  });
+
   // The forge's capacity (`core/capacity.ts`): read and changed live by an
   // admin, never by an agent; anyone else is told the door is not there.
   router.add("GET", "/api/v1/admin/capacity", (ctx) => {
@@ -1261,6 +1369,36 @@ export function apiRoutes(router: Router<Handler>): void {
       changed.error === "no_such_setting"
         ? "no such capacity setting"
         : "that value is outside what this setting takes",
+    );
+  });
+
+  // The forge's limits (`settings/limits.ts`): the same door as capacity.
+  router.add("GET", "/api/v1/admin/limits", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const listed = listLimits(ctx.app, ctx.auth.user);
+    return listed.ok ? json(listed.value) : notFound();
+  });
+
+  router.add("PUT", "/api/v1/admin/limits/:key", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const value =
+      input.value === null
+        ? null
+        : typeof input.value === "number" && Number.isFinite(input.value)
+          ? String(input.value)
+          : str(input.value);
+    const changed = changeLimit(ctx.app, ctx.auth.user, ctx.params.key!, value);
+    if (changed.ok) return json(changed.value);
+    if (changed.error.kind === "not_found") return notFound();
+    return apiError(
+      changed.error.kind,
+      422,
+      changed.error.kind === "no_such_limit"
+        ? "no such limit"
+        : changed.error.message,
     );
   });
 
@@ -1312,6 +1450,24 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("DELETE", "/api/v1/admin/accounts/:username", async (ctx) => {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
+    const input = await body(ctx.request);
+    if (input.retireOrgs === true) {
+      const name = ctx.params.username!;
+      if (input.confirm !== true) {
+        const plan = retirementPlan(ctx.app, ctx.auth.user, name);
+        return plan.ok ? json({ confirm_required: true, retire: plan.value }) : accountError(plan.error);
+      }
+      const retired = await retireAndRemoveAccount(ctx.app, ctx.auth.user, name, {
+        confirmed: true,
+      });
+      if (!retired.ok) return accountError(retired.error);
+      if (retired.value.failed !== null)
+        return json(
+          { error: "delete_failed", failed: retired.value.failed, removed: retired.value.removed },
+          500,
+        );
+      return json({ removed: name, retired: retired.value.removed });
+    }
     const done = await removeAccount(ctx.app, ctx.auth.user, ctx.params.username!);
     if (!done.ok && done.error === "last_owner") {
       const user = getUserByName(ctx.app.db, ctx.params.username!);
@@ -1627,6 +1783,12 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const input = await body(ctx.request);
+    if (input.decisionsBy !== undefined && !isDecisionsBy(input.decisionsBy))
+      return apiError(
+        "bad_decisions_by",
+        422,
+        "decisionsBy is me, decider or decider_tell",
+      );
     const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
       ...(input.visibility === "public" || input.visibility === "private"
         ? { visibility: input.visibility }
@@ -1649,6 +1811,10 @@ export function apiRoutes(router: Router<Handler>): void {
       // "Outsiders may trigger the crew" (`crew/direct.ts`): an admin's, never an agent's.
       ...(typeof input.crewOutsiders === "boolean"
         ? { crewOutsiders: input.crewOutsiders }
+        : {}),
+      // The standing rule for its decisions: also an admin's, never an agent's.
+      ...(isDecisionsBy(input.decisionsBy)
+        ? { decisionsBy: input.decisionsBy }
         : {}),
     });
     if (!updated.ok) return respondAccess(updated.error, 422);
@@ -1734,6 +1900,7 @@ export function apiRoutes(router: Router<Handler>): void {
       conflicts: relation.conflicts,
       forkTip: relation.forkTip,
       parentTip: relation.parentTip,
+      parentForge: parentForgeFor(ctx.app.config),
       converge:
         converge === undefined
           ? null
@@ -2390,6 +2557,18 @@ export function apiRoutes(router: Router<Handler>): void {
       );
     },
   );
+  // Which stage of the one flow each open issue is in, and what went live in
+  // the last day (src/flow).
+  router.add("GET", "/api/v1/repos/:owner/:name/flow", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    return json(
+      readFlow(ctx.app.db, repo, {
+        now: new Date(),
+        scope: sealedScope(ctx.app.db, repo, ctx.auth.user),
+      }),
+    );
+  });
   // A plan, all or nothing: the same action as the MCP `plan` tool, so the
   // same items and the same refusals (docs/PLANNING.md).
   router.add("POST", "/api/v1/repos/:owner/:name/plan", async (ctx) => {
@@ -2485,6 +2664,20 @@ export function apiRoutes(router: Router<Handler>): void {
       return data === undefined ? notFound() : json(data);
     },
   );
+  // Keep a thought exactly as typed (#1658): append-only, never edited.
+  router.add("POST", "/api/v1/thoughts", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const kept = keepThought(ctx.app, ctx.auth.user, input.text, "api");
+    if (kept.ok) return json({ id: kept.value.id }, 201);
+    if (kept.error === "unauthorized") return unauthorized();
+    return apiError(
+      "invalid",
+      422,
+      `send {"text": "…"} as a string of at most ${THOUGHT_MAX.toLocaleString("en-US")} characters`,
+    );
+  });
   // Watch a milestone, or stop (#732): the caller's own watch, so a write
   // token and nothing more. The read above says `watching`.
   for (const method of ["PUT", "DELETE"] as const)
@@ -2567,7 +2760,7 @@ export function apiRoutes(router: Router<Handler>): void {
           listActiveRuns(ctx.app.db, [repo.id]),
         ),
         pillars,
-        await askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
+        askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
       ),
     );
   });
@@ -2588,6 +2781,7 @@ export function apiRoutes(router: Router<Handler>): void {
         show: raw ?? "unshipped",
         order: order ?? "oldest",
       }).map(askedJson),
+      thoughts: ctx.auth.user ? thoughtStream(ctx.app.db, ctx.auth.user).map(streamJson) : [],
     });
   });
   // Every repository the caller can see, one entry each: the global map.
@@ -2616,7 +2810,9 @@ export function apiRoutes(router: Router<Handler>): void {
         // What the decider saw about a sealed report is the report's (`sealed.ts`).
         .filter(
           (d) => mayViewId(ctx.app.db, repo, d.issueId, ctx.auth.user),
-        ),
+        )
+        // A hand-over's state carries its tapper's private preferences.
+        .map((d) => forReader(d, ctx.auth.user)),
       week: decisionStats(ctx.app.db, repo.id, week),
     });
   });
@@ -2713,17 +2909,25 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // ── pull requests — so automation drives the review/merge loop ───────
 
-  router.add("GET", "/api/v1/repos/:owner/:name/pulls", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/pulls", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = withLabelsMany(
-      ctx,
-      listPulls(ctx.app.db, repo.id, {
-        ...query,
-        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-      }),
+    const pulls = listPulls(ctx.app.db, repo.id, {
+      ...query,
+      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+    });
+    const states = await pullMergeStates(
+      await Promise.all(
+        pulls.map(async (p) => ({ dir: await pullDirOf(ctx, repo, p), pull: p })),
+      ),
     );
+    const siblings = variantSiblings(ctx.app.db, pulls);
+    const items = withLabelsMany(ctx, pulls).map((item, i) => ({
+      ...item,
+      variantSiblings: siblings[i] ?? [],
+      ...(states[i] ?? {}),
+    }));
     return json(paged(items, query.limit, (p) => p.number));
   });
 
@@ -2765,7 +2969,13 @@ export function apiRoutes(router: Router<Handler>): void {
         created.error === "origin_unreachable"
         ? originAware(created.error)
         : respondAccess(created.error, 422);
-    return json(withLabels(ctx, created.value), 201);
+    return json(
+      {
+        ...withLabels(ctx, created.value),
+        variantSiblings: variantSiblings(ctx.app.db, [created.value])[0] ?? [],
+      },
+      201,
+    );
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/pulls/:number", async (ctx) => {
@@ -2785,6 +2995,10 @@ export function apiRoutes(router: Router<Handler>): void {
     const hold = getHold(ctx.app.db, found.pull.id);
     return json({
       ...withLabels(ctx, found.pull),
+      variantSiblings: variantSiblings(ctx.app.db, [found.pull])[0] ?? [],
+      ...(found.pull.state === "open" && found.pull.mergedAt === null
+        ? { mergeable: status.mergeable, conflicts: status.conflicts }
+        : {}),
       status,
       diff,
       hold: hold === undefined ? null : holdJson(hold),
@@ -2806,6 +3020,9 @@ export function apiRoutes(router: Router<Handler>): void {
       const wanted = input.state === undefined ? undefined : str(input.state);
       if (wanted !== undefined && wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
+      // A pull has no reason to give: "parked" is the crew's word alone.
+      if (input.reason !== undefined || input.into !== undefined)
+        return json({ error: "invalid_reason" }, 422);
       if (
         wanted === undefined &&
         text.title === undefined &&
@@ -3114,6 +3331,74 @@ export function apiRoutes(router: Router<Handler>): void {
         return originAware(submitted.error, 422);
       }
       return json(submitted.value, 201);
+    },
+  );
+
+  // Like or dislike one pull among its variant siblings; a dislike closes it
+  // with a one-line reason.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/variant",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const answer = str(input.answer);
+      if (answer !== "like" && answer !== "dislike")
+        return apiError("invalid_answer", 422, "answer is like or dislike");
+      const voted = voteVariant(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        answer,
+        str(input.reason),
+      );
+      if (!voted.ok) {
+        if (voted.error === "forbidden" || voted.error === "unauthorized")
+          return respondAccess(voted.error, 422);
+        return apiError(voted.error, 422, "that vote could not be recorded");
+      }
+      return json({ answer, closed: voted.value.closed }, 201);
+    },
+  );
+
+  // Let an origin fork's pull run here: a person who can write approves its
+  // current head, and its check and preview start.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/approve-here",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const done = await approveHere(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+      );
+      if (!done.ok) {
+        if (done.error === "self_review")
+          return apiError(
+            "self_review",
+            422,
+            "you cannot approve your own pull request",
+          );
+        if (done.error === "not_foreign")
+          return apiError(
+            "not_foreign",
+            422,
+            "this pull needs no approval to run",
+          );
+        if (done.error === "not_open")
+          return apiError("not_open", 422, "this pull is closed");
+        return respondAccess(done.error, 422);
+      }
+      return json(done.value, 201);
     },
   );
 
@@ -3900,6 +4185,23 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(state);
   });
 
+  // A child's signed heartbeat (docs/SPAWN.md): counts and version, never
+  // data. Every refusal is the same 404, so nothing says who is a child.
+  router.add("POST", "/api/v1/heartbeat", async (ctx) => {
+    const bytes = await readBounded(ctx.request, 1024);
+    if (bytes === "too_large") return apiError("not_found", 404, "no such door");
+    const raw = new TextDecoder().decode(bytes);
+    const kept = await receiveBeat(ctx.app, raw, ctx.request.headers.get(SIGNATURE_HEADER));
+    return kept ? json({ ok: true }) : apiError("not_found", 404, "no such door");
+  });
+
+  // The family (#425): the parent for anyone, the children for an admin.
+  router.add("GET", "/api/v1/family", async (ctx) => {
+    const denied = ctx.auth.user === undefined ? undefined : requireScope(ctx, "ro");
+    if (denied) return denied;
+    return json(await familyView(ctx.app, ctx.auth.user?.isAdmin === true));
+  });
+
   // A forge's children (docs/SPAWN.md): an admin's, planned before made.
   router.add("GET", "/api/v1/forges", async (ctx) => {
     const denied = requireScope(ctx, "ro");
@@ -4517,7 +4819,12 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const run = getRepoRun(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
-    return run.ok ? json(runForViewer(ctx, repo)(run.value)) : notFound();
+    if (!run.ok) return notFound();
+    // The merged pulls a finished production deploy carries (`core/carried.ts`).
+    return json({
+      ...runForViewer(ctx, repo)(run.value),
+      carries: carriedBy(ctx.app.db, run.value.id),
+    });
   });
 
   // The log: text, or a live tail as server-sent events (`?follow=1`, or
@@ -4527,7 +4834,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
-    if (!found.ok) return notFound();
+    if (!found.ok || found.value.logHidden) return notFound();
     const follow =
       ctx.url.searchParams.get("follow") === "1" ||
       (ctx.request.headers.get("accept") ?? "").includes("text/event-stream");

@@ -111,6 +111,12 @@ export interface CellSpec {
    * environment's (`egressMode`) when the caller has none.
    */
   readonly egressMode?: "enforce" | "report" | undefined;
+  /**
+   * Whose cell this is, for the machine sampler (`boards/sampler.ts`):
+   * `check:<run id>` or `app:<slug>/<env>`. An unlabelled cell is watched
+   * the same, and never sampled.
+   */
+  readonly label?: string | undefined;
 }
 
 /**
@@ -360,7 +366,7 @@ export function openCell(
   let breach: string | undefined;
   let unwatch: (() => void) | undefined;
   const watch = (pid: number, stop: (why: string) => void): void => {
-    unwatch = watchTree(pid, spec.limits, writable, (why) => {
+    unwatch = watchTree(pid, spec.limits, writable, spec.label, (why) => {
       if (breach !== undefined) return;
       breach = why;
       log(`stopped: ${why}`);
@@ -506,10 +512,41 @@ interface Watched {
   readonly breach: (why: string) => void;
   readonly samples: { at: number; ticks: number }[];
   ticks: number;
+  readonly key: number;
+  readonly label: string | undefined;
+  /** The tree's CPU ticks so far and resident KiB, at the last tick. */
+  last?: { ticks: number; kib: number };
 }
 
 const watched = new Set<Watched>();
 let timer: ReturnType<typeof setInterval> | undefined;
+let nextKey = 1;
+
+/** One labelled cell as its watch last read it: cumulative CPU and resident memory. */
+export interface CellCounter {
+  /** Unique per watched tree, so a rate never spans two processes. */
+  readonly key: number;
+  readonly label: string;
+  /** User + system CPU of every process in the tree, µs (`/proc/<pid>/stat` ticks × 10⁶ / CLK_TCK). */
+  readonly cpuUsec: number;
+  /** Resident memory of every process in the tree, bytes (`VmRSS`). */
+  readonly memoryBytes: number;
+}
+
+/** Every labelled cell the watch has read at least once. */
+export function cellCounters(): CellCounter[] {
+  const out: CellCounter[] = [];
+  for (const e of watched) {
+    if (e.label === undefined || e.last === undefined) continue;
+    out.push({
+      key: e.key,
+      label: e.label,
+      cpuUsec: (e.last.ticks * 1_000_000) / CLK_TCK,
+      memoryBytes: e.last.kib * 1024,
+    });
+  }
+  return out;
+}
 
 /**
  * Kill every process under `root`, deepest first. `root` is bubblewrap,
@@ -605,6 +642,7 @@ function watchTree(
   root: number,
   limits: Limits,
   writable: readonly string[],
+  label: string | undefined,
   breach: (why: string) => void,
 ): () => void {
   const entry: Watched = {
@@ -614,6 +652,8 @@ function watchTree(
     breach,
     samples: [],
     ticks: 0,
+    key: nextKey++,
+    label,
   };
   watched.add(entry);
   timer ??= setInterval(tick, WATCH.tickMs);
@@ -732,6 +772,7 @@ function tick(): void {
       kib += residentKiB(pid);
       ticks += rows.get(pid)?.ticks ?? 0;
     }
+    entry.last = { ticks, kib };
     if (kib > limits.memoryMiB * 1024) {
       entry.breach(
         `used ${mib(kib * 1024)} of memory, over its ${limits.memoryMiB} MiB limit`,

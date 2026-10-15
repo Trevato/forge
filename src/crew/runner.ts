@@ -61,6 +61,7 @@ import { runGitCapture } from "../git/env.ts";
 import { looksForEnv } from "../core/looks.ts";
 import { aheadCount, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { alreadyDoneSummary, namedCommits, onBase } from "./already.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
 import { createLog, redactValues } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -83,6 +84,7 @@ import {
   resumeAt,
   whenText,
 } from "./limits.ts";
+import { clearStaleLocks, lockedOut } from "./locks.ts";
 import { interruptedSummary } from "./interrupted.ts";
 import { laterGate } from "./later.ts";
 import { parkedTwice } from "./parks.ts";
@@ -109,6 +111,7 @@ import { workdirFor } from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
 import { feedbackSince } from "./news.ts";
 import { SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
+import { passportEnv } from "./passport_env.ts";
 
 const log = createLog("crew");
 
@@ -928,6 +931,7 @@ async function work(
       ...identity,
       FORGE_URL: options.forgeUrl,
       FORGE_TOKEN: token.token,
+      ...passportEnv(app.config.dataDir),
       ...credentialEnv(picked),
       ...grant.env,
       ...(options.configDir === undefined
@@ -1172,6 +1176,22 @@ async function work(
     if (declined) {
       const why = result.result.replace(/^\s*DECLINED:?\s*/i, "").trim();
       write(`declined: ${why.split("\n")[0] ?? ""}`);
+      // Done on the base already, by a commit that is there: its own
+      // outcome, not a park (`already.ts`). A claim without one is an
+      // ordinary decline.
+      const done = await onBase(
+        bare,
+        repo.defaultBranch,
+        namedCommits(why.split("\n")[0] ?? ""),
+      );
+      if (done.length > 0)
+        return {
+          state: "ok",
+          summary: alreadyDoneSummary(done),
+          sessionId: result.sessionId,
+          costUsd: result.costUsd,
+          turns: result.turns,
+        };
       // The reason lives on the run record (its summary) and the ledger
       // line, never as a comment: a comment on an assigned issue is the
       // thing that starts the next run.
@@ -1223,6 +1243,7 @@ async function work(
         : `Budget reached at $${stoppedAt.toFixed(2)}; this is where it stopped.`,
       write,
       Object.values(grant.env),
+      run.variantGroup,
     );
     return {
       state: result.ok || landed.pushed ? "ok" : "failed",
@@ -1297,6 +1318,7 @@ async function prepareClone(
   write: (line: string) => void,
   signal: AbortSignal,
   keep = false,
+  fresh = false,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   // Two addresses for one forge. The forge itself clones and fetches over
   // `localUrl`, on this machine. The agent's remotes carry `forgeUrl`, the
@@ -1323,6 +1345,9 @@ async function prepareClone(
         error: `clone failed: ${cloned.error.stderr.slice(0, 200)}`,
       };
   } else {
+    // A kept clone may carry the locks of a run the forge cut off. This run
+    // owns the clone now, so a lock a minute old is nobody's.
+    clearStaleLocks(dir, write);
     const fetched = await runGit(
       [
         "fetch",
@@ -1395,6 +1420,37 @@ async function prepareClone(
     cwd: dir,
     env,
   });
+  if (!checked.ok && !fresh && lockedOut(checked.error.stderr)) {
+    // A lock too young to clear, or one the sweep missed: start over once
+    // from a fresh clone rather than failing the follow-up.
+    // Only when nothing would be lost: a cut-off run may hold commits that
+    // were never pushed, and those live nowhere else.
+    const unpushed = await runGit(
+      ["rev-list", "--branches", "--not", "--remotes=origin"],
+      { cwd: dir, env },
+    );
+    if (!unpushed.ok || unpushed.value.trim() !== "")
+      return {
+        ok: false,
+        error:
+          "checkout blocked by a git lock, and the kept clone holds commits that were never pushed; left as it is",
+      };
+    write("checkout blocked by a git lock; cloning afresh");
+    rmSync(dir, { recursive: true, force: true });
+    return prepareClone(
+      app,
+      options,
+      repo,
+      fork,
+      branch,
+      dir,
+      env,
+      write,
+      signal,
+      false,
+      true,
+    );
+  }
   if (!checked.ok)
     return {
       ok: false,
@@ -1456,6 +1512,7 @@ async function landWork(
   note: string | undefined,
   write: (line: string) => void,
   granted: readonly string[] = [],
+  variantGroup: string | null = null,
 ): Promise<{ pushed: boolean; summary: string }> {
   // A model may echo a granted value into a file; the tree is scrubbed
   // before the forge commits it, and the agent's own commits are searched
@@ -1600,6 +1657,7 @@ async function landWork(
     baseBranch: repo.defaultBranch,
     headBranch: branch,
     headRepo: fork,
+    ...(variantGroup === null ? {} : { variantGroup }),
   });
   if (!opened.ok) {
     write(`could not open the pull: ${JSON.stringify(opened.error)}`);

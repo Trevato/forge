@@ -13,7 +13,7 @@ import { appsRuntime } from "../apps/runtime.ts";
 import { listApps } from "../core/apps.ts";
 import type { User } from "../core/users.ts";
 import { forgeHealth, rolloutLine, type ForgeHealth } from "../kernel/guard.ts";
-import { vitals, type Vitals } from "../kernel/vitals.ts";
+import { laneLine, sinceWords, vitals, type Degraded, type Vitals } from "../kernel/vitals.ts";
 
 export function readHealth(
   app: App,
@@ -25,7 +25,12 @@ export function readHealth(
   const envs = runtime
     ? listApps(app.db).flatMap((record) => runtime.status(record))
     : [];
-  const v = vitals({ db: app.db, dataDir: app.config.dataDir, envs });
+  const v = vitals({
+    db: app.db,
+    dataDir: app.config.dataDir,
+    envs,
+    signals: app.signals,
+  });
   return { ...v, ...forge, ok: forge.ok && v.ok };
 }
 
@@ -44,6 +49,25 @@ export function forgeNeeds(app: App, actor: User | undefined): string[] | undefi
     ...h.incidents
       .filter((i) => i.key !== "stuck" && i.key !== "held")
       .map((i) => `${i.key}: ${i.message}`),
-    ...h.needs,
+    ...h.degraded.map(needLine),
   ];
+}
+
+export { sinceWords };
+
+/** A cause as one line: its sentence and when it began (a stuck run's says so already). */
+export function needLine(d: Degraded, now: number = Date.now()): string {
+  return d.cause.startsWith("stuck:")
+    ? d.sentence
+    : `${d.sentence} Since ${sinceWords(d.since, now)}.`;
+}
+
+/**
+ * The check lane as one line for a site admin, as the board's forge strip
+ * prints it; `null` for anyone else, and when no check is queued.
+ */
+export function forgeLane(app: App, actor: User | undefined): string | null {
+  if (!actor?.isAdmin) return null;
+  const h = readHealth(app, actor) as Vitals & ForgeHealth;
+  return laneLine(h.lane);
 }

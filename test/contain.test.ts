@@ -20,6 +20,7 @@ import { enableApp } from "../src/actions/apps.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import {
+  cellCounters,
   cellsAvailable,
   hiddenMounts,
   mountMode,
@@ -36,7 +37,7 @@ import {
 import { noteReached, reachedHosts } from "../src/apps/egress_report.ts";
 import { egressNote } from "../src/web/studio/egress.ts";
 import { parseCheck, parseManifest } from "../src/apps/manifest.ts";
-import { childEnv, runStep } from "../src/apps/process.ts";
+import { childEnv, runStep, stepCell } from "../src/apps/process.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { runAppTty } from "../src/apps/tty.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
@@ -473,6 +474,21 @@ describe("cells hide every mount that may carry a secret", () => {
   });
 });
 
+describe("cells are labelled for the machine sampler (boards/sampler.ts)", () => {
+  test("a deploy's install and test steps carry the environment's label", () => {
+    const manifest = parseManifest(JSON.stringify({ app: { run: "bun server.ts" } }), undefined);
+    if (!manifest.ok) throw new Error(JSON.stringify(manifest.error));
+    const input = {
+      dir: "/x", dataDir: "/d", manifest: manifest.value, env: "production" as const,
+      url: "http://x", commitOid: "0".repeat(40), forgeUrl: "http://forge",
+      identityKey: "k", log: () => {}, signal: new AbortController().signal,
+    };
+    expect(stepCell(input)).toBeUndefined();
+    const spec = stepCell({ ...input, cell: { hide: [], home: "/h", label: "app:notes/production" } });
+    expect(spec?.label).toBe("app:notes/production");
+  });
+});
+
 // A host told not to hold cells (`FORGE_CELLS=off`: a check cell, where a
 // cell inside a cell is not a cell) is a host without cells for these.
 const noCells =
@@ -600,6 +616,11 @@ describe.skipIf(noCells)(
       throw new Error(`${kind} did not settle in time`);
     }
 
+    // Every label the machine sampler could have read while these cells ran.
+    const labels = new Set<string>();
+    let recorder: ReturnType<typeof setInterval> | undefined;
+    const savedTick = WATCH.tickMs;
+
     const viaHost = async (url: string, path: string): Promise<Response> =>
       fetch(`${servers.url}${path}`, { headers: { host: new URL(url).host } });
 
@@ -607,6 +628,10 @@ describe.skipIf(noCells)(
       // The forge's own environment carries this; no cell may ever see it.
       process.env["FORGE_TEST_CANARY"] = CANARY;
       dataDir = await mkdtemp(join(tmpdir(), "forge-cells-"));
+      WATCH.tickMs = 200;
+      recorder = setInterval(() => {
+        for (const c of cellCounters()) labels.add(c.label);
+      }, 50);
       app = createApp({ dataDir, port: 0 });
       servers = await serve(app);
       runtime = new AppsRuntime(app, {
@@ -672,6 +697,8 @@ describe.skipIf(noCells)(
 
     afterAll(async () => {
       delete process.env["FORGE_TEST_CANARY"];
+      clearInterval(recorder);
+      WATCH.tickMs = savedTick;
       await checks?.stop();
       await runtime?.stop();
       listener?.stop(true);
@@ -802,6 +829,15 @@ describe.skipIf(noCells)(
       const fromPreview = await viaHost(runtime.urlFor(record, env), "/probe");
       expectContained((await fromPreview.json()) as Record<string, string>);
     }, 240_000);
+
+    test("each cell is sampled by whose it is: app:<slug>/<env> and check:<run id>", () => {
+      expect(labels).toContain("app:ledger/production");
+      expect(labels).toContain("app:probe/production");
+      const checksRun = listRuns(app.db, repo.id, { kind: "check", limit: 50 });
+      expect(checksRun.length).toBeGreaterThan(0);
+      expect(checksRun.some((r) => labels.has(`check:${r.id}`))).toBe(true);
+      for (const l of labels) expect(l).toMatch(/^(app:[a-z0-9-]+\/[a-z0-9-]+|check:\S+)$/);
+    });
   },
 );
 
@@ -876,6 +912,29 @@ describe.skipIf(noCells)("cells: limits stop a step, and say which", () => {
       expect(result.error).toMatch(
         /^check stopped: it wrote \d+ MiB to disk, over its 64 MiB limit$/,
       );
+  }, 30_000);
+
+  test("a labelled cell is counted while it runs and gone once it ends; an unlabelled one never is", async () => {
+    const seen: { label: string; cpuUsec: number; memoryBytes: number }[] = [];
+    const poll = setInterval(() => seen.push(...cellCounters()), 50);
+    try {
+      // Holds 64 MiB for a few watch ticks (200 ms each here), then ends.
+      const hold = `bun -e "const a = new Uint8Array(64 << 20).fill(1); await Bun.sleep(1500); console.log(a[0])"`;
+      const [labelled, plain] = await Promise.all([
+        step(hold, { ...cell({}), label: "check:t1" }),
+        step(hold, cell({})),
+      ]);
+      expect(labelled.ok).toBe(true);
+      expect(plain.ok).toBe(true);
+    } finally {
+      clearInterval(poll);
+    }
+    expect(seen.length).toBeGreaterThan(0);
+    expect(new Set(seen.map((c) => c.label))).toEqual(new Set(["check:t1"]));
+    const last = seen.at(-1)!;
+    expect(last.memoryBytes).toBeGreaterThan(64 * 2 ** 20);
+    expect(last.cpuUsec).toBeGreaterThanOrEqual(0);
+    expect(cellCounters()).toEqual([]);
   }, 30_000);
 
   test("within its limits, a step runs, writes only where it may, and sees no mounted secret", async () => {

@@ -23,6 +23,8 @@ import { issueMayRun } from "../core/pull_trust.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
   cancelRun,
+  getRun,
+  cancelRunsForPull,
   checksForHead,
   claimRun,
   createRun,
@@ -35,11 +37,15 @@ import {
   sweepAbandonedChecks,
   type Run,
 } from "../core/runs.ts";
-import { Gate } from "../git/env.ts";
+import { Gate, runGit } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { mergeForCheck } from "./merged.ts";
+import { checkKey, provenBy, recordProven } from "./proven.ts";
 import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
+import { keepCache, restoreCache } from "./cache.ts";
+import { ASKED, redMain, unheld } from "./red_main.ts";
+import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { getIssueById } from "../core/issues.ts";
 import { repoDir } from "../git/repos.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
@@ -65,6 +71,10 @@ import {
   type CellSpec,
 } from "../apps/contain.ts";
 import { summariseCheckFailure } from "./summary.ts";
+import type { Result } from "../kernel/result.ts";
+import { placementFromEnv, type Placement } from "./placement.ts";
+import { runJobStep } from "./job_step.ts";
+import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
 
 const log = createLog("checks");
@@ -80,6 +90,24 @@ export interface ChecksOptions {
   readonly label?: string | undefined;
   /** How long a check may run before it is killed. @default BUDGETS.gate */
   readonly budgetMs?: number | undefined;
+  /**
+   * How long a red main holds a pull's check (`checks/red_main.ts`). @default 0,
+   * nothing held; the forge says `RED_HOLD_MS`.
+   */
+  readonly redHoldMs?: number | undefined;
+  /**
+   * How long `stop` lets checks already running finish before it cuts them
+   * off and queues them again (#1796). Nothing new starts meanwhile.
+   * @default 0
+   */
+  readonly drainMs?: number | undefined;
+  /**
+   * Where a check's commands run (`checks/placement.ts`). @default from the
+   * environment: `process`.
+   */
+  readonly placement?: Placement | undefined;
+  /** The kube client a `job` placement speaks through; tests stand one in. */
+  readonly job?: JobOptions | undefined;
 }
 
 export interface ChecksHandle {
@@ -187,6 +215,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   const capacity = (): number =>
     capacityCount(app.db, "checks.concurrency", options.concurrency ?? 1);
   const gate = options.gate ?? new Gate(capacity());
+  const placement = options.placement ?? placementFromEnv();
   /** Full gates on land in flight: not slots in the queue, but stopped with it. */
   const gates = new Set<AbortController>();
   const inFlight = new Map<
@@ -230,17 +259,27 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     // is still waiting, and the same commit is not checked twice. Looked for
     // and written in one write transaction, so a second forge process over
     // this database (a roll) cannot queue the same check beside it.
+    const superseded: Run[] = [];
     const { run, fresh } = transact(app.db, () => {
       for (const active of listActive(app.db, "check")) {
         if (active.repoId !== repo.id || active.env !== env) continue;
-        if (active.commitOid === commitOid)
+        // A person asking for a check a red main holds queues it as theirs,
+        // which runs (`checks/red_main.ts`); any other repeat is the same check.
+        if (
+          active.commitOid === commitOid &&
+          !(reason === ASKED && active.state === "queued" && active.reason !== ASKED)
+        )
           return { run: active, fresh: false };
-        if (active.state === "queued")
-          cancelRun(
+        // A pull's running check is for a head nobody will land either:
+        // it is stopped too, below, once the row says so.
+        if (active.state === "queued" || issueId !== undefined) {
+          const gone = cancelRun(
             app.db,
             active.id,
             `superseded by ${commitOid.slice(0, 7)}`,
           );
+          if (gone && active.state === "running") superseded.push(gone);
+        }
       }
       const created = createRun(app.db, {
         repoId: repo.id,
@@ -253,6 +292,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       });
       return { run: created, fresh: true };
     });
+    // The row is cancelled, so the check's own end finishes nothing and
+    // announces nothing; the abort is what frees its slot and its checkout.
+    for (const old of superseded) inFlight.get(old.id)?.abort.abort();
     if (!fresh) return run;
     announceRun(app, run, actorId);
     schedule();
@@ -291,8 +333,13 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const limit = capacity();
     if (options.gate === undefined) gate.resize(limit);
     while (inFlight.size < limit) {
-      const queued = listActive(app.db, "check").filter(
-        (run) => run.state === "queued" && !inFlight.has(run.id),
+      // A pull's check waits while its main is red (`checks/red_main.ts`).
+      const queued = unheld(
+        listActive(app.db, "check").filter(
+          (run) => run.state === "queued" && !inFlight.has(run.id),
+        ),
+        (repoId) => redMain(app.db, repoId),
+        options.redHoldMs ?? 0,
       );
       const next = pickNext(queued);
       if (!next) return;
@@ -407,6 +454,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         if (failed) announceRun(app, failed);
         return;
       }
+      // Ended from outside while it ran: its pull landed or closed, and
+      // the row says so. That is not this check failing.
+      if (!outcome.ok && getRun(app.db, run.id)?.state === "cancelled") {
+        write(`superseded: ${getRun(app.db, run.id)?.summary ?? "cancelled"}`);
+        return;
+      }
       if (!outcome.ok && stopped && signal.aborted) {
         // Cut off by this forge stopping, not by the check: the same check
         // goes back on the queue, and the forge that carries on runs it.
@@ -420,7 +473,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       const done = finishRun(app.db, run.id, {
         state: outcome.ok ? "ok" : "failed",
         summary: outcome.ok
-          ? `check passed in ${seconds}s`
+          ? outcome.proven === undefined
+            ? `check passed in ${seconds}s`
+            : `already proven green by ${outcome.proven}`
           : `check failed: ${outcome.error}`,
         ...(outcome.ok || outcome.detail === undefined
           ? {}
@@ -439,7 +494,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     write: (line: string) => void,
     signal: AbortSignal,
   ): Promise<
-    | { ok: true }
+    | { ok: true; proven?: string }
     | { ok: false; error: string; detail?: CheckDetail | undefined }
   > {
     const bare = await runDir(app.db, app.reposRoot, repo, run.issueId);
@@ -457,6 +512,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       commitOid: run.commitOid,
       pull,
       tier: pull === undefined ? "run" : "fast",
+      keep: run.issueId === null && run.env === repo.defaultBranch,
+      keepImpact: pull === undefined && run.env === repo.defaultBranch,
       write,
       signal,
     });
@@ -473,6 +530,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     readonly pull?: Pull | undefined;
     /** `run`: a push to a branch; `fast`: a pull's push; `full`: on land. */
     readonly tier: "run" | "fast" | "full";
+    /** A check of the default branch's own push: its cache is kept. */
+    readonly keep?: boolean;
+    /** A green run keeps the impact map it measured; `full` always does. */
+    readonly keepImpact?: boolean;
     readonly write: (line: string) => void;
     readonly signal: AbortSignal;
   }
@@ -480,7 +541,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   async function runTier(
     x: Execution,
   ): Promise<
-    | { ok: true }
+    | { ok: true; proven?: string }
     | { ok: false; error: string; detail?: CheckDetail | undefined }
   > {
     const { bare, repo, write, signal } = x;
@@ -561,6 +622,29 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     // which the clone is given as a repository of its own: `origin/main` is
     // not a ref there.
     const base = manifest.fast !== null ? tip : undefined;
+    // The tree this runs on under this gate has been green before: that is
+    // the verdict, and nothing is checked out (#1795).
+    const learned =
+      base === undefined ? "" : readLearned(app.config.dataDir, x.pull!.id).join(",");
+    const tree = await runGit(["rev-parse", `${run.commitOid}^{tree}`], { cwd: bare });
+    const key = tree.ok
+      ? checkKey({
+          repoId: repo.id,
+          treeOid: tree.value.trim(),
+          command,
+          install: manifest.install,
+          timeout: manifest.timeout,
+          egress: manifest.egress,
+          limits: manifest.limits,
+          base,
+          learned,
+        })
+      : undefined;
+    const earlier = key === undefined ? undefined : provenBy(app.db, key);
+    if (earlier !== undefined) {
+      write(`already proven green by ${earlier}`);
+      return { ok: true, proven: earlier };
+    }
     const dir = join(checksRoot(app.config.dataDir), run.id);
     mkdirSync(dir, { recursive: true });
     write(mergeLine === "" ? `checking out ${run.commitOid.slice(0, 7)}` : mergeLine);
@@ -573,18 +657,49 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         return { ok: false, error: given.error };
       }
     }
+    // What the base's own check left (`checks/cache.ts`): tsc's build info
+    // and the gate's per-file times, keyed by the commit this one builds on.
+    const cached = restoreCache(
+      app.config.dataDir,
+      repo.id,
+      tip === undefined ? [] : [tip],
+      dir,
+    );
+    if (cached !== undefined) write(`cache from ${cached.slice(0, 7)}`);
+    // Every check starts from the impact map the last green default-branch
+    // run measured; the fast tier selects by it.
+    try {
+      const seeded = seedImpact(app.config.dataDir, repo.id, dir);
+      if (seeded > 0) write(`impact map: ${seeded} tests, from the last green ${repo.defaultBranch}`);
+    } catch (error) {
+      write(`impact map not seeded: ${String(error)}`);
+    }
     // The check is repository code: it runs in a cell of its own
     // (`apps/contain.ts`), its checkout and a home its only places to write,
     // the forge, the registry and what it declared its only way out.
-    const cells = await cellsAvailable();
+    const job = placement.mode === "job" ? placement : undefined;
     if (x.runId !== undefined)
-      noteRunProgress(app.db, x.runId, {
-        sandbox: { enforced: cells.ok, note: cells.ok ? "" : cells.reason },
-      });
-    if (!cells.ok)
-      write(`uncontained here: ${cells.reason}; the check runs unrestricted`);
+      noteRunProgress(app.db, x.runId, { placement: placement.mode });
+    // A Job is its own boundary: no cell here, the cluster holds it.
+    const cells = job === undefined ? await cellsAvailable() : undefined;
+    if (cells !== undefined) {
+      if (x.runId !== undefined)
+        noteRunProgress(app.db, x.runId, {
+          sandbox: { enforced: cells.ok, note: cells.ok ? "" : cells.reason },
+        });
+      if (!cells.ok)
+        write(`uncontained here: ${cells.reason}; the check runs unrestricted`);
+    } else {
+      // The cluster holds a Job, but not as a cell does: the egress a
+      // check declared is not enforced here, and the run says so.
+      if (x.runId !== undefined)
+        noteRunProgress(app.db, x.runId, {
+          sandbox: { enforced: false, note: "egress not enforced on a cluster job" },
+        });
+      write("placement: job");
+    }
     const home = `${dir}.home`;
-    const cell: CellSpec | undefined = cells.ok
+    const cell: CellSpec | undefined = cells?.ok
       ? {
           dir,
           writable: [],
@@ -596,6 +711,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           onUndeclared: (host, port) =>
             noteReached(app.config.dataDir, repo.id, host, port),
           egressMode: egressSetting(app.db),
+          label: `check:${run.id}`,
         }
       : undefined;
     try {
@@ -606,14 +722,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         FORGE_URL: options.forgeUrl,
         FORGE_CHECK: run.id,
         FORGE_COMMIT: x.commitOid,
+        FORGE_CHECK_IMPACT: IMPACT_FILE,
         ...(base === undefined
           ? {}
           : {
               FORGE_CHECK_BASE: base,
-              FORGE_CHECK_LEARNED: readLearned(
-                app.config.dataDir,
-                x.pull!.id,
-              ).join(","),
+              FORGE_CHECK_LEARNED: learned,
             }),
         // A cell inside a cell is not a cell. This check's own cell is the
         // boundary; a forge the tests boot inside it would wrap its apps in
@@ -621,36 +735,55 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         // plain processes here — as they do on a runner without bwrap.
         FORGE_CELLS: "off",
       });
-      if (manifest.install !== null) {
-        const installed = await runStep("install", manifest.install, {
-          cwd: dir,
+      let ran: Result<void, string>;
+      const checkLines: string[] = [];
+      if (job !== undefined) {
+        ran = await runJobStep(job, {
+          runId: run.id,
+          dir,
+          commands: manifest.install === null ? [command] : [manifest.install, command],
           env,
           log: write,
+          output: checkLines,
+          signal,
+          timeoutMs: manifest.timeout * 1000,
+          limits: resolveLimits("step", manifest.limits),
+          onNode: (node) => {
+            if (x.runId !== undefined) noteRunProgress(app.db, x.runId, { node });
+          },
+          ...(options.job === undefined ? {} : { options: options.job }),
+        });
+      } else {
+        if (manifest.install !== null) {
+          const installed = await runStep("install", manifest.install, {
+            cwd: dir,
+            env,
+            log: write,
+            signal,
+            timeoutMs: manifest.timeout * 1000,
+            cell,
+          });
+          if (!installed.ok) return { ok: false, error: installed.error };
+        }
+        // The check step's own lines are kept beside what `write` already
+        // logs, so a failure can be summarised once here — never by reading
+        // the log back, on this run or any later render of it. `runStep`
+        // echoes the command as its first line before any output of the
+        // command's own; that echo is not output to summarise from.
+        let sawEcho = false;
+        ran = await runStep("check", command, {
+          cwd: dir,
+          env,
+          log: (line) => {
+            if (sawEcho) checkLines.push(line);
+            sawEcho = true;
+            write(line);
+          },
           signal,
           timeoutMs: manifest.timeout * 1000,
           cell,
         });
-        if (!installed.ok) return { ok: false, error: installed.error };
       }
-      // The check step's own lines are kept beside what `write` already
-      // logs, so a failure can be summarised once here — never by reading
-      // the log back, on this run or any later render of it. `runStep`
-      // echoes the command as its first line before any output of the
-      // command's own; that echo is not output to summarise from.
-      const checkLines: string[] = [];
-      let sawEcho = false;
-      const ran = await runStep("check", command, {
-        cwd: dir,
-        env,
-        log: (line) => {
-          if (sawEcho) checkLines.push(line);
-          sawEcho = true;
-          write(line);
-        },
-        signal,
-        timeoutMs: manifest.timeout * 1000,
-        cell,
-      });
       if (!ran.ok) {
         const { summary, detail } = summariseCheckFailure(
           checkLines,
@@ -658,6 +791,21 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         );
         return { ok: false, error: summary, detail };
       }
+      // Only a green check of the default branch is kept for the next.
+      if (
+        x.keep === true &&
+        keepCache(app.config.dataDir, repo.id, run.commitOid, dir)
+      )
+        write(`cache kept for ${run.commitOid.slice(0, 7)}`);
+      if (x.tier === "full" || x.keepImpact === true) {
+        try {
+          const kept = keepImpact(app.config.dataDir, repo.id, dir);
+          if (kept !== undefined) write(kept);
+        } catch (error) {
+          write(`impact map not kept: ${String(error)}`);
+        }
+      }
+      if (key !== undefined) recordProven(app.db, key, x.id);
       return { ok: true };
     } finally {
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
@@ -787,6 +935,24 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           );
         return;
       }
+      // Landed or closed: nothing left to check, so nothing waits in the lane.
+      case "pull.merged":
+      case "pull.closed": {
+        const number = event.payload["number"];
+        if (typeof number !== "number") return;
+        const pull = getPull(app.db, repo.id, number);
+        if (!pull) return;
+        const cancelled = cancelRunsForPull(
+          app.db,
+          pull.id,
+          event.kind === "pull.merged" ? "pull landed" : "pull closed",
+        );
+        for (const run of cancelled) {
+          inFlight.get(run.id)?.abort.abort();
+          announceRun(app, run);
+        }
+        return;
+      }
       default:
         return;
     }
@@ -834,9 +1000,23 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       stopped = true;
       clearInterval(timer);
       unsubscribe();
+      // A roll waits for the checks under way, up to the budget, and only
+      // then cuts off what is left (it is queued again, not lost).
+      const running = Promise.all([...inFlight.values()].map((f) => f.promise));
+      const drainMs = options.drainMs ?? 0;
+      if (drainMs > 0 && inFlight.size > 0) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          running,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, drainMs);
+          }),
+        ]);
+        clearTimeout(timer);
+      }
       for (const { abort } of inFlight.values()) abort.abort();
       for (const abort of gates) abort.abort();
-      await Promise.all([...inFlight.values()].map((f) => f.promise));
+      await running;
     },
   };
   handles.set(app, handle);

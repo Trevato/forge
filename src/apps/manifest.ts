@@ -51,6 +51,11 @@ export interface AppManifest {
   readonly egress?: readonly string[] | undefined;
   /** `app.limits`: the app process's memory, CPU and disk, within the machine's maximum. */
   readonly limits?: DeclaredLimits | undefined;
+  /**
+   * `toolbar` (top level of `forge.json`): `false` keeps the forge's pill
+   * out of the app's HTML pages. Unset is on.
+   */
+  readonly toolbar?: boolean | undefined;
 }
 
 export type ManifestError =
@@ -138,6 +143,9 @@ export function parseManifest(
   if (!egress.ok) return egress;
   const limits = limitsField(app, "app");
   if (!limits.ok) return limits;
+  const toolbar = parsed.value["toolbar"];
+  if (toolbar !== undefined && typeof toolbar !== "boolean")
+    return invalid("forge.json: toolbar must be true or false");
   const kind = app["kind"];
   if (kind !== undefined && kind !== "web" && kind !== "service")
     return invalid('forge.json: app.kind must be "web" or "service"');
@@ -166,6 +174,7 @@ export function parseManifest(
     service,
     egress: egress.value,
     limits: limits.value,
+    toolbar: toolbar ?? true,
   });
 }
 
@@ -354,6 +363,65 @@ export function parseCheck(
         : install.value || null,
     timeout: timeout ?? CHECK_TIMEOUT_DEFAULT,
   });
+}
+
+/** The vendors a repository may name in `cloud.json`; a closed set. */
+export const CLOUD_VENDORS = ["cloudflare", "fly", "hetzner", "s3"] as const;
+/** What a vendor may be used for; a closed set. */
+export const CLOUD_USES = ["compute", "storage", "backup", "dns", "cdn"] as const;
+export type CloudVendor = (typeof CLOUD_VENDORS)[number];
+export type CloudUse = (typeof CLOUD_USES)[number];
+
+/** One declared use: which vendor, for what, and why. */
+export interface CloudDeclaration {
+  readonly vendor: CloudVendor;
+  readonly use: CloudUse;
+  readonly why: string;
+}
+
+const CLOUD_MAX = 32;
+const WHY_MAX = 300;
+
+/**
+ * `cloud.json` beside `forge.json`: `{ "uses": [{ vendor, use, why }] }`.
+ * Absent is no uses at all. Present and wrong is refused with one sentence.
+ */
+export function parseCloud(
+  cloudJson: string | undefined,
+): Result<readonly CloudDeclaration[], ManifestError> {
+  if (cloudJson === undefined) return ok([]);
+  const parsed = parseJson(cloudJson, "cloud.json");
+  if (!parsed.ok) return parsed;
+  const uses = parsed.value["uses"];
+  if (!Array.isArray(uses) || uses.length > CLOUD_MAX)
+    return invalid(
+      `cloud.json: uses must be an array of at most ${CLOUD_MAX} entries`,
+    );
+  const out: CloudDeclaration[] = [];
+  for (const item of uses) {
+    if (!isObject(item))
+      return invalid("cloud.json: each use must be an object {vendor, use, why}");
+    const { vendor, use, why } = item;
+    if (!(CLOUD_VENDORS as readonly unknown[]).includes(vendor))
+      return invalid(`cloud.json: vendor must be one of ${CLOUD_VENDORS.join(", ")}`);
+    if (!(CLOUD_USES as readonly unknown[]).includes(use))
+      return invalid(`cloud.json: use must be one of ${CLOUD_USES.join(", ")}`);
+    if (
+      typeof why !== "string" ||
+      why.trim() === "" ||
+      why.length > WHY_MAX ||
+      /[\x00-\x1f\x7f]/.test(why)
+    )
+      return invalid(
+        `cloud.json: why must be one line of 1–${WHY_MAX} characters`,
+      );
+    out.push({
+      vendor: vendor as CloudVendor,
+      use: use as CloudUse,
+      why: why.trim(),
+    });
+  }
+  return ok(out);
 }
 
 /** Whether `forge.json` declares an app at all, without validating it. */

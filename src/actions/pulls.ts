@@ -85,6 +85,8 @@ export interface OpenPullInput {
   /** The issue id of the pull this one reverts ("Take it back"). Native
    * repos only — a mirror's pull is the origin's, which has no such field. */
   revertsIssueId?: string;
+  /** The variant group the pull joins (`actions/tell.ts`); absent for an ordinary pull. */
+  variantGroup?: string;
   /**
    * A person's deliberate yes to fixing a sealed report from a branch that
    * is already public (this repository, or a public fork). Without it such
@@ -217,6 +219,7 @@ export async function openPull(
           }
         : {}),
       ...(input.revertsIssueId ? { revertsIssueId: input.revertsIssueId } : {}),
+      ...(input.variantGroup ? { variantGroup: input.variantGroup } : {}),
     },
   );
   if (!created.ok) return created;
@@ -678,3 +681,65 @@ export function pullThreads(
 }
 
 export { anchorId, listReviews } from "../core/reviews.ts";
+
+export type ApproveHereError =
+  | AccessError
+  | "not_foreign"
+  | "not_open"
+  | "self_review";
+
+/**
+ * A person who can write this repository lets an origin fork's pull run
+ * here: its check and preview execute this exact head. It is a local
+ * record — no `origin_author`, nothing sent to the origin — which is what
+ * tells it from the reviews imported from, or written through to, the
+ * origin; those name the connecting account, not who approved, and never
+ * count. A new head waits for a new approval.
+ */
+export async function approveHere(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  pull: Pull,
+): Promise<Result<Review, ApproveHereError>> {
+  const writer = requireWriter(app, actor, repo);
+  if (!writer.ok) return writer;
+  const user = writer.value;
+  if (user.kind !== "user") return err("forbidden");
+  if (pull.repoId !== repo.id) return err("not_found");
+  if (pull.originHeadRepo === null) return err("not_foreign");
+  if (pull.state !== "open" || pull.mergedAt !== null) return err("not_open");
+  if (pull.originAuthor === null && pull.authorId === user.id)
+    return err("self_review");
+
+  const status = await pullStatus(
+    await pullDir(app.db, app.reposRoot, repo, pull),
+    pull,
+  );
+  if (status.headOid === "") return err("not_found");
+  const again = listReviews(app.db, pull.id).findLast(
+    (r) => r.authorId === user.id && r.originAuthor === null,
+  );
+  if (
+    again !== undefined &&
+    again.commitOid === status.headOid &&
+    again.state === "approved"
+  )
+    return ok(again);
+
+  const recorded = recordReview(app.db, {
+    issueId: pull.id,
+    authorId: user.id,
+    state: "approved",
+    body: "",
+    commitOid: status.headOid,
+  });
+  if (!recorded.ok) return err("not_found");
+  app.bus.append({
+    kind: "pull.reviewed",
+    repoId: repo.id,
+    actorId: user.id,
+    payload: { number: pull.number, state: "approved", via: "here" },
+  });
+  return recorded;
+}

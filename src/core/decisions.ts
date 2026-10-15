@@ -13,10 +13,20 @@ import { id as newId } from "../kernel/id.ts";
  * a follow-up with nothing new (`skipped`), an issue at its run cap
  * (`capped`) — counted by `guardCounts` (`crew/guard.ts`).
  *
- * `lean` was which option on a studio ask card a careful owner would pick.
- * Nothing records one any more; older ledgers still hold rows of it, and the
- * summaries that read them keep the word. */
-export type DecisionKind = "next" | "land" | "retry" | "lean" | "guard";
+ * `lean` was which option on a studio ask card a careful owner would pick;
+ * it is now a person's like or dislike of one sibling among a deck's
+ * variants (`recordVariantVote`). Older ledgers hold the earlier rows, and
+ * the summaries that read them keep the word.
+ *
+ * `hand` is a person's tap on "Let the decider" on a hand-over card
+ * (`crew/handover.ts`): its state is the curated context the decider saw. */
+export type DecisionKind =
+  | "next"
+  | "land"
+  | "retry"
+  | "lean"
+  | "guard"
+  | "hand";
 
 export interface Decision {
   readonly id: string;
@@ -108,6 +118,39 @@ export function recordDecision(
   return getDecision(db, id)!;
 }
 
+/** A person's like or dislike of one pull among its variant siblings; the newest replaces their earlier one. */
+export function recordVariantVote(
+  db: Database,
+  input: {
+    readonly repoId: string;
+    readonly issueId: string;
+    readonly group: string;
+    readonly number: number;
+    readonly answer: "like" | "dislike";
+    readonly by: string;
+    readonly reason?: string | undefined;
+  },
+): Decision {
+  // One vote per person per pull: a later one replaces the earlier.
+  db.query(
+    "DELETE FROM decision WHERE kind = 'lean' AND issue_id = ?1 AND by = ?2",
+  ).run(input.issueId, input.by);
+  return recordDecision(db, {
+    kind: "lean",
+    repoId: input.repoId,
+    issueId: input.issueId,
+    state: {
+      group: input.group,
+      number: input.number,
+      ...(input.reason === undefined ? {} : { reason: input.reason }),
+    },
+    answer: input.answer,
+    p: 1,
+    by: input.by,
+    ms: 0,
+  });
+}
+
 export function getDecision(db: Database, id: string): Decision | undefined {
   const row = db
     .query<Row, [string]>("SELECT * FROM decision WHERE id = ?1")
@@ -149,6 +192,13 @@ export function stopStands(
   if (!aboutACheck) return true;
   if (decision.outcome === "green") return false;
   return greenAt === undefined || greenAt <= decision.createdAt;
+}
+
+/** Say what came of one decision, by id. */
+export function setOutcome(db: Database, id: string, outcome: string): void {
+  db.query(
+    `UPDATE decision SET outcome = ?2, outcome_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1`,
+  ).run(id, outcome);
 }
 
 /** What came of the newest unresolved decision of this kind about an issue. */
@@ -289,5 +339,21 @@ export function listDecidedIn(
        ORDER BY outcome_at DESC, id DESC LIMIT ?1`,
     )
     .all(limit, ...repoIds)
+    .map(toDecision);
+}
+
+/** The decisions of one kind made since a moment, across every repository, newest first. */
+export function decisionsSince(
+  db: Database,
+  kind: DecisionKind,
+  since: string,
+  limit = 500,
+): Decision[] {
+  return db
+    .query<
+      Row,
+      [string, string, number]
+    >("SELECT * FROM decision WHERE kind = ?1 AND created_at >= ?2 ORDER BY created_at DESC, id DESC LIMIT ?3")
+    .all(kind, since, Math.min(500, Math.max(1, limit)))
     .map(toDecision);
 }

@@ -15,7 +15,7 @@ import { steerRun } from "../crew/runner.ts";
 import { getIssueById } from "../core/issues.ts";
 import { addComment } from "./issues.ts";
 import { getAppByRepo } from "../core/apps.ts";
-import { canEnterApp, type Repo } from "../core/repos.ts";
+import { canEnterApp, canSeeOwnerFacts, onCrew, type Repo } from "../core/repos.ts";
 import {
   cancelRun as markCancelled,
   getRun,
@@ -42,6 +42,7 @@ export function runPayload(run: Run): Record<string, unknown> {
     summary: run.summary,
     costUsd: run.costUsd,
     turns: run.turns,
+    ...(run.placement === "job" ? { placement: run.placement, node: run.node } : {}),
     ...(run.issueId === null ? {} : { issueId: run.issueId }),
   };
 }
@@ -82,6 +83,23 @@ export function mayReadRuns(
   );
 }
 
+/**
+ * Whether `actor` may read a run's log — the agent's transcript, or a
+ * deploy's output. A summary is public with the run; the log is for the
+ * repository's writers and crew only, on a public repository too: it says
+ * what the agent ran, read and concluded, in the detail it wrote for itself.
+ */
+export function mayReadRunLog(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): boolean {
+  return (
+    mayReadRuns(app, actor, repo) &&
+    (canSeeOwnerFacts(app.db, repo, actor) || onCrew(app.db, repo, actor))
+  );
+}
+
 export function listRepoRuns(
   app: App,
   actor: User | undefined,
@@ -118,6 +136,8 @@ export interface RunLogView {
   readonly lines: string[];
   readonly truncated: boolean;
   readonly path: string;
+  /** The reader may see the run but not its log: `lines` is empty. */
+  readonly logHidden: boolean;
 }
 
 export function runLog(
@@ -128,12 +148,16 @@ export function runLog(
 ): Result<RunLogView, "not_found"> {
   const found = getRepoRun(app, actor, repo, runId);
   if (!found.ok) return found;
-  const { lines, truncated } = readRunLog(app.config.dataDir, runId);
+  const logHidden = !mayReadRunLog(app, actor, repo);
+  const { lines, truncated } = logHidden
+    ? { lines: [], truncated: false }
+    : readRunLog(app.config.dataDir, runId);
   return ok({
     run: found.value,
     lines,
     truncated,
     path: runLogPath(app.config.dataDir, runId),
+    logHidden,
   });
 }
 

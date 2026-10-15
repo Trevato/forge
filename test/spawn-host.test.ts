@@ -6,9 +6,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawnForge } from "../src/actions/spawn.ts";
+import { readdirSync, readFileSync } from "node:fs";
+import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
+import { flushAccess } from "../src/http/access_log.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { hostedPlacement } from "../src/spawn/placement.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -71,5 +73,27 @@ describe("hosted child Host dispatch", () => {
       headers: { host: "nope--forge.test" },
     });
     expect(unknown.status).toBe(404);
+  });
+
+  test("a child's requests are logged in the child's data, never the parent's", async () => {
+    const ask = (host: string, path: string) =>
+      fetch(servers.url + path, {
+        headers: { host, "user-agent": "VisitorBot/1.0" },
+      });
+    await ask("homie--forge.test", "/api/in-the-childs-house");
+    await ask("forge.test", "/api/in-the-parents-house");
+    flushAccess();
+    const { bodyId } = JSON.parse(
+      readFileSync(join(dir, "spawn", "homie.json"), "utf8"),
+    ) as { bodyId: string };
+    const paths = (dataDir: string): string[] =>
+      readdirSync(join(dataDir, "access")).flatMap((f) =>
+        readFileSync(join(dataDir, "access", f), "utf8")
+          .split("\n")
+          .filter((l) => l !== "")
+          .map((l) => (JSON.parse(l) as { path: string }).path),
+      );
+    expect(paths(childDirOf(parent, bodyId))).toEqual(["/api/in-the-childs-house"]);
+    expect(paths(dir)).toEqual(["/api/in-the-parents-house"]);
   });
 });

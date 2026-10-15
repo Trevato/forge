@@ -38,6 +38,8 @@ export function eventAudience(kind: string): EventAudience {
     kind.startsWith("secret.") ||
     // The forge's mail ceiling is its owner's to hear (`actions/mail.ts`).
     kind.startsWith("mail.") ||
+    // A restore drill's verdict is the forge owner's (`snapshot/service.ts`).
+    kind.startsWith("drill.") ||
     // A report from outside waits for a person who decides; its arrival is
     // theirs to see, never the readers' (`actions/reports.ts`).
     kind.startsWith("report.") ||
@@ -48,8 +50,14 @@ export function eventAudience(kind: string): EventAudience {
     kind === "repo.crew_outsiders"
   )
     return "admins";
-  // A fleet operation spans repositories; its receipt is its actor's.
-  if (kind === "repo.pinned" || kind === "repo.unpinned" || kind.startsWith("fleet."))
+  // A fleet operation spans repositories; its receipt is its actor's. So is
+  // a thought: it belongs to no repository and to nobody but its author.
+  if (
+    kind === "repo.pinned" ||
+    kind === "repo.unpinned" ||
+    kind.startsWith("fleet.") ||
+    kind.startsWith("thought.")
+  )
     return "actor";
   // A run's summary, an app's serving state and its pictures can carry the
   // app's own output: for a private app they are for those who may enter it

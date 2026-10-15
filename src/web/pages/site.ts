@@ -8,14 +8,17 @@
  * typed still in it. A dead end that loses input is a bug, not a message.
  */
 
+import { limitValue } from "../../settings/limits.ts";
 import { mayView } from "../../core/sealed.ts";
 import { signOutHere } from "../../actions/signins.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo } from "../../actions/repos.ts";
-import { signUp } from "../../actions/users.ts";
+import { HUMAN_CHECK_MESSAGE, signUp } from "../../actions/users.ts";
 import { listAssignedTo, type Issue } from "../../core/issues.ts";
+import { joinMany } from "../../core/pulls.ts";
+import { conflictsOf } from "../../crew/stale_asks.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins } from "../../core/pins.ts";
 import {
@@ -37,6 +40,7 @@ import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
 import { field, readForm } from "../form.ts";
+import { passkeyJs } from "../passkey-client.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
 import { flashTo, page, redirect } from "../layout.ts";
@@ -54,8 +58,18 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hasAdmin } from "../../spawn/claim.ts";
 
-export function sessionCookie(value: string, expires: Date, url: URL): string {
-  const secure = url.protocol === "https:" ? "; Secure" : "";
+export function sessionCookie(
+  value: string,
+  expires: Date,
+  url: URL,
+  forgeUrl?: string,
+): string {
+  // Secure when the request or the forge's own address is https: behind a
+  // proxy that ends TLS the request itself arrives as http.
+  const secure =
+    url.protocol === "https:" || forgeUrl?.startsWith("https://")
+      ? "; Secure"
+      : "";
   return `forge_session=${value}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires.toUTCString()}${secure}`;
 }
 
@@ -64,7 +78,7 @@ export function sessionCookie(value: string, expires: Date, url: URL): string {
  * protocol-relative `//evil.example` is a redirect off-site wearing a path's
  * clothes, so it is refused with everything else that isn't a plain path.
  */
-function safeNext(raw: string | null): string | undefined {
+export function safeNext(raw: string | null): string | undefined {
   if (raw === null || raw === "") return undefined;
   if (!raw.startsWith("/") || raw.startsWith("//")) return undefined;
   if (raw.includes("\\") || /[\n\r]/.test(raw)) return undefined;
@@ -201,8 +215,16 @@ export function onYouCard(ctx: Ctx, user: User): Html | undefined {
   }
   // Two or more can be given one move: a box each, and one form for the set.
   const bulk = shown.length >= 2;
-  const rows = shown.map(({ issue, repo }) =>
-    row({
+  const heads = new Map(
+    joinMany(
+      db,
+      shown.map((s) => s.issue).filter((i) => i.kind === "pull"),
+    ).map((p) => [p.id, p.headOid]),
+  );
+  const rows = shown.map(({ issue, repo }) => {
+    // A pull the last sweep found unable to merge is never shown as ready.
+    const conflicts = conflictsOf(db, issue.id, heads.get(issue.id) ?? "");
+    return row({
       ...(bulk ? {} : { href: threadPath(repo, issue), nav: true as const }),
       state: "open",
       lead: bulk
@@ -222,9 +244,12 @@ export function onYouCard(ctx: Ctx, user: User): Html | undefined {
         : issue.title,
       titleAttr: issue.title,
       meta: html`${repo.ownerName}/${repo.name} #${issue.number} · updated
-      ${time(issue.updatedAt)}`,
-    }),
-  );
+      ${time(issue.updatedAt)}${conflicts > 0
+        ? html` · <span class="conflicts">Conflicts in ${conflicts}
+            ${conflicts === 1 ? "file" : "files"}</span>`
+        : null}`,
+    });
+  });
   if (rows.length === 0 && silenced.size === 0) return undefined;
   const last = latestUndoable(ctx.app, user);
   const byKind = [...new Set(shown.map((s) => s.issue.kind))].map((k) => ({
@@ -312,6 +337,7 @@ interface AuthErrors {
   username?: string;
   email?: string;
   password?: string;
+  human?: string;
 }
 
 function authForm(
@@ -393,6 +419,15 @@ function authForm(
         ...(errors.password ? { error: errors.password } : {}),
       })}
       ${when(
+        kind === "signup" ? siteKey(ctx) : undefined,
+        (key) =>
+          html`<div class="cf-turnstile mb" data-sitekey="${key}"></div>`,
+      )}
+      ${when(
+        errors.human,
+        (message) => html`<p class="error mb" role="alert">${message}</p>`,
+      )}
+      ${when(
         firstAccount,
         () =>
           html`<p class="muted small mb">
@@ -426,6 +461,13 @@ function authForm(
   return html`<div class="narrow">
     ${pageHead(kind === "signin" ? "Sign in" : "Create your account")}
     ${card(body)}
+    ${when(
+      kind === "signin",
+      () => html`<p class="mt">
+        <button type="button" id="passkey-signin" class="btn" data-variant="outline">Sign in with a passkey</button>
+        <span class="error-note small" id="passkey-signin-note" role="status"></span>
+      </p>`,
+    )}
     ${claimable
       ? html`<p class="muted small mt" id="claim-door">
           Was this forge made for you? <a href="/claim">Claim it with your code</a>.
@@ -435,11 +477,27 @@ function authForm(
 }
 
 export function signinPage(ctx: Ctx): Response {
-  return page({ ctx, title: "Sign in", body: authForm(ctx, "signin") });
+  return page({
+    ctx,
+    title: "Sign in",
+    body: authForm(ctx, "signin"),
+    scriptJs: passkeyJs,
+  });
+}
+
+/** The widget's public site key, when signup is gated on Turnstile. */
+function siteKey(ctx: Ctx): string | undefined {
+  const { turnstileSecret, turnstileSiteKey } = ctx.app.config;
+  return turnstileSecret === undefined ? undefined : turnstileSiteKey;
 }
 
 export function signupPage(ctx: Ctx): Response {
-  return page({ ctx, title: "Sign up", body: authForm(ctx, "signup") });
+  return page({
+    ctx,
+    title: "Sign up",
+    body: authForm(ctx, "signup"),
+    turnstile: siteKey(ctx) !== undefined,
+  });
 }
 
 /**
@@ -453,19 +511,19 @@ export function signupPage(ctx: Ctx): Response {
  * limiter per forge, so a test's forge never throttles another's.
  */
 const signinLimits = new WeakMap<Ctx["app"], RateLimiter>();
-const SIGNIN_PER_ACCOUNT = 20;
-const SIGNIN_PER_FORGE = 200;
 
-function signinAllowed(ctx: Ctx, username: string): number | undefined {
+export function signinAllowed(ctx: Ctx, username: string): number | undefined {
   let limiter = signinLimits.get(ctx.app);
   if (limiter === undefined) {
-    limiter = new RateLimiter({
-      perMinute: SIGNIN_PER_ACCOUNT,
-      adminPerMinute: SIGNIN_PER_FORGE,
-      enabled: true,
-    });
+    limiter = new RateLimiter({ perMinute: 0, adminPerMinute: 0, enabled: true });
     signinLimits.set(ctx.app, limiter);
   }
+  // Read on every attempt, so a change on /admin/limits governs the next one.
+  limiter.setLimits({
+    perMinute: limitValue(ctx.app.db, "signin.per_account"),
+    adminPerMinute: limitValue(ctx.app.db, "signin.per_forge"),
+    enabled: true,
+  });
   const whole = limiter.take("forge", "admin");
   if (!whole.allowed) return whole.retryAfter;
   const one = limiter.take(`account:${username.toLowerCase()}`, "ro");
@@ -521,7 +579,7 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
   const session = createSession(ctx.app.db, verified.value.id);
   return redirect(
     safeNext(ctx.url.searchParams.get("next")) ?? "/",
-    sessionCookie(session.token, session.expiresAt, ctx.url),
+    sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
   );
 }
 
@@ -552,7 +610,12 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
   const email = field(form, "email");
   const created = await signUp(
     ctx.app,
-    { username, email, password: field(form, "password") },
+    {
+      username,
+      email,
+      password: field(form, "password"),
+      humanToken: field(form, "cf-turnstile-response"),
+    },
     { address: clientAddress(ctx.request) },
   );
   if (!created.ok) {
@@ -564,12 +627,14 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       username_reserved: { username: "That name is reserved." },
       email_taken: { email: "That email already has an account." },
       weak_password: { password: "Passwords need at least 10 characters." },
+      human_check: { human: HUMAN_CHECK_MESSAGE },
     }[created.error] ?? { username: "Something went wrong." };
     return page(
       {
         ctx,
         title: "Sign up",
         body: authForm(ctx, "signup", { values: { username, email }, errors }),
+        turnstile: siteKey(ctx) !== undefined,
       },
       422,
     );
@@ -577,7 +642,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
   const session = createSession(ctx.app.db, created.value.id);
   return redirect(
     safeNext(ctx.url.searchParams.get("next")) ?? "/",
-    sessionCookie(session.token, session.expiresAt, ctx.url),
+    sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
   );
 }
 
@@ -610,7 +675,7 @@ export function logoutSubmit(ctx: Ctx): Response {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
     return new Response("forbidden", { status: 403 });
   signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
-  return redirect("/", sessionCookie("", new Date(0), ctx.url));
+  return redirect("/", sessionCookie("", new Date(0), ctx.url, ctx.app.config.url));
 }
 
 // ---- new repository ----

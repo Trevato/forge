@@ -9,6 +9,7 @@
  * bigger.
  */
 
+import { getIssueById } from "../../core/issues.ts";
 import { mayEditIssue } from "../../actions/issues.ts";
 import { marksByName, type Mark } from "../../core/marks.ts";
 import { mayView } from "../../core/sealed.ts";
@@ -20,6 +21,7 @@ import {
   pullStatus,
   revertOf,
   toldBy,
+  variantSiblings,
   type Pull,
   pullDir,
 } from "../../core/pulls.ts";
@@ -58,6 +60,7 @@ import {
 } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
+import { approveHereCard } from "../pages/pull.ts";
 import { pullState } from "../pages/pulls.ts";
 import { workSpent } from "../pages/runs.ts";
 import {
@@ -183,7 +186,10 @@ export function changeHead(ctx: Ctx, repo: Repo, pull: Pull): Html {
   return html`<div class="issue-head">
     <h1>${pull.title} <span class="number">#${pull.number}</span></h1>
     <div class="issue-meta">
-      ${stateBadge(pullState(pull))}
+      ${stateBadge(
+        pullState(pull),
+        getIssueById(ctx.app.db, pull.id)?.closeReason === "parked",
+      )}
       <span
         >${pull.originAuthor
           ? originTag(pull.originAuthor, originGlyph(repo))
@@ -525,6 +531,7 @@ async function changeConversation(
       ),
   );
 
+  const siblings = variantSiblings(db, [pull])[0] ?? [];
   const glyph = originGlyph(repo);
   const headOid = status?.headOid ?? pull.headOid;
   const reviews = listReviews(db, pull.id);
@@ -548,7 +555,15 @@ async function changeConversation(
       ownTitle: true,
     })}
     ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "change")}
+    ${when(siblings.length > 0, () =>
+      html`<p class="muted small variant-link">
+        <a href="${base}/variants/${pull.variantGroup ?? ""}"
+          >Choose among ${siblings.length + 1} variants</a
+        >
+      </p>`,
+    )}
     <div id="pull-check">${checkLine}</div> ${holdCard(ctx, repo, pull, { act: true })}
+    ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
     ${when(wall, (w) => wallCard(w))} ${decisionSection}
     ${takeBackSection}
     ${when(record, (r) => lookCard(ctx, repo, r, pull, pull.headOid))}

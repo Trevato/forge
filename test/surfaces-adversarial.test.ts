@@ -14,7 +14,6 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import type { Database } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,25 +35,10 @@ import { createForgeApp } from "../src/tui/forge.ts";
 import type { Session, TuiIdentity } from "../src/tui/session.ts";
 import type { App as TuiApp, Screen } from "../src/tui/app/app.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { statements } from "./helpers/statements.ts";
 import { settleApp } from "./helpers/tui.ts";
 
 quietLogs();
-
-/** Count the SQL statements a block of work runs — mirrors test/counts.test.ts. */
-async function statements(db: Database, work: () => Promise<void> | void) {
-  const original = db.query.bind(db);
-  let count = 0;
-  (db as unknown as { query: unknown }).query = (sql: string) => {
-    count++;
-    return original(sql);
-  };
-  try {
-    await work();
-  } finally {
-    (db as unknown as { query: unknown }).query = original;
-  }
-  return count;
-}
 
 const words = (html: string): string => html.replace(/\s+/g, " ");
 
@@ -116,7 +100,8 @@ describe("surfaces adversarial: web", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-surfaces-adv-"));
-    app = createApp({ dataDir, port: 0 });
+    // The standing sweep queries on a timer; the N+1 counts are of requests alone.
+    app = createApp({ dataDir, port: 0, standingSweepMs: 3_600_000 });
     servers = await serve(app);
     base = servers.url;
     alice = await signUp("alice", alicePassword); // first account: the admin

@@ -1595,6 +1595,221 @@ export const migrations: readonly string[] = [
     PRIMARY KEY (repo_id, parent_id, issue_id)
   );
   `,
+  // 76 — the sentinel's memory (#1131): each hunt, and each finding with the
+  // issue it became, so a fault is filed once and a returning one is told
+  // apart from one that never left.
+  `
+  CREATE TABLE IF NOT EXISTS sentinel_hunt (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    at    TEXT NOT NULL,
+    found INTEGER NOT NULL,
+    filed INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS sentinel_finding (
+    key        TEXT NOT NULL,
+    issue_id   TEXT NOT NULL REFERENCES issue(id) ON DELETE CASCADE,
+    evidence   TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen  TEXT NOT NULL,
+    PRIMARY KEY (key, issue_id)
+  );
+  `,
+  // 77 — OpenID Connect over the same grant (#1459): the nonce and OIDC
+  // scopes a consent carried, the signing keys (current and previous), and
+  // which access tokens came from an OpenID grant, for /oauth/userinfo.
+  `
+  ALTER TABLE oauth_code ADD COLUMN oidc_scopes TEXT NOT NULL DEFAULT '';
+  ALTER TABLE oauth_code ADD COLUMN nonce TEXT NOT NULL DEFAULT '';
+  CREATE TABLE oidc_key (
+    kid         TEXT PRIMARY KEY,
+    private_jwk TEXT NOT NULL,
+    public_jwk  TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+  );
+  CREATE TABLE oidc_token (
+    token_id TEXT PRIMARY KEY REFERENCES token(id) ON DELETE CASCADE,
+    scopes   TEXT NOT NULL
+  );
+  `,
+  // 78 — variants (#1643): a pull and a run may belong to a variant group,
+  // a name shared by the pulls that try the same thing. Null for an ordinary
+  // one; nothing reads it but the pull JSON yet.
+  `
+  ALTER TABLE pull ADD COLUMN variant_group TEXT;
+  ALTER TABLE run ADD COLUMN variant_group TEXT;
+  CREATE INDEX pull_variant_group ON pull(variant_group) WHERE variant_group IS NOT NULL;
+  `,
+  // 79 — degraded history (#1296): one row per stretch a cause held, kept
+  // 30 days past its close (`kernel/degraded_history.ts`). Times are epoch ms;
+  // `closed_at` is null while the cause still holds, and at most one span
+  // per cause is open.
+  `
+  CREATE TABLE degraded_span (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    cause     TEXT NOT NULL,
+    sentence  TEXT NOT NULL,
+    href      TEXT NOT NULL,
+    opened_at INTEGER NOT NULL,
+    closed_at INTEGER
+  );
+  CREATE UNIQUE INDEX degraded_span_open ON degraded_span(cause) WHERE closed_at IS NULL;
+  CREATE INDEX degraded_span_closed ON degraded_span(closed_at) WHERE closed_at IS NOT NULL;
+  `,
+  // 80 — restore drills (#1668): one row per run of `snapshot/drill.ts`,
+  // kept so the Backups page can show the last. `at` is an ISO time.
+  `
+  CREATE TABLE drill (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    at           TEXT NOT NULL,
+    snapshot_id  TEXT,
+    ms           INTEGER NOT NULL,
+    repositories INTEGER NOT NULL,
+    issues       INTEGER NOT NULL,
+    verdict      TEXT NOT NULL CHECK (verdict IN ('green', 'red')),
+    failed_step  TEXT,
+    reason       TEXT
+  );
+  `,
+  // 81 — thoughts (#1658): what a person typed, kept exactly, forever. One
+  // row per thought, appended and never changed: the triggers refuse an
+  // UPDATE or DELETE, and there is no foreign key so no cascade can remove
+  // one when an account goes. The author is an id, not a reference.
+  `
+  CREATE TABLE thought (
+    id          TEXT PRIMARY KEY,
+    author      TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    source      TEXT NOT NULL CHECK (source IN ('composer', 'api', 'mcp', 'share')),
+    received_at TEXT NOT NULL
+  );
+  CREATE INDEX thought_author ON thought(author, received_at);
+  CREATE TRIGGER thought_no_update BEFORE UPDATE ON thought
+  BEGIN SELECT RAISE(ABORT, 'a thought is never changed'); END;
+  CREATE TRIGGER thought_no_delete BEFORE DELETE ON thought
+  BEGIN SELECT RAISE(ABORT, 'a thought is never deleted'); END;
+  `,
+  // 82 — passkeys (#1694): several per account. `credential_id` is the
+  // base64url id the authenticator names itself by; `key` is the public JWK,
+  // `sign_count` the last counter seen (a clone shows as one that stalls).
+  `
+  CREATE TABLE passkey (
+    id            TEXT PRIMARY KEY,
+    user_id       TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    credential_id TEXT NOT NULL UNIQUE,
+    name          TEXT NOT NULL,
+    alg           TEXT NOT NULL,
+    key           TEXT NOT NULL,
+    sign_count    INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    last_used_at  TEXT
+  );
+  CREATE INDEX passkey_user ON passkey(user_id);
+  `,
+  // 83 — releases (#1662): one row per landing on the forge's own repository
+  // that was checked out and preflighted (`release/`). `ok` is the preflight
+  // verdict, `line` its one line; the pull is kept as a number so the row
+  // outlives a deleted pull.
+  `
+  CREATE TABLE release (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    sha         TEXT NOT NULL,
+    repo_id     TEXT NOT NULL,
+    pull_number INTEGER,
+    ok          INTEGER NOT NULL,
+    line        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+  );
+  CREATE INDEX release_created ON release(created_at);
+  `,
+  // 84 — placements (#652): where the planner put each thought. One row per
+  // thought, written once; the thought itself stays as typed. `placed` is a
+  // JSON list of what was done (opened, amended, deferred, superseded).
+  `
+  CREATE TABLE placement (
+    thought_id TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL CHECK (kind IN ('work', 'amendment', 'vision', 'decision', 'reversal')),
+    placed     TEXT NOT NULL,
+    reply      TEXT NOT NULL,
+    question   INTEGER NOT NULL DEFAULT 0,
+    decided_by TEXT NOT NULL,
+    placed_at  TEXT NOT NULL
+  );
+  `,
+  // 85 — a standing rule per repository (#1605): who answers the decisions
+  // it asks of its owner. \`me\` is what every repository did before.
+  `
+  ALTER TABLE repo ADD COLUMN decisions_by TEXT NOT NULL DEFAULT 'me'
+    CHECK (decisions_by IN ('me', 'decider', 'decider_tell'));
+  `,
+  // 86 — what a production deploy carries (pull #1753, issue #1600): one row per merged pull
+  // whose merge commit the deployed commit contains, written when the deploy
+  // finishes. An index over git, so no foreign key outlives a deleted run.
+  `
+  CREATE TABLE deploy_pull (
+    run_id      TEXT NOT NULL,
+    issue_id    TEXT NOT NULL,
+    pull_number INTEGER NOT NULL,
+    merged_oid  TEXT NOT NULL,
+    PRIMARY KEY (run_id, issue_id)
+  );
+  CREATE INDEX deploy_pull_issue ON deploy_pull(issue_id);
+  `,
+  // 87 — supersession and repeats (#654): a thought that repeats or takes
+  // back an earlier one links to it, and an issue a repeat raised is read
+  // ahead of the rest in the ready order.
+  `
+  CREATE TABLE thought_link (
+    thought_id TEXT NOT NULL,
+    other_id   TEXT NOT NULL,
+    relation   TEXT NOT NULL CHECK (relation IN ('repeats', 'supersedes')),
+    PRIMARY KEY (thought_id, other_id, relation)
+  );
+  CREATE INDEX thought_link_other ON thought_link(other_id);
+  CREATE TABLE issue_raise (
+    issue_id  TEXT PRIMARY KEY,
+    raised_at TEXT NOT NULL,
+    times     INTEGER NOT NULL DEFAULT 1
+  );
+  `,
+  // 88 — what the machine used (#1576, boards/ring.ts): the forge pod,
+  // each cell and the node, every 15 s for a day and as 5-min mean and max
+  // for 30 days. Telemetry, not state: a lost row is a gap in a chart.
+  `
+  CREATE TABLE machine_sample (
+    at               TEXT NOT NULL,
+    step             INTEGER NOT NULL CHECK (step IN (15, 300)),
+    target           TEXT NOT NULL,
+    cpu_cores        REAL,
+    cpu_cores_max    REAL,
+    memory_bytes     REAL,
+    memory_bytes_max REAL,
+    load             REAL,
+    PRIMARY KEY (step, at, target)
+  ) WITHOUT ROWID;
+  `,
+  // 89 — a pull the crew parked (#1624) closes as parked, not done. The
+  // column carries it, and `close_reason` stays NULL: its CHECK cannot be
+  // widened in place, and NULL is never read as done by raw SQL.
+  // `closeReason` reads 'parked' from it.
+  `
+  ALTER TABLE issue ADD COLUMN parked INTEGER NOT NULL DEFAULT 0;
+  `,
+  // 90 — a green check's key and who proved it (#1795, checks/proven.ts):
+  // the same tree under the same gate is not run twice. A lost row is a
+  // check run again.
+  `
+  CREATE TABLE check_proven (
+    key       TEXT PRIMARY KEY,
+    proven_by TEXT NOT NULL,
+    at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  ) WITHOUT ROWID;
+  `,
+  // 91 — where a check ran (#1815): `process` (the forge's own cell) or `job`
+  // (a cluster Job), and the node a Job's pod landed on. Empty: not recorded.
+  `
+  ALTER TABLE run ADD COLUMN placement TEXT NOT NULL DEFAULT '';
+  ALTER TABLE run ADD COLUMN node TEXT NOT NULL DEFAULT '';
+  `,
 ];
 
 /**

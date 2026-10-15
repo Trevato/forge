@@ -1,0 +1,86 @@
+name: flake-hunt
+# Nightly: every gate file five times in random order, a fresh seed each
+# run, on a loaded box (scripts/flake-hunt.ts). A file red in some runs and
+# green in others is flaky: the hunt files an issue on the forge carrying
+# the failure text, the seed and this run; the quarantine job then moves
+# every file an open `Flaky: …` issue names from GATE to EXCLUDED and
+# proposes that as a pull. Nobody hand-edits the list.
+#
+# Flakiness is judged per file across runs, so the gate splits into slices
+# and each slice hunts on its own: the isolated runner cuts a job at ~30m
+# (see check.yml), and five loaded runs of the whole gate is hours.
+#
+# Needs two settings on the mirror: secret FORGE_TOKEN (a forge token with
+# write on the repository) and variable FORGE_URL (the forge's origin).
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  hunt:
+    runs-on: isolated
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    env:
+      REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
+    steps:
+      - name: clone main
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git clone -q "http://x-access-token:$TOKEN@$REGISTRY/$GITHUB_REPOSITORY.git" src
+          cd src
+          bun install --frozen-lockfile
+
+      - name: hunt slice ${{ matrix.slice }}/20
+        working-directory: src
+        env:
+          FORGE_API: ${{ vars.FORGE_URL }}/api/v1
+          FORGE_REPO: ${{ github.repository }}
+          FORGE_TOKEN: ${{ secrets.FORGE_TOKEN }}
+          FORGE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }}
+        run: |
+          set +e
+          bun scripts/flake-hunt.ts hunt --shard ${{ matrix.slice }}/20 --file-issues
+          code=$?
+          # 1 is "found a flake and filed it": the quarantine job's work, not a broken hunt.
+          test "$code" -le 1
+
+  quarantine:
+    runs-on: isolated
+    needs: [hunt]
+    if: always()
+    timeout-minutes: 10
+    env:
+      FORGE_API: ${{ vars.FORGE_URL }}/api/v1
+      FORGE_REPO: ${{ github.repository }}
+      REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
+    steps:
+      - name: move every open flaky file out of the gate, as a pull
+        env:
+          FORGE_TOKEN: ${{ secrets.FORGE_TOKEN }}
+          FORGE_URL: ${{ vars.FORGE_URL }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          # The internal registry with the job's token, as the hunt clones:
+          # a private repository answers no anonymous clone.
+          git clone -q "http://x-access-token:$TOKEN@$REGISTRY/$GITHUB_REPOSITORY.git" src
+          cd src
+          bun install --frozen-lockfile
+          bun scripts/flake-hunt.ts quarantine
+          git diff --quiet scripts/gate.ts && exit 0
+          branch="flake-hunt/$(date -u +%Y-%m-%d)"
+          git -c user.name=flake-hunt -c user.email=flake-hunt@forge.invalid \
+            commit -qm "Quarantine the files the flake hunt found flaky" scripts/gate.ts
+          # The branch goes to the forge, where the pull is opened.
+          git -c "http.extraHeader=Authorization: Bearer $FORGE_TOKEN" \
+            push -q "${FORGE_URL}/${FORGE_REPO}.git" "HEAD:refs/heads/$branch"
+          curl -fsS -X POST "$FORGE_API/repos/$FORGE_REPO/pulls" \
+            -H "Authorization: Bearer $FORGE_TOKEN" -H "Content-Type: application/json" \
+            --data "$(BRANCH="$branch" bun -e 'const b = process.env.BRANCH; console.log(JSON.stringify({title: `Quarantine flaky tests (${b})`, head: b, base: "main", body: "Moved by `bun scripts/flake-hunt.ts quarantine`, not by hand: each file leaves GATE under the open `Flaky:` issue that carries its failure, seed and run."}))')"

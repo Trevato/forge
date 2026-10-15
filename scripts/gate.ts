@@ -9,8 +9,13 @@
  * cannot sit outside the gate silently.
  *
  * A file joins the gate by moving from `EXCLUDED` to `GATE` in a pull whose
- * check is green.
+ * check is green and whose description carries ten green runs in random
+ * order under load (`bun scripts/flake-hunt.ts admit <file>`). A flaky file
+ * leaves it only through `bun scripts/flake-hunt.ts quarantine`, under the
+ * issue the nightly hunt filed (`.forgejo/workflows/flake-hunt.yml`).
  */
+
+import { readdirSync } from "node:fs";
 
 export type Exclusion = {
   /** Repository-relative path, `test/….test.ts`. */
@@ -22,32 +27,66 @@ export type Exclusion = {
 };
 
 export const GATE: readonly string[] = [
+  "test/accounts-retire.test.ts",
+  "test/cloud-use.test.ts",
   "test/accounts.test.ts",
+  "test/asks-mute.test.ts",
   "test/agents.test.ts",
   "test/app-domains.test.ts",
   "test/app.test.ts",
   "test/apps-idle.test.ts",
   "test/body-limits.test.ts",
+  "test/boards-query.test.ts",
+  "test/boards-page.test.ts",
+  "test/boards-store.test.ts",
+  "test/boards-sampler.test.ts",
+  "test/turnstile.test.ts",
+  "test/variants-deck.test.ts",
+  "test/variants-surfaces.test.ts",
+  "test/thoughts.test.ts",
+  "test/triage.test.ts",
+  "test/passkeys.test.ts",
+  "test/webauthn.test.ts",
   "test/chaos.test.ts",
+  "test/flow-stage.test.ts",
+  "test/cluster-jobs.test.ts",
+  "test/checks-placement.test.ts",
   "test/fuzz-found.test.ts",
   "test/fuzz-parsers.test.ts",
   "test/attach-look.test.ts",
+  "test/protection.test.ts",
   "test/tui-limbs.test.ts",
+  "test/tui-onyou.test.ts",
   "test/claim-link.test.ts",
   "test/og-card.test.ts",
+  "test/og-route.test.ts",
   "test/health.test.ts",
   "test/client-address.test.ts",
   "test/client-list.test.ts",
+  "test/family-heartbeat.test.ts",
   "test/contents-api.test.ts",
   "test/crew-agents-only.test.ts",
   "test/crew-brief-audience.test.ts",
+  "test/run-log-audience.test.ts",
   "test/crew.test.ts",
+  "test/crew-already-done.test.ts",
+  "test/crew-check-failed.test.ts",
+  "test/crew-continues.test.ts",
+  "test/crew-declines.test.ts",
+  "test/crew-pause.test.ts",
+  "test/crew-review.test.ts",
+  "test/crew-review-budget.test.ts",
   "test/commit-identity.test.ts",
   "test/enterable-apps.test.ts",
   "test/event-order.test.ts",
   "test/refresh-meta.test.ts",
   "test/restore-card.test.ts",
   "test/recovery-doc.test.ts",
+  "test/release-checkout.test.ts",
+  "test/release-preflight.test.ts",
+  "test/release-rollback.test.ts",
+  "test/release-swap.test.ts",
+  "test/threats-doc.test.ts",
   "test/returns.test.ts",
   "test/review-route.test.ts",
   "test/review-lines.test.ts",
@@ -56,12 +95,15 @@ export const GATE: readonly string[] = [
   "test/review-from-green.test.ts",
   "test/themes.test.ts",
   "test/waves.test.ts",
+  "test/cut-wave.test.ts",
   "test/crew-wrapup.test.ts",
   "test/crew-limits.test.ts",
   "test/crew-parks.test.ts",
   "test/crew-sandbox.test.ts",
   "test/crew-remotes.test.ts",
   "test/crew-brief-gate.test.ts",
+  "test/passport.test.ts",
+  "test/passport-edge.test.ts",
   "test/crew-direction.test.ts",
   "test/crew-direction-autonomy.test.ts",
   "test/crew-guard.test.ts",
@@ -83,10 +125,15 @@ export const GATE: readonly string[] = [
   "test/decide.test.ts",
   "test/ledger.test.ts",
   "test/capacity.test.ts",
+  "test/access-log.test.ts",
+  "test/flow-pipeline.test.ts",
+  "test/flow-throughput.test.ts",
+  "test/limits.test.ts",
   "test/guard-new-accounts.test.ts",
   "test/checks.test.ts",
   "test/dependencies.test.ts",
   "test/map-closing.test.ts",
+  "test/parked-close.test.ts",
   "test/autonomy.test.ts",
   "test/studio.test.ts",
   "test/studio-words.test.ts",
@@ -96,12 +143,21 @@ export const GATE: readonly string[] = [
   "test/front.test.ts",
   "test/fork-counts.test.ts",
   "test/fork-flow.test.ts",
+  "test/approve-here.test.ts",
   "test/fork-pull-approval.test.ts",
   "test/cross-repo-pull.test.ts",
+  "test/pull-mergeable.test.ts",
+  "test/pull-variants.test.ts",
+  "test/pull-checks-line.test.ts",
   "test/pulls.test.ts",
   "test/api-reader-marks.test.ts",
   "test/app-members.test.ts",
   "test/apps.test.ts",
+  "test/apps-crew.test.ts",
+  "test/apps-identity.test.ts",
+  "test/apps-new.test.ts",
+  "test/apps-slow-test.test.ts",
+  "test/apps-tests-clause.test.ts",
   "test/apps-adversarial.test.ts",
   "test/apps-busy.test.ts",
   "test/apps-token.test.ts",
@@ -116,23 +172,38 @@ export const GATE: readonly string[] = [
   "test/git-trust.test.ts",
   "test/helpers.test.ts",
   "test/shards.test.ts",
+  "test/snapshot-drill.test.ts",
+  "test/drill-verdict.test.ts",
+  "test/drill-board-line.test.ts",
+  "test/snapshot-drill-page.test.ts",
   "test/snapshot-store.test.ts",
   "test/migrate.test.ts",
   "test/schema-additive.test.ts",
   "test/schema-migrations.test.ts",
+  "test/domains.test.ts",
   "test/vitals.test.ts",
+  "test/vitals-degraded.test.ts",
+  "test/red-main.test.ts",
+  "test/sentinel.test.ts",
+  "test/tui-sentinel.test.ts",
   "test/version.test.ts",
   "test/watches.test.ts",
   "test/guard.test.ts",
   "test/asked.test.ts",
+  "test/thought-stream.test.ts",
   "test/asks.test.ts",
+  "test/review-wait.test.ts",
   "test/asks-bulk.test.ts",
+  "test/hand-decider.test.ts",
+  "test/decisions-by-doors.test.ts",
+  "test/standing-rule.test.ts",
   "test/asks-expiry.test.ts",
   "test/asks-rank.test.ts",
   "test/plan-pillars.test.ts",
   "test/plan-route.test.ts",
   "test/planner-declined.test.ts",
   "test/feed.test.ts",
+  "test/feed-choose.test.ts",
   "test/feed-page.test.ts",
   "test/offline.test.ts",
   "test/share.test.ts",
@@ -142,6 +213,7 @@ export const GATE: readonly string[] = [
   "test/forge-cloudflare.test.ts",
   "test/forge-cloudflare-celld.test.ts",
   "test/branch_tell.test.ts",
+  "test/tell_from.test.ts",
   "test/usage.test.ts",
   "test/tokens.test.ts",
   "test/credentials.test.ts",
@@ -155,6 +227,7 @@ export const GATE: readonly string[] = [
   "test/spawn-child-apps.test.ts",
   "test/spawn-child-runs-apps.test.ts",
   "test/spawn-first-boot.test.ts",
+  "test/spawn-fresh-forks.test.ts",
   "test/spawn-keys.test.ts",
   "test/web-apps.test.ts",
   "test/web-ui.test.ts",
@@ -165,6 +238,7 @@ export const GATE: readonly string[] = [
   "test/diff-edge-cases.test.ts",
   "test/diff.test.ts",
   "test/edge-auth.test.ts",
+  "test/own-session.test.ts",
   "test/edit-words.test.ts",
   "test/edits-security.test.ts",
   "test/edits.test.ts",
@@ -195,7 +269,8 @@ export const GATE: readonly string[] = [
   "test/make-it-yours.test.ts",
   "test/map.test.ts",
   "test/pillars.test.ts",
-  "test/reaches.test.ts",
+  "test/carried.test.ts",
+  "test/carried-deploy.test.ts",
   "test/milestones.test.ts",
   "test/mcp.test.ts",
   "test/name-marks.test.ts",
@@ -214,24 +289,30 @@ export const GATE: readonly string[] = [
   "test/overlap.test.ts",
   "test/outsiders-switch.test.ts",
   "test/check-budget.test.ts",
+  "test/check-proven.test.ts",
   "test/check-list.test.ts",
   "test/check-tiers.test.ts",
   "test/pull-check-again.test.ts",
   "test/holds.test.ts",
   "test/hollow.test.ts",
+  "test/flags.test.ts",
   "test/home-feed.test.ts",
+  "test/home-walk.test.ts",
   "test/oauth-discovery.test.ts",
   "test/oauth-flow.test.ts",
+  "test/oidc.test.ts",
   "test/data-home.test.ts",
   "test/tree.test.ts",
   "test/reports.test.ts",
   "test/report-discovery.test.ts",
   "test/apps-report.test.ts",
+  "test/apps-toolbar.test.ts",
   "test/private-app.test.ts",
   "test/actions.test.ts",
   "test/app-env.test.ts",
   "test/apps-ssh.test.ts",
   "test/pacing.test.ts",
+  "test/openapi.test.ts",
   "test/palette.test.ts",
   "test/qr.test.ts",
   "test/branches.test.ts",
@@ -240,12 +321,17 @@ export const GATE: readonly string[] = [
   "test/counts.test.ts",
   "test/crew-loop.test.ts",
   "test/crew-totals.test.ts",
+  "test/flake.test.ts",
+  "test/crew-locks.test.ts",
   "test/ssh-site.test.ts",
   "test/web-code.test.ts",
   "test/web-origins.test.ts",
+  "test/roll.test.ts",
+  "test/rehearsal.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
+  { file: "test/crew-sandbox-real.test.ts", reason: "landed unlisted and red locally; the builder admits it", issue: 1238 },
   { file: "test/api-errors.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
   {
@@ -387,4 +473,40 @@ export function auditGate(
     if (!gated.has(file) && !out.has(file))
       problems.push(`${file} is in neither GATE nor EXCLUDED`);
   return problems;
+}
+
+/** The `test/*.test.ts` files under `root`, as the gate names them. */
+export function presentTests(root = "."): string[] {
+  try {
+    return readdirSync(`${root}/test`)
+      .filter((name) => name.endsWith(".test.ts"))
+      .map((name) => `test/${name}`)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * What the check prints when the list is wrong: every problem, then one
+ * last line naming the files to list. Empty when the list is right.
+ */
+export function gateRefusal(present: readonly string[]): string[] {
+  const problems = auditGate(present, GATE, EXCLUDED);
+  if (problems.length === 0) return [];
+  const named = [
+    ...new Set(problems.map((p) => p.match(/^(test\/\S+\.test\.ts) /)?.[1])),
+  ].filter((f): f is string => f !== undefined);
+  return [
+    ...problems,
+    `${named.join(", ")}: list it in GATE or EXCLUDED in scripts/gate.ts`,
+  ];
+}
+
+// `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so
+// an unlisted file fails in under a second — not after install and tsc.
+if (import.meta.main) {
+  const refusal = gateRefusal(presentTests());
+  for (const line of refusal) console.error(`gate: ${line}`);
+  process.exit(refusal.length === 0 ? 0 : 2);
 }

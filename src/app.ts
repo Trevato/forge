@@ -7,6 +7,7 @@
 import type { MailConfig, Mailer } from "./kernel/mail.ts";
 import type { Database } from "bun:sqlite";
 import type { Decider } from "./crew/decide.ts";
+import type { VerifyHuman } from "./core/turnstile.ts";
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -17,7 +18,14 @@ import { follow } from "./core/following.ts";
 import { enqueueForEvent } from "./core/webhooks.ts";
 import { openDb } from "./kernel/db.ts";
 import { id } from "./kernel/id.ts";
-import { createLog, type Log } from "./kernel/log.ts";
+import {
+  createLog,
+  forgeErrorLedger,
+  releaseErrorLedger,
+  type ErrorLedger,
+  type Log,
+} from "./kernel/log.ts";
+import { RefusedLedger } from "./kernel/internal_refused.ts";
 import { closeReadersUnder } from "./git/read.ts";
 
 export interface ForgeConfig {
@@ -113,6 +121,23 @@ export interface ForgeConfig {
    */
   sshPort?: number;
   /**
+   * The Turnstile secret (`FORGE_TURNSTILE_SECRET`). Set, signup refuses a
+   * missing or bad token before it hashes a password or makes an account.
+   * Unset, signup is open as before.
+   */
+  turnstileSecret?: string;
+  /**
+   * The Turnstile site key (`FORGE_TURNSTILE_SITEKEY`): public, it names the
+   * widget `/signup` renders. The secret is only honoured with it, so signup
+   * cannot be locked behind a widget the page never shows.
+   */
+  turnstileSiteKey?: string;
+  /**
+   * Stand-in for Cloudflare's siteverify in tests: with a secret set, asked
+   * instead of the network. Without a secret it is never asked.
+   */
+  verifyHuman?: VerifyHuman;
+  /**
    * The exact command the host forge gave this one to reach its terminal
    * (`FORGE_APP_SSH`), when it runs as an app of another forge (a spawned
    * child). Printed verbatim wherever the forge says how to connect.
@@ -123,8 +148,27 @@ export interface ForgeConfig {
    * (`FORGE_REPO`, e.g. `trevato-apps/forge`). A spawned child forks it,
    * so every child starts from the forge's code and can follow its
    * parent's updates. Unset, children are spawned without the fork.
+   * It also marks the repository whose landings are checked out into
+   * `releases/<sha>/` and preflighted (`release/`, #1662).
    */
   forgeRepo?: string;
+  /**
+   * The forge this one was spawned from (`FORGE_PARENT_URL`): https, no
+   * credentials. Its `/releases.json` is read for the following page.
+   */
+  parentUrl?: string;
+  /** Lets `parentUrl` be plain http. Tests only; boot never sets it. */
+  parentLoopback?: boolean;
+  /** How many `releases/<sha>/` checkouts to keep (`FORGE_RELEASES_KEEP`). @default 5 */
+  releasesKeep?: number;
+  /**
+   * A green release of the forge's own code takes over the port instead of
+   * waiting for a restart (`FORGE_SELF_SWAP=1`; `release/swap.ts`, #1663).
+   * The listener is bound with SO_REUSEPORT so the new process can share it.
+   */
+  selfSwap?: boolean;
+  /** How long a swapped-in release has to read healthy (`FORGE_SWAP_BUDGET_S`). @default 60000 */
+  swapBudgetMs?: number;
 }
 
 export interface App {
@@ -138,6 +182,8 @@ export interface App {
   readonly hookAddress: { current: string };
   /** Per-boot secret every internal request must carry (`FORGE_HOOK_SECRET` in a hook's env). */
   readonly hookSecret: string;
+  /** What `vitals` turns into needs: this forge's own, not the process's. */
+  readonly signals: { errors: ErrorLedger; refused: RefusedLedger };
   close(): void;
 }
 
@@ -166,11 +212,14 @@ export function createApp(config: ForgeConfig): App {
   // and the forks whose default branch is still a copy of this one's.
   follow({ db, reposRoot, bus });
 
+  const owner = id();
+  const errors = forgeErrorLedger(owner);
   return {
     config: { ...config, dataDir },
     db,
     bus,
-    log: createLog("forge"),
+    log: createLog("forge", owner),
+    signals: { errors, refused: new RefusedLedger() },
     reposRoot,
     // This process's own: two forges share a data directory for the length
     // of a release, and each spawns git with its own socket in the env.
@@ -182,6 +231,7 @@ export function createApp(config: ForgeConfig): App {
       // and processes outlive a closed database unless somebody says
       // otherwise. One data dir is one forge, so closing the forge is where
       // that is said.
+      releaseErrorLedger(errors);
       closeReadersUnder(reposRoot);
       db.close();
     },

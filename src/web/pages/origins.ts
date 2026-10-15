@@ -73,6 +73,7 @@ export type AccountSection =
   | "password"
   | "tokens"
   | "keys"
+  | "passkeys"
   | "origins"
   | "crew"
   | "accounts"
@@ -80,6 +81,8 @@ export type AccountSection =
   | "backups"
   | "secrets"
   | "capacity"
+  | "access"
+  | "limits"
   | "cloud";
 
 /**
@@ -132,6 +135,18 @@ export function accountSections(
             current: current === "capacity",
           },
           {
+            label: "Access",
+            href: "/settings/access",
+            icon: "activity" as const,
+            current: current === "access",
+          },
+          {
+            label: "Limits",
+            href: "/admin/limits",
+            icon: "activity" as const,
+            current: current === "limits",
+          },
+          {
             label: "Backups",
             href: "/settings/backups",
             icon: "download" as const,
@@ -162,6 +177,12 @@ export function accountSections(
       href: "/settings/keys",
       icon: "lock",
       current: current === "keys",
+    },
+    {
+      label: "Passkeys",
+      href: "/settings/passkeys",
+      icon: "key",
+      current: current === "passkeys",
     },
     {
       label: "Origins",

@@ -1,0 +1,149 @@
+/**
+ * Limits, for a forge admin: every limit the owner can hit, with its value,
+ * its default and the reason it is there (`settings/limits.ts`). A change
+ * governs the next request that meets the limit; each one is listed below:
+ * who, when, from what to what. Anyone else gets the not-found page.
+ */
+
+import { changeLimit, listLimits } from "../../actions/limits.ts";
+import type { Ctx } from "../../http/context.ts";
+import { notFoundPage, settingsLayout } from "../chrome.ts";
+import { field, readForm } from "../form.ts";
+import { html, when } from "../html.ts";
+import { flashTo, page } from "../layout.ts";
+import { btn, card, icon, row, time } from "../ui.ts";
+import { accountSections } from "./origins.ts";
+
+// GET /admin/limits
+export function limitsPage(ctx: Ctx): Response {
+  const listed = listLimits(ctx.app, ctx.auth.user);
+  if (!listed.ok) return notFoundPage(ctx);
+  const { limits, changes } = listed.value;
+  const rows = limits.map((l) =>
+    row({
+      lead: icon("activity"),
+      title: html`${l.label} <span class="muted small mono">${l.key}</span>`,
+      meta: html`${l.reason} <br />${l.isSet
+          ? html`Set here; the default is
+              <span class="mono">${String(l.defaultValue)}</span>.`
+          : html`The default.`}
+        Whole number, ${l.unit}, from
+        <span class="mono">${String(l.min)}</span> to
+        <span class="mono">${String(l.max)}</span>.`,
+      trail: html`<form class="row-actions" method="post" action="/admin/limits">
+        <input type="hidden" name="key" value="${l.key}" />
+        <input
+          class="input mono"
+          type="number"
+          name="value"
+          min="${String(l.min)}"
+          max="${String(l.max)}"
+          step="1"
+          value="${String(l.value)}"
+          aria-label="${l.label}"
+        />
+        ${btn("Save", {
+          size: "sm",
+          variant: "primary",
+          label: `Save ${l.label}`,
+        })}
+        ${when(
+          l.isSet,
+          () =>
+            html`${btn("Default", {
+              size: "sm",
+              name: "reset",
+              value: "1",
+              label: `Back to the default for ${l.label}`,
+            })}`,
+        )}
+      </form>`,
+    }),
+  );
+  const history = changes.map((c) =>
+    row({
+      lead: icon("history"),
+      title: html`<span class="mono">${c.key}</span>
+        <span class="mono">${c.from}</span> →
+        <span class="mono">${c.to}</span>`,
+      meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}`,
+    }),
+  );
+  const body = html`${card(
+      html`<div class="card-body">
+          <p class="muted small">
+            Every limit you can hit, and why it is there. A change governs
+            the next request that meets the limit; nothing needs a restart.
+          </p>
+        </div>
+        <ul class="list">
+          ${rows}
+        </ul>`,
+      {
+        head: html`${icon("activity")}
+          <h2>Limits</h2>`,
+        pad: false,
+      },
+    )}
+    ${card(
+      history.length === 0
+        ? html`<div class="card-body">
+            <p class="muted small">No change yet.</p>
+          </div>`
+        : html`<ul class="list">
+            ${history}
+          </ul>`,
+      {
+        head: html`${icon("history")}
+          <h2>Changes</h2>`,
+        pad: false,
+      },
+    )}`;
+  return page({
+    ctx,
+    title: "Limits",
+    body: html`<div class="page-head"><h1>Limits</h1></div>
+      ${settingsLayout(
+        accountSections("limits", { admin: true }),
+        body,
+        "Account settings",
+      )}`,
+  });
+}
+
+// POST /admin/limits
+export async function limitsSet(ctx: Ctx): Promise<Response> {
+  // Checked before the body is read: a non-admin learns nothing of the door.
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent")
+    return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const key = field(form, "key");
+  const reset = field(form, "reset") === "1";
+  const changed = changeLimit(
+    ctx.app,
+    ctx.auth.user,
+    key,
+    reset ? null : field(form, "value"),
+  );
+  if (!changed.ok && changed.error.kind === "not_found")
+    return notFoundPage(ctx);
+  return flashTo(
+    ctx,
+    "/admin/limits",
+    changed.ok
+      ? {
+          message:
+            changed.value.from === changed.value.to
+              ? `${key} is already ${changed.value.to}.`
+              : `${key}: ${changed.value.from} → ${changed.value.to}.`,
+        }
+      : {
+          tone: "danger",
+          message:
+            changed.error.kind === "out_of_bounds"
+              ? `${changed.error.message}.`
+              : "There is no such limit.",
+        },
+  );
+}

@@ -11,6 +11,7 @@ import {
   parseAuthorizedKey,
   type UserKey,
 } from "../core/keys.ts";
+import { turnstileVerifier } from "../core/turnstile.ts";
 import { reservedName } from "../core/reserved.ts";
 import { setUserSetting } from "../core/settings.ts";
 import {
@@ -22,6 +23,7 @@ import {
   changePassword as rehash,
   cleanDisplayName,
   createUser,
+  hasAnyUser,
   updateProfile as writeProfile,
   verifyPassword,
   type CreateUserError,
@@ -36,9 +38,15 @@ export interface SignUpInput {
   username: string;
   email: string;
   password: string;
+  /** The Turnstile token the browser's widget gave; read only when a secret is set. */
+  humanToken?: string;
 }
 
-export type SignUpError = CreateUserError;
+export type SignUpError = CreateUserError | "human_check";
+
+/** What a person is told when the check fails. */
+export const HUMAN_CHECK_MESSAGE =
+  "We could not tell you are a person. Reload the page and try again.";
 
 /**
  * The first account on a fresh forge is the admin — no setup wizard. A name
@@ -49,9 +57,27 @@ export async function signUp(
   app: App,
   input: SignUpInput,
   /** Where the request came from, for the owner's audit of who joined. */
-  from: { address?: string | undefined } = {},
+  from: {
+    address?: string | undefined;
+    /**
+     * The terminal cannot render a widget, so it is let past the Turnstile
+     * check for the first account only (the bootstrap admin); once anyone
+     * exists, the terminal is asked like everyone else and, having no
+     * token, is refused: sign up on the web page.
+     */
+    door?: "terminal";
+  } = {},
 ): Promise<Result<User, SignUpError>> {
-  const created = await createUser(app.db, { ...input, adminIfFirst: true });
+  const secret = app.config.turnstileSecret;
+  const bootstrap = from.door === "terminal" && !hasAnyUser(app.db);
+  if (secret !== undefined && !bootstrap) {
+    const verify = app.config.verifyHuman ?? turnstileVerifier(secret);
+    // Before a password is hashed or a row is written.
+    if (!(await verify(input.humanToken ?? "", from.address)))
+      return err("human_check");
+  }
+  const { humanToken: _token, ...account } = input;
+  const created = await createUser(app.db, { ...account, adminIfFirst: true });
   if (!created.ok) return created;
   app.bus.append({
     kind: "user.created",

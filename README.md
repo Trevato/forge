@@ -24,7 +24,10 @@ child's own data, and `/forges` says how many are running and why any is not.
 
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
-stays that way. Everything worth having is written here: the Result type, the
+stays that way. The one exception is dev-only: `@anthropic-ai/sandbox-runtime`
+(a devDependency, with its own few transitive packages) lets
+`test/crew-sandbox-real.test.ts` run a shell under the very sandbox Claude Code
+builds from the crew's settings; it never ships and the app never imports it. Everything worth having is written here: the Result type, the
 router, the SSR templates, the design system, the markdown renderer. The only
 thing forge asks of the host is a `git` binary.
 
@@ -34,9 +37,13 @@ feeling on a foundation sized for one person.
 ## Run it
 
 ```sh
-bun install          # dev-only: types + tsc, no runtime deps
+bun install          # dev-only: types + tsc (native, 7.x), no runtime deps
 bun run src/main.ts  # web on :3000, ssh on :2222 (FORGE_SSH_PORT=0 turns it off; a taken port turns it off with one warning)
+bun src/main.ts --preflight  # can this tree boot? config parses, migrations run on a copy of the database; one line, exit 0 or 1, no socket opened. Run it before the swap, not under load: the copy is not atomic against a live writer, and a `preflight-*` directory a killed run left behind is swept by the next run once an hour old, and a missing data directory is created, as boot would
+bun src/main.ts --rollback <sha>  # swap back to a kept release: a full 40-hex sha under $FORGE_DATA/releases/, PORT as the running forge's. Exit 0 once that release reads healthy as that sha, else 1 with one line
 ```
+
+Set `FORGE_REPO=owner/name` to the forge's own code and a pull the crew lands there is written to `$FORGE_DATA/releases/<sha>/` (the newest `FORGE_RELEASES_KEEP`, default 5, are kept), preflighted with that tree's own `--preflight`, and recorded in the `release` table (sha, landed pull, verdict, its line, when). A red preflight is asked again once (the copy of the live database can tear under load); a second red is logged and told to the landed pull. Other repositories are untouched, and nothing is swapped unless `FORGE_SELF_SWAP=1`: then the forge binds its port with SO_REUSEPORT, a green release is started from `releases/<sha>/` beside it on the same port (`FORGE_COMMIT` set to the sha), `/api/v1/health` is read until an answer names that sha and is well (`FORGE_SWAP_BUDGET_S`, default 60), and only then does this process drain as a SIGTERM does. A release not healthy in its budget is killed, the old keeps serving, and the log and the landed pull say so. One swap per process: a landing while another swap is in its budget, or after one succeeded, is released and recorded but not started (the new process runs it from the next restart). The SSH terminal is not handed over yet (the new process cannot bind the old one's port), so a process holding the SSH listener refuses the swap and tells the landed pull; run with `FORGE_SSH_PORT=0` to swap. The swap also needs `net.ipv4.tcp_migrate_req=1` (Linux 5.14+): without it the kernel resets the connections still queued on the old listener when it closes, so a swap is refused (and told to the landed pull) rather than failing requests. The release is a child of the old process, so the swap is for a forge run directly, not under a supervisor that kills its children when the old process exits (PID 1 of a container, a systemd unit with the default `KillMode=control-group`). SO_REUSEPORT lets any process of the forge's user bind the same port and take a share of its connections, so `FORGE_SELF_SWAP=1` assumes nothing else runs as the forge's user on the host network (agents and apps are sandboxed or in cells). `--rollback <sha>` starts the kept release beside the running forge by the same health-read swap (`FORGE_SWAP_BUDGET_S` does not apply: it waits the default 60s), and a release that is not healthy is killed with the old still serving. It refuses, with one line and exit 1, a sha that is not kept (never checked out, or pruned) and a release whose schema has fewer migrations than the live database has applied (`<sha> predates schema N; rolling back would need a down-migration`); a release with a newer schema is allowed, as it migrates forward on boot, and the database's refusal of a future schema is unchanged. It does not drain the forge that was serving: until part 2 of the rollback does, both processes share the port and the operator stops the old one (the command prints that). It does not check `tcp_migrate_req` or SSH either; stopping the old process cleanly needs the same `net.ipv4.tcp_migrate_req=1` setup as the swap, and the SSH port stays with the old process. `FORGE_REPO` also names the parent code that spawned child forges fork.
 
 If your shell already has `FORGE_URL` set — a crew workspace sets it to the
 forge you work for — this forge takes it as its own canonical address and
@@ -79,6 +86,22 @@ ssh -p 2222 localhost                        # the terminal UI
 git clone ssh://localhost:2222/you/hello.git # git, same port
 ```
 
+On a host that cannot hold cells or the crew's shell sandbox, a site admin
+sees `Reduced protection: …` in one line, under the filter on the terminal's
+first screen and in the web footer; nobody else does, and a fully protected
+forge shows nothing.
+
+The family across forges: `:` → Family in the terminal, `/family` on the web,
+`GET /api/v1/family` and the MCP `family` tool all give the same view. The
+forge that sent this one is shown to anyone; the forges it sent, only to a
+site admin (docs/SPAWN.md, "The family across forges").
+
+Passkeys: Settings → Passkeys lists, adds and removes them (several per
+account; `src/auth/webauthn.ts` verifies, no dependency, `none` attestation).
+The sign-in page's "Sign in with a passkey" gives the same HttpOnly session a
+password does. The relying party is the address the browser used (or
+`FORGE_URL`), so a passkey does not follow a forge to another hostname.
+
 Your SSH key is your identity. A key the forge knows signs you straight in; any
 other key browses public repos as a guest and can press `s` to sign in with a
 username and password — which links that key to your account, so the next
@@ -103,7 +126,10 @@ nothing else can.
 Configuration is environment variables, all with defaults: `FORGE_DATA`
 (`data/`; the forge refuses to boot when it is the checkout itself or a path
 inside it that git does not ignore), `PORT` (`3000`), `FORGE_SSH_PORT` (`2222`; `0` turns SSH off), and
-`FORGE_HOST` (`localhost`, the hostname in clone URLs). Connecting origins
+`FORGE_HOST` (`localhost`, the hostname in clone URLs). `FORGE_DRAIN_LINGER_S`
+(`10`, 0 to 120) is how long a forge sent SIGTERM keeps answering while
+routers learn it is going, so a roll refuses nobody (`docs/ops/ROLL.md`).
+Connecting origins
 adds `FORGE_URL` (the canonical public base URL, needed for OAuth callbacks),
 `FORGE_GITHUB_CLIENT_ID` / `FORGE_GITHUB_CLIENT_SECRET`, and
 `FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN). Behind a
@@ -114,7 +140,15 @@ signed in by the platform, with an account made on first sight. Mail out
 configured by the forge-level secrets `MAIL_SMTP_URL`
 (`smtps://user:pass@host:465`) and `MAIL_FROM`, set live under Settings →
 Secrets, or at boot by `FORGE_SMTP_URL` / `FORGE_MAIL_FROM`. With neither, no
-mail is sent and a newcomer waits for the owner to verify them. Behind a
+mail is sent and a newcomer waits for the owner to verify them. With
+`FORGE_TURNSTILE_SECRET` and `FORGE_TURNSTILE_SITEKEY` set (the forge refuses to
+boot with only the secret), `/signup` renders the Turnstile widget, its CSP
+allows `https://challenges.cloudflare.com`, and signup asks Cloudflare's
+siteverify about the posted `cf-turnstile-response` (API: `turnstile_token`),
+refusing a missing or bad token before it hashes a password or makes an
+account. Unset, signup is open. The terminal (SSH) cannot show a widget, so
+with Turnstile on it can create only the first account (the admin); everyone
+else is told to sign up on the web page. Accounts made through the platform edge are not checked. Behind a
 proxy, `FORGE_TRUSTED_PROXIES` (comma-separated CIDR ranges, e.g.
 `10.42.0.0/16` for a k3s ingress) names the proxies allowed to say who the
 client is; limits for strangers and the signup audit then see each outside
@@ -127,6 +161,34 @@ Unset, only this machine may say so, and the named header is never read. Everyth
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 
+`/forges/new`, `POST /api/v1/forges` and the MCP `spawn` make a client's forge from forks of the apps you pick, plus optionally one fresh app from a one-line description (`fresh`, at most 200 characters), and end in one claim link; see `docs/SPAWN.md`.
+
+`FORGE_PARENT_URL` names the forge this one was spawned from. It must be
+`https://` with no credentials or query (the forge refuses to boot otherwise).
+The parent serves `/releases.json` as `{"releases":[{"name","url"}]}`, newest
+first; the child reads it with a 3 s timeout, no redirects and a 256 KB cap,
+caches it under `FORGE_APP_DATA` for 10 minutes, and says "N releases behind
+<parent>" on a fork's following card, in the terminal's About card (`I`), and as `parentForge`
+(`{host, behind, releases, fetchedAt, down}`, null when unset) in
+`GET /api/v1/repos/:owner/:name/following` and the MCP `following` tool. A
+page never waits for the parent: it shows the cached copy and refreshes in the
+background, and a parent that is down or answering garbage leaves a "could not
+be reached" with the age of the last copy. Unset, nothing is shown. Read only:
+taking a release is not done here. This forge publishes its own
+`/releases.json` (the version names, each linking to that document), so any
+forge can be a parent. The terminal shows the count, not the release names.
+
+## Health
+
+`GET /api/v1/health` (and the MCP `health` tool) answer a site admin with
+`degraded`: one entry per thing that needs a person, `{cause, sentence,
+since, href}`. `cause` is a stable key (`disk`, `errors`, `internal`,
+`queue:<kind>`, `stuck:<runId>`, `budget:<runId>`); `since` is when it began, by the oldest
+evidence (oldest queued run, last heartbeat, oldest error or refused call in
+the hour) or else the first time the forge saw it, and holds until the cause
+clears; `href` is the page to look at. The board's forge strip links each
+entry, and the terminal dashboard prints each with its start.
+
 ## Origins
 
 Your forge is the index of everything you work on, wherever it actually lives.
@@ -135,6 +197,14 @@ Mirror a repository in and its issues, pulls, comments and labels come with the
 git objects; anything you then do here is **written through** to the origin
 first and reflected locally after it succeeds. For a mirror the origin is
 truth, exactly as git is truth for a native repo.
+
+A pull from an outsider's fork on the origin is someone else's code, so its
+check and preview wait. A person with write access lets that exact head run:
+on the pull page, **Approve to run here**; in the terminal, `A` on the pull
+("approve to run here"); over the API, `POST
+/api/v1/repos/:o/:n/pulls/:n/approve-here`. It is a local record — a review
+written through to, or imported from, the origin never counts — and a new push
+waits for a new approval.
 
 Connect one at **Settings → Origins** (or `A` then `o` in the terminal). Which
 way in you get is a property of the forge, not a preference:
@@ -201,6 +271,46 @@ header (`p` on a row in the terminal, `P` on a repo's home) says "keep this on
 my machine", and the dashboard grows an **On your machine** card listing them.
 The server remembers only the choice — nothing about the state of a laptop —
 and `forge sync` below is what acts on it.
+
+**Muting a repository from the home**: each ask row on the home carries a "Mute owner/name" chip. A muted repository's asks leave the home, `/api/v1/asks`, the header count and the phone's pushes (the same per-user mute the On you card uses, no new table); the home says "N muted repositories still ask" with a "Listen again" button, and an app's own page still counts them.
+
+**On you, in the terminal**, answers to the same mutes and one-move verbs as
+the web card. Repositories you muted are hidden and counted ("2 repositories
+muted"). On the On you card: `space` marks a row, `x` closes the marked rows
+(or the row under the cursor) with one reason, `m` mutes their repositories,
+`S` ships them, `u` undoes the latest set within its day, and `L` listens
+again to every muted repository. Each goes through `applyAsksBulk`, so the
+per-row access checks and refusals are the web's, shown in the toast.
+
+**Let the decider** answers a hand-over card (an issue the crew parked) when
+you would rather not: the third tap on the card, `POST /api/v1/asks/decide`
+(`{"item": "parked:<id>"}`), the MCP tool `asks_decide`, or `D` on the On you
+card in the terminal. It sees only the direction text, whether you pinned or
+muted the app, the day's spend against the ceiling, your last ten decisions
+there and the card's own evidence; the decision ledger row carries exactly
+that, with a reason and a confidence. A sure answer (70% or more) to set it
+aside takes the card off your board; an unsure one, a failure, or no decider
+configured leaves it with you. Undo for a day (`/api/v1/asks/decide/<id>/undo`,
+`asks_undecide`, `U`). Each tap is a paid call, so one card is handed over
+once in ten minutes.
+
+**The standing rule** says who answers a repository's hand-overs without a
+tap, three ways: `me` (the default: they wait for you), `decider` (the sweep
+asks the decider about each parked card and its word stands, whatever its
+confidence), or `decider_tell` (the decider's sure set-asides, 70% or more,
+take the card off your board; the unsure ones stay with you). The tap on the
+card follows the same rule. A shelved repository, one whose autonomy is `off`,
+has its parked cards closed by rule with no model call whenever the rule is
+not `me`, so turning the crew off on a ruled repository closes what it had
+parked. The sweep spends at most five model calls a tick and never re-asks a
+card already answered or undone. Only a repository admin who is a person sets
+it, never an agent. Set it in the repository's settings (Autonomy → Decisions
+here); over the API with `PATCH /api/v1/repos/<owner>/<name>`
+`{"decisionsBy": "me" | "decider" | "decider_tell"}` (admin token; it is in the
+repository JSON too); over MCP with `decisions_by` (`repo`; without `by` it
+says how the rule is set, with `by` it plans unless `dryRun: false`); in the
+terminal with `R` in the repository's workspace, which cycles me → decider →
+decider_tell.
 
 ## On your machine
 
@@ -270,9 +380,19 @@ file), and if you named an agent, the sentence became issue #1, assigned.
   `budget: <what> took <n> min, limit <m>`, queued again once, and failed
   the second time, which the vitals carry as a need for a day. `gate` is 60
   min because this repository's own gate takes 18–25 min alone and 45 beside
-  another check; it comes down when the gate does.
+  another check; it comes down when the gate does. A check waiting in the lane
+  past `laneWait` (10 min) or a run silent past `heartbeat` (3 min) turns the
+  health degraded with one sentence naming the cause ("22 checks wait behind
+  one lane; the oldest since 04:13; the lane runs #1212 for 31 min (limit
+  60)"). The sentinel files each such breach at once, not once per tick:
+  labelled P0 Trust and assigned to the sentinel, whose run the dispatcher
+  queues on the assignment.
 - **Every deploy is a run**, and the run is the check on the pull. Turn on
   **require checks** and a pull cannot merge until its head is green.
+- **A production deploy records the merged pulls it carries**: one `git
+  rev-list` of the deployed commit when the run finishes. The run page says
+  "Carries #3, #5" and `GET /api/v1/repos/:owner/:name/runs/:id` has `carries`.
+  The terminal has no list of deploys yet, so it does not show this.
 - A **private** app answers only to someone the forge has vouched for
   (`canRead` on the repository, then a signed grant); a public one to anyone.
 - **Every app has a terminal.** `ssh -p 2222 <name>@<forge>` runs the app's
@@ -312,6 +432,15 @@ off: no autonomy tick, no dispatch, no spend; checks still run and everything
 can still be read. The boot log and the studio's crew card say so. Set
 `FORGE_CREW_IN_PREVIEW=1` to run it anyway.
 
+**Tell the crew from any page.** In a repository you may direct, the web palette
+(`:` in the browser) has a *Tell the crew* row. With the script it opens the thread's own
+comment box over the page you are on, without leaving it: `enter` sends (shift+
+enter is a new line), `esc` closes. The tell remembers that page (`from`), and
+the answer comes back to it. Without a script the row is a link to a page of
+its own, `/:owner/:name/tell?from=/path`, which is the same box; `from` must be
+a path on this forge. Who may not direct the crew gets a 404 there and no row.
+The terminal's palette has no such row yet.
+
 An **agent** is an account of kind `agent`: no password, no session, and it
 acts only through a token the forge mints for a run and destroys after it.
 An admin creates one (**Settings → Crew**, or `POST /api/v1/agents`) with a
@@ -328,6 +457,38 @@ preview comes up. Leave feedback on the pull — a comment, a request for
 changes, a line comment — and the agent picks it up in the background,
 resuming its session. A failed check re-engages it too, a bounded number of
 times before a person must speak.
+
+**Three rounds, then a person.** When the crew reviewer has asked for
+changes three times on one pull with no approval and no word from a person
+who may direct the crew between, no more feedback runs start on it. The
+thread keeps a note ("Handed to a person by the crew:") with the three
+asks, and the pull becomes a **hand-over** card in asks: *Tell them what to
+try*, or *Close it*. Rounds are counted from the reviews, not the runs, so a
+restart never adds one. A person resets the count by commenting as a
+director (the crew then resumes) or by approving the pull from its page; the
+card ends when the pull is approved, closed or merged. Hand-overs can be
+closed in bulk like the other pull asks. The terminal's On you card lists
+them as "handed over" rows: `enter` opens the pull, `x` closes it.
+
+**Already done.** A builder that finds its issue already built on the base
+branch declines with `DECLINED: already done on main in <commit>`, naming the
+full or abbreviated id of each commit that did it (at most five). The forge
+checks that every commit named is on the base branch; only then is the run
+an "already done" outcome, with no strike and nothing parked. The issue stays
+open with a note naming the commits, the asked list and the issue page say
+"Done on main", and the person who asked closes it (the page's Close button,
+or `x` on the issue in the terminal); the close writes "Closed: already done
+on main in …" on the thread. A claim with no commit, or with one that is not
+on the base, is an ordinary decline and is parked as one.
+
+**A red pull.** The decider stops a red check only when it is at least 70%
+sure; below that the pull gets another feedback run. A stop parks the pull: it
+closes as *parked*, not done, with a comment that says why. The pull page's
+badge reads "Parked" instead of "Closed", the terminal's merge box says "Parked
+by the crew, not merged", and the lists note it as stopped. Reopening it clears
+the mark. Only the crew parks: the API and the page refuse `reason: "parked"`.
+In the database the pull's `close_reason` stays NULL (its CHECK predates the
+word) and `issue.parked = 1` carries it, so raw SQL never reads it as done.
 
 An autonomous app's planner is **held** while nothing is landing or the plate
 is full: no pull has merged in 48 h while one was closed unmerged, or more than
@@ -368,10 +529,17 @@ from before this record say nothing).
 `docs/APPS.md` is the contract: the vocabulary, and the rules that are
 mechanical rather than advisory.
 
+`docs/FLOW.md` is where every issue stands: `GET /api/v1/repos/:owner/:name/flow` returns each open issue's stage, since, stalled and unblock, plus what went live in the last 24 h.
+Where the whole forge waits is a forge admin's: `/flow` shows each stage from ready to live with what waits, the oldest wait and its capacity, under one sentence naming the bottleneck, and beside each what it let out in the last hour with a 24-hour sparkline, under a line of landings and the median ask→live — every count links to the items it counts. The terminal's Flow command and the MCP `flow` tool read the same: the sentence, the landings line, and each stage's count out in the last hour and in 24 h.
+
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
 what "ready now" means to a person and to the crew. The map also shows each
 pillar's ask-to-live: the median hours from an issue opening to its change live
 in production, over the last 7 days (also in the map and milestones API and MCP).
+It reads the `deploy_pull` record a production deploy writes when it finishes,
+so a page view runs no git; an issue closed by several pulls counts once, at
+its first time live. On boot the forge records what the last 7 days of earlier
+production deploys carried, so work that went live before the record is counted.
 
 `docs/STUDIO.md` is the front door from the top of this page in full: the five
 words and where each is decided, the box, the three lists, a tell, a run
@@ -400,9 +568,52 @@ huge one); restore unpacks them. While one runs, progress shows on
 **Settings → Backups** and as a line in the log every 500 objects or minute.
 The terminal has no backups view, so it has no readout.
 
+**Run a drill** on the same page (admins only) restores the newest snapshot
+into scratch, opens it, counts what is there and unseals a value; the page
+waits for it, up to 10 minutes, and the last drill shows there as one line.
+Only one runs at a time. See `docs/SNAPSHOT.md`.
+
+A red drill, or none in eight days, is one line for the forge's admin on the
+board's forge strip, in the terminal's dashboard (same `forgeNeeds`), and in
+MCP `health` and `asks`; it names the failed step and the next green drill
+clears it. An admin with a phone URL gets one push per cause (a new red
+drill, or the silence), also when eight days pass with no event: the notifier
+wakes every 10 minutes for it. The time the forge first owed a drill is kept
+at boot in `drill/first-seen`; if the disk will not take it, a warning is
+logged and a forge with no drill ever is not flagged.
+
 `docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.
+
+### The sentinel
+
+The forge hunts its own faults (`docs/CREW.md`): a hunt an hour on the
+autonomy clock, sooner when a held slot or a setting left away from its
+default is new. Each finding is one issue with its evidence, filed in
+`FORGE_SENTINEL_REPO` (default `trevato/forge`) as the `sentinel` agent, else
+the first admin. Evidence is scrubbed of anything credential-shaped before it
+is filed.
+
+- **Board:** a site admin's forge strip shows the open findings and the last
+  hunt; a guest or member sees nothing.
+- **Terminal:** press `ctrl+k`, run **Sentinel** — the same line as a toast.
+  Offered to site admins only.
+
+### Passports
+
+A crew run's environment carries `FORGE_PASSPORT`, a 15-minute credential
+scoped to `health:read` for the forge alone (`src/kernel/passport.ts`, no
+dependency: Node crypto's HMAC and HKDF). It opens one route and nothing else:
+
+    curl -H "authorization: Passport $FORGE_PASSPORT" "$FORGE_URL/api/v1/passport/health"
+
+Missing, expired, wrong-audience, wrong-scope or forged passports get a 401. A
+passport has exactly one valid encoding (padded or altered variants are refused).
+
+This route proves the mechanism and is not a privilege: it returns what the
+anonymous `GET /api/v1/health` already returns. The next edge should guard
+something only a passport may reach.
 
 ## Cloud accounts
 
@@ -433,6 +644,31 @@ you tap Post. Signed out, you sign in (or up) first and land on the same
 draft. The share target is the web manifest's `share_target`, which only an
 **installed PWA on Android and Chrome** offers; iOS Safari does not.
 
+The home composer's app picker also has **the forge**: that sends no tell to
+an app, it keeps what you typed as a thought, exactly as typed (works with no
+apps too). Your thoughts from the last day stand at the top of the feed as
+your own posts, marked "Received". The terminal has no feed or composer, so
+thoughts are web-only there; `POST /api/v1/thoughts` is the other way in.
+Within minutes the planner places each thought on the map and answers under it
+in the feed, saying where it went; the MCP `thought` tool returns that
+placement to the thought's author.
+A thought that says an earlier one again does not open a duplicate: it links to
+the earlier thought (`repeats`), comments on the issue it placed and raises it
+to the front of the ready order, unless that issue is deferred or closed, which
+the reply says. A close restatement counts only when the planner reads it as
+plain work and nothing in it negates or flips the earlier one; "don't make X"
+after "make X" is a reversal, never a repeat. A reversal links the thoughts it
+takes back (`supersedes`). `/asked` shows "said again, first on …", "takes back
+…" and "superseded by …" under each thought, and the MCP `thought` tool returns
+`repeats`, `supersedes`, `repeatedBy` and `supersededBy` thought ids.
+
+## Link-preview cards
+
+`/og/repo/owner~name.svg`, `/og/app/slug.svg`, `/og/issue/owner~name~N.svg`,
+`/og/pull/owner~name~N.svg` and `/og/run/owner~name~runid.svg` are 1200×630
+social cards. They show only what an anonymous reader can open; anything
+private, sealed or unknown is the same 404.
+
 ## Develop
 
 ```sh
@@ -450,6 +686,37 @@ and `FORGE_CHECK_SHARDS=2` turns that down on a small or busy host. Each
 shard's output is written whole as it finishes; the log ends with every
 failing test from every shard, or on green with one line — how many tests,
 across how many files, in how long, then the slowest and fastest shard.
+
+The check's first step is the gate-list audit (`bun scripts/gate.ts`), so a
+test file listed in neither `GATE` nor `EXCLUDED` fails in under a second,
+before install-heavy work. `tsc` then runs `--incremental` with a 2 GB heap,
+its build info in `.forge-cache/`. It is TypeScript 7, the native compiler (a
+Go binary, so the bound is `GOMEMLIMIT=2GiB`): on this tree a cold check is
+~3 s and ~17 CPU-s where 5.9 took ~30 s and ~50 CPU-s (#1864). 5.9 stays as
+the dev dependency `typescript-api` only because `scripts/hollow.ts` walks
+its AST, which 7.0 has no stable JS API for. The forge restores
+`.forge-cache/` from the base's own green check and keeps it only from green checks of the default
+branch (`src/checks/cache.ts`), so a pull's code never fills a cache another
+check reads. The full gate also writes every file's time there, and the next
+split weighs every file by measurement rather than the 41 the table named.
+
+The fast tier picks by measurement. The full gate runs each file in a
+`bun test` of its own under Bun's coverage (`--impact`; coverage is per
+process, so a shard of many files would blur theirs together) and writes
+the impact map: test file → the `src/**` files whose functions it called.
+A file merely imported — its top level run, none of its functions — does
+not count; that is the import graph again (#1794). Under the forge the map
+is handed over as `$FORGE_CHECK_IMPACT` in the checkout: every check is
+seeded with the one the last green default-branch run kept (under
+the forge's data directory, `checks/impact/`, `src/checks/impact-store.ts`), and
+only such a run, or the full gate on land, keeps a new one. By hand it is
+`scripts/test-impact.json`. A diff intersected with it is the set of tests
+the change reaches; the plan line says `by coverage: N changed files reach
+M tests; src/x.ts reaches none` (a coverage gap). A measured test is
+guessed by imports only against the changes the map cannot see; tests the
+map has never seen fall back to the import-hop guess, and a change to
+`forge.json`, `package.json`, `scripts/**` or `src/kernel/**` runs
+everything. With no map yet the line says `by imports (no impact map)`.
 
 Files go to shards by how long they take, not how big they are: longest
 first onto the least-loaded shard, weighed from `scripts/test-times.json`
@@ -486,8 +753,35 @@ Every `test/*.test.ts` is either in `GATE` or in `EXCLUDED` with a one-line
 reason and the issue that owns admitting it; `test/check-list.test.ts` goes
 red on a file in neither, in both, or named without existing, so a new test
 file never sits outside the gate silently. A file joins the gate by moving
-from `EXCLUDED` to `GATE` in a pull whose check is green — that pull is the
-proof it passes.
+from `EXCLUDED` to `GATE` in a pull whose check is green and whose description
+carries ten green runs in random order under load:
+`bun scripts/flake-hunt.ts admit test/x.test.ts` runs the file ten times, each
+its own `bun test --randomize` with a fresh seed beside busy loops, prints the
+record and exits non-zero unless all ten are green.
+
+**No flaky tests.** Nightly, `.forgejo/workflows/flake-hunt.yml` runs every
+gate file five times on a loaded box, each run a fresh seed that orders both
+the files and (through `--randomize`) the tests inside them, nothing stopped
+early. A file red in some runs and green in others is flaky: the hunt files
+a `Flaky: test/x.test.ts` issue carrying the failure text, the seed and the
+run, with the usual root causes to tick (a shared port, a real clock, order
+dependence, a leaked server, a timeout set near the real duration, a tight
+wall-clock bound); then
+`bun scripts/flake-hunt.ts quarantine` moves every file an open `Flaky:`
+issue the hunt itself filed (its author is the token's user and the forge
+has not marked it untrusted) names from `GATE` to `EXCLUDED` under that issue and proposes the move
+as a pull. Nobody hand-edits the list. A file red in every run is broken,
+not flaky, and the check already says so. The fix is the test's shape, never
+a retry: `test/flake.test.ts` fails on `--retry`, `--rerun-each`, a bunfig
+`retry` or a `{ retry: N }` anywhere the gate runs, and on any test that
+bounds a measured time under 200 ms (a loopback fetch on a loaded runner
+takes tens of ms): assert relative to a baseline from the same run, or bound
+only the failure the test names. The workflow needs a
+`FORGE_TOKEN` secret and a `FORGE_URL` variable on the mirror.
+
+Bun's own `--randomize --seed=N` drives every hunt and admission run. Not
+used: `--rerun-each` (one seed for every rerun, so ten reruns explore one
+order) and `--parallel` (it changes the load the gate is judged under).
 
 The gate also refuses hollow work. `test/hollow.test.ts` runs
 `scripts/hollow.ts`, which names an exported function in `src/actions/` that
@@ -529,12 +823,35 @@ work here.
 
 ## What works today
 
+- **Cut a wave** — Settings → *Cut a wave* (repository admins, same-origin
+  POST; web-only, the terminal's settings hand over to the web) opens a pull
+  adding `waves/<next>.md`, listing the pulls merged since the last wave and
+  not already in an earlier wave. The headline and highlights are `TODO`
+  placeholders; no model is called. It refuses, writing nothing, when an
+  earlier wave does not parse (naming the file) or nothing new has merged.
+
 - **Accounts & access** — register/sign in, personal access tokens with coarse
   scopes (ro/rw/admin), public and private repositories.
 - **Git** — push and pull over HTTPS **and SSH**, browse code (tree, blob with line anchors,
   commit history) with README rendering and **syntax highlighting**, protected
   default branches (force-push and deletion refused, honest fast-forwards
   allowed).
+- **Boards** — `/boards/data`, for a forge admin who is a person (anyone else
+  gets a 404): the query is the URL (`?source=runs&aggregate=count&by=day&fcolumn=state&fvalue=failed`),
+  drawn server-side as the chart chosen beside it (`chart=line|bar|area|number|table|heat`)
+  with its points in a table; a point opens the rows behind it, keeping your filter.
+  `series=<column>` splits each group by a second column: stacked area draws one band per
+  value (eight at most, the rest folded into "other"), the heat strip one row per value
+  (twelve at most) with time across, the table a series column; line, bar and number set
+  it aside. Number is the latest group's value over a sparkline of all of them.
+  `/boards` holds the boards themselves: a board is one JSON file
+  (`{title, range, refresh: off|10s|1m, panels: [{title, chart, query, w, h}]}`) in
+  `forge/boards`, a repo the forge owns and makes on the first board; every save is a commit
+  by the admin who made it, and a file that does not validate is not shown. Make, rename,
+  duplicate, delete, add/edit/remove/reorder panels, or pin the query on `/boards/data`.
+  A board with a refresh redraws its grid on that beat through the live-region swap
+  (`/boards/:slug/live`, etag'd). The same doors are in the API: `GET /api/v1/boards`, `GET|PUT|DELETE /api/v1/boards/:slug`
+  (an agent is 403, anyone but an admin 404; a panel whose query cannot run is refused with 422). No dependency was added.
 - **Issues** — labels, threaded comments, close/reopen, markdown.
 - **Pull requests** — open from a branch, a **beautiful diff viewer** (syntax
   highlighting composed with intra-line word highlighting, mobile-first,
@@ -550,6 +867,10 @@ work here.
   flags new activity, no refresh.
 - **Commit pages** — every commit's diff through the same viewer.
 - **Settings** — visibility, branch protection, and labels.
+- **The check lane is visible.** Checks run one at a time; an admin's home
+  strip, the terminal dashboard's strip and `GET /api/v1/health` (`lane`) show
+  the queue depth, the running check and its age, the median of the last
+  twenty and the time to clear, and the 30-minute queue card names that cause.
 - **A terminal UI** — `ssh` in for the whole forge: dashboard, code browsing
   with syntax highlighting, issues and pulls with live-updating threads, the
   diff viewer with inline review comments, merges, settings, orgs, tokens and
@@ -561,6 +882,16 @@ work here.
 - **Automation** — a JSON API covering repos, issues, forks, and orgs (the
   label-as-queue surface), a durable event outbox, and **webhooks** (HMAC-signed
   delivery with retry).
+- **Removing an account** — `DELETE /api/v1/admin/accounts/:username` (admin
+  only). An account that is the last owner of an organization answers 409 with
+  the organizations named. Send `{"retireOrgs": true}` to preview: the answer
+  lists each organization, its repositories (and the app each runs) and its
+  teams, and changes nothing. Send `{"retireOrgs": true, "confirm": true}` to
+  do it: apps are stopped, repositories deleted, organizations retired (the
+  name stays taken), then the account. If a repository will not go, the answer
+  is 500 with `failed` and `removed`; what is left is intact and the same call
+  again finishes the job. The accounts page offers the same flow: Remove →
+  "Remove the organization too" → a confirm page listing everything that goes.
 - **Apps** — a repository that runs: production on the default branch, a
   preview per open pull with its own copy of the data, served by hostname
   from the forge's own port, every deploy a run and every run a check.
@@ -605,3 +936,29 @@ Invariants are proven by faults, not by hope. No dependencies were added.
 `forge.json`'s `check` may declare `fast` beside `run` (the full gate; `full` names it explicitly). `bun scripts/test-shards.ts --tier fast --diff <base>..<head>` runs the tests that touch the diff (changed, named for a changed source file, or importing one within two hops), every test the times table records under 1 s, and any named by `--learned a,b`. `src/checks/tiers.ts` decides; it adds no dependency.
 
 In the forge itself: a pull's check runs `fast` when the manifest has one, in a clone holding the fork point and the head as `FORGE_CHECK_BASE` and `HEAD` (`origin/main` is not a ref there), with `FORGE_CHECK_LEARNED` naming tests earlier land attempts taught the pull (`src/checks/history.ts`, `learned.ts`). Landing (`landIfGreen`) runs `full` once on the merge with its base before merging (`src/checks/landing.ts`); red comments on the pull with the tests named, is remembered per head and base, and the files ride the pull's next fast run. The pull page's checks line shows the tier words.
+
+While the default branch's own last check is red, the forge holds its pulls' checks queued rather than fail each one on the same test (`src/checks/red_main.ts`): the vitals carry one card naming the failing test and how many checks wait, and main going green releases them. A check a person asks for again runs at once, and no check is held more than 20 minutes, so the pull that fixes main can always show green.
+
+## Limits
+
+Every limit the owner can hit is declared in `src/settings/limits.ts` with its default, bounds and reason, and changed live by a forge admin at `/admin/limits`, `PUT /api/v1/admin/limits/:key` or the `limits` MCP tool (never by an agent). Each change is kept with who made it.
+
+## Choosing among variants
+
+A tell with `variants: n` starts n builders whose pulls share a variant group.
+`/:owner/:name/variants/:group` is the deck: one card per open sibling with its
+look and preview, linked from each sibling's change page. A writer likes or
+dislikes each (plain form posts; on touch a mostly-horizontal swipe, with a
+confirm before a dislike), through `POST /api/v1/repos/:owner/:name/pulls/:number/variant`
+(`{"answer","reason"}`), the `variant` MCP tool, or `+`/`-` on a pull in the
+terminal. Each person has one vote per pull, kept as a `lean` row in the
+decision ledger. A dislike closes the pull and leaves its one-line reason as a
+comment the builder reads; the last open sibling shows Ship. Readers see the
+cards and no buttons.
+
+While two or more siblings are open and none has shipped, a writer's feed holds
+one **Choose** item for the group ("choose among N open variants of …") that
+links to the deck, whatever the number of siblings; it is never muted away.
+Once a sibling ships or all but one close, the item leaves the feed. The
+terminal has no feed; the item is in `GET /api/v1/feed` and the MCP feed tool
+as kind `choose`.

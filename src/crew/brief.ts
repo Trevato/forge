@@ -138,6 +138,7 @@ export function systemPrompt(input: BriefInput): string {
     ...SANDBOX_LINES,
     "",
     "Work carefully and finish. If the task is unclear, impossible, or not something you should do, do not guess: make your last message start with `DECLINED:` followed by exactly why. Nothing is pushed then, and a person reads it.",
+    "If the issue is already done on the base branch, decline with `DECLINED: already done on main in <commit>` naming the full or abbreviated id of each commit that did it (at most five); the forge checks they are on the base, and a person closes the issue.",
   );
   return lines.filter((l) => l !== undefined).join("\n");
 }

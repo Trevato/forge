@@ -25,9 +25,4 @@ export const ALLOWED: readonly Allowed[] = [
       "the fleet graph shipped ahead of the fleet page that is to link to it",
     issue: 448,
   },
-  {
-    orphan: "GET /oauth/authorize",
-    reason: "reached only through an OAuth client's redirect",
-    issue: 971,
-  },
 ];

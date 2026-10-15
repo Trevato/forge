@@ -54,6 +54,15 @@ import {
 } from "../src/crew/interrupted.ts";
 import { laterGate } from "../src/crew/later.ts";
 import {
+  alreadyDoneOids,
+  alreadyDoneSummary,
+  namedCommits,
+  onBase,
+} from "../src/crew/already.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { alreadyDone } from "../src/core/done_on_main.ts";
+import { askedIn, askedJson } from "../src/core/asked.ts";
+import {
   handedOverAt,
   parkedTwice,
   parkReason,
@@ -1171,5 +1180,183 @@ describe("migration 43", () => {
     expect(after[2]).toStartWith("Interrupted, not parked: ");
     expect(after[3]).toBe(bodies[3]!);
     expect(after[4]).toBe(bodies[4]!);
+  });
+});
+
+describe("an issue found already done is the asker's to close, not a park", () => {
+  let e: Engine;
+  let oid: string;
+  const settle = (on: Issue, state: "ok" | "failed", summary: string) =>
+    settleAgentRun(e.app, e.fresh(), {
+      issueId: on.id,
+      state,
+      summary,
+      reason: "assigned",
+      actorId: e.mason.id,
+    });
+
+  beforeAll(async () => {
+    e = await engine("forge-already-");
+    const seeded = await commitToBranch(e.app, e.alice, e.repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# engine\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    oid = seeded.value.commitOid;
+  });
+  afterAll(() => e.close());
+
+  test("only a named commit that is on the base counts", async () => {
+    const dir = repoDir(e.app.reposRoot, e.repo.ownerName, e.repo.name);
+    expect(namedCommits("already done on main in " + oid.slice(0, 9))).toEqual([
+      oid.slice(0, 9),
+    ]);
+    expect(namedCommits("already done on main")).toEqual([]);
+    expect(namedCommits("out of scope, see " + oid.slice(0, 9))).toEqual([]);
+    expect(await onBase(dir, "main", [oid.slice(0, 9)])).toEqual([oid]);
+    expect(await onBase(dir, "main", ["deadbeef"])).toEqual([]);
+    expect(await onBase(dir, "nope", [oid.slice(0, 9)])).toEqual([]);
+  });
+
+  test("an already-done outcome is recorded, shown, and no strike", async () => {
+    const work = e.issue("Already built");
+    const summary = alreadyDoneSummary([oid]);
+    expect(alreadyDoneOids(summary)).toEqual([oid]);
+    for (let n = 0; n < 3; n++) {
+      expect(settle(work, "ok", summary)).toBe(true);
+      await tick();
+    }
+    const parks = listComments(e.app.db, work.id).filter((c) =>
+      c.body.startsWith("Parked by the crew"),
+    );
+    expect(parks).toEqual([]);
+    expect(parkedCount(e.app, e.fresh(), work.id)).toBe(0);
+    expect(struckOut(e.app.db, e.fresh(), [work.id]).has(work.id)).toBe(false);
+    expect(alreadyDone(e.app.db, [work.id]).get(work.id)).toEqual([oid]);
+    expect(getIssueById(e.app.db, work.id)!.state).toBe("open");
+
+    const signin = await fetch(`${e.servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({
+        username: "alice",
+        password: "a-good-passphrase",
+      }),
+      redirect: "manual",
+    });
+    const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const page = await (
+      await fetch(`${e.servers.url}/alice/engine/issues/${work.number}`, {
+        headers: { cookie },
+      })
+    ).text();
+    expect(page).toContain("waiting for you to close it");
+    expect(page).toContain(`/commit/${oid}`);
+
+    const closed = await fetch(
+      `${e.servers.url}/alice/engine/issues/${work.number}/state`,
+      {
+        method: "POST",
+        headers: { cookie, origin: e.servers.url },
+        body: new URLSearchParams({ state: "closed", reason: "done" }),
+        redirect: "manual",
+      },
+    );
+    expect(closed.status).toBeLessThan(400);
+    expect(getIssueById(e.app.db, work.id)!.state).toBe("closed");
+    expect(
+      listComments(e.app.db, work.id).some((c) =>
+        c.body.startsWith(`Closed: already done on main in [\`${oid.slice(0, 7)}\``),
+      ),
+    ).toBe(true);
+  });
+
+  test("the asked JSON carries the commits; closing through any door writes the note", async () => {
+    const work = e.issue("Asked and already built");
+    expect(settle(work, "ok", alreadyDoneSummary([oid]))).toBe(true);
+    const row = askedIn(e.app.db, [e.fresh()], { show: "all" }).find(
+      (a) => a.issue.id === work.id,
+    )!;
+    expect(askedJson(row).doneBy).toEqual([oid]);
+    // Not the web form: the same close the terminal makes.
+    expect(setIssueState(e.app, e.alice, e.fresh(), work, "closed").ok).toBe(true);
+    const comments = listComments(e.app.db, work.id).filter((c) =>
+      c.body.startsWith("Closed: already done on main in "),
+    );
+    expect(comments).toHaveLength(1);
+    expect(comments[0]!.body).toContain(oid.slice(0, 7));
+    // An issue with no note closes without one.
+    const plain = e.issue("Closed plainly");
+    expect(setIssueState(e.app, e.alice, e.fresh(), plain, "closed").ok).toBe(true);
+    expect(
+      listComments(e.app.db, plain.id).some((c) => c.body.startsWith("Closed:")),
+    ).toBe(false);
+  });
+
+  test("the asked page says done on main, with the commits", async () => {
+    const work = e.issue("Asked page");
+    expect(settle(work, "ok", alreadyDoneSummary([oid]))).toBe(true);
+    const signin = await fetch(`${e.servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({
+        username: "alice",
+        password: "a-good-passphrase",
+      }),
+      redirect: "manual",
+    });
+    const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const page = await (
+      await fetch(`${e.servers.url}/asked`, { headers: { cookie } })
+    ).text();
+    expect(page).toContain("Done on main");
+    expect(page).toContain(`on main in ${oid.slice(0, 7)}, waiting for you to close it`);
+  });
+
+  test("an issue parked twice and then found done leaves the planner's list", () => {
+    const work = e.issue("Parked, then built");
+    e.ended(work, "no changes pushed: DECLINED: out of scope");
+    e.ended(work, "no changes pushed: DECLINED: out of scope");
+    const listed = () =>
+      parkedTwice(e.app.db, [e.fresh()]).some((p) => p.issueId === work.id);
+    expect(listed()).toBe(true);
+    expect(settle(work, "ok", alreadyDoneSummary([oid]))).toBe(true);
+    expect(alreadyDone(e.app.db, [work.id]).get(work.id)).toEqual([oid]);
+    expect(listed()).toBe(false);
+  });
+
+  test("another person's comment that reads like the note is that person's word", async () => {
+    const carol = await createUser(e.app.db, {
+      trusted: true,
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!carol.ok) throw new Error(carol.error);
+    // Anyone who can read may direct the crew here, for this test only.
+    e.app.db.run("UPDATE repo SET visibility = 'public', crew_outsiders = 1 WHERE id = ?1", [e.repo.id]);
+    try {
+      const work = e.issue("Words");
+      e.ended(work, "no changes pushed: DECLINED: out of scope");
+      expect(parkedCount(e.app, e.fresh(), work.id)).toBe(1);
+      await tick();
+      addComment(
+        e.app,
+        carol.value,
+        e.fresh(),
+        work,
+        "Done on main already, waiting for you to close it: try again anyway",
+      );
+      expect(parkedCount(e.app, e.fresh(), work.id)).toBe(0);
+      expect(alreadyDone(e.app.db, [work.id]).has(work.id)).toBe(false);
+    } finally {
+      e.app.db.run("UPDATE repo SET visibility = 'private', crew_outsiders = 0 WHERE id = ?1", [e.repo.id]);
+    }
+  });
+
+  test("an ordinary decline, or a claim with no commit, still parks", () => {
+    const work = e.issue("Out of scope");
+    expect(settle(work, "ok", "no changes pushed: DECLINED: out of scope")).toBe(true);
+    expect(parkedCount(e.app, e.fresh(), work.id)).toBe(1);
+    expect(alreadyDone(e.app.db, [work.id]).has(work.id)).toBe(false);
+    expect(alreadyDoneOids("no changes pushed: already done: " + oid)).toEqual([]);
   });
 });

@@ -119,6 +119,19 @@ describe("spawn over the API and MCP", () => {
     expect(placed).toBe(0);
   });
 
+  test("a fresh app is planned through the API and the MCP spawn; a bad sentence is refused", async () => {
+    const api = (await (await post(rw, { name: "fresh1", apps: ["alice/notes"], fresh: "A booking page" })).json()) as any;
+    expect(api.plan.fresh).toEqual({ name: "a-booking-page", description: "A booking page" });
+    expect(api.copied.join("\n")).toContain("a fresh app a-booking-page");
+    const m = await mcp(rw, { name: "fresh1", fresh: "A booking page" });
+    expect(m.error).toBe(false);
+    expect(m.text).toContain("a-booking-page");
+    const bad = await post(rw, { name: "fresh1", fresh: "one\ntwo" });
+    expect(bad.status).toBe(422);
+    expect(((await bad.json()) as any).message).toContain("fresh: must be one line");
+    expect((await post(rw, { name: "fresh1", fresh: "x".repeat(201) })).status).toBe(422);
+  });
+
   test("dryRun: false makes the child through the placement, and the ledger lists it", async () => {
     const res = await post(rw, { name: "kid", apps: ["alice/notes"], crew: ["scout"], dryRun: false });
     expect(res.status).toBe(201);

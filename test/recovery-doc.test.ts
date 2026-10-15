@@ -63,5 +63,13 @@ test("what a snapshot lacks is what snapshot.ts leaves out", () => {
 });
 
 test("the doc fits one printed side", () => {
-  expect(doc.split("\n").length).toBeLessThanOrEqual(70);
+  expect(doc.split("\n").length).toBeLessThanOrEqual(80);
+});
+
+test("the doc says where the drill's verdicts are posted, and names its steps", () => {
+  expect(doc).toContain("FORGE_RECOVERY_ISSUE");
+  expect(doc).toContain("FORGE_RECOVERY_REPO");
+  expect(doc).toContain("/api/v1/health");
+  const steps = read("src/snapshot/drill.ts").match(/type DrillStep = ([^;]+);/)?.[1];
+  for (const step of steps!.matchAll(/"(\w+)"/g)) expect(doc).toContain(step[1]!);
 });

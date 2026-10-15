@@ -366,8 +366,15 @@ whose pull is still open after three days says _Pull open_ and how long the
 pull has been open. `?show=flagged|all` changes the view, `?order=newest` flips it,
 `?repo=owner/name` keeps it to one repository. The rows are derived on read
 in `src/core/asked.ts`, and `/api/v1/asked` and the MCP `asked` tool answer
-the same rows. Each row names its `source` (`issue` today) so thoughts can
-join the same list. It is reached from the feed's header, the board, the asks page and the palette.
+the same rows. Above the asks, the same page
+shows the viewer's own thoughts, newest first and verbatim (`src/core/thought_stream.ts`):
+time, source, the issues the planner placed each on, and one word — _Heard_
+(not yet placed), _Placed_, _Building_, _Shipped_ (a placed issue's pull
+merged) or _Superseded_ (a later thought marked what it placed superseded,
+and the row says which). A thought with something placed and nothing merged
+more than N days after placement (the `thoughtFlagDays` user setting, 3 by
+default) is _Nothing built_; the one primary button opens the oldest such
+thought's placed issue. `/api/v1/asked` and the MCP `asked` tool return them as `thoughts`. A placement in a repository the viewer cannot read shows no title, state or name. It is reached from the feed's header, the board, the asks page and the palette.
 
 ## The home
 
@@ -520,3 +527,12 @@ It never says _shipped_ before production redeployed, never hides that a
 run cost money, never shows a preview that is not the pull's real head, and
 never invents an answer for a card. The complexity is removed from the
 surface, not from the system.
+
+**What a green deploy says about its tests.** One clause, `testsClause`
+(`src/web/studio/words.ts`): "its tests passed" when the app declares a test
+and it ran, "it answered, no tests were run" when it declares none. It is read
+from the finished deploy's summary (see `finishRun`) and drawn on the pull's
+note, the look card in the home's needs-you (`decisionsFor`), and the previews
+panel (only when the check is of the commit being served). The terminal draws
+none of it: it shows the app's shell, not the studio's words, so nothing there
+changed.

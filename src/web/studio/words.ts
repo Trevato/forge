@@ -10,13 +10,19 @@
 
 import type { Database } from "bun:sqlite";
 import { ancestorsOf } from "../../git/merge.ts";
-import type { AppsRuntime, EnvStatus } from "../../apps/runtime.ts";
+import {
+  NO_TESTS_TAIL,
+  TESTS_PASSED_TAIL,
+  type AppsRuntime,
+  type EnvStatus,
+} from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { canEnterApp, getRepoById } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import type { Efficiency } from "../../core/efficiency.ts";
 import type { WindowStanding } from "../../core/standing.ts";
 import { whenText } from "../../crew/limits.ts";
+import { waitsForReviewer } from "../../crew/review.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { getPull, pullForBranch, type Pull } from "../../core/pulls.ts";
 import {
@@ -150,11 +156,28 @@ function detailNote(detail: CheckDetail): string {
   return `${detail.passed} passed, ${detail.failed} failed: ${names}`;
 }
 
+/**
+ * What a green deploy says about its tests, from the summary the runtime
+ * wrote when it finished: the one clause every surface that draws a green
+ * change uses. Empty for a run that predates the clause.
+ */
+export function testsClause(run: Run | null): string {
+  const summary = run?.summary ?? "";
+  if (summary.endsWith(TESTS_PASSED_TAIL)) return "its tests passed";
+  if (summary.endsWith(NO_TESTS_TAIL)) return "it answered, no tests were run";
+  return "";
+}
+
 /** A single open pull's check, in the studio's own words — never dev's
  * "Checks passed/failed": the same five words as the rest of the page. */
 function checkRunWord(check: CheckSummary): { word: Word; note: string } {
-  if (check.state === "ok")
-    return { word: "look", note: "green — ready for a look" };
+  if (check.state === "ok") {
+    const clause = testsClause(check.run);
+    return {
+      word: "look",
+      note: `green — ${clause === "" ? "" : `${clause}, `}ready for a look`,
+    };
+  }
   if (check.state === "failed") {
     const base =
       check.run?.servingAt != null
@@ -209,12 +232,23 @@ export async function pullWord(
     return mergedPullWord(production, commitOid);
   }
   if (pull.state === "closed")
-    return { word: "stopped", note: "closed without shipping" };
+    return {
+      word: "stopped",
+      note:
+        getIssueById(ctx.db, pull.id)?.closeReason === "parked"
+          ? "parked by the crew"
+          : "closed without shipping",
+    };
   const check = checkSummary(ctx.db, pull.id, pull.headOid);
   // A repository that is not an app never deploys a head, so it never gets
   // a look: an open change there waits on a person, and says so.
   if (ctx.record === undefined && check.state === "none")
     return { word: "waiting", note: "open — waiting on a person" };
+  if (check.state === "ok") {
+    const reviewer = waitsForReviewer(ctx.db, pull.repoId, pull);
+    if (reviewer !== undefined)
+      return { word: "waiting", note: `waiting for ${reviewer}'s review` };
+  }
   return checkRunWord(check);
 }
 

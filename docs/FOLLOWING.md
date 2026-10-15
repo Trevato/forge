@@ -44,6 +44,21 @@ src/weapons.ts" — and offers exactly one thing to do. The forks page shows
 each fork's standing as a badge. The JSON is
 `GET /api/v1/repos/:owner/:name/following`.
 
+## Releases behind a parent forge
+
+`FORGE_PARENT_URL` names the forge this one was spawned from. It must be
+`https://` with no credentials or query (the forge refuses to boot otherwise).
+The parent serves `/releases.json` as `{"releases":[{"name","url"}]}`, newest
+first; the child reads it with a 3 s timeout, no redirects and a 256 KB cap,
+caches it under `FORGE_APP_DATA` for 10 minutes, and says "N releases behind
+<parent>" on a fork's following card and in the terminal's About card (`I`). A
+page never waits for the parent: it shows the cached copy and refreshes in the
+background, and a parent that is down or answering garbage leaves a "could not
+be reached" with the age of the last copy. Unset, nothing is shown. Read only:
+taking a release is not done here. This forge publishes its own
+`/releases.json` (the version names, each linking to that document), so any
+forge can be a parent. The terminal shows the count, not the release names.
+
 ## A frozen parent
 
 A parent can itself be a mirror whose origin was disconnected — a detached

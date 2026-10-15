@@ -4,7 +4,7 @@
  * in the header.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,11 +12,14 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { TESTS_PASSED_TAIL } from "../src/apps/runtime.ts";
 import { recordDecision, resolveOpen } from "../src/core/decisions.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { getUserByName } from "../src/core/users.ts";
+import type { Ctx } from "../src/http/context.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { decisionsFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -55,10 +58,16 @@ describe("the asks page", () => {
 
   /** The number the header's link carries, or 0 when it carries none. */
   const headerCount = (page: string): number =>
-    Number(/>Asks<span class="pill"[^>]*>(\d+)</.exec(page)?.[1] ?? 0);
+    Number(/<h2 id="asks-sentence"[^>]*>\s*(\d+)\b/.exec(page)?.[1] ?? 0);
 
   const sentence = (page: string): string =>
     /<h2 id="asks-sentence"[^>]*>([^<]*)<\/h2>/.exec(page)?.[1] ?? "";
+
+  // Module loggers reach every forge in the process: each test starts from a quiet ledger.
+  beforeEach(() => {
+    app.signals.errors.clear();
+    app.signals.refused.clear();
+  });
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-"));
@@ -158,11 +167,11 @@ describe("the asks page", () => {
       .query("UPDATE run SET created_at = ?1 WHERE state = 'queued'")
       .run(new Date(Date.now() - 3 * 3_600_000).toISOString());
     const admin = await get(alice, "/");
-    expect(admin).toContain("queue has waited over");
+    expect(admin).toContain("behind one lane");
     expect(sentence(admin)).toBe("2 things need you");
     expect(headerCount(admin)).toBe(2);
     const other = await get(bob, "/");
-    expect(other).not.toContain("queue has waited");
+    expect(other).not.toContain("behind one lane");
     expect(sentence(other)).toBe("All fine");
   });
 
@@ -218,5 +227,39 @@ describe("the asks page", () => {
     // the crew's tries are what the card is counted from.
     check("failed");
     expect(await get(alice, "/")).not.toContain(card);
+  });
+
+  test("a green change's card says what its tests did", async () => {
+    const bot = getUserByName(app.db, "bot")!;
+    const branch = await commitToBranch(app, getUserByName(app.db, "alice")!, repo, {
+      branch: "bot/3-clause",
+      base: "main",
+      message: "Bot work",
+      files: [{ path: "CLAUSE.md", content: "x\n" }],
+    });
+    expect(branch.ok).toBe(true);
+    const opened = await openPull(app, bot, repo, {
+      title: "Bot clause",
+      body: "",
+      baseBranch: "main",
+      headBranch: "bot/3-clause",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+    });
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: `running at x${TESTS_PASSED_TAIL}` });
+    const card = decisionsFor(
+      { app, auth: { user: getUserByName(app.db, "alice")! } } as unknown as Ctx,
+      [repo],
+    ).find((d) => d.id === `look:${pull.id}`);
+    expect(card?.says).toContain("its tests passed");
+    expect(card?.short).toContain("its tests passed");
   });
 });

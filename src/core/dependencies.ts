@@ -14,6 +14,7 @@ import { getIssuesByIds, type CloseReason, type Issue } from "./issues.ts";
 import { pillarsOf, structuralIds } from "./pillars.ts";
 import { getRepoById } from "./repos.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
+import { raisedAt } from "./thought_links.ts";
 import { limbRanks, limbTree, readPlaces } from "./limb_order.ts";
 
 export type DependencyError = "self" | "cross_repo" | "cycle" | "not_an_issue";
@@ -187,7 +188,7 @@ export function dependenciesOf(
 export interface Held {
   readonly issueId: string;
   readonly blockedById: string;
-  readonly reason: Exclude<CloseReason, "done">;
+  readonly reason: Exclude<CloseReason, "done" | "parked">;
 }
 
 export interface Graph {
@@ -222,6 +223,11 @@ export interface Graph {
    * here; absent, the ready order is the one that never knew limbs.
    */
   readonly limbRank?: ReadonlyMap<string, number>;
+  /**
+   * When a repeated thought last raised an issue (#654). A raised issue is
+   * ready ahead of the rest, the latest raise first.
+   */
+  readonly raised?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -335,6 +341,7 @@ export function repoGraph(
             places,
           ),
         }),
+    raised: raisedAt(db, issues.map((i) => i.id)),
     issues,
     unadopted:
       repo === undefined ? new Set() : unadoptedAmong(db, repo, issues),
@@ -538,9 +545,13 @@ export function readyNow(graph: Graph): Ranked[] {
       !graph.deferred.has(r.issue.id),
   );
   const rank = graph.limbRank;
-  if (rank === undefined) return ready;
-  const of = (r: Ranked) => rank.get(r.issue.id) ?? Number.MAX_SAFE_INTEGER;
-  return ready.sort((a, b) => of(a) - of(b));
+  const of = (r: Ranked) => rank?.get(r.issue.id) ?? Number.MAX_SAFE_INTEGER;
+  if (rank !== undefined) ready.sort((a, b) => of(a) - of(b));
+  const raised = graph.raised;
+  if (raised === undefined || raised.size === 0) return ready;
+  // What the owner said again comes first (stable: the rest keep their order).
+  const at = (r: Ranked) => raised.get(r.issue.id) ?? "";
+  return ready.sort((a, b) => at(b).localeCompare(at(a)));
 }
 
 /**

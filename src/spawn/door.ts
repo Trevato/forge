@@ -233,6 +233,7 @@ export async function spawnDoor(
     // by whoever opens the link.
     keepAccess: anon ? false : raw["keepAccess"],
     budgetUsd: raw["budgetUsd"],
+    fresh: raw["fresh"],
     ...(anon ? {} : { for: raw["for"] }),
   };
 

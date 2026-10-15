@@ -391,7 +391,10 @@ process — from the last id it saw; the crew stops taking runs and lets the
 ones it holds finish and land (`crew.stop({ drain: true })`, bounded); a
 check in flight is cut and handed back to the queue for the new process;
 its app processes stop (the new process already runs its own); SSH sessions
-are kept until they leave. Then it exits.
+are kept until they leave. However little it holds, its listener stays open
+for `FORGE_DRAIN_LINGER_S` (10 s) after the SIGTERM: routers hear that it
+left rotation a probe period later, and a process already gone turns each
+request sent in that beat into a 502. Then it exits.
 
 **Anything either process may start, it starts once.** Every place two
 processes could both act is a compare-and-set or a lease, never a read
@@ -411,7 +414,9 @@ App environments are each process's own: each runs, sleeps and wakes its
 own app processes over the shared app data (SQLite in WAL, like the forge's
 own, with a busy timeout on every connection). `test/overlap.test.ts` runs
 two real processes on one data directory and holds each shared write path
-to it; the rehearsal on a copy (#873) is the minute-long proof.
+to it; the rehearsal on a copy (`scripts/rehearse-roll.ts`, #873) is the
+minute-long proof: the release rolled from and the release rolled to, on one
+copied data directory, requests the whole way, zero refused.
 
 **A migration only adds** (see "Data & state model"), so the old process can
 keep serving on the database the new one migrated.
@@ -679,3 +684,19 @@ outbox, working in Claude Code and proposing through pulls a person merges).
 Not yet: containers around app processes, custom domains, a gate that
 lands a pull on its own once review and checks agree, federation, package
 registry.
+
+## Passports between parts
+
+`kernel/passport.ts` issues short-lived (≤15 min) scoped credentials between
+forge parts: `issue` names issuer, audience, scopes and a ttl; `verify`
+checks signature (HMAC under an HKDF subkey of `secret.key`), expiry,
+audience and scope with no lookup. `verify` also checks that `iss`/`aud`
+are valid names and every scope a string, not the MAC alone.
+
+First edge: the runner issues each crew run a `FORGE_PASSPORT` (iss `runner`,
+aud `forge`, scope `health:read`, 15 min; `crew/passport_env.ts`), and
+`GET /api/v1/passport/health` (`http/passport_edge.ts`) answers the forge's
+public health only to `Authorization: Passport <token>` that verifies — a
+missing, expired, wrong-audience, wrong-scope or forged passport is a 401.
+Try: `curl -H "authorization: Passport $FORGE_PASSPORT" "$FORGE_URL/api/v1/passport/health"`.
+More edges follow the same pattern: one audience, one scope, one route.

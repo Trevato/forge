@@ -117,6 +117,18 @@ export function mutedRepos(db: Database, viewerId: string): Set<string> {
   );
 }
 
+/** Mute one repository for this viewer; twice is the same as once. */
+export function muteRepo(db: Database, viewerId: string, repoId: string): void {
+  if (mutedRepos(db, viewerId).has(repoId)) return;
+  recordInteraction(db, {
+    viewerId,
+    itemId: `repo:${repoId}`,
+    kind: "muted",
+    repoId,
+    actorId: viewerId,
+  });
+}
+
 /** Items this viewer dismissed. */
 export function dismissedItems(db: Database, viewerId: string): Set<string> {
   return new Set(

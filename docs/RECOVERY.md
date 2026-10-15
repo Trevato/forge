@@ -10,6 +10,15 @@ region `S3_REGION`) under the prefix `snapshots/<name>/`, one directory per
 snapshot, named like `2026-09-22T08-00-00Z`. The restore command accepts `latest` for
 the newest; no object is called that.
 
+## Where the verdicts are posted
+
+Sundays 09:00 UTC the forge drills a restore of the newest snapshot, boots it
+on a side port and reads `/api/v1/health`. One comment lands on the recovery
+issue (`FORGE_RECOVERY_ISSUE` in `FORGE_RECOVERY_REPO`): snapshot, restore
+time, health, counts, pass or fail. A failed drill is an inbox card naming
+the step (fetch, restore, open, count, unseal, health) until one passes. No
+comment this week means the backups are unproven.
+
 ## What a restore needs
 
 Export these, with the values the forge ran under:

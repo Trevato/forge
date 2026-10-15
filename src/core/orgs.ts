@@ -231,6 +231,20 @@ export function ownerlessOrgs(db: Database): User[] {
     .filter((u): u is User => u !== undefined);
 }
 
+/**
+ * Retire an organization: its teams (and so their members) go, the row stays
+ * marked removed so the name stays taken. Its repositories are the caller's
+ * to have removed first.
+ */
+export function retireOrg(db: Database, orgId: string, at: string): void {
+  db.transaction(() => {
+    db.query("DELETE FROM team WHERE org_id = ?1").run(orgId);
+    db.query(
+      "UPDATE user SET removed_at = ?1 WHERE id = ?2 AND kind = 'org'",
+    ).run(at, orgId);
+  })();
+}
+
 /** The organizations `userId` is the last active person owning: removing them would orphan these. */
 export function soleOwnedOrgs(db: Database, userId: string): User[] {
   const user = getUserById(db, userId);

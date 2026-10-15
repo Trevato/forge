@@ -6,6 +6,8 @@
  *   /.well-known/change-password  where a password manager sends someone
  *   /robots.txt                   what a crawler may index, and the sitemap
  *   /sitemap.xml                  every public repository
+ *   /releases.json                the releases this forge has shipped, newest
+ *                                 first, for a child forge to read
  *   /manifest.webmanifest         the forge as an installable app
  *   /llms.txt                     the forge for an agent: what it is, how to
  *                                 report a problem without an account, how
@@ -18,6 +20,7 @@
  * FORGE_SECURITY_CONTACT.
  */
 
+import releases from "../core/releases.json" with { type: "json" };
 import { markPng, type MarkShape } from "../design/mark.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
 import { canRead, getRepo, listReposVisibleTo } from "../core/repos.ts";
@@ -86,6 +89,22 @@ export function changePassword(): Response {
     status: 302,
     headers: { location: "/settings/password" },
   });
+}
+
+/**
+ * GET /releases.json — `{ releases: [{ name, url }] }`, newest first, read
+ * by a child forge (`core/parent_releases.ts`). Public and read-only. The
+ * link of each is this document at that release; there is no page per
+ * release to point at.
+ */
+export function releasesJson(ctx: Ctx): Response {
+  const body = {
+    releases: releases.releases.map((r) => ({
+      name: r.version,
+      url: `${ctx.url.origin}/releases.json#${encodeURIComponent(r.version)}`,
+    })),
+  };
+  return text(JSON.stringify(body), "application/json");
 }
 
 /** GET /robots.txt */

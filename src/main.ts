@@ -4,12 +4,18 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
-import { parseCidrs } from "./kernel/cidr.ts";
+import { startSampler } from "./boards/sampler.ts";
+import { sweepStanding } from "./crew/standing.ts";
+import { handover } from "./release/swap.ts";
+import { parentUrlProblem } from "./core/parent_releases.ts";
+import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
+import { backfillCarried } from "./core/carried.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { bootHostedChildren } from "./spawn/host.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
+import { startHeartbeat } from "./spawn/heartbeat.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
@@ -20,13 +26,14 @@ import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { resolveAppDomain } from "./apps/host.ts";
 import { requeueAbandonedChecks, startChecks } from "./checks/service.ts";
+import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { startLooks } from "./looks/service.ts";
 import { startProbes } from "./contract/probes.ts";
 import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
 import { releaseOrphans } from "./core/run_secret.ts";
 import { failAbandonedRuns } from "./core/runs.ts";
-import { startDraining } from "./http/health.ts";
+import { DRAIN_LINGER_MAX_S, drainLingerMs, startDraining } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
 import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
@@ -38,8 +45,10 @@ import { sweepStaleAsks } from "./crew/stale_asks.ts";
 import { recordAskLedger } from "./web/studio/asks.ts";
 import { startPromptRoutine } from "./crew/prompts.ts";
 import { pruneTokens } from "./core/tokens.ts";
-import { dataHomeRefusal } from "./kernel/data_home.ts";
+import { configProblem, dataDirOf, preflight } from "./kernel/preflight.ts";
 import { running } from "./kernel/version.ts";
+import { record as recordDegraded } from "./kernel/degraded_history.ts";
+import { vitals } from "./kernel/vitals.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -51,6 +60,38 @@ if (process.argv[2] === "hook") {
     process.exit(1);
   }
   await runHookClient(name);
+}
+
+// `--preflight` asks whether this tree can boot and answers in one line:
+// config parsed, migrations run on a copy of the database. No socket, no
+// timers, and the live database is never opened.
+if (process.argv.includes("--preflight")) {
+  const { migrations } = await import("./core/schema.ts");
+  const result = preflight(process.env, import.meta.dir, migrations);
+  // CLI answer on the stream a person or a script reads.
+  (result.ok ? console.log : console.error)(result.line);
+  process.exit(result.ok ? 0 : 1);
+}
+
+// `--rollback <sha>` starts a kept release beside the running forge and
+// exits once it reads healthy as that sha (release/rollback.ts).
+if (process.argv[2] === "--rollback") {
+  const { rollback } = await import("./release/rollback.ts");
+  const port = Number(process.env.PORT ?? 3000);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.error(`PORT must be a port number, not ${JSON.stringify(process.env.PORT ?? "").slice(0, 40)}`);
+    process.exit(1);
+  }
+  const result = await rollback({
+    dataDir: dataDirOf(process.env),
+    sha: process.argv[3] ?? "",
+    port,
+    env: process.env,
+  });
+  // CLI answer on the stream a person or a script reads.
+  if (result.ok) console.log(`rolled back: pid ${result.pid} is healthy; the previous forge is still running on the port, stop it yourself`);
+  else console.error(result.line);
+  process.exit(result.ok ? 0 : 1);
 }
 
 // A forge can be an app of a forge (docs/APPS.md, "The forge as an app of
@@ -73,34 +114,52 @@ const canonicalUrl = hosted ? hostedAt : (process.env.FORGE_URL ?? "").trim();
 // identity headers sign people in; without it they are ignored.
 const edgeToken = (process.env.FORGE_EDGE_TOKEN ?? "").trim();
 
-const dataDir =
-  process.env.FORGE_DATA ??
-  (hosted ? process.env.FORGE_APP_DATA : undefined) ??
-  "data";
-// State never lands in the tree the forge runs from (#622): a database or a
-// host key there is one `git add -A` from every clone.
-const refusal = dataHomeRefusal(dataDir, import.meta.dir);
-if (refusal !== null) {
-  console.error(refusal);
+const dataDir = dataDirOf(process.env);
+// One answer for boot and `--preflight` (kernel/preflight.ts): the data
+// directory is not the tree itself (#622: a database or a host key there is
+// one `git add -A` from every clone), FORGE_TRUSTED_PROXIES parses (a typo
+// fails the boot, not a limit that quietly counts every stranger as one),
+// and the forge's URL is one.
+const problem = configProblem(process.env, import.meta.dir);
+if (problem !== null) {
+  console.error(problem);
   process.exit(1);
 }
 
-// FORGE_TRUSTED_PROXIES is checked here so a typo fails the boot, not a
-// limit that quietly counts every stranger as one.
+// FORGE_DRAIN_LINGER_S: seconds a SIGTERM'd forge keeps answering while
+// routers learn it is going (`http/health.ts`).
+const lingerMs = drainLingerMs(process.env.FORGE_DRAIN_LINGER_S);
+if (lingerMs === null) {
+  console.error(
+    `FORGE_DRAIN_LINGER_S: whole seconds from 0 to ${DRAIN_LINGER_MAX_S}, not "${(process.env.FORGE_DRAIN_LINGER_S ?? "").slice(0, 20)}"`,
+  );
+  process.exit(1);
+}
+
 const trustedProxies = (process.env.FORGE_TRUSTED_PROXIES ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter((s) => s !== "");
-{
-  const parsed = parseCidrs(trustedProxies.join(","));
-  if (!parsed.ok) {
-    console.error(`FORGE_TRUSTED_PROXIES: "${parsed.error}" is not an address or range`);
-    process.exit(1);
-  }
+
+// The secret and the widget's site key come together or not at all: a secret
+// alone would refuse every signup on a page that cannot show the widget.
+const turnstileSecret = (process.env.FORGE_TURNSTILE_SECRET ?? "").trim();
+const turnstileSiteKey = (process.env.FORGE_TURNSTILE_SITEKEY ?? "").trim();
+if (turnstileSecret !== "" && turnstileSiteKey === "") {
+  console.error("FORGE_TURNSTILE_SECRET needs FORGE_TURNSTILE_SITEKEY: the signup page needs the widget");
+  process.exit(1);
+}
+
+const parentUrl = (process.env.FORGE_PARENT_URL ?? "").trim();
+const parentProblem = parentUrl === "" ? null : parentUrlProblem(parentUrl);
+if (parentProblem !== null) {
+  console.error(`FORGE_PARENT_URL: ${parentProblem}`);
+  process.exit(1);
 }
 
 const app = createApp({
   dataDir,
+  ...(parentUrl === "" ? {} : { parentUrl }),
   port: Number(process.env.PORT ?? 3000),
   ...(process.env.FORGE_HOST === undefined
     ? {}
@@ -112,6 +171,9 @@ const app = createApp({
   ...(hosted && (process.env.FORGE_APP_SSH ?? "").trim() !== ""
     ? { appSsh: (process.env.FORGE_APP_SSH ?? "").trim() }
     : {}),
+  // The repository holding this forge's own code: a landing there is
+  // checked out under releases/ and preflighted (#1662).
+  ...releaseEnv(process.env),
   // The one knob on the crew's bill: FORGE_CREW_CEILING_USD, dollars a day
   // across every repository. Unset is no forge-wide ceiling.
   ...(process.env.FORGE_MIGRATE_PRIVATE_HOSTS === "1"
@@ -133,6 +195,10 @@ const app = createApp({
   Number(process.env.FORGE_MAIL_DAILY) > 0
     ? { mailDailyCap: Number(process.env.FORGE_MAIL_DAILY) }
     : {}),
+  // Signup asks Cloudflare Turnstile when its secret is set.
+  ...(turnstileSecret === ""
+    ? {}
+    : { turnstileSecret, turnstileSiteKey }),
   // Who may say who the client is: the ingress in front of a hosted forge.
   ...(trustedProxies.length > 0 ? { trustedProxies } : {}),
   ...((process.env.FORGE_CLIENT_IP_HEADER ?? "").trim() !== ""
@@ -225,6 +291,10 @@ const apps = appDomain?.ok
     })
   : undefined;
 await apps?.start();
+// What deploys before the record carried, so ask-to-live is not blank for them.
+void backfillCarried(app.db, app.reposRoot).catch((error) =>
+  app.log.error("could not backfill what deploys carried", { error: String(error) }),
+);
 // A repository's own check, on every push a pull or the default branch takes.
 const checks =
   process.env.FORGE_CHECKS === "0"
@@ -232,6 +302,9 @@ const checks =
     : startChecks(app, {
         forgeUrl,
         concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, 1),
+        redHoldMs: RED_HOLD_MS,
+        // A roll lets running checks finish this long before cutting them off.
+        drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 300) * 1000,
       });
 // The look: a picture of every environment that comes up green, taken
 // through this forge's own listener.
@@ -255,6 +328,9 @@ const snapshots = startSnapshots(
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
   },
 );
+// What the machine uses (boards/sampler.ts): the pod, each cell and the
+// node, every 15 s into a ring the `machine` board source reads.
+const sampler = startSampler(app);
 const crewHeldOff = crewOffInPreview();
 if (appsOn && crewHeldOff)
   app.log.info(CREW_OFF_IN_PREVIEW, {
@@ -283,6 +359,8 @@ void bootHostedChildren(app);
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);
+// A spawned child reports its standing to its parent (spawn/heartbeat.ts).
+const heartbeatTimer = startHeartbeat(app);
 // Prompts from Instagram (docs/APPS.md): once a day, for each repository
 // that connected an account, the top comment on its latest Reel is told to
 // the crew. A minute's clock; nothing leaves the box until a source exists.
@@ -328,10 +406,31 @@ runSync(app); // one pass on boot: a forge that was down has fetching to do
 // expired: what asked each person, and how it ended.
 const tickAsks = async (): Promise<void> => {
   await sweepStaleAsks(app);
+  // Repositories ruled "decider" have their hand-overs answered here.
+  try {
+    await sweepStanding(app);
+  } catch (error) {
+    app.log.error("standing rule sweep failed", { error: String(error) });
+  }
   try {
     recordAskLedger(app.db);
   } catch (error) {
     app.log.error("asks ledger failed", { error: String(error) });
+  }
+  // The degraded history rides the same tick; it catches its own errors.
+  try {
+    recordDegraded(
+      app.db,
+      vitals({
+        db: app.db,
+        dataDir: app.config.dataDir,
+        signals: app.signals,
+      }).degraded,
+      Date.now(),
+      app.log,
+    );
+  } catch (error) {
+    app.log.warn("degraded history: vitals failed", { error: String(error) });
   }
 };
 const staleTimer = setInterval(() => void tickAsks(), 120_000);
@@ -383,6 +482,9 @@ const leaseTimer = setInterval(() => {
   releaseOrphans(app.db);
 }, 30_000);
 
+// A release that read healthy beside this process takes over (#1663).
+handover.drain = () => shutdown("SIGTERM");
+handover.ssh = ssh !== undefined;
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
@@ -404,10 +506,15 @@ function shutdown(signal: NodeJS.Signals): void {
   // process that replaced this one, not to this one while it finishes.
   drainStreams();
   clearInterval(deliveryTimer);
+  clearInterval(heartbeatTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);
   clearInterval(leaseTimer);
+  // The platform's SIGTERM: the listener stays open while routers learn
+  // this process is going. A person's Ctrl-C does not wait for routers.
+  const linger = signal === "SIGTERM" ? Bun.sleep(lingerMs ?? 0) : undefined;
   Promise.all([
+    linger,
     prompts.stop(),
     notifier.stop(),
     crew?.stop({ drain: true }),
@@ -416,6 +523,7 @@ function shutdown(signal: NodeJS.Signals): void {
     looks?.stop(),
     probes?.stop(),
     snapshots.stop(),
+    sampler.stop(),
   ])
     .catch(() => {})
     .then(() => {

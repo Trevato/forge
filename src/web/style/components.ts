@@ -515,6 +515,10 @@ a.row:hover .row-title { color: var(--accent); }
   .dialog { width: 100%; max-width: 100%; margin: auto auto 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
 }
 
+/* ---- tell the crew, in place: fixed, so nothing shifts ---- */
+.tell-here { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; width: min(620px, 100%); margin: 0 auto; padding: 8px; }
+.tell-here .comment-form { margin: 0; box-shadow: var(--shadow-lg, 0 8px 24px rgb(0 0 0 / .25)); }
+
 /* ---- command palette ---- */
 /* A dialog centres itself with its own auto margins, which the reset zeroes
    — so anything that wants to be centred has to say so again. */

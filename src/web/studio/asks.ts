@@ -8,13 +8,15 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { needLine } from "../../actions/health.ts";
+import type { Degraded } from "../../kernel/vitals.ts";
 import { previewEnv } from "../../apps/data.ts";
 import { crewForRepos } from "../../core/agents.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos, getAppByRepo, listApps } from "../../core/apps.ts";
 import { latestDecision, stopStands } from "../../core/decisions.ts";
 import { getHold, holdsFor } from "../../core/holds.ts";
-import { askDismissals } from "../../core/interactions.ts";
+import { askDismissals, mutedRepos } from "../../core/interactions.ts";
 import { askMeasure, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
 import {
   getIssueById,
@@ -27,6 +29,8 @@ import {
 import { looksForApps } from "../../core/looks.ts";
 import { closesFromBody, getPull, joinMany, type Pull } from "../../core/pulls.ts";
 import {
+  canRead,
+  getReposByIds,
   listReposVisibleTo,
   canWrite,
   listReposWritableTo,
@@ -38,6 +42,7 @@ import {
   activeRunFor,
   automaticRunsSince,
   latestRunsForIssues,
+  type Run,
 } from "../../core/runs.ts";
 import { getUserById, type User } from "../../core/users.ts";
 import {
@@ -47,8 +52,9 @@ import {
 } from "../../crew/autonomy.ts";
 import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
+import { handoverLines, handoverOf, type Handover } from "../../crew/guard.ts";
 import { isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
-import { waitsForPerson, type ReviewWait } from "../../crew/review.ts";
+import { waitsForPerson, waitsForReviewer, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { vitals } from "../../kernel/vitals.ts";
 import { repoBase } from "../chrome.ts";
@@ -57,6 +63,7 @@ import { btn, card, icon, row } from "../ui.ts";
 import { lookUrl } from "../../core/looks.ts";
 import { lookThumb, thumbLook } from "../pages/looks.ts";
 import { changeHref } from "./nouns.ts";
+import { testsClause } from "./words.ts";
 
 /** Repos narrowed to those with an app record, with the records — the one
  * join `appsOf` and `writableAppsOf` share. */
@@ -94,7 +101,7 @@ export function writableAppsOf(ctx: Ctx, user: User | undefined) {
   );
 }
 
-export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined";
+export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
@@ -150,6 +157,11 @@ export const ASK_WORDS: Readonly<Record<DecisionKind, AskWords>> = {
     options: ["Tell them"],
     ifNothing: "nothing more starts on it",
   },
+  handover: {
+    decision: "The reviewer asked for changes three times: what should the builder try?",
+    options: ["Tell them what to try", "Close it"],
+    ifNothing: "no more feedback runs start; the pull waits for you",
+  },
   declined: {
     decision: "The planner declined the direction: answer it?",
     options: ["Answer the planner"],
@@ -179,6 +191,7 @@ export const KIND_TIER: Readonly<Record<DecisionKind, Consequence>> = {
   declined: { score: 70, why: "the planner has stopped for this app" },
   stopped: { score: 50, why: "red, and the crew stopped" },
   review: { score: 45, why: "an agent's change waits for a review" },
+  handover: { score: 55, why: "three reviews without an approval: handed to a person" },
   parked: { score: 40, why: "parked by the crew" },
   look: { score: 30, why: "green, waiting" },
 };
@@ -214,6 +227,8 @@ interface AskCandidate {
    * differently for a person's own change than for the crew's (below).
    * Absent for "paused", which names no author at all. */
   readonly authorIsAgent?: boolean;
+  /** For "look": the green check, whose summary says what its tests did. */
+  readonly check?: Run;
   /** For "review": why the agent's change waits for a person, and since when. */
   readonly reviewWait?: ReviewWait;
   /** For "stopped": how many automatic tries, and whether the decider itself stopped it. */
@@ -221,6 +236,8 @@ interface AskCandidate {
   readonly stoppedByDecider?: boolean;
   /** For "declined": the declining run and what the planner said. */
   readonly decline?: { readonly runId: string; readonly words: string };
+  /** For "handover": the reviews that asked for changes. */
+  readonly handover?: Handover;
 }
 
 /**
@@ -270,6 +287,22 @@ function askCandidatesFor(
     const who = issue.authorName;
     // The crew is on it: that is working, not a question for a person.
     if (activeRunFor(db, "agent", issue.id) !== undefined) continue;
+    // Three reviews without an approval: the crew stopped, and says so
+    // before anything about the check (`guard.ts`).
+    const over = handoverOf(db, repo, issue.id);
+    if (over !== undefined) {
+      out.push({
+        kind: "handover",
+        id: `handover:${pull.id}`,
+        since: over.at,
+        repo,
+        pull,
+        who,
+        authorIsAgent: issue.authorIsAgent,
+        handover: over,
+      });
+      continue;
+    }
     if (check?.state === "failed") {
       // Automatic retries, and the limit that stops them, are the crew's
       // own machinery — a person's own failing pull never accrues tries,
@@ -302,6 +335,9 @@ function askCandidatesFor(
       // bringing it up to date is work, not a person's decision.
       !isStalePull(db, pull.id, pull.headOid)
     ) {
+      // An agent's green pull waits for its reviewer first: it is the
+      // crew's to wait on, and reaches the owner with the verdict (#1602).
+      if (waitsForReviewer(db, repo.id, pull) !== undefined) continue;
       // Autonomous repositories look at their own green pulls: the decider,
       // then the crew's reviewer. Everything else waits for a person —
       // whoever opened it, since a green change asks to be looked at
@@ -316,6 +352,7 @@ function askCandidatesFor(
         pull,
         who,
         authorIsAgent: issue.authorIsAgent,
+        check,
       });
     } else if (
       check?.state === "ok" &&
@@ -471,7 +508,8 @@ const groupId = (a: { kind: DecisionKind; repo: Repo }): string =>
   `${a.kind}:${a.repo.id}`;
 
 /**
- * The asks the viewer has not set aside: a dismissal — of the ask, or of
+ * The asks the viewer has not set aside: a muted repository's asks are all
+ * out (they still exist, and `repoAsks` still counts them); a dismissal — of the ask, or of
  * the row it collapsed into — holds until the ask's cause is newer than it
  * (a check ran again, it was parked again, a new day's pause).
  */
@@ -480,12 +518,23 @@ function notDismissed<T extends AskCandidate>(
   user: User,
   asks: readonly T[],
 ): T[] {
+  const muted = mutedRepos(db, user.id);
   const dismissed = askDismissals(db, user.id);
-  if (dismissed.size === 0) return [...asks];
   const holds = (id: string, since: string): boolean =>
     (dismissed.get(`ask:${id}`) ?? "") > since;
+  // A hand-over the decider or the standing rule set aside is closed for
+  // everyone it asks, not for one viewer: the ledger holds it.
+  const setAside = (a: T): boolean => {
+    if (a.kind !== "parked" || a.issue === undefined) return false;
+    const last = latestDecision(db, a.issue.id, "hand");
+    return last?.outcome === "set_aside" && last.createdAt >= a.since;
+  };
   return asks.filter(
-    (a) => !holds(a.id, a.since) && !holds(groupId(a), a.since),
+    (a) =>
+      !muted.has(a.repo.id) &&
+      !holds(a.id, a.since) &&
+      !holds(groupId(a), a.since) &&
+      !setAside(a),
   );
 }
 
@@ -542,6 +591,40 @@ function scoredFor(
   return asks.map((a) => ({ ...a, consequence: scores.get(a.id)! }));
 }
 
+/**
+ * The viewer's muted repositories that hold asks right now: said on the
+ * home, never silent, so a mute is always one tap from being taken back.
+ */
+export function silencedRepos(
+  db: Database,
+  user: User,
+): Repo[] {
+  const muted = mutedRepos(db, user.id);
+  if (muted.size === 0) return [];
+  const inMuted = [...getReposByIds(db, [...muted]).values()].filter((r) =>
+    canRead(db, r, user),
+  );
+  const held = new Map<string, Repo>();
+  for (const a of scoredFor(db, user, inMuted)) held.set(a.repo.id, a.repo);
+  return [...held.values()];
+}
+
+/**
+ * How many rows ask the viewer in this one repository, mute or no mute: the
+ * repository's own page counts what its home leaves out.
+ */
+export function repoAsks(
+  db: Database,
+  user: User | undefined,
+  repo: Repo,
+): { count: number; muted: boolean } {
+  if (!user) return { count: 0, muted: false };
+  return {
+    count: askRows(scoredFor(db, user, [repo])).length,
+    muted: mutedRepos(db, user.id).has(repo.id),
+  };
+}
+
 /** What asks the viewer now: candidates, less what they set aside. */
 function waitingOn(
   db: Database,
@@ -553,14 +636,14 @@ function waitingOn(
 }
 
 /** How an ask that is no longer asked ended, when nobody dismissed it. */
-function endOf(
+export function endOf(
   db: Database,
   viewerId: string,
   askId: string,
   raisedAt: string,
 ): Exclude<AskEnd, "dismissed"> {
   const [kind, what] = askId.split(":") as [DecisionKind, string];
-  if (kind === "look" || kind === "review" || kind === "stopped") {
+  if (kind === "look" || kind === "review" || kind === "stopped" || kind === "handover") {
     const pull = getIssueById(db, what);
     // Shipped or closed: someone decided. Held by the one it asked: they
     // answered "not yet". Still open otherwise: the cause went away.
@@ -638,6 +721,8 @@ function lineOf(c: AskCandidate): string {
     return `the crew parked #${c.issue!.number} after three failed runs`;
   if (c.kind === "declined")
     return "the planner declined the direction and waits for you";
+  if (c.kind === "handover")
+    return `"${c.pull?.title ?? ""}" had three reviews asking for changes and waits for you`;
   const title = c.pull?.title ?? "";
   if (c.kind === "review")
     return `"${title}" waits for your review: ${reviewWhy(c.reviewWait)}`;
@@ -662,6 +747,7 @@ export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> =
   review: (n) => `${n} agent changes wait for your review`,
   stopped: (n) => `the crew stopped on ${n} changes`,
   parked: (n) => `the crew parked ${n} issues after three failed runs`,
+  handover: (n) => `${n} changes had three reviews asking for changes and wait for you`,
   declined: (n) => `the planner declined ${n} times and waits for you`,
   paused: (n) => `${n} pauses at the ceiling`,
 };
@@ -790,6 +876,16 @@ export function decisionsFor(
         says: `The planner declined the direction: \u201c${c.decline.words}\u201d. It plans nothing more until you answer on #${c.issue.number}.`,
         short: `the planner declined the direction: \u201c${c.decline.words}\u201d`,
       };
+    if (c.kind === "handover" && c.pull && c.handover)
+      return {
+        kind: "handover",
+        id: `handover:${c.pull.id}`,
+        repo: c.repo,
+        pull: c.pull,
+        who: c.who,
+        says: `The reviewer asked for changes three times with no approval between, so the crew stopped. ${handoverLines(c.handover).join(" ")} Say what to try (or approve it on its page), or close it.`,
+        short: `"${c.pull.title}" had three reviews asking for changes`,
+      };
     if (c.kind === "stopped" && c.pull) {
       const tries = c.tries ?? 0;
       const stopped = c.stoppedByDecider ?? false;
@@ -819,6 +915,7 @@ export function decisionsFor(
       };
     if (c.kind === "look" && c.pull) {
       const picture = pictureOf(c.repo, c.pull);
+      const clause = testsClause(c.check ?? null);
       // The crew's own words say who finished it; a person's own change
       // gets the wording that is true of it — nobody "finished" it for
       // them, it is simply green and waiting.
@@ -829,11 +926,11 @@ export function decisionsFor(
         pull: c.pull,
         who: c.who,
         says: c.authorIsAgent
-          ? `${c.who} finished "${c.pull.title}" and the check is green. Look at the preview, then ship it or say what is off.`
-          : `"${c.pull.title}" is green — ready for a look. Ship it, or say what is off.`,
+          ? `${c.who} finished "${c.pull.title}" and the check is green${clause === "" ? "" : ` (${clause})`}. Look at the preview, then ship it or say what is off.`
+          : `"${c.pull.title}" is green — ${clause === "" ? "" : `${clause}, `}ready for a look. Ship it, or say what is off.`,
         short: c.authorIsAgent
-          ? `${c.who} finished it; the check is green`
-          : `green — ready for a look`,
+          ? `${c.who} finished it; the check is green${clause === "" ? "" : ` (${clause})`}`
+          : `green — ${clause === "" ? "" : `${clause}, `}ready for a look`,
         ...(picture === undefined ? {} : { picture }),
       };
     }
@@ -856,18 +953,23 @@ const askFormId = (d: Decision): string => `ask-${d.id}`;
  * It sits after the panel's form, because a form inside a form is not
  * HTML; the button reaches it by id.
  */
-export function decisionForm(d: Decision): Html | null {
+export function decisionForm(d: Decision, back?: string): Html | null {
   const pull = d.pull;
+  const own = html`id="${askFormId(d)}" method="post" hidden`;
+  if (d.kind === "parked")
+    return html`<form ${own} action="/asks/decide">
+      <input type="hidden" name="ask" value="${d.id}" />
+    </form>`;
   if (pull === undefined) return null;
   const base = repoBase(d.repo);
-  const own = html`id="${askFormId(d)}" method="post" hidden`;
-  if (d.kind === "stopped")
+  const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
+  if (d.kind === "stopped" || d.kind === "handover")
     return html`<form ${own} action="${base}/pulls/${pull.number}/state">
-      <input type="hidden" name="state" value="closed" />
+      <input type="hidden" name="state" value="closed" />${where}
     </form>`;
   if (d.kind === "look" || d.kind === "review")
     return html`<form ${own} action="${base}/pulls/${pull.number}/ship">
-      <input type="hidden" name="pull" value="${pull.number}" />
+      <input type="hidden" name="pull" value="${pull.number}" />${where}
     </form>`;
   return null;
 }
@@ -893,7 +995,7 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
       : getAppByRepo(ctx.app.db, d.repo.id) === undefined
         ? undefined
         : `${base}/app/pull-${pull.number}/open`;
-  if (d.kind === "stopped" && pull)
+  if ((d.kind === "stopped" || d.kind === "handover") && pull)
     return {
       primary: btn("Tell them", {
         href: `${changeHref(base, pull.number)}#comment-body`,
@@ -932,7 +1034,11 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
         size: "sm",
         variant: "primary",
       }),
-      others: [],
+      // Only where a decider is there to answer.
+      others:
+        ctx.app.config.decider === undefined
+          ? []
+          : [btn("Let the decider", { size: "sm", form: askFormId(d) })],
     };
   return {
     primary: btn("Settings", { href: `${base}/settings/autonomy`, size: "sm" }),
@@ -945,7 +1051,7 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
  * health answer (`/api/v1/health`) as one ask. Anyone else gets none — the
  * forge's standing is the admin's to read and nobody else's to know about.
  */
-export function forgeNeedsFor(ctx: Ctx, user: User | undefined): string[] {
+export function forgeNeedsFor(ctx: Ctx, user: User | undefined): Degraded[] {
   if (!user?.isAdmin) return [];
   const runtime = appsRuntime(ctx.app);
   const envs = runtime
@@ -954,8 +1060,9 @@ export function forgeNeedsFor(ctx: Ctx, user: User | undefined): string[] {
   return vitals({
     db: ctx.app.db,
     dataDir: ctx.app.config.dataDir,
+    signals: ctx.app.signals,
     envs,
-  }).needs;
+  }).degraded;
 }
 
 /**
@@ -990,7 +1097,7 @@ export function asksAnswer(ctx: Ctx, user: User) {
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   return {
     rows: askLinesFor(ctx.app.db, user),
-    forge: forgeNeedsFor(ctx, user),
+    forge: forgeNeedsFor(ctx, user).map((d) => needLine(d)),
     measure: { days: 7, ...askMeasure(ctx.app.db, user.id, since) },
   };
 }
@@ -1002,7 +1109,12 @@ export function asksAnswer(ctx: Ctx, user: User) {
  */
 export function askItemsOf(issue: Issue): string[] {
   return issue.kind === "pull"
-    ? [`ask:look:${issue.id}`, `ask:review:${issue.id}`, `ask:stopped:${issue.id}`]
+    ? [
+        `ask:look:${issue.id}`,
+        `ask:review:${issue.id}`,
+        `ask:stopped:${issue.id}`,
+        `ask:handover:${issue.id}`,
+      ]
     : [`ask:parked:${issue.id}`];
 }
 

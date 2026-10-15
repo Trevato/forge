@@ -13,6 +13,7 @@
  * commit, once.
  */
 
+import { recordCarried } from "../core/carried.ts";
 import { pullDir, runDir } from "../core/pulls.ts";
 import { accountActive } from "../core/accounts.ts";
 import { sshCommand } from "../ssh/command.ts";
@@ -84,6 +85,7 @@ import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
 import { egressSetting } from "../core/capacity.ts";
+import { noteProtection } from "../kernel/protection.ts";
 import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
 import {
   startProcess,
@@ -160,6 +162,11 @@ const BUSY_GRACE_MS = 45 * 60_000;
  * the studio reads the same constant to word its badge. */
 export const VERIFYING_NOTE = "serving — still verifying its tests";
 
+/** What a finished deploy's summary ends with: the studio words its green
+ * from these, so a pull says whether its tests ran (`words.ts`). */
+export const TESTS_PASSED_TAIL = " · its tests passed";
+export const NO_TESTS_TAIL = " · no tests declared, none run";
+
 export interface EnvStatus {
   readonly env: EnvName;
   readonly state: EnvState;
@@ -201,6 +208,8 @@ export interface EnvStatus {
    * as `tty`.
    */
   readonly looks?: readonly string[] | undefined;
+  /** `false` when its `forge.json` turns the forge pill off; unset is on. */
+  readonly toolbar?: boolean | undefined;
   /**
    * A deploy newer than the one serving that never came up — set only
    * while an older deployment keeps answering in its place. A later
@@ -489,6 +498,7 @@ export class AppsRuntime {
               createdAt: state.live.createdAt,
               tty: state.live.manifest.tty,
               looks: state.live.manifest.looks,
+              toolbar: state.live.manifest.toolbar,
               ...(state.live.deployStartedAt === null
                 ? {}
                 : { deployStartedAt: state.live.deployStartedAt }),
@@ -525,6 +535,7 @@ export class AppsRuntime {
         createdAt: state.live.createdAt,
         tty: state.live.manifest.tty,
         looks: state.live.manifest.looks,
+        toolbar: state.live.manifest.toolbar,
         ...(state.live.deployStartedAt === null
           ? {}
           : { deployStartedAt: state.live.deployStartedAt }),
@@ -589,6 +600,7 @@ export class AppsRuntime {
   /** Rebuild every environment from git and the open pulls, then listen. */
   async start(): Promise<void> {
     this.cells = await cellsAvailable();
+    noteProtection("apps", this.cells);
     if (!this.cells.ok)
       log.warn("apps run uncontained here", { reason: this.cells.reason });
     // Deploys are failed; a check the last forge left is queued again while
@@ -1116,9 +1128,10 @@ export class AppsRuntime {
     if (tested.ok) {
       const done = finishRun(this.app.db, run.id, {
         state: "ok",
-        summary: `running at ${url}`,
+        summary: `running at ${url}${live.manifest.test === null ? NO_TESTS_TAIL : TESTS_PASSED_TAIL}`,
       });
       write(`done: ${url}`);
+      if (done && state.env === "production") await this.noteCarried(repo, done);
       if (done) announceRun(this.app, done);
       return;
     }
@@ -1133,6 +1146,21 @@ export class AppsRuntime {
     write(`failed: test: ${tested.error}`);
     write(`serving ${url} anyway — its tests failed`);
     if (done) announceRun(this.app, done);
+  }
+
+  /** Note the merged pulls a finished production deploy carries; never fails the deploy. */
+  private async noteCarried(repo: Repo, run: Run): Promise<void> {
+    try {
+      const dir = await runDir(this.app.db, this.app.reposRoot, repo, null);
+      await recordCarried(this.app.db, {
+        runId: run.id,
+        repoId: repo.id,
+        commitOid: run.commitOid,
+        dir,
+      });
+    } catch (error) {
+      log.error("could not record what a deploy carries", { error: String(error) });
+    }
   }
 
   private async bringUp(
@@ -1301,6 +1329,7 @@ export class AppsRuntime {
         noteReached(dataDir, record.repoId, host, port),
       // Asked at every start: an admin's flip reaches the next cell.
       egressMode: egressSetting(this.app.db),
+      label: `app:${record.slug}/${env}`,
     };
   }
 
@@ -1350,6 +1379,7 @@ export class AppsRuntime {
               terminal: true,
               onUndeclared: base.onUndeclared,
               egressMode: base.egressMode,
+              label: base.label,
             },
     };
   }

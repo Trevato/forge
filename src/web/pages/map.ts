@@ -1419,7 +1419,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
     graph.issues.map((i) => wordFor(i, readySet, marks)),
   );
   const pillars = pillarView(db, repo);
-  const ask = await askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
+  const ask = askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>

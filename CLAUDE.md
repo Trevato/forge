@@ -13,7 +13,9 @@ isn't understood yet.
 
 1. **Zero runtime dependencies.** `package.json` `dependencies` is empty and
    stays empty. Never `bun add` a runtime dep. Need a 20-line utility? Write it
-   as a 20-line file. `devDependencies` is types + `tsc` only.
+   as a 20-line file. `devDependencies` is types + `tsc` only (`typescript` is
+   the native 7.x checker; `typescript-api` is 5.x for `scripts/hollow.ts`'s
+   AST walk).
 2. **Bun, not npm/yarn/pnpm.** Install, run, test, build all go through `bun`.
    The runtime provides everything: `Bun.serve`, `Bun.spawn`, `bun:sqlite`,
    `Bun.password` (argon2), WebCrypto, gzip.
@@ -86,6 +88,14 @@ bun run src/main.ts   # boots on :3000, data in ./data
   It runs the files in `GATE` (`scripts/gate.ts`), not the whole suite; every
   other test file is in `EXCLUDED` with its reason and owning issue. Add a new
   test file to `GATE`, or the check goes red.
+- **A flaky test is a red that teaches nothing.** A file joins `GATE` only
+  with ten green random-order runs under load in the pull
+  (`bun scripts/flake-hunt.ts admit test/x.test.ts`); the nightly hunt files
+  a `Flaky:` issue and `flake-hunt.ts quarantine` moves the file to
+  `EXCLUDED`, so never hand-edit that move. Never add `retry` — fix the
+  cause: a shared port, a real clock, order dependence, a leaked server, a
+  timeout near the real duration, a wall-clock bound under 200 ms on a
+  request or a spawn (`test/flake.test.ts` refuses one).
 - **Every non-trivial change ships with a test.** Prefer protocol-level tests
   that boot a real app (`createApp` + `serve`) over unit mocks. Adversarial
   tests (can this be bypassed?) are worth more than happy-path ones.

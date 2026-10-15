@@ -7,6 +7,7 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
+import { protectionNotice } from "../kernel/protection.ts";
 import { askCountFor } from "./studio/asks.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
@@ -90,6 +91,12 @@ export interface PageOptions {
    * origin" — so pages that do not ask for it keep the stricter policy.
    */
   scriptAsset?: string;
+  /**
+   * The page carries a Cloudflare Turnstile widget (`/signup`): its script,
+   * frame and verification call may come from challenges.cloudflare.com, and
+   * nothing else on this page is relaxed.
+   */
+  turnstile?: boolean;
   /** Extra palette rows for this page's context (a repo's own tabs). */
   palette?: PaletteItem[];
   /**
@@ -147,23 +154,6 @@ function themeMenu(active: ThemeName | undefined): Html {
   </details>`;
 }
 
-/**
- * The way to what needs you, with how many things ask the viewer — the very
- * count the home's pinned section leads with (`askCountFor`).
- */
-export function asksLink(ctx: Ctx): Html {
-  if (!ctx.auth.user) return html``;
-  const count = askCountFor(ctx, ctx.auth.user);
-  return html`<a
-    id="asks-link"
-    class="btn"
-    data-size="sm"
-    href="/#needs-you"
-    title="${count === 0 ? "All fine" : `${count} need you`}"
-    >Asks${count === 0 ? null : pill(count, "accent")}</a
-  >`;
-}
-
 /** A whole forge for someone (`/forges/new`): any signed-in person's. */
 const NEW_FORGE: MenuItem = {
   label: "New forge",
@@ -218,7 +208,12 @@ function userMenu(ctx: Ctx, user: User, signOut: MenuItem): Html {
     { label: "SSH keys", href: "/settings/keys", icon: "lock" },
     { label: "Origins", href: "/settings/origins", icon: "globe" },
     ...(user.isAdmin
-      ? [{ label: "Crew", href: "/settings/crew", icon: "bot" as const }]
+      ? [
+          { label: "Crew", href: "/settings/crew", icon: "bot" as const },
+          ...(user.kind === "agent"
+            ? []
+            : [{ label: "Boards", href: "/boards", icon: "activity" as const }]),
+        ]
       : []),
     { separator: true, label: "" },
     signOut,
@@ -280,7 +275,6 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Apps", h: "/apps", c: "Go to" },
   { t: "Explore", h: "/explore", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
-  { t: "Asks you", h: "/#needs-you", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
   { t: "Front page", h: "/front", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
@@ -327,7 +321,11 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
       ? [{ t: "New forge", h: "/forges/new", c: "Create" }]
       : []),
     ...(ctx.auth.user?.isAdmin
-      ? [{ t: "Forges you sent", h: "/forges", c: "Go to" }]
+      ? [
+          { t: "Flow", h: "/flow", c: "Go to" },
+          { t: "Forges you sent", h: "/forges", c: "Go to" },
+          { t: "Family of forges", h: "/family", c: "Go to" },
+        ]
       : []),
   ];
   // `studio` rides along so the palette's *remote* rows — what the search
@@ -397,7 +395,10 @@ function flashToast(flash: Flash): Html {
   return html`<div class="toast" data-tone="${tone}" role="status">
     ${icon(glyph)}
     <div class="toast-body">
-      ${flash.message}
+      ${flash.message}${when(
+        flash.link,
+        (link) => html` · <a href="${link.href}">${link.label}</a>`,
+      )}
       ${when(
         flash.code,
         (code) =>
@@ -448,9 +449,18 @@ function topbar(
       )}
       <span class="spacer"></span>
       <span class="topbar-tools">
-        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${asksLink(
-          ctx,
-        )}${themeMenu(theme)}
+        ${when(
+          user?.isAdmin === true,
+          () =>
+            html`<a
+              id="flow-link"
+              class="btn"
+              data-size="sm"
+              href="/flow"
+              title="The pipeline and its bottleneck"
+              >${icon("activity")}<span class="hide-sm">Flow</span></a
+            >`,
+        )}${searchBar()}<span class="hide-sm">${helpButton()}</span>${themeMenu(theme)}
         ${user
           ? html`<span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
                 ctx,
@@ -479,6 +489,8 @@ function topbar(
  * else gets: the one person who is asked "which version is this?".
  */
 function footer(ctx: Ctx): Html {
+  const reduced =
+    ctx.auth.user?.isAdmin === true ? protectionNotice() : undefined;
   return html`<footer class="foot">
     <span class="mark"></span>
     <span
@@ -487,6 +499,11 @@ function footer(ctx: Ctx): Html {
         ? runningLine()
         : "— your code, your machine"}</span
     >
+    ${reduced === undefined
+      ? null
+      : html`<span class="reduced" id="reduced-protection"
+          >${reduced}</span
+        >`}
     <span class="spacer"></span>
     <button
       class="btn js-only"
@@ -626,6 +643,16 @@ export function page(options: PageOptions, status = 200): Response {
         ${raw(`<style nonce="${nonce}">${bootCss}</style>`)}
         <link rel="stylesheet" href="${stylesheetAsset().path}" />
         ${when(
+          options.turnstile,
+          () =>
+            html`<script
+              nonce="${nonce}"
+              src="${TURNSTILE_ORIGIN}/turnstile/v0/api.js"
+              async
+              defer
+            ></script>`,
+        )}
+        ${when(
           options.scriptAsset,
           (src) => html`<script type="module" src="${src}"></script>`,
         )}
@@ -647,7 +674,7 @@ export function page(options: PageOptions, status = 200): Response {
     // The external stylesheet plus this page's own nonce'd <style>/<script>
     // are the only resources allowed; connect-src 'self' lets the live
     // event stream (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}; connect-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${options.turnstile ? `frame-src ${TURNSTILE_ORIGIN}; ` : ""}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
     // Markup is revalidated every time; only the hashed assets it names are
@@ -659,6 +686,8 @@ export function page(options: PageOptions, status = 200): Response {
   if (flash) headers.append("set-cookie", clearFlashCookie(ctx.url));
   return new Response(doc.text, { status, headers });
 }
+
+const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 
 export interface RedirectOptions {
   /** A Set-Cookie value to send alongside (session, theme). */

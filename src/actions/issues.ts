@@ -55,6 +55,7 @@ import {
 } from "../crew/direct.ts";
 import { laterGate } from "../crew/later.ts";
 import { handedOverAt } from "../crew/parks.ts";
+import { alreadyDone, CLOSED_NOTE } from "../core/done_on_main.ts";
 import { listReviews } from "../core/reviews.ts";
 import {
   applyLabelNames,
@@ -290,6 +291,7 @@ export function assignIssue(
   repo: Repo,
   issue: Issue,
   assignee: User | null,
+  variantGroup?: string,
 ): Result<
   Issue,
   AccessError | "assignee_cannot_read" | "agent_not_on_crew" | "unverified"
@@ -321,6 +323,7 @@ export function assignIssue(
       number: issue.number,
       assignee: assignee?.username ?? null,
       agent: assignee?.kind === "agent",
+      ...(variantGroup ? { variantGroup } : {}),
     },
   });
   return ok(updated);
@@ -408,7 +411,11 @@ export function setIssueState(
   const children: Issue[] = [];
   if (closing.reason !== undefined || closing.into !== undefined) {
     // A reason is how an issue closes; a pull or a reopen has none.
-    if (state !== "closed" || issue.kind !== "issue")
+    if (
+      state !== "closed" ||
+      issue.kind !== (reason === "parked" ? "pull" : "issue") ||
+      (reason === "parked" && closing.into !== undefined)
+    )
       return err("invalid_reason");
     if (reason === "split") {
       for (const number of closing.into ?? []) {
@@ -420,7 +427,25 @@ export function setIssueState(
       if (children.length === 0) return err("invalid_reason");
     } else if (closing.into !== undefined) return err("invalid_reason");
   }
-  const changed = writeState(app.db, issue.id, state, reason);
+  // Done on main already, by the commits the crew named: the close keeps
+  // them, whichever door it comes through. The note goes in with the
+  // state change or not at all.
+  const doneBy =
+    state === "closed" && issue.kind === "issue"
+      ? (alreadyDone(app.db, [issue.id]).get(issue.id) ?? [])
+      : [];
+  const changed = app.db.transaction(() => {
+    const written = writeState(app.db, issue.id, state, reason);
+    if (written && doneBy.length > 0)
+      insertComment(app.db, {
+        issueId: issue.id,
+        authorId: user.value.id,
+        body: `${CLOSED_NOTE}${doneBy
+          .map((o) => `[\`${o.slice(0, 7)}\`](/${repo.ownerName}/${repo.name}/commit/${o})`)
+          .join(", ")}.`,
+      });
+    return written;
+  })();
   if (!changed) return ok(getIssueById(app.db, issue.id) ?? issue);
   if (children.length > 0)
     moveBlockersToChildren(app.db, issue, children, user.value.id);
@@ -430,7 +455,9 @@ export function setIssueState(
     actorId: user.value.id,
     payload: {
       number: issue.number,
-      ...(issue.kind === "issue" && reason !== undefined ? { reason } : {}),
+      ...(reason !== undefined && (issue.kind === "issue" || reason === "parked")
+        ? { reason }
+        : {}),
       ...(children.length > 0 ? { into: children.map((c) => c.number) } : {}),
     },
   });

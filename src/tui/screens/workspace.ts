@@ -39,7 +39,8 @@ import { err, ok } from "../../kernel/result.ts";
 import { createBranch } from "../../actions/branches.ts";
 import { pinRepo, syncRepoNow, unpinRepo } from "../../actions/origins.ts";
 import { isPinned } from "../../core/pins.ts";
-import { canAdmin, type Repo } from "../../core/repos.ts";
+import { setDecisionsBy } from "../../actions/repos.ts";
+import { canAdmin, DECISIONS_BY, getRepoById, type Repo } from "../../core/repos.ts";
 import type { TreeEntry } from "../../git/read.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import { detectLanguage, highlightLines } from "../../web/highlight.ts";
@@ -1283,6 +1284,9 @@ export function workspaceScreen(
               binding(["y"], "copy path"),
               binding(["i", "p", "C"], "issues / pulls / commits"),
               binding(["I"], "about this repository"),
+              ...(repo !== undefined && admin()
+                ? [binding(["R"], `decisions by ${(getRepoById(f.db, repo.id) ?? repo).decisionsBy} (cycle)`)]
+                : []),
               ...liveBindings(src),
               ...(liveSide?.mirroredAs === undefined
                 ? []
@@ -1668,6 +1672,22 @@ export function workspaceScreen(
           `/${repo.ownerName}/${repo.name}/settings`,
           "Settings",
         );
+        return true;
+      }
+      if (plain && e.key === "R" && repo !== undefined && admin()) {
+        // `repo` was read when the screen opened; the rule is read afresh.
+        const target = getRepoById(f.db, repo.id) ?? repo;
+        const next =
+          DECISIONS_BY[(DECISIONS_BY.indexOf(target.decisionsBy) + 1) % DECISIONS_BY.length]!;
+        runAsync(ctx, async () => {
+          const done = await setDecisionsBy(f.app, f.user, target, next, false);
+          if (!done.ok) {
+            ctx.toast("only a person who administers this sets its standing rule", "danger");
+            return;
+          }
+          reload();
+          ctx.toast(`decisions here go by ${next}`, "success");
+        });
         return true;
       }
       if (plain && e.key === "r") {

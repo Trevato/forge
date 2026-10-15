@@ -5,8 +5,15 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
+import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
+import { flowPage } from "../web/pages/flow.ts";
+import { limitsPage, limitsSet } from "../web/pages/admin-limits.ts";
+import { boardsPage } from "../web/pages/boards.ts";
+import { boardNew, boardPin, boardPost } from "../web/pages/boards-edit.ts";
+import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
 import {
   closeStreamsOf,
   closeStreamsOfSession,
@@ -15,6 +22,8 @@ import {
 } from "./caller.ts";
 import {
   accountAct,
+  retireAct,
+  retirePage,
   accountsPage,
   personSignInsPage,
   signInAct,
@@ -85,6 +94,14 @@ import {
   verifyPage,
   themeSubmit,
 } from "../web/pages/site.ts";
+import {
+  passkeyAdd,
+  passkeyDelete,
+  passkeyOptions,
+  passkeysPage,
+  signinOptions,
+  signinPasskey,
+} from "../web/pages/passkeys.ts";
 import { confirmPage, searchPage } from "../web/pages/search.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { reconnectSubmit } from "../web/pages/frozen.ts";
@@ -94,6 +111,7 @@ import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
 import {
   backupsClear,
   backupsDestination,
+  backupsDrill,
   backupsNow,
   backupsPage,
   backupsTest,
@@ -118,6 +136,7 @@ import {
   changePassword,
   iconPng,
   llmsTxt,
+  releasesJson,
   robotsTxt,
   securityTxt,
   sitemapXml,
@@ -160,6 +179,7 @@ import {
   newTellPage,
 } from "../web/pages/issues.ts";
 import { tellPage } from "../web/studio/tell.ts";
+import { tellHerePage } from "../web/studio/tell_here.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import {
   milestonePage,
@@ -183,13 +203,17 @@ import {
 } from "../web/studio/actions.ts";
 import { everydayCreate, everydayKeep, everydaySwitch } from "../web/pages/everyday.ts";
 import { claimFragmentPage, claimSubmit } from "../web/pages/claim.ts";
+import { familyPage } from "../web/pages/family.ts";
 import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
 import {
   asksBulkSubmit,
   asksBulkUndo,
+  asksDecide,
+  asksDecideUndo,
   asksListen,
+  asksMute,
   asksPage,
 } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
@@ -238,6 +262,7 @@ import {
   runsList,
 } from "../web/pages/runs.ts";
 import { lookImage } from "../web/pages/looks.ts";
+import { ogCard } from "../web/pages/og.ts";
 import { bigRedirect, boardPage } from "../web/pages/board.ts";
 import { returnsPage } from "../web/pages/returns.ts";
 import {
@@ -258,12 +283,14 @@ import {
   pullPage,
   pullStateFragment,
 } from "../web/studio/change.ts";
+import { variantsPage, variantVoteSubmit } from "../web/pages/variants.ts";
 import {
   pullCommentSubmit,
   pullFilesPage,
   pullMergeSubmit,
   pullChecksSubmit,
   pullReviewStateSubmit,
+  pullApproveHereSubmit,
   pullReviewSubmit,
   pullThreadFragment,
   threadResolveSubmit,
@@ -298,6 +325,7 @@ import {
   repoDelete,
   settingsPage,
   settingsUpdate,
+  waveCut,
   webhookCreate,
   webhookDelete,
 } from "../web/pages/settings.ts";
@@ -368,6 +396,7 @@ import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { oauthRoutes } from "./oauth.ts";
+import { flushAccess, recordAccess } from "./access_log.ts";
 import { carryPeer, clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
 import { parseCidrs } from "../kernel/cidr.ts";
 import {
@@ -408,6 +437,7 @@ import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
   appWebSocket,
+  type AppSocket,
   proxyApp,
   resolveAppHost,
 } from "../apps/proxy.ts";
@@ -528,6 +558,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/llms.txt", llmsTxt);
   router.add("GET", "/.well-known/change-password", changePassword);
   router.add("GET", "/robots.txt", robotsTxt);
+  router.add("GET", "/releases.json", releasesJson);
   router.add("GET", "/sitemap.xml", sitemapXml);
   router.add("GET", "/manifest.webmanifest", webManifest);
   router.add("GET", "/icons/:spec.png", iconPng);
@@ -537,6 +568,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/assets/:name.js", async (ctx) => {
     const shell = shellAsset();
     if (ctx.params.name === shell.name) return assetResponse(shell);
+    if (ctx.params.name === TOOLBAR_NAME) return toolbarResponse();
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();
     return assetResponse(asset);
@@ -550,6 +582,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/claim", claimSubmit);
   // "+ New forge": the spawn door as a page, any signed-in person (spawn/door.ts).
   router.add("GET", "/forges", forgesPage);
+  router.add("GET", "/family", familyPage);
   router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
@@ -575,6 +608,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/asks/bulk", asksBulkSubmit);
   router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
   router.add("POST", "/asks/listen", asksListen);
+  router.add("POST", "/asks/mute", asksMute);
+  router.add("POST", "/asks/decide", asksDecide);
+  router.add("POST", "/asks/decide/:id/undo", asksDecideUndo);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
   // The big view, folded into the board: every old address lands on its wall mode.
@@ -602,6 +638,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/migrate/jobs/:job", migrationJobPage);
   // Every app on one canvas; a literal route, so it must sit above /:owner.
   router.add("GET", "/map", globalMapPage);
+  // The pipeline's stages and its bottleneck, for a forge admin (#1554); literal, above /:owner.
+  router.add("GET", "/flow", flowPage);
   // A selection's spend and runs over time; literal, above /:owner.
   router.add("GET", "/fleet/graph", fleetGraphPage);
   router.add("GET", "/fleet/graph/live", fleetGraphLive);
@@ -641,6 +679,12 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/tokens", tokenCreate);
   router.add("POST", "/settings/tokens/:id/delete", tokenDelete);
   router.add("POST", "/settings/sessions/:id/delete", sessionDelete);
+  router.add("GET", "/settings/passkeys", passkeysPage);
+  router.add("POST", "/settings/passkeys/options", passkeyOptions);
+  router.add("POST", "/settings/passkeys", passkeyAdd);
+  router.add("POST", "/settings/passkeys/:id/delete", passkeyDelete);
+  router.add("POST", "/signin/passkey/options", signinOptions);
+  router.add("POST", "/signin/passkey", signinPasskey);
   // The crew: a forge admin's section, hidden from everyone else.
   router.add("GET", "/settings/subscriptions", subscriptionsPage);
   router.add("POST", "/settings/subscriptions", subscriptionAdd);
@@ -661,10 +705,21 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/cloud/write", cloudWrite);
   router.add("POST", "/settings/cloud/audit", cloudAudit);
   router.add("POST", "/settings/cloud/remove", cloudRemove);
+  router.add("GET", "/settings/access", accessPage);
   router.add("GET", "/settings/capacity", capacityPage);
   router.add("POST", "/settings/capacity", capacitySet);
+  router.add("GET", "/boards", boardsList);
+  router.add("GET", "/boards/data", boardsPage);
+  router.add("POST", "/boards/new", boardNew);
+  router.add("POST", "/boards/pin", boardPin);
+  router.add("GET", "/boards/:slug", boardShow);
+  router.add("GET", "/boards/:slug/live", boardLive);
+  router.add("POST", "/boards/:slug/:op", boardPost);
+  router.add("GET", "/admin/limits", limitsPage);
+  router.add("POST", "/admin/limits", limitsSet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
+  router.add("POST", "/settings/backups/drill", backupsDrill);
   router.add("POST", "/settings/backups/destination", backupsDestination);
   router.add("POST", "/settings/backups/test", backupsTest);
   router.add("POST", "/settings/backups/clear", backupsClear);
@@ -691,6 +746,8 @@ export function buildRouter(): Router<Handler> {
     accountAct("unsuspend"),
   );
   router.add("POST", "/settings/accounts/:username/remove", accountAct("remove"));
+  router.add("GET", "/settings/accounts/:username/retire", retirePage);
+  router.add("POST", "/settings/accounts/:username/retire", retireAct);
   router.add("POST", "/settings/accounts/:username/verify", accountAct("verify"));
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew", agentCreate);
@@ -885,6 +942,7 @@ export function buildRouter(): Router<Handler> {
   );
   // The studio's verbs on an app: tell, ship, say, and — on a shipped
   // change — take it back.
+  router.add("GET", "/:owner/:name/tell", tellHerePage);
   router.add("POST", "/:owner/:name/tell", tellSubmit);
   // The home's composer without a script: a tell to the app it names (#599).
   router.add("POST", "/tell", composerSubmit);
@@ -940,6 +998,22 @@ export function buildRouter(): Router<Handler> {
     "/:owner/:name/pulls/:number/review-state",
     pullReviewStateSubmit,
   );
+  router.add("GET", "/:owner/:name/variants/:group", variantsPage);
+  router.add(
+    "POST",
+    "/:owner/:name/variants/:group/:number/like",
+    variantVoteSubmit("like"),
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/variants/:group/:number/dislike",
+    variantVoteSubmit("dislike"),
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/pulls/:number/approve-here",
+    pullApproveHereSubmit,
+  );
   router.add(
     "POST",
     "/:owner/:name/pulls/:number/threads/:anchor/resolve",
@@ -981,6 +1055,12 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/runs/:id", runPage);
   router.add("POST", "/:owner/:name/runs/:id/cancel", runCancel);
   router.add("POST", "/:owner/:name/runs/:id/steer", runSteer);
+  // The public social cards: a repo as owner~name, an app as its slug.
+  router.add("GET", "/og/repo/:ref.svg", ogCard("repo"));
+  router.add("GET", "/og/app/:ref.svg", ogCard("app"));
+  router.add("GET", "/og/issue/:ref.svg", ogCard("issue"));
+  router.add("GET", "/og/pull/:ref.svg", ogCard("pull"));
+  router.add("GET", "/og/run/:ref.svg", ogCard("run"));
   // The pictures of an environment, read like the repository.
   router.add("GET", "/:owner/:name/looks/:env/:commit/:kind.png", lookImage);
 
@@ -1058,6 +1138,7 @@ export function buildRouter(): Router<Handler> {
   // Settings (owner-gated inside the handlers).
   router.add("GET", "/:owner/:name/settings", settingsPage);
   router.add("POST", "/:owner/:name/settings", settingsUpdate);
+  router.add("POST", "/:owner/:name/settings/wave", waveCut);
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);
@@ -1669,17 +1750,28 @@ export async function serve(app: App): Promise<Servers> {
       : { header: app.config.clientIpHeader }),
   };
 
-  const web = Bun.serve({
-    port: app.config.port ?? 3000,
-    idleTimeout: 120,
-    // The largest thing anyone may send — a git push. Every reader below it
-    // keeps its own, smaller cap (\`http/limits.ts\`); the runtime enforces
-    // this one only on a declared length.
-    maxRequestBodySize: REQUEST_MAX,
-    // The only sockets the forge holds are an app's, carried through the
-    // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
-    websocket: appWebSocket,
-    async fetch(request, server) {
+  // What the forge itself answered, for the owner's access log. Called only
+  // after `notePeer`, so the caller is known; an app's own traffic (the
+  // `proxyApp` branch) is the app's and never comes through here. `ms` is the
+  // time to headers: a streamed body is still being sent.
+  const logged = (
+    dataDir: string,
+    request: Request,
+    response: Response,
+    started: number,
+  ) =>
+    recordAccess(dataDir, {
+      request,
+      status: response.status,
+      ms: performance.now() - started,
+      client: clientAddress(request),
+    });
+
+  const handle = async (
+    request: Request,
+    server: Bun.Server<AppSocket>,
+  ): Promise<Response | undefined> => {
+      const started = performance.now();
       // An app's hostname is answered before any route: `hello.<domain>` is
       // the app, whatever its path, and the forge's own routes never apply.
       const runtime = appsRuntime(app);
@@ -1722,6 +1814,7 @@ export async function serve(app: App): Promise<Servers> {
           notePeer(request, server.requestIP(request)?.address, trust);
           armClose(request, () => server.timeout(request, 1));
           const response = securityFloor(await http.handle(request));
+          logged(key, request, response, started);
           await settleBody(request);
           if (!mustClose(request)) return response;
           server.timeout(request, 1);
@@ -1739,12 +1832,27 @@ export async function serve(app: App): Promise<Servers> {
       const response = securityFloor(
         await answer(app, router, apiRouter, limiter, request),
       );
+      logged(app.config.dataDir, request, response, started);
       await settleBody(request);
       if (!mustClose(request)) return response;
       // Said, so no client or proxy reuses it; then done, so none can.
       server.timeout(request, 1);
       return withHeader(response, "connection", "close");
-    },
+  };
+
+  const web = Bun.serve({
+    port: app.config.port ?? 3000,
+    // A release swaps in beside this process on the same port (#1663).
+    ...(app.config.selfSwap === true ? { reusePort: true } : {}),
+    idleTimeout: 120,
+    // The largest thing anyone may send — a git push. Every reader below it
+    // keeps its own, smaller cap (\`http/limits.ts\`); the runtime enforces
+    // this one only on a declared length.
+    maxRequestBodySize: REQUEST_MAX,
+    // The only sockets the forge holds are an app's, carried through the
+    // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
+    websocket: appWebSocket,
+    fetch: handle,
     error(error) {
       const refused = refusedByDatabase(error);
       if (refused !== undefined) {
@@ -1764,7 +1872,7 @@ export async function serve(app: App): Promise<Servers> {
       // port has none, so every internal request proves the boot secret.
       if (!hookCallerAllowed(app, request)) {
         const path = new URL(request.url).pathname;
-        if (noteRefusedInternal(request.method, path))
+        if (noteRefusedInternal(request.method, path, Date.now(), app.signals.refused))
           app.log.warn("internal call refused: no boot secret", {
             method: request.method,
             path: path.slice(0, 120),
@@ -1790,6 +1898,7 @@ export async function serve(app: App): Promise<Servers> {
       for (const http of childHttps.values()) http.close();
       childHttps.clear();
       closeHostedChildren(app);
+      flushAccess();
       web.stop(true);
       internal.stop(true);
       // Our socket goes with us; a corpse is only ever an unclean exit's.

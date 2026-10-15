@@ -8,6 +8,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parentUrlProblem } from "../src/core/parent_releases.ts";
+import { Session } from "../src/tui/session.ts";
+import { releasesRow } from "../src/tui/screens/about.ts";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
@@ -486,6 +489,167 @@ describe("a fork that follows its parent", () => {
     expect(page).toContain("ahead");
   });
 
+  test("a child forge says how many releases it is behind its parent, and a parent that is down leaves the page up", async () => {
+    let mode: "ok" | "500" | "garbage" = "ok";
+    let asked = 0;
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    const fake = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: async () => {
+        asked++;
+        if (mode === "500") return new Response("boom", { status: 500 });
+        if (mode === "garbage") return new Response("<html>not json");
+        await gate;
+        return Response.json({
+          releases: [
+            { name: "9.0.2 <b>x</b>", url: "http://127.0.0.1/r/2" },
+            { name: "9.0.1", url: "http://127.0.0.1/r/1" },
+            { name: "9.0.0", url: "http://127.0.0.1/r/0" },
+            { name: "bad", url: "javascript:alert(1)" },
+          ],
+        });
+      },
+    });
+    const config = app.config as { parentUrl?: string; parentLoopback?: boolean };
+    const cache = join(dataDir, "parent-releases.json");
+    const was = process.env.FORGE_VERSION;
+    const flat = (t: string) => t.replace(/\s+/g, " ");
+    const get = () =>
+      fetch(`${base}/bob/game`, {
+        headers: { authorization: `Bearer ${bobToken}`, accept: "text/html" },
+      });
+    const page = async () => flat(await (await get()).text());
+    try {
+      process.env.FORGE_VERSION = "9.0.0";
+      config.parentUrl = `http://127.0.0.1:${fake.port}`;
+      config.parentLoopback = true;
+
+      // The first view does not wait for the parent: it answers while the
+      // fake parent is still blocked on `gate`.
+      const first = await page();
+      expect(first).toContain("Checking 127.0.0.1:");
+      open();
+      await settled(dataDir);
+      const ok = await page();
+      expect(ok).toContain("2 releases behind");
+      // The agent door carries the same view.
+      const api = (await (
+        await fetch(`${base}/api/v1/repos/bob/game/following`, {
+          headers: { authorization: `Bearer ${bobToken}` },
+        })
+      ).json()) as {
+        parentForge: {
+          behind: number;
+          host: string;
+          down: boolean;
+          releases: { name: string }[];
+        };
+      };
+      expect(api.parentForge.behind).toBe(2);
+      expect(api.parentForge.host).toBe(`127.0.0.1:${fake.port}`);
+      expect(api.parentForge.down).toBe(false);
+      expect(api.parentForge.releases.map((r) => r.name)).toEqual([
+        "9.0.2 <b>x</b>",
+        "9.0.1",
+      ]);
+      expect(ok).toContain("9.0.2 &lt;b&gt;x&lt;/b&gt;");
+      expect(ok).not.toContain("<b>x</b>");
+      expect(ok).not.toContain("javascript:");
+
+      // Cached for ten minutes: the parent going away changes nothing yet.
+      mode = "500";
+      const before = asked;
+      expect(await page()).toContain("2 releases behind");
+      await settled(dataDir);
+      expect(asked).toBe(before);
+
+      // Past the cache the page is served from the old copy at once, the
+      // refresh fails behind it, and the next view says so with the age.
+      const stored = JSON.parse(await Bun.file(cache).text());
+      stored.fetchedAt -= 3 * 3_600_000;
+      stored.triedAt -= 3 * 3_600_000;
+      await Bun.write(cache, JSON.stringify(stored));
+      expect(await page()).toContain("2 releases behind");
+      await settled(dataDir);
+      const down = await page();
+      expect(down).toContain("2 releases behind");
+      expect(down).toContain(
+        "could not be reached; this is a copy from 3 hours ago",
+      );
+
+      mode = "garbage";
+      stored.triedAt -= 3_600_000;
+      await Bun.write(cache, JSON.stringify(stored));
+      expect((await get()).status).toBe(200);
+      await settled(dataDir);
+      expect(await page()).toContain("could not be reached");
+
+      // A build the parent does not list is not "behind" by any count.
+      process.env.FORGE_VERSION = "1.2.3";
+      expect(await page()).toContain(
+        "This version (1.2.3) is not in 127.0.0.1:",
+      );
+
+      // No copy at all: still a page, and an honest sentence.
+      mode = "500";
+      await Bun.write(cache, "{}");
+      expect((await get()).status).toBe(200);
+      await settled(dataDir);
+      const none = await get();
+      expect(none.status).toBe(200);
+      expect(flat(await none.text())).toContain("could not be reached.");
+    } finally {
+      if (was === undefined) delete process.env.FORGE_VERSION;
+      else process.env.FORGE_VERSION = was;
+      delete config.parentUrl;
+      delete config.parentLoopback;
+      fake.stop(true);
+    }
+  });
+
+  test("the terminal's About card says the same sentence from the same cache", async () => {
+    const fake = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () =>
+        Response.json({
+          releases: [
+            { name: "8.0.1", url: "http://127.0.0.1/r/1" },
+            { name: "8.0.0", url: "http://127.0.0.1/r/0" },
+          ],
+        }),
+    });
+    const config = app.config as { parentUrl?: string; parentLoopback?: boolean };
+    const was = process.env.FORGE_VERSION;
+    try {
+      process.env.FORGE_VERSION = "8.0.0";
+      config.parentUrl = `http://127.0.0.1:${fake.port}`;
+      config.parentLoopback = true;
+      const session = new Session(app, {
+        sshUsername: "bob",
+        remoteAddress: "127.0.0.1",
+        fingerprint: "SHA256:test",
+        user: bob,
+      });
+      const repo = fresh(fork);
+      expect(releasesRow(session, undefined)).toEqual([]);
+      expect(releasesRow(session, fresh(parent))).toEqual([]);
+      expect(releasesRow(session, repo)[0]![1]).toStartWith("Checking ");
+      await settled(dataDir);
+      expect(releasesRow(session, repo)).toEqual([
+        ["releases", `1 release behind 127.0.0.1:${fake.port}.`],
+      ]);
+    } finally {
+      if (was === undefined) delete process.env.FORGE_VERSION;
+      else process.env.FORGE_VERSION = was;
+      delete config.parentUrl;
+      delete config.parentLoopback;
+      fake.stop(true);
+    }
+  });
+
   test("the family is a tree: a fork of a fork nests under it, from any page in it", async () => {
     const f = await createUser(app.db, { trusted: true,
       username: "fay",
@@ -800,5 +964,26 @@ describe("a landed pull moves the forks, like the push it amounts to", () => {
     expect(checked(untouched)).toBe(0);
     expect(checked(worked)).toBe(1);
     expect(checked(parent)).toBeGreaterThan(0);
+  });
+});
+
+/** Waits for a background refresh to rewrite the cache (or 600 ms for none). */
+async function settled(dir: string): Promise<void> {
+  const file = Bun.file(join(dir, "parent-releases.json"));
+  const text = async () => ((await file.exists()) ? await file.text() : "");
+  const before = await text();
+  for (let i = 0; i < 24; i++) {
+    await Bun.sleep(25);
+    if ((await text()) !== before) return;
+  }
+}
+
+describe("a parent URL", () => {
+  test("is https, without credentials", () => {
+    expect(parentUrlProblem("https://parent.example")).toBeNull();
+    expect(parentUrlProblem("http://parent.example")).not.toBeNull();
+    expect(parentUrlProblem("https://u:p@parent.example")).not.toBeNull();
+    expect(parentUrlProblem("nonsense")).not.toBeNull();
+    expect(parentUrlProblem("http://127.0.0.1:1", true)).toBeNull();
   });
 });

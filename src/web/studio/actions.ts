@@ -11,7 +11,8 @@
 import { mayView } from "../../core/sealed.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment } from "../../actions/issues.ts";
-import { tell } from "../../actions/tell.ts";
+import { parseFrom, tell } from "../../actions/tell.ts";
+import { keepThought } from "../../actions/thought.ts";
 import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
 import { revertPull, type RevertPullError } from "../../actions/revert.ts";
@@ -20,8 +21,9 @@ import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { bringUpToDate } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
-import { field, readForm, type Form } from "../form.ts";
+import { backTo, field, readForm, type Form } from "../form.ts";
 import { flashOrJson, flashTo } from "../layout.ts";
+import { FORGE_TARGET } from "./feed.ts";
 import { changeHref } from "./nouns.ts";
 
 /** A merge refusal in a person's words. */
@@ -47,14 +49,18 @@ async function tellFrom(
   back: string,
 ): Promise<Response> {
   const text = field(form, "text").trim();
+  // The page the tell was said on; a path that is not ours is no `from`,
+  // and so is never somewhere to send the person back to.
+  const from = parseFrom(field(form, "from") || undefined) ?? null;
+  if (from !== null) back = from;
   if (text === "")
-    return flashTo(ctx, back, {
+    return flashOrJson(ctx, back, {
       tone: "danger",
       message: "Say something first.",
     });
-  const told = await tell(ctx.app, ctx.auth.user, repo, text);
+  const told = await tell(ctx.app, ctx.auth.user, repo, text, 1, from);
   if (!told.ok)
-    return flashTo(ctx, back, {
+    return flashOrJson(ctx, back, {
       tone: "danger",
       message:
         told.error === "forbidden"
@@ -65,12 +71,12 @@ async function tellFrom(
     });
   const { routed } = told.value;
   if (routed === undefined)
-    return flashTo(ctx, back, {
+    return flashOrJson(ctx, back, {
       message: `Told. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
     });
   const builder = routed.builder;
-  return flashTo(ctx, back, {
-    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}. Watch it work below.`,
+  return flashOrJson(ctx, back, {
+    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}.${from === null ? " Watch it work below." : ""}`,
   });
 }
 
@@ -94,7 +100,23 @@ export async function composerSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const [owner = "", name = "", ...extra] = field(form, "app").split("/");
+  const target = field(form, "app");
+  // "the forge" is no app: the words are kept as a thought, exactly as typed.
+  if (target === FORGE_TARGET) {
+    const kept = keepThought(ctx.app, ctx.auth.user, field(form, "text"), "composer");
+    return flashTo(
+      ctx,
+      "/",
+      kept.ok
+        ? { message: "Received." }
+        : {
+            tone: "danger",
+            message:
+              kept.error === "too_long" ? "That is too long to keep." : "That could not be kept.",
+          },
+    );
+  }
+  const [owner = "", name = "", ...extra] = target.split("/");
   const repo = extra.length === 0 ? getRepo(ctx.app.db, owner, name) : undefined;
   if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
   return tellFrom(ctx, repo, form, "/");
@@ -115,6 +137,8 @@ export async function shipSubmit(ctx: Ctx): Promise<Response> {
     : undefined;
   if (!pull || !mayView(ctx.app.db, repo, pull, ctx.auth.user))
     return notFoundPage(ctx);
+  // The inbox and the feed say where they were; the pull page does not.
+  const back = backTo(form, changeHref(base, pull.number));
   const merged = await mergePull(ctx.app, ctx.auth.user, repo, pull, "squash");
   // A conflict is never the person's to fix: the pull's agent brings the
   // branch up to date, and the pull comes back green, or lands on its own.
@@ -124,7 +148,7 @@ export async function shipSubmit(ctx: Ctx): Promise<Response> {
     merged.error.kind === "conflict"
   ) {
     const who = bringUpToDate(ctx.app, repo, pull, merged.error.files);
-    return flashOrJson(ctx, base, {
+    return flashOrJson(ctx, back, {
       tone: "danger" as const,
       message:
         who === undefined
@@ -132,9 +156,12 @@ export async function shipSubmit(ctx: Ctx): Promise<Response> {
           : `It conflicts with main (${merged.error.files.join(", ")}); ${who} is bringing it up to date${repo.autonomy === "autonomous" ? ", then it lands on its own" : ", then it comes back to you"}.`,
     });
   }
-  return flashOrJson(ctx, base, {
+  return flashOrJson(ctx, back, {
     ...(merged.ok
-      ? { message: `Shipped "${pull.title}". Production is redeploying.` }
+      ? {
+          message: `Shipped #${pull.number}`,
+          link: { href: `${base}/app/production/open`, label: "see it live" },
+        }
       : {
           tone: "danger" as const,
           message: `That could not ship: ${mergeWords(merged.error)}.`,

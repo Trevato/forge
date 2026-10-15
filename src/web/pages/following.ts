@@ -31,6 +31,13 @@ import {
   type Converge,
 } from "../../crew/converge.ts";
 import type { Lineage, LineageNode } from "../../core/following.ts";
+import {
+  parentReleases,
+  parentForgeOf,
+  releasesSentence,
+  type ParentReleases,
+} from "../../core/parent_releases.ts";
+import { running } from "../../kernel/version.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import { field, readForm } from "../form.ts";
@@ -98,6 +105,8 @@ export function lineageCard(lineage: Lineage, hereId: string): Html {
 export interface Following {
   readonly relation: ForkRelation;
   readonly converge: Converge | undefined;
+  /** The parent forge's releases, when this forge names a parent forge. */
+  readonly releases: { url: string; view: ParentReleases } | undefined;
 }
 
 /** Everything the card needs, for a repo that follows something. */
@@ -114,7 +123,43 @@ export async function followingOf(
     relation.state === "diverged" && !relation.clean
       ? convergeState(ctx.app, repo, relation.parent)
       : undefined;
-  return { relation, converge };
+  const { parentUrl } = ctx.app.config;
+  const releases =
+    parentUrl === undefined
+      ? undefined
+      : {
+          url: parentUrl,
+          view: parentReleases(ctx.app.config.dataDir, parentUrl, {
+            loopback: ctx.app.config.parentLoopback === true,
+          }),
+        };
+  return { relation, converge, releases };
+}
+
+/**
+ * "N releases behind <parent>", each with its name and link; or, when the
+ * parent cannot be read, that it cannot and how old the last copy is.
+ * Every field comes from another server and is escaped by `html`.
+ */
+export function releasesBlock(parentUrl: string, releases: ParentReleases): Html {
+  const host = new URL(parentUrl).host;
+  const version = running().version;
+  const { releases: news } = parentForgeOf(parentUrl, releases, version);
+  return html`<div class="following-releases">
+    <p class="following-sentence">
+      ${releasesSentence(releases, version, host)}
+    </p>
+    ${news.length === 0
+      ? null
+      : html`<ul class="list">
+          ${news.map(
+            (r) =>
+              html`<li>
+                <a href="${r.url}" rel="noopener noreferrer">${r.name}</a>
+              </li>`,
+          )}
+        </ul>`}
+  </div>`;
 }
 
 function plural(n: number, one: string, many = `${one}s`): string {
@@ -303,6 +348,9 @@ export function followingCard(
                 >Reconnect it.</a
               >`}
       </p>
+      ${following.releases === undefined
+        ? null
+        : releasesBlock(following.releases.url, following.releases.view)}
       ${when(
         actions.length > 0,
         () => html`<div class="following-actions">${actions}</div>`,

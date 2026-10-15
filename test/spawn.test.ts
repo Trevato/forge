@@ -79,6 +79,7 @@ describe("spawnForge", () => {
     expect(db.query("SELECT brief FROM agent").all()).toEqual([{ brief: "ship small" }]);
     db.close();
     expect(JSON.parse(await Bun.file(join(child, "parent.json")).text())).toEqual({
+      apps: [{ repo: "kids/notes", upstream: "alice/notes" }],
       upstream: "https://forge.test",
       name: "kid",
       org: "kids",
@@ -86,6 +87,8 @@ describe("spawnForge", () => {
       keepAccess: false,
       // A hash only: what the parent answers to stays in its own ledger.
       statusHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      // The child signs heartbeats to its parent with it (#425).
+      beatKey: expect.stringMatching(/^[A-Za-z0-9_-]{20,}$/),
     });
   });
 

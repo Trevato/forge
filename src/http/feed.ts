@@ -3,7 +3,14 @@
  * are the signed-in viewer's own — there is no way to ask for another's.
  */
 
-import { tell, UNVERIFIED_WORDS } from "../actions/tell.ts";
+import {
+  parseVariants,
+  parseFrom,
+  FROM_WORDS,
+  tell,
+  UNVERIFIED_WORDS,
+  VARIANTS_MAX,
+} from "../actions/tell.ts";
 import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { getEvent } from "../core/events.ts";
@@ -19,6 +26,7 @@ import {
   parseCursor,
   readFeed,
 } from "../feed/feed.ts";
+import { decideAsk, undoDecideAsk } from "../actions/asks_decide.ts";
 import { asksAnswer } from "../web/studio/asks.ts";
 import {
   applyAsksBulk,
@@ -101,6 +109,24 @@ export function feedRoutes(router: Router<Handler>): void {
     return json(op.value, 201);
   });
 
+  // Let the decider answer a hand-over (`actions/asks_decide.ts`), and undo it.
+  router.add("POST", "/api/v1/asks/decide", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const done = await decideAsk(ctx.app, ctx.auth.user, input.item);
+    if (!done.ok) return bulkError(done.error);
+    return json(done.value, 201);
+  });
+
+  router.add("POST", "/api/v1/asks/decide/:id/undo", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const undone = undoDecideAsk(ctx.app, ctx.auth.user, ctx.params.id);
+    if (!undone.ok) return bulkError(undone.error);
+    return json(undone.value, 201);
+  });
+
   router.add("POST", "/api/v1/feed/interactions", async (ctx) => {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
@@ -154,20 +180,41 @@ export function feedRoutes(router: Router<Handler>): void {
     const text = str(input.text).trim();
     if (text === "" || text.length > 2000)
       return apiError("invalid_text", 422, "text is 1 to 2000 characters");
+    const variants = parseVariants(input.variants);
+    if (variants === undefined)
+      return apiError(
+        "invalid_variants",
+        400,
+        `variants is a whole number, 1 to ${VARIANTS_MAX}`,
+      );
+    const from = parseFrom(input.from);
+    if (from === undefined) return apiError("invalid_from", 400, FROM_WORDS);
     const [owner, name, extra] = str(input.app).split("/");
     const repo =
       owner && name && extra === undefined
         ? getRepo(ctx.app.db, owner, name)
         : undefined;
     if (!repo || !canRead(ctx.app.db, repo, viewer)) return notFound();
-    const told = await tell(ctx.app, viewer, repo, text);
+    const told = await tell(ctx.app, viewer, repo, text, variants, from);
     if (!told.ok)
       return told.error === "forbidden"
         ? apiError("forbidden", 403, DIRECTION_NOTE)
         : told.error === "unverified"
           ? apiError("unverified", 403, UNVERIFIED_WORDS)
           : apiError("refused", told.error === "unauthorized" ? 403 : 422, "that could not be told");
-    return json({ issue: told.value.issue.number }, 201);
+    return json(
+      {
+        issue: told.value.issue.number,
+        ...(told.value.variantGroup === null
+          ? {}
+          : {
+              issues: told.value.issues.map((i) => i.number),
+              assigned: told.value.assignedNumbers,
+              variantGroup: told.value.variantGroup,
+            }),
+      },
+      201,
+    );
   });
 
   router.add("POST", "/api/v1/share", async (ctx) => {
@@ -211,7 +258,7 @@ function bulkError(error: FleetError): Response {
   if (error.code === "unauthorized") return unauthorized();
   return apiError(
     error.code,
-    error.code === "forbidden" ? 403 : error.code === "already_undone" || error.code === "expired" ? 409 : 422,
+    error.code === "forbidden" ? 403 : error.code === "too_many" ? 429 : error.code === "already_undone" || error.code === "expired" ? 409 : 422,
     error.message,
   );
 }

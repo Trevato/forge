@@ -98,3 +98,22 @@ export function askMeasure(
     expired: ended.get("expired") ?? 0,
   };
 }
+
+/** How this viewer's last asks on a repository ended, newest first: what they decided there. */
+export function recentEnds(
+  db: Database,
+  viewerId: string,
+  repoId: string,
+  limit = 10,
+): { kind: string; how: AskEnd; at: string }[] {
+  return db
+    .query<
+      { kind: string; how: AskEnd; at: string },
+      [string, string, number]
+    >(
+      `SELECT kind, ended_how AS how, ended_at AS at FROM ask_ledger
+       WHERE viewer_id = ?1 AND repo_id = ?2 AND ended_at IS NOT NULL
+       ORDER BY ended_at DESC, id DESC LIMIT ?3`,
+    )
+    .all(viewerId, repoId, limit);
+}

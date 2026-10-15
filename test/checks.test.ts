@@ -9,7 +9,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { openPull, submitReview } from "../src/actions/pulls.ts";
+import { mergePull, openPull, submitReview } from "../src/actions/pulls.ts";
+import { setIssueState } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { parseBunTestFailure } from "../src/checks/bun-test.ts";
 import { summariseCheckFailure } from "../src/checks/summary.ts";
@@ -22,6 +23,7 @@ import {
 } from "../src/checks/service.ts";
 import {
   cancelRun,
+  cancelRunsForPull,
   CHECK_RESTART_LIMIT,
   checksForHead,
   claimRun,
@@ -42,6 +44,71 @@ import { readRunLog } from "../src/runs/log.ts";
 
 const checkJson = (run: string, extra = ""): string =>
   `{"check": {"run": ${JSON.stringify(run)}, "install": ""${extra}}}\n`;
+
+describe("cancelRunsForPull: a landed or closed pull leaves nothing in the lane", () => {
+  test("queued and running checks and queued deploys of that pull are cancelled, building deploys and other pulls kept", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-cancel-"));
+    const db = createApp({ dataDir: dir, port: 0 });
+    try {
+      const u = await createUser(db.db, {
+        trusted: true,
+        username: "alice",
+        email: "alice@forge.local",
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      if (!u.ok) throw new Error(u.error);
+      const made = await createRepo(db, u.value, { name: "lib" });
+      if (!made.ok) throw new Error(String(made.error));
+      const repoId = made.value.id;
+      const first = await commitToBranch(db, u.value, made.value, {
+        message: "Start",
+        files: [{ path: "README.md", content: "x\n" }],
+      });
+      if (!first.ok) throw new Error(JSON.stringify(first.error));
+      const pullOn = async (branch: string): Promise<string> => {
+        const c = await commitToBranch(db, u.value, made.value, {
+          branch,
+          message: branch,
+          files: [{ path: `${branch}.md`, content: "x\n" }],
+        });
+        if (!c.ok) throw new Error(JSON.stringify(c.error));
+        const o = await openPull(db, u.value, made.value, {
+          title: branch,
+          baseBranch: "main",
+          headBranch: branch,
+        });
+        if (!o.ok) throw new Error(String(o.error));
+        return o.value.id;
+      };
+      const p1 = await pullOn("one");
+      const p2 = await pullOn("two");
+      const mk = (kind: "check" | "deploy", issueId: string) =>
+        createRun(db.db, { repoId, kind, env: "pull-1", issueId });
+      const queued = mk("check", p1);
+      const running = mk("check", p1);
+      claimRun(db.db, running.id);
+      const deploy = mk("deploy", p1);
+      const building = mk("deploy", p1);
+      claimRun(db.db, building.id);
+      const other = mk("check", p2);
+      const stopped = cancelRunsForPull(db.db, p1, "pull landed");
+      expect(stopped.map((r) => r.id).sort()).toEqual(
+        [queued.id, running.id, deploy.id].sort(),
+      );
+      // A building deploy is the runtime's to stop; the row must not say otherwise.
+      expect(getRun(db.db, building.id)?.state).toBe("running");
+      for (const r of [queued, running, deploy]) {
+        expect(getRun(db.db, r.id)?.state).toBe("cancelled");
+        expect(getRun(db.db, r.id)?.summary).toBe("pull landed");
+      }
+      expect(getRun(db.db, other.id)?.state).toBe("queued");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("parseBunTestFailure: a convenience over one known runner, not a general protocol", () => {
   test("bun test's own tail: the counts, and the failing names bounded to a few", () => {
@@ -434,6 +501,25 @@ describe("checks", () => {
     expect(second.state).toBe("ok");
   }, 60_000);
 
+  test("a commit already proven green is not run again; the re-request answers with the earlier verdict (#1795)", async () => {
+    const made = await commitToBranch(app, alice, repo, {
+      message: "Proven once",
+      files: [
+        { path: "forge.json", content: checkJson("echo ran-once; test -f OK.md # proven") },
+        { path: "OK.md", content: "ok\n" },
+      ],
+    });
+    if (!made.ok) throw new Error(JSON.stringify(made.error));
+    const first = await settled((r) => r.commitOid === made.value.commitOid);
+    expect(first.state).toBe("ok");
+    expect(readRunLog(dataDir, first.id).lines.join("\n")).toContain("ran-once");
+    const asked = await checks.request(repo, "main", made.value.commitOid, "again");
+    const second = await settled((r) => r.id === asked!.id);
+    expect(second.state).toBe("ok");
+    expect(second.summary).toBe(`already proven green by ${first.id}`);
+    expect(readRunLog(dataDir, second.id).lines.join("\n")).not.toContain("ran-once");
+  }, 60_000);
+
   test("a newer commit supersedes a check still waiting for the same environment", async () => {
     const slow = await commitToBranch(app, alice, repo, {
       message: "A slow check",
@@ -469,6 +555,106 @@ describe("checks", () => {
     expect(middle?.state).toBe("cancelled");
     expect(middle?.summary).toContain("superseded by");
   }, 60_000);
+
+  test("a new head on a pull stops its running check for the old head, superseded not failed", async () => {
+    const slow = await commitToBranch(app, alice, repo, {
+      branch: "supersede",
+      message: "A very slow check",
+      files: [
+        { path: "forge.json", content: checkJson("sleep 30") },
+        { path: "S.md", content: "s\n" },
+      ],
+    });
+    if (!slow.ok) throw new Error(JSON.stringify(slow.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "supersede",
+      baseBranch: "main",
+      headBranch: "supersede",
+    });
+    if (!opened.ok) throw new Error(JSON.stringify(opened.error));
+    const env = `pull-${opened.value.number}`;
+    const old = await checks.request(
+      repo,
+      env,
+      slow.value.commitOid,
+      "push",
+      opened.value.id,
+    );
+    if (!old) throw new Error("no run");
+    const began = Date.now();
+    while (getRun(app.db, old.id)?.state !== "running") {
+      if (Date.now() - began > 20_000) throw new Error("never started");
+      await Bun.sleep(50);
+    }
+    const next = await commitToBranch(app, alice, repo, {
+      branch: "supersede",
+      message: "Fast",
+      files: [
+        { path: "forge.json", content: checkJson("test -f S.md") },
+      ],
+    });
+    if (!next.ok) throw new Error(JSON.stringify(next.error));
+    const fresh = await settled((r) => r.commitOid === next.value.commitOid);
+    expect(fresh.state).toBe("ok");
+    const stopped = getRun(app.db, old.id);
+    expect(stopped?.state).toBe("cancelled");
+    expect(stopped?.summary).toContain("superseded by");
+    // Well short of the 30 s the old check would have taken.
+    expect(Date.now() - began).toBeLessThan(25_000);
+  }, 60_000);
+
+  for (const ending of ["merge", "close"] as const)
+    test(`${ending === "merge" ? "merging" : "closing"} a pull leaves no queued or running run for it`, async () => {
+      const blocker = await commitToBranch(app, alice, repo, {
+        message: "Hold the lane",
+        files: [
+          {
+            path: "forge.json",
+            content: checkJson(`sleep 2 && test -f OK.md # ${ending}`),
+          },
+        ],
+      });
+      if (!blocker.ok) throw new Error(JSON.stringify(blocker.error));
+      await checks.request(repo, "lane", blocker.value.commitOid, "push");
+      const branched = await commitToBranch(app, alice, repo, {
+        branch: `lands-${ending}`,
+        message: "Lands before its check runs",
+        files: [{ path: "LANDS.md", content: "x\n" }],
+      });
+      if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+      const opened = await openPull(app, alice, repo, {
+        title: "Lands soon",
+        baseBranch: "main",
+        headBranch: `lands-${ending}`,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      const pull = opened.value;
+      const mine = (): Run[] =>
+        listRuns(app.db, repo.id, { kind: "check" }).filter(
+          (r) => r.issueId === pull.id,
+        );
+      const until = async (done: () => boolean): Promise<void> => {
+        const deadline = Date.now() + 10_000;
+        while (!done() && Date.now() < deadline) await Bun.sleep(25);
+      };
+      await until(() => mine().length > 0);
+      expect(mine().some((r) => r.state === "queued")).toBe(true);
+      if (ending === "merge") {
+        const landed = await mergePull(app, alice, repo, pull, "merge");
+        if (!landed.ok) throw new Error(String(landed.error));
+      } else {
+        const closed = setIssueState(app, alice, repo, pull, "closed");
+        if (!closed.ok) throw new Error(String(closed.error));
+      }
+      await until(() => mine().every((r) => r.state !== "queued"));
+      expect(mine().filter((r) => r.state === "queued")).toEqual([]);
+      expect(
+        mine().some(
+          (r) =>
+            r.summary === (ending === "merge" ? "pull landed" : "pull closed"),
+        ),
+      ).toBe(true);
+    }, 60_000);
 
   test("pickNext takes the newest queued check, unless one has starved", () => {
     const a = createRun(app.db, { repoId: repo.id, kind: "check", env: "a" });
@@ -605,6 +791,58 @@ describe("checks", () => {
     checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
     const done = await settled((r) => r.id === again!.id);
     expect(done.state).toBe("ok");
+  }, 60_000);
+
+  async function slowCheck(command: string, message: string): Promise<string> {
+    const made = await commitToBranch(app, alice, repo, {
+      message,
+      files: [{ path: "forge.json", content: checkJson(command) }],
+    });
+    if (!made.ok) throw new Error(JSON.stringify(made.error));
+    const oid = made.value.commitOid;
+    const deadline = Date.now() + 20_000;
+    let found: Run | undefined;
+    while (Date.now() < deadline && found?.state !== "running") {
+      found = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
+        (r) => r.commitOid === oid,
+      );
+      await Bun.sleep(50);
+    }
+    expect(found?.state).toBe("running");
+    return found!.id;
+  }
+
+  test("a roll waits for a running check to finish, within its budget, instead of throwing it away", async () => {
+    await checks.stop();
+    checks = startChecks(app, {
+      forgeUrl: servers.url,
+      concurrency: 1,
+      drainMs: 30_000,
+    });
+    const id = await slowCheck("sleep 2 && test -f OK.md # drained", "A drained check");
+    await checks.stop();
+    const run = getRun(app.db, id);
+    expect(run?.state).toBe("ok");
+    expect(
+      listRuns(app.db, repo.id, { kind: "check", limit: 50 }).some(
+        (r) => r.state === "queued",
+      ),
+    ).toBe(false);
+    checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
+  }, 60_000);
+
+  test("a check whose pull lands while it runs ends as superseded, not failed", async () => {
+    const id = await slowCheck("sleep 2 && false", "A check overtaken");
+    cancelRun(app.db, id, "pull landed");
+    const deadline = Date.now() + 20_000;
+    let lines = "";
+    while (Date.now() < deadline && !lines.includes("superseded")) {
+      await Bun.sleep(100);
+      lines = readRunLog(dataDir, id).lines.join("\n");
+    }
+    expect(lines).toContain("superseded: pull landed");
+    expect(lines).not.toContain("failed:");
+    expect(getRun(app.db, id)?.state).toBe("cancelled");
   }, 60_000);
 
   test("a check that is declared wrong fails with the reason", async () => {
