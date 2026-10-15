@@ -529,6 +529,13 @@ you tap Post. Signed out, you sign in (or up) first and land on the same
 draft. The share target is the web manifest's `share_target`, which only an
 **installed PWA on Android and Chrome** offers; iOS Safari does not.
 
+## Link-preview cards
+
+`/og/repo/owner~name.svg`, `/og/app/slug.svg`, `/og/issue/owner~name~N.svg`,
+`/og/pull/owner~name~N.svg` and `/og/run/owner~name~runid.svg` are 1200×630
+social cards. They show only what an anonymous reader can open; anything
+private, sealed or unknown is the same 404.
+
 ## Develop
 
 ```sh

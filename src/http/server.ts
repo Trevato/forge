@@ -1008,6 +1008,9 @@ export function buildRouter(): Router<Handler> {
   // The public social cards: a repo as owner~name, an app as its slug.
   router.add("GET", "/og/repo/:ref.svg", ogCard("repo"));
   router.add("GET", "/og/app/:ref.svg", ogCard("app"));
+  router.add("GET", "/og/issue/:ref.svg", ogCard("issue"));
+  router.add("GET", "/og/pull/:ref.svg", ogCard("pull"));
+  router.add("GET", "/og/run/:ref.svg", ogCard("run"));
   // The pictures of an environment, read like the repository.
   router.add("GET", "/:owner/:name/looks/:env/:commit/:kind.png", lookImage);
 
