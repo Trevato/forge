@@ -32,6 +32,7 @@ import {
   undoAsksBulk,
 } from "../../actions/asks_bulk.ts";
 import { mutedRepos, removeMutes } from "../../core/interactions.ts";
+import { chipsOf, KIND_CHIPS, setChip } from "../../core/feed_chips.ts";
 import type { Operation } from "../../core/fleet_ops.ts";
 import { listPins, pinnedRepoIds, type Pin } from "../../core/pins.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
@@ -205,7 +206,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       const repo = byId.get(id);
       if (repo !== undefined && canRead(f.db, repo, f.user)) silenced.set(id, repo);
     }
+    const off = chipsOf(f.db, f.user.id).people;
     const assigned = issues.flatMap((issue) => {
+      if (off.has(issue.authorId)) return [];
       const repo = byId.get(issue.repoId);
       if (
         repo === undefined ||
@@ -386,6 +389,36 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     );
     reload();
     ctx.toast("listening again", "success");
+  };
+
+  /** `1`–`4` switch a kind chip off or on, `P` brings back every person; the web's chips, the same table. */
+  const toggleChip = (n: number): void => {
+    if (f.user === undefined) return;
+    const value = KIND_CHIPS[n];
+    if (value === undefined) return;
+    const hidden = !chipsOf(f.db, f.user.id).kinds.has(value);
+    setChip(f.db, f.user.id, { kind: "kind", value }, hidden);
+    reload();
+    ctx.toast(`${value} ${hidden ? "off" : "on"}`, "success");
+  };
+  /** `h` on an On you row switches its author off, as the web's person chip does; never yourself. */
+  const hideAuthor = (): void => {
+    const here = onYou[at("onyou").index];
+    if (f.user === undefined || here === undefined) return;
+    if (here.issue.authorId === f.user.id) {
+      ctx.toast("that one is yours", "attn");
+      return;
+    }
+    setChip(f.db, f.user.id, { kind: "person", value: here.issue.authorId }, true);
+    reload();
+    ctx.toast(`${here.issue.authorName} off`, "success");
+  };
+  const showPeople = (): void => {
+    if (f.user === undefined) return;
+    const people = chipsOf(f.db, f.user.id).people;
+    for (const id of people) setChip(f.db, f.user.id, { kind: "person", value: id }, false);
+    reload();
+    ctx.toast(people.size > 0 ? "people back on" : "no person is off", "success");
   };
 
   /** Yours with an empty filter; anything you can see once you type —
@@ -628,10 +661,14 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         if (e.key === "m") return clear("mute"), true;
         if (e.key === "S") return shipSet(), true;
         if (e.key === "D" && item !== undefined) return handToDecider(), true;
+        if (e.key === "h") return hideAuthor(), true;
       }
       if (e.key === "u" && f.user) return undoSet(), true;
       if (e.key === "U" && f.user) return undoHand(), true;
       if (e.key === "L" && f.user) return listenAgain(), true;
+      if (e.key === "P" && f.user) return showPeople(), true;
+      if (f.user && e.key >= "1" && e.key <= String(KIND_CHIPS.length))
+        return toggleChip(Number(e.key) - 1), true;
       if (e.key === "d" && focus === "machine") {
         unpin(pins[at("machine").index]);
         return true;
@@ -722,6 +759,16 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** What the card says about mutes, marks and the day's undo. */
   function onYouFooter(): string | undefined {
     const parts: string[] = [];
+    if (f.user !== undefined) {
+      const chips = chipsOf(f.db, f.user.id);
+      const off: string[] = KIND_CHIPS.filter((k) => chips.kinds.has(k));
+      if (chips.people.size > 0) off.push(`${chips.people.size} people`);
+      parts.push(
+        off.length > 0
+          ? `off: ${off.join(", ")} · 1-4 chips · h hide author${chips.people.size > 0 ? " · P people" : ""}`
+          : "1-4 chips · h hide author",
+      );
+    }
     if (marked.size > 0) parts.push(`${marked.size} marked`);
     if (silenced.size > 0)
       parts.push(

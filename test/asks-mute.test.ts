@@ -16,6 +16,7 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getIssueById } from "../src/core/issues.ts";
 import { createApp as createAppRecord } from "../src/core/apps.ts";
+import { setChip } from "../src/core/feed_chips.ts";
 import { mutedRepos } from "../src/core/interactions.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
@@ -194,5 +195,27 @@ describe("muting a repository's asks", () => {
     expect(await apiAsks()).toHaveLength(1);
     expect(await onYou()).toContain("Muted work");
     expect(repoAsks(app.db, alice, repo)).toEqual({ count: 1, muted: false });
+  });
+
+  test("a chip leaves the inbox: the change's chip or its author's, and no other", async () => {
+    const bot = getUserByName(app.db, "bot")!;
+    const lines = () => askLinesFor(app.db, alice).length;
+    expect(lines()).toBe(1);
+    // A chip for something else leaves it be.
+    setChip(app.db, alice.id, { kind: "kind", value: "decisions" }, true);
+    setChip(app.db, alice.id, { kind: "kind", value: "crew" }, true);
+    expect(lines()).toBe(1);
+    setChip(app.db, alice.id, { kind: "kind", value: "reviews" }, true);
+    expect(lines()).toBe(0);
+    expect(await apiAsks()).toHaveLength(0);
+    setChip(app.db, alice.id, { kind: "kind", value: "reviews" }, false);
+    expect(lines()).toBe(1);
+    // The author's chip takes it; another person's does not.
+    setChip(app.db, alice.id, { kind: "person", value: bob.id }, true);
+    expect(lines()).toBe(1);
+    setChip(app.db, alice.id, { kind: "person", value: bot.id }, true);
+    expect(lines()).toBe(0);
+    setChip(app.db, alice.id, { kind: "person", value: bot.id }, false);
+    expect(lines()).toBe(1);
   });
 });

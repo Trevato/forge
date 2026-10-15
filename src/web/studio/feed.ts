@@ -8,8 +8,9 @@
  * Every string on a card is plain text and is escaped here, once.
  */
 
+import { chipsOf, KIND_CHIPS, type KindChip } from "../../core/feed_chips.ts";
 import { marksByName, type Mark } from "../../core/marks.ts";
-import type { User } from "../../core/users.ts";
+import { getUsersByIds, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { placementsOf, type Placement } from "../../core/placements.ts";
 import { recentThoughts, type Thought } from "../../core/thoughts.ts";
@@ -41,6 +42,7 @@ const KIND_LABEL: Record<FeedItem["kind"], string> = {
   tell: "Told",
   reply: "Reply",
   look: "Look",
+  release: "Release",
 };
 
 /**
@@ -200,6 +202,41 @@ export function feedNote(): Html {
   ></p>`;
 }
 
+const CHIP_LABEL: Record<KindChip, string> = {
+  reviews: "Changes",
+  decisions: "Decisions",
+  crew: "Crew words",
+  releases: "Releases",
+};
+
+/**
+ * The chips: a button per kind and per person in sight (and per person
+ * already switched off, so it can come back). Pressed is shown; pressing
+ * switches it off, saved with the mutes (`/api/v1/feed/chips`).
+ */
+function chipsBar(user: User, ctx: Ctx, items: readonly FeedItem[]): Html {
+  const chips = chipsOf(ctx.app.db, user.id);
+  const hidden = [...getUsersByIds(ctx.app.db, [...chips.people]).values()];
+  const names = new Set([
+    ...hidden.map((u) => u.username),
+    ...items.flatMap((i) => (i.actor === null ? [] : [i.actor])),
+  ]);
+  names.delete(user.username);
+  const hiddenNames = new Set(hidden.map((u) => u.username));
+  const chip = (kind: string, value: string, label: string, shown: boolean): Html =>
+    html`<button
+      type="button"
+      class="btn btn-sm btn-ghost feed-chip"
+      data-chip="${kind}"
+      data-value="${value}"
+      aria-pressed="${String(shown)}"
+    >${label}</button>`;
+  return html`<div class="bar feed-chips" role="group" aria-label="Filter the feed">
+    ${KIND_CHIPS.map((k) => chip("kind", k, CHIP_LABEL[k], !chips.kinds.has(k)))}
+    ${[...names].sort().map((n) => chip("person", n, n, !hiddenNames.has(n)))}
+  </div>`;
+}
+
 /** The region: cards, or one line saying there is nothing to do. */
 export function feedRegion(user: User, ctx: Ctx): Html {
   // What needs you is pinned above the timeline (`needsYouSection`), so an
@@ -221,6 +258,7 @@ export function feedRegion(user: User, ctx: Ctx): Html {
     data-live="${FEED_LIVE}"
     data-live-src="/live/feed"
   >
+    ${chipsBar(user, ctx, items)}
     ${thoughts.map((t) => thoughtCard(t, user.username, placed.get(t.id)))}
     ${items.length === 0 && thoughts.length === 0
       ? empty({
@@ -292,6 +330,13 @@ ${outboxJs}
   // Acting is instant: the card goes, the act is kept and sent.
   function act(card, kind) { if (send(card, kind)) gone(card); }
   feed.addEventListener('click', function (e) {
+    var c = e.target && e.target.closest ? e.target.closest('[data-chip]') : null;
+    if (c) {
+      fetch('/api/v1/feed/chips', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ kind: c.getAttribute('data-chip'), value: c.getAttribute('data-value'), hidden: c.getAttribute('aria-pressed') === 'true' }) })
+        .then(function (r) { if (r.ok) location.reload(); });
+      return;
+    }
     var t = e.target && e.target.closest ? e.target.closest('[data-feed],[data-feed-open]') : null;
     var card = t && t.closest('.fcard');
     if (!card) return;

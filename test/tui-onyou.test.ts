@@ -13,6 +13,7 @@ import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
+import { chipsOf, setChip } from "../src/core/feed_chips.ts";
 import { getIssue } from "../src/core/issues.ts";
 import { mutedRepos, recordInteraction } from "../src/core/interactions.ts";
 import { markVerified } from "../src/core/verify.ts";
@@ -128,6 +129,43 @@ describe("terminal On you: mutes and many in one move", () => {
     expect(mutedRepos(forge.db, alice.id).size).toBe(0);
     expect(h.text()).not.toContain("repository muted");
     h.stop();
+  });
+
+  test("chips: a key switches a kind off for the inbox and the web, and back", async () => {
+    const h = await boot();
+    expect(chipsOf(forge.db, alice.id).kinds.size).toBe(0);
+    await h.press("2");
+    expect(chipsOf(forge.db, alice.id).kinds.has("decisions")).toBe(true);
+    expect(h.text()).toContain("off: decisions");
+    await h.press("2");
+    expect(chipsOf(forge.db, alice.id).kinds.size).toBe(0);
+    setChip(forge.db, alice.id, { kind: "person", value: bob.id }, true);
+    await h.press("P");
+    expect(chipsOf(forge.db, alice.id).people.size).toBe(0);
+    h.stop();
+  });
+
+  test("chips: h hides the author of the row under the cursor, never yourself", async () => {
+    const theirs = openIssue(forge, bob, lamp, { title: "Bob's flicker" });
+    if (!theirs.ok) throw new Error("issue failed");
+    assignIssue(forge, alice, lamp, theirs.value, alice);
+    const own = issueIn(lamp, "Alice's own hum");
+    const h = await boot();
+    expect(h.text()).toContain("Bob's flicker");
+    // Walk the rows pressing h: alice's own are refused, bob's goes.
+    for (let i = 0; i < 12; i++) {
+      await h.press("h");
+      if (chipsOf(forge.db, alice.id).people.size > 0) break;
+      await h.press("j");
+    }
+    const people = chipsOf(forge.db, alice.id).people;
+    expect(people.has(alice.id)).toBe(false);
+    expect(people.has(bob.id)).toBe(true);
+    expect(h.text()).not.toContain("Bob's flicker");
+    await h.press("P");
+    expect(h.text()).toContain("Bob's flicker");
+    h.stop();
+    void own;
   });
 
   test("a repository muted elsewhere (the web) is hidden here", async () => {

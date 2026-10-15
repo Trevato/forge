@@ -19,6 +19,8 @@ import {
   isInteractionKind,
   recordInteraction,
 } from "../core/interactions.ts";
+import { chipsOf, isKindChip, setChip } from "../core/feed_chips.ts";
+import { getUserByName, getUsersByIds } from "../core/users.ts";
 import { share, RECIPIENTS_MAX } from "../feed/share.ts";
 import { canRead, getRepo, getRepoById } from "../core/repos.ts";
 import {
@@ -70,6 +72,40 @@ export function feedRoutes(router: Router<Handler>): void {
       200,
       { "cache-control": "private, no-store" },
     );
+  });
+
+  // The chips the viewer switched off, and switching one: a kind of post or
+  // a person by username. Saved per viewer; the feed, home and inbox read it.
+  const chipsAnswer = (ctx: Parameters<Handler>[0]) => {
+    const chips = chipsOf(ctx.app.db, ctx.auth.user!.id);
+    return {
+      kinds: [...chips.kinds].sort(),
+      people: [...getUsersByIds(ctx.app.db, [...chips.people]).values()]
+        .map((u) => u.username)
+        .sort(),
+    };
+  };
+  router.add("GET", "/api/v1/feed/chips", (ctx) => {
+    if (!ctx.auth.user) return unauthorized();
+    return json(chipsAnswer(ctx), 200, { "cache-control": "private, no-store" });
+  });
+  router.add("POST", "/api/v1/feed/chips", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const value = str(input.value);
+    if (typeof input.hidden !== "boolean")
+      return apiError("invalid_hidden", 422, "hidden is true or false");
+    if (input.kind === "kind") {
+      if (!isKindChip(value))
+        return apiError("invalid_chip", 422, "that kind has no chip");
+      setChip(ctx.app.db, ctx.auth.user!.id, { kind: "kind", value }, input.hidden);
+    } else if (input.kind === "person") {
+      const who = getUserByName(ctx.app.db, value);
+      if (!who || who.kind === "org") return notFound();
+      setChip(ctx.app.db, ctx.auth.user!.id, { kind: "person", value: who.id }, input.hidden);
+    } else return apiError("invalid_chip", 422, "kind is `kind` or `person`");
+    return json(chipsAnswer(ctx), 200, { "cache-control": "private, no-store" });
   });
 
   // What asks the viewer, ranked, with the week's measure (`asksAnswer`).
