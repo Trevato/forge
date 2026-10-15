@@ -57,6 +57,8 @@ import { parseTargets } from "./feed.ts";
 import { appsRuntime, envsFor } from "../apps/runtime.ts";
 import { getIssue, getIssueById, listOpenAgentPullsVisibleTo } from "../core/issues.ts";
 import { waitsForPerson } from "../crew/review.ts";
+import { attachLook } from "../actions/attach_look.ts";
+import { lookUrl } from "../core/looks.ts";
 import { getPull } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
@@ -132,6 +134,17 @@ type Answer =
   { ok: true; value: unknown } | { ok: false; error: string; message: string };
 
 const good = (value: unknown): Answer => ({ ok: true, value });
+const attachWords = (error: string): string =>
+  ({
+    forbidden: "attaching a look is for a person who can write this app",
+    not_open: "only an open pull takes a look",
+    no_app: "this repository has no app, so its pulls have no looks",
+    bad_width: "width is phone or desktop",
+    bad_note: "say what it shows in one line, at most 200 characters (says)",
+    bad_image: "image must be a PNG or JPEG, base64, that reads",
+    too_large: "the picture is over 5 MB",
+  })[error] ?? "refused";
+
 const bad = (error: string, message: string): Answer => ({
   ok: false,
   error,
@@ -1450,6 +1463,61 @@ const TOOLS: readonly Tool[] = [
             says: `#${issue.number} no longer waits for #${blocker.number}.`,
           })
         : bad(unlinked.error, "you need write access to plan here");
+    },
+  },
+  {
+    name: "attach_look",
+    description:
+      "Attach a look to an open pull: a PNG or JPEG (at most 5 MB, base64 in `image`) taken at a stated width, `phone` or `desktop`, with one line in `says` about what it shows. It appears beside the crew's own looks on the change's page, for people who write the app. For a person who can write the app: an agent is refused, since the crew's looks come from the preview. It plans first — `dryRun` is true unless you say false — and checks the picture.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        pull: { type: "integer", description: "The pull's number." },
+        width: { type: "string", enum: ["phone", "desktop"] },
+        says: {
+          type: "string",
+          description: "One line, at most 200 characters, saying what it shows.",
+        },
+        image: { type: "string", description: "The PNG or JPEG, base64." },
+        dryRun: {
+          type: "boolean",
+          description: "Check only (the default). Send false to attach it.",
+        },
+      },
+      required: ["app", "pull", "width", "says", "image"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = args["pull"];
+      const pull =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getPull(ctx.app.db, repo.id, n)
+          : undefined;
+      if (pull === undefined)
+        return bad("no_such_pull", `no pull #${String(n)}`);
+      const input = {
+        width: str(args["width"]),
+        note: str(args["says"]),
+        image: typeof args["image"] === "string" ? args["image"] : "",
+      };
+      const name = `${repo.ownerName}/${repo.name}#${pull.number}`;
+      const dry = args["dryRun"] !== false;
+      const attached = attachLook(ctx.app, user, repo, pull, input, dry);
+      if (!attached.ok) return bad(attached.error, attachWords(attached.error));
+      if (dry)
+        return good({
+          says: `Would attach a ${input.width} look to ${name}. Nothing changed; send dryRun: false to do it.`,
+          dryRun: true,
+        });
+      return good({
+        says: `Attached a ${input.width} look to ${name}.`,
+        url: lookUrl(`/${repo.ownerName}/${repo.name}`, attached.value),
+        dryRun: false,
+      });
     },
   },
   {

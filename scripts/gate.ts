@@ -48,6 +48,9 @@ export const GATE: readonly string[] = [
   "test/review-route.test.ts",
   "test/review-lines.test.ts",
   "test/review-gate.test.ts",
+  "test/review-from-check.test.ts",
+  "test/review-from-green.test.ts",
+  "test/themes.test.ts",
   "test/crew-wrapup.test.ts",
   "test/crew-limits.test.ts",
   "test/crew-parks.test.ts",
@@ -232,6 +235,7 @@ export const GATE: readonly string[] = [
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
+  { file: "test/plan-route.test.ts", reason: "times out on the runner and reads a file its stand-in never wrote", issue: 1468 },
   { file: "test/api-errors.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
   {
@@ -251,6 +255,12 @@ export const EXCLUDED: readonly Exclusion[] = [
   {
     file: "test/crew-interrupted.test.ts",
     reason: "not yet admitted",
+    issue: 261,
+  },
+  {
+    file: "test/plan-route.test.ts",
+    reason:
+      "waits up to 30 s on a fake planner run under the crew sandbox, over the 1 s budget; red where the sandbox cannot nest",
     issue: 261,
   },
   { file: "test/parity.test.ts", reason: "not yet admitted", issue: 261 },

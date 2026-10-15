@@ -53,7 +53,11 @@ export function memoryBodies(): BodyStore {
   };
 }
 
-export const MAX_CHILDREN = 5;
+// The owner decides how many forges this one sends (2026-10-15: "i should have
+// unlimited forges"). This constant is the ceiling until #1454 makes it a
+// capacity setting sized by the node; the hosted placement still refuses
+// when the node has no room.
+export const MAX_CHILDREN = 1_000;
 export const MAX_DEPTH = 2;
 
 /**
