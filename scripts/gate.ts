@@ -31,6 +31,7 @@ export const GATE: readonly string[] = [
   "test/chaos.test.ts",
   "test/fuzz-found.test.ts",
   "test/fuzz-parsers.test.ts",
+  "test/attach-look.test.ts",
   "test/health.test.ts",
   "test/claim-link.test.ts",
   "test/client-address.test.ts",
@@ -234,7 +235,6 @@ export const GATE: readonly string[] = [
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
-  { file: "test/plan-route.test.ts", reason: "times out on the runner and reads a file its stand-in never wrote", issue: 1468 },
   { file: "test/api-errors.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
   {
