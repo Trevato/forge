@@ -7,6 +7,7 @@
 import type { MailConfig, Mailer } from "./kernel/mail.ts";
 import type { Database } from "bun:sqlite";
 import type { Decider } from "./crew/decide.ts";
+import type { VerifyHuman } from "./core/turnstile.ts";
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -119,6 +120,23 @@ export interface ForgeConfig {
    * Undefined means the forge is running without SSH.
    */
   sshPort?: number;
+  /**
+   * The Turnstile secret (`FORGE_TURNSTILE_SECRET`). Set, signup refuses a
+   * missing or bad token before it hashes a password or makes an account.
+   * Unset, signup is open as before.
+   */
+  turnstileSecret?: string;
+  /**
+   * The Turnstile site key (`FORGE_TURNSTILE_SITEKEY`): public, it names the
+   * widget `/signup` renders. The secret is only honoured with it, so signup
+   * cannot be locked behind a widget the page never shows.
+   */
+  turnstileSiteKey?: string;
+  /**
+   * Stand-in for Cloudflare's siteverify in tests: with a secret set, asked
+   * instead of the network. Without a secret it is never asked.
+   */
+  verifyHuman?: VerifyHuman;
   /**
    * The exact command the host forge gave this one to reach its terminal
    * (`FORGE_APP_SSH`), when it runs as an app of another forge (a spawned

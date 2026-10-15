@@ -814,6 +814,7 @@ export function slug(path: string): string {
 
 const MESSAGES: Record<string, string> = {
   not_found: "not found",
+  human_check: "we could not tell you are a person; sign up on the web page",
   unauthorized: "sign in first",
   forbidden: "you do not have permission",
   forbidden_owner: "you cannot create repos for that owner",

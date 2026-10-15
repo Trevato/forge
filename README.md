@@ -122,7 +122,15 @@ signed in by the platform, with an account made on first sight. Mail out
 configured by the forge-level secrets `MAIL_SMTP_URL`
 (`smtps://user:pass@host:465`) and `MAIL_FROM`, set live under Settings →
 Secrets, or at boot by `FORGE_SMTP_URL` / `FORGE_MAIL_FROM`. With neither, no
-mail is sent and a newcomer waits for the owner to verify them. Behind a
+mail is sent and a newcomer waits for the owner to verify them. With
+`FORGE_TURNSTILE_SECRET` and `FORGE_TURNSTILE_SITEKEY` set (the forge refuses to
+boot with only the secret), `/signup` renders the Turnstile widget, its CSP
+allows `https://challenges.cloudflare.com`, and signup asks Cloudflare's
+siteverify about the posted `cf-turnstile-response` (API: `turnstile_token`),
+refusing a missing or bad token before it hashes a password or makes an
+account. Unset, signup is open. The terminal (SSH) cannot show a widget, so
+with Turnstile on it can create only the first account (the admin); everyone
+else is told to sign up on the web page. Accounts made through the platform edge are not checked. Behind a
 proxy, `FORGE_TRUSTED_PROXIES` (comma-separated CIDR ranges, e.g.
 `10.42.0.0/16` for a k3s ingress) names the proxies allowed to say who the
 client is; limits for strangers and the signup audit then see each outside

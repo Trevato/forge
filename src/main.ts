@@ -111,6 +111,15 @@ const trustedProxies = (process.env.FORGE_TRUSTED_PROXIES ?? "")
   .map((s) => s.trim())
   .filter((s) => s !== "");
 
+// The secret and the widget's site key come together or not at all: a secret
+// alone would refuse every signup on a page that cannot show the widget.
+const turnstileSecret = (process.env.FORGE_TURNSTILE_SECRET ?? "").trim();
+const turnstileSiteKey = (process.env.FORGE_TURNSTILE_SITEKEY ?? "").trim();
+if (turnstileSecret !== "" && turnstileSiteKey === "") {
+  console.error("FORGE_TURNSTILE_SECRET needs FORGE_TURNSTILE_SITEKEY: the signup page needs the widget");
+  process.exit(1);
+}
+
 const app = createApp({
   dataDir,
   port: Number(process.env.PORT ?? 3000),
@@ -145,6 +154,10 @@ const app = createApp({
   Number(process.env.FORGE_MAIL_DAILY) > 0
     ? { mailDailyCap: Number(process.env.FORGE_MAIL_DAILY) }
     : {}),
+  // Signup asks Cloudflare Turnstile when its secret is set.
+  ...(turnstileSecret === ""
+    ? {}
+    : { turnstileSecret, turnstileSiteKey }),
   // Who may say who the client is: the ingress in front of a hosted forge.
   ...(trustedProxies.length > 0 ? { trustedProxies } : {}),
   ...((process.env.FORGE_CLIENT_IP_HEADER ?? "").trim() !== ""

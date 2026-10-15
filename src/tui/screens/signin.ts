@@ -63,7 +63,10 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
           const created = await signUp(
             f.app,
             { username, email, password },
-            { address: f.identity.remoteAddress },
+            {
+              address: f.identity.remoteAddress,
+              ...(first ? { door: "terminal" as const } : {}),
+            },
           );
           if (!created.ok) {
             error = errorText(created.error);

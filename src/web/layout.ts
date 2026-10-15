@@ -91,6 +91,12 @@ export interface PageOptions {
    * origin" — so pages that do not ask for it keep the stricter policy.
    */
   scriptAsset?: string;
+  /**
+   * The page carries a Cloudflare Turnstile widget (`/signup`): its script,
+   * frame and verification call may come from challenges.cloudflare.com, and
+   * nothing else on this page is relaxed.
+   */
+  turnstile?: boolean;
   /** Extra palette rows for this page's context (a repo's own tabs). */
   palette?: PaletteItem[];
   /**
@@ -614,6 +620,16 @@ export function page(options: PageOptions, status = 200): Response {
         ${raw(`<style nonce="${nonce}">${bootCss}</style>`)}
         <link rel="stylesheet" href="${stylesheetAsset().path}" />
         ${when(
+          options.turnstile,
+          () =>
+            html`<script
+              nonce="${nonce}"
+              src="${TURNSTILE_ORIGIN}/turnstile/v0/api.js"
+              async
+              defer
+            ></script>`,
+        )}
+        ${when(
           options.scriptAsset,
           (src) => html`<script type="module" src="${src}"></script>`,
         )}
@@ -635,7 +651,7 @@ export function page(options: PageOptions, status = 200): Response {
     // The external stylesheet plus this page's own nonce'd <style>/<script>
     // are the only resources allowed; connect-src 'self' lets the live
     // event stream (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}; connect-src 'self'; worker-src 'self'; manifest-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${options.turnstile ? `frame-src ${TURNSTILE_ORIGIN}; ` : ""}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
     // Markup is revalidated every time; only the hashed assets it names are
@@ -647,6 +663,8 @@ export function page(options: PageOptions, status = 200): Response {
   if (flash) headers.append("set-cookie", clearFlashCookie(ctx.url));
   return new Response(doc.text, { status, headers });
 }
+
+const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
 
 export interface RedirectOptions {
   /** A Set-Cookie value to send alongside (session, theme). */

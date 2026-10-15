@@ -15,7 +15,7 @@ import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo } from "../../actions/repos.ts";
-import { signUp } from "../../actions/users.ts";
+import { HUMAN_CHECK_MESSAGE, signUp } from "../../actions/users.ts";
 import { listAssignedTo, type Issue } from "../../core/issues.ts";
 import { joinMany } from "../../core/pulls.ts";
 import { conflictsOf } from "../../crew/stale_asks.ts";
@@ -336,6 +336,7 @@ interface AuthErrors {
   username?: string;
   email?: string;
   password?: string;
+  human?: string;
 }
 
 function authForm(
@@ -417,6 +418,15 @@ function authForm(
         ...(errors.password ? { error: errors.password } : {}),
       })}
       ${when(
+        kind === "signup" ? siteKey(ctx) : undefined,
+        (key) =>
+          html`<div class="cf-turnstile mb" data-sitekey="${key}"></div>`,
+      )}
+      ${when(
+        errors.human,
+        (message) => html`<p class="error mb" role="alert">${message}</p>`,
+      )}
+      ${when(
         firstAccount,
         () =>
           html`<p class="muted small mb">
@@ -462,8 +472,19 @@ export function signinPage(ctx: Ctx): Response {
   return page({ ctx, title: "Sign in", body: authForm(ctx, "signin") });
 }
 
+/** The widget's public site key, when signup is gated on Turnstile. */
+function siteKey(ctx: Ctx): string | undefined {
+  const { turnstileSecret, turnstileSiteKey } = ctx.app.config;
+  return turnstileSecret === undefined ? undefined : turnstileSiteKey;
+}
+
 export function signupPage(ctx: Ctx): Response {
-  return page({ ctx, title: "Sign up", body: authForm(ctx, "signup") });
+  return page({
+    ctx,
+    title: "Sign up",
+    body: authForm(ctx, "signup"),
+    turnstile: siteKey(ctx) !== undefined,
+  });
 }
 
 /**
@@ -576,7 +597,12 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
   const email = field(form, "email");
   const created = await signUp(
     ctx.app,
-    { username, email, password: field(form, "password") },
+    {
+      username,
+      email,
+      password: field(form, "password"),
+      humanToken: field(form, "cf-turnstile-response"),
+    },
     { address: clientAddress(ctx.request) },
   );
   if (!created.ok) {
@@ -588,12 +614,14 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       username_reserved: { username: "That name is reserved." },
       email_taken: { email: "That email already has an account." },
       weak_password: { password: "Passwords need at least 10 characters." },
+      human_check: { human: HUMAN_CHECK_MESSAGE },
     }[created.error] ?? { username: "Something went wrong." };
     return page(
       {
         ctx,
         title: "Sign up",
         body: authForm(ctx, "signup", { values: { username, email }, errors }),
+        turnstile: siteKey(ctx) !== undefined,
       },
       422,
     );

@@ -132,6 +132,7 @@ import {
   createToken,
   deleteSshKey,
   deleteToken,
+  HUMAN_CHECK_MESSAGE,
   signUp,
   updateProfile,
 } from "../actions/users.ts";
@@ -1119,9 +1120,12 @@ export function apiRoutes(router: Router<Handler>): void {
         username: str(input.username),
         email: str(input.email),
         password: str(input.password),
+        humanToken: str(input.turnstile_token),
       },
       { address: clientAddress(ctx.request) },
     );
+    if (!created.ok && created.error === "human_check")
+      return apiError("human_check", 422, HUMAN_CHECK_MESSAGE);
     if (!created.ok) return json({ error: created.error }, 422);
     return json(publicUser(created.value), 201);
   });
