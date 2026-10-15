@@ -461,6 +461,12 @@ describe("the tiers in the forge's own checks service", () => {
     const green = await checks.gate(repo, pull, branched.value.commitOid);
     expect(green.ok).toBe(true);
     expect(green.lines.join("\n")).toContain("FULL-GREEN");
+
+    // The same commit gated again is not run: the first verdict stands (#1795).
+    const again = await checks.gate(repo, pull, branched.value.commitOid);
+    expect(again.ok).toBe(true);
+    expect(again.lines.join("\n")).toContain("already proven green by gate-");
+    expect(again.lines.join("\n")).not.toContain("FULL-GREEN");
   });
 
   test("a red full gate names its tests and the pull learns the files", async () => {
