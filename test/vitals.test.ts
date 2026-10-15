@@ -81,7 +81,7 @@ test("a site admin with a read-only token gets the shape; others get the short o
   const v = (await res.json()) as Record<string, any>;
   expect(Object.keys(v).sort()).toEqual(
     [
-      "apps", "at", "checkedAt", "commit", "disk", "draining", "errors",
+      "apps", "at", "checkedAt", "commit", "degraded", "disk", "draining", "errors",
       "incidents", "memory", "needs", "ok", "queue", "rollout", "stale", "stuck",
       "version",
     ].sort(),
@@ -202,4 +202,65 @@ test("an unauthenticated internal call is refused, logged and flagged; the probe
   expect(line).toContain("1 internal call");
   expect(line).toContain("/internal/hook");
   resetRefusedInternal();
+});
+
+test("degraded names each cause, stable, with when it began", async () => {
+  const { createLog, clearErrors } = await import("../src/kernel/log.ts");
+  const { resetRefusedInternal } = await import("../src/kernel/internal_refused.ts");
+  const { ERROR_BURST, QUEUE_WAIT_MAX_MS } = await import("../src/kernel/vitals.ts");
+  const orig = console.error;
+  console.error = () => {};
+  try {
+    clearErrors();
+    resetRefusedInternal();
+    const base = vitals({ db: app.db, dataDir });
+    expect(base.degraded.map((d) => d.cause)).not.toContain("errors");
+
+    // queue: since is the oldest queued run's createdAt.
+    const oldest = (
+      app.db.query("SELECT MIN(created_at) AS m FROM run WHERE state='queued' AND kind='agent'").get() as { m: string }
+    ).m;
+    const later = Date.now() + 2 * QUEUE_WAIT_MAX_MS;
+    const q = vitals({ db: app.db, dataDir, now: later }).degraded.find((d) => d.cause === "queue:agent");
+    expect(q?.since).toBe(new Date(oldest).toISOString());
+    expect(q?.href).toBe("/settings/capacity");
+
+    // stuck: one per run, keyed by run id, since is when it last moved.
+    const run = createRun(app.db, { repoId, kind: "deploy", env: "production" });
+    const moved = new Date(Date.now() - 10 * 60_000).toISOString();
+    app.db
+      .query("UPDATE run SET state='running', started_at=?2, heartbeat_at=?2 WHERE id=?1")
+      .run(run.id, moved);
+    const s = vitals({ db: app.db, dataDir });
+    const entry = s.degraded.find((d) => d.cause === `stuck:${run.id}`);
+    expect(entry?.since).toBe(moved);
+    expect(entry?.href).toBe(`/alice/r/runs/${run.id}`);
+    expect(s.needs).toContain(entry!.sentence);
+    app.db.query("UPDATE run SET state='ok' WHERE id=?1").run(run.id);
+
+    // errors: no recorded start, so since is at; the cause is stable across calls.
+    const log = createLog("probe");
+    for (let i = 0; i < ERROR_BURST; i++) log.error(`boom ${i}`);
+    const a = vitals({ db: app.db, dataDir });
+    const e = a.degraded.find((d) => d.cause === "errors");
+    expect(e?.since).toBe(a.at);
+    expect(vitals({ db: app.db, dataDir, now: Date.now() + 5 }).degraded.some((d) => d.cause === "errors")).toBe(true);
+
+    // internal: refused calls.
+    await fetchInternal(app.hookAddress.current, "/internal/hook", { method: "POST" });
+    const i = vitals({ db: app.db, dataDir }).degraded.find((d) => d.cause === "internal");
+    expect(i?.since).toBeDefined();
+
+    // every need has exactly one sentence match in degraded (stuck shares one).
+    const all = vitals({ db: app.db, dataDir });
+    expect(new Set(all.degraded.map((d) => d.sentence))).toEqual(new Set(all.needs));
+
+    // the health API carries the same list.
+    const h = (await (await health(admin)).json()) as { degraded: { cause: string }[] };
+    expect(h.degraded.map((d) => d.cause)).toContain("errors");
+  } finally {
+    console.error = orig;
+    clearErrors();
+    resetRefusedInternal();
+  }
 });

@@ -30,9 +30,24 @@ export interface EnvCount {
   readonly state: string;
 }
 
+/**
+ * One cause of the forge being off: the `needs` sentence, a `cause` key that
+ * holds for as long as its condition does (`disk`, `errors`, `internal`,
+ * `queue:<kind>`, `stuck:<runId>`), when it began by the forge's own evidence
+ * (disk, errors and refused calls record no start, so those are `at`), and
+ * where to look.
+ */
+export interface Degraded {
+  readonly cause: string;
+  readonly sentence: string;
+  readonly since: string;
+  readonly href: string;
+}
+
 export interface Vitals {
   readonly ok: boolean;
   readonly needs: string[];
+  readonly degraded: Degraded[];
   readonly disk: { freeBytes: number; totalBytes: number };
   readonly memory: {
     rssBytes: number;
@@ -62,7 +77,13 @@ export interface VitalsInput {
 
 export function vitals(input: VitalsInput): Vitals {
   const now = input.now ?? Date.now();
+  const at = new Date(now).toISOString();
   const needs: string[] = [];
+  const degraded: Degraded[] = [];
+  const need = (cause: string, sentence: string, since: string, href: string) => {
+    needs.push(sentence);
+    degraded.push({ cause, sentence, since, href });
+  };
 
   const fs = statfsSync(input.dataDir);
   const disk = {
@@ -70,16 +91,22 @@ export function vitals(input: VitalsInput): Vitals {
     totalBytes: Number(fs.blocks) * Number(fs.bsize),
   };
   if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < DISK_FREE_MIN)
-    needs.push(
+    need(
+      "disk",
       `Disk is nearly full: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free.`,
+      at,
+      "/settings/capacity",
     );
 
   const queue: Record<string, number> = {};
   for (const row of queueDepth(input.db, now)) {
     queue[row.kind] = row.queued;
     if (now - new Date(row.oldest).getTime() > QUEUE_WAIT_MAX_MS)
-      needs.push(
+      need(
+        `queue:${row.kind}`,
         `The ${row.kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes.`,
+        new Date(row.oldest).toISOString(),
+        "/settings/capacity",
       );
   }
 
@@ -94,10 +121,11 @@ export function vitals(input: VitalsInput): Vitals {
         since: run.heartbeatAt ?? run.startedAt ?? run.createdAt,
       });
   }
-  if (stuck.length > 0)
-    needs.push(
-      `${stuck.length} run${stuck.length === 1 ? " is" : "s are"} stuck.`,
-    );
+  if (stuck.length > 0) {
+    const sentence = `${stuck.length} run${stuck.length === 1 ? " is" : "s are"} stuck.`;
+    for (const s of stuck)
+      need(`stuck:${s.runId}`, sentence, s.since, `/${s.repo}/runs/${s.runId}`);
+  }
 
   const apps = { serving: 0, asleep: 0, previews: 0 };
   for (const e of input.envs ?? []) {
@@ -108,19 +136,26 @@ export function vitals(input: VitalsInput): Vitals {
 
   const seen = recentErrors(5, now);
   if (seen.lastHour >= ERROR_BURST)
-    needs.push(
+    need(
+      "errors",
       `${seen.lastHour} errors in the last hour (${ERROR_BURST} or more is a burst).`,
+      at,
+      "/api/v1/health",
     );
 
   const refused = refusedInternal(now);
   if (refused.lastHour > 0)
-    needs.push(
+    need(
+      "internal",
       `${refused.lastHour} internal call${refused.lastHour === 1 ? "" : "s"} without the boot secret refused in the last hour${refused.latest ? ` (latest ${refused.latest.method} ${refused.latest.path})` : ""}.`,
+      at,
+      "/api/v1/health",
     );
 
   return {
     ok: needs.length === 0,
     needs,
+    degraded,
     disk,
     memory: {
       rssBytes: process.memoryUsage().rss,
@@ -131,6 +166,6 @@ export function vitals(input: VitalsInput): Vitals {
     stuck,
     apps,
     errors: { lastHour: seen.lastHour, latest: seen.latest },
-    at: new Date(now).toISOString(),
+    at,
   };
 }
