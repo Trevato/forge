@@ -145,7 +145,7 @@ describe("the restore drill", () => {
   test("a restore that hangs ends red at restore, and nothing is left", async () => {
     const r = await runDrill(
       deps({
-        timeoutMs: 50,
+        timeoutMs: 1500, // one clock covers fetch too; 50 ms lost to a loaded shard
         restore: () => new Promise(() => {}),
       }),
     );

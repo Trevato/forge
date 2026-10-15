@@ -13,6 +13,9 @@ import { parentForgeFor } from "../core/parent_releases.ts";
 import { readFlow } from "../flow/read.ts";
 import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
 import { runQuery } from "../boards/query.ts";
+import { recordDrill } from "../core/domain_drills.ts";
+import { drillVerdict } from "../kernel/domain_drill.ts";
+import { DOMAINS } from "../kernel/domains.ts";
 import { SOURCES } from "../boards/sources.ts";
 import { bodyCapFor, readBounded } from "./limits.ts";
 import { askCheck } from "../checks/again.ts";
@@ -1283,6 +1286,34 @@ export function apiRoutes(router: Router<Handler>): void {
         ...(s.docs ? { docs: s.docs } : {}),
       })),
     });
+  });
+
+  // A domain drill and its verdict (`kernel/domain_drill.ts`): an admin
+  // person's, kept whether green or red.
+  /** A drill's observations: each of health and the board, and the whole body. */
+  const DRILL_SEEN_MAX = 8_000;
+  const DRILL_BODY_MAX = 32_000;
+  router.add("POST", "/api/v1/drills", async (ctx) => {
+    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const input = await boundedBody(ctx.request, DRILL_BODY_MAX);
+    if (input === "too_large") return apiError("too_large", 413, "that is too large to read here");
+    const domain = DOMAINS.find((d) => d.key === input.domain);
+    if (!domain) return apiError("unknown_domain", 422, "domain is not one of the forge's failure domains");
+    const seen = input.seen;
+    const health = (seen as { health?: unknown } | null)?.health;
+    const board = (seen as { board?: unknown } | null)?.board;
+    const back = input.backSeconds;
+    if (
+      typeof health !== "string" || typeof board !== "string" ||
+      health.length > DRILL_SEEN_MAX || board.length > DRILL_SEEN_MAX
+    )
+      return apiError("invalid_seen", 422, `seen needs health and board as text of at most ${DRILL_SEEN_MAX} characters each`);
+    if (typeof back !== "number" || !Number.isInteger(back) || back < 0 || back > 31_536_000)
+      return apiError("invalid_back", 422, "backSeconds must be a whole number of seconds, 0 to 31536000");
+    const observed = { health, board };
+    const verdict = drillVerdict(domain, observed, back);
+    return json(recordDrill(ctx.app.db, ctx.auth.user!.id, domain.key, observed, back, verdict), 201);
   });
 
   router.add("POST", "/api/v1/boards/query", async (ctx) => {

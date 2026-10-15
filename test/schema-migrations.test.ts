@@ -293,14 +293,14 @@ describe("a migration is a file named by a sortable id (#1837)", () => {
   test("stamped ids sort after every numbered one, and among themselves by time", () => {
     const names = readMigrations(
       directory({
-        "20261015120000-later.ts": "CREATE TABLE later (id TEXT)",
-        "20261015110000-earlier.ts": "CREATE TABLE earlier (id TEXT)",
+        "20991231120000-later.ts": "CREATE TABLE later (id TEXT)",
+        "20991231110000-earlier.ts": "CREATE TABLE earlier (id TEXT)",
       }),
     ).map((m) => m.name);
     expect(names.slice(-3)).toEqual([
       migrationFiles[migrationFiles.length - 1]!.name,
-      "20261015110000-earlier",
-      "20261015120000-later",
+      "20991231110000-earlier",
+      "20991231120000-later",
     ]);
   });
 

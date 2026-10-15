@@ -6,7 +6,8 @@ equal to it and proves each quoted phrase is what the forge's own code emits
 under that condition. The words are quoted from `kernel/vitals.ts`, never
 drafted. "Nothing yet" means the forge has no words for that domain today.
 Minutes back are estimates, not measurements. A drill named here is the name
-issue #1195 will build; only the restore drill exists today.
+issue #1195 will build. Today the restore drill exists, and `POST /api/v1/drills`
+keeps a drill's verdict for any domain here (see the README).
 
 | Domain | What breaks | The forge says | Minutes back | The owner | Drill |
 | --- | --- | --- | --- | --- | --- |
