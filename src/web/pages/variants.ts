@@ -37,7 +37,6 @@ function deck(ctx: Ctx, repo: Repo, group: string): Pull[] {
   );
 }
 
-// Swipe right likes, left dislikes: it submits the card's own forms.
 // Swipe right likes, left asks before disliking; only a mostly horizontal
 // move counts, so a diagonal scroll closes nothing.
 const SWIPE_JS = `for(const c of document.querySelectorAll("[data-swipe]")){let x=null,y=0;

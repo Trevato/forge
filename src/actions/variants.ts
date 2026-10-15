@@ -7,6 +7,7 @@
 import type { App } from "../app.ts";
 import { recordVariantVote } from "../core/decisions.ts";
 import type { Pull } from "../core/pulls.ts";
+import { getIssueById } from "../core/issues.ts";
 import { canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -60,6 +61,9 @@ export function voteVariant(
   // is refused leaves no comment and no ledger row behind.
   try {
     app.db.transaction(() => {
+      // Another dislike may have closed it since this one was read.
+      if (getIssueById(app.db, pull.id)?.state !== "open")
+        throw new Error("not_open");
       const closed = setIssueState(app, actor, repo, pull, "closed");
       if (!closed.ok) throw new Error(closed.error);
       const said = addComment(
@@ -72,8 +76,8 @@ export function voteVariant(
       if (!said.ok) throw new Error(said.error);
       vote();
     })();
-  } catch {
-    return err("failed");
+  } catch (e) {
+    return err(e instanceof Error && e.message === "not_open" ? "not_open" : "failed");
   }
   return ok({ closed: true });
 }

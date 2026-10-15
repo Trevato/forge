@@ -88,6 +88,7 @@ import {
   Scroll,
   ago,
   confirmScreen,
+  promptScreen,
   drawLines,
   hitScroll,
   errorText,
@@ -222,6 +223,11 @@ export function pullScreen(
   /** Agent runs about this pull, newest first. */
   const crew = new RunList(f);
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
+  /** A writer, on a pull that is one of several variants. */
+  const mayVote = (): boolean =>
+    mayWrite() &&
+    repo !== undefined &&
+    getPull(f.db, repo.id, number)?.variantGroup != null;
   scroll.top = keep.top ?? 0;
 
   const reload = async (): Promise<void> => {
@@ -651,7 +657,7 @@ export function pullScreen(
           ? [
               binding(["c"], tab === 1 ? "review line" : "comment"),
               binding(["R"], "review"),
-              binding(["+", "-"], "like/dislike a variant"),
+              ...(mayVote() ? [binding(["+", "-"], "like/dislike a variant")] : []),
               ...(mayApproveHere()
                 ? [binding(["A"], "approve to run here")]
                 : []),
@@ -814,24 +820,35 @@ export function pullScreen(
         tab = ((tab + 1) % tabCount()) as Tab;
         return true;
       }
-      if ((e.key === "+" || e.key === "-") && mayWrite() && repo !== undefined) {
-        const row = getPull(f.db, repo.id, number);
-        if (row === undefined || row.variantGroup === null) return true;
-        const voted = voteVariant(
-          f.app,
-          f.user,
-          repo,
-          row,
-          e.key === "+" ? "like" : "dislike",
-        );
-        if (!voted.ok) ctx.toast(errorText(voted.error), "danger");
-        else {
+      if ((e.key === "+" || e.key === "-") && mayVote()) {
+        const target = repo!;
+        const vote = (answer: "like" | "dislike", reason = ""): void => {
+          const row = getPull(f.db, target.id, number);
+          if (row === undefined) return;
+          const voted = voteVariant(f.app, f.user, target, row, answer, reason);
+          if (!voted.ok) {
+            ctx.toast(errorText(voted.error), "danger");
+            return;
+          }
           const others = variantSiblings(f.db, [row])[0] ?? [];
           ctx.toast(
-            `${e.key === "+" ? "Liked" : "Closed"}. Variants: ${others.map((n) => `#${n}`).join(" ") || "none"}`,
+            `${answer === "like" ? "Liked" : "Closed"}. Variants: ${others.map((n) => `#${n}`).join(" ") || "none"}`,
           );
           runAsync(ctx, reload);
-        }
+        };
+        if (e.key === "+") vote("like");
+        else
+          ctx.push(
+            promptScreen(ctx, screen, {
+              title: `Dislike and close #${number}`,
+              label: "Why not this one",
+              hint: "One line the builder reads. Enter closes it; Esc cancels.",
+              onSubmit: (value) => {
+                vote("dislike", value);
+                return undefined;
+              },
+            }),
+          );
         return true;
       }
       if (e.key === "R" && mayWrite()) {

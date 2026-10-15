@@ -527,6 +527,7 @@ async function changeConversation(
       ),
   );
 
+  const siblings = variantSiblings(db, [pull])[0] ?? [];
   const glyph = originGlyph(repo);
   const headOid = status?.headOid ?? pull.headOid;
   const reviews = listReviews(db, pull.id);
@@ -550,14 +551,12 @@ async function changeConversation(
       ownTitle: true,
     })}
     ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "change")}
-    ${when(
-      pull.variantGroup !== null && variantSiblings(db, [pull])[0]!.length > 0,
-      () =>
-        html`<p class="muted small variant-link">
-          <a href="${base}/variants/${pull.variantGroup ?? ""}"
-            >Choose among ${variantSiblings(db, [pull])[0]!.length + 1} variants</a
-          >
-        </p>`,
+    ${when(siblings.length > 0, () =>
+      html`<p class="muted small variant-link">
+        <a href="${base}/variants/${pull.variantGroup ?? ""}"
+          >Choose among ${siblings.length + 1} variants</a
+        >
+      </p>`,
     )}
     <div id="pull-check">${checkLine}</div> ${holdCard(ctx, repo, pull, { act: true })}
     ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
