@@ -27,7 +27,7 @@ import { repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
-import { asksLink, fragment, page, redirect } from "../layout.ts";
+import { fragment, page, redirect } from "../layout.ts";
 import { liveClientJs } from "../live.ts";
 import {
   btn,
@@ -147,7 +147,7 @@ export function liveAppsFragment(ctx: Ctx): Response {
  * region as it is now and the top bar's Asks link with its new count.
  */
 export function onYouAnswer(ctx: Ctx, user: User, note?: string): Response {
-  return fragment(html`<div>${onYouRegion(ctx, user, note)}${asksLink(ctx)}</div>`);
+  return fragment(html`<div>${onYouRegion(ctx, user, note)}</div>`);
 }
 
 // GET /live/on-you — what is on the viewer, alone.
