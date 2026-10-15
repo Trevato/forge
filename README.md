@@ -457,6 +457,11 @@ huge one); restore unpacks them. While one runs, progress shows on
 **Settings → Backups** and as a line in the log every 500 objects or minute.
 The terminal has no backups view, so it has no readout.
 
+**Run a drill** on the same page (admins only) restores the newest snapshot
+into scratch, opens it, counts what is there and unseals a value; the page
+waits for it, up to 10 minutes, and the last drill shows there as one line.
+Only one runs at a time. See `docs/SNAPSHOT.md`.
+
 `docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.

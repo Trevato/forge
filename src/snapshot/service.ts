@@ -18,6 +18,8 @@ import {
   type Manifest,
   type Progress,
 } from "./snapshot.ts";
+import { runDrill, type DrillDeps, type DrillResult } from "./drill.ts";
+import { recordDrill } from "./drills.ts";
 import type { Store } from "./store.ts";
 
 const log = createLog("snapshots");
@@ -38,6 +40,8 @@ export interface SnapshotsHandle {
   readonly list: () => Promise<Manifest[]>;
   /** The last one taken by this process, and what it said. */
   readonly last: () => { manifest?: Manifest; error?: string; at?: string };
+  /** Drill the newest snapshot now and keep the result; waits for any snapshot in flight. */
+  readonly drill: () => Promise<DrillResult>;
   /** Forget the resolved store; the next use resolves again (a new destination was saved). */
   readonly forget: () => void;
   readonly stop: () => Promise<void>;
@@ -61,6 +65,8 @@ export function startSnapshots(
     readonly version: string;
     readonly nightly?: boolean;
     readonly passphrase?: string | undefined;
+    /** Test seam: the drill itself. */
+    readonly drill?: ((deps: DrillDeps) => Promise<DrillResult>) | undefined;
   } = {
     version: "0",
   },
@@ -118,6 +124,28 @@ export function startSnapshots(
     return inFlight;
   };
 
+  // Single-flight: a restore of every repository is heavy, so a second call
+  // while one runs joins it instead of filling the disk with another.
+  let drilling: Promise<DrillResult> | undefined;
+  const drill = (): Promise<DrillResult> => {
+    drilling ??= (async (): Promise<DrillResult> => {
+      await (inFlight ?? Promise.resolve()).catch(() => {});
+      const store = current();
+      if (store === undefined)
+        throw new Error("this forge has nowhere to drill from");
+      const result = await (options.drill ?? runDrill)({
+        store,
+        dataDir: app.config.dataDir,
+        passphrase: options.passphrase,
+      });
+      recordDrill(app.db, result);
+      return result;
+    })().finally(() => {
+      drilling = undefined;
+    });
+    return drilling;
+  };
+
   let timer: ReturnType<typeof setTimeout> | undefined;
   const schedule = (): void => {
     if (options.nightly === false || stopped) return;
@@ -135,6 +163,7 @@ export function startSnapshots(
     },
     wraps: !!options.passphrase,
     now: take,
+    drill,
     list: async () => {
       const store = current();
       return store === undefined ? [] : listSnapshots(store);

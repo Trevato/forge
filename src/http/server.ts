@@ -98,6 +98,7 @@ import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
 import {
   backupsClear,
   backupsDestination,
+  backupsDrill,
   backupsNow,
   backupsPage,
   backupsTest,
@@ -678,6 +679,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/admin/limits", limitsSet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
+  router.add("POST", "/settings/backups/drill", backupsDrill);
   router.add("POST", "/settings/backups/destination", backupsDestination);
   router.add("POST", "/settings/backups/test", backupsTest);
   router.add("POST", "/settings/backups/clear", backupsClear);
