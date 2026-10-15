@@ -9,8 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { mkdirSync, readFileSync, statfsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { statfsSync } from "node:fs";
 import { freemem, totalmem } from "node:os";
 import { refusedInternal, type RefusedLedger } from "./internal_refused.ts";
 import { recentErrors, type ErrorLedger, type ErrorLine } from "./log.ts";
@@ -22,7 +21,7 @@ import {
 } from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { BUDGETS } from "./budgets.ts";
-import { drillNeed, lastVerdict } from "../snapshot/verdict.ts";
+import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { heldChecks, redSentence } from "../checks/red_main.ts";
 
 /** Free disk under this share of the volume is something to say. */
@@ -210,28 +209,6 @@ export function laneSentence(
   return `${head}; the lane runs ${what} for ${age} min (limit ${BUDGETS.gate / 60_000}).`;
 }
 
-/**
- * When the forge first looked for a drill, kept in `drill/first-seen`: a
- * forge younger than eight days has missed none. Written on first sight.
- */
-export function forgeSince(dataDir: string, now: number): string {
-  const file = join(dataDir, "drill", "first-seen");
-  try {
-    const at = readFileSync(file, "utf8").trim();
-    if (Number.isFinite(Date.parse(at))) return at;
-  } catch {
-    // not yet seen
-  }
-  const at = new Date(now).toISOString();
-  try {
-    mkdirSync(join(dataDir, "drill"), { recursive: true });
-    writeFileSync(file, at);
-  } catch {
-    // a disk that will not take it only delays the line
-  }
-  return at;
-}
-
 export function vitals(input: VitalsInput): Vitals {
   const now = input.now ?? Date.now();
   const at = new Date(now).toISOString();
@@ -337,7 +314,7 @@ export function vitals(input: VitalsInput): Vitals {
 
   // A red restore drill, or none in eight days, is a card until a drill passes.
   const drill = lastVerdict(input.dataDir);
-  const owed = drillNeed(drill, now, () => forgeSince(input.dataDir, now));
+  const owed = drillNeed(drill, now, () => drillFirstSeen(input.dataDir));
   if (owed !== undefined)
     need("drill", owed.sentence, owed.since, "/settings/backups");
 

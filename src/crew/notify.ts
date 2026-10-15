@@ -30,8 +30,7 @@ import { getUserSetting, setUserSetting } from "../core/settings.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { landedLines } from "../core/watches.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { forgeSince } from "../kernel/vitals.ts";
-import { drillNeed, lastVerdict } from "../snapshot/verdict.ts";
+import { drillNeed, firstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
 const KEY = "notify_url";
@@ -162,7 +161,7 @@ export function drillLines(
   now = Date.now(),
 ): { id: string; line: string; items: readonly string[] }[] {
   if (!user.isAdmin || user.kind !== "user") return [];
-  const need = drillNeed(lastVerdict(app.config.dataDir), now, () => forgeSince(app.config.dataDir, now));
+  const need = drillNeed(lastVerdict(app.config.dataDir), now, () => firstSeen(app.config.dataDir));
   if (need === undefined) return [];
   const id = `drill:${need.key}`;
   return [{ id, line: need.sentence, items: [id] }];
@@ -179,6 +178,8 @@ export interface NotifyOptions {
   forgeUrl: string;
   send?: Sender;
   now?: () => number;
+  /** How often the clock wakes the notifier; ten minutes unless a test says. */
+  clockMs?: number;
 }
 
 const oneLine = (s: string): string =>
@@ -296,7 +297,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
         app.log.error("notify failed", { error: String(error) });
       }
     });
-  }, CLOCK_MS);
+  }, options.clockMs ?? CLOCK_MS);
   clock.unref();
 
   return {

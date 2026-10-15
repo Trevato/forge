@@ -41,6 +41,29 @@ export function failedSentence(r: DrillResult | undefined): string | undefined {
   return `The restore drill failed at ${r.failedStep ?? "an unknown step"}${r.reason ? `: ${r.reason}` : ""}. Snapshot ${r.snapshotId ?? "none"}; docs/RECOVERY.md says what to do.`;
 }
 
+const firstFile = (dataDir: string): string => join(dataDir, "drill", "first-seen");
+
+/**
+ * Written once at boot (`seedFirstSeen`): when this forge first ran with a
+ * drill to owe. A forge younger than eight days has missed none. A pure
+ * read; undefined when never seeded, which is no line.
+ */
+export function firstSeen(dataDir: string): string | undefined {
+  try {
+    const at = readFileSync(firstFile(dataDir), "utf8").trim();
+    return Number.isFinite(Date.parse(at)) ? at : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Keep the first boot's time if none is kept; throws when the disk will not take it. */
+export function seedFirstSeen(dataDir: string, now: number = Date.now()): void {
+  if (firstSeen(dataDir) !== undefined) return;
+  mkdirSync(join(dataDir, "drill"), { recursive: true });
+  writeFileSync(firstFile(dataDir), new Date(now).toISOString());
+}
+
 /** A drill older than this, or none at all, is one line on the board. */
 export const DRILL_STALE_MS = 8 * 24 * 3_600_000;
 

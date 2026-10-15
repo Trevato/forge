@@ -3,17 +3,17 @@
  * one push, on a deterministic clock and with no real drill.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
-import { startNotifier } from "../src/crew/notify.ts";
-import { setNotifyUrl } from "../src/crew/notify.ts";
+import { setNotifyUrl, startNotifier } from "../src/crew/notify.ts";
+import { eventAudience } from "../src/core/event_audience.ts";
 import { vitals } from "../src/kernel/vitals.ts";
 import type { DrillResult } from "../src/snapshot/drill.ts";
-import { DRILL_STALE_MS, recordVerdict } from "../src/snapshot/verdict.ts";
+import { DRILL_STALE_MS, recordVerdict, seedFirstSeen } from "../src/snapshot/verdict.ts";
 import { forgeNeeds } from "../src/actions/health.ts";
 
 const DAY = 86_400_000;
@@ -52,8 +52,7 @@ describe("the drill's board line", () => {
     if (!u.ok) throw new Error(u.error);
     admin = u as typeof admin;
     // The forge first looked 30 days before the test's clock.
-    mkdirSync(join(root, "drill"), { recursive: true });
-    writeFileSync(join(root, "drill", "first-seen"), new Date(T0 - 30 * DAY).toISOString());
+    seedFirstSeen(root, T0 - 30 * DAY);
   });
   afterAll(async () => {
     await rm(root, { recursive: true, force: true });
@@ -65,13 +64,20 @@ describe("the drill's board line", () => {
     expect(l[0]!.sentence).toContain("No restore drill");
   });
 
-  test("a forge younger than eight days has missed nothing", () => {
+  test("a forge younger than eight days has missed nothing", async () => {
     expect(line(T0 - 30 * DAY + DAY)).toHaveLength(0);
     const fresh = mkdtempSync(join(tmpdir(), "forge-drill-fresh-"));
     const input = { db: app.db, dataDir: fresh, signals: app.signals };
-    expect(vitals({ ...input, now: T0 }).degraded.some((d) => d.cause === "drill")).toBe(false);
-    expect(vitals({ ...input, now: T0 + 9 * DAY }).degraded.some((d) => d.cause === "drill")).toBe(true);
-    void rm(fresh, { recursive: true, force: true });
+    const flagged = (now: number) =>
+      vitals({ ...input, now }).degraded.some((d) => d.cause === "drill");
+    // Never seeded: a pure read flags nothing and writes nothing.
+    expect(flagged(T0 + 99 * DAY)).toBe(false);
+    expect(() => readFileSync(join(fresh, "drill", "first-seen"))).toThrow();
+    seedFirstSeen(fresh, T0);
+    seedFirstSeen(fresh, T0 + 5 * DAY);
+    expect(flagged(T0)).toBe(false);
+    expect(flagged(T0 + 9 * DAY)).toBe(true);
+    await rm(fresh, { recursive: true, force: true });
   });
 
   test("red: one line naming the step", () => {
@@ -126,5 +132,39 @@ describe("the drill's board line", () => {
     expect(sent).toHaveLength(2);
     expect(sent[1]).toContain("No restore drill");
     n.stop();
+  });
+
+  test("eight days of silence alone, with no event, is pushed once by the clock", async () => {
+    recordVerdict(root, drill(T0 + 10 * DAY, false));
+    let clock = T0 + 11 * DAY;
+    const sent: string[] = [];
+    const n = startNotifier(app, {
+      forgeUrl: "https://forge.example.com",
+      now: () => clock,
+      clockMs: 10,
+      send: async (_u, body) => (sent.push(body), true),
+    });
+    await n.settled();
+    expect(sent).toHaveLength(0);
+    clock = T0 + 10 * DAY + DRILL_STALE_MS + 1;
+    for (let i = 0; i < 100 && sent.length === 0; i++) await Bun.sleep(10);
+    await n.settled();
+    await Bun.sleep(50);
+    await n.settled();
+    n.stop();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("No restore drill");
+  });
+
+  test("a drill event is the admins' alone", () => {
+    expect(eventAudience("drill.finished")).toBe("admins");
+  });
+
+  test("the terminal reads the same line as the board, for an admin only", () => {
+    // The terminal's dashboard lists `forgeNeeds`, as the board's strip does.
+    recordVerdict(root, drill(Date.now(), true));
+    const needs = forgeNeeds(app, admin.value)!;
+    expect(needs.filter((x) => x.includes("restore drill"))).toHaveLength(1);
+    expect(forgeNeeds(app, undefined)).toBeUndefined();
   });
 });

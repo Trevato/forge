@@ -10,7 +10,7 @@
 
 import type { App } from "../app.ts";
 import { createLog } from "../kernel/log.ts";
-import { reportVerdict } from "./verdict.ts";
+import { reportVerdict, seedFirstSeen } from "./verdict.ts";
 import {
   KEEP,
   listSnapshots,
@@ -173,6 +173,13 @@ export function startSnapshots(
     }, untilNightly());
   };
   schedule();
+
+  // The board only reads; the time the forge first owed a drill is kept here.
+  try {
+    seedFirstSeen(app.config.dataDir);
+  } catch (error) {
+    log.warn("drill: first-seen time not kept; a missing drill will not be flagged", { error: String(error) });
+  }
 
   let drillTimer: ReturnType<typeof setTimeout> | undefined;
   const scheduleDrill = (): void => {
