@@ -20,7 +20,10 @@ any URL — and it is the rest of this page.
 
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
-stays that way. Everything worth having is written here: the Result type, the
+stays that way. The one exception is dev-only: `@anthropic-ai/sandbox-runtime`
+(a devDependency, with its own few transitive packages) lets
+`test/crew-sandbox-real.test.ts` run a shell under the very sandbox Claude Code
+builds from the crew's settings; it never ships and the app never imports it. Everything worth having is written here: the Result type, the
 router, the SSR templates, the design system, the markdown renderer. The only
 thing forge asks of the host is a `git` binary.
 

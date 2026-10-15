@@ -12,6 +12,7 @@
     "check:record": "bun run scripts/check.ts --record"
   },
   "devDependencies": {
+    "@anthropic-ai/sandbox-runtime": "^0.0.79",
     "@types/bun": "^1.2.0",
     "typescript": "^5.9.0"
   }

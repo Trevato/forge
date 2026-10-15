@@ -962,6 +962,7 @@ export function forgeNeedsFor(ctx: Ctx, user: User | undefined): string[] {
   return vitals({
     db: ctx.app.db,
     dataDir: ctx.app.config.dataDir,
+    signals: ctx.app.signals,
     envs,
   }).needs;
 }

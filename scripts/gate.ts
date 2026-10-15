@@ -109,6 +109,7 @@ export const GATE: readonly string[] = [
   "test/fork-pull-approval.test.ts",
   "test/cross-repo-pull.test.ts",
   "test/pull-mergeable.test.ts",
+  "test/pull-checks-line.test.ts",
   "test/pulls.test.ts",
   "test/api-reader-marks.test.ts",
   "test/app-members.test.ts",
@@ -262,6 +263,7 @@ export const GATE: readonly string[] = [
   "test/ssh-site.test.ts",
   "test/web-code.test.ts",
   "test/web-origins.test.ts",
+  "test/roll.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
