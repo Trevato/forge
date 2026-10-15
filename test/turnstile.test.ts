@@ -159,6 +159,34 @@ describe("turnstile doors", () => {
       expect(csp).toMatch(new RegExp(`${directive}[^;]*https://challenges.cloudflare.com`));
   });
 
+  test("only /signup widens the policy, and the secret reaches no page", async () => {
+    const { base } = await boot({ turnstileSecret: "SECRET-VALUE", turnstileSiteKey: "0xSITE" });
+    for (const path of ["/", "/login", "/explore"]) {
+      const response = await fetch(`${base}${path}`);
+      expect(response.headers.get("content-security-policy")).not.toContain("cloudflare");
+      expect(await response.text()).not.toContain("SECRET-VALUE");
+    }
+    expect(await (await fetch(`${base}/signup`)).text()).not.toContain("SECRET-VALUE");
+  });
+
+  test("the admin settings line says on when Turnstile is on, and never the secret", async () => {
+    const { base } = await boot({ turnstileSecret: "SECRET-VALUE", turnstileSiteKey: "0xSITE" });
+    expect((await signup(base, "good")).status).toBe(201);
+    const signedIn = await fetch(`${base}/signin`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: base },
+      body: new URLSearchParams({ username: "casey", password: "correct horse battery" }),
+    });
+    const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const page = await fetch(`${base}/settings/secrets`, { headers: { cookie } });
+    expect(page.status).toBe(200);
+    const text = await page.text();
+    expect(text).toContain("Signup asks Cloudflare Turnstile");
+    expect(text).not.toContain("Signup has no human check");
+    expect(text).not.toContain("SECRET-VALUE");
+  });
+
   test("off, the page has no widget and the policy is unchanged", async () => {
     const { base } = await boot();
     const response = await fetch(`${base}/signup`);

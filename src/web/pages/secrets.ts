@@ -145,6 +145,13 @@ function requireAdmin(ctx: Ctx): Response | undefined {
   return undefined;
 }
 
+/** One quiet line: whether signup asks Turnstile, and the two variables that decide it. */
+function humanCheckLine(ctx: Ctx): string {
+  return ctx.app.config.turnstileSecret === undefined
+    ? "Signup has no human check. Set FORGE_TURNSTILE_SECRET and FORGE_TURNSTILE_SITEKEY at boot to turn it on."
+    : "Signup asks Cloudflare Turnstile (FORGE_TURNSTILE_SECRET and FORGE_TURNSTILE_SITEKEY).";
+}
+
 // GET /settings/secrets
 export function secretsPage(ctx: Ctx): Response {
   const denied = requireAdmin(ctx);
@@ -155,7 +162,8 @@ export function secretsPage(ctx: Ctx): Response {
     body: html`<div class="page-head"><h1>Secrets</h1></div>
       ${settingsLayout(
         accountSections("secrets", { admin: true }),
-        secretsSection(ctx, "forge", "")!,
+        html`${secretsSection(ctx, "forge", "")!}
+          <p class="muted small">${humanCheckLine(ctx)}</p>`,
         "Account settings",
       )}`,
   });

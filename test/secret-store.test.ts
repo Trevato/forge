@@ -320,6 +320,9 @@ describe("forge-level secrets", () => {
     expect(await (await get("/settings/secrets", cookie)).text()).toContain(
       "CF_TOKEN",
     );
+    expect(await (await get("/settings/secrets", cookie)).text()).toContain(
+      "Signup has no human check. Set FORGE_TURNSTILE_SECRET and FORGE_TURNSTILE_SITEKEY",
+    );
     const bob = await login("bob");
     expect((await get("/settings/secrets", bob)).status).toBe(404);
     expect(await (await get("/acme", bob)).text()).not.toContain("Seal");
