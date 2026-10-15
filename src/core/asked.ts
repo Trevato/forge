@@ -133,7 +133,7 @@ export function askedRepos(
  * in these repositories, read once — the one join `scan` and `askedCounts`
  * share, so a count can never disagree with the list.
  */
-function pullsByAsk(
+export function pullsByAsk(
   db: Database,
   repoIds: readonly string[],
 ): Map<string, AskedPull[]> {

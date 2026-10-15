@@ -31,6 +31,7 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import { streamJson, thoughtStream } from "../core/thought_stream.ts";
 import {
   listAccounts,
   removeAccount,
@@ -2720,6 +2721,7 @@ export function apiRoutes(router: Router<Handler>): void {
         show: raw ?? "unshipped",
         order: order ?? "oldest",
       }).map(askedJson),
+      thoughts: ctx.auth.user ? thoughtStream(ctx.app.db, ctx.auth.user).map(streamJson) : [],
     });
   });
   // Every repository the caller can see, one entry each: the global map.

@@ -125,6 +125,7 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import { streamJson, thoughtStream } from "../core/thought_stream.ts";
 import {
   readAppMembers,
   setAppMembersThrough,
@@ -1144,7 +1145,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asked",
     description:
-      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, whether it is stale (not shipped after three days), and whether it is flagged (stale with nothing built: no pull open or merged, and nobody on it). Each pull says when it was opened. `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. The same data as the /asked page and /api/v1/asked.",
+      "What people asked the crew for, in the repositories you can write: by default what has nothing merged yet, oldest first. Each ask with who asked and when, the pulls that close it, one state (waiting, building, shipped, closed), the crew's last activity on it, whether it is stale (not shipped after three days), and whether it is flagged (stale with nothing built: no pull open or merged, and nobody on it). Each pull says when it was opened. `show` is unshipped (default), flagged or all; `order` is oldest (default) or newest; `repo` (owner/name) keeps it to one repository. Also `thoughts`: every thought you sent, newest first, verbatim, with time, source, where the planner put it, and one state (unplaced, placed, building, shipped, superseded — with the later thought that superseded it); `flagged` when nothing merged more than your `thoughtFlagDays` setting (three by default) after it was placed. Yours only. The same data as the /asked page and /api/v1/asked.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1165,7 +1166,10 @@ const TOOLS: readonly Tool[] = [
       const repos = askedRepos(ctx.app.db, user, spec);
       if (spec !== null && repos.length === 0)
         return bad("not_found", "no such app or repository you can write (owner/name)");
-      return good({ asked: askedIn(ctx.app.db, repos, { show, order }).map(askedJson) });
+      return good({
+        asked: askedIn(ctx.app.db, repos, { show, order }).map(askedJson),
+        thoughts: thoughtStream(ctx.app.db, user).map(streamJson),
+      });
     },
   },
   {
