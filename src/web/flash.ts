@@ -19,6 +19,8 @@ export interface Flash {
   message: string;
   /** A one-time value rendered in a copyable monospace block. */
   code?: string;
+  /** One same-origin link after the message ("see it live"). */
+  link?: { href: string; label: string };
 }
 
 // Cookies cap out around 4KB; a flash is a sentence, not a payload.
@@ -63,5 +65,23 @@ export function readFlash(request: Request): Flash | undefined {
     ...(typeof value.code === "string" && value.code !== ""
       ? { code: value.code.slice(0, 512) }
       : {}),
+    ...linkOf(value.link),
   };
+}
+
+/** A flash link read back: a same-origin path and a short label, or nothing. */
+function linkOf(value: unknown): { link?: NonNullable<Flash["link"]> } {
+  if (typeof value !== "object" || value === null) return {};
+  const { href, label } = value as Record<string, unknown>;
+  if (typeof href !== "string" || typeof label !== "string") return {};
+  if (!isLocalPath(href) || label === "" || label.length > 80) return {};
+  return { link: { href, label } };
+}
+
+/** A path on this origin: one leading slash, no scheme, no control bytes. */
+export function isLocalPath(path: string): boolean {
+  return (
+    path.length <= 512 &&
+    /^\/(?![/\\])[^\u0000-\u001f\u007f\\]*$/.test(path)
+  );
 }

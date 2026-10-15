@@ -420,7 +420,7 @@ export function needsYouSection(
           ${reasonInput(top?.reason)} ${btn("Preview", { size: "sm" })}
           <span class="muted small">on the selected asks</span>
         </form>`}
-    ${decisions.map((d) => decisionForm(d))}
+    ${decisions.map((d) => decisionForm(d, ctx.url.pathname))}
   </section>`;
   return { body, scriptJs: SELECT_JS };
 }

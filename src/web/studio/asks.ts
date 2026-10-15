@@ -909,7 +909,7 @@ const askFormId = (d: Decision): string => `ask-${d.id}`;
  * It sits after the panel's form, because a form inside a form is not
  * HTML; the button reaches it by id.
  */
-export function decisionForm(d: Decision): Html | null {
+export function decisionForm(d: Decision, back?: string): Html | null {
   const pull = d.pull;
   const own = html`id="${askFormId(d)}" method="post" hidden`;
   if (d.kind === "parked")
@@ -918,13 +918,14 @@ export function decisionForm(d: Decision): Html | null {
     </form>`;
   if (pull === undefined) return null;
   const base = repoBase(d.repo);
+  const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
   if (d.kind === "stopped")
     return html`<form ${own} action="${base}/pulls/${pull.number}/state">
-      <input type="hidden" name="state" value="closed" />
+      <input type="hidden" name="state" value="closed" />${where}
     </form>`;
   if (d.kind === "look" || d.kind === "review")
     return html`<form ${own} action="${base}/pulls/${pull.number}/ship">
-      <input type="hidden" name="pull" value="${pull.number}" />
+      <input type="hidden" name="pull" value="${pull.number}" />${where}
     </form>`;
   return null;
 }

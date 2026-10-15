@@ -400,6 +400,87 @@ describe("the studio", () => {
     expect(getUserByName(app.db, "scout")).toBeDefined();
   });
 
+  test("ship from the home returns to the home with a flash and one link; a foreign back lands on the pull page", async () => {
+    const green = async (name: string) => {
+      const branch = await commitToBranch(app, alice, repo, {
+        branch: `feature/${name}`,
+        base: "main",
+        message: name,
+        files: [{ path: `${name.toUpperCase()}.md`, content: `${name}\n` }],
+      });
+      if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+      const opened = await openPull(app, alice, repo, {
+        title: name,
+        body: "",
+        baseBranch: "main",
+        headBranch: `feature/${name}`,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      const check = createRun(app.db, {
+        repoId: repo.id,
+        kind: "check",
+        issueId: opened.value.id,
+        env: `pull-${opened.value.number}`,
+        commitOid: opened.value.headOid,
+        reason: "pull",
+      });
+      claimRun(app.db, check.id);
+      finishRun(app.db, check.id, { state: "ok", summary: "check passed in 1s" });
+      return opened.value;
+    };
+    const home = await green("fromhome");
+    const shipped = await post(
+      `/alice/notes/pulls/${home.number}/ship`,
+      { back: "/" },
+      "; forge_mode=studio",
+    );
+    expect(shipped.status).toBe(303);
+    expect(shipped.headers.get("location")).toBe("/");
+    const flash = decodeURIComponent(
+      (shipped.headers.get("set-cookie") ?? "").split("forge_flash=")[1] ?? "",
+    );
+    expect(flash).toContain(`Shipped #${home.number}`);
+    expect(flash).toContain("see it live");
+    expect(getPull(app.db, repo.id, home.number)?.mergedAt).not.toBeNull();
+
+    const evil = await green("fromevil");
+    const lost = await post(
+      `/alice/notes/pulls/${evil.number}/ship`,
+      { back: "https://evil.example/" },
+      "; forge_mode=studio",
+    );
+    expect(lost.status).toBe(303);
+    expect(lost.headers.get("location")).toBe(
+      `/alice/notes/changes/${evil.number}`,
+    );
+  });
+
+  test("close from the home returns to the home", async () => {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "feature/closeme",
+      base: "main",
+      message: "Close me",
+      files: [{ path: "CLOSEME.md", content: "x\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Close me",
+      body: "",
+      baseBranch: "main",
+      headBranch: "feature/closeme",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const n = opened.value.number;
+    const closed = await post(
+      `/alice/notes/pulls/${n}/state`,
+      { state: "closed", back: "/" },
+      "; forge_mode=studio",
+    );
+    expect(closed.status).toBe(303);
+    expect(closed.headers.get("location")).toBe("/");
+    expect(getPull(app.db, repo.id, n)?.state).toBe("closed");
+  });
+
   test("a tell shipped long ago still reads shipped once it is buried under 250 later events", async () => {
     const told = openIssue(app, alice, repo, {
       title: "Buried tell",

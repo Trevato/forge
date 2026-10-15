@@ -49,7 +49,7 @@ import {
 } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { commentCard } from "../comments.ts";
-import { field, readForm } from "../form.ts";
+import { backTo, field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { flashOrJson, flashTo } from "../layout.ts";
 import {
@@ -724,7 +724,10 @@ export async function stateSubmit(
   if (form instanceof Response) return form;
 
   const wanted = field(form, "state") === "closed" ? "closed" : "open";
-  const dest = `${repoBase(found.repo)}/${kind === "pull" ? "pulls" : "issues"}/${found.issue.number}`;
+  const dest = backTo(
+    form,
+    `${repoBase(found.repo)}/${kind === "pull" ? "pulls" : "issues"}/${found.issue.number}`,
+  );
   const why = field(form, "reason");
   const intoText = field(form, "into").trim();
   const into = intoText

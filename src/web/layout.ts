@@ -394,7 +394,10 @@ function flashToast(flash: Flash): Html {
   return html`<div class="toast" data-tone="${tone}" role="status">
     ${icon(glyph)}
     <div class="toast-body">
-      ${flash.message}
+      ${flash.message}${when(
+        flash.link,
+        (link) => html` · <a href="${link.href}">${link.label}</a>`,
+      )}
       ${when(
         flash.code,
         (code) =>
