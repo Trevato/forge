@@ -188,6 +188,14 @@ my machine", and the dashboard grows an **On your machine** card listing them.
 The server remembers only the choice — nothing about the state of a laptop —
 and `forge sync` below is what acts on it.
 
+**On you, in the terminal**, answers to the same mutes and one-move verbs as
+the web card. Repositories you muted are hidden and counted ("2 repositories
+muted"). On the On you card: `space` marks a row, `x` closes the marked rows
+(or the row under the cursor) with one reason, `m` mutes their repositories,
+`S` ships them, `u` undoes the latest set within its day, and `L` listens
+again to every muted repository. Each goes through `applyAsksBulk`, so the
+per-row access checks and refusals are the web's, shown in the toast.
+
 ## On your machine
 
 The forge holds the truth; `forge` keeps a copy of the parts you work on, the
