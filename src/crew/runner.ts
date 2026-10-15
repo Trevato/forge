@@ -83,6 +83,7 @@ import {
   resumeAt,
   whenText,
 } from "./limits.ts";
+import { clearStaleLocks, lockedOut } from "./locks.ts";
 import { interruptedSummary } from "./interrupted.ts";
 import { laterGate } from "./later.ts";
 import { parkedTwice } from "./parks.ts";
@@ -1297,6 +1298,7 @@ async function prepareClone(
   write: (line: string) => void,
   signal: AbortSignal,
   keep = false,
+  fresh = false,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   // Two addresses for one forge. The forge itself clones and fetches over
   // `localUrl`, on this machine. The agent's remotes carry `forgeUrl`, the
@@ -1323,6 +1325,9 @@ async function prepareClone(
         error: `clone failed: ${cloned.error.stderr.slice(0, 200)}`,
       };
   } else {
+    // A kept clone may carry the locks of a run the forge cut off. This run
+    // owns the clone now, so a lock a minute old is nobody's.
+    clearStaleLocks(dir, write);
     const fetched = await runGit(
       [
         "fetch",
@@ -1395,6 +1400,37 @@ async function prepareClone(
     cwd: dir,
     env,
   });
+  if (!checked.ok && !fresh && lockedOut(checked.error.stderr)) {
+    // A lock too young to clear, or one the sweep missed: start over once
+    // from a fresh clone rather than failing the follow-up.
+    // Only when nothing would be lost: a cut-off run may hold commits that
+    // were never pushed, and those live nowhere else.
+    const unpushed = await runGit(
+      ["rev-list", "--branches", "--not", "--remotes=origin"],
+      { cwd: dir, env },
+    );
+    if (!unpushed.ok || unpushed.value.trim() !== "")
+      return {
+        ok: false,
+        error:
+          "checkout blocked by a git lock, and the kept clone holds commits that were never pushed; left as it is",
+      };
+    write("checkout blocked by a git lock; cloning afresh");
+    rmSync(dir, { recursive: true, force: true });
+    return prepareClone(
+      app,
+      options,
+      repo,
+      fork,
+      branch,
+      dir,
+      env,
+      write,
+      signal,
+      false,
+      true,
+    );
+  }
   if (!checked.ok)
     return {
       ok: false,
