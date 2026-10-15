@@ -190,3 +190,19 @@ export function undoHandled(
   setOutcome(app.db, decision.id, "undone");
   return getDecision(app.db, decision.id)!;
 }
+
+/**
+ * A ledger row as `reader` may see it. A hand-over's state holds the tapper's
+ * own pins, mutes, recent endings and id: only they get those back; anyone
+ * else who can read the repository gets the rest.
+ */
+export function forReader(d: Decision, reader: User | undefined): Decision {
+  if (d.kind !== "hand") return d;
+  const state = (d.state ?? {}) as Record<string, any>;
+  if (reader !== undefined && state.actor === reader.id) return d;
+  const { actor: _a, recent: _r, repository, ...rest } = state;
+  return {
+    ...d,
+    state: { ...rest, repository: { name: repository?.name } },
+  };
+}

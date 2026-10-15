@@ -353,6 +353,35 @@ describe("let the decider answer a hand-over", () => {
       ui.stop();
     });
 
+    test("the ledger API gives a hand-over's private part to its tapper only", async () => {
+      app.config.decider = standIn;
+      says = 0.9;
+      const issue = parked("private part");
+      expect((await decideAsk(app, alice, `parked:${issue.id}`)).ok).toBe(true);
+      const read = async (headers: Record<string, string>) => {
+        const res = await fetch(`${servers.url}/api/v1/repos/alice/shelf/decisions`, { headers });
+        const rows = ((await res.json()) as any).decisions.filter((d: any) => d.issueId === issue.id);
+        expect(rows).toHaveLength(1);
+        return rows[0].state;
+      };
+      const mine = await read({ cookie });
+      expect(mine.actor).toBe(alice.id);
+      expect(mine.recent).toBeDefined();
+      expect(mine.repository.pinned).toBe(false);
+      const bob = getUserByName(app.db, "bob")!;
+      for (const headers of [
+        {},
+        { authorization: `Bearer ${createToken(app.db, bob.id, "b2", "ro").token}` },
+      ]) {
+        const seenBy = await read(headers);
+        expect(seenBy.actor).toBeUndefined();
+        expect(seenBy.recent).toBeUndefined();
+        expect(seenBy.repository.pinned).toBeUndefined();
+        expect(seenBy.repository.muted).toBeUndefined();
+        expect(seenBy.reason).toBeDefined();
+      }
+    });
+
     test("two quick taps pay once", async () => {
       says = 0.5;
       const issue = parked("double tap");

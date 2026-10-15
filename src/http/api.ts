@@ -266,6 +266,7 @@ import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
+import { forReader } from "../crew/handover.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import {
   milestoneData,
@@ -2672,7 +2673,9 @@ export function apiRoutes(router: Router<Handler>): void {
         // What the decider saw about a sealed report is the report's (`sealed.ts`).
         .filter(
           (d) => mayViewId(ctx.app.db, repo, d.issueId, ctx.auth.user),
-        ),
+        )
+        // A hand-over's state carries its tapper's private preferences.
+        .map((d) => forReader(d, ctx.auth.user)),
       week: decisionStats(ctx.app.db, repo.id, week),
     });
   });
