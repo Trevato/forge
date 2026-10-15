@@ -543,6 +543,8 @@ mechanical rather than advisory.
 `docs/FLOW.md` is where every issue stands: `GET /api/v1/repos/:owner/:name/flow` returns each open issue's stage, since, stalled and unblock, plus what went live in the last 24 h.
 Where the whole forge waits is a forge admin's: `/flow` shows each stage from ready to live with what waits, the oldest wait and its capacity, under one sentence naming the bottleneck, and beside each what it let out in the last hour with a 24-hour sparkline, under a line of landings and the median ask→live — every count links to the items it counts. The terminal's Flow command and the MCP `flow` tool read the same: the sentence, the landings line, and each stage's count out in the last hour and in 24 h.
 
+The terminal also has an Access command (`:` → Access), a site admin's: it reads the same last-day non-browser requests as Settings → Access and the `access` MCP tool, newest first, and filters them with `s` (since), `u` (user agent) and `p` (path), `c` to clear.
+
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
 what "ready now" means to a person and to the crew. The map also shows each
 pillar's ask-to-live: the median hours from an issue opening to its change live
