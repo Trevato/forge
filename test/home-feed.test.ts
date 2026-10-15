@@ -280,6 +280,59 @@ describe("home is the feed", () => {
     }
   });
 
+  test("the composer can send to the forge: a thought, verbatim, shown escaped as the owner's received post", async () => {
+    const text = "  <script>alert(1)</script> & more\n\tsecond line ";
+    const sent = await fetch(`${servers.url}/tell`, {
+      method: "POST",
+      headers: { cookie: aliceCookie, origin: servers.url },
+      body: new URLSearchParams({ app: "forge", text }),
+      redirect: "manual",
+    });
+    expect(sent.status).toBe(303);
+    const row = app.db
+      .query<{ text: string; source: string }, [string]>(
+        "SELECT text, source FROM thought WHERE author = ?1",
+      )
+      .get(alice.id);
+    expect(row).toEqual({ text, source: "composer" });
+    const page = await get("/", aliceCookie).then((r) => r.text());
+    expect(page).toContain("&lt;script&gt;alert(1)&lt;/script&gt; &amp; more");
+    expect(page).not.toContain("<script>alert(1)</script>");
+    expect(page).toContain("Received");
+    expect(page).toContain('<option value="forge">the forge</option>');
+    // It is the author's alone, and another site's form is refused.
+    const bobs = await get("/", bobCookie).then((r) => r.text());
+    expect(bobs).not.toContain("alert(1)");
+    const forged = await fetch(`${servers.url}/tell`, {
+      method: "POST",
+      headers: { cookie: aliceCookie, origin: "https://evil.example" },
+      body: new URLSearchParams({ app: "forge", text: "nope" }),
+      redirect: "manual",
+    });
+    expect(forged.status).toBe(403);
+    expect(app.db.query("SELECT count(*) AS n FROM thought").get()).toEqual({ n: 1 });
+  });
+
+  test("a person with no apps can still send to the forge, and a day-old thought leaves the feed", async () => {
+    const empty = await get("/", bobCookie).then((r) => r.text());
+    expect(empty).toContain('name="app" value="forge"');
+    expect(empty).toContain("No apps yet");
+    const old = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    app.db
+      .query("INSERT INTO thought (id, author, text, source, received_at) VALUES ('old1', ?1, 'ancient musing', 'composer', ?2)")
+      .run(bob.id, old);
+    expect(await get("/", bobCookie).then((r) => r.text())).not.toContain("ancient musing");
+    await fetch(`${servers.url}/tell`, {
+      method: "POST",
+      headers: { cookie: bobCookie, origin: servers.url },
+      body: new URLSearchParams({ app: "forge", text: "fresh musing" }),
+      redirect: "manual",
+    });
+    const after = await get("/", bobCookie).then((r) => r.text());
+    expect(after).toContain("fresh musing");
+    expect(after).not.toContain("ancient musing");
+  });
+
   test("the MCP feed answers the same posts, page by page", async () => {
     const token = createToken(app.db, alice.id, "ro", "ro").token;
     const call = async (args: unknown) => {

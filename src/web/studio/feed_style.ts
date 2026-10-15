@@ -8,6 +8,7 @@ export const feedCss = /* css */ `
 .fcard[hidden] { display: none; }
 .fcard-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .fcard-reason { margin: 8px 0 4px; font-size: 1.05em; overflow-wrap: anywhere; }
+.fcard-text { white-space: pre-wrap; }
 .fcard-who { font-weight: 600; }
 /* One quiet control under the post: say something, dismiss, mute. */
 .fcard-more summary { cursor: pointer; list-style: none; padding: 2px 0; }

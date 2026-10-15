@@ -12,6 +12,7 @@ import { mayView } from "../../core/sealed.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment } from "../../actions/issues.ts";
 import { tell } from "../../actions/tell.ts";
+import { keepThought } from "../../actions/thought.ts";
 import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
 import { revertPull, type RevertPullError } from "../../actions/revert.ts";
@@ -22,6 +23,7 @@ import type { Ctx } from "../../http/context.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { flashOrJson, flashTo } from "../layout.ts";
+import { FORGE_TARGET } from "./feed.ts";
 import { changeHref } from "./nouns.ts";
 
 /** A merge refusal in a person's words. */
@@ -94,7 +96,23 @@ export async function composerSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const [owner = "", name = "", ...extra] = field(form, "app").split("/");
+  const target = field(form, "app");
+  // "the forge" is no app: the words are kept as a thought, exactly as typed.
+  if (target === FORGE_TARGET) {
+    const kept = keepThought(ctx.app, ctx.auth.user, field(form, "text"), "composer");
+    return flashTo(
+      ctx,
+      "/",
+      kept.ok
+        ? { message: "Received." }
+        : {
+            tone: "danger",
+            message:
+              kept.error === "too_long" ? "That is too long to keep." : "That could not be kept.",
+          },
+    );
+  }
+  const [owner = "", name = "", ...extra] = target.split("/");
   const repo = extra.length === 0 ? getRepo(ctx.app.db, owner, name) : undefined;
   if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
   return tellFrom(ctx, repo, form, "/");

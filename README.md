@@ -549,6 +549,12 @@ you tap Post. Signed out, you sign in (or up) first and land on the same
 draft. The share target is the web manifest's `share_target`, which only an
 **installed PWA on Android and Chrome** offers; iOS Safari does not.
 
+The home composer's app picker also has **the forge**: that sends no tell to
+an app, it keeps what you typed as a thought, exactly as typed (works with no
+apps too). Your thoughts from the last day stand at the top of the feed as
+your own posts, marked "Received". The terminal has no feed or composer, so
+thoughts are web-only there; `POST /api/v1/thoughts` is the other way in.
+
 ## Link-preview cards
 
 `/og/repo/owner~name.svg`, `/og/app/slug.svg`, `/og/issue/owner~name~N.svg`,
