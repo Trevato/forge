@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +15,11 @@ import {
   createRun,
   getRun,
   listQueued,
+  listRuns,
 } from "../src/core/runs.ts";
+import { listPulls } from "../src/core/pulls.ts";
+import { getAgent } from "../src/core/agents.ts";
+import { workdirFor } from "../src/crew/workdir.ts";
 import { STALE_AFTER_MS } from "../src/runs/lease.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
@@ -33,7 +37,8 @@ describe("a run the last forge left running", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-interrupted-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, {
+      trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -179,7 +184,9 @@ describe("a run the last forge left running", () => {
     if (!issued.ok) throw new Error(String(issued.error));
     const issue = issued.value;
     // The word the follow-up answers: a follow-up with nothing new never starts.
-    expect(addComment(app, alice, repo, issue, "The low branches first.").ok).toBe(true);
+    expect(
+      addComment(app, alice, repo, issue, "The low branches first.").ok,
+    ).toBe(true);
     // A stand-in that never finishes on its own.
     const slow = join(dataDir, "slow-claude");
     writeFileSync(
@@ -296,6 +303,124 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Done while
       listQueued(app.db, "agent").filter((r) => r.issueId === issue.id),
     ).toHaveLength(0);
   }, 40_000);
+
+  const keptClone = async (name: string) => {
+    await crew?.stop();
+    crew = undefined;
+    const created = await createRepo(app, alice, {
+      name,
+      visibility: "private",
+    });
+    if (!created.ok) throw new Error(String(created.error));
+    const repo = created.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# meadow\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+    const issued = openIssue(app, alice, repo, { title: "Mow", body: "" });
+    if (!issued.ok) throw new Error(String(issued.error));
+    const issue = issued.value;
+    const fake = join(dataDir, "lock-claude");
+    writeFileSync(
+      fake,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+cat > /dev/null &
+echo '{"type":"system","subtype":"init","session_id":"lock-1","model":"fake"}'
+echo "mowed $(date +%s%N)" >> CREW.md
+git add -A && git commit -qm "mowed" && git push -q -u origin HEAD
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Done.","total_cost_usd":0.01,"num_turns":2,"session_id":"lock-1","terminal_reason":"completed"}'
+`,
+    );
+    chmodSync(fake, 0o755);
+    const options = {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: fake,
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+    };
+    const first = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      issueId: issue.id,
+      actorId: bot.id,
+      reason: "assigned",
+    });
+    crew = await startCrew(app, options);
+    const wait = async (id: string) => {
+      const deadline = Date.now() + 25_000;
+      while (
+        !["ok", "failed", "cancelled"].includes(getRun(app.db, id)!.state) &&
+        Date.now() < deadline
+      )
+        await Bun.sleep(100);
+      return getRun(app.db, id)!;
+    };
+    expect((await wait(first.id)).state).toBe("ok");
+
+    // The clone is kept while the pull is open; a cut-off run left a lock.
+    const agent = getAgent(app.db, bot.id)!;
+    const clone = workdirFor(app.config.dataDir, agent, repo, issue.number);
+    expect(existsSync(join(clone, ".git"))).toBe(true);
+    return { repo, issue, clone };
+  };
+
+  const followUp = async (
+    repo: Awaited<ReturnType<typeof keptClone>>["repo"],
+  ) => {
+    const pull = listPulls(app.db, repo.id)[0];
+    expect(pull).toBeDefined();
+    expect(
+      addComment(app, alice, repo, pull!, "Closer to the fence, please.").ok,
+    ).toBe(true);
+    const deadline = Date.now() + 25_000;
+    let next;
+    while (Date.now() < deadline) {
+      next = listRuns(app.db, repo.id, { issueId: pull!.id })[0];
+      if (next && ["ok", "failed", "cancelled"].includes(next.state)) break;
+      await Bun.sleep(100);
+    }
+    expect(next).toBeDefined();
+    return next!;
+  };
+
+  test("a kept clone with a stale git lock resumes cleanly and the lock is gone", async () => {
+    const { repo, clone } = await keptClone("meadow");
+    const lock = join(clone, ".git", "config.lock");
+    writeFileSync(lock, "");
+    const old = new Date(Date.now() - 10 * 60_000);
+    utimesSync(lock, old, old);
+    const next = await followUp(repo);
+    expect(next.summary ?? "").not.toContain("checkout failed");
+    expect(existsSync(lock)).toBe(false);
+  }, 60_000);
+
+  test("a young lock that blocks checkout is recovered by a fresh clone", async () => {
+    const { repo, clone } = await keptClone("orchard");
+    const lock = join(clone, ".git", "index.lock");
+    writeFileSync(lock, "");
+    const next = await followUp(repo);
+    expect(next.state).toBe("ok");
+    expect(existsSync(lock)).toBe(false);
+  }, 60_000);
+
+  test("a young lock is not worked around when the clone holds unpushed commits", async () => {
+    const { repo, clone } = await keptClone("paddock");
+    writeFileSync(join(clone, "LOST.md"), "unpushed\n");
+    const git = (...args: string[]) =>
+      Bun.spawnSync(["git", ...args], { cwd: clone });
+    git("add", "LOST.md");
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "local");
+    writeFileSync(join(clone, ".git", "index.lock"), "");
+    const next = await followUp(repo);
+    expect(next.state).toBe("failed");
+    expect(next.summary ?? "").toContain("never pushed");
+    expect(existsSync(join(clone, "LOST.md"))).toBe(true);
+  }, 60_000);
 });
 
 describe("an issue handed to someone else", () => {
@@ -311,7 +436,8 @@ describe("an issue handed to someone else", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-reassign-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, {
+      trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

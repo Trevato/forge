@@ -473,6 +473,16 @@ out) with the steps to make the dump. No connection string to the old
 database is ever committed or read at boot. The crew proposes; a person lands — autonomy included,
 exactly as for any app (docs/APPS.md).
 
+A link can prefill the form: `/migrate?from=<host>/<owner>/<name>&crew=<agent>`.
+`from` is matched against the full host of each of your origins
+(`URL(webUrl).host`: host plus any port, lower-cased — not the display label)
+and then `/<owner>/<name>`; a match selects that repository. `crew` selects
+that agent when it exists. Either is capped (200 and 64 characters) and limited
+to ref characters; a value that matches nothing is ignored and named in one
+escaped line. The GET reads the lists the page already loads and starts nothing;
+the person still presses Migrate (POST, same-origin checked).
+(`src/web/pages/migrate-prefill.ts`)
+
 The clone runs as a job in the mirror's registry (`origins/jobs.ts`, kind
 `migrate`, owned by whoever started it — anyone else's is `not_found`).
 `/migrate/jobs/:job` refreshes until it stops, then lands on the repository
@@ -555,6 +565,7 @@ Review states and threads, on any repo:
 ```
 GET    /api/v1/repos/:o/:n/pulls/:n/review-states   the verdicts
 POST   /api/v1/repos/:o/:n/pulls/:n/review-states   {state, body?, comments?} → 201
+POST   /api/v1/repos/:o/:n/pulls/:n/approve-here   a writer lets an origin fork's current head run here → 201
 GET    /api/v1/repos/:o/:n/pulls/:n/threads         anchors + resolution
 POST   /api/v1/repos/:o/:n/pulls/:n/threads/:anchor/resolve
 DELETE /api/v1/repos/:o/:n/pulls/:n/threads/:anchor/resolve
@@ -574,6 +585,9 @@ whole review with `bad_anchor`, and the message says how an anchor is written.
 This is the one way the crew's reviewer brief posts a review.
 `GET …/pulls/:number` gains `status.reviews:
 { approved, changesRequested, required, mergeable }`.
+`GET …/pulls` and `GET …/pulls/:number` carry `mergeable` (does the head merge
+into the base's current head) and `conflicts` (the paths that stop it) on open
+pulls only; a merged or closed pull leaves both out.
 
 Repo JSON gains `origin: { originId, kind, fullName, htmlUrl, host, lastFetchAt,
 fetchError, detached, frozenSince, detachedAt } | null` — a detached mirror

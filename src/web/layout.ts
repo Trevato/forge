@@ -7,6 +7,7 @@
  * `/search`), and every dialog (a link to a real page).
  */
 
+import { protectionNotice } from "../kernel/protection.ts";
 import { askCountFor } from "./studio/asks.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
@@ -147,22 +148,6 @@ function themeMenu(active: ThemeName | undefined): Html {
   </details>`;
 }
 
-/**
- * The way to what needs you, with how many things ask the viewer — the very
- * count the home's pinned section leads with (`askCountFor`).
- */
-function asksLink(ctx: Ctx): Html {
-  if (!ctx.auth.user) return html``;
-  const count = askCountFor(ctx, ctx.auth.user);
-  return html`<a
-    class="btn"
-    data-size="sm"
-    href="/#needs-you"
-    title="${count === 0 ? "All fine" : `${count} need you`}"
-    >Asks${count === 0 ? null : pill(count, "accent")}</a
-  >`;
-}
-
 /** A whole forge for someone (`/forges/new`): any signed-in person's. */
 const NEW_FORGE: MenuItem = {
   label: "New forge",
@@ -170,9 +155,15 @@ const NEW_FORGE: MenuItem = {
   icon: "fork",
 };
 
-/** The door shows only to an admin, and only while a child still fits here. */
+/** The door shows to every person; with no room left it is disabled and says why. */
+const isPerson = (ctx: Ctx): boolean => ctx.auth.user?.kind === "user";
 const sendsForges = (ctx: Ctx): boolean =>
-  ctx.auth.user?.kind === "user" && noRoom(ctx.app) === undefined;
+  isPerson(ctx) && noRoom(ctx.app) === undefined;
+const forgeDoor = (ctx: Ctx): MenuItem[] => {
+  if (!isPerson(ctx)) return [];
+  const why = noRoom(ctx.app);
+  return [why === undefined ? NEW_FORGE : { ...NEW_FORGE, disabled: why }];
+};
 
 function newMenu(ctx: Ctx): Html {
   const items: MenuItem[] = [
@@ -180,7 +171,7 @@ function newMenu(ctx: Ctx): Html {
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
     { label: "New organization", href: "/organizations/new", icon: "users" },
-    ...(sendsForges(ctx) ? [NEW_FORGE] : []),
+    ...forgeDoor(ctx),
   ];
   return menu({
     trigger: icon("plus"),
@@ -204,7 +195,7 @@ function userMenu(ctx: Ctx, user: User, signOut: MenuItem): Html {
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
-    ...(sendsForges(ctx) ? [NEW_FORGE] : []),
+    ...forgeDoor(ctx),
     { separator: true, label: "" },
     { label: "Settings", href: "/settings", icon: "settings" },
     { label: "Access tokens", href: "/settings/tokens", icon: "key" },
@@ -273,7 +264,6 @@ const STATIC_PALETTE: PaletteItem[] = [
   { t: "Apps", h: "/apps", c: "Go to" },
   { t: "Explore", h: "/explore", c: "Go to" },
   { t: "Map", h: "/map", c: "Go to" },
-  { t: "Asks you", h: "/#needs-you", c: "Go to" },
   { t: "What you asked for", h: "/asked", c: "Go to" },
   { t: "Front page", h: "/front", c: "Go to" },
   { t: "New app", h: "/apps/new", c: "Create" },
@@ -441,9 +431,7 @@ function topbar(
       )}
       <span class="spacer"></span>
       <span class="topbar-tools">
-        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${asksLink(
-          ctx,
-        )}${themeMenu(theme)}
+        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${themeMenu(theme)}
         ${user
           ? html`<span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
                 ctx,
@@ -472,6 +460,8 @@ function topbar(
  * else gets: the one person who is asked "which version is this?".
  */
 function footer(ctx: Ctx): Html {
+  const reduced =
+    ctx.auth.user?.isAdmin === true ? protectionNotice() : undefined;
   return html`<footer class="foot">
     <span class="mark"></span>
     <span
@@ -480,6 +470,11 @@ function footer(ctx: Ctx): Html {
         ? runningLine()
         : "— your code, your machine"}</span
     >
+    ${reduced === undefined
+      ? null
+      : html`<span class="reduced" id="reduced-protection"
+          >${reduced}</span
+        >`}
     <span class="spacer"></span>
     <button
       class="btn js-only"

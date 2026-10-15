@@ -75,6 +75,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "manifest.webmanifest",
   "map",
   "mcp",
+  "contract",
   "migrate",
   "mode",
   "new",

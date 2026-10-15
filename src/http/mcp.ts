@@ -19,6 +19,8 @@
 
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
+import { changeLimit, listLimits } from "../actions/limits.ts";
+import { LIMIT_KEYS } from "../settings/limits.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
 import { watchMilestone } from "../actions/watches.ts";
 import {
@@ -37,6 +39,15 @@ import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { clientRows } from "../spawn/clients.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
+import { contextNote, parseContext } from "../actions/tell_context.ts";
+import {
+  CARD_KINDS,
+  CARD_MIME,
+  CARD_OF_TOOL,
+  CARD_SHELL,
+  CARD_URI,
+  cardFor,
+} from "../web/studio/cards.ts";
 import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
 import { readReturns, reportSpend } from "../actions/returns.ts";
 import {
@@ -57,9 +68,12 @@ import { parseTargets } from "./feed.ts";
 import { appsRuntime, envsFor } from "../apps/runtime.ts";
 import { getIssue, getIssueById, listOpenAgentPullsVisibleTo } from "../core/issues.ts";
 import { waitsForPerson } from "../crew/review.ts";
-import { getPull } from "../core/pulls.ts";
+import { attachLook } from "../actions/attach_look.ts";
+import { lookUrl } from "../core/looks.ts";
+import { getPull, pullDir, pullMergeState } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
+import { askToLiveFor } from "../web/ask_to_live.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import {
   canRead,
@@ -73,6 +87,7 @@ import { plannerDeclines } from "../crew/autonomy.ts";
 import { listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { getUsersByIds, type User } from "../core/users.ts";
+import { openapi } from "../contract/openapi.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
@@ -132,6 +147,17 @@ type Answer =
   { ok: true; value: unknown } | { ok: false; error: string; message: string };
 
 const good = (value: unknown): Answer => ({ ok: true, value });
+const attachWords = (error: string): string =>
+  ({
+    forbidden: "attaching a look is for a person who can write this app",
+    not_open: "only an open pull takes a look",
+    no_app: "this repository has no app, so its pulls have no looks",
+    bad_width: "width is phone or desktop",
+    bad_note: "say what it shows in one line, at most 200 characters (says)",
+    bad_image: "image must be a PNG or JPEG, base64, that reads",
+    too_large: "the picture is over 5 MB",
+  })[error] ?? "refused";
+
 const bad = (error: string, message: string): Answer => ({
   ok: false,
   error,
@@ -272,14 +298,41 @@ const TOOLS: readonly Tool[] = [
       "Tell an app's crew what should change. One sentence or several; the first line becomes the title. A builder is picked and starts on the crew's next tick.",
     inputSchema: {
       type: "object",
-      properties: { repo: REPO_ARG, text: { type: "string", maxLength: 8000 } },
+      properties: {
+        repo: REPO_ARG,
+        text: { type: "string", maxLength: 8000 },
+        context: {
+          type: "object",
+          description:
+            "Where this was told from, so the builder sees it: page (http/https address), run (id), commit (hex), said (the person's own words).",
+          properties: {
+            page: { type: "string" },
+            run: { type: "string" },
+            commit: { type: "string" },
+            said: { type: "string", maxLength: 2000 },
+          },
+        },
+      },
       required: ["repo", "text"],
     },
     writes: true,
     async run(ctx, user, args) {
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
-      const told = await tell(ctx.app, user, repo, str(args["text"]));
+      const where = parseContext(args["context"]);
+      if (where === null)
+        return bad(
+          "invalid",
+          "context is { page?: http(s) address, run?: id, commit?: hex, said?: words }",
+        );
+      const told = await tell(
+        ctx.app,
+        user,
+        repo,
+        str(args["text"]) === ""
+          ? ""
+          : `${str(args["text"])}${contextNote(where)}`,
+      );
       if (!told.ok)
         return bad(
           told.error,
@@ -359,6 +412,43 @@ const TOOLS: readonly Tool[] = [
     },
   },
   {
+    name: "pull",
+    description:
+      "Read a pull: its title, state and head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`). The same two fields as GET /api/v1/repos/:owner/:name/pulls/:number.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "integer", minimum: 1 },
+      },
+      required: ["repo", "number"],
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = args["number"];
+      const pull =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getPull(ctx.app.db, repo.id, n)
+          : undefined;
+      if (pull === undefined || !mayView(ctx.app.db, repo, pull, user))
+        return bad("no_such_pull", `no pull #${String(n)}`);
+      const state = await pullMergeState(
+        await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull),
+        pull,
+      );
+      return good({
+        number: pull.number,
+        title: pull.title,
+        state: pull.mergedAt !== null ? "merged" : pull.state,
+        base: pull.baseBranch,
+        head: pull.headBranch,
+        ...(state ?? {}),
+      });
+    },
+  },
+  {
     name: "edit",
     description:
       "Give an issue or a pull a new title or body: the pull whose body still says work in progress, the issue whose title no longer says what it asks. Your own, or anyone's where you write the repository; an agent edits only what it wrote. Send what changes; the other stands.",
@@ -415,12 +505,13 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_act",
     description:
-      "Act on many asks at once: dismiss, ship, close, or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`). A dry run (the default, and all a read-only token may do) changes nothing: the answer is each row's before and after and the rows refused with why. With dryRun false it acts and returns a receipt; dismiss, close and replan can be undone once (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Dismiss needs only that the ask is yours; the others are checked against your admin of each app.",
+      "Decide many asks at once (the set and the verb): dismiss or decline, ship, close (with one `reason`, written on each), mute (silence the app's repository in your own On you), or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`), or `issue:<id>` for something assigned to you. A dry run (the default, and all a read-only token may do) changes nothing: the answer is each row's before and after and the rows refused with why. With dryRun false it acts and returns a receipt; dismiss, decline, mute, close and replan can be undone once, for a day (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Dismiss needs only that the ask is yours; the others are checked against your admin of each app.",
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["dismiss", "ship", "close", "replan"] },
+        action: { type: "string", enum: ["dismiss", "decline", "mute", "ship", "close", "replan"] },
         items: { type: "array", items: { type: "string" }, maxItems: 100 },
+        reason: { type: "string", maxLength: 300 },
         dryRun: { type: "boolean" },
       },
       required: ["action", "items"],
@@ -430,8 +521,8 @@ const TOOLS: readonly Tool[] = [
     async run(ctx, user, args) {
       const answer =
         args["dryRun"] === false
-          ? await applyAsksBulk(ctx.app, user, args["action"], args["items"])
-          : previewAsksBulk(ctx.app, user, args["action"], args["items"]);
+          ? await applyAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"])
+          : previewAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"]);
       return answer.ok ? good(answer.value) : bad(answer.error.code, answer.error.message);
     },
   },
@@ -962,7 +1053,7 @@ const TOOLS: readonly Tool[] = [
       type: "object",
       properties: {
         repo: REPO_ARG,
-        members: { type: "array", items: { type: "string" }, maxItems: 100 },
+        members: { type: "array", items: { type: "string" } },
         dryRun: { type: "boolean" },
       },
       required: ["repo"],
@@ -1089,8 +1180,8 @@ const TOOLS: readonly Tool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        pinned: { type: "array", items: { type: "string" }, maxItems: 12 },
-        hidden: { type: "array", items: { type: "string" }, maxItems: 200 },
+        pinned: { type: "array", items: { type: "string" } },
+        hidden: { type: "array", items: { type: "string" } },
         weights: {
           type: "object",
           description: "What counts toward an app's place, each 0 to 10: forks, ships, use, fresh. One left out keeps what is set.",
@@ -1138,12 +1229,13 @@ const TOOLS: readonly Tool[] = [
       required: ["app"],
     },
     writes: false,
-    run(ctx, user, args) {
+    async run(ctx, user, args) {
       const repo = planRepo(ctx, user, args);
       if (isAnswer(repo)) return repo;
       const graph = repoGraph(ctx.app.db, repo.id, {
         ...sealedScope(ctx.app.db, repo, user),
       });
+      const pillars = pillarView(ctx.app.db, repo);
       return good(
         mapJson(
           repo,
@@ -1154,7 +1246,8 @@ const TOOLS: readonly Tool[] = [
             graph,
             listActiveRuns(ctx.app.db, [repo.id]),
           ),
-          pillarView(ctx.app.db, repo),
+          pillars,
+          await askToLiveFor(ctx.app, repo, pillars, user),
         ),
       );
     },
@@ -1177,14 +1270,15 @@ const TOOLS: readonly Tool[] = [
       required: ["app"],
     },
     writes: false,
-    run(ctx, user, args) {
+    async run(ctx, user, args) {
       const repo = planRepo(ctx, user, args);
       if (isAnswer(repo)) return repo;
-      if (args["issue"] === undefined) return good(milestonesJson(ctx, repo));
+      if (args["issue"] === undefined)
+        return good(await milestonesJson(ctx, repo));
       const number = args["issue"];
       const data =
         typeof number === "number" && Number.isInteger(number) && number > 0
-          ? milestoneData(ctx, repo, number)
+          ? await milestoneData(ctx, repo, number)
           : undefined;
       return data === undefined
         ? bad(
@@ -1236,7 +1330,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "limb",
     description:
-      "One action on a whole limb of the plan — a milestone and everything beneath it that only it needs. `defer` moves the limb behind the Later gate, so the crew picks none of it; `resume` brings it back, under `pillar` when you name one; `close` closes every open issue of the limb as not doing, with `reason` said on each; `undo` reverses an `operation` by its id. A dry run unless `dryRun` is false: it answers with every row before and after, what the action takes along (`taken`) and what stays because something outside the limb still waits for it (`kept`), and changes nothing. Applying and undoing take an admin token of a person who administers the app, and answer with the receipt.",
+      "One action on a whole limb of the plan — a milestone and everything beneath it that only it needs. `defer` moves the limb behind the Later gate, so the crew picks none of it; `resume` brings it back, under `pillar` when you name one; `close` closes every open issue of the limb as not doing, with `reason` said on each; `raise` and `lower` move it one place among its siblings — `under` says whose limbs when it is a limb of several, or `top` — and the crew takes ready work from the higher limb first; the dry run answers with the new `order` and the top of the ready list `before` and `after`. `undo` reverses an `operation` by its id. A dry run unless `dryRun` is false: it answers with every row before and after, what the action takes along (`taken`) and what stays because something outside the limb still waits for it (`kept`), and changes nothing. Applying and undoing take an admin token of a person who administers the app, and answer with the receipt.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1246,7 +1340,7 @@ const TOOLS: readonly Tool[] = [
           minimum: 1,
           description: "The limb: the number of its issue.",
         },
-        action: { type: "string", enum: ["defer", "resume", "close", "undo"] },
+        action: { type: "string", enum: ["defer", "resume", "close", "raise", "lower", "undo"] },
         reason: {
           type: "string",
           description: "For close: why it is not being done, in one sentence.",
@@ -1255,6 +1349,11 @@ const TOOLS: readonly Tool[] = [
           type: "string",
           description:
             "For resume: the pillar to put it back under, by name or short form; under none when absent.",
+        },
+        under: {
+          type: "string",
+          description:
+            "For raise and lower: among whose limbs — `top`, or the number of the milestone; needed only when the limb sits in several places.",
         },
         operation: {
           type: "string",
@@ -1290,11 +1389,14 @@ const TOOLS: readonly Tool[] = [
         !Number.isInteger(number) ||
         number < 1
       )
-        return bad("invalid", "give the limb's issue number and an action: defer, resume, close or undo");
+        return bad("invalid", "give the limb's issue number and an action: defer, resume, close, raise, lower or undo");
       const request = {
         action: args["action"],
         ...(typeof args["reason"] === "string" ? { reason: args["reason"] } : {}),
         ...(typeof args["pillar"] === "string" ? { pillar: args["pillar"] } : {}),
+        ...(typeof args["under"] === "string" || typeof args["under"] === "number"
+          ? { under: String(args["under"]) }
+          : {}),
       };
       if (dry) {
         const plan = previewLimb(ctx.app, user, repo, number, request);
@@ -1450,6 +1552,61 @@ const TOOLS: readonly Tool[] = [
             says: `#${issue.number} no longer waits for #${blocker.number}.`,
           })
         : bad(unlinked.error, "you need write access to plan here");
+    },
+  },
+  {
+    name: "attach_look",
+    description:
+      "Attach a look to an open pull: a PNG or JPEG (at most 5 MB, base64 in `image`) taken at a stated width, `phone` or `desktop`, with one line in `says` about what it shows. It appears beside the crew's own looks on the change's page, for people who write the app. For a person who can write the app: an agent is refused, since the crew's looks come from the preview. It plans first — `dryRun` is true unless you say false — and checks the picture.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        app: APP_ARG,
+        pull: { type: "integer", description: "The pull's number." },
+        width: { type: "string", enum: ["phone", "desktop"] },
+        says: {
+          type: "string",
+          description: "One line, at most 200 characters, saying what it shows.",
+        },
+        image: { type: "string", description: "The PNG or JPEG, base64." },
+        dryRun: {
+          type: "boolean",
+          description: "Check only (the default). Send false to attach it.",
+        },
+      },
+      required: ["app", "pull", "width", "says", "image"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const repo = planRepo(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = args["pull"];
+      const pull =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getPull(ctx.app.db, repo.id, n)
+          : undefined;
+      if (pull === undefined)
+        return bad("no_such_pull", `no pull #${String(n)}`);
+      const input = {
+        width: str(args["width"]),
+        note: str(args["says"]),
+        image: typeof args["image"] === "string" ? args["image"] : "",
+      };
+      const name = `${repo.ownerName}/${repo.name}#${pull.number}`;
+      const dry = args["dryRun"] !== false;
+      const attached = attachLook(ctx.app, user, repo, pull, input, dry);
+      if (!attached.ok) return bad(attached.error, attachWords(attached.error));
+      if (dry)
+        return good({
+          says: `Would attach a ${input.width} look to ${name}. Nothing changed; send dryRun: false to do it.`,
+          dryRun: true,
+        });
+      return good({
+        says: `Attached a ${input.width} look to ${name}.`,
+        url: lookUrl(`/${repo.ownerName}/${repo.name}`, attached.value),
+        dryRun: false,
+      });
     },
   },
   {
@@ -1635,6 +1792,42 @@ const TOOLS: readonly Tool[] = [
       });
     },
   },
+  {
+    name: "limits",
+    description:
+      "Every limit the forge's owner can hit, with its value, bounds and the reason it is there (people per app, pins, hidden repositories, budget ceilings, daily shares, sign-in attempts, crew and check concurrency). Without `key`, each limit and the recent changes. With `key` and `value` (\"\" goes back to the default), the change it would make; with dryRun false, made, by a forge admin with an admin-scope token, never an agent. Honoured by the next use, never by a restart. The same as /admin/limits and /api/v1/admin/limits.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        key: { type: "string", enum: [...LIMIT_KEYS] },
+        value: { type: "string", maxLength: 16 },
+        dryRun: { type: "boolean", description: "Plan only (the default). Send false to change it." },
+      },
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const listed = listLimits(ctx.app, user);
+      if (!listed.ok) return bad("not_found", "no such tool here");
+      const key = typeof args["key"] === "string" ? args["key"] : undefined;
+      if (key === undefined) return good(listed.value);
+      const value = typeof args["value"] === "string" ? args["value"] : "";
+      const now = listed.value.limits.find((l) => l.key === key);
+      if (now === undefined) return bad("no_such_limit", `no limit ${key}`);
+      if (args["dryRun"] !== false)
+        return good({
+          says: `Would set ${key} from ${now.value} to ${value || `its default, ${now.defaultValue}`}. Send dryRun: false to change it.`,
+        });
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing the forge's limits needs an admin-scope token");
+      const changed = changeLimit(ctx.app, user, key, value === "" ? null : value);
+      if (!changed.ok) return bad(changed.error.kind, changed.error.kind === "out_of_bounds" ? changed.error.message : "no such limit");
+      return good({
+        says: `${key}: ${changed.value.from} → ${changed.value.to}, from the next use on.`,
+        ...changed.value,
+      });
+    },
+  },
 ];
 
 /**
@@ -1649,6 +1842,12 @@ function adminNote(ctx: Ctx, user: User): string {
       ? " Daily work belongs on an everyday account, apart from admin."
       : ` Daily work belongs on ${daily.username}, their everyday account.`
   }`;
+}
+
+/** A card's model beside the text, for a host that draws `ui://` resources. */
+function cardResult(name: string, value: unknown): Record<string, unknown> {
+  const card = cardFor(name, value);
+  return card === undefined ? {} : { structuredContent: { card } };
 }
 
 function rpcOne(
@@ -1682,7 +1881,7 @@ function rpcOne(
         protocolVersion: (PROTOCOLS as readonly string[]).includes(asked)
           ? asked
           : PROTOCOLS[0],
-        capabilities: { tools: {} },
+        capabilities: { tools: {}, resources: {} },
         serverInfo: server(),
         instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options.${adminNote(ctx, user)}`,
       });
@@ -1697,10 +1896,33 @@ function rpcOne(
             description: t.description,
             inputSchema: t.inputSchema,
             annotations: { readOnlyHint: !t.writes },
+            ...(CARD_OF_TOOL[t.name] === undefined
+              ? {}
+              : {
+                  _meta: {
+                    ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) },
+                  },
+                }),
           })),
           REPORT_TOOL,
         ],
       });
+    case "resources/list":
+      return reply({
+        resources: CARD_KINDS.map((k) => ({
+          uri: CARD_URI(k),
+          name: `forge-${k}-card`,
+          mimeType: CARD_MIME,
+        })),
+      });
+    case "resources/read": {
+      const uri = str(params["uri"]);
+      const kind = CARD_KINDS.find((k) => CARD_URI(k) === uri);
+      if (kind === undefined) return refuse(-32002, `no resource ${uri}`);
+      return reply({
+        contents: [{ uri, mimeType: CARD_MIME, text: CARD_SHELL(kind) }],
+      });
+    }
     case "tools/call": {
       const tool = TOOLS.find((t) => t.name === params["name"]);
       if (tool === undefined)
@@ -1722,6 +1944,7 @@ function rpcOne(
           answer.ok
             ? {
                 content: [{ type: "text", text: JSON.stringify(answer.value) }],
+                ...cardResult(String(params["name"]), answer.value),
               }
             : {
                 content: [
@@ -1881,4 +2104,10 @@ export function mcpRoutes(router: Router<Handler>): void {
   // for a proxy to cut.
   router.add("GET", "/mcp", () => NOT_HERE("POST"));
   router.add("DELETE", "/mcp", () => NOT_HERE("POST"));
+  // The public API as OpenAPI, for any client that reads it.
+  router.add("GET", "/contract/openapi.json", (ctx) =>
+    json(openapi(ctx.url.origin, running().version), 200, {
+      "cache-control": "public, max-age=300",
+    }),
+  );
 }

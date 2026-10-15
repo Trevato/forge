@@ -14,12 +14,12 @@
     }
   },
   "check": {
-    "fast": "node --max-old-space-size=1024 ./node_modules/typescript/lib/tsc.js --noEmit && FORGE_CHECK_SHARDS=1 bun scripts/test-shards.ts --timeout 60000 --tier fast --diff $FORGE_CHECK_BASE..HEAD --learned \"$FORGE_CHECK_LEARNED\"",
-    "run": "node --max-old-space-size=1024 ./node_modules/typescript/lib/tsc.js --noEmit && FORGE_CHECK_SHARDS=1 bun scripts/test-shards.ts --timeout 60000 --gate",
+    "fast": "node --max-old-space-size=1024 ./node_modules/typescript/lib/tsc.js --noEmit && bun scripts/test-shards.ts --timeout 60000 --tier fast --diff $FORGE_CHECK_BASE..HEAD --learned \"$FORGE_CHECK_LEARNED\"",
+    "run": "node --max-old-space-size=1024 ./node_modules/typescript/lib/tsc.js --noEmit && bun scripts/test-shards.ts --timeout 60000 --gate --impact",
     "timeout": 7200,
     "limits": {
-      "memory": 4096,
-      "cpus": 4,
+      "memory": 8192,
+      "cpus": 8,
       "disk": 8192
     }
   }

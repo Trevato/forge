@@ -20,6 +20,7 @@ import {
   setIssueStateThrough,
 } from "../../actions/issues.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
+import { alreadyDone } from "../../core/done_on_main.ts";
 import { getIssue, type Issue, type Label } from "../../core/issues.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { IssueDetail, RepoSource } from "../../view/source.ts";
@@ -52,6 +53,13 @@ import { local, localRepo, whereRows, whereStrip } from "./where.ts";
 /** The crew card shows this many runs before it scrolls. */
 const CREW_ROWS = 4;
 
+/** The status-line tail for an issue the crew found done on main. */
+export function doneText(commits: readonly string[], canClose: boolean): string {
+  if (commits.length === 0) return "";
+  const shas = commits.map((o) => o.slice(0, 7)).join(", ");
+  return ` · done on main in ${shas}${canClose ? ", x to close" : ""}`;
+}
+
 export function issueScreen(
   f: Session,
   ctx: Ctx,
@@ -68,6 +76,8 @@ export function issueScreen(
   const repo = localRepo(src);
   /** The local row — who it is assigned to. Undefined on a live browse. */
   let issueRow: Issue | undefined;
+  /** The commits the crew found this issue done by on main; `x` closes it. */
+  let doneBy: readonly string[] = [];
   /** What the crew has done here, newest first; a card when there is any. */
   const crew = new RunList(f);
   /** Which pane `j`/`k`/`enter` belong to; `tab` moves between them. */
@@ -92,6 +102,10 @@ export function issueScreen(
             issueId: issueRow.id,
             limit: 50,
           });
+    doneBy =
+      issueRow?.state === "open"
+        ? (alreadyDone(f.db, [issueRow.id]).get(issueRow.id) ?? [])
+        : [];
     crew.set(runs !== undefined && runs.ok ? runs.value : []);
     if (crew.runs.length === 0) focus = "thread";
     width = 0;
@@ -259,7 +273,7 @@ export function issueScreen(
         x,
         head!.y + 1,
         truncate(
-          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(detail.comments.length, "comment")}${assignedText(issueRow, ctx.icons)}`,
+          ` ${issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)} · ${plural(detail.comments.length, "comment")}${assignedText(issueRow, ctx.icons)}${doneText(doneBy, mayWrite())}`,
           Math.max(0, right - x),
         ),
         style(c.mutedFg, c.bg),

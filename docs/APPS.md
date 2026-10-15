@@ -124,6 +124,12 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    follows the same rule: its environments' state and errors (`envsFor`),
    its runs and their logs (`mayReadRuns`) and its run and serving events
    reach only those who may enter it.
+   On any repository, public too, a run's **log** (the agent's
+   transcript, a deploy's output) is read only by its writers and crew
+   (`mayReadRunLog`); a stranger reads the run and its summary, not the
+   log, on the page, the API and the live tails (#1075). Check runs share
+   the rule: on a public repository the author of a pull from outside it
+   reads a failed check's summary, not its output.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never
@@ -225,6 +231,16 @@ that before the deploy fails; `tty` is the app's terminal interface (below);
 file is read from the commit being deployed, never from the database — a
 pull that changes how the app runs is previewed the way it will run.
 
+`toolbar`, at the top level, is `true` unless you set it to `false`. The
+forge adds one `<script>` tag to the HTML pages your app serves (before
+`</body>`, or at the end): a small pill in the bottom-right corner, collapsed
+until pressed, drawn in a shadow root so it never touches your styles. The
+script comes from the forge's own origin, immutable-cached, with no inline
+code; a `Content-Security-Policy` that forbids it just leaves the pill out.
+Only `text/html` responses the app sends uncompressed with a `Content-Length`
+(up to 4 MiB) are rewritten; JSON, images, compressed or chunked HTML and
+`HEAD` requests pass through byte for byte. `"toolbar": false` keeps it out.
+
 Two more fields say what the app's code may use (rule 9):
 
 ```json
@@ -244,6 +260,11 @@ reach `registry.npmjs.org`. `limits` (MiB, cores, MiB) default to 512 MiB,
 are capped by the machine (`FORGE_CELL_MEMORY_MAX_MIB`, default 4096; the
 number of cores; `FORGE_CELL_DISK_MAX_MIB`, default 16384). A cell's `/tmp`
 holds at most 256 MiB.
+
+Where the host cannot hold cells (or the crew's shell sandbox), the forge
+runs uncontained and says so in one line: a boot warning, and, in the foot of
+every page a site admin reads, `Reduced protection: apps (<reason>) runs
+uncontained.` (`kernel/protection.ts`). A fully protected forge shows nothing.
 
 A release that turns egress on must not break an app whose writers have
 not declared what it uses yet, so the operator can start it reported:
@@ -753,6 +774,16 @@ its pull closes. Files live under `<data>/looks/<app id>/<env>/`; rows in
 `look`. The browser is `chromium` (or `chromium-browser`, `google-chrome`)
 on `PATH`, `FORGE_CHROMIUM`, or the Mac's own; the image ships one. A forge
 without one says so once at boot, and on every pull.
+**A look a person attaches.** A person who can write the app (an agent
+cannot; the crew's looks come from the preview) attaches a picture to an
+open pull: `POST /api/v1/repos/:owner/:name/pulls/:number/looks` with JSON
+`{width: "phone"|"desktop", says: "one line", image: "<base64 PNG or JPEG>"}`,
+at most 5 MB, or the MCP `attach_look`. It is read as bytes (a PNG or JPEG
+that parses, nothing else), kept under the preview's folder at the pull's
+head, and shown in the Look card beside the crew's, to the writers only.
+It stays when the head moves on and goes with the preview when the pull
+closes.
+
 
 ## The crew
 
@@ -1056,6 +1087,11 @@ the data directory `FORGE_APP_DATA`, and the defaults become
 `FORGE_SSH_PORT=0`, `FORGE_CREW_CONCURRENCY=1` and
 `FORGE_APP_DOMAIN=--<its own host>`.
 
+Every limit an owner can hit (crew runs and checks at once, budget
+ceilings, per-account caps, sign-in rates) is listed with its value and its
+reason under **Settings → Limits** (`/admin/limits`, forge admin only),
+declared in `settings/limits.ts` and read on every use.
+
 Four of these are the forge's capacity and change while it runs: crew runs
 at once, checks at once, shards per check, and the cells' egress mode. A
 forge admin sets them under **Settings → Capacity**, through
@@ -1086,3 +1122,14 @@ refused), `placement` (`"metal"` or `"cloud"`, optional) and `volumes`
 sync cadence in seconds, 10–86400). `src/apps/service.ts` validates it; the
 manifest carries it as `service`, `null` for a web app. Running it, exposing
 the ports and syncing volumes are not built yet (issue #391).
+
+## The forge as an OpenID Connect provider
+
+Discovery is at `/.well-known/openid-configuration`. Register a client at
+`/oauth/register`, send a person to `/oauth/authorize` with `scope=openid`
+(optionally `profile email`), a `nonce`, and a PKCE S256 challenge. The
+`/oauth/token` answer carries an `id_token` (ES256) beside the ordinary
+ro/rw access token — the same grant, not a second credential. Present that
+access token to `/oauth/userinfo` for the claims. `/oauth/jwks` publishes the
+current signing key and the previous one; keys rotate every 30 days and live
+in the database, never in the repository.

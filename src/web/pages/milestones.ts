@@ -17,13 +17,25 @@ import {
   type LeafState,
   type Limb,
   type Milestone,
+  type Plan,
 } from "../../core/milestones.ts";
+import type { Database } from "bun:sqlite";
+import { parseSeat, seating } from "../../core/limb_seats.ts";
+import type { Issue } from "../../core/issues.ts";
+import type { User } from "../../core/users.ts";
 import type { LimbAction } from "../../actions/limbs.ts";
-import { isStructural, PILLAR_DAYS, pillarsOf } from "../../core/pillars.ts";
+import {
+  type AskToLive,
+  isStructural,
+  PILLAR_DAYS,
+  pillarsOf,
+  pillarView,
+} from "../../core/pillars.ts";
 import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { isWatching } from "../../core/watches.ts";
 import { watchMilestone } from "../../actions/watches.ts";
 import type { Ctx } from "../../http/context.ts";
+import { askToLiveFor } from "../ask_to_live.ts";
 import {
   crumbsFor,
   loadRepo,
@@ -36,6 +48,7 @@ import {
 import { html, when, type Html } from "../html.ts";
 import { field, readForm } from "../form.ts";
 import { page, redirect } from "../layout.ts";
+import { liveClientJs, liveMount } from "../live.ts";
 import { btn, time } from "../ui.ts";
 
 /** Where a milestone is: its own page. */
@@ -47,7 +60,53 @@ export const limbHref = (
   base: string,
   number: number,
   action: LimbAction,
-): string => `${milestoneHref(base, number)}/limb?action=${action}`;
+  under?: string,
+): string =>
+  `${milestoneHref(base, number)}/limb?action=${action}${under === undefined ? "" : `&under=${under}`}`;
+
+/**
+ * Raise and Lower for a limb among its siblings in one group (`top`, or a
+ * milestone's number): only the moves that change something, and nothing
+ * at all where it has no sibling. For whoever administers the repository.
+ */
+type Mover = ((limb: Issue, group: string) => Html | null) & {
+  /** The first group a limb sits in, for its own page. */
+  homeOf(limb: Issue): string | undefined;
+};
+
+function moverFor(
+  db: Database,
+  repo: Repo,
+  viewer: User | undefined,
+  read: Plan["read"],
+): Mover | undefined {
+  if (!canAdmin(db, repo, viewer)) return undefined;
+  const seats = seating(db, repo, read);
+  const base = repoBase(repo);
+  const at = (limb: Issue, group: string) => {
+    const seat = seats
+      .of(limb.id)
+      .flatMap((s) => parseSeat(s) ?? [])
+      .find((s) => s.group === group);
+    if (seat === undefined || seats.size(group) < 2) return null;
+    const up = seat.place > 1;
+    const down = seat.place < seats.size(group);
+    return html`<span class="ms-move small"
+      >${up
+        ? html`<a href="${limbHref(base, limb.number, "raise", group)}"
+            >Raise</a
+          >`
+        : null}${down
+        ? html`<a href="${limbHref(base, limb.number, "lower", group)}"
+            >Lower</a
+          >`
+        : null}</span
+    >`;
+  };
+  return Object.assign(at, {
+    homeOf: (limb: Issue) => parseSeat(seats.of(limb.id)[0])?.group,
+  });
+}
 
 /**
  * The actions on a whole limb, for whoever administers the repository:
@@ -60,10 +119,12 @@ function limbActions(
   m: Milestone,
   furniture: boolean,
   lead: Html | null,
+  move: Html | null,
 ): Html {
   const number = m.issue.number;
   return html`<p class="bar ms-actions" id="limb-actions">
     ${lead}
+    ${move}
     ${furniture
       ? null
       : m.deferred
@@ -101,7 +162,7 @@ function weightWords(limb: Limb): Html {
 }
 
 /** One limb as one line: a link to it, how far it is, and its weight. */
-function limbLine(base: string, limb: Limb): Html {
+function limbLine(base: string, limb: Limb, move: Html | null = null): Html {
   const w = limb.weight;
   return html`<li class="ms-limb" data-trim="${limb.trim === undefined ? "no" : "yes"}">
     <a class="ms-name" href="${milestoneHref(base, limb.issue.number)}"
@@ -120,6 +181,7 @@ function limbLine(base: string, limb: Limb): Html {
       (why) =>
         html`<span class="ms-trim small">A candidate to trim: ${why}.</span>`,
     )}
+    ${move}
   </li>`;
 }
 
@@ -131,6 +193,7 @@ export function milestonesPage(ctx: Ctx): Response {
     spend: canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user),
   });
   const base = repoBase(repo);
+  const move = moverFor(ctx.app.db, repo, ctx.auth.user, plan.read);
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Milestones</h1>
@@ -145,8 +208,9 @@ export function milestonesPage(ctx: Ctx): Response {
           show. <a href="${base}/map">See the map</a>.
         </p>`
       : html`<ul class="ms-limbs" id="ms-limbs">
-          ${plan.limbs.map((limb) => limbLine(base, limb))}
-        </ul>`}`;
+          ${plan.limbs.map((limb) => limbLine(base, limb, move?.(limb.issue, "top") ?? null))}
+        </ul>`}
+    ${liveMount({ repo: base })}`;
   return page({
     ctx,
     title: `Milestones · ${repo.name}`,
@@ -154,6 +218,7 @@ export function milestonesPage(ctx: Ctx): Response {
     palette: repoPalette(ctx, repo),
     body,
     styleCss: milestonesCss,
+    scriptJs: liveClientJs,
   });
 }
 
@@ -208,6 +273,7 @@ function milestoneBody(
   m: Milestone,
   names: boolean,
   actions: Html | null,
+  move?: Mover,
 ): Html {
   const base = repoBase(repo);
   const issue = (number: number, title: string): Html =>
@@ -257,7 +323,9 @@ function milestoneBody(
         html`<section class="ms-section" id="ms-limbs">
           <h2>Limbs</h2>
           <ul class="ms-limbs">
-            ${m.limbs.map((limb) => limbLine(base, limb))}
+            ${m.limbs.map((limb) =>
+              limbLine(base, limb, move?.(limb.issue, String(m.issue.number)) ?? null),
+            )}
           </ul>
         </section>`,
     )}
@@ -378,10 +446,11 @@ export function milestonePage(ctx: Ctx): Response {
   if (!repo) return notFoundPage(ctx);
   const number = Number(ctx.params.number);
   const owner = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
-  const milestone = Number.isInteger(number)
-    ? readPlan(ctx.app.db, repo, { spend: owner }).milestone(number)
+  const plan = Number.isInteger(number)
+    ? readPlan(ctx.app.db, repo, { spend: owner })
     : undefined;
-  if (milestone === undefined) return notFoundPage(ctx);
+  const milestone = plan?.milestone(number);
+  if (plan === undefined || milestone === undefined) return notFoundPage(ctx);
   const viewer = ctx.auth.user;
   // Watch is each person's own; acting on the whole limb is for whoever
   // administers the repository. One row, Watch first.
@@ -393,12 +462,16 @@ export function milestonePage(ctx: Ctx): Response {
           isWatching(ctx.app.db, viewer.id, milestone.issue.id),
         )
       : null;
+  const move = moverFor(ctx.app.db, repo, viewer, plan.read);
+  // Its own place: among the limbs of whichever milestone holds it first.
+  const seat = move?.homeOf(milestone.issue);
   const actions = canAdmin(ctx.app.db, repo, ctx.auth.user)
     ? limbActions(
         repoBase(repo),
         milestone,
         isStructural(pillarsOf(ctx.app.db, repo), milestone.issue.id),
         watch,
+        seat === undefined ? null : (move?.(milestone.issue, seat) ?? null),
       )
     : watch === null
       ? null
@@ -409,8 +482,10 @@ export function milestonePage(ctx: Ctx): Response {
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body: html`${repoHeader(ctx, repo, "map")}
-    ${milestoneBody(repo, milestone, owner, actions)}`,
+    ${milestoneBody(repo, milestone, owner, actions, move)}
+    ${liveMount({ repo: repoBase(repo) })}`,
     styleCss: milestonesCss,
+    scriptJs: liveClientJs,
   });
 }
 
@@ -437,25 +512,53 @@ export async function milestoneWatch(ctx: Ctx): Promise<Response> {
 }
 
 /** The plan's limbs as data: `GET /api/v1/repos/:owner/:name/milestones`, and the MCP's `milestones`. */
-export function milestonesJson(
+export async function milestonesJson(
   ctx: Ctx,
   repo: Repo,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   const plan = readPlan(ctx.app.db, repo, {
     spend: canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user),
   });
+  const ask = await askByUmbrella(ctx, repo);
   return {
     repo: { owner: repo.ownerName, name: repo.name },
-    limbs: plan.limbs.map(limbJson),
+    limbs: plan.limbs.map((limb) => ({
+      ...limbJson(limb),
+      ...askOf(ask, limb.issue.number),
+    })),
   };
 }
 
+/** Each pillar's ask-to-live, by its umbrella's number: what its limb shows too. */
+async function askByUmbrella(
+  ctx: Ctx,
+  repo: Repo,
+  only?: number,
+): Promise<Map<number, AskToLive | null>> {
+  const out = new Map<number, AskToLive | null>();
+  const view = pillarView(ctx.app.db, repo);
+  if (view === undefined) return out;
+  // A milestone that is no pillar's umbrella has none: ask git for nothing.
+  if (only !== undefined && !view.set.pillars.some((p) => p.umbrella.number === only))
+    return out;
+  const ask = await askToLiveFor(ctx.app, repo, view, ctx.auth.user);
+  for (const pillar of view.set.pillars)
+    out.set(
+      pillar.umbrella.number,
+      ask.find((a) => a.pillar === pillar.name)?.askToLive ?? null,
+    );
+  return out;
+}
+
+const askOf = (ask: Map<number, AskToLive | null>, number: number) =>
+  ask.has(number) ? { askToLive: ask.get(number) } : {};
+
 /** One milestone as data, or nothing for an issue that waits for nothing. */
-export function milestoneData(
+export async function milestoneData(
   ctx: Ctx,
   repo: Repo,
   number: number,
-): Record<string, unknown> | undefined {
+): Promise<Record<string, unknown> | undefined> {
   const owner = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
   const milestone = readPlan(ctx.app.db, repo, { spend: owner }).milestone(
     number,
@@ -466,6 +569,7 @@ export function milestoneData(
     : {
         repo: { owner: repo.ownerName, name: repo.name },
         ...milestoneJson(milestone, owner),
+        ...askOf(await askByUmbrella(ctx, repo, number), number),
         // Whether the caller watches it; a caller who cannot has no answer.
         ...(viewer?.kind === "user"
           ? {
@@ -492,6 +596,7 @@ export const milestonesCss = /* css */ `
 .ms-top h1, .ms-top p { margin: 0; }
 .ms-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .ms-actions { margin-top: 4px; }
+.ms-move { grid-column: 1 / -1; display: flex; gap: 14px; }
 .ms-section { margin-top: 22px; }
 .ms-section h2 { font-size: 13px; margin: 0 0 6px; }
 .ms-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }

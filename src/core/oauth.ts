@@ -7,7 +7,9 @@ import type { Database } from "bun:sqlite";
 import { sha256 } from "../kernel/hash.ts";
 import { id, secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { NONCE_MAX, oidcScopes, recordGrant, signIdToken } from "./oidc.ts";
 import { createToken } from "./tokens.ts";
+import { getUserById, isActive } from "./users.ts";
 
 export const NAME_MAX = 100;
 export const REDIRECTS_MAX = 10;
@@ -158,6 +160,9 @@ export interface AuthRequest {
   readonly challenge: string;
   readonly state: string;
   readonly scope: OAuthScope;
+  /** `openid` and the OIDC scopes asked with it; empty for a plain OAuth grant. */
+  readonly oidcScopes: readonly string[];
+  readonly nonce: string;
 }
 
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
@@ -189,7 +194,19 @@ export function parseAuthRequest(
   const state = get("state");
   if (state.length > STATE_MAX) return err("The state is too long.");
   const asked = get("scope").split(/\s+/).find(isOAuthScope);
-  return ok({ client, redirectUri, challenge, state, scope: asked ?? "ro" });
+  const oidc = oidcScopes(get("scope"));
+  const openid = oidc.includes("openid");
+  const nonce = get("nonce");
+  if (nonce.length > NONCE_MAX) return err("The nonce is too long.");
+  return ok({
+    client,
+    redirectUri,
+    challenge,
+    state,
+    scope: asked ?? "ro",
+    oidcScopes: openid ? oidc : [],
+    nonce: openid ? nonce : "",
+  });
 }
 
 /** The name a person gave a token: plain text, bounded, never empty. */
@@ -219,8 +236,8 @@ export function issueCode(
 ): string {
   const code = secret();
   db.query(
-    `INSERT INTO oauth_code (code_hash, client_id, user_id, redirect_uri, challenge, scope, name, lifetime_s, expires_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+    `INSERT INTO oauth_code (code_hash, client_id, user_id, redirect_uri, challenge, scope, name, lifetime_s, expires_at, oidc_scopes, nonce)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
   ).run(
     sha256(code),
     request.client.id,
@@ -231,6 +248,8 @@ export function issueCode(
     grant.name,
     grant.lifetimeS,
     new Date(Date.now() + CODE_TTL_MS).toISOString(),
+    request.oidcScopes.join(" "),
+    request.nonce,
   );
   db.query("DELETE FROM oauth_code WHERE expires_at <= ?1").run(
     new Date().toISOString(),
@@ -243,6 +262,8 @@ export interface Minted {
   readonly scope: OAuthScope;
   /** Seconds the token lives, or null for one that does not expire. */
   readonly expiresIn: number | null;
+  /** The signed id_token, when the grant was an OpenID one. */
+  readonly idToken?: string;
 }
 
 /**
@@ -250,15 +271,17 @@ export interface Minted {
  * decided, so a replay, a wrong verifier or a wrong redirect all find it
  * gone: one try per code. Every refusal is `invalid_grant`.
  */
-export function redeemCode(
+export async function redeemCode(
   db: Database,
+  dataDir: string,
   input: {
     code: string;
     clientId: string;
     redirectUri: string;
     verifier: string;
+    issuer: string;
   },
-): Result<Minted, "invalid_grant"> {
+): Promise<Result<Minted, "invalid_grant">> {
   const row = db
     .query<
       {
@@ -270,6 +293,8 @@ export function redeemCode(
         name: string;
         lifetime_s: number | null;
         expires_at: string;
+        oidc_scopes: string;
+        nonce: string;
       },
       [string]
     >("DELETE FROM oauth_code WHERE code_hash = ?1 RETURNING *")
@@ -283,10 +308,23 @@ export function redeemCode(
     .update(input.verifier)
     .digest("base64url");
   if (digest !== row.challenge) return err("invalid_grant");
+  const user = getUserById(db, row.user_id);
+  if (user === null || user === undefined || !isActive(user)) return err("invalid_grant");
   const minted = createToken(db, row.user_id, row.name, row.scope, {
     ...(row.lifetime_s === null
       ? {}
       : { expiresAt: new Date(Date.now() + row.lifetime_s * 1000).toISOString() }),
   });
-  return ok({ token: minted.token, scope: row.scope, expiresIn: row.lifetime_s });
+  const scopes = row.oidc_scopes === "" ? [] : row.oidc_scopes.split(" ");
+  if (scopes.length === 0)
+    return ok({ token: minted.token, scope: row.scope, expiresIn: row.lifetime_s });
+  recordGrant(db, minted.id, scopes);
+  const idToken = await signIdToken(db, dataDir, {
+    issuer: input.issuer,
+    clientId: row.client_id,
+    user,
+    scopes,
+    nonce: row.nonce,
+  });
+  return ok({ token: minted.token, scope: row.scope, expiresIn: row.lifetime_s, idToken });
 }

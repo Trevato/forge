@@ -1578,6 +1578,59 @@ export const migrations: readonly string[] = [
     expires_at    TEXT NOT NULL
   );
   `,
+  // 74 — a look a person attached to a pull (#1066): who, and the one line
+  // saying what it shows. Both null for a look the forge took itself.
+  `
+  ALTER TABLE look ADD COLUMN attached_by TEXT;
+  ALTER TABLE look ADD COLUMN note TEXT;
+  `,
+  // 75 — a limb's place among its siblings (#1064), set by a person. `parent_id`
+  // is the issue whose limbs these are, or '' for the top of the plan.
+  `
+  CREATE TABLE limb_place (
+    repo_id   TEXT NOT NULL REFERENCES repo(id) ON DELETE CASCADE,
+    parent_id TEXT NOT NULL,
+    issue_id  TEXT NOT NULL,
+    place     INTEGER NOT NULL,
+    PRIMARY KEY (repo_id, parent_id, issue_id)
+  );
+  `,
+  // 76 — the sentinel's memory (#1131): each hunt, and each finding with the
+  // issue it became, so a fault is filed once and a returning one is told
+  // apart from one that never left.
+  `
+  CREATE TABLE IF NOT EXISTS sentinel_hunt (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    at    TEXT NOT NULL,
+    found INTEGER NOT NULL,
+    filed INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS sentinel_finding (
+    key        TEXT NOT NULL,
+    issue_id   TEXT NOT NULL REFERENCES issue(id) ON DELETE CASCADE,
+    evidence   TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen  TEXT NOT NULL,
+    PRIMARY KEY (key, issue_id)
+  );
+  `,
+  // 77 — OpenID Connect over the same grant (#1459): the nonce and OIDC
+  // scopes a consent carried, the signing keys (current and previous), and
+  // which access tokens came from an OpenID grant, for /oauth/userinfo.
+  `
+  ALTER TABLE oauth_code ADD COLUMN oidc_scopes TEXT NOT NULL DEFAULT '';
+  ALTER TABLE oauth_code ADD COLUMN nonce TEXT NOT NULL DEFAULT '';
+  CREATE TABLE oidc_key (
+    kid         TEXT PRIMARY KEY,
+    private_jwk TEXT NOT NULL,
+    public_jwk  TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+  );
+  CREATE TABLE oidc_token (
+    token_id TEXT PRIMARY KEY REFERENCES token(id) ON DELETE CASCADE,
+    scopes   TEXT NOT NULL
+  );
+  `,
 ];
 
 /**

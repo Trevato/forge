@@ -194,7 +194,8 @@ function previewsPanel(
  * Once the deploy has swapped in, the lines are the app's own — never the
  * deploy's, whose word (`envPhrase`) has already moved on to "live" — and
  * an app's stdout can carry anything the owner never meant for a stranger,
- * so only a viewer who can see the owner's facts is shown it at all.
+ * so only a viewer who can see the owner's facts is shown it at all —
+ * a deploy's too, as it is a log (`mayReadRunLog`).
  */
 function productionTail(
   ctx: Ctx,
@@ -206,7 +207,7 @@ function productionTail(
   if (production === undefined || production.runId === undefined) return none;
   const deploying = production.state === "deploying";
   if (!deploying && production.state !== "running") return none;
-  if (!deploying && !writer) return none;
+  if (!writer) return none;
   const agentBusy = listRuns(ctx.app.db, repo.id, {
     kind: "agent",
     limit: 8,

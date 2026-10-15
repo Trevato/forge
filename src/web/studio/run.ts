@@ -66,6 +66,7 @@ export async function runView(
   run: Run,
   lines: readonly string[],
   truncated: boolean,
+  logHidden = false,
 ): Promise<Response> {
   const db = ctx.app.db;
   const base = repoBase(repo);
@@ -204,6 +205,13 @@ export async function runView(
     )}
     ${when(pull, (p) => previewCard(ctx, repo, p))}
     ${when(
+      logHidden,
+      () =>
+        html`<p class="muted small" id="run-log-hidden">
+          The log is for this repository's writers and crew.
+        </p>`,
+    )}
+    ${when(
       truncated,
       () =>
         html`<p class="muted small mb">
@@ -211,14 +219,14 @@ export async function runView(
         </p>`,
     )}
     ${when(
-      lines.length === 0,
+      lines.length === 0 && !logHidden,
       () =>
         html`<p class="muted small" id="run-empty">
           Nothing has been logged yet.
         </p>`,
     )}
     <div class="run-live" id="run-live" data-state="${run.state}">
-      ${logBox({
+      ${when(!logHidden, () => logBox({
         id: "run-log",
         who,
         cap: all
@@ -232,7 +240,7 @@ export async function runView(
         extra: html`<button type="button" class="run-jump" id="run-jump" hidden>
           newer below
         </button>`,
-      })}
+      }))}
       ${when(
         run.kind === "agent",
         () => html`<p class="muted small crew-note">${directionNote(repo)}</p>`,

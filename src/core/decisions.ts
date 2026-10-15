@@ -291,3 +291,19 @@ export function listDecidedIn(
     .all(limit, ...repoIds)
     .map(toDecision);
 }
+
+/** The decisions of one kind made since a moment, across every repository, newest first. */
+export function decisionsSince(
+  db: Database,
+  kind: DecisionKind,
+  since: string,
+  limit = 500,
+): Decision[] {
+  return db
+    .query<
+      Row,
+      [string, string, number]
+    >("SELECT * FROM decision WHERE kind = ?1 AND created_at >= ?2 ORDER BY created_at DESC, id DESC LIMIT ?3")
+    .all(kind, since, Math.min(500, Math.max(1, limit)))
+    .map(toDecision);
+}

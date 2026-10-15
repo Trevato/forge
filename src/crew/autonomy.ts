@@ -42,6 +42,7 @@ import {
 import { getHold } from "../core/holds.ts";
 import { certain } from "./decide.ts";
 import { decideAndRecord } from "./ledger.ts";
+import { sentinelTick } from "./sentinel.ts";
 import { wallOf, wallSentence } from "../contract/policy.ts";
 import {
   getIssue,
@@ -59,6 +60,7 @@ import {
   pullDir,
 } from "../core/pulls.ts";
 import {
+  canWrite,
   getRepoById,
   listAutonomousRepos,
   setDirectionIssue,
@@ -89,6 +91,8 @@ import {
   SKIP_SUMMARY,
   skipsReplan,
 } from "./guard.ts";
+import { BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
+import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
 import { interruptionOf } from "./interrupted.ts";
 import {
   PARK_NOTE,
@@ -439,6 +443,104 @@ function notPlanned(repo: Repo, why: string): false {
   return false;
 }
 
+/** Nothing landing for this long, with a pull closed unmerged, holds the planner. */
+const LANDING_WINDOW_MS = 48 * 60 * 60_000;
+/** More ready, unassigned issues than slots × this fill the plate. */
+const PLATE_PER_SLOT = 3;
+
+export type PlannerHold =
+  | { readonly kind: "nothing landed"; readonly since: string }
+  | { readonly kind: "plate full"; readonly ready: number };
+
+/** Why a hold is held, as the tick log says it. */
+export function holdWhy(hold: PlannerHold): string {
+  return hold.kind === "plate full"
+    ? `plate full (${hold.ready} ready)`
+    : `nothing landed since ${hold.since.slice(0, 10)}`;
+}
+
+/** The same reason in plain words, for the board. */
+export function holdWords(hold: PlannerHold): string {
+  if (hold.kind === "plate full")
+    return `Planning paused: ${hold.ready} issues are ready and waiting`;
+  const at = new Date(hold.since);
+  const day = at.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+  return `Planning paused: nothing has landed since ${day}`;
+}
+
+/**
+ * A word on the direction issue from someone who may write here, newer than
+ * the planner's last pass: the owner steering, which is never held.
+ */
+function steered(app: App, repo: Repo): boolean {
+  if (repo.directionIssueId === null) return false;
+  const last = app.db
+    .query<{ created_at: string }, [string]>(
+      `SELECT created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(repo.directionIssueId);
+  return app.db
+    .query<{ id: string }, [string, string]>(
+      `SELECT DISTINCT author_id AS id FROM comment
+        WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL`,
+    )
+    .all(repo.directionIssueId, last?.created_at ?? "")
+    .some((r) => {
+      const who = getUserById(app.db, r.id);
+      return who !== undefined && who.kind !== "agent" && canWrite(app.db, repo, who);
+    });
+}
+
+/**
+ * Whether the planner is held for this repository: no pull merged in 48 h
+ * while one closed unmerged, or more ready, unassigned issues than
+ * `slots × 3`. A steer from a writer on the direction issue lifts it.
+ */
+export function plannerHold(
+  app: App,
+  repo: Repo,
+  now = new Date(),
+): PlannerHold | null {
+  if (steered(app, repo)) return null;
+  const cutoff = new Date(now.getTime() - LANDING_WINDOW_MS).toISOString();
+  const merged = app.db
+    .query<{ at: string | null }, [string]>(
+      `SELECT MAX(p.merged_at) AS at FROM pull p JOIN issue i ON i.id = p.issue_id
+        WHERE i.repo_id = ?1`,
+    )
+    .get(repo.id)?.at ?? null;
+  if (merged === null || merged < cutoff) {
+    const refused = app.db
+      .query<{ n: number }, [string, string]>(
+        `SELECT COUNT(*) AS n FROM issue i JOIN pull p ON p.issue_id = i.id
+          WHERE i.repo_id = ?1 AND i.kind = 'pull' AND i.state = 'closed'
+            AND p.merged_at IS NULL AND i.closed_at >= ?2`,
+      )
+      .get(repo.id, cutoff)?.n ?? 0;
+    if (refused > 0) return { kind: "nothing landed", since: merged ?? cutoff };
+  }
+  const ready = readyNow(repoGraph(app.db, repo.id, { sealed: true })).filter(
+    (r) => r.issue.id !== repo.directionIssueId && r.issue.assigneeId === null,
+  ).length;
+  if (ready > Math.max(1, repo.autonomySlots) * PLATE_PER_SLOT)
+    return { kind: "plate full", ready };
+  return null;
+}
+
+function held(repo: Repo, why: string): false {
+  log.info("tick", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    planner: "held",
+    why,
+  });
+  return false;
+}
+
 async function planIfThin(
   app: App,
   repo: Repo,
@@ -472,6 +574,10 @@ async function planIfThin(
   if (ready >= THIN_MAP && owed.length === 0) return false;
   if (atRunCap(app, repo, direction))
     return notPlanned(repo, "parked: the direction is at its run cap");
+  // An issue the crew handed over is owed its pass whatever the hold: the
+  // planner splitting it is how work starts landing again.
+  const hold = owed.length === 0 ? plannerHold(app, repo, now) : null;
+  if (hold !== null) return held(repo, holdWhy(hold));
   if (lastPlan !== null && lastPlan !== undefined) {
     // A planner that declined the direction is not asked again until a
     // person has said something on it, or the crew hands it an issue.
@@ -551,8 +657,9 @@ function stalled(app: App, repo: Repo, issue: Issue): boolean {
   // an origin, whoever connected it (#619).
   return !app.db
     .query<{ id: string }, [string, string]>(
-      `SELECT DISTINCT author_id AS id FROM comment
-        WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL`,
+      `SELECT DISTINCT n.author_id AS id FROM comment n
+        WHERE n.issue_id = ?1 AND n.created_at > ?2 AND n.origin_author IS NULL
+          AND NOT (n.body LIKE '${DONE_LIKE}' AND ${BY_CREW})`,
     )
     .all(issue.id, last.created_at)
     .some((r) => speaksForCrew(app.db, repo, getUserById(app.db, r.id)));
@@ -595,9 +702,10 @@ function declineOf(
     return undefined;
   const spoke = db
     .query<{ id: string }, [string, string]>(
-      `SELECT DISTINCT author_id AS id FROM comment
-       WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL
-         AND body NOT LIKE 'Parked by the crew%'`,
+      `SELECT DISTINCT n.author_id AS id FROM comment n
+       WHERE n.issue_id = ?1 AND n.created_at > ?2 AND n.origin_author IS NULL
+         AND n.body NOT LIKE 'Parked by the crew%'
+         AND NOT (n.body LIKE '${DONE_LIKE}' AND ${BY_CREW})`,
     )
     .all(issueId, last.created_at)
     .map((r) => r.id);
@@ -763,12 +871,40 @@ export function settleAgentRun(
     crewRole(app.db, repo.id, run.actorId) !== "builder"
   )
     return false;
+  const done = alreadyDoneOids(run.summary);
+  if (run.state === "ok" && done.length > 0)
+    return noteAlreadyDone(app, repo, issue, done);
   return parkIssue(
     app,
     repo,
     issue,
     `the run ended without a pull: ${run.summary || run.state}`,
   );
+}
+
+/**
+ * A run found its issue done on the base, by commits that are there
+ * (`already.ts`): one note on the issue with the commits, the assignee
+ * cleared, and no park — it is no strike and never reaches the planner as
+ * parked twice. Closing it is the asker's. Said once per run.
+ */
+function noteAlreadyDone(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  oids: readonly string[],
+): boolean {
+  if (repo.autonomyBy === null) return false;
+  const by = getUserById(app.db, repo.autonomyBy);
+  if (!by) return false;
+  if (issue.assigneeId !== null) assignIssue(app, by, repo, issue, null);
+  addComment(app, by, repo, issue, `${ALREADY_NOTE}${oids.join(" ")}`);
+  log.info("already done", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    issue: issue.number,
+    commits: oids.length,
+  });
+  return true;
 }
 
 /**
@@ -932,6 +1068,12 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
         error: String(error),
       });
     }
+  }
+  // The forge hunts its own faults on the same clock (`crew/sentinel.ts`).
+  try {
+    sentinelTick(app, now.getTime());
+  } catch (error) {
+    log.error("sentinel failed", { error: String(error) });
   }
   // Review is not autonomy's alone: an agent's green pull is read by the
   // crew's reviewer in every repository that has one.

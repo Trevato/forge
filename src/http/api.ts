@@ -12,6 +12,7 @@ import { readFlow } from "../flow/read.ts";
 import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
+import { changeLimit, listLimits } from "../actions/limits.ts";
 import {
   accountSignIns,
   endAccountSession,
@@ -28,6 +29,8 @@ import {
 import {
   listAccounts,
   removeAccount,
+  retireAndRemoveAccount,
+  retirementPlan,
   suspendAccount,
   unsuspendAccount,
   verifyAccount,
@@ -96,9 +99,12 @@ import {
   refreshPullHead,
   resolveReviewThread,
   submitReview,
+  approveHere,
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
+import { attachLook } from "../actions/attach_look.ts";
+import { lookUrl } from "../core/looks.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
@@ -159,6 +165,7 @@ import {
   listPulls,
   pullDiff,
   pullDir,
+  pullMergeStates,
   type Pull,
 } from "../core/pulls.ts";
 import {
@@ -257,6 +264,7 @@ import {
 import { openPlan, parsePlan } from "../actions/plan.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
+import { askToLiveFor } from "../web/ask_to_live.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import {
@@ -337,6 +345,7 @@ import {
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
+import { passportRoutes } from "./passport_edge.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -374,7 +383,7 @@ function respondFleet(error: FleetError): Response {
   if (error.code === "unauthorized") return unauthorized();
   return apiError(
     error.code,
-    error.code === "forbidden" ? 403 : error.code === "already_undone" ? 409 : 422,
+    error.code === "forbidden" ? 403 : error.code === "already_undone" || error.code === "expired" ? 409 : 422,
     error.message,
   );
 }
@@ -1090,6 +1099,7 @@ function membersAnswer<T>(result: Result<T, AppMembersError>): Response {
   }
 }
 export function apiRoutes(router: Router<Handler>): void {
+  passportRoutes(router);
   // ── accounts ─────────────────────────────────────────────────────────
 
   router.add("POST", "/api/v1/users", async (ctx) => {
@@ -1143,7 +1153,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!verified.ok) return unauthorized();
     const session = createSession(ctx.app.db, verified.value.id);
     return json(publicUser(verified.value), 201, {
-      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url),
+      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
     });
   });
 
@@ -1153,7 +1163,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
     return json({}, 200, {
-      "set-cookie": sessionCookie("", new Date(0), ctx.url),
+      "set-cookie": sessionCookie("", new Date(0), ctx.url, ctx.app.config.url),
     });
   });
 
@@ -1262,6 +1272,36 @@ export function apiRoutes(router: Router<Handler>): void {
     );
   });
 
+  // The forge's limits (`settings/limits.ts`): the same door as capacity.
+  router.add("GET", "/api/v1/admin/limits", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const listed = listLimits(ctx.app, ctx.auth.user);
+    return listed.ok ? json(listed.value) : notFound();
+  });
+
+  router.add("PUT", "/api/v1/admin/limits/:key", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const value =
+      input.value === null
+        ? null
+        : typeof input.value === "number" && Number.isFinite(input.value)
+          ? String(input.value)
+          : str(input.value);
+    const changed = changeLimit(ctx.app, ctx.auth.user, ctx.params.key!, value);
+    if (changed.ok) return json(changed.value);
+    if (changed.error.kind === "not_found") return notFound();
+    return apiError(
+      changed.error.kind,
+      422,
+      changed.error.kind === "no_such_limit"
+        ? "no such limit"
+        : changed.error.message,
+    );
+  });
+
   router.add("GET", "/api/v1/admin/accounts", (ctx) => {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
@@ -1310,6 +1350,24 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("DELETE", "/api/v1/admin/accounts/:username", async (ctx) => {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
+    const input = await body(ctx.request);
+    if (input.retireOrgs === true) {
+      const name = ctx.params.username!;
+      if (input.confirm !== true) {
+        const plan = retirementPlan(ctx.app, ctx.auth.user, name);
+        return plan.ok ? json({ confirm_required: true, retire: plan.value }) : accountError(plan.error);
+      }
+      const retired = await retireAndRemoveAccount(ctx.app, ctx.auth.user, name, {
+        confirmed: true,
+      });
+      if (!retired.ok) return accountError(retired.error);
+      if (retired.value.failed !== null)
+        return json(
+          { error: "delete_failed", failed: retired.value.failed, removed: retired.value.removed },
+          500,
+        );
+      return json({ removed: name, retired: retired.value.removed });
+    }
     const done = await removeAccount(ctx.app, ctx.auth.user, ctx.params.username!);
     if (!done.ok && done.error === "last_owner") {
       const user = getUserByName(ctx.app.db, ctx.params.username!);
@@ -2476,20 +2534,22 @@ export function apiRoutes(router: Router<Handler>): void {
   );
   // Milestones as data: the plan's limbs with their weights, and one
   // milestone opened. The same numbers as the pages.
-  router.add("GET", "/api/v1/repos/:owner/:name/milestones", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/milestones", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(milestonesJson(ctx, repo));
+    return json(await milestonesJson(ctx, repo));
   });
   router.add(
     "GET",
     "/api/v1/repos/:owner/:name/milestones/:number",
-    (ctx) => {
+    async (ctx) => {
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
       const number = positiveInt(ctx.params.number);
       const data =
-        number === undefined ? undefined : milestoneData(ctx, repo, number);
+        number === undefined
+          ? undefined
+          : await milestoneData(ctx, repo, number);
       return data === undefined ? notFound() : json(data);
     },
   );
@@ -2521,7 +2581,7 @@ export function apiRoutes(router: Router<Handler>): void {
       },
     );
   // One action on a whole limb (#733): defer, resume, or close as not
-  // doing. A fleet operation in every respect — a dry run by default with a
+  // doing, or raise or lower it among its siblings (#1064). A fleet operation in every respect — a dry run by default with a
   // read credential, an admin token to apply, the receipt in
   // /api/v1/fleet/ops/:id and its undo at …/undo.
   router.add(
@@ -2536,11 +2596,14 @@ export function apiRoutes(router: Router<Handler>): void {
       const number = positiveInt(ctx.params.number);
       if (!repo || number === undefined) return notFound();
       if (!isLimbAction(input.action))
-        return apiError("bad_action", 422, "action is defer, resume or close");
+        return apiError("bad_action", 422, "action is defer, resume, close, raise or lower");
       const request = {
         action: input.action,
         ...(typeof input.reason === "string" ? { reason: input.reason } : {}),
         ...(typeof input.pillar === "string" ? { pillar: input.pillar } : {}),
+        ...(typeof input.under === "string" || typeof input.under === "number"
+          ? { under: String(input.under) }
+          : {}),
       };
       if (dryRun) {
         const plan = previewLimb(ctx.app, ctx.auth.user, repo, number, request);
@@ -2554,12 +2617,13 @@ export function apiRoutes(router: Router<Handler>): void {
   );
   // The map as data: ready now, blocked on, the critical path, every edge,
   // and where the crew is.
-  router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/map", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const graph = repoGraph(ctx.app.db, repo.id, {
       ...sealedScope(ctx.app.db, repo, ctx.auth.user),
     });
+    const pillars = pillarView(ctx.app.db, repo);
     return json(
       mapJson(
         repo,
@@ -2570,7 +2634,8 @@ export function apiRoutes(router: Router<Handler>): void {
           graph,
           listActiveRuns(ctx.app.db, [repo.id]),
         ),
-        pillarView(ctx.app.db, repo),
+        pillars,
+        await askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
       ),
     );
   });
@@ -2716,17 +2781,23 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // ── pull requests — so automation drives the review/merge loop ───────
 
-  router.add("GET", "/api/v1/repos/:owner/:name/pulls", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/pulls", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = withLabelsMany(
-      ctx,
-      listPulls(ctx.app.db, repo.id, {
-        ...query,
-        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-      }),
+    const pulls = listPulls(ctx.app.db, repo.id, {
+      ...query,
+      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+    });
+    const states = await pullMergeStates(
+      await Promise.all(
+        pulls.map(async (p) => ({ dir: await pullDirOf(ctx, repo, p), pull: p })),
+      ),
     );
+    const items = withLabelsMany(ctx, pulls).map((item, i) => ({
+      ...item,
+      ...(states[i] ?? {}),
+    }));
     return json(paged(items, query.limit, (p) => p.number));
   });
 
@@ -2788,6 +2859,9 @@ export function apiRoutes(router: Router<Handler>): void {
     const hold = getHold(ctx.app.db, found.pull.id);
     return json({
       ...withLabels(ctx, found.pull),
+      ...(found.pull.state === "open" && found.pull.mergedAt === null
+        ? { mergeable: status.mergeable, conflicts: status.conflicts }
+        : {}),
       status,
       diff,
       hold: hold === undefined ? null : holdJson(hold),
@@ -2934,6 +3008,50 @@ export function apiRoutes(router: Router<Handler>): void {
     },
   );
 
+  // Attach a look: a picture a person took, at a stated width, with one line
+  // saying what it shows (`actions/attach_look.ts`). The picture is base64
+  // in the JSON body; the crew's own looks keep their path through the
+  // preview.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/looks",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const attached = attachLook(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        { width: str(input.width), note: str(input.says), image: str(input.image) },
+      );
+      if (!attached.ok)
+        return respondAccess(
+          attached.error,
+          attached.error === "too_large"
+            ? 413
+            : attached.error === "not_open" || attached.error === "no_app"
+              ? 409
+              : 422,
+        );
+      const look = attached.value;
+      return json(
+        {
+          id: look.id,
+          width: look.kind,
+          says: look.note,
+          by: look.attachedBy,
+          commit: look.commitOid,
+          url: lookUrl(`/${found.repo.ownerName}/${found.repo.name}`, look),
+        },
+        201,
+      );
+    },
+  );
+
   // Line-anchored review comments. The anchor is (path, side, line) in the
   // pull's current diff; the server takes the content hash, so a client never
   // handles one — and a later force-push marks the comment `outdated`.
@@ -3073,6 +3191,43 @@ export function apiRoutes(router: Router<Handler>): void {
         return originAware(submitted.error, 422);
       }
       return json(submitted.value, 201);
+    },
+  );
+
+  // Let an origin fork's pull run here: a person who can write approves its
+  // current head, and its check and preview start.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/approve-here",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const done = await approveHere(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+      );
+      if (!done.ok) {
+        if (done.error === "self_review")
+          return apiError(
+            "self_review",
+            422,
+            "you cannot approve your own pull request",
+          );
+        if (done.error === "not_foreign")
+          return apiError(
+            "not_foreign",
+            422,
+            "this pull needs no approval to run",
+          );
+        if (done.error === "not_open")
+          return apiError("not_open", 422, "this pull is closed");
+        return respondAccess(done.error, 422);
+      }
+      return json(done.value, 201);
     },
   );
 
@@ -4486,7 +4641,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
-    if (!found.ok) return notFound();
+    if (!found.ok || found.value.logHidden) return notFound();
     const follow =
       ctx.url.searchParams.get("follow") === "1" ||
       (ctx.request.headers.get("accept") ?? "").includes("text/event-stream");

@@ -86,6 +86,10 @@ export interface Look {
   readonly error: string | null;
   /** Who the picture was taken as: the owner (an admin), or nobody. */
   readonly takenAs: "owner" | "nobody";
+  /** The person who attached it, for a look the forge did not take. */
+  readonly attachedBy: string | null;
+  /** The one line that says what an attached look shows. */
+  readonly note: string | null;
 }
 
 interface Row {
@@ -99,6 +103,8 @@ interface Row {
   created_at: string;
   error: string | null;
   taken_as: "owner" | "nobody";
+  attached_by: string | null;
+  note: string | null;
 }
 
 const toLook = (r: Row): Look => ({
@@ -112,6 +118,8 @@ const toLook = (r: Row): Look => ({
   createdAt: r.created_at,
   error: r.error,
   takenAs: r.taken_as,
+  attachedBy: r.attached_by,
+  note: r.note,
 });
 
 export interface RecordLookInput {
@@ -124,14 +132,17 @@ export interface RecordLookInput {
   readonly error?: string | undefined;
   /** Who it was taken as; the owner unless said. */
   readonly takenAs?: "owner" | "nobody" | undefined;
+  /** A person's attachment: who, and what it shows. */
+  readonly attachedBy?: string | undefined;
+  readonly note?: string | undefined;
 }
 
 /** Record a picture, or the reason there is none. A retake replaces. */
 export function recordLook(db: Database, input: RecordLookInput): Look {
   const page = input.page ?? DEFAULT_PAGE;
   db.query(
-    `INSERT INTO look (id, app_id, env, commit_oid, page, kind, path, error, taken_as)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+    `INSERT INTO look (id, app_id, env, commit_oid, page, kind, path, error, taken_as, attached_by, note)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
      ON CONFLICT (app_id, env, commit_oid, page, kind) DO UPDATE SET
        path = excluded.path, error = excluded.error, taken_as = excluded.taken_as,
        created_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`,
@@ -145,6 +156,8 @@ export function recordLook(db: Database, input: RecordLookInput): Look {
     input.path,
     input.error ?? null,
     input.takenAs ?? "owner",
+    input.attachedBy ?? null,
+    input.note ?? null,
   );
   return getLook(db, input.appId, input.env, input.commitOid, page, input.kind)!;
 }
@@ -196,7 +209,9 @@ export function looksForApps(db: Database, appIds: readonly string[]): Look[] {
 }
 
 /**
- * Forget an environment's looks — all of them, or all but one commit's.
+ * Forget an environment's looks — all of them, or all but one commit's
+ * (a person's attachments are not the forge's to age out: they go with the
+ * environment).
  * Returns what was forgotten, so the files can go with the rows.
  */
 export function deleteLooks(
@@ -217,7 +232,7 @@ export function deleteLooks(
           .query<
             Row,
             [string, string, string]
-          >(`DELETE FROM look WHERE app_id = ?1 AND env = ?2 AND commit_oid != ?3 RETURNING *`)
+          >(`DELETE FROM look WHERE app_id = ?1 AND env = ?2 AND commit_oid != ?3 AND attached_by IS NULL RETURNING *`)
           .all(appId, env, keepCommit);
   return gone.map(toLook);
 }
@@ -236,3 +251,9 @@ export const lookVersion = (look: Look): string =>
  * the last one for a year asks for the new one. */
 export const lookUrl = (base: string, look: Look): string =>
   `${base}/looks/${look.env}/${look.commitOid}/${lookSlot(look.page, look.kind)}.png?v=${lookVersion(look)}`;
+
+/** Whether a look was attached by a person, not taken by the forge. */
+export const isAttached = (look: Look): boolean => look.attachedBy !== null;
+
+/** The page an attached look is filed under: its own, so it never collides. */
+export const attachedPage = (id: string): string => `/attached-${id}`;

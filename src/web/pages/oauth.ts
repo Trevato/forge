@@ -29,6 +29,7 @@ const PARAMS = [
   "code_challenge_method",
   "state",
   "scope",
+  "nonce",
 ] as const;
 
 /** Nothing here is cacheable, and nothing here may be sent on as a referrer. */
@@ -75,6 +76,23 @@ const refused = (ctx: Ctx, message: string): Response =>
 const hidden = (name: string, value: string): Html =>
   html`<input type="hidden" name="${name}" value="${value}" />`;
 
+/** What an OpenID grant tells the app about the person, in plain words. */
+const IDENTITY: Record<string, string> = {
+  openid: "who you are on this forge (an identifier that stays the same)",
+  profile: "your username and name",
+  email: "your email address",
+};
+
+const identity = (request: AuthRequest): Html | "" =>
+  request.oidcScopes.length === 0
+    ? ""
+    : html`<fieldset class="field">
+        <legend>What it will learn about you</legend>
+        <ul>
+          ${request.oidcScopes.map((s) => html`<li>${IDENTITY[s] ?? s}</li>`)}
+        </ul>
+      </fieldset>`;
+
 function consent(ctx: Ctx, request: AuthRequest, values: Params): Html {
   const host = new URL(request.redirectUri).host;
   return html`<div class="narrow">
@@ -87,6 +105,7 @@ function consent(ctx: Ctx, request: AuthRequest, values: Params): Html {
         </p>
         <form method="post" action="/oauth/authorize">
           ${PARAMS.map((name) => hidden(name, values[name]))}
+          ${identity(request)}
           <fieldset class="field">
             <legend>What it may do</legend>
             <label

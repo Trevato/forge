@@ -5,8 +5,10 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
+import { limitsPage, limitsSet } from "../web/pages/admin-limits.ts";
 import {
   closeStreamsOf,
   closeStreamsOfSession,
@@ -45,6 +47,7 @@ import {
 import { edgeIdentity } from "./edge.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
+import { noteRefusedInternal } from "../kernel/internal_refused.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import {
@@ -188,6 +191,7 @@ import { askedPage } from "../web/studio/asked_page.ts";
 import {
   asksBulkSubmit,
   asksBulkUndo,
+  asksListen,
   asksPage,
 } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
@@ -262,6 +266,7 @@ import {
   pullMergeSubmit,
   pullChecksSubmit,
   pullReviewStateSubmit,
+  pullApproveHereSubmit,
   pullReviewSubmit,
   pullThreadFragment,
   threadResolveSubmit,
@@ -535,6 +540,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/assets/:name.js", async (ctx) => {
     const shell = shellAsset();
     if (ctx.params.name === shell.name) return assetResponse(shell);
+    if (ctx.params.name === TOOLBAR_NAME) return toolbarResponse();
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();
     return assetResponse(asset);
@@ -572,6 +578,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/asks", asksPage);
   router.add("POST", "/asks/bulk", asksBulkSubmit);
   router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
+  router.add("POST", "/asks/listen", asksListen);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
   // The big view, folded into the board: every old address lands on its wall mode.
@@ -660,6 +667,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/cloud/remove", cloudRemove);
   router.add("GET", "/settings/capacity", capacityPage);
   router.add("POST", "/settings/capacity", capacitySet);
+  router.add("GET", "/admin/limits", limitsPage);
+  router.add("POST", "/admin/limits", limitsSet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
   router.add("POST", "/settings/backups/destination", backupsDestination);
@@ -936,6 +945,11 @@ export function buildRouter(): Router<Handler> {
     "POST",
     "/:owner/:name/pulls/:number/review-state",
     pullReviewStateSubmit,
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/pulls/:number/approve-here",
+    pullApproveHereSubmit,
   );
   router.add(
     "POST",
@@ -1746,6 +1760,12 @@ export async function serve(app: App): Promise<Servers> {
       // The socket's file mode used to be the only door check; a loopback
       // port has none, so every internal request proves the boot secret.
       if (!hookCallerAllowed(app, request)) {
+        const path = new URL(request.url).pathname;
+        if (noteRefusedInternal(request.method, path, Date.now(), app.signals.refused))
+          app.log.warn("internal call refused: no boot secret", {
+            method: request.method,
+            path: path.slice(0, 120),
+          });
         return new Response("forbidden", { status: 403 });
       }
       const url = new URL(request.url);

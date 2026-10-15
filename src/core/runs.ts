@@ -9,6 +9,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { BUDGET_PREFIX } from "../kernel/budgets.ts";
 import { id } from "../kernel/id.ts";
 
 export type RunKind = "deploy" | "agent" | "check";
@@ -294,6 +295,34 @@ export function cancelRun(
   return changes > 0 ? getRun(db, runId) : undefined;
 }
 
+/**
+ * Every queued or running check, and every queued deploy, of one pull,
+ * cancelled with the same summary: a pull that landed or closed has nothing
+ * left to check, and a queued run would hold the lane for nobody. A running
+ * deploy is left alone: nothing here stops the build in the runtime, and a
+ * row marked cancelled under a build that goes live would lie. Answers the
+ * runs it stopped.
+ */
+export function cancelRunsForPull(
+  db: Database,
+  issueId: string,
+  summary: string,
+): Run[] {
+  const ids = db
+    .query<{ id: string }, [string]>(
+      `SELECT id FROM run WHERE issue_id = ?1 AND 
+         ((kind = 'check' AND state IN ('queued','running'))
+          OR (kind = 'deploy' AND state = 'queued')) ORDER BY id`,
+    )
+    .all(issueId);
+  const out: Run[] = [];
+  for (const { id } of ids) {
+    const cancelled = cancelRun(db, id, summary);
+    if (cancelled) out.push(cancelled);
+  }
+  return out;
+}
+
 /** Record spend and the session as a run goes, so a cut-off run still reports it. */
 export function noteRunProgress(
   db: Database,
@@ -399,6 +428,7 @@ export function requeueCheck(
   db: Database,
   runId: string,
   lapsedBefore?: string,
+  summary: string = REQUEUED_SUMMARY,
 ): { cancelled: Run; again: Run } | undefined {
   return db.transaction(() => {
     const changes = db
@@ -408,7 +438,7 @@ export function requeueCheck(
          WHERE id = ?1 AND kind = 'check' AND state = 'running'
            AND (?3 IS NULL OR heartbeat_at IS NULL OR heartbeat_at < ?3)`,
       )
-      .run(runId, REQUEUED_SUMMARY, lapsedBefore ?? null).changes;
+      .run(runId, summary, lapsedBefore ?? null).changes;
     if (changes === 0) return undefined;
     const cancelled = getRun(db, runId)!;
     const again = createRun(db, {
@@ -423,6 +453,43 @@ export function requeueCheck(
     });
     return { cancelled, again };
   })();
+}
+
+/**
+ * Whether the run before this one in its chain (the attempt just below, same
+ * kind, repository, reason and issue) was killed for its budget: the second
+ * overrun is a failure, not a second retry. The branch and commit are not
+ * compared: a run notes its branch as it works, its queued retry starts bare.
+ */
+export function overranBefore(db: Database, run: Run): boolean {
+  return (
+    db
+      .query(
+        `SELECT 1 FROM run WHERE kind = ?1 AND repo_id = ?2 AND reason = ?3
+            AND COALESCE(issue_id, '') = ?4 AND attempt = ?5 AND id <> ?6
+            AND state = 'cancelled' AND summary LIKE ?7 || '%' LIMIT 1`,
+      )
+      .get(
+        run.kind,
+        run.repoId,
+        run.reason,
+        run.issueId ?? "",
+        run.attempt - 1,
+        run.id,
+        BUDGET_PREFIX,
+      ) !== null
+  );
+}
+
+/** Failed runs the budget killed since `since`: each is a card in the vitals. */
+export function budgetFailures(db: Database, since: string): Run[] {
+  return db
+    .query<RunRow, [string, string]>(
+      `SELECT * FROM run WHERE state = 'failed' AND summary LIKE ?2 || '%'
+          AND finished_at >= ?1 ORDER BY finished_at DESC LIMIT 20`,
+    )
+    .all(since, BUDGET_PREFIX)
+    .map(toRun);
 }
 
 /** What a sweep of abandoned checks did, run by run. */

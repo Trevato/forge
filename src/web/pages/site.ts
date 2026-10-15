@@ -8,6 +8,7 @@
  * typed still in it. A dead end that loses input is a bug, not a message.
  */
 
+import { limitValue } from "../../settings/limits.ts";
 import { mayView } from "../../core/sealed.ts";
 import { signOutHere } from "../../actions/signins.ts";
 import { clientAddress } from "../../http/peer.ts";
@@ -29,7 +30,9 @@ import { hasAnyUser, verifyPassword, type User } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
-import { homeTop } from "../studio/asks_page.ts";
+import { homeTop, onYouBulk } from "../studio/asks_page.ts";
+import { latestUndoable } from "../../actions/asks_bulk.ts";
+import { mutedRepos } from "../../core/interactions.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
@@ -52,8 +55,18 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hasAdmin } from "../../spawn/claim.ts";
 
-export function sessionCookie(value: string, expires: Date, url: URL): string {
-  const secure = url.protocol === "https:" ? "; Secure" : "";
+export function sessionCookie(
+  value: string,
+  expires: Date,
+  url: URL,
+  forgeUrl?: string,
+): string {
+  // Secure when the request or the forge's own address is https: behind a
+  // proxy that ends TLS the request itself arrives as http.
+  const secure =
+    url.protocol === "https:" || forgeUrl?.startsWith("https://")
+      ? "; Secure"
+      : "";
   return `forge_session=${value}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires.toUTCString()}${secure}`;
 }
 
@@ -182,29 +195,76 @@ export function onYouCard(ctx: Ctx, user: User): Html | undefined {
   const visible = new Set(
     listReposVisibleTo(db, user, { limit: 200 }).map((repo) => repo.id),
   );
-  const rows: Html[] = [];
+  const muted = mutedRepos(db, user.id);
+  const shown: { issue: Issue; repo: Repo }[] = [];
+  // Muted repositories that hold work assigned to the viewer: said, never silent.
+  const silenced = new Map<string, Repo>();
   for (const issue of assigned) {
     const repo = repos.get(issue.repoId);
     if (!repo) continue;
     if (!visible.has(repo.id) && !canRead(db, repo, user)) continue;
     if (!mayView(db, repo, issue, user)) continue;
-    rows.push(
-      row({
-        href: threadPath(repo, issue),
-        nav: true,
-        state: "open",
-        lead: icon(issue.kind === "pull" ? "pull" : "issue"),
-        title: issue.title,
-        titleAttr: issue.title,
-        meta: html`${repo.ownerName}/${repo.name} #${issue.number} · updated
-        ${time(issue.updatedAt)}`,
-      }),
-    );
+    if (muted.has(repo.id)) {
+      silenced.set(repo.id, repo);
+      continue;
+    }
+    shown.push({ issue, repo });
   }
-  if (rows.length === 0) return undefined;
+  // Two or more can be given one move: a box each, and one form for the set.
+  const bulk = shown.length >= 2;
+  const rows = shown.map(({ issue, repo }) =>
+    row({
+      ...(bulk ? {} : { href: threadPath(repo, issue), nav: true as const }),
+      state: "open",
+      lead: bulk
+        ? html`<input
+            type="checkbox"
+            class="ask-pick"
+            name="item"
+            value="issue:${issue.id}"
+            form="onyou-bulk"
+            data-repo="${repo.id}"
+            data-kind="${issue.kind}"
+            aria-label="Select ${issue.title}"
+          />`
+        : icon(issue.kind === "pull" ? "pull" : "issue"),
+      title: bulk
+        ? html`<a href="${threadPath(repo, issue)}">${issue.title}</a>`
+        : issue.title,
+      titleAttr: issue.title,
+      meta: html`${repo.ownerName}/${repo.name} #${issue.number} · updated
+      ${time(issue.updatedAt)}`,
+    }),
+  );
+  if (rows.length === 0 && silenced.size === 0) return undefined;
+  const last = latestUndoable(ctx.app, user);
+  const byKind = [...new Set(shown.map((s) => s.issue.kind))].map((k) => ({
+    id: k,
+    label: k === "pull" ? "Pulls" : "Issues",
+  }));
+  const byRepo = [...new Map(shown.map((s) => [s.repo.id, s.repo])).values()].map(
+    (r) => ({ id: r.id, label: `${r.ownerName}/${r.name}` }),
+  );
   return listCard(rows, {
     head: html`${icon("user")}
       <h2>On you</h2>`,
+    ...(bulk || last !== undefined || silenced.size > 0
+      ? {
+          foot: onYouBulk(
+            byKind,
+            byRepo,
+            last === undefined
+              ? undefined
+              : {
+                  id: last.id,
+                  verb: last.verb,
+                  done: last.rows.filter((r) => r.outcome === "ok").length,
+                },
+            bulk,
+            [...silenced.values()].map((r) => ({ id: r.id, label: `${r.ownerName}/${r.name}` })),
+          ),
+        }
+      : {}),
   });
 }
 
@@ -404,19 +464,19 @@ export function signupPage(ctx: Ctx): Response {
  * limiter per forge, so a test's forge never throttles another's.
  */
 const signinLimits = new WeakMap<Ctx["app"], RateLimiter>();
-const SIGNIN_PER_ACCOUNT = 20;
-const SIGNIN_PER_FORGE = 200;
 
 function signinAllowed(ctx: Ctx, username: string): number | undefined {
   let limiter = signinLimits.get(ctx.app);
   if (limiter === undefined) {
-    limiter = new RateLimiter({
-      perMinute: SIGNIN_PER_ACCOUNT,
-      adminPerMinute: SIGNIN_PER_FORGE,
-      enabled: true,
-    });
+    limiter = new RateLimiter({ perMinute: 0, adminPerMinute: 0, enabled: true });
     signinLimits.set(ctx.app, limiter);
   }
+  // Read on every attempt, so a change on /admin/limits governs the next one.
+  limiter.setLimits({
+    perMinute: limitValue(ctx.app.db, "signin.per_account"),
+    adminPerMinute: limitValue(ctx.app.db, "signin.per_forge"),
+    enabled: true,
+  });
   const whole = limiter.take("forge", "admin");
   if (!whole.allowed) return whole.retryAfter;
   const one = limiter.take(`account:${username.toLowerCase()}`, "ro");
@@ -472,7 +532,7 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
   const session = createSession(ctx.app.db, verified.value.id);
   return redirect(
     safeNext(ctx.url.searchParams.get("next")) ?? "/",
-    sessionCookie(session.token, session.expiresAt, ctx.url),
+    sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
   );
 }
 
@@ -528,7 +588,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
   const session = createSession(ctx.app.db, created.value.id);
   return redirect(
     safeNext(ctx.url.searchParams.get("next")) ?? "/",
-    sessionCookie(session.token, session.expiresAt, ctx.url),
+    sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
   );
 }
 
@@ -561,7 +621,7 @@ export function logoutSubmit(ctx: Ctx): Response {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
     return new Response("forbidden", { status: 403 });
   signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
-  return redirect("/", sessionCookie("", new Date(0), ctx.url));
+  return redirect("/", sessionCookie("", new Date(0), ctx.url, ctx.app.config.url));
 }
 
 // ---- new repository ----

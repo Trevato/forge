@@ -24,6 +24,13 @@ import {
   landVerdict,
   tierLine,
 } from "../src/checks/tiers.ts";
+import {
+  executedFiles,
+  formatImpact,
+  mergeImpact,
+  parseImpact,
+  reach,
+} from "../src/checks/impact.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
 
 const tests = [
@@ -102,6 +109,134 @@ describe("the fast set", () => {
   });
 });
 
+describe("the fast set, by measured coverage", () => {
+  const impact = new Map([
+    ["test/snapshot-store.test.ts", ["src/snapshot/store.ts"]],
+    ["test/snapshot.test.ts", ["src/snapshot/service.ts", "src/snapshot/store.ts"]],
+    ["test/web-phone.test.ts", ["src/web/phone.ts"]],
+    ["test/deep.test.ts", ["src/a.ts"]],
+    ["test/tiny.test.ts", ["src/tiny.ts"]],
+  ]);
+  const base = { tests: [...tests, "test/new.test.ts"], imports, times, impact };
+
+  test("a diff to one source file picks exactly its tests", () => {
+    const plan = fastSet({ ...base, changed: ["src/snapshot/store.ts"] });
+    expect(plan.files).toEqual([
+      "test/snapshot-store.test.ts",
+      "test/snapshot.test.ts",
+    ]);
+    expect(plan.why.get("test/snapshot.test.ts")).toBe("executes src/snapshot/store.ts");
+    expect(plan.line).toBe("by coverage: 1 changed file reaches 2 tests");
+  });
+
+  test("a changed file no test executes is said, and judged by the guesses", () => {
+    const plan = fastSet({ ...base, changed: ["src/web/phone.ts", "src/web/x.ts"] });
+    expect(plan.files).toEqual(["test/web-phone.test.ts", "test/tiny.test.ts"]);
+    expect(plan.line).toBe(
+      "by coverage and imports: 2 changed files reach 1 test; src/web/x.ts reaches none",
+    );
+  });
+
+  test("an unreached source file is found by the name guess, not left to run nothing", () => {
+    const plan = fastSet({ ...base, changed: ["src/snapshot/extra.ts"], tests: [...tests, "test/snapshot-extra.test.ts"] });
+    expect(plan.files).toContain("test/snapshot-extra.test.ts");
+    expect(plan.why.get("test/snapshot-extra.test.ts")).toBe("named for src/snapshot/extra.ts");
+  });
+
+  test("a non-src file the map cannot see turns the guesses on", () => {
+    const plan = fastSet({
+      ...base,
+      changed: ["static/app.js"],
+      imports: (file) => (file === "test/deep.test.ts" ? ["static/app.js"] : imports(file)),
+    });
+    expect(plan.files).toContain("test/deep.test.ts");
+  });
+
+  test("a test the map has never seen is picked by the hop rule", () => {
+    const hop = fastSet({
+      ...base,
+      changed: ["src/c.ts"],
+      imports: (file) => (file === "test/new.test.ts" ? ["src/a.ts"] : imports(file)),
+    });
+    expect(hop.files).toContain("test/new.test.ts");
+    expect(hop.why.get("test/new.test.ts")).toBe("imports src/c.ts");
+  });
+
+  test("a kernel, manifest or scripts change runs full", () => {
+    for (const file of ["src/kernel/db.ts", "forge.json", "package.json", "scripts/gate.ts"]) {
+      const plan = fastSet({ ...base, changed: [file] });
+      expect(plan.files).toEqual(base.tests);
+      expect(plan.line).toContain("full tier");
+    }
+    expect(fastSet({ ...base, changed: ["scripts/test-times.json"] }).files).toEqual([]);
+  });
+
+  test("lcov: only src files with a line hit count as executed", () => {
+    const lcov = "SF:src/a.ts\nDA:1,0\nend_of_record\nSF:src/b.ts\nDA:1,3\nend_of_record\nSF:test/x.test.ts\nDA:1,1\nend_of_record\n";
+    expect(executedFiles(lcov)).toEqual(["src/b.ts"]);
+  });
+});
+
+describe("the impact map", () => {
+  test("parseImpact accepts a map and rejects bad shapes and paths", () => {
+    const ok = parseImpact('{"test/a.test.ts":["src/a.ts"]}');
+    expect(ok).toEqual({ ok: true, value: new Map([["test/a.test.ts", ["src/a.ts"]]]) });
+    for (const bad of [
+      "nope",
+      "[]",
+      "null",
+      '{"test/a.test.ts":"src/a.ts"}',
+      '{"test/a.test.ts":[1]}',
+      '{"test/a.test.ts":["../etc/passwd"]}',
+      '{"test/a.test.ts":["scripts/x.ts"]}',
+      '{"src/a.ts":["src/a.ts"]}',
+      '{"test/../a.test.ts":[]}',
+    ])
+      expect(parseImpact(bad).ok).toBe(false);
+  });
+
+  test("formatImpact sorts and round-trips", () => {
+    const map = new Map([
+      ["test/b.test.ts", ["src/z.ts", "src/a.ts"]],
+      ["test/a.test.ts", ["src/a.ts"]],
+    ]);
+    const text = formatImpact(map);
+    expect(text.indexOf("test/a.test.ts")).toBeLessThan(text.indexOf("test/b.test.ts"));
+    expect(text).toContain('["src/a.ts","src/z.ts"]');
+    const back = parseImpact(text);
+    if (!back.ok) throw new Error(back.error);
+    expect(formatImpact(back.value)).toBe(text);
+    expect(formatImpact(new Map())).toBe("{}\n");
+  });
+
+  test("reach names the first file that meets the diff and the unreached", () => {
+    const map = new Map([["test/a.test.ts", ["src/a.ts", "src/b.ts"]]]);
+    const got = reach(["src/b.ts", "src/c.ts", "README.md"], map);
+    expect(got.tests).toEqual(new Map([["test/a.test.ts", "src/b.ts"]]));
+    expect(got.unreached).toEqual(["src/c.ts"]);
+  });
+
+  test("mergeImpact refreshes what was measured and drops tests that left the gate", () => {
+    const old = new Map([
+      ["test/a.test.ts", ["src/old.ts"]],
+      ["test/b.test.ts", ["src/b.ts"]],
+      ["test/gone.test.ts", ["src/g.ts"]],
+    ]);
+    const measured = new Map([
+      ["test/a.test.ts", ["src/new.ts"]],
+      ["test/c.test.ts", ["src/c.ts"]],
+    ]);
+    const merged = mergeImpact(old, measured, ["test/a.test.ts", "test/b.test.ts", "test/c.test.ts"]);
+    expect(merged).toEqual(
+      new Map([
+        ["test/a.test.ts", ["src/new.ts"]],
+        ["test/b.test.ts", ["src/b.ts"]],
+        ["test/c.test.ts", ["src/c.ts"]],
+      ]),
+    );
+  });
+});
+
 describe("importsOf", () => {
   test("resolves relative specifiers and leaves packages out", () => {
     const source = `import { a } from "../src/snapshot/store.ts";\nimport x from "node:fs";\nconst m = await import("./helper.ts");`;
@@ -162,6 +297,28 @@ describe("forge.json", () => {
     if (!plain.ok || plain.value === undefined) throw new Error("refused");
     expect(plain.value.fast).toBeNull();
     expect(plain.value.full).toBe("a");
+  });
+});
+
+describe("forge.json: check.fast", () => {
+  const parse = (check: string) => parseCheck(`{"check": ${check}}`, undefined);
+
+  test("is trimmed", () => {
+    const r = parse('{"run": "a", "fast": " b "}');
+    expect(r.ok && r.value?.fast).toBe("b");
+  });
+
+  test("an empty fast is no fast tier", () => {
+    const r = parse('{"run": "a", "fast": ""}');
+    expect(r.ok && r.value?.fast).toBeNull();
+  });
+
+  test("a non-string or multi-line fast fails with the reason", () => {
+    for (const fast of ["1", '"a\\nb"']) {
+      const r = parse(`{"run": "a", "fast": ${fast}}`);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(JSON.stringify(r.error)).toContain("check.fast");
+    }
   });
 });
 

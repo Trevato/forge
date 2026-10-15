@@ -12,7 +12,8 @@
 
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
-import { soleOwnedOrgs } from "../core/orgs.ts";
+import { getAppByRepo } from "../core/apps.ts";
+import { listTeams, retireOrg, soleOwnedOrgs } from "../core/orgs.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
   dropCredentials,
@@ -123,6 +124,123 @@ export function unsuspendAccount(
   return ok(getUserByName(app.db, username)!);
 }
 
+/** What retiring a sole-owned organization takes with it, as plain data. */
+export interface OrgRetirement {
+  org: string;
+  repos: { name: string; app: string | null }[];
+  teams: string[];
+}
+
+/**
+ * What removing `username` with `retireOrgs` would take: every organization
+ * the account alone owns, its repositories (with the app each runs, if any)
+ * and its teams. Reads only.
+ */
+export function retirementPlan(
+  app: App,
+  actor: User | undefined,
+  username: string,
+): Result<OrgRetirement[], AccountActionError> {
+  const admin = requireForgeAdmin(actor);
+  if (!admin.ok) return admin;
+  const found = target(app, admin.value, username);
+  if (!found.ok) return found;
+  return ok(
+    soleOwnedOrgs(app.db, found.value.id).map((org) => ({
+      org: org.username,
+      repos: listReposOwnedBy(app.db, org.id).map((r) => ({
+        name: `${org.username}/${r.name}`,
+        app: getAppByRepo(app.db, r.id)?.slug ?? null,
+      })),
+      teams: listTeams(app.db, org.id).map((t) => t.name),
+    })),
+  );
+}
+
+/**
+ * Take apart every repository `owner` has: its apps torn down, then the
+ * repository itself. Stops at the first that will not go and names it;
+ * `removed` collects the ones that did. Null means all are gone.
+ */
+async function removeOwnedRepos(
+  app: App,
+  admin: User,
+  owner: User,
+  removed: string[] = [],
+): Promise<string | null> {
+  const runtime = appsRuntime(app);
+  for (const repo of listReposOwnedBy(app.db, owner.id)) {
+    if (runtime !== undefined) await runtime.teardownAll(repo.id);
+    const label = `${owner.username}/${repo.name}`;
+    const deleted = await destroyRepo(app.db, app.reposRoot, repo);
+    if (!deleted.ok) return label;
+    removed.push(label);
+    if (owner.kind === "org")
+      app.bus.append({
+        kind: "repo.deleted",
+        actorId: admin.id,
+        payload: { repo: label, by: "org_retired" },
+      });
+  }
+  return null;
+}
+
+/** What a retirement did: every thing removed, in order, and what stopped it. */
+export interface Retired {
+  removed: string[];
+  failed: string | null;
+}
+
+/**
+ * Remove an account together with the organizations it alone owns. Each
+ * organization's repositories go the way an account's do (apps torn down,
+ * then the repository), then the organization and its teams, then the
+ * account. A failure stops there with everything before it gone and
+ * everything after it intact; calling again finishes the job.
+ */
+export async function retireAndRemoveAccount(
+  app: App,
+  actor: User | undefined,
+  username: string,
+  options: { confirmed?: boolean } = {},
+): Promise<Result<Retired, AccountActionError | "confirm_required">> {
+  const admin = requireForgeAdmin(actor);
+  if (!admin.ok) return admin;
+  const found = target(app, admin.value, username);
+  if (!found.ok) return found;
+  const user = found.value;
+  if (options.confirmed !== true) return err("confirm_required");
+  const out: Retired = { removed: [], failed: null };
+  if (user.removedAt !== null) return ok(out);
+  setSuspended(app.db, user.id, new Date().toISOString());
+  dropCredentials(app.db, user.id);
+  await quiet(app, admin.value, user);
+  for (const org of soleOwnedOrgs(app.db, user.id)) {
+    await quiet(app, admin.value, org);
+    out.failed = await removeOwnedRepos(app, admin.value, org, out.removed);
+    if (out.failed !== null) return ok(out);
+    const at = new Date().toISOString();
+    retireOrg(app.db, org.id, at);
+    scrubAccount(app.db, org.id, at);
+    out.removed.push(org.username);
+    app.bus.append({
+      kind: "org.retired",
+      actorId: admin.value.id,
+      payload: { org: org.username, with: user.username },
+    });
+  }
+  out.failed = await removeOwnedRepos(app, admin.value, user, out.removed);
+  if (out.failed !== null) return ok(out);
+  scrubAccount(app.db, user.id, new Date().toISOString());
+  out.removed.push(user.username);
+  app.bus.append({
+    kind: "account.removed",
+    actorId: admin.value.id,
+    payload: { username: user.username },
+  });
+  return ok(out);
+}
+
 export async function removeAccount(
   app: App,
   actor: User | undefined,
@@ -142,12 +260,8 @@ export async function removeAccount(
   setSuspended(app.db, user.id, new Date().toISOString());
   dropCredentials(app.db, user.id);
   await quiet(app, admin.value, user);
-  const runtime = appsRuntime(app);
-  for (const repo of listReposOwnedBy(app.db, user.id)) {
-    if (runtime !== undefined) await runtime.teardownAll(repo.id);
-    const deleted = await destroyRepo(app.db, app.reposRoot, repo);
-    if (!deleted.ok) return deleted;
-  }
+  if ((await removeOwnedRepos(app, admin.value, user)) !== null)
+    return err("delete_failed");
   scrubAccount(app.db, user.id, new Date().toISOString());
   app.bus.append({
     kind: "account.removed",

@@ -4,7 +4,7 @@
  * red run whose tail names every failing test from every shard.
  */
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -22,7 +22,7 @@ import {
   type ShardResult,
 } from "../scripts/shards.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
-import { GATE } from "../scripts/gate.ts";
+import { EXCLUDED, GATE } from "../scripts/gate.ts";
 
 const files = Array.from({ length: 23 }, (_, i) => `test/f${i}.test.ts`);
 
@@ -430,5 +430,51 @@ test("says two things, a pause apart", async () => {
     expect(text).toContain("tick-two");
     expect(text).toContain("── shard 1/1: live.test.ts");
     expect(text).toMatch(/── shard 1\/1 done \(exit 0, [\d.]+s\)/);
+  }, 30_000);
+});
+
+describe("the gate audit before any shard", () => {
+  const script = new URL("../scripts/test-shards.ts", import.meta.url).pathname;
+  const listed = [...GATE, ...EXCLUDED.map((e) => e.file)];
+  const run = async (extra: string[], args: string[]) => {
+    const dir = mkdtempSync(join(tmpdir(), "forge-audit-"));
+    mkdirSync(join(dir, "test"));
+    for (const file of [...listed, ...extra]) writeFileSync(join(dir, file), "");
+    const started = performance.now();
+    const child = Bun.spawn(["bun", script, ...args], {
+      cwd: dir,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ]);
+    const code = await child.exited;
+    rmSync(dir, { recursive: true, force: true });
+    return { code, out, err, ms: performance.now() - started };
+  };
+
+  test("an unlisted test file is refused by name, last line, nothing spawned", async () => {
+    for (const args of [["--gate"], ["--tier", "fast", "--diff", "a..b"]]) {
+      const got = await run(["test/zz-new.test.ts"], args);
+      expect(got.code).toBe(2);
+      const last = got.err.trim().split("\n").pop()!;
+      expect(last).toContain("test/zz-new.test.ts");
+      expect(last).toContain("list it in GATE or EXCLUDED in scripts/gate.ts");
+      expect(got.out + got.err).not.toContain("start ");
+      expect(got.out).not.toContain("── shard");
+      expect(got.ms).toBeLessThan(1000);
+    }
+  });
+
+  test("a listed set proceeds, and explicit files are not audited", async () => {
+    const last = String(GATE.length);
+    const got = await run([], ["--gate", "--shard", `${last}/${last}`]);
+    expect(got.err).not.toContain("list it in GATE");
+    expect(got.out).toContain(`matrix slice ${last}/${last}`);
+    const explicit = await run(["test/zz-new.test.ts"], ["test/zz-new.test.ts"]);
+    expect(explicit.err).not.toContain("list it in GATE");
   }, 30_000);
 });

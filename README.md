@@ -20,7 +20,10 @@ any URL — and it is the rest of this page.
 
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
-stays that way. Everything worth having is written here: the Result type, the
+stays that way. The one exception is dev-only: `@anthropic-ai/sandbox-runtime`
+(a devDependency, with its own few transitive packages) lets
+`test/crew-sandbox-real.test.ts` run a shell under the very sandbox Claude Code
+builds from the crew's settings; it never ships and the app never imports it. Everything worth having is written here: the Result type, the
 router, the SSR templates, the design system, the markdown renderer. The only
 thing forge asks of the host is a `git` binary.
 
@@ -75,11 +78,26 @@ ssh -p 2222 localhost                        # the terminal UI
 git clone ssh://localhost:2222/you/hello.git # git, same port
 ```
 
+On a host that cannot hold cells or the crew's shell sandbox, a site admin
+sees `Reduced protection: …` in one line, under the filter on the terminal's
+first screen and in the web footer; nobody else does, and a fully protected
+forge shows nothing.
+
 Your SSH key is your identity. A key the forge knows signs you straight in; any
 other key browses public repos as a guest and can press `s` to sign in with a
 username and password — which links that key to your account, so the next
 connection is instant. `j`/`k` to move, `enter` to open, `esc` to go back, `/`
 to filter, `?` for the keys, `:` for the command palette, `t` for the theme.
+
+**Milestones.** `:` → *Milestones in a repository* → `owner/name` lists a
+repository's limbs in the order the crew takes ready work (`enter` opens a
+limb's own limbs). A person who administers the repository presses `r` to
+Raise or `l` to Lower the limb under the cursor: a preview of the new order
+and of the top of the ready list first, then `enter` to apply (`esc` backs
+out), then `u` to undo the last move. It is the same fleet operation the web
+milestones page uses, and a move is heard by that page when it is open.
+Anyone else sees the order and no keys to change it; a guest sees only what
+the web shows them.
 
 Working on the UI itself? `bun run src/tui/main.ts --user alice` runs it over
 stdio against your local data directory. That `--user` flag is a development
@@ -121,6 +139,14 @@ Mirror a repository in and its issues, pulls, comments and labels come with the
 git objects; anything you then do here is **written through** to the origin
 first and reflected locally after it succeeds. For a mirror the origin is
 truth, exactly as git is truth for a native repo.
+
+A pull from an outsider's fork on the origin is someone else's code, so its
+check and preview wait. A person with write access lets that exact head run:
+on the pull page, **Approve to run here**; in the terminal, `A` on the pull
+("approve to run here"); over the API, `POST
+/api/v1/repos/:o/:n/pulls/:n/approve-here`. It is a local record — a review
+written through to, or imported from, the origin never counts — and a new push
+waits for a new approval.
 
 Connect one at **Settings → Origins** (or `A` then `o` in the terminal). Which
 way in you get is a property of the forge, not a preference:
@@ -188,6 +214,14 @@ my machine", and the dashboard grows an **On your machine** card listing them.
 The server remembers only the choice — nothing about the state of a laptop —
 and `forge sync` below is what acts on it.
 
+**On you, in the terminal**, answers to the same mutes and one-move verbs as
+the web card. Repositories you muted are hidden and counted ("2 repositories
+muted"). On the On you card: `space` marks a row, `x` closes the marked rows
+(or the row under the cursor) with one reason, `m` mutes their repositories,
+`S` ships them, `u` undoes the latest set within its day, and `L` listens
+again to every muted repository. Each goes through `applyAsksBulk`, so the
+per-row access checks and refusals are the web's, shown in the toast.
+
 ## On your machine
 
 The forge holds the truth; `forge` keeps a copy of the parts you work on, the
@@ -251,6 +285,12 @@ file), and if you named an agent, the sentence became issue #1, assigned.
   redeployed on each push and gone when the pull closes. Its data starts as
   a copy of production's — copy-on-write where the filesystem can — and
   never writes back. Merging moves code and touches no data.
+- **A run has a budget** (`src/kernel/budgets.ts`): a check past `gate`
+  (60 min) or a reviewer's run past `review` (10 min) is killed with
+  `budget: <what> took <n> min, limit <m>`, queued again once, and failed
+  the second time, which the vitals carry as a need for a day. `gate` is 60
+  min because this repository's own gate takes 18–25 min alone and 45 beside
+  another check; it comes down when the gate does.
 - **Every deploy is a run**, and the run is the check on the pull. Turn on
   **require checks** and a pull cannot merge until its head is green.
 - A **private** app answers only to someone the forge has vouched for
@@ -309,6 +349,24 @@ changes, a line comment — and the agent picks it up in the background,
 resuming its session. A failed check re-engages it too, a bounded number of
 times before a person must speak.
 
+**Already done.** A builder that finds its issue already built on the base
+branch declines with `DECLINED: already done on main in <commit>`, naming the
+full or abbreviated id of each commit that did it (at most five). The forge
+checks that every commit named is on the base branch; only then is the run
+an "already done" outcome, with no strike and nothing parked. The issue stays
+open with a note naming the commits, the asked list and the issue page say
+"Done on main", and the person who asked closes it (the page's Close button,
+or `x` on the issue in the terminal); the close writes "Closed: already done
+on main in …" on the thread. A claim with no commit, or with one that is not
+on the base, is an ordinary decline and is parked as one.
+
+An autonomous app's planner is **held** while nothing is landing or the plate
+is full: no pull has merged in 48 h while one was closed unmerged, or more than
+`slots × 3` ready, unassigned issues are waiting. The tick log says which
+(`planner: held`), and the board and the terminal's repository list say it in
+words. A comment on the direction issue from someone who may write there lifts
+the hold; an issue handed to the planner is still owed its pass.
+
 The forge asks the host for one more binary: `claude`, on `PATH` or at
 `FORGE_CLAUDE`, authenticated as the operator (an `ANTHROPIC_API_KEY` in the
 forge's environment is handed to runs; the machine's own Claude Code login
@@ -326,7 +384,11 @@ one the provider rests hands its runs to the other until the reset.
 **Sandbox.** An agent's shell is held to a policy — the network is the forge
 and the package registry, writes stay in the clone, the forge's data and the
 operator's credentials are unreadable — by bubblewrap and socat on Linux
-(both are in the image). A host that forbids unprivileged user namespaces
+(both are in the image). Inside it a builder can install the declared
+packages, type-check, and run the tests that boot a server: no unix socket is
+let through, so the run carries `FORGE_TEST_SOCKET=port` and the forge listens
+on a loopback port instead (`bun scripts/sandbox-probe.ts` prints each
+verdict). A host that forbids unprivileged user namespaces
 (many container platforms' seccomp profiles) cannot hold it, and the policy is
 then switched off rather than faked. To tell which a deployment is in: the
 boot log carries `agent sandbox not available here` with the reason, Settings →
@@ -340,7 +402,9 @@ mechanical rather than advisory.
 `docs/FLOW.md` is where every issue stands: `GET /api/v1/repos/:owner/:name/flow` returns each open issue's stage, since, stalled and unblock, plus what went live in the last 24 h.
 
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
-what "ready now" means to a person and to the crew.
+what "ready now" means to a person and to the crew. The map also shows each
+pillar's ask-to-live: the median hours from an issue opening to its change live
+in production, over the last 7 days (also in the map and milestones API and MCP).
 
 `docs/STUDIO.md` is the front door from the top of this page in full: the five
 words and where each is decided, the box, the three lists, a tell, a run
@@ -363,9 +427,44 @@ it answers by default: `.well-known`, feeds, cards, the manifest.
 `docs/SNAPSHOT.md` is a forge back from a copy: what a nightly snapshot
 holds, where it goes, and the one command that restores it.
 
+A snapshot uploads eight objects at a time. Run logs older than a day go up
+bundled per day (cut at 4 MB, so a long history is several objects, never one
+huge one); restore unpacks them. While one runs, progress shows on
+**Settings → Backups** and as a line in the log every 500 objects or minute.
+The terminal has no backups view, so it has no readout.
+
 `docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.
+
+### The sentinel
+
+The forge hunts its own faults (`docs/CREW.md`): a hunt an hour on the
+autonomy clock, sooner when a held slot or a setting left away from its
+default is new. Each finding is one issue with its evidence, filed in
+`FORGE_SENTINEL_REPO` (default `trevato/forge`) as the `sentinel` agent, else
+the first admin. Evidence is scrubbed of anything credential-shaped before it
+is filed.
+
+- **Board:** a site admin's forge strip shows the open findings and the last
+  hunt; a guest or member sees nothing.
+- **Terminal:** press `ctrl+k`, run **Sentinel** — the same line as a toast.
+  Offered to site admins only.
+
+### Passports
+
+A crew run's environment carries `FORGE_PASSPORT`, a 15-minute credential
+scoped to `health:read` for the forge alone (`src/kernel/passport.ts`, no
+dependency: Node crypto's HMAC and HKDF). It opens one route and nothing else:
+
+    curl -H "authorization: Passport $FORGE_PASSPORT" "$FORGE_URL/api/v1/passport/health"
+
+Missing, expired, wrong-audience, wrong-scope or forged passports get a 401. A
+passport has exactly one valid encoding (padded or altered variants are refused).
+
+This route proves the mechanism and is not a privilege: it returns what the
+anonymous `GET /api/v1/health` already returns. The next edge should guard
+something only a passport may reach.
 
 ## Cloud accounts
 
@@ -388,6 +487,14 @@ not as a crew run; AWS audits look at us-east-1 only; over-provisioned
 droplets and forgotten DNS records need metrics or resolution and are not
 attempted; Backblaze audits find nothing yet. No dependency was added.
 
+## Share to the forge
+
+Install the forge to your home screen, then Share a link or text to it from
+any app: the home composer opens with it as a draft, and it is only sent when
+you tap Post. Signed out, you sign in (or up) first and land on the same
+draft. The share target is the web manifest's `share_target`, which only an
+**installed PWA on Android and Chrome** offers; iOS Safari does not.
+
 ## Develop
 
 ```sh
@@ -405,6 +512,15 @@ and `FORGE_CHECK_SHARDS=2` turns that down on a small or busy host. Each
 shard's output is written whole as it finishes; the log ends with every
 failing test from every shard, or on green with one line — how many tests,
 across how many files, in how long, then the slowest and fastest shard.
+
+The fast tier picks by measurement. The full gate runs each file under
+Bun's coverage (`--impact`) and writes `scripts/test-impact.json`: test
+file → the `src/**` files it executed. A diff intersected with it is the
+set of tests the change reaches; the check line says `N changed files
+reach M tests; src/x.ts reaches none` (a coverage gap). Tests the map has
+never seen fall back to the import-hop guess, and a change to `forge.json`,
+`package.json`, `scripts/**` or `src/kernel/**` runs everything. Until a
+release commits the map, the fast tier guesses by imports as before.
 
 Files go to shards by how long they take, not how big they are: longest
 first onto the least-loaded shard, weighed from `scripts/test-times.json`
@@ -441,8 +557,35 @@ Every `test/*.test.ts` is either in `GATE` or in `EXCLUDED` with a one-line
 reason and the issue that owns admitting it; `test/check-list.test.ts` goes
 red on a file in neither, in both, or named without existing, so a new test
 file never sits outside the gate silently. A file joins the gate by moving
-from `EXCLUDED` to `GATE` in a pull whose check is green — that pull is the
-proof it passes.
+from `EXCLUDED` to `GATE` in a pull whose check is green and whose description
+carries ten green runs in random order under load:
+`bun scripts/flake-hunt.ts admit test/x.test.ts` runs the file ten times, each
+its own `bun test --randomize` with a fresh seed beside busy loops, prints the
+record and exits non-zero unless all ten are green.
+
+**No flaky tests.** Nightly, `.forgejo/workflows/flake-hunt.yml` runs every
+gate file five times on a loaded box, each run a fresh seed that orders both
+the files and (through `--randomize`) the tests inside them, nothing stopped
+early. A file red in some runs and green in others is flaky: the hunt files
+a `Flaky: test/x.test.ts` issue carrying the failure text, the seed and the
+run, with the usual root causes to tick (a shared port, a real clock, order
+dependence, a leaked server, a timeout set near the real duration, a tight
+wall-clock bound); then
+`bun scripts/flake-hunt.ts quarantine` moves every file an open `Flaky:`
+issue the hunt itself filed (its author is the token's user and the forge
+has not marked it untrusted) names from `GATE` to `EXCLUDED` under that issue and proposes the move
+as a pull. Nobody hand-edits the list. A file red in every run is broken,
+not flaky, and the check already says so. The fix is the test's shape, never
+a retry: `test/flake.test.ts` fails on `--retry`, `--rerun-each`, a bunfig
+`retry` or a `{ retry: N }` anywhere the gate runs, and on any test that
+bounds a measured time under 200 ms (a loopback fetch on a loaded runner
+takes tens of ms): assert relative to a baseline from the same run, or bound
+only the failure the test names. The workflow needs a
+`FORGE_TOKEN` secret and a `FORGE_URL` variable on the mirror.
+
+Bun's own `--randomize --seed=N` drives every hunt and admission run. Not
+used: `--rerun-each` (one seed for every rerun, so ten reruns explore one
+order) and `--parallel` (it changes the load the gate is judged under).
 
 The gate also refuses hollow work. `test/hollow.test.ts` runs
 `scripts/hollow.ts`, which names an exported function in `src/actions/` that
@@ -505,6 +648,10 @@ work here.
   flags new activity, no refresh.
 - **Commit pages** — every commit's diff through the same viewer.
 - **Settings** — visibility, branch protection, and labels.
+- **The check lane is visible.** Checks run one at a time; an admin's home
+  strip, the terminal dashboard's strip and `GET /api/v1/health` (`lane`) show
+  the queue depth, the running check and its age, the median of the last
+  twenty and the time to clear, and the 30-minute queue card names that cause.
 - **A terminal UI** — `ssh` in for the whole forge: dashboard, code browsing
   with syntax highlighting, issues and pulls with live-updating threads, the
   diff viewer with inline review comments, merges, settings, orgs, tokens and
@@ -516,6 +663,15 @@ work here.
 - **Automation** — a JSON API covering repos, issues, forks, and orgs (the
   label-as-queue surface), a durable event outbox, and **webhooks** (HMAC-signed
   delivery with retry).
+- **Removing an account** — `DELETE /api/v1/admin/accounts/:username` (admin
+  only). An account that is the last owner of an organization answers 409 with
+  the organizations named. Send `{"retireOrgs": true}` to preview: the answer
+  lists each organization, its repositories (and the app each runs) and its
+  teams, and changes nothing. Send `{"retireOrgs": true, "confirm": true}` to
+  do it: apps are stopped, repositories deleted, organizations retired (the
+  name stays taken), then the account. If a repository will not go, the answer
+  is 500 with `failed` and `removed`; what is left is intact and the same call
+  again finishes the job.
 - **Apps** — a repository that runs: production on the default branch, a
   preview per open pull with its own copy of the data, served by hostname
   from the forge's own port, every deploy a run and every run a check.
@@ -560,3 +716,7 @@ Invariants are proven by faults, not by hope. No dependencies were added.
 `forge.json`'s `check` may declare `fast` beside `run` (the full gate; `full` names it explicitly). `bun scripts/test-shards.ts --tier fast --diff <base>..<head>` runs the tests that touch the diff (changed, named for a changed source file, or importing one within two hops), every test the times table records under 1 s, and any named by `--learned a,b`. `src/checks/tiers.ts` decides; it adds no dependency.
 
 In the forge itself: a pull's check runs `fast` when the manifest has one, in a clone holding the fork point and the head as `FORGE_CHECK_BASE` and `HEAD` (`origin/main` is not a ref there), with `FORGE_CHECK_LEARNED` naming tests earlier land attempts taught the pull (`src/checks/history.ts`, `learned.ts`). Landing (`landIfGreen`) runs `full` once on the merge with its base before merging (`src/checks/landing.ts`); red comments on the pull with the tests named, is remembered per head and base, and the files ride the pull's next fast run. The pull page's checks line shows the tier words.
+
+## Limits
+
+Every limit the owner can hit is declared in `src/settings/limits.ts` with its default, bounds and reason, and changed live by a forge admin at `/admin/limits`, `PUT /api/v1/admin/limits/:key` or the `limits` MCP tool (never by an agent). Each change is kept with who made it.

@@ -7,7 +7,10 @@ on:
 
 jobs:
   build:
-    runs-on: isolated
+    # The droplet runner: it pushes to the registry beside it. A build on the
+    # vxrail pushes the image across the home uplink and dies at the registry
+    # (499, 2026-10-15), so image builds never run there.
+    runs-on: droplet
     env:
       # In-cluster http registry — helm chart push + cosign signature write.
       REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000

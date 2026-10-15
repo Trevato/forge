@@ -31,8 +31,9 @@
  * table is rewritten from those times when every file is green.
  */
 
-import { availableParallelism } from "node:os";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { availableParallelism, tmpdir } from "node:os";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   formatTimes,
   parseShardSpec,
@@ -45,14 +46,17 @@ import {
   weigher,
   type ShardResult,
 } from "./shards.ts";
-import { GATE } from "./gate.ts";
+import { auditGate, EXCLUDED, GATE } from "./gate.ts";
+import { executedFiles, formatImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
 import { fastSet, importsOf, duration } from "../src/checks/tiers.ts";
 
 const TIMES = new URL("./test-times.json", import.meta.url).pathname;
+const IMPACT = new URL("./test-impact.json", import.meta.url).pathname;
 
 const argv = process.argv.slice(2);
 const record = argv.includes("--record");
 const gate = argv.includes("--gate");
+const measure = argv.includes("--impact");
 
 /** Pull `--shard N/M` or `--shard=N/M` out of argv so it never reaches bun test. */
 function takeShardArg(raw: string[]): {
@@ -112,7 +116,7 @@ function takeValue(
 }
 
 const tierArg = takeValue(
-  argv.filter((arg) => arg !== "--record" && arg !== "--gate"),
+  argv.filter((arg) => arg !== "--record" && arg !== "--gate" && arg !== "--impact"),
   "--tier",
 );
 const diffArg = takeValue(tierArg.rest, "--diff");
@@ -170,6 +174,28 @@ if (!split.ok) {
   process.exit(2);
 }
 const flags = split.flags;
+// A test file in neither GATE nor EXCLUDED costs a whole gate run to find
+// out; say so before anything spawns. Explicit files alone are not audited.
+if (gate || tier === "fast") {
+  let present: string[] = [];
+  try {
+    present = readdirSync("test")
+      .filter((name) => name.endsWith(".test.ts"))
+      .map((name) => `test/${name}`)
+      .sort();
+  } catch {}
+  const problems = auditGate(present, GATE, EXCLUDED);
+  if (problems.length > 0) {
+    for (const problem of problems) console.error(`test-shards: ${problem}`);
+    const named = [
+      ...new Set(problems.map((p) => p.match(/^(test\/\S+\.test\.ts) /)?.[1])),
+    ].filter((f): f is string => f !== undefined);
+    console.error(
+      `test-shards: ${named.join(", ")}: list it in GATE or EXCLUDED in scripts/gate.ts`,
+    );
+    process.exit(2);
+  }
+}
 let files = [...(gate || tier === "fast" ? GATE : []), ...split.files];
 if (tier === "fast") {
   const diff = Bun.spawnSync(
@@ -205,7 +231,16 @@ if (tier === "fast") {
     }
     return found;
   };
+  let impact: Map<string, string[]> | undefined;
+  try {
+    const parsed = parseImpact(readFileSync(IMPACT, "utf8"));
+    if (parsed.ok) impact = parsed.value;
+    else console.log(`test-shards: scripts/test-impact.json refused (${parsed.error}); guessing by imports`);
+  } catch {
+    // no map yet: the import guess stands
+  }
   const plan = fastSet({
+    ...(impact === undefined ? {} : { impact }),
     changed,
     tests: files,
     imports,
@@ -213,7 +248,7 @@ if (tier === "fast") {
     learned: (learnedArg.value ?? "").split(",").filter((f) => f !== ""),
   });
   console.log(
-    `test-shards: fast tier, ${plan.files.length} of ${files.length} files for ${changed.length} changed ` +
+    `test-shards: fast tier, ${plan.files.length} of ${files.length} files for ${changed.length} changed, ${plan.line} ` +
       `(expected ${duration(plan.expected)}${plan.overBudget ? ", over the 5m budget" : ""})`,
   );
   for (const file of plan.files)
@@ -336,6 +371,9 @@ async function drain(
   take(decoder.decode());
 }
 
+const measured = new Map<string, string[]>();
+const unmeasured = new Set<string>();
+
 type Timed = ShardResult & { seconds: number };
 
 /**
@@ -368,7 +406,13 @@ async function runShard(
   // to bun test shards — a leftover max-old-space-size races the check
   // cell's memory cgroup and the kernel SIGKILLs the gate (exit 137).
   delete childEnv["NODE_OPTIONS"];
-  const child = Bun.spawn(["bun", "test", ...flags, ...paths], {
+  // Measuring: one file per process, its coverage in a directory of its own.
+  const covDir =
+    measure && slice.length === 1 ? mkdtempSync(join(tmpdir(), "impact-")) : undefined;
+  const cover = covDir
+    ? ["--coverage", "--coverage-reporter=lcov", `--coverage-dir=${covDir}`]
+    : [];
+  const child = Bun.spawn(["bun", "test", ...flags, ...cover, ...paths], {
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -398,6 +442,14 @@ async function runShard(
       ? `${text.endsWith("\n") || text === "" ? "" : "\n"}── shard ${where} done (exit ${code}, ${seconds}s)\n`
       : `\n── shard ${where} (exit ${code}, ${seconds}s): ${slice.join(" ")}\n${text}${text.endsWith("\n") ? "" : "\n"}`,
   );
+  if (covDir) {
+    try {
+      measured.set(slice[0]!, executedFiles(readFileSync(join(covDir, "lcov.info"), "utf8")));
+    } catch {
+      unmeasured.add(slice[0]!);
+    }
+    rmSync(covDir, { recursive: true, force: true });
+  }
   return {
     files: slice,
     code,
@@ -463,6 +515,24 @@ if (record) {
     console.log(
       `test-shards: wrote ${results.length} times to scripts/test-times.json`,
     );
+  }
+}
+if (measure) {
+  if (ending.code !== 0 || unmeasured.size > 0 || !(record || serialFiles)) {
+    console.log("test-shards: not writing scripts/test-impact.json: the run was not green and measured, one file at a time");
+  } else {
+    // A partial run refreshes what it ran and forgets nothing else.
+    let old = new Map<string, string[]>();
+    try {
+      const parsed = parseImpact(readFileSync(IMPACT, "utf8"));
+      if (parsed.ok) old = parsed.value;
+      else console.log(`test-shards: scripts/test-impact.json refused (${parsed.error}); writing a fresh map`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        console.log(`test-shards: scripts/test-impact.json unreadable (${String(error)}); writing a fresh map`);
+    }
+    writeFileSync(IMPACT, formatImpact(mergeImpact(old, measured, GATE)));
+    console.log(`test-shards: wrote ${measured.size} test impacts to scripts/test-impact.json`);
   }
 }
 process.exit(ending.code);

@@ -5,7 +5,7 @@ import { stylesheetAsset } from "../src/web/asset.ts";
  * `?wall` is its wall mode, where every old `/big` address lands;
  * anonymous is sent to sign in.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,6 +18,8 @@ import { openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getAppByRepo } from "../src/core/apps.ts";
+import { hunt } from "../src/crew/sentinel.ts";
+import { setCapacity } from "../src/core/capacity.ts";
 import { recordDecision } from "../src/core/decisions.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull } from "../src/core/pulls.ts";
@@ -66,6 +68,12 @@ describe("the board", () => {
     if (!enabled.ok) throw new Error(String(enabled.error));
     return made.value;
   }
+
+  // Module loggers reach every forge in the process: each test starts from a quiet ledger.
+  beforeEach(() => {
+    app.signals.errors.clear();
+    app.signals.refused.clear();
+  });
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-board-"));
@@ -404,6 +412,12 @@ describe("the board's forge strip", () => {
       })
     ).text();
 
+  // Module loggers reach every forge in the process: each test starts from a quiet ledger.
+  beforeEach(() => {
+    app.signals.errors.clear();
+    app.signals.refused.clear();
+  });
+
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-board-strip-"));
     app = createApp({ dataDir, port: 0 });
@@ -456,6 +470,19 @@ describe("the board's forge strip", () => {
     expect(other).not.toContain("stuck.");
   });
 
+  test("the home says the lane when checks are queued, to an admin only", async () => {
+    app.db.query("UPDATE run SET state = 'cancelled' WHERE state IN ('queued','running')").run();
+    const idle = await board("root");
+    expect(idle).not.toContain("Lane:");
+    const made = await createRepo(app, admin, { name: "laned" });
+    if (!made.ok) throw new Error(String(made.error));
+    for (let i = 0; i < 3; i++) createRun(app.db, { repoId: made.value.id, kind: "check" });
+    const busy = await board("root");
+    expect(busy).toContain("Lane: 3 checks queued");
+    expect(await board("bob")).not.toContain("Lane:");
+    app.db.query("UPDATE run SET state = 'cancelled' WHERE state IN ('queued','running')").run();
+  });
+
   test("a setting that is not the default is no incident: the strip stays fine and the cards render", async () => {
     const made = await createRepo(app, admin, { name: "calm" });
     if (!made.ok) throw new Error(String(made.error));
@@ -495,6 +522,28 @@ describe("the board's forge strip", () => {
     } finally {
       delete process.env["FORGE_GUARD_DIR"];
       rmSync(guard, { recursive: true, force: true });
+    }
+  });
+
+  test("the sentinel's line is the admin's alone, and absent before the first hunt", async () => {
+    expect(await board("root")).not.toContain("sentinel");
+
+    setCapacity(app.db, "checks.concurrency", "4", admin.id);
+    app.db
+      .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'")
+      .run("2020-01-01T00:00:00.000Z");
+    process.env["FORGE_SENTINEL_REPO"] = "root/stuck";
+    try {
+      expect(hunt(app, "root/stuck").filed).toBeGreaterThan(0);
+      const seen = await board("root");
+      expect(seen).toMatch(/<a class="board-forge-need" id="sentinel" href="\/root\/stuck\/issues">The sentinel has \d+ open findings?<\/a>/);
+      expect(seen).not.toContain('class="board-forge-ok" id="sentinel"');
+      expect(await board("bob")).not.toMatch(/sentinel/i);
+      const guest = await (await fetch(`${servers.url}/board`)).text();
+      expect(guest).not.toMatch(/sentinel/i);
+    } finally {
+      delete process.env["FORGE_SENTINEL_REPO"];
+      setCapacity(app.db, "checks.concurrency", "1", admin.id);
     }
   });
 });

@@ -15,6 +15,8 @@ import { SEALED_VALUE, type World } from "./world.ts";
 
 export interface Invariant {
   readonly name: string;
+  /** Costly: checked once at the end of a night, not after every fault. */
+  readonly final?: true;
   check(world: World): Promise<string[]>;
 }
 
@@ -71,6 +73,7 @@ const pullsKeepHeads: Invariant = {
 /** A snapshot taken now restores into an empty directory with the same runs. */
 const snapshotRestores: Invariant = {
   name: "a snapshot taken after restores",
+  final: true,
   async check(world) {
     const root = mkdtempSync(join(tmpdir(), "forge-chaos-snap-"));
     try {

@@ -671,3 +671,19 @@ outbox, working in Claude Code and proposing through pulls a person merges).
 Not yet: containers around app processes, custom domains, a gate that
 lands a pull on its own once review and checks agree, federation, package
 registry.
+
+## Passports between parts
+
+`kernel/passport.ts` issues short-lived (≤15 min) scoped credentials between
+forge parts: `issue` names issuer, audience, scopes and a ttl; `verify`
+checks signature (HMAC under an HKDF subkey of `secret.key`), expiry,
+audience and scope with no lookup. `verify` also checks that `iss`/`aud`
+are valid names and every scope a string, not the MAC alone.
+
+First edge: the runner issues each crew run a `FORGE_PASSPORT` (iss `runner`,
+aud `forge`, scope `health:read`, 15 min; `crew/passport_env.ts`), and
+`GET /api/v1/passport/health` (`http/passport_edge.ts`) answers the forge's
+public health only to `Authorization: Passport <token>` that verifies — a
+missing, expired, wrong-audience, wrong-scope or forged passport is a 401.
+Try: `curl -H "authorization: Passport $FORGE_PASSPORT" "$FORGE_URL/api/v1/passport/health"`.
+More edges follow the same pattern: one audience, one scope, one route.

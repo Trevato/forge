@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRun } from "../src/core/runs.ts";
 import { vitals } from "../src/kernel/vitals.ts";
+import { fetchInternal } from "../src/git/hook-address.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 let dataDir: string;
@@ -81,7 +82,7 @@ test("a site admin with a read-only token gets the shape; others get the short o
   expect(Object.keys(v).sort()).toEqual(
     [
       "apps", "at", "checkedAt", "commit", "disk", "draining", "errors",
-      "incidents", "memory", "needs", "ok", "queue", "rollout", "stale", "stuck",
+      "incidents", "lane", "memory", "needs", "ok", "queue", "rollout", "stale", "stuck",
       "version",
     ].sort(),
   );
@@ -99,13 +100,17 @@ test("a site admin with a read-only token gets the shape; others get the short o
   expect((await fetch(servers.url + "/healthz")).status).toBe(200);
 });
 
-test("a full queue shows in queue, and an old one in needs", () => {
+test("a full queue shows in queue, and an old one in needs", async () => {
+  // Errors and refused calls are process-wide: another file in the shard may have left some.
+  app.signals.errors.clear();
+  app.signals.refused.clear();
   const old = Date.now() - 3_600_000;
   for (let i = 0; i < 3; i++) createRun(app.db, { repoId, kind: "agent" });
-  const v = vitals({ db: app.db, dataDir });
+  const v = vitals({ db: app.db, signals: app.signals, dataDir });
   expect(v.queue).toEqual({ agent: 3 });
-  expect(v.ok).toBe(true);
-  const later = vitals({ db: app.db, dataDir, now: old + 2 * 3_600_000 + 3_600_000 });
+  // Process-wide signals (errors, refused calls) from other suites may speak too.
+  expect(v.needs.join(" ")).not.toContain("queue");
+  const later = vitals({ db: app.db, signals: app.signals, dataDir, now: old + 2 * 3_600_000 + 3_600_000 });
   expect(later.ok).toBe(false);
   expect(later.needs.join(" ")).toContain("agent queue");
 });
@@ -126,7 +131,7 @@ test("a running run with a lapsed lease is stuck, and needs says so", async () =
   app.db
     .query("UPDATE run SET heartbeat_at=?2 WHERE id=?1")
     .run(run.id, new Date().toISOString());
-  expect(vitals({ db: app.db, dataDir }).stuck).toEqual([]);
+  expect(vitals({ db: app.db, signals: app.signals, dataDir }).stuck).toEqual([]);
 });
 
 test("the number of queries does not grow with runs", () => {
@@ -139,7 +144,7 @@ test("the number of queries does not grow with runs", () => {
         return typeof v === "function" ? v.bind(t) : v;
       },
     });
-    vitals({ db: counting, dataDir });
+    vitals({ db: counting, signals: app.signals, dataDir });
     return n;
   };
   const before = count();
@@ -148,8 +153,8 @@ test("the number of queries does not grow with runs", () => {
     if (i % 2) app.db.query("UPDATE run SET state='running' WHERE id=?1").run(r.id);
   }
   expect(count()).toBe(before);
-  // The queue and the running runs.
-  expect(before).toBe(2);
+  // The queue, the running runs, the runs killed twice for their budget, and the lane's depth and finished checks.
+  expect(before).toBe(5);
 });
 
 test("errors are counted, bounded, redacted, and a burst is said", async () => {
@@ -176,10 +181,102 @@ test("errors are counted, bounded, redacted, and a burst is said", async () => {
     expect(seen.latest.length).toBe(ERROR_RING);
     expect(seen.lastHour).toBe(ERROR_RING + 51);
     expect(seen.lastHour).toBeGreaterThanOrEqual(ERROR_BURST);
-    expect(vitals({ db: app.db, dataDir }).needs.some((n) => n.includes("errors in the last hour"))).toBe(true);
-    expect(vitals({ db: app.db, dataDir, now: Date.now() + 2 * 3_600_000 }).errors.lastHour).toBe(0);
+    expect(vitals({ db: app.db, signals: app.signals, dataDir }).needs.some((n) => n.includes("errors in the last hour"))).toBe(true);
+    expect(vitals({ db: app.db, signals: app.signals, dataDir, now: Date.now() + 2 * 3_600_000 }).errors.lastHour).toBe(0);
   } finally {
     console.error = orig;
     clearErrors();
+  }
+});
+
+test("the lane: depth, the running check and its age, the median of the last finished, the time to clear", async () => {
+  const { laneLine } = await import("../src/kernel/vitals.ts");
+  app.db.query("DELETE FROM run").run();
+  const now = Date.now();
+  const iso = (ms: number) => new Date(ms).toISOString();
+  // Empty lane: no line.
+  expect(vitals({ db: app.db, signals: app.signals, dataDir, now }).lane).toEqual({
+    queued: 0, running: null, medianMinutes: null, clearsInMinutes: null,
+  });
+  expect(laneLine(vitals({ db: app.db, signals: app.signals, dataDir, now }).lane, now)).toBeNull();
+  // Three finished checks of 10, 20 and 30 minutes: the median is 20.
+  for (const min of [10, 20, 30]) {
+    const r = createRun(app.db, { repoId, kind: "check" });
+    app.db
+      .query("UPDATE run SET state='ok', started_at=?2, finished_at=?3 WHERE id=?1")
+      .run(r.id, iso(now - 3_600_000), iso(now - 3_600_000 + min * 60_000));
+  }
+  const live = createRun(app.db, { repoId, kind: "check" });
+  app.db
+    .query("UPDATE run SET state='running', started_at=?2, heartbeat_at=?3 WHERE id=?1")
+    .run(live.id, iso(now - 6 * 60_000), iso(now));
+  for (let i = 0; i < 6; i++) createRun(app.db, { repoId, kind: "check" });
+  const lane = vitals({ db: app.db, signals: app.signals, dataDir, now }).lane;
+  expect(lane.queued).toBe(6);
+  expect(lane.running?.since).toBe(iso(now - 6 * 60_000));
+  expect(lane.medianMinutes).toBe(20);
+  expect(lane.clearsInMinutes).toBe(120);
+  expect(laneLine(lane, now)).toBe(
+    "6 checks queued · running a check for 6 min · median 20 min · clears in ~2 h",
+  );
+  // The same, in one call for an admin.
+  const body = (await (await health(admin)).json()) as { lane: typeof lane };
+  expect(body.lane.queued).toBe(6);
+  expect(body.lane.medianMinutes).toBe(20);
+  // Waiting past thirty minutes names the cause, not only the symptom.
+  const later = vitals({ db: app.db, signals: app.signals, dataDir, now: now + 3_600_000 });
+  const cause = later.needs.find((n) => n.includes("one lane"));
+  expect(cause).toMatch(/^The check queue has waited over 30 minutes; 6 checks queued .*; one lane, checks run one at a time\.$/);
+  expect(cause).not.toContain("Lane:");
+});
+
+test("an unauthenticated internal call is refused, logged and flagged; the probe is not", async () => {
+  app.signals.refused.clear();
+  const flagged = () =>
+    vitals({ db: app.db, signals: app.signals, dataDir: app.config.dataDir }).needs.filter((n) =>
+      n.includes("internal call"),
+    );
+  const call = (path: string) =>
+    fetchInternal(app.hookAddress.current, path, { method: "POST" });
+  expect(flagged()).toEqual([]);
+  expect((await call("/internal/ping")).status).toBe(403);
+  expect(flagged()).toEqual([]);
+  expect((await call("/internal/hook")).status).toBe(403);
+  const [line] = flagged();
+  expect(line).toContain("1 internal call");
+  expect(line).toContain("/internal/hook");
+  app.signals.refused.clear();
+});
+
+test("two forges in one process keep their own error and refusal signals", async () => {
+  const { ERROR_BURST } = await import("../src/kernel/vitals.ts");
+  const { createLog } = await import("../src/kernel/log.ts");
+  const { noteRefusedInternal } = await import("../src/kernel/internal_refused.ts");
+  const dirB = await mkdtemp(join(tmpdir(), "forge-vitals-b-"));
+  const other = createApp({ dataDir: dirB, port: 0 });
+  try {
+    const needs = (a: App) =>
+      vitals({ db: a.db, dataDir: a.config.dataDir, signals: a.signals }).needs;
+    expect(needs(app)).toEqual([]);
+    expect(needs(other)).toEqual([]);
+    for (let i = 0; i < ERROR_BURST; i++) other.log.error("boom");
+    noteRefusedInternal("POST", "/internal/hook", Date.now(), other.signals.refused);
+    expect(needs(other).join(" ")).toContain("errors in the last hour");
+    expect(needs(other).join(" ")).toContain("internal call");
+    expect(needs(app)).toEqual([]);
+    // A logger that belongs to no forge speaks for the whole process: production's path.
+    const shared = createLog("shared");
+    for (let i = 0; i < ERROR_BURST; i++) shared.error("boom");
+    expect(needs(app).join(" ")).toContain("errors in the last hour");
+    // A forge born later starts clean.
+    const dirC = await mkdtemp(join(tmpdir(), "forge-vitals-c-"));
+    const later = createApp({ dataDir: dirC, port: 0 });
+    expect(needs(later)).toEqual([]);
+    later.close();
+    await rm(dirC, { recursive: true, force: true });
+  } finally {
+    other.close();
+    await rm(dirB, { recursive: true, force: true });
+    (await import("../src/kernel/log.ts")).clearErrors();
   }
 });

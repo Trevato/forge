@@ -17,6 +17,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { noteProtection, resetProtection } from "../src/kernel/protection.ts";
 import { running, runningLine, UNSTAMPED } from "../src/kernel/version.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
@@ -290,6 +291,37 @@ describe("where the stamp is read", () => {
       expect(other).toStartWith("forge — your code, your machine");
       expect(other).not.toContain("9.8.7");
     }
+  });
+
+  test("a forge with less than default protection says so to its admin alone, escaped", async () => {
+    noteProtection("apps", { ok: false, reason: "<b>no bwrap</b>" });
+    try {
+      const get = async (cookie?: string) =>
+        await (
+          await fetch(`${base}/explore`, {
+            headers: cookie === undefined ? {} : { cookie },
+          })
+        ).text();
+      const admin = await get(await signIn("alice"));
+      expect(admin).toContain('id="reduced-protection"');
+      expect(admin).toContain("Reduced protection: apps (&lt;b&gt;no bwrap");
+      expect(admin).not.toContain("<b>no bwrap");
+      for (const other of [await get(await signIn("bob")), await get()])
+        expect(other).not.toContain("reduced-protection");
+    } finally {
+      resetProtection();
+    }
+  });
+
+  test("once the host is protected again the admin's page shows no notice", async () => {
+    noteProtection("apps", { ok: false, reason: "x" });
+    noteProtection("apps", { ok: true });
+    const page = await (
+      await fetch(`${base}/explore`, {
+        headers: { cookie: await signIn("alice") },
+      })
+    ).text();
+    expect(page).not.toContain("reduced-protection");
   });
 
   test("with no stamp every one of them says dev", async () => {

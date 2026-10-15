@@ -9,7 +9,6 @@ import { listAgents, type Agent } from "../../core/agents.ts";
 import {
   addSubscription,
   API_BASE_MAX,
-  BUDGET_MAX_USD,
   budgetsOf,
   deleteSubscription,
   EVERYONE,
@@ -59,6 +58,7 @@ import { readSpend } from "../../actions/spend.ts";
 import { liveRegionsJs } from "../client.ts";
 import { spendView } from "./spend.ts";
 import { markOf } from "../../core/marks.ts";
+import { limitValue } from "../../settings/limits.ts";
 
 const POOL = "/settings/subscriptions";
 
@@ -250,7 +250,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
                       name="budget"
                       type="number"
                       min="1"
-                      max="${budget?.locked ? budget.budgetUsd : BUDGET_MAX_USD}"
+                      max="${budget?.locked ? budget.budgetUsd : limitValue(ctx.app.db, "subscription.budget_max_usd")}"
                       step="1"
                       placeholder="none"
                       value="${budget?.budgetUsd ?? ""}"
@@ -485,7 +485,7 @@ export async function subscriptionBudget(ctx: Ctx): Promise<Response> {
     POOL,
     saved
       ? { message: usd === null ? "No budget: this account spends until you stop it." : `Budget set: ${dollars(usd)} in all.` }
-      : { tone: "danger", message: `A budget is dollars from 1 to ${BUDGET_MAX_USD}, or empty for none.` },
+      : { tone: "danger", message: `A budget is dollars from 1 to ${limitValue(ctx.app.db, "subscription.budget_max_usd")}, or empty for none.` },
   );
 }
 

@@ -1,0 +1,295 @@
+/**
+ * Every limit a forge's owner can hit, in one place: its name, default,
+ * bounds and the one sentence that says why it is there. The code that
+ * enforces a limit asks `limitValue` on every use, so a change on
+ * `/admin/limits` governs the next request and never needs a restart.
+ *
+ * Values live in `forge_setting` (like capacity, `core/capacity.ts`); the
+ * two crew/check concurrency limits *are* capacity settings, so they are
+ * read and written there and listed here with the bounds capacity holds —
+ * one stored value, one place that says what it may be. Every change is
+ * kept in `forge_setting_change`: who, when, from what to what.
+ * Pure data; authorization is in `actions/limits.ts`.
+ */
+
+import type { Database } from "bun:sqlite";
+import {
+  CAPACITY,
+  bootDefault,
+  capacityValue,
+  setCapacity,
+  type CapacityKey,
+} from "../core/capacity.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
+
+export type LimitKey =
+  | "crew.concurrency"
+  | "checks.concurrency"
+  | "agent.budget_max_usd"
+  | "subscription.budget_max_usd"
+  | "app.members_max"
+  | "front.pinned_max"
+  | "front.hidden_max"
+  | "share.daily_max"
+  | "signin.per_account"
+  | "signin.per_forge";
+
+export interface LimitDef {
+  readonly label: string;
+  readonly unit: string;
+  readonly default: number;
+  readonly min: number;
+  readonly max: number;
+  /** One sentence: why the limit is there. */
+  readonly reason: string;
+}
+
+function capacityLimit(key: CapacityKey, unit: string, reason: string): LimitDef {
+  const kind = CAPACITY[key].kind;
+  if (kind.type !== "count") throw new Error(`${key} is not a count`);
+  return {
+    label: CAPACITY[key].label,
+    unit,
+    default: Number(CAPACITY[key].fallback),
+    min: kind.min,
+    max: kind.max,
+    reason,
+  };
+}
+
+export const LIMITS: Record<LimitKey, LimitDef> = {
+  "crew.concurrency": capacityLimit(
+    "crew.concurrency",
+    "runs",
+    "The crew shares one machine; more runs at once slow every run and every page.",
+  ),
+  "checks.concurrency": capacityLimit(
+    "checks.concurrency",
+    "checks",
+    "A check runs a whole test suite; more at once starve the web process of CPU.",
+  ),
+  "agent.budget_max_usd": {
+    label: "Crew member budget ceiling",
+    unit: "dollars",
+    default: 100,
+    min: 1,
+    max: 1_000_000,
+    reason: "A crew member's per-run budget is spent unattended, so what one run may cost has a top.",
+  },
+  "subscription.budget_max_usd": {
+    label: "Pool account budget ceiling",
+    unit: "dollars",
+    default: 100_000,
+    min: 1,
+    max: 100_000_000,
+    reason: "A sealed account's whole-life budget is a promise about real money, so a typo cannot make it unbounded.",
+  },
+  "app.members_max": {
+    label: "People named on one app",
+    unit: "people",
+    default: 100,
+    min: 1,
+    max: 10_000,
+    reason: "The member list is read on every request to the app, so it stays short enough to scan.",
+  },
+  "front.pinned_max": {
+    label: "Pinned repositories on the front page",
+    unit: "repositories",
+    default: 12,
+    min: 1,
+    max: 100,
+    reason: "Pins sit above the fold; past a dozen they stop being picks.",
+  },
+  "front.hidden_max": {
+    label: "Hidden repositories on the front page",
+    unit: "repositories",
+    default: 200,
+    min: 1,
+    max: 10_000,
+    reason: "The hidden list is checked while the front page is ranked, so it is kept bounded.",
+  },
+  "share.daily_max": {
+    label: "Shares delivered to one person a day",
+    unit: "shares",
+    default: 5,
+    min: 1,
+    max: 1_000,
+    reason: "A person's feed is theirs: shares past the day's allowance wait instead of crowding it out.",
+  },
+  "signin.per_account": {
+    label: "Sign-in attempts per account a minute",
+    unit: "attempts",
+    default: 20,
+    min: 1,
+    max: 1_000,
+    reason: "Every attempt costs a password hash, and a guesser gets only so many tries at one account.",
+  },
+  "signin.per_forge": {
+    label: "Sign-in attempts per forge a minute",
+    unit: "attempts",
+    default: 200,
+    min: 1,
+    max: 100_000,
+    reason: "Spread across many accounts, guessing still burns CPU on hashes, so the forge as a whole has a ceiling.",
+  },
+};
+
+export const LIMIT_KEYS = Object.keys(LIMITS) as LimitKey[];
+
+export function isLimitKey(key: string): key is LimitKey {
+  return Object.hasOwn(LIMITS, key);
+}
+
+/** Which limits are capacity settings and so stored there. */
+function capacityKey(key: LimitKey): CapacityKey | undefined {
+  return key === "crew.concurrency" || key === "checks.concurrency"
+    ? key
+    : undefined;
+}
+
+function storeKey(key: LimitKey): string {
+  return `limit.${key}`;
+}
+
+/** Whether `n` is a whole number inside `key`'s bounds. */
+export function validLimit(key: LimitKey, n: number): boolean {
+  const def = LIMITS[key];
+  return Number.isInteger(n) && n >= def.min && n <= def.max;
+}
+
+/** The sentence that names a limit's bounds, for a refusal. */
+export function limitBounds(key: LimitKey): string {
+  const def = LIMITS[key];
+  return `${def.label} is a whole number from ${def.min} to ${def.max}`;
+}
+
+function stored(db: Database, key: LimitKey): number | undefined {
+  const row = db
+    .query<{ value: string }, [string]>(
+      "SELECT value FROM forge_setting WHERE key = ?1",
+    )
+    .get(storeKey(key));
+  if (row === null || !/^\d+$/.test(row.value)) return undefined;
+  const n = Number(row.value);
+  return validLimit(key, n) ? n : undefined;
+}
+
+/** The value in force when nobody has set one. */
+export function limitDefault(db: Database, key: LimitKey): number {
+  const cap = capacityKey(key);
+  if (cap !== undefined) {
+    const n = Number(bootDefault(db, cap));
+    return validLimit(key, n) ? n : LIMITS[key].default;
+  }
+  return LIMITS[key].default;
+}
+
+/** What `key` is now. Read on every use, never once at boot. */
+export function limitValue(db: Database, key: LimitKey): number {
+  const cap = capacityKey(key);
+  if (cap !== undefined) {
+    const n = Number(capacityValue(db, cap));
+    return validLimit(key, n) ? n : limitDefault(db, key);
+  }
+  return stored(db, key) ?? LIMITS[key].default;
+}
+
+/** Whether an admin has set `key` (rather than it being the default). */
+export function limitIsSet(db: Database, key: LimitKey): boolean {
+  const cap = capacityKey(key);
+  if (cap !== undefined)
+    return (
+      db
+        .query("SELECT 1 FROM forge_setting WHERE key = ?1")
+        .get(cap) !== null
+    );
+  return stored(db, key) !== undefined;
+}
+
+export type LimitError = {
+  readonly kind: "out_of_bounds";
+  readonly message: string;
+};
+
+/**
+ * Set `key` to `value` (`null` goes back to the default) and keep the
+ * change. A value outside the bounds is refused with the bounds named.
+ */
+export function setLimit(
+  db: Database,
+  key: LimitKey,
+  value: number | null,
+  actorId: string,
+): Result<{ from: number; to: number }, LimitError> {
+  if (value !== null && !validLimit(key, value))
+    return err({ kind: "out_of_bounds", message: limitBounds(key) });
+  const from = limitValue(db, key);
+  const cap = capacityKey(key);
+  if (cap !== undefined) {
+    setCapacity(db, cap, value === null ? null : String(value), actorId);
+    return ok({ from, to: limitValue(db, key) });
+  }
+  const at = new Date().toISOString();
+  db.transaction(() => {
+    if (value === null)
+      db.query("DELETE FROM forge_setting WHERE key = ?1").run(storeKey(key));
+    else
+      db.query(
+        `INSERT INTO forge_setting (key, value, updated_by, updated_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value,
+           updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+      ).run(storeKey(key), String(value), actorId, at);
+    db.query(
+      `INSERT INTO forge_setting_change (key, from_value, to_value, actor_id, at)
+       VALUES (?1, ?2, ?3, ?4, ?5)`,
+    ).run(storeKey(key), String(from), String(limitValue(db, key)), actorId, at);
+  })();
+  return ok({ from, to: limitValue(db, key) });
+}
+
+export interface LimitChange {
+  readonly key: LimitKey;
+  readonly from: string;
+  readonly to: string;
+  readonly actorName: string;
+  readonly at: string;
+}
+
+/** The most recent changes to any listed limit, newest first. */
+export function limitChanges(db: Database, limit = 20): LimitChange[] {
+  const marks = LIMIT_KEYS.map((_, i) => `?${i + 1}`).join(", ");
+  const rows = db
+    .query<
+      {
+        key: string;
+        from_value: string;
+        to_value: string;
+        username: string | null;
+        at: string;
+      },
+      string[]
+    >(
+      `SELECT c.key, c.from_value, c.to_value, u.username, c.at
+         FROM forge_setting_change c LEFT JOIN user u ON u.id = c.actor_id
+        WHERE c.key IN (${marks})
+        ORDER BY c.at DESC, c.rowid DESC
+        LIMIT ${Math.trunc(limit)}`,
+    )
+    .all(...LIMIT_KEYS.map(storedChangeKey));
+  return rows.map((r) => ({
+    key: fromChangeKey(r.key),
+    from: r.from_value,
+    to: r.to_value,
+    actorName: r.username ?? "",
+    at: r.at,
+  }));
+}
+
+/** The key a change is kept under: capacity's own, or `limit.` + the key. */
+function storedChangeKey(key: LimitKey): string {
+  return capacityKey(key) ?? storeKey(key);
+}
+
+function fromChangeKey(key: string): LimitKey {
+  return (key.startsWith("limit.") ? key.slice(6) : key) as LimitKey;
+}

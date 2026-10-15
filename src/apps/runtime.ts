@@ -84,6 +84,7 @@ import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
 import { egressSetting } from "../core/capacity.ts";
+import { noteProtection } from "../kernel/protection.ts";
 import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
 import {
   startProcess,
@@ -195,6 +196,8 @@ export interface EnvStatus {
    * as `tty`.
    */
   readonly looks?: readonly string[] | undefined;
+  /** `false` when its `forge.json` turns the forge pill off; unset is on. */
+  readonly toolbar?: boolean | undefined;
   /**
    * A deploy newer than the one serving that never came up — set only
    * while an older deployment keeps answering in its place. A later
@@ -478,6 +481,7 @@ export class AppsRuntime {
               createdAt: state.live.createdAt,
               tty: state.live.manifest.tty,
               looks: state.live.manifest.looks,
+              toolbar: state.live.manifest.toolbar,
               ...(state.live.deployStartedAt === null
                 ? {}
                 : { deployStartedAt: state.live.deployStartedAt }),
@@ -514,6 +518,7 @@ export class AppsRuntime {
         createdAt: state.live.createdAt,
         tty: state.live.manifest.tty,
         looks: state.live.manifest.looks,
+        toolbar: state.live.manifest.toolbar,
         ...(state.live.deployStartedAt === null
           ? {}
           : { deployStartedAt: state.live.deployStartedAt }),
@@ -578,6 +583,7 @@ export class AppsRuntime {
   /** Rebuild every environment from git and the open pulls, then listen. */
   async start(): Promise<void> {
     this.cells = await cellsAvailable();
+    noteProtection("apps", this.cells);
     if (!this.cells.ok)
       log.warn("apps run uncontained here", { reason: this.cells.reason });
     // Deploys are failed; a check the last forge left is queued again while
