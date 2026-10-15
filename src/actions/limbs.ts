@@ -16,6 +16,11 @@
  *   one reason said on each — and never what something outside the limb
  *   also waits for.
  *
+ * - `raise` and `lower` move the limb one place among its siblings (#1064),
+ *   and the crew takes ready work in that order. One row: the limb, holding
+ *   its seat (`core/limb_seats.ts`). The preview shows the new order and how
+ *   the top of the ready list changes.
+ *
  * Who may is the fleet's rule, unchanged: a person who administers the
  * repository; an agent may preview and never apply.
  */
@@ -23,6 +28,9 @@
 import type { App } from "../app.ts";
 import type { FleetValue, Operation } from "../core/fleet_ops.ts";
 import type { Issue } from "../core/issues.ts";
+import { readyNow } from "../core/dependencies.ts";
+import { limbRanks, withGroup } from "../core/limb_order.ts";
+import { parseSeat, seating } from "../core/limb_seats.ts";
 import { readPlan } from "../core/milestones.ts";
 import { isStructural, pillarsOf } from "../core/pillars.ts";
 import { canRead, type Repo } from "../core/repos.ts";
@@ -35,7 +43,7 @@ import {
   type Plan,
 } from "./fleet.ts";
 
-export const LIMB_ACTIONS = ["defer", "resume", "close"] as const;
+export const LIMB_ACTIONS = ["defer", "resume", "close", "raise", "lower"] as const;
 export type LimbAction = (typeof LIMB_ACTIONS)[number];
 
 export const isLimbAction = (value: unknown): value is LimbAction =>
@@ -47,6 +55,8 @@ export interface LimbRequest {
   readonly reason?: string;
   /** For `resume`: the pillar to put it back under; absent leaves it under none. */
   readonly pillar?: string;
+  /** For `raise` and `lower`: among whose limbs, `top` or a milestone's number; absent when the limb sits in one place. */
+  readonly under?: string;
 }
 
 /** An issue an action touches or takes along, as a person reads it. */
@@ -62,7 +72,16 @@ export interface LimbReach {
   readonly taken: readonly LimbIssue[];
   /** For `defer` and `close`: what beneath it stays, because something outside the limb still waits for it. */
   readonly kept: readonly LimbIssue[];
+  /** For `raise` and `lower`: the limbs of that group as they would stand, and the top of the ready list before and after. */
+  readonly order?: readonly LimbIssue[];
+  readonly ready?: {
+    readonly before: readonly LimbIssue[];
+    readonly after: readonly LimbIssue[];
+  };
 }
+
+/** How many ready issues the preview shows: the top of the list. */
+const TOP_READY = 5;
 
 const brief = (issue: Issue): LimbIssue => ({
   number: issue.number,
@@ -71,6 +90,66 @@ const brief = (issue: Issue): LimbIssue => ({
 
 const fail = (code: FleetError["code"], message: string) =>
   err<FleetError>({ code, message });
+
+/** One step up or down among the limb's siblings, with the order and the ready list it makes. */
+function move(
+  app: App,
+  repo: Repo,
+  limb: Issue,
+  request: LimbRequest,
+  where: string,
+): Result<
+  { query: string; action: { verb: string; value: FleetValue }; reach: LimbReach },
+  FleetError
+> {
+  const seats = seating(app.db, repo);
+  const held = seats.of(limb.id).flatMap((s) => parseSeat(s) ?? []);
+  const under = request.under?.trim().toLowerCase();
+  if (under !== undefined && under !== "top" && !/^[1-9][0-9]{0,8}$/.test(under))
+    return fail("bad_action", "under is top, or the number of a milestone");
+  const seat =
+    under === undefined
+      ? held.length === 1
+        ? held[0]
+        : undefined
+      : held.find((s) => s.group === under);
+  if (seat === undefined)
+    return fail(
+      "bad_action",
+      held.length === 0 || under !== undefined
+        ? "it is not one of the limbs of a milestone, so it has no place to move"
+        : "it is a limb of several milestones: say which with under",
+    );
+  const to = seat.place + (request.action === "raise" ? -1 : 1);
+  const size = seats.size(seat.group);
+  if (to < 1) return fail("bad_action", "it is first already");
+  if (to > size) return fail("bad_action", "it is last already");
+  const ids = [...seats.order(seat.group)];
+  ids.splice(seat.place - 1, 1);
+  ids.splice(to - 1, 0, limb.id);
+  const group = seats.parentId(seat.group)!;
+  const after = readyNow({
+    ...seats.graph,
+    limbRank: limbRanks(seats.tree, withGroup(seats.places, group, ids)),
+  });
+  const byId = new Map(seats.graph.issues.map((i) => [i.id, i]));
+  return ok({
+    query: `${where} number:${limb.number}`,
+    action: { verb: "place", value: `${seat.group}:${to}` },
+    reach: {
+      limb: brief(limb),
+      taken: [],
+      kept: [],
+      order: ids.flatMap((id) => byId.get(id) ?? []).map(brief),
+      ready: {
+        before: readyNow(seats.graph)
+          .slice(0, TOP_READY)
+          .map((r) => brief(r.issue)),
+        after: after.slice(0, TOP_READY).map((r) => brief(r.issue)),
+      },
+    },
+  });
+}
 
 /** The fleet operation a limb action is, and what it reaches. */
 function shape(
@@ -93,6 +172,8 @@ function shape(
     return fail("not_found", "no such milestone here");
   const limb = brief(rows.own[0]);
   const where = `issue repo:${repo.ownerName}/${repo.name}`;
+  if (request.action === "raise" || request.action === "lower")
+    return move(app, repo, rows.own[0], request, where);
   if (request.action === "close") {
     const reason = (request.reason ?? "").trim();
     if (reason === "")

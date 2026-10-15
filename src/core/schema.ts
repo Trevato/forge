@@ -1563,6 +1563,38 @@ export const migrations: readonly string[] = [
      WHERE id = NEW.id;
   END;
   `,
+  // 73 — authorization codes for the MCP's OAuth (#971): one per consent,
+  // kept by hash, spent by deleting. The code is never stored.
+  `
+  CREATE TABLE IF NOT EXISTS oauth_code (
+    code_hash     TEXT PRIMARY KEY,
+    client_id     TEXT NOT NULL REFERENCES oauth_client(id) ON DELETE CASCADE,
+    user_id       TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    redirect_uri  TEXT NOT NULL,
+    challenge     TEXT NOT NULL,
+    scope         TEXT NOT NULL CHECK (scope IN ('ro','rw')),
+    name          TEXT NOT NULL,
+    lifetime_s    INTEGER,
+    expires_at    TEXT NOT NULL
+  );
+  `,
+  // 74 — a look a person attached to a pull (#1066): who, and the one line
+  // saying what it shows. Both null for a look the forge took itself.
+  `
+  ALTER TABLE look ADD COLUMN attached_by TEXT;
+  ALTER TABLE look ADD COLUMN note TEXT;
+  `,
+  // 75 — a limb's place among its siblings (#1064), set by a person. `parent_id`
+  // is the issue whose limbs these are, or '' for the top of the plan.
+  `
+  CREATE TABLE limb_place (
+    repo_id   TEXT NOT NULL REFERENCES repo(id) ON DELETE CASCADE,
+    parent_id TEXT NOT NULL,
+    issue_id  TEXT NOT NULL,
+    place     INTEGER NOT NULL,
+    PRIMARY KEY (repo_id, parent_id, issue_id)
+  );
+  `,
 ];
 
 /**

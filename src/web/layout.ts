@@ -25,9 +25,8 @@ import {
   THEMES,
   type ThemeName,
 } from "../design/themes.ts";
-import { stylesheetAsset } from "./asset.ts";
+import { shellAsset, stylesheetAsset } from "./asset.ts";
 import { linkHeader, pageLinks } from "./standards.ts";
-import { shellJs } from "./client.ts";
 import {
   clearFlashCookie,
   flashCookie,
@@ -153,10 +152,11 @@ function themeMenu(active: ThemeName | undefined): Html {
  * The way to what needs you, with how many things ask the viewer — the very
  * count the home's pinned section leads with (`askCountFor`).
  */
-function asksLink(ctx: Ctx): Html {
+export function asksLink(ctx: Ctx): Html {
   if (!ctx.auth.user) return html``;
   const count = askCountFor(ctx, ctx.auth.user);
   return html`<a
+    id="asks-link"
     class="btn"
     data-size="sm"
     href="/#needs-you"
@@ -536,9 +536,6 @@ export function page(options: PageOptions, status = 200): Response {
   const theme = ctx.theme ?? options.theme;
   const flash = readFlash(ctx.request);
   const links = pageLinks(ctx);
-  const scriptJs = options.scriptJs
-    ? `${shellJs}\n${options.scriptJs}`
-    : shellJs;
 
   // The body's markup, built before the document so the icons it used can be
   // counted: every `icon()` left a `<use>` behind, and the sprite defining
@@ -628,7 +625,7 @@ export function page(options: PageOptions, status = 200): Response {
           rel="icon"
           href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%232563eb'/%3E%3Cstop offset='1' stop-color='%237c3aed'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='3' y='3' width='26' height='26' rx='8' fill='url(%23g)'/%3E%3C/svg%3E"
         />
-        ${raw(`<style nonce="${nonce}">${bootCss(theme)}</style>`)}
+        ${raw(`<style nonce="${nonce}">${bootCss}</style>`)}
         <link rel="stylesheet" href="${stylesheetAsset().path}" />
         ${when(
           options.scriptAsset,
@@ -640,7 +637,10 @@ export function page(options: PageOptions, status = 200): Response {
       </head>
       <body>
         ${shell}${iconSprite(shell.text)}
-        ${raw(`<script nonce="${nonce}">${scriptJs}</script>`)}
+        <script nonce="${nonce}" src="${shellAsset().path}"></script>
+        ${options.scriptJs
+          ? raw(`<script nonce="${nonce}">${options.scriptJs}</script>`)
+          : null}
       </body>
     </html>`;
 

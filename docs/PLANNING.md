@@ -180,10 +180,24 @@ and stands under the `Later: …` umbrella where the repository keeps one.
 The owner moves an item out by unlinking it from the gate, or opens them
 all by closing the gate.
 
-A plan says which it is for every issue. The planner's brief tells it to
-link each issue it opens under its pillar or behind the gate, and the MCP
-`plan` tool refuses an item that says neither. A repository with no
-umbrella issues has no pillars, and plans as it always did.
+A plan says which it is for every issue. The planner plans through one
+route, `POST /api/v1/repos/:owner/:name/plan` with `{ "issues": [...] }`
+(`rw` scope; a crew member's run token may use it), which calls the same
+action as the MCP `plan` tool (`openPlan`): the same items, the same
+refusals, all or nothing. An item names its `pillar`, or is `later: true`
+with `why`; one that says neither is refused with `no_pillar` and nothing is
+opened, so the planner reads the refusal, names the pillar or defers the
+item, and posts again. The answer is `{ opened, ready, later, gate }`. A
+repository with no umbrella issues has no pillars, and plans as it always
+did.
+
+**An issue opened outside a plan.** A builder that finds its task too big
+for one run opens smaller issues one at a time and links them. Such a split
+child serves its parent's pillar: when the parent serves one, the builder
+makes that umbrella wait for the child as well (`POST …/issues/U/dependencies`
+with `{"blockedBy": child}`). It does not choose a pillar of its own and is
+never deferred by the builder; where the parent serves none, the child
+serves none either. Only a plan names new purposes.
 
 The umbrellas, the Later umbrella and the gate are the plan's own, not
 work. None of them is ever _ready_, so the crew never picks one and the map
@@ -293,14 +307,26 @@ one undo.
 - **Close as not doing** closes every open issue that is the limb's own,
   the limb included, as `dropped`, with the reason said on each. What other
   work outside the limb also waits for is not the limb's to close.
+- **Raise** and **Lower** (#1064) move the limb one place among its
+  siblings — the pillars and Later at the top, a milestone's limbs under
+  it. The place is stored per group of siblings (`limb_place`), kept across
+  a restart, and is the order the limbs are listed in; a limb never placed
+  follows the placed ones, by number. The preview shows the new order and
+  how the top of the ready list changes. Once a person has set an order in
+  a repository, the crew's ready order follows it: an issue beneath a
+  higher limb comes before one beneath a lower limb (beneath two limbs, the
+  higher), after them come issues beneath no limb, and within a limb the
+  order is the old one — what it frees, then age. Until then nothing about
+  the ready order changes. It is one fleet row, the verb `place`; undo puts
+  the place back. Through the API and the MCP `limb` tool (`action` raise or
+  lower, `under` when the limb sits in several places), dry-run by default.
 
 An umbrella or the gate is the plan's own and is not filed. A leaf beneath
 a limb that is not deferred cannot be deferred alone: defer the limb. A
-candidate to trim offers Defer first. Raising and lowering a limb against
-its siblings is #760; handing one to the planner is #761.
+candidate to trim offers Defer first. Handing one to the planner is #761.
 
 The same is `POST /api/v1/repos/:owner/:name/milestones/:number/limb`
-`{ "action": "defer" | "resume" | "close", "reason"?, "pillar"?, "dryRun"? }`
+`{ "action": "defer" | "resume" | "close" | "raise" | "lower", "reason"?, "pillar"?, "under"?, "dryRun"? }`
 and the MCP's `limb`, both a dry run unless `dryRun` is false. Applying and
 undoing take an admin token of a person who administers the repository; an
 agent may look and never apply.

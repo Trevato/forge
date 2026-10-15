@@ -57,6 +57,21 @@ jobs:
           git checkout -q "$GITHUB_SHA"
           echo "checked out $(git rev-parse --short HEAD)"
 
+      - name: runner limits (observability only)
+        run: |
+          # Print the real budget this job runs under. Never fails the job.
+          set +e
+          cg=/sys/fs/cgroup
+          rd() { [ -r "$1" ] && echo "$2=$(cat "$1")" >&2; }
+          echo "runner-limits: nproc=$(nproc) host_mem_kb=$(awk '/MemTotal/{print $2}' /proc/meminfo)" >&2
+          rd $cg/memory.max memory.max; rd $cg/memory.high memory.high
+          rd $cg/memory.swap.max memory.swap.max; rd $cg/cpu.max cpu.max
+          rd $cg/memory/memory.limit_in_bytes v1.memory.limit
+          rd $cg/cpu/cpu.cfs_quota_us v1.cpu.quota; rd $cg/cpu/cpu.cfs_period_us v1.cpu.period
+          echo "runner-limits: bun=$(bun --version) node=$(node --version) git=$(git --version)" >&2
+          echo "runner-limits: v8_heap_limit_mb=$(node -e 'console.log(Math.round(require("v8").getHeapStatistics().heap_size_limit/2**20))')" >&2
+          true
+
       - name: install dev dependencies
         working-directory: src
         run: bun install --frozen-lockfile
@@ -69,6 +84,24 @@ jobs:
           FORGE_CHECK_SHARD_INDEX: ${{ matrix.shard }}
         run: |
           set -eu
+          # Observability: a stderr heartbeat every 60s with elapsed time and
+          # cgroup memory (current/peak), a warning at 25m before the ~30m
+          # runner wall, and one CI_SUMMARY JSON line at exit. Read-only.
+          T0=$(date +%s)
+          memof() { cat /sys/fs/cgroup/$1 2>/dev/null || echo -1; }
+          ( while sleep 60; do
+              el=$(( $(date +%s) - T0 ))
+              echo "heartbeat: shard=${{ matrix.shard }}/3 elapsed_s=$el mem_current=$(memof memory.current) mem_peak=$(memof memory.peak)" >&2
+              if [ "$el" -ge 1500 ] && [ "$el" -lt 1560 ]; then
+                echo "::warning::gate shard ${{ matrix.shard }} at ${el}s — the isolated runner cuts jobs near 1800s" >&2
+              fi
+            done ) &
+          HB=$!
+          summary() {
+            rc=$?; kill "$HB" 2>/dev/null || true
+            echo "CI_SUMMARY {\"phase\":\"gate\",\"shard\":\"${{ matrix.shard }}/3\",\"event\":\"$GITHUB_EVENT_NAME\",\"exit\":$rc,\"wall_s\":$(( $(date +%s) - T0 )),\"mem_peak\":$(memof memory.peak),\"mem_max\":\"$(memof memory.max)\"}" >&2
+          }
+          trap summary EXIT
           # A pull judges the fast tier (#1198); main's push runs the whole gate.
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             git fetch -q origin "$GITHUB_BASE_REF"

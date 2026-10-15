@@ -814,6 +814,9 @@ form.inline { display: inline; margin-left: auto; }
 .look-pair { display: flex; gap: 14px; align-items: flex-start; }
 .look { display: block; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--muted); }
 .look img { display: block; width: 100%; height: auto; }
+.look-attachments { flex-wrap: wrap; margin-top: 10px; }
+.look-attached { margin: 0; display: flex; flex-direction: column; gap: 6px; flex: 1 1 200px; min-width: 0; max-width: 1280px; }
+.look-attached-phone { flex: 0 0 200px; }
 .look-phone { flex: 0 0 200px; }
 .look-desktop { flex: 1 1 320px; min-width: 0; max-width: 1280px; }
 @media (max-width: 640px) {
@@ -1203,4 +1206,47 @@ textarea.editor:focus { outline: none; }
   }
 }
 .needs-you .ask-group > summary { padding: 10px 14px; cursor: pointer; }
+/* An ask's actions: the decider, then the rest. Wide: in a line, as ever.
+   The kind label is for a phone, where the sentence under the title goes. */
+.ask-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 12px; }
+.ask-more-acts { display: contents; }
+.ask-more-acts > summary { list-style: none; }
+.ask-more-acts > summary::-webkit-details-marker { display: none; }
+.ask-kind { display: none; }
+.row .ask-acts { margin-top: 0; }
+@supports selector(::details-content) {
+  @media (min-width: 481px) {
+    .ask-more-acts > summary { display: none; }
+    .ask-more-acts::details-content { content-visibility: visible; display: contents; }
+  }
+}
+/* A phone: rows run edge to edge (the card's box, border and body padding
+   go; the page's 16 px gutter stays), the title wraps under "kind · repo",
+   the decider sits at the trailing edge and the rest wait behind "More". */
+@media (max-width: 480px) {
+  .needs-you .ask-card {
+    margin-inline: -16px; border-inline: 0; border-radius: 0; box-shadow: none; background: none;
+  }
+  .ask-card .card-head { padding: 12px 16px 0; background: none; border: 0; gap: 4px 8px; align-items: baseline; }
+  .ask-card .card-body { padding: 4px 16px 12px; }
+  .ask-card .card-foot { padding: 0 16px 12px; background: none; border: 0; }
+  .ask-card .card-head h2 { order: 2; flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; font-size: 1.05em; }
+  .ask-card .card-head h2 a { white-space: normal; overflow: visible; text-overflow: clip; }
+  .ask-card .ask-meta { order: 1; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .ask-card .ask-kind { display: inline; margin-right: 6px; color: var(--fg); }
+  .ask-card .ask-kind::after { content: " ·"; font-weight: 400; }
+  .ask-card .ask-short { display: none; }
+  .ask-card .ask-pick { order: 0; min-width: 24px; min-height: 24px; }
+  .ask-card .ask-group > summary { padding: 10px 16px; min-height: 44px; }
+  .ask-card .ask-group .row { flex-wrap: wrap; padding-inline: 16px; }
+  .ask-card .ask-group .row-main { flex-basis: 100%; }
+  .ask-card .ask-group .row-meta { flex: 1 1 100%; white-space: normal; }
+  .ask-acts { flex-direction: row-reverse; justify-content: space-between; }
+  .ask-acts > .btn { min-height: 44px; min-width: 96px; padding: 0 20px; flex: 0 0 auto; }
+  .ask-more-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ask-more-acts > summary { display: inline-flex; min-height: 44px; padding: 0 16px; }
+  .ask-more-acts[open] { flex: 1 1 100%; order: 2; }
+  .ask-more-acts[open] > summary { display: none; }
+  .ask-more-acts > .btn { min-height: 44px; flex: 1 1 auto; }
+}
 `;

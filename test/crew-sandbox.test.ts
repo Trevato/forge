@@ -34,6 +34,12 @@ import { serve } from "../src/http/server.ts";
 import { readFileSync } from "node:fs";
 import { claudeSettings } from "../src/crew/claude.ts";
 import {
+  SANDBOX_LINES,
+  systemPrompt,
+  type BriefInput,
+} from "../src/crew/brief.ts";
+import { LOOPBACK, probe } from "../scripts/sandbox-probe.ts";
+import {
   dataInTemp,
   SandboxListingError,
   sandboxAvailable,
@@ -47,6 +53,18 @@ describe("the shell sandbox", () => {
     agentName: "scout",
     urls: ["http://localhost:3000"],
   };
+
+  test("allows loopback by the forge's port, never whole", () => {
+    const hosts = sandboxPolicy({
+      ...input,
+      urls: ["http://127.0.0.1:3000", "https://forge.example.com"],
+    }).allowHosts;
+    expect(hosts).toContain("127.0.0.1:3000");
+    expect(hosts).toContain("forge.example.com");
+    expect(hosts).not.toContain("127.0.0.1");
+    expect(hosts).not.toContain("localhost");
+    expect(sandboxPolicy(input).allowHosts).toContain("localhost:3000");
+  });
 
   test("is enforced unless the host says it cannot", () => {
     expect(sandboxPolicy(input).enforced).toBe(true);
@@ -75,6 +93,40 @@ describe("the shell sandbox", () => {
     expect(off.allowUnsandboxedCommands).toBe(false);
     expect(on.failIfUnavailable).toBe(true);
     expect(off.failIfUnavailable).toBe(false);
+  });
+
+  test("the probe reports each listener and a server answers on loopback", async () => {
+    // What `test/checks.test.ts` does to boot the forge. A sandboxed run
+    // refuses the unix sockets and takes the port (FORGE_TEST_SOCKET=port);
+    // in a crew run, `bun scripts/sandbox-probe.ts` prints these verdicts.
+    const verdicts = await probe();
+    expect(verdicts.map((v) => v.name)).toEqual([
+      "unix socket under $TMPDIR",
+      "unix socket under the clone",
+      LOOPBACK,
+    ]);
+    expect(verdicts.find((v) => v.name === LOOPBACK)?.ok).toBe(true);
+  });
+
+  test("the brief says in two lines what the shell can and cannot run", () => {
+    expect(SANDBOX_LINES).toHaveLength(2);
+    const [can, cannot] = SANDBOX_LINES;
+    expect(can).toContain("bun install");
+    expect(can).toContain("bun x tsc --noEmit");
+    expect(can).toContain("FORGE_TEST_SOCKET=port");
+    expect(can).toContain("loopback");
+    expect(cannot).toContain("It cannot:");
+    expect(cannot).toContain("bind a unix socket");
+    expect(cannot).toContain("Never leave the sandbox");
+    const prompt = systemPrompt({
+      agent: { user: { username: "bot", displayName: "" }, brief: "" },
+      repo: { ownerName: "alice", name: "square", defaultBranch: "main" },
+      issue: { number: 1 },
+      branch: "bot/1",
+      forgeUrl: "http://forge.test",
+      isApp: false,
+    } as unknown as BriefInput);
+    expect(prompt).toContain(`${can}\n${cannot}`);
   });
 
   test("the probe answers with a reason when it cannot", async () => {

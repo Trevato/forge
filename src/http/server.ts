@@ -45,6 +45,7 @@ import {
 import { edgeIdentity } from "./edge.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
+import { noteRefusedInternal } from "../kernel/internal_refused.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import {
@@ -66,6 +67,7 @@ import { sha256 } from "../kernel/hash.ts";
 import {
   assetResponse,
   highlightAsset,
+  shellAsset,
   stylesheetAsset,
   stylesheetRedirect,
   stylesheetResponse,
@@ -187,6 +189,7 @@ import { askedPage } from "../web/studio/asked_page.ts";
 import {
   asksBulkSubmit,
   asksBulkUndo,
+  asksListen,
   asksPage,
 } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
@@ -250,11 +253,16 @@ import {
   crewPage,
 } from "../web/pages/crew.ts";
 import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
-import { changePage, pullPage } from "../web/studio/change.ts";
+import {
+  changePage,
+  pullPage,
+  pullStateFragment,
+} from "../web/studio/change.ts";
 import {
   pullCommentSubmit,
   pullFilesPage,
   pullMergeSubmit,
+  pullChecksSubmit,
   pullReviewStateSubmit,
   pullReviewSubmit,
   pullThreadFragment,
@@ -527,6 +535,8 @@ export function buildRouter(): Router<Handler> {
   // than a redirect: the page that asked for it names the hash it was built
   // with, so a miss means an old tab, and an old tab should reload.
   router.add("GET", "/assets/:name.js", async (ctx) => {
+    const shell = shellAsset();
+    if (ctx.params.name === shell.name) return assetResponse(shell);
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();
     return assetResponse(asset);
@@ -564,6 +574,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/asks", asksPage);
   router.add("POST", "/asks/bulk", asksBulkSubmit);
   router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
+  router.add("POST", "/asks/listen", asksListen);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
   // The big view, folded into the board: every old address lands on its wall mode.
@@ -877,6 +888,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/tell", tellSubmit);
   // The home's composer without a script: a tell to the app it names (#599).
   router.add("POST", "/tell", composerSubmit);
+  router.add("POST", "/:owner/:name/pulls/:number/checks", pullChecksSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/ship", shipSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/say", saySubmit);
   router.add("POST", "/:owner/:name/pulls/:number/take-back", takeBackSubmit);
@@ -919,6 +931,7 @@ export function buildRouter(): Router<Handler> {
   // box, one tab under the change itself.
   router.add("GET", "/:owner/:name/pulls/:number/files", pullFilesPage);
   router.add("GET", "/:owner/:name/pulls/:number/thread", pullThreadFragment);
+  router.add("GET", "/:owner/:name/pulls/:number/state", pullStateFragment);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/review", pullReviewSubmit);
   // The verdict on the change as a whole, and the threads it settles.
@@ -1736,6 +1749,12 @@ export async function serve(app: App): Promise<Servers> {
       // The socket's file mode used to be the only door check; a loopback
       // port has none, so every internal request proves the boot secret.
       if (!hookCallerAllowed(app, request)) {
+        const path = new URL(request.url).pathname;
+        if (noteRefusedInternal(request.method, path))
+          app.log.warn("internal call refused: no boot secret", {
+            method: request.method,
+            path: path.slice(0, 120),
+          });
         return new Response("forbidden", { status: 403 });
       }
       const url = new URL(request.url);

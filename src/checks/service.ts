@@ -35,7 +35,8 @@ import {
   type Run,
 } from "../core/runs.ts";
 import { Gate } from "../git/env.ts";
-import { mergeBase, resolveOid } from "../git/merge.ts";
+import { resolveOid } from "../git/merge.ts";
+import { mergeForCheck } from "./merged.ts";
 import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
 import { getIssueById } from "../core/issues.ts";
@@ -433,7 +434,22 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     | { ok: false; error: string; detail?: CheckDetail | undefined }
   > {
     const { bare, repo, write, signal } = x;
-    const run = { id: x.id, commitOid: x.commitOid };
+    // A pull's fast check is of the pull as it would land: its head merged
+    // into the base's tip. The gate comes from that tree, so a pull forked
+    // before the base learned something is judged with it.
+    let source = x.commitOid;
+    let tip: string | undefined;
+    let mergeLine = "";
+    if (x.tier === "fast" && x.pull !== undefined) {
+      tip = await resolveOid(bare, `refs/heads/${x.pull.baseBranch}`);
+      if (tip === undefined)
+        return { ok: false, error: `the base ${x.pull.baseBranch} could not be found` };
+      const merged = await mergeForCheck(bare, x.pull.baseBranch, tip, x.commitOid);
+      if (!merged.ok) return { ok: false, error: merged.error };
+      source = merged.commit;
+      mergeLine = merged.line;
+    }
+    const run = { id: x.id, commitOid: source };
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, run.commitOid, "forge.json"),
       readFileAt(bare, run.commitOid, "package.json"),
@@ -449,26 +465,55 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       };
     if (declared.value === undefined)
       return { ok: false, error: "this commit declares no check" };
-    const manifest = declared.value;
+    // A pull does not choose its own gate: the commands and the timeout come
+    // from the base branch's `forge.json` where the pull left it. The
+    // branch's own supplies only what it needs to run (install, egress,
+    // limits).
+    let manifest = declared.value;
+    let baseTip: string | undefined;
+    if (x.pull !== undefined) {
+      baseTip = await resolveOid(bare, `refs/heads/${x.pull.baseBranch}`);
+      if (baseTip === undefined)
+        return { ok: false, error: "the pull's base branch could not be found" };
+      const [baseJson, basePackage] = await Promise.all([
+        readFileAt(bare, baseTip, "forge.json"),
+        readFileAt(bare, baseTip, "package.json"),
+      ]);
+      const gate = parseCheck(baseJson, basePackage);
+      if (!gate.ok)
+        return {
+          ok: false,
+          error:
+            gate.error.kind === "invalid"
+              ? `${x.pull.baseBranch}: ${gate.error.message}`
+              : "the base branch declares no check",
+        };
+      if (gate.value !== undefined) {
+        manifest = {
+          ...manifest,
+          run: gate.value.run,
+          fast: gate.value.fast,
+          full: gate.value.full,
+          timeout: gate.value.timeout,
+        };
+        write(
+          `tier ${x.tier} from ${x.pull.baseBranch}@${baseTip.slice(0, 7)}`,
+        );
+      }
+    }
     const command =
       x.tier === "full"
         ? manifest.full
         : x.tier === "fast"
           ? (manifest.fast ?? manifest.run)
           : manifest.run;
-    // The fast tier diffs against the fork point, which the clone is given
-    // as a repository of its own: `origin/main` is not a ref there.
-    const fast = x.tier === "fast" && manifest.fast !== null && x.pull !== undefined;
-    let base: string | undefined;
-    if (fast) {
-      const tip = await resolveOid(bare, `refs/heads/${x.pull!.baseBranch}`);
-      base = tip === undefined ? undefined : await mergeBase(bare, tip, run.commitOid);
-      if (base === undefined)
-        return { ok: false, error: "the pull's fork point could not be found" };
-    }
+    // The fast tier diffs what the pull changes against the base's tip,
+    // which the clone is given as a repository of its own: `origin/main` is
+    // not a ref there.
+    const base = manifest.fast !== null ? tip : undefined;
     const dir = join(checksRoot(app.config.dataDir), run.id);
     mkdirSync(dir, { recursive: true });
-    write(`checking out ${run.commitOid.slice(0, 7)}`);
+    write(mergeLine === "" ? `checking out ${run.commitOid.slice(0, 7)}` : mergeLine);
     const exported = await exportTree(bare, run.commitOid, dir);
     if (!exported.ok) return { ok: false, error: exported.error };
     if (base !== undefined) {
@@ -510,7 +555,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         CI: "1",
         FORGE_URL: options.forgeUrl,
         FORGE_CHECK: run.id,
-        FORGE_COMMIT: run.commitOid,
+        FORGE_COMMIT: x.commitOid,
         ...(base === undefined
           ? {}
           : {

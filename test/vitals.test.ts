@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRun } from "../src/core/runs.ts";
 import { vitals } from "../src/kernel/vitals.ts";
+import { fetchInternal } from "../src/git/hook-address.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 let dataDir: string;
@@ -182,4 +183,23 @@ test("errors are counted, bounded, redacted, and a burst is said", async () => {
     console.error = orig;
     clearErrors();
   }
+});
+
+test("an unauthenticated internal call is refused, logged and flagged; the probe is not", async () => {
+  const { resetRefusedInternal } = await import("../src/kernel/internal_refused.ts");
+  resetRefusedInternal();
+  const flagged = () =>
+    vitals({ db: app.db, dataDir: app.config.dataDir }).needs.filter((n) =>
+      n.includes("internal call"),
+    );
+  const call = (path: string) =>
+    fetchInternal(app.hookAddress.current, path, { method: "POST" });
+  expect(flagged()).toEqual([]);
+  expect((await call("/internal/ping")).status).toBe(403);
+  expect(flagged()).toEqual([]);
+  expect((await call("/internal/hook")).status).toBe(403);
+  const [line] = flagged();
+  expect(line).toContain("1 internal call");
+  expect(line).toContain("/internal/hook");
+  resetRefusedInternal();
 });

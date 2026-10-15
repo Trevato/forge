@@ -19,6 +19,7 @@ import { askMeasure, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts
 import {
   getIssueById,
   labelsForIssues,
+  listAssignedTo,
   listComments,
   listOpenPullsVisibleTo,
   type Issue,
@@ -51,7 +52,7 @@ import { waitsForPerson, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { vitals } from "../../kernel/vitals.ts";
 import { repoBase } from "../chrome.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, type Html } from "../html.ts";
 import { btn, card, icon, row } from "../ui.ts";
 import { lookUrl } from "../../core/looks.ts";
 import { lookThumb, thumbLook } from "../pages/looks.ts";
@@ -649,6 +650,8 @@ function lineOf(c: AskCandidate): string {
 const reviewWhy = (wait: ReviewWait | undefined): string =>
   wait?.why === "rounds"
     ? `the reviewer asked for changes three times, since ${wait.since.slice(0, 10)}`
+    : wait?.why === "lapsed" && wait.lateCheckMinutes !== undefined
+    ? `review ran late: the check took ${wait.lateCheckMinutes} min, and the reviewer did not answer, since ${wait.since.slice(0, 10)}`
     : wait?.why === "lapsed"
     ? `the reviewer did not answer, since ${wait.since.slice(0, 10)}`
     : `no reviewer on the crew, since ${wait?.since.slice(0, 10) ?? "it went green"}`;
@@ -876,6 +879,12 @@ export function decisionForm(d: Decision): Html | null {
  * where the conversation is — not in a box in a list.
  */
 export function decisionActions(ctx: Ctx, d: Decision): Html {
+  const { primary, others } = decisionButtons(ctx, d);
+  return html`${primary} ${others}`;
+}
+
+/** An ask's actions in two parts: the one that decides, and the rest. */
+export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others: Html[] } {
   const base = repoBase(d.repo);
   const pull = d.pull;
   const preview =
@@ -885,53 +894,50 @@ export function decisionActions(ctx: Ctx, d: Decision): Html {
         ? undefined
         : `${base}/app/pull-${pull.number}/open`;
   if (d.kind === "stopped" && pull)
-    return html`${btn("Tell them", {
-      href: `${changeHref(base, pull.number)}#comment-body`,
-      size: "sm",
-      variant: "primary",
-    })}
-    ${btn("Close", {
-      size: "sm",
-      form: askFormId(d),
-    })}
-    ${btn("See", {
-      href: changeHref(base, pull.number),
-      size: "sm",
-    })}`;
+    return {
+      primary: btn("Tell them", {
+        href: `${changeHref(base, pull.number)}#comment-body`,
+        size: "sm",
+        variant: "primary",
+      }),
+      others: [
+        btn("Close", { size: "sm", form: askFormId(d) }),
+        btn("See", { href: changeHref(base, pull.number), size: "sm" }),
+      ],
+    };
   if ((d.kind === "look" || d.kind === "review") && pull)
-    return html`${btn("Ship", {
-      size: "sm",
-      form: askFormId(d),
-      variant: "primary",
-    })}
-    ${when(
-      preview,
-      (href) =>
-        html`${btn("Preview", {
-          href,
+    return {
+      primary: btn("Ship", { size: "sm", form: askFormId(d), variant: "primary" }),
+      others: [
+        ...(preview === undefined ? [] : [btn("Preview", { href: preview, size: "sm" })]),
+        btn("Not like this", {
+          href: `${changeHref(base, pull.number)}#comment-body`,
           size: "sm",
-        })}`,
-    )}
-    ${btn("Not like this", {
-      href: `${changeHref(base, pull.number)}#comment-body`,
-      size: "sm",
-    })}`;
+        }),
+      ],
+    };
   if (d.kind === "declined" && d.issue)
-    return html`${btn("Answer", {
-      href: `${base}/issues/${d.issue.number}#comment-body`,
-      size: "sm",
-      variant: "primary",
-    })}`;
+    return {
+      primary: btn("Answer", {
+        href: `${base}/issues/${d.issue.number}#comment-body`,
+        size: "sm",
+        variant: "primary",
+      }),
+      others: [],
+    };
   if (d.kind === "parked" && d.issue)
-    return html`${btn("Tell them", {
-      href: `${base}/issues/${d.issue.number}#comment-body`,
-      size: "sm",
-      variant: "primary",
-    })}`;
-  return html`${btn("Settings", {
-    href: `${base}/settings/autonomy`,
-    size: "sm",
-  })}`;
+    return {
+      primary: btn("Tell them", {
+        href: `${base}/issues/${d.issue.number}#comment-body`,
+        size: "sm",
+        variant: "primary",
+      }),
+      others: [],
+    };
+  return {
+    primary: btn("Settings", { href: `${base}/settings/autonomy`, size: "sm" }),
+    others: [],
+  };
 }
 
 /**
@@ -1047,9 +1053,16 @@ export function askTargetsFor(
   );
   const issueIds: string[] = [];
   const refused: { item: string; reason: string }[] = [];
+  // `issue:<id>` names an issue or pull assigned to the viewer — what the
+  // home's On you card holds — rather than an ask it raises.
+  const assigned = new Map(
+    listAssignedTo(db, user.id, 200).map((i) => [`issue:${i.id}`, i]),
+  );
   for (const item of new Set(items)) {
     const ask = asks.get(item);
-    if (ask === undefined) refused.push({ item, reason: "it no longer asks you" });
+    const mine = assigned.get(item);
+    if (mine !== undefined) issueIds.push(mine.id);
+    else if (ask === undefined) refused.push({ item, reason: "it no longer asks you" });
     else if (ask.kind === "paused")
       refused.push({ item, reason: "a ceiling is raised in the app's settings" });
     else if (ask.kind === "declined")
