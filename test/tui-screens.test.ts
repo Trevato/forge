@@ -28,6 +28,7 @@ import { getIssue, listComments } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { getUserSetting } from "../src/core/settings.ts";
+import { noteProtection, resetProtection } from "../src/kernel/protection.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { parseGitCommand, splitCommand } from "../src/git/smart-ssh.ts";
@@ -217,6 +218,28 @@ describe("the terminal UI, against a real forge", () => {
     expect(text).not.toContain("Recent activity");
     expect(text).not.toContain("Organizations");
     expect(text).not.toMatch(/issue\.opened|repo\.created|label\.created/);
+    h.stop();
+  });
+
+  test("the dashboard tells a site admin, and only them, that protection is reduced", async () => {
+    noteProtection("apps", { ok: false, reason: "bwrap is not installed" });
+    try {
+      const admin = boot(forge, asAlice());
+      await admin.settle();
+      expect(admin.text()).toContain("Reduced protection: apps (bwrap is not");
+      admin.stop();
+      for (const identity of [{ ...asAlice(), user: bob }, asGuest()]) {
+        const h = boot(forge, identity);
+        await h.settle();
+        expect(h.text()).not.toContain("Reduced protection");
+        h.stop();
+      }
+    } finally {
+      resetProtection();
+    }
+    const h = boot(forge, asAlice());
+    await h.settle();
+    expect(h.text()).not.toContain("Reduced protection");
     h.stop();
   });
 

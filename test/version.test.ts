@@ -311,7 +311,17 @@ describe("where the stamp is read", () => {
     } finally {
       resetProtection();
     }
-    expect(await (await fetch(`${base}/explore`, { headers: { cookie: await signIn("alice") } })).text()).not.toContain("reduced-protection");
+  });
+
+  test("once the host is protected again the admin's page shows no notice", async () => {
+    noteProtection("apps", { ok: false, reason: "x" });
+    noteProtection("apps", { ok: true });
+    const page = await (
+      await fetch(`${base}/explore`, {
+        headers: { cookie: await signIn("alice") },
+      })
+    ).text();
+    expect(page).not.toContain("reduced-protection");
   });
 
   test("with no stamp every one of them says dev", async () => {
