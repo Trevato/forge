@@ -105,7 +105,8 @@ test("a full queue shows in queue, and an old one in needs", () => {
   for (let i = 0; i < 3; i++) createRun(app.db, { repoId, kind: "agent" });
   const v = vitals({ db: app.db, dataDir });
   expect(v.queue).toEqual({ agent: 3 });
-  expect(v.ok).toBe(true);
+  // Process-wide signals (errors, refused calls) from other suites may speak too.
+  expect(v.needs.join(" ")).not.toContain("queue");
   const later = vitals({ db: app.db, dataDir, now: old + 2 * 3_600_000 + 3_600_000 });
   expect(later.ok).toBe(false);
   expect(later.needs.join(" ")).toContain("agent queue");
