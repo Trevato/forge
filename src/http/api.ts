@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { readFlow } from "../flow/read.ts";
 import { runQuery } from "../boards/query.ts";
 import { SOURCES } from "../boards/sources.ts";
 import { bodyCapFor, readBounded } from "./limits.ts";
@@ -2486,6 +2487,18 @@ export function apiRoutes(router: Router<Handler>): void {
       );
     },
   );
+  // Which stage of the one flow each open issue is in, and what went live in
+  // the last day (src/flow).
+  router.add("GET", "/api/v1/repos/:owner/:name/flow", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    return json(
+      readFlow(ctx.app.db, repo, {
+        now: new Date(),
+        scope: sealedScope(ctx.app.db, repo, ctx.auth.user),
+      }),
+    );
+  });
   // A plan, all or nothing: the same action as the MCP `plan` tool, so the
   // same items and the same refusals (docs/PLANNING.md).
   router.add("POST", "/api/v1/repos/:owner/:name/plan", async (ctx) => {
