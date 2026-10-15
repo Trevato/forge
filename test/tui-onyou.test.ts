@@ -14,7 +14,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { getIssue } from "../src/core/issues.ts";
-import { mutedRepos } from "../src/core/interactions.ts";
+import { mutedRepos, recordInteraction } from "../src/core/interactions.ts";
 import { markVerified } from "../src/core/verify.ts";
 import type { Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
@@ -135,7 +135,6 @@ describe("terminal On you: mutes and many in one move", () => {
     const h0 = await boot();
     expect(h0.text()).toContain("Paint peels");
     h0.stop();
-    const { recordInteraction } = await import("../src/core/interactions.ts");
     recordInteraction(forge.db, {
       viewerId: alice.id,
       itemId: `repo:${paint.id}`,
@@ -148,6 +147,24 @@ describe("terminal On you: mutes and many in one move", () => {
     expect(h.text()).toContain("1 repository muted");
     await h.press("L");
     expect(h.text()).toContain("Paint peels");
+    h.stop();
+  });
+
+  test("listen again clears a muted repository with nothing assigned to you", async () => {
+    const quiet = await createRepo(forge, alice, { name: "quiet", visibility: "public" });
+    if (!quiet.ok) throw new Error("repo failed");
+    recordInteraction(forge.db, {
+      viewerId: alice.id,
+      itemId: `repo:${quiet.value.id}`,
+      kind: "muted",
+      repoId: quiet.value.id,
+      actorId: null,
+    });
+    const h = await boot();
+    expect(h.text()).toContain("1 repository muted");
+    await h.press("L");
+    expect(mutedRepos(forge.db, alice.id).has(quiet.value.id)).toBe(false);
+    expect(h.text()).not.toContain("repository muted");
     h.stop();
   });
 

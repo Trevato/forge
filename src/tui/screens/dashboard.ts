@@ -159,11 +159,14 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     if (f.user === undefined) return [];
     const issues = listAssignedTo(f.db, f.user.id, 50);
     const muted = mutedRepos(f.db, f.user.id);
+    const byId = getReposByIds(f.db, [...new Set([...issues.map((i) => i.repoId), ...muted])]);
+    // Every repository this account muted, with work on it or not: the web's
+    // card counts the same set, and `L` takes back all of it.
     silenced = new Map();
-    const byId = getReposByIds(
-      f.db,
-      issues.map((issue) => issue.repoId),
-    );
+    for (const id of muted) {
+      const repo = byId.get(id);
+      if (repo !== undefined && canRead(f.db, repo, f.user)) silenced.set(id, repo);
+    }
     return issues.flatMap((issue) => {
       const repo = byId.get(issue.repoId);
       if (
@@ -172,10 +175,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         !mayView(f.db, repo, issue, f.user)
       )
         return [];
-      if (muted.has(repo.id)) {
-        silenced.set(repo.id, repo);
-        return [];
-      }
+      if (muted.has(repo.id)) return [];
       return [{ issue, repo }];
     });
   };
@@ -525,10 +525,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** The inbox: what is assigned to this account, across every repository. */
   function drawOnYou(s: Surface, r: Rect, c: Tokens, set: IconSet): void {
     const on = focus === "onyou";
+    const footer = onYouFooter();
     const inner = card(s, r, c, {
       title: `${icon("person", set)} ${TITLES.onyou}`,
       focused: on,
-      ...(onYouFooter() === undefined ? {} : { footer: onYouFooter()! }),
+      ...(footer === undefined ? {} : { footer }),
     });
     if (onYou.length === 0) {
       note(s, inner, c, [
