@@ -33,6 +33,8 @@ import {
   listActive,
   noteRunProgress,
   overranBefore,
+  vanishedBefore,
+  VANISHED_SUMMARY,
   requeueCheck,
   REQUEUED_SUMMARY,
   sweepAbandonedChecks,
@@ -74,7 +76,7 @@ import {
 import { summariseCheckFailure } from "./summary.ts";
 import type { Result } from "../kernel/result.ts";
 import { placementFromEnv, type Placement } from "./placement.ts";
-import { runJobStep } from "./job_step.ts";
+import { JOB_VANISHED, runJobStep } from "./job_step.ts";
 import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
 
@@ -480,6 +482,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         announceRun(app, moved.again, run.actorId ?? undefined);
         return;
       }
+      // The cluster lost the Job (evicted, node gone): interrupted, not
+      // failed, and queued once more as after a restart; the second loss fails.
+      if (!outcome.ok && outcome.error === JOB_VANISHED && !vanishedBefore(app.db, claimed)) {
+        const moved = requeueCheck(app.db, run.id, undefined, VANISHED_SUMMARY);
+        if (moved) {
+          write(VANISHED_SUMMARY);
+          announceRun(app, moved.again, run.actorId ?? undefined);
+          return;
+        }
+      }
       const seconds = Math.round((Date.now() - started) / 1000);
       const done = finishRun(app.db, run.id, {
         state: outcome.ok ? "ok" : "failed",
@@ -795,6 +807,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           cell,
         });
       }
+      if (!ran.ok && ran.error === JOB_VANISHED) return { ok: false, error: JOB_VANISHED };
       if (!ran.ok) {
         const { summary, detail } = summariseCheckFailure(
           checkLines,
