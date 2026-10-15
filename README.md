@@ -267,6 +267,8 @@ my machine", and the dashboard grows an **On your machine** card listing them.
 The server remembers only the choice — nothing about the state of a laptop —
 and `forge sync` below is what acts on it.
 
+**What an ask row waits for.** Every ask row carries one word, `waitingFor` (`src/core/waiting_for.ts`, computed once), and who it waits on, e.g. "ready to land · on you". The first that applies wins: `conflicts with main` (the last sweep found files stopping the pull, on its author), `ready to land` (a green change to look at and ship), `a review` (a review or a hand-over), `assigned to you` (the pull or issue is assigned to the viewer), otherwise `a decision`. It shows as a chip on each row of the home, as `waitingFor: {word, on}` in `GET /api/v1/asks` and the MCP `asks` tool, and in the terminal's On you card.
+
 **Muting a repository from the home**: each ask row on the home carries a "Mute owner/name" chip. A muted repository's asks leave the home, `/api/v1/asks`, the header count and the phone's pushes (the same per-user mute the On you card uses, no new table); the home says "N muted repositories still ask" with a "Listen again" button, and an app's own page still counts them.
 
 **On you, in the terminal**, answers to the same mutes and one-move verbs as
