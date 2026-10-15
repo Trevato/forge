@@ -50,7 +50,7 @@ const KIND_COLOR: Record<CardKind, string> = {
 function clean(s: unknown): string {
   return String(s ?? "")
     .replace(/\s+/g, " ")
-    .replace(/[^\u0009\u000A\u000D -퟿-�\u{10000}-\u{10FFFF}]/gu, "")
+    .replace(/[^\u0009\u000A\u000D -\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu, "")
     .trim();
 }
 

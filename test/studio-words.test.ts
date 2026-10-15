@@ -30,15 +30,22 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { previewEnv, type EnvName } from "../src/apps/data.ts";
-import { AppsRuntime } from "../src/apps/runtime.ts";
+import {
+  AppsRuntime,
+  NO_TESTS_TAIL,
+  TESTS_PASSED_TAIL,
+  type EnvStatus,
+} from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { claimRun, createRun, finishRun, type Run } from "../src/core/runs.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { previewVerdict } from "../src/web/studio/previews.ts";
+import { testsClause } from "../src/web/studio/words.ts";
 
 /**
  * Dev's own words, each with the reason it must never reach a studio page.
@@ -881,5 +888,39 @@ describe("dev's vocabulary never reaches a studio page", () => {
     expect(((await dev.json()) as { error: string }).error).toBe(
       "A merged change cannot be reopened.",
     );
+  });
+});
+
+describe("testsClause", () => {
+  const run = (summary: string) => ({ summary }) as unknown as Run;
+
+  test("a deploy from before the clause existed says nothing about tests; the two tails say their own", () => {
+    expect(testsClause(run("running at http://x"))).toBe("");
+    expect(testsClause(null)).toBe("");
+    expect(testsClause(run(`running at http://x${TESTS_PASSED_TAIL}`))).toBe(
+      "its tests passed",
+    );
+    expect(testsClause(run(`running at http://x${NO_TESTS_TAIL}`))).toBe(
+      "it answered, no tests were run",
+    );
+  });
+});
+
+describe("a preview row's tests verdict", () => {
+  const run = (summary: string, commitOid: string, state = "ok") =>
+    ({ state, summary, commitOid }) as unknown as Run;
+  const env = (state: string, commitOid: string) =>
+    ({ state, commitOid }) as unknown as EnvStatus;
+
+  test("speaks only when the green check is of the commit being served", () => {
+    const green = run(`running at x${TESTS_PASSED_TAIL}`, "abc");
+    expect(previewVerdict(env("running", "abc"), green)).toBe("its tests passed");
+    expect(previewVerdict(env("running", "def"), green)).toBeUndefined();
+    expect(previewVerdict(env("asleep", "abc"), green)).toBeUndefined();
+    expect(previewVerdict(undefined, green)).toBeUndefined();
+    expect(
+      previewVerdict(env("running", "abc"), run(`x${TESTS_PASSED_TAIL}`, "abc", "failed")),
+    ).toBeUndefined();
+    expect(previewVerdict(env("running", "abc"), undefined)).toBeUndefined();
   });
 });

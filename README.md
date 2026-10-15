@@ -33,7 +33,7 @@ feeling on a foundation sized for one person.
 ## Run it
 
 ```sh
-bun install          # dev-only: types + tsc, no runtime deps
+bun install          # dev-only: types + tsc (native, 7.x), no runtime deps
 bun run src/main.ts  # web on :3000, ssh on :2222 (FORGE_SSH_PORT=0 turns it off; a taken port turns it off with one warning)
 bun src/main.ts --preflight  # can this tree boot? config parses, migrations run on a copy of the database; one line, exit 0 or 1, no socket opened. Run it before the swap, not under load: the copy is not atomic against a live writer, and a `preflight-*` directory a killed run left behind is swept by the next run once an hour old, and a missing data directory is created, as boot would
 bun src/main.ts --rollback <sha>  # swap back to a kept release: a full 40-hex sha under $FORGE_DATA/releases/, PORT as the running forge's. Exit 0 once that release reads healthy as that sha, else 1 with one line
@@ -571,6 +571,15 @@ into scratch, opens it, counts what is there and unseals a value; the page
 waits for it, up to 10 minutes, and the last drill shows there as one line.
 Only one runs at a time. See `docs/SNAPSHOT.md`.
 
+A red drill, or none in eight days, is one line for the forge's admin on the
+board's forge strip, in the terminal's dashboard (same `forgeNeeds`), and in
+MCP `health` and `asks`; it names the failed step and the next green drill
+clears it. An admin with a phone URL gets one push per cause (a new red
+drill, or the silence), also when eight days pass with no event: the notifier
+wakes every 10 minutes for it. The time the forge first owed a drill is kept
+at boot in `drill/first-seen`; if the disk will not take it, a warning is
+logged and a forge with no drill ever is not flagged.
+
 `docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.
@@ -679,8 +688,12 @@ across how many files, in how long, then the slowest and fastest shard.
 The check's first step is the gate-list audit (`bun scripts/gate.ts`), so a
 test file listed in neither `GATE` nor `EXCLUDED` fails in under a second,
 before install-heavy work. `tsc` then runs `--incremental` with a 2 GB heap,
-its build info in `.forge-cache/`: the forge restores that directory from the
-base's own green check and keeps it only from green checks of the default
+its build info in `.forge-cache/`. It is TypeScript 7, the native compiler (a
+Go binary, so the bound is `GOMEMLIMIT=2GiB`): on this tree a cold check is
+~3 s and ~17 CPU-s where 5.9 took ~30 s and ~50 CPU-s (#1864). 5.9 stays as
+the dev dependency `typescript-api` only because `scripts/hollow.ts` walks
+its AST, which 7.0 has no stable JS API for. The forge restores
+`.forge-cache/` from the base's own green check and keeps it only from green checks of the default
 branch (`src/checks/cache.ts`), so a pull's code never fills a cache another
 check reads. The full gate also writes every file's time there, and the next
 split weighs every file by measurement rather than the 41 the table named.
@@ -940,3 +953,10 @@ terminal. Each person has one vote per pull, kept as a `lean` row in the
 decision ledger. A dislike closes the pull and leaves its one-line reason as a
 comment the builder reads; the last open sibling shows Ship. Readers see the
 cards and no buttons.
+
+While two or more siblings are open and none has shipped, a writer's feed holds
+one **Choose** item for the group ("choose among N open variants of …") that
+links to the deck, whatever the number of siblings; it is never muted away.
+Once a sibling ships or all but one close, the item leaves the feed. The
+terminal has no feed; the item is in `GET /api/v1/feed` and the MCP feed tool
+as kind `choose`.

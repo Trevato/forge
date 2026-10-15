@@ -21,7 +21,7 @@ import {
 } from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { BUDGETS } from "./budgets.ts";
-import { failedSentence, lastVerdict } from "../snapshot/verdict.ts";
+import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { heldChecks, redSentence } from "../checks/red_main.ts";
 
 /** Free disk under this share of the volume is something to say. */
@@ -312,11 +312,11 @@ export function vitals(input: VitalsInput): Vitals {
       `/${red.repo}/runs/${red.runId}`,
     );
 
-  // A failed restore drill is a card until a drill passes.
+  // A red restore drill, or none in eight days, is a card until a drill passes.
   const drill = lastVerdict(input.dataDir);
-  const failed = failedSentence(drill);
-  if (failed !== undefined)
-    need("drill", failed, drill?.at, "/settings/backups");
+  const owed = drillNeed(drill, now, () => drillFirstSeen(input.dataDir));
+  if (owed !== undefined)
+    need("drill", owed.sentence, owed.since, "/settings/backups");
 
   const apps = { serving: 0, asleep: 0, previews: 0 };
   for (const e of input.envs ?? []) {

@@ -527,3 +527,12 @@ It never says _shipped_ before production redeployed, never hides that a
 run cost money, never shows a preview that is not the pull's real head, and
 never invents an answer for a card. The complexity is removed from the
 surface, not from the system.
+
+**What a green deploy says about its tests.** One clause, `testsClause`
+(`src/web/studio/words.ts`): "its tests passed" when the app declares a test
+and it ran, "it answered, no tests were run" when it declares none. It is read
+from the finished deploy's summary (see `finishRun`) and drawn on the pull's
+note, the look card in the home's needs-you (`decisionsFor`), and the previews
+panel (only when the check is of the commit being served). The terminal draws
+none of it: it shows the app's shell, not the studio's words, so nothing there
+changed.
