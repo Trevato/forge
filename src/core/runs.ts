@@ -78,6 +78,8 @@ export interface Run {
   readonly sandboxNote: string;
   /** A failed check's own detail, when its output was recognised; null otherwise. */
   readonly checkDetail: CheckDetail | null;
+  /** The variant group this run belongs to; null for an ordinary run. */
+  readonly variantGroup: string | null;
   readonly createdAt: string;
   readonly startedAt: string | null;
   /** When this deploy's environment started serving — set once, at the swap-in. */
@@ -106,6 +108,7 @@ interface RunRow {
   sandbox_enforced: number | null;
   sandbox_note: string;
   check_detail: string;
+  variant_group: string | null;
   created_at: string;
   started_at: string | null;
   serving_at: string | null;
@@ -134,6 +137,7 @@ const toRun = (r: RunRow): Run => ({
     r.sandbox_enforced === null ? null : r.sandbox_enforced !== 0,
   sandboxNote: r.sandbox_note,
   checkDetail: r.check_detail ? (JSON.parse(r.check_detail) as CheckDetail) : null,
+  variantGroup: r.variant_group,
   createdAt: r.created_at,
   startedAt: r.started_at,
   servingAt: r.serving_at,
@@ -154,14 +158,16 @@ export interface CreateRunInput {
   attempt?: number | undefined;
   /** What the card says while it waits. */
   summary?: string | undefined;
+  /** The variant group the run belongs to, when it is one of several tries. */
+  variantGroup?: string | undefined;
 }
 
 export function createRun(db: Database, input: CreateRunInput): Run {
   const runId = id();
   db.query(
     `INSERT INTO run (id, repo_id, kind, issue_id, env, commit_oid, branch, actor_id, reason,
-                      not_before, attempt, summary)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
+                      not_before, attempt, summary, variant_group)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`,
   ).run(
     runId,
     input.repoId,
@@ -175,6 +181,7 @@ export function createRun(db: Database, input: CreateRunInput): Run {
     input.notBefore ?? null,
     input.attempt ?? 0,
     input.summary ?? "",
+    input.variantGroup ?? null,
   );
   return getRun(db, runId)!;
 }

@@ -4,6 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { openPull } from "../src/actions/pulls.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import type { Repo } from "../src/core/repos.ts";
+import { listRuns } from "../src/core/runs.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { createUser, type User } from "../src/core/users.ts";
+import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 
 const gitEnv = gitClientEnv();
@@ -157,3 +165,129 @@ describe("a pull says its variant group and siblings", () => {
     expect(cols).toContain("variant_group");
   });
 });
+
+describe("a tell asks for variants", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let alice: User;
+  let repo: Repo;
+  let auth: Record<string, string>;
+
+  const tellOver = (body: Record<string, unknown>) =>
+    fetch(`${servers.url}/api/v1/feed/tells`, {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ app: "alice/square", text: "Make it purple", ...body }),
+    });
+  const runs = () => listRuns(app.db, repo.id, { kind: "agent" });
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-tellvar-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    const made = await createUser(app.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!made.ok) throw new Error(made.error);
+    alice = made.value;
+    auth = {
+      authorization: `Bearer ${createToken(app.db, alice.id, "tells", "rw").token}`,
+    };
+    const agent = await createAgent(app, alice, { username: "bot", brief: "Be brief." });
+    if (!agent.ok) throw new Error(String(agent.error));
+    const created = await createRepo(app, alice, { name: "square", visibility: "public" });
+    if (!created.ok) throw new Error(String(created.error));
+    repo = created.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# square\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+    // A crew whose runs wait: nothing here starts a process.
+    crew = await startCrew(app, {
+      forgeUrl: servers.url,
+      localUrl: servers.url,
+      binary: "/nonexistent-agent",
+      concurrency: 0,
+      budgetUsd: 1,
+      runTimeoutMs: 5_000,
+    });
+  }, 30_000);
+
+  let crew: CrewHandle;
+  afterAll(async () => {
+    await crew?.stop();
+    servers?.stop();
+    app?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a plain tell has no group", async () => {
+    const res = await tellOver({});
+    expect(res.status).toBe(201);
+    const got = (await res.json()) as any;
+    expect(got.variantGroup).toBeUndefined();
+    const run = await until(() => runs().find((r) => r.reason === "assigned"));
+    expect(run.variantGroup).toBeNull();
+  });
+
+  test("variants: 0, 9, \"2\" and 2.5 are a 400 and open nothing", async () => {
+    const before = runs().length;
+    for (const variants of [0, 9, "2", 2.5, null, true]) {
+      const res = await tellOver({ variants });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as any).message).toContain("1 to 4");
+    }
+    expect((await tellOver({ variants: 1 })).status).toBe(201);
+    await Bun.sleep(100);
+    expect(runs().length).toBe(before + 1);
+  });
+
+  test("variants: 2 makes two runs in one fresh group", async () => {
+    const before = new Set(runs().map((r) => r.id));
+    const res = await tellOver({ variants: 2 });
+    expect(res.status).toBe(201);
+    const got = (await res.json()) as any;
+    expect(got.issues).toHaveLength(2);
+    const fresh = await until(() => {
+      const f = runs().filter((r) => !before.has(r.id));
+      return f.length === 2 ? f : undefined;
+    });
+    expect(fresh[0]!.variantGroup).toBe(got.variantGroup);
+    expect(fresh[1]!.variantGroup).toBe(got.variantGroup);
+    expect(new Set(fresh.map((r) => r.issueId)).size).toBe(2);
+  });
+
+  test("the pull a variant run opens carries the group", async () => {
+    const commit = await commitToBranch(app, alice, repo, {
+      branch: "try",
+      message: "Try",
+      files: [{ path: "README.md", content: "# purple\n" }],
+    });
+    expect(commit.ok).toBe(true);
+    const opened = await openPull(app, alice, repo, {
+      title: "Try",
+      baseBranch: "main",
+      headBranch: "try",
+      variantGroup: "g-1",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    expect(opened.value.variantGroup).toBe("g-1");
+  });
+});
+
+async function until<T>(probe: () => T | undefined): Promise<T> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const got = probe();
+    if (got !== undefined) return got;
+    await Bun.sleep(25);
+  }
+  throw new Error("never");
+}

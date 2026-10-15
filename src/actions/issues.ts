@@ -291,6 +291,7 @@ export function assignIssue(
   repo: Repo,
   issue: Issue,
   assignee: User | null,
+  variantGroup?: string,
 ): Result<
   Issue,
   AccessError | "assignee_cannot_read" | "agent_not_on_crew" | "unverified"
@@ -322,6 +323,7 @@ export function assignIssue(
       number: issue.number,
       assignee: assignee?.username ?? null,
       agent: assignee?.kind === "agent",
+      ...(variantGroup ? { variantGroup } : {}),
     },
   });
   return ok(updated);
