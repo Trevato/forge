@@ -24,9 +24,8 @@ import {
   THEMES,
   type ThemeName,
 } from "../design/themes.ts";
-import { stylesheetAsset } from "./asset.ts";
+import { shellAsset, stylesheetAsset } from "./asset.ts";
 import { linkHeader, pageLinks } from "./standards.ts";
-import { shellJs } from "./client.ts";
 import {
   clearFlashCookie,
   flashCookie,
@@ -528,9 +527,6 @@ export function page(options: PageOptions, status = 200): Response {
   const theme = ctx.theme ?? options.theme;
   const flash = readFlash(ctx.request);
   const links = pageLinks(ctx);
-  const scriptJs = options.scriptJs
-    ? `${shellJs}\n${options.scriptJs}`
-    : shellJs;
 
   // The body's markup, built before the document so the icons it used can be
   // counted: every `icon()` left a `<use>` behind, and the sprite defining
@@ -632,7 +628,10 @@ export function page(options: PageOptions, status = 200): Response {
       </head>
       <body>
         ${shell}${iconSprite(shell.text)}
-        ${raw(`<script nonce="${nonce}">${scriptJs}</script>`)}
+        <script nonce="${nonce}" src="${shellAsset().path}"></script>
+        ${options.scriptJs
+          ? raw(`<script nonce="${nonce}">${options.scriptJs}</script>`)
+          : null}
       </body>
     </html>`;
 

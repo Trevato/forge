@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { stylesheetAsset, stylesheetRedirect } from "../src/web/asset.ts";
+import {
+  shellAsset,
+  stylesheetAsset,
+  stylesheetRedirect,
+} from "../src/web/asset.ts";
+import { shellJs } from "../src/web/client.ts";
 import { escapeHtml, html, raw, when } from "../src/web/html.ts";
 import {
   icon,
@@ -370,6 +375,43 @@ describe("web pages end to end", () => {
     expect(text).toContain("New repository");
   });
 
+  test("the shell is a cached file, linked before the page's own inline script", async () => {
+    const shell = shellAsset();
+    const home = await (await fetch(base, { headers: { cookie } })).text();
+    expect(home).toMatch(
+      new RegExp(`<script nonce="[^"]+" src="${shell.path}"></script>`),
+    );
+    // Its source is no longer in the HTML, and the page is a good deal lighter.
+    expect(home).not.toContain(shellJs.slice(0, 400));
+    expect(home).not.toContain(shellJs.slice(-400));
+
+    // A page with its own script: the shell is a classic script placed first,
+    // so it has run by the time the nonce'd inline one does.
+    const apps = await (
+      await fetch(`${base}/apps/new`, { headers: { cookie } })
+    ).text();
+    const at = apps.indexOf(`src="${shell.path}">`);
+    const inline = apps.indexOf("<script nonce=", at);
+    expect(at).toBeGreaterThan(-1);
+    expect(inline).toBeGreaterThan(at);
+    expect(apps).not.toContain(shellJs.slice(0, 400));
+
+    const file = await fetch(base + shell.path);
+    expect(file.status).toBe(200);
+    expect(file.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    expect(await file.text()).toBe(shellJs);
+    expect(
+      (await fetch(`${base}/assets/shell-0000000000000000.js`)).status,
+    ).toBe(404);
+
+    const policy = (await fetch(base, { headers: { cookie } })).headers.get(
+      "content-security-policy",
+    );
+    expect(policy).not.toContain("unsafe-inline");
+  });
+
   test("the command palette is a proper dialog: modal, a combobox over a listbox, its index as data", async () => {
     const text = await (await fetch(base, { headers: { cookie } })).text();
     expect(text).toMatch(
@@ -382,9 +424,10 @@ describe("web pages end to end", () => {
     expect(text).toContain(
       '<script type="application/json" id="palette-index">',
     );
-    // The script carries the scorer and consumes Escape itself.
-    expect(text).toContain("function fuzzyScore(");
-    expect(text).toContain("function openModal(");
+    // The shell file carries the scorer and consumes Escape itself.
+    const file = await (await fetch(base + shellAsset().path)).text();
+    expect(file).toContain("function fuzzyScore(");
+    expect(file).toContain("function openModal(");
   });
 
   test("stylesheet is content-addressed and immutable, at the path the page names", async () => {

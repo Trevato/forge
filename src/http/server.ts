@@ -66,6 +66,7 @@ import { sha256 } from "../kernel/hash.ts";
 import {
   assetResponse,
   highlightAsset,
+  shellAsset,
   stylesheetAsset,
   stylesheetRedirect,
   stylesheetResponse,
@@ -532,6 +533,8 @@ export function buildRouter(): Router<Handler> {
   // than a redirect: the page that asked for it names the hash it was built
   // with, so a miss means an old tab, and an old tab should reload.
   router.add("GET", "/assets/:name.js", async (ctx) => {
+    const shell = shellAsset();
+    if (ctx.params.name === shell.name) return assetResponse(shell);
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();
     return assetResponse(asset);
