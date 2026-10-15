@@ -45,8 +45,10 @@ that feeling onto a foundation sized for one human.
   covers every system need without a single package.
 - **Language**: TypeScript, strict, `noUncheckedIndexedAccess`,
   `exactOptionalPropertyTypes`. Types are the documentation.
-- **Deploy**: `bun run src/main.ts` in dev; `bun build --compile` produces a
-  single native binary for release. The only system requirement is `git`.
+- **Deploy**: the server runs from source, `bun run src/main.ts`, in dev and
+  in release: it reads its migrations from `src/core/migrations/` at boot, so
+  it is never compiled. `bun build --compile` produces the CLI binary only.
+  The only system requirement is `git`.
 
 Why not Go: Go's advantages (static binary, subprocess plumbing prior art) are
 real, but Forgejo already exists as the Go forge. The differentiators here —

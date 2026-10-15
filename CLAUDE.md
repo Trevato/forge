@@ -248,7 +248,7 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   don't invent a new shape.
 - **Add a schema change:** add one file to `core/migrations/`, named by the
   UTC second you wrote it — `$(date -u +%Y%m%d%H%M%S)-what-it-adds.ts`,
-  whose default export is the SQL — never the next number: `0001`–`0088`
+  whose default export is the SQL — never the next number: `0001`–`0090`
   are the numbered history, and a shared next number is what parallel pulls
   collided on (#1837). Files run in name order, once each, recognised by a
   hash of their text in `schema_migration` (`kernel/migrate.ts`), so two
