@@ -17,33 +17,49 @@ export interface RefusedCall {
   readonly path: string;
 }
 
-let seen: RefusedCall[] = [];
+/** One forge's count (`App.signals.refused`). */
+export class RefusedLedger {
+  private seen: RefusedCall[] = [];
 
-/** Note one refused internal call; the probe is expected and not counted. */
+  /** Note one refused internal call; the probe is expected and not counted. */
+  note(method: string, path: string, now: number = Date.now()): boolean {
+    if (path === PROBE) return false;
+    this.seen.push({
+      at: now,
+      method: method.slice(0, 16),
+      path: path.replace(/[^\x21-\x7e]/g, "?").slice(0, 120),
+    });
+    if (this.seen.length > KEEP) this.seen = this.seen.slice(-KEEP);
+    return true;
+  }
+
+  recent(now: number = Date.now()): {
+    lastHour: number;
+    latest: RefusedCall | undefined;
+    oldest: string | undefined;
+  } {
+    const recent = this.seen.filter((c) => now - c.at < WINDOW_MS);
+    return {
+      lastHour: recent.length,
+      latest: recent.at(-1),
+      oldest: recent[0] && new Date(recent[0].at).toISOString(),
+    };
+  }
+
+  clear(): void {
+    this.seen = [];
+  }
+}
+
 export function noteRefusedInternal(
   method: string,
   path: string,
-  now: number = Date.now(),
+  now: number,
+  ledger: RefusedLedger,
 ): boolean {
-  if (path === PROBE) return false;
-  seen.push({
-    at: now,
-    method: method.slice(0, 16),
-    path: path.replace(/[^\x21-\x7e]/g, "?").slice(0, 120),
-  });
-  if (seen.length > KEEP) seen = seen.slice(-KEEP);
-  return true;
+  return ledger.note(method, path, now);
 }
 
-export function refusedInternal(now: number = Date.now()): {
-  lastHour: number;
-  latest: RefusedCall | undefined;
-} {
-  const recent = seen.filter((c) => now - c.at < WINDOW_MS);
-  return { lastHour: recent.length, latest: recent.at(-1) };
-}
-
-/** For tests: forget everything. */
-export function resetRefusedInternal(): void {
-  seen = [];
+export function refusedInternal(now: number, ledger: RefusedLedger) {
+  return ledger.recent(now);
 }

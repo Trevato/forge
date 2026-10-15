@@ -1763,7 +1763,7 @@ export async function serve(app: App): Promise<Servers> {
       // port has none, so every internal request proves the boot secret.
       if (!hookCallerAllowed(app, request)) {
         const path = new URL(request.url).pathname;
-        if (noteRefusedInternal(request.method, path))
+        if (noteRefusedInternal(request.method, path, Date.now(), app.signals.refused))
           app.log.warn("internal call refused: no boot secret", {
             method: request.method,
             path: path.slice(0, 120),

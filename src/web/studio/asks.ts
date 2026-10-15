@@ -8,6 +8,8 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { needLine } from "../../actions/health.ts";
+import type { Degraded } from "../../kernel/vitals.ts";
 import { previewEnv } from "../../apps/data.ts";
 import { crewForRepos } from "../../core/agents.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
@@ -981,7 +983,7 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
  * health answer (`/api/v1/health`) as one ask. Anyone else gets none — the
  * forge's standing is the admin's to read and nobody else's to know about.
  */
-export function forgeNeedsFor(ctx: Ctx, user: User | undefined): string[] {
+export function forgeNeedsFor(ctx: Ctx, user: User | undefined): Degraded[] {
   if (!user?.isAdmin) return [];
   const runtime = appsRuntime(ctx.app);
   const envs = runtime
@@ -990,8 +992,9 @@ export function forgeNeedsFor(ctx: Ctx, user: User | undefined): string[] {
   return vitals({
     db: ctx.app.db,
     dataDir: ctx.app.config.dataDir,
+    signals: ctx.app.signals,
     envs,
-  }).needs;
+  }).degraded;
 }
 
 /**
@@ -1026,7 +1029,7 @@ export function asksAnswer(ctx: Ctx, user: User) {
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   return {
     rows: askLinesFor(ctx.app.db, user),
-    forge: forgeNeedsFor(ctx, user),
+    forge: forgeNeedsFor(ctx, user).map((d) => needLine(d)),
     measure: { days: 7, ...askMeasure(ctx.app.db, user.id, since) },
   };
 }

@@ -20,7 +20,10 @@ any URL — and it is the rest of this page.
 
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
-stays that way. Everything worth having is written here: the Result type, the
+stays that way. The one exception is dev-only: `@anthropic-ai/sandbox-runtime`
+(a devDependency, with its own few transitive packages) lets
+`test/crew-sandbox-real.test.ts` run a shell under the very sandbox Claude Code
+builds from the crew's settings; it never ships and the app never imports it. Everything worth having is written here: the Result type, the
 router, the SSR templates, the design system, the markdown renderer. The only
 thing forge asks of the host is a `git` binary.
 
@@ -127,6 +130,17 @@ this machine is not one unless listed, since every app runs beside the forge.
 Unset, only this machine may say so, and the named header is never read. Everything a forge
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
+
+## Health
+
+`GET /api/v1/health` (and the MCP `health` tool) answer a site admin with
+`degraded`: one entry per thing that needs a person, `{cause, sentence,
+since, href}`. `cause` is a stable key (`disk`, `errors`, `internal`,
+`queue:<kind>`, `stuck:<runId>`, `budget:<runId>`); `since` is when it began, by the oldest
+evidence (oldest queued run, last heartbeat, oldest error or refused call in
+the hour) or else the first time the forge saw it, and holds until the cause
+clears; `href` is the page to look at. The board's forge strip links each
+entry, and the terminal dashboard prints each with its start.
 
 ## Origins
 

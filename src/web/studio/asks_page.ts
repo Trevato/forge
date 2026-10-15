@@ -17,6 +17,8 @@ import {
 } from "../../actions/asks_bulk.ts";
 import type { FleetValue } from "../../core/fleet_ops.ts";
 import { muteRepo, removeMutes } from "../../core/interactions.ts";
+import { needLine } from "../../actions/health.ts";
+import type { Degraded } from "../../kernel/vitals.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { User } from "../../core/users.ts";
 import { onYouAnswer, studioHome } from "./home.ts";
@@ -112,10 +114,7 @@ document.addEventListener('submit', function (e) {
       var t = document.createElement('template');
       t.innerHTML = text;
       var fresh = t.content.getElementById('live-on-you');
-      var link = t.content.getElementById('asks-link');
       if (region && fresh) region.innerHTML = fresh.innerHTML;
-      var mine = document.getElementById('asks-link');
-      if (mine && link) mine.innerHTML = link.innerHTML;
     })
     .catch(function () { f.removeAttribute('data-bulk'); f.submit(); })
     .then(function () { if (region) region.removeAttribute('data-busy'); });
@@ -271,8 +270,8 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
   );
 }
 
-const forgeCard = (sentence: string): Html =>
-  card(html`<p>${sentence}</p>`, {
+const forgeCard = (d: Degraded): Html =>
+  card(html`<p><a href="${d.href}">${needLine(d)}</a></p>`, {
     tone: "danger",
     head: html`${icon("shield")}
       <h2>The forge</h2>

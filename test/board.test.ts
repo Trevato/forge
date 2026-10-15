@@ -5,7 +5,7 @@ import { stylesheetAsset } from "../src/web/asset.ts";
  * `?wall` is its wall mode, where every old `/big` address lands;
  * anonymous is sent to sign in.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -68,6 +68,12 @@ describe("the board", () => {
     if (!enabled.ok) throw new Error(String(enabled.error));
     return made.value;
   }
+
+  // Module loggers reach every forge in the process: each test starts from a quiet ledger.
+  beforeEach(() => {
+    app.signals.errors.clear();
+    app.signals.refused.clear();
+  });
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-board-"));
@@ -406,6 +412,12 @@ describe("the board's forge strip", () => {
       })
     ).text();
 
+  // Module loggers reach every forge in the process: each test starts from a quiet ledger.
+  beforeEach(() => {
+    app.signals.errors.clear();
+    app.signals.refused.clear();
+  });
+
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-board-strip-"));
     app = createApp({ dataDir, port: 0 });
@@ -449,7 +461,7 @@ describe("the board's forge strip", () => {
       .run("2020-01-01T00:00:00.000Z", run.id);
     const stuck = await board("root");
     expect(stuck).not.toContain("All fine");
-    expect(stuck).toContain("1 run is stuck.");
+    expect(stuck).toContain(`Run ${run.id} is stuck: it has not moved 2020-01-01.`);
     expect(stuck).toContain(`href="/root/stuck/runs/${run.id}"`);
 
     const other = await board("bob");
