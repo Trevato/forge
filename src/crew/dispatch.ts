@@ -43,6 +43,7 @@ import {
 import {
   activeRunFor,
   hasQueuedRun,
+  variantGroupOf,
   automaticRunsSince,
   cancelRun,
   createRun,
@@ -259,6 +260,7 @@ export function queueAgentRun(
   reason: RunReason,
   actorId?: string,
   again?: { notBefore: string; attempt: number; summary: string },
+  variantGroup?: string,
 ): Run | undefined {
   // A suspended or removed owner's repositories run nothing, whoever asks.
   if (!accountActive(app.db, repo.ownerId)) return undefined;
@@ -320,6 +322,7 @@ export function queueAgentRun(
         hasQueuedRun(app.db, "agent", issue.id, mine))
     )
       return undefined;
+    const group = variantGroup ?? variantGroupOf(app.db, issue.id);
     return createRun(app.db, {
       repoId: repo.id,
       kind: "agent",
@@ -327,6 +330,9 @@ export function queueAgentRun(
       actorId: agent.user.id,
       reason,
       ...again,
+      // A run queued again (a restart, a pause, the sweep) stays in the
+      // group its issue was started in.
+      ...(group ? { variantGroup: group } : {}),
     });
   });
   if (run !== undefined) announceRun(app, run, actorId);
@@ -401,6 +407,10 @@ function route(app: App, event: ForgeEvent): void {
         agent,
         "assigned",
         event.actorId ?? undefined,
+        undefined,
+        typeof event.payload["variantGroup"] === "string"
+          ? event.payload["variantGroup"]
+          : undefined,
       );
       return;
     }

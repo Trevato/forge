@@ -39,6 +39,8 @@ import { startPromptRoutine } from "./crew/prompts.ts";
 import { pruneTokens } from "./core/tokens.ts";
 import { dataHomeRefusal } from "./kernel/data_home.ts";
 import { running } from "./kernel/version.ts";
+import { record as recordDegraded } from "./kernel/degraded_history.ts";
+import { vitals } from "./kernel/vitals.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -328,6 +330,21 @@ const tickAsks = async (): Promise<void> => {
     recordAskLedger(app.db);
   } catch (error) {
     app.log.error("asks ledger failed", { error: String(error) });
+  }
+  // The degraded history rides the same tick; it catches its own errors.
+  try {
+    recordDegraded(
+      app.db,
+      vitals({
+        db: app.db,
+        dataDir: app.config.dataDir,
+        signals: app.signals,
+      }).degraded,
+      Date.now(),
+      app.log,
+    );
+  } catch (error) {
+    app.log.warn("degraded history: vitals failed", { error: String(error) });
   }
 };
 const staleTimer = setInterval(() => void tickAsks(), 120_000);

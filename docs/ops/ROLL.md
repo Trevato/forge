@@ -37,8 +37,10 @@ It prints its answer and exits:
 
 `--json` prints the same answer as data.
 
-What happens after an exit 3 is #1589's step. Until that lands, do not roll:
-put the printed answer in front of the owner.
+Exit 3 means do not roll. The output says the seconds the roll would be
+dark (`--dark-seconds`, from the last roll's gap between the old pod going
+and the new one ready) and the headroom that would avoid it. Step 2 says what
+may follow.
 
 ### The rule
 
@@ -72,7 +74,26 @@ On an 8 GB node with 3900m cpu and 7680 Mi allocatable, 3100m cpu and
 and 3712 Mi, and is short by 200m cpu and 1792 Mi. `test/roll.test.ts`
 carries this case.
 
-## 2. Roll
+## 2. A roll that cannot surge needs the owner's yes
+
+Release checklist, in order:
+
+1. Run step 1 with `--version <the version> --yes-file docs/ops/dark-rolls.log`.
+2. Exit 0 and "zero-downtime": roll.
+3. Exit 3: **do not roll.** Tell the owner the seconds dark and the headroom
+   short, and wait for an explicit yes to **that version**. Free the headroom
+   instead if you can, and run step 1 again.
+4. A yes is for one roll, named by version: `0.7.104`, not "the next one", not
+   "any". A yes for another version does not count, and there is no standing
+   yes. The chart never carries `maxSurge: 0` to make the check pass.
+5. Record it beside the version, one line in `docs/ops/dark-rolls.log`:
+   `0.7.104 yes <owner> 2026-10-15`. Run step 1 again; it now exits 0 and
+   prints "dark roll of 0.7.104 allowed".
+
+Without the line, no dark roll. The agent writes the line only after the
+owner's yes is in the conversation, and quotes it in the release notes.
+
+## 3. Roll
 
 Release as the release workflow does. Nothing in this recipe changes the
 workflow or the chart.

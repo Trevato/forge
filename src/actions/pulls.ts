@@ -85,6 +85,8 @@ export interface OpenPullInput {
   /** The issue id of the pull this one reverts ("Take it back"). Native
    * repos only — a mirror's pull is the origin's, which has no such field. */
   revertsIssueId?: string;
+  /** The variant group the pull joins (`actions/tell.ts`); absent for an ordinary pull. */
+  variantGroup?: string;
   /**
    * A person's deliberate yes to fixing a sealed report from a branch that
    * is already public (this repository, or a public fork). Without it such
@@ -217,6 +219,7 @@ export async function openPull(
           }
         : {}),
       ...(input.revertsIssueId ? { revertsIssueId: input.revertsIssueId } : {}),
+      ...(input.variantGroup ? { variantGroup: input.variantGroup } : {}),
     },
   );
   if (!created.ok) return created;
