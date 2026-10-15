@@ -127,6 +127,7 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import { linksFrom, linksTo } from "../core/thought_links.ts";
 import { streamJson, thoughtStream } from "../core/thought_stream.ts";
 import {
   readAppMembers,
@@ -1171,7 +1172,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "thought",
     description:
-      "Where one of your thoughts went: its id (from `tell` without a repo) answers with the planner's placement — the kind (work, amendment, vision, decision, reversal), the issues it opened, amended, deferred or marked superseded, and the one-or-two-line reply, with a question when it was unsure. `placement` is null while the planner has not reached it (within a few minutes).",
+      "Where one of your thoughts went: its id (from `tell` without a repo) answers with the planner's placement — the kind (work, amendment, vision, decision, reversal), the issues it opened, amended, deferred or marked superseded, and the one-or-two-line reply, with a question when it was unsure. `placement` is null while the planner has not reached it (within a few minutes). `repeats` and `supersedes` list the earlier thought ids this one says again or takes back; `repeatedBy` and `supersededBy` the later ones that did the same to it.",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string", maxLength: 64 } },
@@ -1185,7 +1186,17 @@ const TOOLS: readonly Tool[] = [
       // Not yours and not there answer alike (a thought belongs to its author).
       if (thoughtAuthor(ctx.app.db, thoughtId) !== user.id)
         return bad("not_found", "no such thought");
-      return good({ id: thoughtId, placement: placementJson(placementOf(ctx.app.db, thoughtId)) });
+      const links = linksFrom(ctx.app.db, thoughtId);
+      const back = linksTo(ctx.app.db, thoughtId);
+      return good({
+        id: thoughtId,
+        placement: placementJson(placementOf(ctx.app.db, thoughtId)),
+        // The earlier thoughts this one repeats or takes back, and the later one that took it back.
+        repeats: links.repeats,
+        supersedes: links.supersedes,
+        supersededBy: back.supersededBy,
+        repeatedBy: back.repeatedBy,
+      });
     },
   },
   {

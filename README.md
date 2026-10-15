@@ -624,6 +624,15 @@ thoughts are web-only there; `POST /api/v1/thoughts` is the other way in.
 Within minutes the planner places each thought on the map and answers under it
 in the feed, saying where it went; the MCP `thought` tool returns that
 placement to the thought's author.
+A thought that says an earlier one again does not open a duplicate: it links to
+the earlier thought (`repeats`), comments on the issue it placed and raises it
+to the front of the ready order, unless that issue is deferred or closed, which
+the reply says. A close restatement counts only when the planner reads it as
+plain work and nothing in it negates or flips the earlier one; "don't make X"
+after "make X" is a reversal, never a repeat. A reversal links the thoughts it
+takes back (`supersedes`). `/asked` shows "said again, first on …", "takes back
+…" and "superseded by …" under each thought, and the MCP `thought` tool returns
+`repeats`, `supersedes`, `repeatedBy` and `supersededBy` thought ids.
 
 ## Link-preview cards
 

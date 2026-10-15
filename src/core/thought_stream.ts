@@ -22,7 +22,8 @@ import { placementsOf, type Kind, type Placed } from "./placements.ts";
 import { canRead, getRepo, type Repo } from "./repos.ts";
 import { listActiveRuns } from "./runs.ts";
 import { getUserSetting } from "./settings.ts";
-import { recentThoughts } from "./thoughts.ts";
+import { linksFrom, linksTo } from "./thought_links.ts";
+import { recentThoughts, thoughtOf } from "./thoughts.ts";
 import type { User } from "./users.ts";
 
 export type ThoughtState = "unplaced" | "placed" | "building" | "shipped" | "superseded";
@@ -54,6 +55,16 @@ export interface StreamThought {
   readonly flagged: boolean;
   /** The later thought that superseded this one. */
   readonly supersededBy: { readonly id: string; readonly text: string; readonly receivedAt: string } | null;
+  /** The earlier thought this one says again (#654). */
+  readonly repeats: ThoughtRef | null;
+  /** The earlier thoughts this one takes back. */
+  readonly supersedes: readonly ThoughtRef[];
+}
+
+export interface ThoughtRef {
+  readonly id: string;
+  readonly text: string;
+  readonly receivedAt: string;
 }
 
 /** A person's flag window in days: their setting when it is a whole number of 1–90, else three. */
@@ -108,8 +119,17 @@ export function thoughtStream(
       if (x.action === "superseded" && repoOf(x.repo) !== undefined && !supersedes.has(keyOf(x))) supersedes.set(keyOf(x), t);
   }
 
+  // Links the planner wrote: the later thought wins, whatever the issues did.
+  const byId = new Map(thoughts.map((t) => [t.id, t]));
+  const ref = (id: string): ThoughtRef | null => {
+    const t = byId.get(id) ?? thoughtOf(db, viewer.id, id);
+    return t ? { id: t.id, text: t.text, receivedAt: t.receivedAt } : null;
+  };
+
   return thoughts.map((t) => {
     const p = placements.get(t.id);
+    const from = linksFrom(db, t.id);
+    const to = linksTo(db, t.id);
     const links: PlacedLink[] = (p?.placed ?? []).map((x) => {
       const repo = repoOf(x.repo);
       const issue = repo ? getIssue(db, repo.id, x.number) : undefined;
@@ -131,6 +151,8 @@ export function thoughtStream(
       const s = supersedes.get(keyOf(x));
       if (s !== undefined && s.id !== t.id && s.receivedAt >= t.receivedAt) by = s;
     }
+    const linked = to.supersededBy === null ? null : ref(to.supersededBy);
+    if (by === undefined && linked) by = { ...t, id: linked.id, text: linked.text, receivedAt: linked.receivedAt, source: "" };
     const state: ThoughtState =
       p === undefined ? "unplaced"
       : by !== undefined && !shipped ? "superseded"
@@ -153,6 +175,8 @@ export function thoughtStream(
       flagged,
       supersededBy:
         state === "superseded" && by ? { id: by.id, text: by.text, receivedAt: by.receivedAt } : null,
+      repeats: from.repeats[0] ? ref(from.repeats[0]) : null,
+      supersedes: from.supersedes.flatMap((id) => ref(id) ?? []),
     };
   });
 }
@@ -175,5 +199,7 @@ export function streamJson(t: StreamThought) {
     state: t.state,
     flagged: t.flagged,
     supersededBy: t.supersededBy,
+    repeats: t.repeats,
+    supersedes: t.supersedes,
   };
 }

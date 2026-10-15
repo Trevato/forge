@@ -12,12 +12,16 @@ import { openIssue } from "../src/actions/issues.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { keepThought } from "../src/actions/thought.ts";
 import { listComments, getIssue, getIssueById } from "../src/core/issues.ts";
+import { readyNow, repoGraph } from "../src/core/dependencies.ts";
+import { linksFrom } from "../src/core/thought_links.ts";
+import { thoughtStream } from "../src/core/thought_stream.ts";
 import { placementOf } from "../src/core/placements.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { BATCH_MS, placeThought, ruleKind, triageTick } from "../src/crew/triage.ts";
 import type { Decider } from "../src/crew/decide.ts";
 import { replyUnder } from "../src/web/studio/feed.ts";
+import { thoughtRow } from "../src/web/studio/asked_page.ts";
 
 /** Answers by the first word of the thought: `kind:p:#target:pillar`. */
 const stub = (script: Record<string, [string, number, string?, string?]>): Decider => ({
@@ -190,6 +194,101 @@ describe("triage", () => {
     expect(placed).toBeGreaterThanOrEqual(1);
     expect(placementOf(app.db, f.id)).toBeDefined();
     expect(placementOf(app.db, "stale-0")).toBeUndefined();
+  });
+
+  test("a repeat raises what it repeats instead of opening a duplicate, and says when and where it stands", async () => {
+    app.config.decider = stub({ build: ["work", 0.9, "none", "P7"] });
+    const first = await placeThought(app, fresh(), alice, think("make the export button visible on phones"));
+    const target = getIssue(app.db, repo.id, first.placed[0]!.number)!;
+    const other = openIssue(app, alice, fresh(), { title: "Something older and unrelated to anything" });
+    if (!other.ok) throw new Error(String(other.error));
+    const count = () => app.db.query<{ c: number }, []>("SELECT COUNT(*) c FROM issue").get()!.c;
+    const before = count();
+    const again = think("Make the export button visible on phones!");
+    const p = await placeThought(app, fresh(), alice, again);
+    expect(count()).toBe(before);
+    expect(p.placed[0]).toMatchObject({ action: "linked", number: target.number });
+    expect(p.reply).toContain("You asked this on");
+    expect(p.reply).toContain(`#${target.number} is open`);
+    expect(linksFrom(app.db, again.id).repeats).toHaveLength(1);
+    const ready = readyNow(repoGraph(app.db, repo.id)).map((r) => r.issue.number);
+    expect(ready.indexOf(target.number)).toBe(0);
+    expect(listComments(app.db, target.id).some((c) => c.body.includes(again.id))).toBe(true);
+  });
+
+  test("a reversal links the thought it takes back, which then reads as superseded", async () => {
+    app.config.decider = stub({ build: ["work", 0.9, "none", "P7"], scrap: ["reversal", 0.9, "#0"] });
+    const early = think("build a sparkline for spend per day");
+    const placed = await placeThought(app, fresh(), alice, early);
+    const num = placed.placed[0]!.number;
+    app.config.decider = stub({ scrap: ["reversal", 0.9, `#${num}`] });
+    const late = think(`scrap #${num}, no sparkline`);
+    const p = await placeThought(app, fresh(), alice, late);
+    expect(p.reply).toContain("you said it on");
+    expect(linksFrom(app.db, late.id).supersedes).toEqual([early.id]);
+    const row = thoughtStream(app.db, alice).find((t) => t.id === early.id)!;
+    expect(row.state).toBe("superseded");
+    expect(row.supersededBy?.id).toBe(late.id);
+    expect(thoughtStream(app.db, alice).find((t) => t.id === late.id)!.supersedes[0]!.id).toBe(early.id);
+  });
+
+  test("a reversal in the same words is not a repeat and raises nothing", async () => {
+    app.config.decider = stub({ build: ["work", 0.9, "none", "P7"] });
+    const origin = think("make the search box visible on tablets");
+    const first = await placeThought(app, fresh(), alice, origin);
+    const target = getIssue(app.db, repo.id, first.placed[0]!.number)!;
+    const raised = () => app.db.query<{ c: number }, [string]>("SELECT COUNT(*) c FROM issue_raise WHERE issue_id = ?1").get(target.id)!.c;
+    for (const said of [
+      "do not make the search box visible on tablets",
+      "don't make the search box visible on tablets",
+      "make the search box hidden on tablets",
+    ]) {
+      const later = think(said);
+      const p = await placeThought(app, fresh(), alice, later);
+      expect(linksFrom(app.db, later.id).repeats).not.toContain(origin.id);
+      expect(p.reply).not.toContain(`#${target.number} is open`);
+      expect(raised()).toBe(0);
+    }
+  });
+
+  test("a repeat of an ask that was deferred says so and does not claim to raise it", async () => {
+    app.config.decider = stub({ build: ["work", 0.9, "none", "P7"], scrap: ["reversal", 0.9, "#0"] });
+    const text = "build a heatmap of commits per hour";
+    const placed = await placeThought(app, fresh(), alice, think(text));
+    const num = placed.placed[0]!.number;
+    app.config.decider = stub({ scrap: ["reversal", 0.9, `#${num}`], build: ["work", 0.9, "none", "P7"] });
+    await placeThought(app, fresh(), alice, think(`scrap #${num}, no heatmap`));
+    const issue = getIssue(app.db, repo.id, num)!;
+    const deferred = repoGraph(app.db, repo.id).deferred.has(issue.id);
+    const again = think(text);
+    const p = await placeThought(app, fresh(), alice, again);
+    if (deferred) {
+      expect(p.reply).toContain("deferred");
+      expect(p.reply).not.toContain("Raised it");
+      expect(app.db.query("SELECT 1 FROM issue_raise WHERE issue_id = ?1").get(issue.id)).toBeNull();
+    } else {
+      expect(p.reply).not.toContain("deferred");
+    }
+  });
+
+  test("the asked page says a thought was said again or takes one back, and escapes the earlier text", async () => {
+    app.config.decider = stub({ build: ["work", 0.9, "none", "P7"], scrap: ["reversal", 0.9, "#0"] });
+    const early = think("build a <b>bold</b> gauge for queue depth");
+    const placed = await placeThought(app, fresh(), alice, early);
+    const num = placed.placed[0]!.number;
+    const again = think("build a <b>bold</b> gauge for queue depth");
+    await placeThought(app, fresh(), alice, again);
+    app.config.decider = stub({ scrap: ["reversal", 0.9, `#${num}`] });
+    const late = think(`scrap #${num}, no <i>gauge</i>`);
+    await placeThought(app, fresh(), alice, late);
+    const rows = thoughtStream(app.db, alice);
+    const repeatRow = String(thoughtRow(rows.find((t) => t.id === again.id)!, 7));
+    expect(repeatRow).toContain("said again, first on");
+    const reverseRow = String(thoughtRow(rows.find((t) => t.id === late.id)!, 7));
+    expect(reverseRow).toContain("takes back");
+    expect(reverseRow).toContain("&lt;b&gt;bold&lt;/b&gt;");
+    expect(reverseRow).not.toContain("<b>bold</b>");
+    expect(String(thoughtRow(rows.find((t) => t.id === early.id)!, 7))).toContain("superseded by");
   });
 
   test("a reply links its issue numbers and escapes everything else", () => {

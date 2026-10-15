@@ -70,7 +70,7 @@ function placedLinks(t: StreamThought): Html {
     : html`${links.map((l, i) => html`${i > 0 ? " · " : ""}${l}`)}`;
 }
 
-function thoughtRow(t: StreamThought, days: number): Html {
+export function thoughtRow(t: StreamThought, days: number): Html {
   const word = t.flagged
     ? { text: "Nothing built", tone: "danger" as Tone }
     : THOUGHT_WORD[t.state];
@@ -83,6 +83,8 @@ function thoughtRow(t: StreamThought, days: number): Html {
       : t.text,
     meta: html`${time(t.receivedAt)} · ${t.source} · ${placedLinks(t)}${t.supersededBy
       ? html` · superseded by “${t.supersededBy.text.slice(0, 80)}” ${time(t.supersededBy.receivedAt)}`
+      : null}${t.repeats ? html` · said again, first on ${time(t.repeats.receivedAt)}` : null}${t.supersedes.length > 0
+      ? html` · takes back “${t.supersedes[0]!.text.slice(0, 80)}” ${time(t.supersedes[0]!.receivedAt)}`
       : null}`,
     trail: badge(word.text, { tone: word.tone }),
   });
