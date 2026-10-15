@@ -14,7 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
 import { parseManifest } from "../src/apps/manifest.ts";
-import { TOOLBAR_PATH, toolbarJs, withToolbar } from "../src/apps/toolbar.ts";
+import { REWRITE_MAX, TOOLBAR_PATH, toolbarJs, withToolbar } from "../src/apps/toolbar.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -59,6 +59,17 @@ describe("the forge pill", () => {
             }),
             { headers: html },
           );
+        if (path === "/range")
+          return new Response(HTML.slice(0, 20), {
+            status: 206,
+            headers: { ...html, "content-range": `bytes 0-19/${HTML.length}` },
+          });
+        if (path === "/big")
+          return new Response("a".repeat(REWRITE_MAX + 1), { headers: html });
+        if (path === "/sjis")
+          return new Response(HTML, {
+            headers: { "content-type": "text/html; charset=shift_jis" },
+          });
         return new Response(HTML, { headers: html });
       },
     });
@@ -141,6 +152,20 @@ describe("the forge pill", () => {
     // The client unzips what the app zipped; no tag went in before that.
     expect(await gz.text()).toBe(HTML);
     expect(await (await at("/stream")).text()).toBe(HTML);
+  });
+
+  test("a ranged answer, a HEAD, a huge page and a foreign charset pass through", async () => {
+    const range = await at("/range");
+    expect(range.status).toBe(206);
+    expect(range.headers.get("content-range")).toBe(`bytes 0-19/${HTML.length}`);
+    expect(await range.text()).toBe(HTML.slice(0, 20));
+    const head = await fetch(`${servers.url}/`, {
+      method: "HEAD",
+      headers: { host: `notes.${DOMAIN}` },
+    });
+    expect(head.headers.get("content-length")).toBe(String(HTML.length));
+    expect((await (await at("/big")).text()).length).toBe(REWRITE_MAX + 1);
+    expect(await (await at("/sjis")).text()).toBe(HTML);
   });
 
   test("toolbar: false turns it off", async () => {

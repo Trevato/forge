@@ -80,8 +80,10 @@ const SAFE_CHARSETS = new Set(["utf-8", "utf8", "us-ascii", "iso-8859-1", "latin
  * is plain ASCII, and of a length that is declared and bounded.
  */
 export function rewritable(headers: Headers, status: number): boolean {
-  if (status < 200 || status === 204 || status === 205 || status === 304)
+  if (status < 200 || status === 204 || status === 205 || status === 206 || status === 304)
     return false;
+  // A byte range cannot be rewritten: Content-Range would stop matching.
+  if (headers.has("content-range")) return false;
   const type = (headers.get("content-type") ?? "").toLowerCase();
   if (!type.startsWith("text/html")) return false;
   const charset = /charset\s*=\s*"?([^";\s]+)/.exec(type)?.[1];
