@@ -45,6 +45,7 @@ import {
 import { edgeIdentity } from "./edge.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
+import { noteRefusedInternal } from "../kernel/internal_refused.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import {
@@ -188,6 +189,7 @@ import { askedPage } from "../web/studio/asked_page.ts";
 import {
   asksBulkSubmit,
   asksBulkUndo,
+  asksListen,
   asksPage,
 } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
@@ -572,6 +574,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/asks", asksPage);
   router.add("POST", "/asks/bulk", asksBulkSubmit);
   router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
+  router.add("POST", "/asks/listen", asksListen);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);
   // The big view, folded into the board: every old address lands on its wall mode.
@@ -1746,6 +1749,12 @@ export async function serve(app: App): Promise<Servers> {
       // The socket's file mode used to be the only door check; a loopback
       // port has none, so every internal request proves the boot secret.
       if (!hookCallerAllowed(app, request)) {
+        const path = new URL(request.url).pathname;
+        if (noteRefusedInternal(request.method, path))
+          app.log.warn("internal call refused: no boot secret", {
+            method: request.method,
+            path: path.slice(0, 120),
+          });
         return new Response("forbidden", { status: 403 });
       }
       const url = new URL(request.url);

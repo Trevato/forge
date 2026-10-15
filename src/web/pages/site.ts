@@ -29,7 +29,9 @@ import { hasAnyUser, verifyPassword, type User } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
-import { homeTop } from "../studio/asks_page.ts";
+import { homeTop, onYouBulk } from "../studio/asks_page.ts";
+import { latestUndoable } from "../../actions/asks_bulk.ts";
+import { mutedRepos } from "../../core/interactions.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
@@ -182,29 +184,76 @@ export function onYouCard(ctx: Ctx, user: User): Html | undefined {
   const visible = new Set(
     listReposVisibleTo(db, user, { limit: 200 }).map((repo) => repo.id),
   );
-  const rows: Html[] = [];
+  const muted = mutedRepos(db, user.id);
+  const shown: { issue: Issue; repo: Repo }[] = [];
+  // Muted repositories that hold work assigned to the viewer: said, never silent.
+  const silenced = new Map<string, Repo>();
   for (const issue of assigned) {
     const repo = repos.get(issue.repoId);
     if (!repo) continue;
     if (!visible.has(repo.id) && !canRead(db, repo, user)) continue;
     if (!mayView(db, repo, issue, user)) continue;
-    rows.push(
-      row({
-        href: threadPath(repo, issue),
-        nav: true,
-        state: "open",
-        lead: icon(issue.kind === "pull" ? "pull" : "issue"),
-        title: issue.title,
-        titleAttr: issue.title,
-        meta: html`${repo.ownerName}/${repo.name} #${issue.number} · updated
-        ${time(issue.updatedAt)}`,
-      }),
-    );
+    if (muted.has(repo.id)) {
+      silenced.set(repo.id, repo);
+      continue;
+    }
+    shown.push({ issue, repo });
   }
-  if (rows.length === 0) return undefined;
+  // Two or more can be given one move: a box each, and one form for the set.
+  const bulk = shown.length >= 2;
+  const rows = shown.map(({ issue, repo }) =>
+    row({
+      ...(bulk ? {} : { href: threadPath(repo, issue), nav: true as const }),
+      state: "open",
+      lead: bulk
+        ? html`<input
+            type="checkbox"
+            class="ask-pick"
+            name="item"
+            value="issue:${issue.id}"
+            form="onyou-bulk"
+            data-repo="${repo.id}"
+            data-kind="${issue.kind}"
+            aria-label="Select ${issue.title}"
+          />`
+        : icon(issue.kind === "pull" ? "pull" : "issue"),
+      title: bulk
+        ? html`<a href="${threadPath(repo, issue)}">${issue.title}</a>`
+        : issue.title,
+      titleAttr: issue.title,
+      meta: html`${repo.ownerName}/${repo.name} #${issue.number} · updated
+      ${time(issue.updatedAt)}`,
+    }),
+  );
+  if (rows.length === 0 && silenced.size === 0) return undefined;
+  const last = latestUndoable(ctx.app, user);
+  const byKind = [...new Set(shown.map((s) => s.issue.kind))].map((k) => ({
+    id: k,
+    label: k === "pull" ? "Pulls" : "Issues",
+  }));
+  const byRepo = [...new Map(shown.map((s) => [s.repo.id, s.repo])).values()].map(
+    (r) => ({ id: r.id, label: `${r.ownerName}/${r.name}` }),
+  );
   return listCard(rows, {
     head: html`${icon("user")}
       <h2>On you</h2>`,
+    ...(bulk || last !== undefined || silenced.size > 0
+      ? {
+          foot: onYouBulk(
+            byKind,
+            byRepo,
+            last === undefined
+              ? undefined
+              : {
+                  id: last.id,
+                  verb: last.verb,
+                  done: last.rows.filter((r) => r.outcome === "ok").length,
+                },
+            bulk,
+            [...silenced.values()].map((r) => ({ id: r.id, label: `${r.ownerName}/${r.name}` })),
+          ),
+        }
+      : {}),
   });
 }
 

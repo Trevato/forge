@@ -62,6 +62,7 @@ import { lookUrl } from "../core/looks.ts";
 import { getPull } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
+import { askToLiveFor } from "../web/ask_to_live.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import {
   canRead,
@@ -428,12 +429,13 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_act",
     description:
-      "Act on many asks at once: dismiss, ship, close, or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`). A dry run (the default, and all a read-only token may do) changes nothing: the answer is each row's before and after and the rows refused with why. With dryRun false it acts and returns a receipt; dismiss, close and replan can be undone once (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Dismiss needs only that the ask is yours; the others are checked against your admin of each app.",
+      "Decide many asks at once (the set and the verb): dismiss or decline, ship, close (with one `reason`, written on each), mute (silence the app's repository in your own On you), or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`), or `issue:<id>` for something assigned to you. A dry run (the default, and all a read-only token may do) changes nothing: the answer is each row's before and after and the rows refused with why. With dryRun false it acts and returns a receipt; dismiss, decline, mute, close and replan can be undone once, for a day (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Dismiss needs only that the ask is yours; the others are checked against your admin of each app.",
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["dismiss", "ship", "close", "replan"] },
+        action: { type: "string", enum: ["dismiss", "decline", "mute", "ship", "close", "replan"] },
         items: { type: "array", items: { type: "string" }, maxItems: 100 },
+        reason: { type: "string", maxLength: 300 },
         dryRun: { type: "boolean" },
       },
       required: ["action", "items"],
@@ -443,8 +445,8 @@ const TOOLS: readonly Tool[] = [
     async run(ctx, user, args) {
       const answer =
         args["dryRun"] === false
-          ? await applyAsksBulk(ctx.app, user, args["action"], args["items"])
-          : previewAsksBulk(ctx.app, user, args["action"], args["items"]);
+          ? await applyAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"])
+          : previewAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"]);
       return answer.ok ? good(answer.value) : bad(answer.error.code, answer.error.message);
     },
   },
@@ -1151,12 +1153,13 @@ const TOOLS: readonly Tool[] = [
       required: ["app"],
     },
     writes: false,
-    run(ctx, user, args) {
+    async run(ctx, user, args) {
       const repo = planRepo(ctx, user, args);
       if (isAnswer(repo)) return repo;
       const graph = repoGraph(ctx.app.db, repo.id, {
         ...sealedScope(ctx.app.db, repo, user),
       });
+      const pillars = pillarView(ctx.app.db, repo);
       return good(
         mapJson(
           repo,
@@ -1167,7 +1170,8 @@ const TOOLS: readonly Tool[] = [
             graph,
             listActiveRuns(ctx.app.db, [repo.id]),
           ),
-          pillarView(ctx.app.db, repo),
+          pillars,
+          await askToLiveFor(ctx.app, repo, pillars, user),
         ),
       );
     },
@@ -1190,14 +1194,15 @@ const TOOLS: readonly Tool[] = [
       required: ["app"],
     },
     writes: false,
-    run(ctx, user, args) {
+    async run(ctx, user, args) {
       const repo = planRepo(ctx, user, args);
       if (isAnswer(repo)) return repo;
-      if (args["issue"] === undefined) return good(milestonesJson(ctx, repo));
+      if (args["issue"] === undefined)
+        return good(await milestonesJson(ctx, repo));
       const number = args["issue"];
       const data =
         typeof number === "number" && Number.isInteger(number) && number > 0
-          ? milestoneData(ctx, repo, number)
+          ? await milestoneData(ctx, repo, number)
           : undefined;
       return data === undefined
         ? bad(
@@ -1249,7 +1254,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "limb",
     description:
-      "One action on a whole limb of the plan — a milestone and everything beneath it that only it needs. `defer` moves the limb behind the Later gate, so the crew picks none of it; `resume` brings it back, under `pillar` when you name one; `close` closes every open issue of the limb as not doing, with `reason` said on each; `undo` reverses an `operation` by its id. A dry run unless `dryRun` is false: it answers with every row before and after, what the action takes along (`taken`) and what stays because something outside the limb still waits for it (`kept`), and changes nothing. Applying and undoing take an admin token of a person who administers the app, and answer with the receipt.",
+      "One action on a whole limb of the plan — a milestone and everything beneath it that only it needs. `defer` moves the limb behind the Later gate, so the crew picks none of it; `resume` brings it back, under `pillar` when you name one; `close` closes every open issue of the limb as not doing, with `reason` said on each; `raise` and `lower` move it one place among its siblings — `under` says whose limbs when it is a limb of several, or `top` — and the crew takes ready work from the higher limb first; the dry run answers with the new `order` and the top of the ready list `before` and `after`. `undo` reverses an `operation` by its id. A dry run unless `dryRun` is false: it answers with every row before and after, what the action takes along (`taken`) and what stays because something outside the limb still waits for it (`kept`), and changes nothing. Applying and undoing take an admin token of a person who administers the app, and answer with the receipt.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1259,7 +1264,7 @@ const TOOLS: readonly Tool[] = [
           minimum: 1,
           description: "The limb: the number of its issue.",
         },
-        action: { type: "string", enum: ["defer", "resume", "close", "undo"] },
+        action: { type: "string", enum: ["defer", "resume", "close", "raise", "lower", "undo"] },
         reason: {
           type: "string",
           description: "For close: why it is not being done, in one sentence.",
@@ -1268,6 +1273,11 @@ const TOOLS: readonly Tool[] = [
           type: "string",
           description:
             "For resume: the pillar to put it back under, by name or short form; under none when absent.",
+        },
+        under: {
+          type: "string",
+          description:
+            "For raise and lower: among whose limbs — `top`, or the number of the milestone; needed only when the limb sits in several places.",
         },
         operation: {
           type: "string",
@@ -1303,11 +1313,14 @@ const TOOLS: readonly Tool[] = [
         !Number.isInteger(number) ||
         number < 1
       )
-        return bad("invalid", "give the limb's issue number and an action: defer, resume, close or undo");
+        return bad("invalid", "give the limb's issue number and an action: defer, resume, close, raise, lower or undo");
       const request = {
         action: args["action"],
         ...(typeof args["reason"] === "string" ? { reason: args["reason"] } : {}),
         ...(typeof args["pillar"] === "string" ? { pillar: args["pillar"] } : {}),
+        ...(typeof args["under"] === "string" || typeof args["under"] === "number"
+          ? { under: String(args["under"]) }
+          : {}),
       };
       if (dry) {
         const plan = previewLimb(ctx.app, user, repo, number, request);

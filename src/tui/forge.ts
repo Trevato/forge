@@ -32,6 +32,7 @@ import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
+import { limbsScreen } from "./screens/limbs.ts";
 import { newPullScreen } from "./screens/newpull.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
 import { repoScreen } from "./screens/repo.ts";
@@ -65,6 +66,11 @@ const REPO_VERBS: readonly {
     id: "pulls",
     title: "Pull requests in a repository",
     open: (f, ctx, repo) => issuesScreen(f, ctx, local(f, repo), "pull"),
+  },
+  {
+    id: "milestones",
+    title: "Milestones in a repository",
+    open: (f, ctx, repo) => limbsScreen(f, ctx, repo),
   },
   { id: "new-issue", title: "New issue", open: newIssueScreen },
   { id: "new-pull", title: "New pull request", open: newPullScreen },
@@ -133,9 +139,12 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               // this check the palette would be a way around `canRead`.
               if (!repo || !canRead(session.db, repo, session.user))
                 return "not found";
-              const next = verb.open(session, ctx, repo);
-              if (next !== undefined) ctx.push(next);
-              return undefined;
+              // After the prompt has popped itself, or the pop takes the
+              // screen just pushed instead (`later` in screens/common.ts).
+              return Promise.resolve().then(() => {
+                const next = verb.open(session, ctx, repo);
+                if (next !== undefined) ctx.push(next);
+              });
             }),
           ),
       });
@@ -348,7 +357,7 @@ function askFor(
   ctx: Ctx,
   title: string,
   label: string,
-  onSubmit: (value: string) => string | undefined,
+  onSubmit: (value: string) => string | undefined | Promise<void>,
 ): Screen {
   return promptScreen(ctx, blank(title), { title, label, onSubmit });
 }

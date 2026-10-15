@@ -12,6 +12,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -31,13 +32,16 @@ import { repoDir } from "../src/git/repos.ts";
 import { restoreSnapshot } from "../src/snapshot/restore.ts";
 import { startSnapshots, untilNightly } from "../src/snapshot/service.ts";
 import {
+  isRunBundle,
   listSnapshots,
   pruneSnapshots,
   snapshotName,
+  packRuns,
   takeSnapshot,
+  unpackRuns,
 } from "../src/snapshot/snapshot.ts";
 import { unwrapKey, wrapKey } from "../src/snapshot/wrap.ts";
-import { dirStore } from "../src/snapshot/store.ts";
+import { dirStore, type Store } from "../src/snapshot/store.ts";
 
 const PASS = "correct horse battery staple";
 
@@ -407,4 +411,185 @@ describe("a forge back from a snapshot", () => {
       servers.stop();
     }
   });
+});
+
+describe("a snapshot's uploads", () => {
+  let root: string;
+  let app: App;
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), "forge-snapshot-queue-"));
+    app = createApp({ dataDir: join(root, "live"), port: 0 });
+    mkdirSync(join(app.config.dataDir, "runs"), { recursive: true });
+  });
+  afterAll(async () => {
+    app.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  const forge = (extra: object = {}) => ({
+    db: app.db,
+    dataDir: app.config.dataDir,
+    reposRoot: app.reposRoot,
+    version: "t",
+    ...extra,
+  });
+  /** A store that holds nothing but counts, and answers after `ms`. */
+  const slowStore = (ms: number, failOn?: string) => {
+    const seen = { inFlight: 0, peak: 0, keys: [] as string[], started: [] as string[] };
+    const store: Store = {
+      ...dirStore(join(root, "unused")),
+      where: "fake",
+      async put(key) {
+        seen.started.push(key);
+        seen.inFlight++;
+        seen.peak = Math.max(seen.peak, seen.inFlight);
+        await Bun.sleep(ms);
+        seen.inFlight--;
+        if (failOn !== undefined && key.endsWith(failOn))
+          throw new Error("refused");
+        seen.keys.push(key);
+      },
+    };
+    return { store, seen };
+  };
+  const logsDir = () => join(app.config.dataDir, "runs");
+  const old = (name: string, body: string, day: string) => {
+    const file = join(logsDir(), name);
+    writeFileSync(file, body);
+    const when = new Date(`${day}T12:00:00Z`);
+    utimesSync(file, when, when);
+  };
+
+  test("at most eight puts are in flight, and the manifest keeps its order", async () => {
+    for (let i = 0; i < 40; i++)
+      writeFileSync(join(logsDir(), `new-${String(i).padStart(2, "0")}.log`), "x");
+    const { store, seen } = slowStore(15);
+    const manifest = await takeSnapshot(forge(), store);
+    expect(seen.peak).toBeGreaterThan(1);
+    expect(seen.peak).toBeLessThanOrEqual(8);
+    // Handed over in the manifest's order, whatever order they landed in.
+    expect(seen.started.slice(0, -1)).toEqual(
+      manifest.files.map((f) => `snapshots/${manifest.name}/${f.path}`),
+    );
+    expect(manifest.files.filter((f) => f.path.startsWith("runs/new-")).length).toBe(40);
+    expect(seen.keys.length).toBe(manifest.files.length + 1);
+  });
+
+  test("held bytes are bounded too: big files go through two at a time", async () => {
+    const big = "x".repeat(30 * 1024 * 1024);
+    for (let i = 0; i < 4; i++) writeFileSync(join(logsDir(), `big-${i}.log`), big);
+    const inner = slowStore(30).store;
+    let bigIn = 0;
+    let bigPeak = 0;
+    const counting = {
+      ...inner,
+      async put(...args: Parameters<typeof inner.put>) {
+        const isBig = args[0].includes("/runs/big-");
+        if (isBig) bigPeak = Math.max(bigPeak, ++bigIn);
+        try {
+          await inner.put(...args);
+        } finally {
+          if (isBig) bigIn--;
+        }
+      },
+    };
+    await takeSnapshot(forge(), counting);
+    expect(bigPeak).toBeLessThanOrEqual(2);
+    expect(bigPeak).toBeGreaterThan(0);
+  }, 20_000);
+
+  test("a failed put fails the snapshot and names its key", async () => {
+    const { store } = slowStore(1, "runs/new-07.log");
+    await expect(takeSnapshot(forge(), store)).rejects.toThrow(
+      /could not put snapshots\/.*runs\/new-07\.log/,
+    );
+  }, 15_000);
+
+  test("a slow store gets a progress line every so many objects", async () => {
+    const { store } = slowStore(10);
+    const lines: { objects: number; bytes: number }[] = [];
+    await takeSnapshot(
+      forge({
+        onProgress: (p: { objects: number; bytes: number }) => lines.push(p),
+        progressEvery: { objects: 10, ms: 60_000 },
+      }),
+      store,
+    );
+    expect(lines.length).toBeGreaterThanOrEqual(4);
+    expect(lines[0]!.objects).toBeGreaterThanOrEqual(10);
+    expect(lines.at(-1)!.bytes).toBeGreaterThan(0);
+    // And by the clock when objects are slow to land.
+    const ticks: number[] = [];
+    await takeSnapshot(
+      forge({
+        onProgress: (p: { objects: number }) => ticks.push(p.objects),
+        progressEvery: { objects: 100_000, ms: 20 },
+      }),
+      slowStore(30).store,
+    );
+    expect(ticks.length).toBeGreaterThan(0);
+  });
+
+  test("older run logs go up as one object a day and restore as the logs they were", async () => {
+    old("a.log", "alpha\n", "2026-10-10");
+    old("b.log", "beta\n", "2026-10-10");
+    old("c.log", "gamma\n", "2026-10-11");
+    const store = dirStore(join(root, "bundled"));
+    const manifest = await takeSnapshot(forge(), store);
+    const paths = manifest.files.map((f) => f.path);
+    expect(paths).toContain("runs/2026-10-10.ndjson.zst");
+    expect(paths).toContain("runs/2026-10-11.ndjson.zst");
+    expect(paths).not.toContain("runs/a.log");
+    const target = join(root, "restored");
+    await restoreSnapshot(store, manifest.name, target);
+    expect(readFileSync(join(target, "runs", "a.log"), "utf8")).toBe("alpha\n");
+    expect(readFileSync(join(target, "runs", "b.log"), "utf8")).toBe("beta\n");
+    expect(readFileSync(join(target, "runs", "c.log"), "utf8")).toBe("gamma\n");
+    expect(readFileSync(join(target, "runs", "new-03.log"), "utf8")).toBe("x");
+  });
+
+  test("a bundle that names a path outside runs is refused", () => {
+    const bad = packRuns([{ path: "../evil", body: new Uint8Array([1]) }]);
+    expect(() => unpackRuns(bad)).toThrow(/names/);
+  });
+
+  test("a bundle is cut before it grows past the cap, and every log still restores", async () => {
+    const big = "z".repeat(1_500_000);
+    for (const n of [1, 2, 3, 4]) old(`big-${n}.log`, big + n, "2026-10-09");
+    const store = dirStore(join(root, "capped"));
+    const manifest = await takeSnapshot(forge(), store);
+    const bundles = manifest.files
+      .map((f) => f.path)
+      .filter((p) => p.startsWith("runs/2026-10-09"));
+    expect(bundles.length).toBeGreaterThan(1);
+    expect(bundles.every(isRunBundle)).toBe(true);
+    const target = join(root, "capped-restored");
+    await restoreSnapshot(store, manifest.name, target);
+    for (const n of [1, 2, 3, 4])
+      expect(readFileSync(join(target, "runs", `big-${n}.log`), "utf8")).toBe(
+        big + n,
+      );
+  }, 15_000);
+
+  test("the service shows a running snapshot's progress while it runs", async () => {
+    const { store } = slowStore(40);
+    const svc = startSnapshots(app, store, { version: "t", nightly: false });
+    try {
+      expect(svc.progress()).toBeUndefined();
+      const taking = svc.now();
+      let seen: { objects: number; bytes: number } | undefined;
+      let done = false;
+      void taking.then(() => (done = true));
+      while (!done && (seen?.objects ?? 0) === 0) {
+        seen = svc.progress();
+        await Bun.sleep(10);
+      }
+      expect(seen).toBeDefined();
+      expect(seen!.objects).toBeGreaterThan(0);
+      expect(done).toBe(false);
+      await taking;
+      expect(svc.progress()).toBeUndefined();
+    } finally {
+      await svc.stop();
+    }
+  }, 15_000);
 });

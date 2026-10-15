@@ -18,7 +18,10 @@ import { addTeamMember, createOrg, createTeam } from "../src/actions/orgs.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
-import { getIssueById, type Issue } from "../src/core/issues.ts";
+import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
+import { assignIssue } from "../src/actions/issues.ts";
+import { mutedRepos, recordInteraction, removeMutes } from "../src/core/interactions.ts";
+import { onYouCard } from "../src/web/pages/site.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
@@ -362,7 +365,7 @@ describe("acting on many asks at once", () => {
     expect(preview).toContain('name="apply" value="1"');
     // One screen: the preview sits on top of the asks, the picked ones still ticked.
     expect(preview).toContain('id="asks-sentence"');
-    expect((preview.match(/form="asks-bulk" checked/g) ?? []).length).toBe(picked.length);
+    expect((preview.match(/form="asks-bulk" data-repo="[^"]*" data-kind="[^"]*" checked/g) ?? []).length).toBe(picked.length);
     expect(items(alice).filter((i) => i.startsWith("look:"))).toHaveLength(
       picked.length,
     );
@@ -566,5 +569,207 @@ describe("acting on many asks at once", () => {
       "held by alice (wait for the migration): release it first",
     );
     expect(getPull(app.db, quiet.id, pull.number)!.mergedAt).toBeNull();
+  });
+
+  test("decline is dismiss under the asks' own word, and undoes the same", async () => {
+    const pull = await greenPull(open, "Decline me");
+    const ask = items(alice).filter((i) => i.endsWith(pull.id));
+    expect(ask).toHaveLength(1);
+    const done = await api(aliceRw, "/api/v1/asks/bulk", {
+      action: "decline",
+      items: ask,
+      preview: false,
+    });
+    expect(done.status).toBe(201);
+    expect(done.body.verb).toBe("dismiss");
+    expect(items(alice).filter((i) => i.endsWith(pull.id))).toHaveLength(0);
+    const undone = await api(aliceRw, `/api/v1/asks/bulk/${done.body.id}/undo`, {});
+    expect(undone.status).toBe(201);
+    expect(items(alice).filter((i) => i.endsWith(pull.id))).toHaveLength(1);
+  });
+
+  test("close many with one reason, written on each; undo opens them again", async () => {
+    const a = await greenPull(open, "Close one");
+    const b = await greenPull(quiet, "Close two");
+    const ask = items(alice).filter((i) => i.endsWith(a.id) || i.endsWith(b.id));
+    expect(ask).toHaveLength(2);
+    // A reason belongs to close alone, and is a sentence.
+    const odd = await api(aliceRw, "/api/v1/asks/bulk", {
+      action: "dismiss",
+      items: ask,
+      reason: "nope",
+      preview: false,
+    });
+    expect(odd.status).toBe(422);
+    const long = await api(aliceRw, "/api/v1/asks/bulk", {
+      action: "close",
+      items: ask,
+      reason: "x".repeat(301),
+      preview: false,
+    });
+    expect(long.status).toBe(422);
+    expect(getIssueById(app.db, a.id)!.state).toBe("open");
+    const done = await api(aliceRw, "/api/v1/asks/bulk", {
+      action: "close",
+      items: ask,
+      reason: "the week moved on",
+      preview: false,
+    });
+    expect(done.status).toBe(201);
+    expect(done.body.rows.map((r: { outcome: string }) => r.outcome)).toEqual(["ok", "ok"]);
+    for (const pull of [a, b]) {
+      expect(getIssueById(app.db, pull.id)!.state).toBe("closed");
+      const said = listComments(app.db, pull.id).map((c) => c.body);
+      expect(said).toContain("Closed: the week moved on");
+    }
+    const undone = await api(aliceRw, `/api/v1/asks/bulk/${done.body.id}/undo`, {});
+    expect(undone.status).toBe(201);
+    for (const pull of [a, b]) expect(getIssueById(app.db, pull.id)!.state).toBe("open");
+  });
+
+  test("mute silences a repository in On you, for the person alone; undo listens again", async () => {
+    const a = await greenPull(open, "On you one");
+    const b = await greenPull(open, "On you two");
+    for (const pull of [a, b]) {
+      const issue = getIssueById(app.db, pull.id)!;
+      expect(assignIssue(app, alice, open, issue, alice).ok).toBe(true);
+    }
+    const ctx = (user: User) => ({ app, auth: { user } }) as never;
+    const card = (user: User) => onYouCard(ctx(user), user)?.text ?? "";
+    expect(card(alice)).toContain("On you one");
+    // The card offers the set: a box each, the kinds, one form.
+    expect(card(alice)).toContain('form="onyou-bulk"');
+    expect(card(alice)).toContain('value="issue:' + a.id + '"');
+    expect(card(alice)).toContain("data-pick");
+    const done = await api(aliceRw, "/api/v1/asks/bulk", {
+      action: "mute",
+      items: [`issue:${a.id}`, `issue:${b.id}`],
+      preview: false,
+    });
+    expect(done.status).toBe(201);
+    expect(mutedRepos(app.db, alice.id).has(open.id)).toBe(true);
+    expect(mutedRepos(app.db, bob.id).has(open.id)).toBe(false);
+    expect(card(alice)).not.toContain("On you one");
+    const undone = await api(aliceRw, `/api/v1/asks/bulk/${done.body.id}/undo`, {});
+    expect(undone.status).toBe(201);
+    expect(mutedRepos(app.db, alice.id).has(open.id)).toBe(false);
+    expect(card(alice)).toContain("On you one");
+    // Only what is assigned to the viewer is theirs to name this way.
+    const other = await api(bobRw, "/api/v1/asks/bulk", {
+      action: "mute",
+      items: [`issue:${a.id}`],
+      preview: false,
+    });
+    expect(other.body.rows).toHaveLength(0);
+    expect(other.body.skipped).toHaveLength(1);
+  });
+
+  test("the card's one request answers its script with the region and the count; one undo link stays for a day", async () => {
+    const a = await greenPull(open, "Card one");
+    const b = await greenPull(open, "Card two");
+    for (const pull of [a, b])
+      expect(assignIssue(app, alice, open, getIssueById(app.db, pull.id)!, alice).ok).toBe(true);
+    const headers = { cookie: `${aliceCookie}; forge_mode=studio`, origin: servers.url, "x-forge-fragment": "1" };
+    const res = await fetch(`${servers.url}/asks/bulk`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams([
+        ["action", "close"],
+        ["reason", "not this week"],
+        ["apply", "1"],
+        ["item", `issue:${a.id}`],
+        ["item", `issue:${b.id}`],
+      ]),
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain('id="live-on-you"');
+    expect(text).toContain('id="asks-link"');
+    expect(text).not.toContain("Card one");
+    expect(getIssueById(app.db, a.id)!.state).toBe("closed");
+    // The undo link rides on the card, and is the same one after a refresh.
+    const again = await fetch(`${servers.url}/live/on-you`, { headers }).then((r) => r.text());
+    const undo = /action="(\/asks\/bulk\/[^"]+\/undo)"/.exec(again)?.[1];
+    expect(undo).toBeDefined();
+    const id = undo!.split("/")[3]!;
+    // A day later the link is gone and the undo is refused.
+    app.db.query("UPDATE fleet_operation SET created_at = ?1 WHERE id = ?2").run(
+      new Date(Date.now() - 86_400_000 - 60_000).toISOString(),
+      id,
+    );
+    const late = await fetch(`${servers.url}/live/on-you`, { headers }).then((r) => r.text());
+    expect(late).not.toContain("/undo");
+    const refused = await api(aliceRw, `/api/v1/asks/bulk/${id}/undo`, {});
+    expect(refused.status).toBe(409);
+    expect(getIssueById(app.db, a.id)!.state).toBe("closed");
+    // The same day on the other doors: the fleet route refuses too.
+    const admin = createToken(app.db, alice.id, "admin", "admin").token;
+    const fleet = await api(admin, `/api/v1/fleet/ops/${id}/undo`, {});
+    expect(fleet.status).toBe(409);
+    expect(getIssueById(app.db, a.id)!.state).toBe("closed");
+  });
+
+  test("a muted repository is named on the card, and one request listens again", async () => {
+    const a = await greenPull(open, "Muted one");
+    const b = await greenPull(open, "Muted two");
+    for (const pull of [a, b])
+      expect(assignIssue(app, alice, open, getIssueById(app.db, pull.id)!, alice).ok).toBe(true);
+    const card = () => onYouCard({ app, auth: { user: alice } } as never, alice)?.text ?? "";
+    expect(card()).not.toContain("muted");
+    const done = await api(aliceRw, "/api/v1/asks/bulk", {
+      action: "mute",
+      items: [`issue:${a.id}`, `issue:${b.id}`],
+      preview: false,
+    });
+    expect(done.status).toBe(201);
+    // Past the day's undo, the card still says it, and offers the way back.
+    expect(card()).toContain("1 repository muted");
+    expect(card()).toContain('action="/asks/listen"');
+    const headers = { cookie: `${aliceCookie}; forge_mode=studio`, origin: servers.url };
+    const res = await fetch(`${servers.url}/asks/listen`, {
+      method: "POST",
+      headers,
+      body: new URLSearchParams([["repo", open.id]]),
+      redirect: "manual",
+    });
+    expect(res.status).toBe(303);
+    expect(mutedRepos(app.db, alice.id).has(open.id)).toBe(false);
+    expect(card()).toContain("Muted one");
+    expect(card()).not.toContain("repository muted");
+  });
+  test("on the card, a refusal answers 422 with its message, and a partial set says what was not done", async () => {
+    const a = await greenPull(open, "Refuse one");
+    expect(assignIssue(app, alice, open, getIssueById(app.db, a.id)!, bob).ok).toBe(true);
+    const signed = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      body: new URLSearchParams({ username: "bob", password: PASSWORD }),
+      redirect: "manual",
+    });
+    const bobCookie = (signed.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const post = (cookie: string, action: string, reason: string, item: string) =>
+      fetch(`${servers.url}/asks/bulk`, {
+        method: "POST",
+        headers: { cookie: `${cookie}; forge_mode=studio`, origin: servers.url, "x-forge-fragment": "1" },
+        body: new URLSearchParams([["action", action], ["reason", reason], ["apply", "1"], ["item", item]]),
+      });
+    // A reason belongs to close alone: the script gets an error, not a page.
+    const odd = await post(aliceCookie, "mute", "because", `issue:${a.id}`);
+    expect(odd.status).toBe(422);
+    expect(await odd.text()).toContain("reason");
+    // Bob cannot close it: nothing changes, and the card says why.
+    const res = await post(bobCookie, "close", "", `issue:${a.id}`);
+    const text = res.status === 200 ? await res.text() : "";
+    expect(res.status === 422 || /not done/.test(text)).toBe(true);
+    expect(getIssueById(app.db, a.id)!.state).toBe("open");
+  });
+
+  test("undoing a bulk mute leaves a mute made elsewhere", () => {
+    const item = `repo:${quiet.id}`;
+    recordInteraction(app.db, { viewerId: alice.id, itemId: item, kind: "muted", repoId: quiet.id, actorId: null });
+    recordInteraction(app.db, { viewerId: alice.id, itemId: "event:x", kind: "muted", repoId: quiet.id, actorId: null });
+    removeMutes(app.db, alice.id, [item]);
+    expect(mutedRepos(app.db, alice.id).has(quiet.id)).toBe(true);
+    removeMutes(app.db, alice.id, ["event:x"]);
+    expect(mutedRepos(app.db, alice.id).has(quiet.id)).toBe(false);
   });
 });

@@ -31,10 +31,11 @@ function requireAdmin(ctx: Ctx): Response | undefined {
   return undefined;
 }
 
-function shell(ctx: Ctx, body: Html): Response {
+function shell(ctx: Ctx, body: Html, moving = false): Response {
   return page({
     ctx,
     title: "Backups",
+    ...(moving ? { refresh: { seconds: 5 } } : {}),
     body: html`<div class="page-head"><h1>Backups</h1></div>
       ${settingsLayout(
         accountSections("backups", { admin: true }),
@@ -123,6 +124,15 @@ bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
         </p>
         ${keyNote(svc.wraps, snapshots[0])}
         ${when(
+          svc.progress(),
+          (p) =>
+            html`<p class="backups-progress">
+              ${icon("clock")} A snapshot is being taken: ${p.objects} objects,
+              ${fileSize(p.bytes)} so far, ${Math.round(p.elapsedMs / 1000)} s
+              in.
+            </p>`,
+        )}
+        ${when(
           last.error,
           (error) =>
             html`<p class="backups-error">
@@ -195,6 +205,7 @@ bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
           )
     }
     ${form}`,
+    svc.progress() !== undefined,
   );
 }
 

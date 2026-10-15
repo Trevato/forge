@@ -17,7 +17,8 @@ import { commitFiles } from "../src/git/write.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { usePlacement } from "../src/spawn/door.ts";
-import { hostedPlacement } from "../src/spawn/placement.ts";
+import { childrenForMemory, maxChildren, setCapacity } from "../src/core/capacity.ts";
+import { hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -264,5 +265,35 @@ describe("+ New forge", () => {
     const html = await (await get(admin, "/forges/new")).text();
     expect(html).toContain("cannot hold another child");
     expect(html).not.toContain('action="/forges/new"');
+  });
+
+  test("at the room limit the door stays, disabled, with the sentence; raising the setting reopens it", async () => {
+    const store = memoryBodies();
+    store.add({ bodyId: "b1", name: "one", url: "https://one--forge.test", depth: 1, agents: 1, ssh: false });
+    usePlacement(app, hostedPlacement({ host: "forge.test", store, maxChildren: () => maxChildren(app.db) }));
+    setCapacity(app.db, "children.max", "1", "system");
+    const sentence = "1 of 1 forges sent on this node — retire one, or raise the room in settings";
+    const home = await (await get(admin, "/")).text();
+    expect(home).toContain("New forge");
+    expect(home).toContain('aria-disabled="true"');
+    expect(home).toContain(sentence);
+    expect(home).not.toContain('href="/forges/new"');
+    const list = await (await get(admin, "/forges")).text();
+    expect(list).toContain(sentence);
+    expect(list).toContain("disabled");
+    const page = await (await get(admin, "/forges/new")).text();
+    expect(page).toContain(sentence);
+    expect(page).not.toContain('action="/forges/new"');
+    // Raised live: no restart, the door opens.
+    setCapacity(app.db, "children.max", "2", "system");
+    expect(await (await get(admin, "/")).text()).toContain('href="/forges/new"');
+    expect(await (await get(admin, "/forges/new")).text()).toContain('action="/forges/new"');
+  });
+
+  test("the room defaults to one child per 512 MiB above the forge's own 2 GiB", () => {
+    const GiB = 1024 ** 3;
+    expect(childrenForMemory(32 * GiB)).toBe(60);
+    expect(childrenForMemory(2 * GiB)).toBe(5);
+    expect(childrenForMemory(GiB)).toBe(5);
   });
 });

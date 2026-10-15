@@ -11,7 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { addComment, openIssue } from "../src/actions/issues.ts";
+import { addComment, assignIssue, openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import { listIssues } from "../src/core/issues.ts";
@@ -179,6 +179,46 @@ describe("home is the feed", () => {
     expect(owners.map((i) => i.kind).sort()).toEqual(["look", "run"]);
   });
 
+  test("a phone's share sheet opens the composer with the shared words, escaped, and sends nothing", async () => {
+    const manifest = (await fetch(`${servers.url}/manifest.webmanifest`).then((r) =>
+      r.json(),
+    )) as { share_target: { action: string; method: string; params: Record<string, string> } };
+    expect(manifest.share_target).toEqual({
+      action: "/",
+      method: "GET",
+      params: { title: "title", text: "text", url: "url" },
+    });
+    const before = listIssues(app.db, garden.id, { state: "open" }).length;
+    const q = new URLSearchParams({
+      title: "Rain gauges",
+      text: 'Look at this </textarea><script>alert(1)</script>',
+      url: "https://example.com/gauge",
+    });
+    const res = await get(`/?${q}`, aliceCookie);
+    const text = await res.text();
+    const box = /<textarea[^>]*name="text"[^>]*>([\s\S]*?)<\/textarea>/.exec(text);
+    expect(box?.[1]).toContain("Rain gauges\nLook at this &lt;/textarea&gt;&lt;script&gt;");
+    expect(box?.[1]).toContain("https://example.com/gauge");
+    expect(text).not.toContain("<script>alert(1)");
+    expect(listIssues(app.db, garden.id, { state: "open" }).length).toBe(before);
+    // A link the app put in the text as well is said once.
+    const twice = await get(
+      `/?${new URLSearchParams({ text: "see https://e.com/x", url: "https://e.com/x" })}`,
+      aliceCookie,
+    ).then((r) => r.text());
+    expect(twice.match(/https:\/\/e\.com\/x/g)?.length).toBe(1);
+  });
+
+  test("a signed-out share keeps its words through sign-in and sign-up", async () => {
+    const q = `?${new URLSearchParams({ text: "see this", url: "https://e.com/x" })}`;
+    const page = await get(`/${q}`).then((r) => r.text());
+    const next = encodeURIComponent(`/${q}`).replaceAll("&", "&amp;");
+    expect(page).toContain(`/signin?next=${next}`);
+    expect(page).toContain(`/signup?next=${next}`);
+    const bare = await get("/").then((r) => r.text());
+    expect(bare).toContain('href="/signin"');
+  });
+
   test("the composer posts a tell without a script, to an app the person may read, and only then", async () => {
     const before = listIssues(app.db, garden.id, { state: "open" }).length;
     const posted = await fetch(`${servers.url}/tell`, {
@@ -267,5 +307,33 @@ describe("home is the feed", () => {
     expect(first.next_cursor).not.toBeNull();
     const second = await call({ limit: 2, cursor: first.next_cursor });
     expect(second.items.map((i: any) => i.id)).toEqual(whole.slice(2, 4));
+  });
+
+  test("On you can be cleared in one move: a box each, select all, by kind and by repository, one form", async () => {
+    const one = openIssue(app, alice, garden, { title: "Sweep the path" });
+    const two = openIssue(app, alice, vault, { title: "Oil the hinges" });
+    if (!one.ok || !two.ok) throw new Error("issues");
+    for (const [repo, issue] of [[garden, one.value], [vault, two.value]] as const)
+      expect(assignIssue(app, alice, repo, issue, alice).ok).toBe(true);
+    const text = await (await get("/", aliceCookie)).text();
+    const card = text.slice(text.indexOf('id="live-on-you"')).replace(/\s+/g, " ");
+    expect(card).toContain("On you");
+    expect(card).toContain(`value="issue:${one.value.id}"`);
+    expect(card).toContain(`value="issue:${two.value.id}"`);
+    expect((card.match(/form="onyou-bulk"/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(card).toContain('data-pick="all"');
+    expect(card).toContain("data-pick-repo");
+    expect(card).toContain('<option value="' + garden.id + '">alice/garden</option>');
+    expect(card).toContain('id="onyou-bulk"');
+    expect(card).toContain('action="/asks/bulk"');
+    expect(card).toContain('name="reason"');
+    expect(card).toContain(">Mute repository<");
+    // The live region follows the operation, and the page ships the script.
+    expect(text).toContain("fleet.operated");
+    expect(text).toContain("data-pick");
+    expect(text).toContain('id="asks-link"');
+    // Alone, a single row stays a plain link.
+    const bobCard = await (await get("/", bobCookie)).text();
+    expect(bobCard).not.toContain('id="onyou-bulk"');
   });
 });

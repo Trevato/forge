@@ -440,6 +440,10 @@ a.row:hover .row-title { color: var(--accent); }
 }
 .menu-item:hover, .menu-item:focus-visible { background: var(--muted); color: var(--fg); }
 .menu-item[aria-current="true"] { font-weight: 550; }
+.menu-item[aria-disabled="true"] { cursor: not-allowed; opacity: .65; }
+.menu-item[aria-disabled="true"]:hover { background: none; }
+.menu-item small { display: block; }
+.menu-item[aria-disabled="true"] .grow { white-space: normal; }
 .menu-item .ico { color: var(--faint); }
 .menu-item .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-sep { border: 0; border-top: 1px solid var(--border); margin: 5px 4px; }

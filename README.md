@@ -81,6 +81,16 @@ username and password — which links that key to your account, so the next
 connection is instant. `j`/`k` to move, `enter` to open, `esc` to go back, `/`
 to filter, `?` for the keys, `:` for the command palette, `t` for the theme.
 
+**Milestones.** `:` → *Milestones in a repository* → `owner/name` lists a
+repository's limbs in the order the crew takes ready work (`enter` opens a
+limb's own limbs). A person who administers the repository presses `r` to
+Raise or `l` to Lower the limb under the cursor: a preview of the new order
+and of the top of the ready list first, then `enter` to apply (`esc` backs
+out), then `u` to undo the last move. It is the same fleet operation the web
+milestones page uses, and a move is heard by that page when it is open.
+Anyone else sees the order and no keys to change it; a guest sees only what
+the web shows them.
+
 Working on the UI itself? `bun run src/tui/main.ts --user alice` runs it over
 stdio against your local data directory. That `--user` flag is a development
 convenience and exists only there: over SSH, the key decides who you are and
@@ -342,7 +352,9 @@ from before this record say nothing).
 mechanical rather than advisory.
 
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
-what "ready now" means to a person and to the crew.
+what "ready now" means to a person and to the crew. The map also shows each
+pillar's ask-to-live: the median hours from an issue opening to its change live
+in production, over the last 7 days (also in the map and milestones API and MCP).
 
 `docs/STUDIO.md` is the front door from the top of this page in full: the five
 words and where each is decided, the box, the three lists, a tell, a run
@@ -364,6 +376,12 @@ it answers by default: `.well-known`, feeds, cards, the manifest.
 
 `docs/SNAPSHOT.md` is a forge back from a copy: what a nightly snapshot
 holds, where it goes, and the one command that restores it.
+
+A snapshot uploads eight objects at a time. Run logs older than a day go up
+bundled per day (cut at 4 MB, so a long history is several objects, never one
+huge one); restore unpacks them. While one runs, progress shows on
+**Settings → Backups** and as a line in the log every 500 objects or minute.
+The terminal has no backups view, so it has no readout.
 
 `docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
 grew up in switched off: what a host owes it, the moves in order, and what is
@@ -403,6 +421,14 @@ monthly saving estimate, skipping findings already open. It runs in the forge,
 not as a crew run; AWS audits look at us-east-1 only; over-provisioned
 droplets and forgotten DNS records need metrics or resolution and are not
 attempted; Backblaze audits find nothing yet. No dependency was added.
+
+## Share to the forge
+
+Install the forge to your home screen, then Share a link or text to it from
+any app: the home composer opens with it as a draft, and it is only sent when
+you tap Post. Signed out, you sign in (or up) first and land on the same
+draft. The share target is the web manifest's `share_target`, which only an
+**installed PWA on Android and Chrome** offers; iOS Safari does not.
 
 ## Develop
 
