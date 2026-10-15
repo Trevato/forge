@@ -35,6 +35,9 @@ export interface HandAnswer {
 const fail = (code: FleetError["code"], message: string) =>
   err<FleetError>({ code, message });
 
+/** Cards whose model call is in flight: a second tap must not pay again. */
+const handing = new Set<string>();
+
 const ASK_ID = /^(parked|issue):[A-Za-z0-9_-]{1,64}$/;
 
 function describe(ask: string, d: NonNullable<ReturnType<typeof getDecision>>): HandAnswer {
@@ -71,13 +74,21 @@ export async function decideAsk(
   if (issue === undefined || repo === undefined)
     return fail("not_found", "it no longer asks you");
   const last = latestDecision(app.db, issue.id, "hand");
-  if (last !== undefined && now - Date.parse(last.createdAt) < HAND_COOLDOWN_MS)
+  if (
+    handing.has(issue.id) ||
+    (last !== undefined && now - Date.parse(last.createdAt) < HAND_COOLDOWN_MS)
+  )
     return fail(
       "too_many",
       "the decider answered this a moment ago; try again in a few minutes",
     );
-  const { decision } = await letDeciderHandle(app, actor, repo, issue);
-  return ok(describe(ask, decision));
+  handing.add(issue.id);
+  try {
+    const { decision } = await letDeciderHandle(app, actor, repo, issue);
+    return ok(describe(ask, decision));
+  } finally {
+    handing.delete(issue.id);
+  }
 }
 
 /** Put a set-aside card back on the board, within a day. */

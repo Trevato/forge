@@ -27,6 +27,9 @@ import {
 } from "../src/crew/handover.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { askLinesFor } from "../src/web/studio/asks.ts";
+import { createForgeApp } from "../src/tui/forge.ts";
+import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { settleApp } from "./helpers/tui.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -319,14 +322,67 @@ describe("let the decider answer a hand-over", () => {
       expect(asking(issue)).toBe(true);
     });
 
-    test("the terminal's door: the action takes the row's issue id, and refuses a card that does not ask", async () => {
+    test("the terminal's door: a parked row is on the On you card, D hands it over, U takes it back", async () => {
+      app.config.decider = standIn;
+      says = 0.9;
       const issue = parked("tui card");
-      const done = await decideAsk(app, alice, `issue:${issue.id}`);
-      expect(done.ok && done.value.setAside).toBe(true);
-      const gone = await decideAsk(app, alice, `issue:${issue.id}`);
-      expect(gone.ok).toBe(false);
-      const stranger = await decideAsk(app, getUserByName(app.db, "bob")!, `issue:${parked("tui two").id}`);
-      expect(stranger.ok).toBe(false);
+      const terminal = headlessTerminal(140, 40);
+      const { app: ui } = createForgeApp(
+        app,
+        { sshUsername: "alice", remoteAddress: "127.0.0.1", fingerprint: "SHA256:t", user: alice },
+        { terminal, exitHooks: false },
+      );
+      ui.start();
+      const press = async (key: string) => {
+        ui.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
+        await settleApp(ui);
+      };
+      await settleApp(ui);
+      await press("tab");
+      expect(ui.screen.toText()).toContain("tui card");
+      expect(ui.screen.toText()).toContain("D let the decider");
+      // The cursor is on the first parked row; earlier tests left others.
+      const parkedNow = () =>
+        askLinesFor(app.db, alice).flatMap((r) => r.items).filter((i) => i.startsWith("parked:")).length;
+      const before = parkedNow();
+      await press("D");
+      expect(parkedNow()).toBe(before - 1);
+      expect(ui.screen.toText()).toContain("U undo decider");
+      await press("U");
+      expect(parkedNow()).toBe(before);
+      ui.stop();
+    });
+
+    test("two quick taps pay once", async () => {
+      says = 0.5;
+      const issue = parked("double tap");
+      const before = seen.length;
+      const [a, b] = await Promise.all([
+        decideAsk(app, alice, `parked:${issue.id}`),
+        decideAsk(app, alice, `parked:${issue.id}`),
+      ]);
+      expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
+      expect(seen.length).toBe(before + 1);
+      says = 0.9;
+    });
+
+    test("a co-owner who dismissed the same card cannot undo someone else's decision", async () => {
+      says = 0.9;
+      const issue = parked("not carol's undo");
+      const done = await decideAsk(app, alice, `parked:${issue.id}`);
+      if (!done.ok) throw new Error("no decision");
+      const carol = await createUser(app.db, {
+        trusted: true,
+        username: "carol",
+        email: "carol@forge.test",
+        password: "a-long-hand-passphrase",
+      });
+      if (!carol.ok) throw new Error("no carol");
+      app.db
+        .query("INSERT INTO interaction (id, viewer_id, item_id, kind, repo_id, actor_id) SELECT 'x'||id, ?1, item_id, kind, repo_id, ?1 FROM interaction WHERE viewer_id = ?2 AND item_id = ?3 LIMIT 1")
+        .run(carol.value.id, alice.id, `ask:parked:${issue.id}`);
+      expect(undoHandled(app, carol.value, done.value.id)).toBe("not_found");
+      expect(getDecision(app.db, done.value.id)!.outcome).toBe("set_aside");
     });
   });
 });

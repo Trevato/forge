@@ -143,7 +143,7 @@ export async function letDeciderHandle(
     kind: "hand",
     repoId: repo.id,
     issueId: issue.id,
-    state: { ...context, reason },
+    state: { ...context, reason, actor: owner.id },
     answer: sure ? SET_ASIDE : ASK_OWNER,
     p: answer.p,
     by: decided.by,
@@ -182,6 +182,8 @@ export function undoHandled(
     return "not_found";
   // Someone else's set-aside is not found: only the dismissal's owner undoes it.
   const item = `ask:parked:${decision.issueId}`;
+  const said = decision.state as { actor?: unknown } | null;
+  if (said?.actor !== owner.id) return "not_found";
   if (!askDismissals(app.db, owner.id).has(item)) return "not_found";
   if (now - Date.parse(decision.createdAt) > HAND_UNDO_MS) return "too_late";
   removeDismissals(app.db, owner.id, [item]);

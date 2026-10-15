@@ -836,8 +836,7 @@ function byPillar(ctx: Ctx, scope: BoardScope): Html | null {
 function handContextLine(d: Decision): Html {
   const s = d.state as Partial<HandContext> & { reason?: string };
   const seen = [
-    s.repository?.pinned ? "pinned" : null,
-    s.repository?.muted ? "muted" : null,
+    // One person's pins and mutes stay out of a line other owners read.
     s.spend === undefined
       ? null
       : `${money(s.spend.todayUsd)} of ${money(s.spend.ceilingUsd)} today`,
