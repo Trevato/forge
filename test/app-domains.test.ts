@@ -29,6 +29,7 @@ import { addDomain, getDomain, TOKEN_LENGTH } from "../src/core/domains.ts";
 import { listEvents } from "../src/core/events.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
+import { readRunLogTail } from "../src/runs/log.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -267,21 +268,35 @@ describe("an app gets its own domain", () => {
     return `${(response.headers.get("set-cookie") ?? "").split(";")[0]!}; forge_mode=dev`;
   };
 
-  async function until<T>(read: () => T | undefined, ms = 60_000): Promise<T> {
+  /** A deploy run as the hook reports it: its state, summary and log tail. */
+  const said = (run: Run): string =>
+    [
+      `deploy ${run.id} is ${run.state}: ${run.summary || "(no summary)"}`,
+      ...readRunLogTail(dataDir, run.id, 20).lines,
+    ].join("\n");
+  /**
+   * The deploy's own end: the first matching run that is `ok` or `failed`.
+   * Out of time, it names where the latest matching run stood instead.
+   */
+  async function settled(
+    where: (run: Run) => boolean,
+    ms = 60_000,
+  ): Promise<Run> {
     const deadline = Date.now() + ms;
+    let latest: Run | undefined;
     while (Date.now() < deadline) {
-      const value = read();
-      if (value !== undefined) return value;
+      const runs = listRuns(app.db, repo.id, { kind: "deploy", limit: 50 });
+      const done = runs.find(
+        (r) => where(r) && (r.state === "ok" || r.state === "failed"),
+      );
+      if (done !== undefined) return done;
+      latest = runs.find(where);
       await Bun.sleep(100);
     }
-    throw new Error("did not happen in time");
-  }
-  const settled = (where: (run: Run) => boolean) =>
-    until(() =>
-      listRuns(app.db, repo.id, { kind: "deploy", limit: 50 }).find(
-        (r) => where(r) && (r.state === "ok" || r.state === "failed"),
-      ),
+    throw new Error(
+      `no deploy settled in ${ms} ms; ${latest === undefined ? "none was queued" : said(latest)}`,
     );
+  }
   const kinds = (prefix: string): string[] =>
     listEvents(app.db, { repoId: repo.id, limit: 100 })
       .map((e) => e.kind)
@@ -346,15 +361,18 @@ describe("an app gets its own domain", () => {
     if (!row.ok) throw new Error(row.error);
     other = row.value;
     const run = await settled((r) => r.env === "production");
+    // A failed deploy says why in the check's log, not only "failed".
+    if (run.state !== "ok") throw new Error(said(run));
     expect(run.state).toBe("ok");
     expect((await viaHost(`notes.${DOMAIN}`)).status).toBe(200);
   }, 120_000);
 
   afterAll(async () => {
-    await runtime.stop();
-    servers.stop();
-    app.close();
-    await rm(dataDir, { recursive: true, force: true });
+    // A setup that failed part-way leaves later handles unset: stop what started.
+    await runtime?.stop();
+    servers?.stop();
+    app?.close();
+    if (dataDir) await rm(dataDir, { recursive: true, force: true });
   });
 
   test("what a domain may be: a hostname someone can own, and not the forge's", () => {

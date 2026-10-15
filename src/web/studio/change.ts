@@ -39,7 +39,7 @@ import {
 } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import type { IconName as Glyph } from "../icons.ts";
-import { page, redirect } from "../layout.ts";
+import { fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
@@ -263,17 +263,13 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
 export const changePage = pullPage;
 
 /**
- * A change is judged by what it does, not by its diff. The title and the
- * author's own words (the opening post), who made it and when, the check
- * and the preview in the studio's five words, the look when one has been
- * taken, the same decision the asks panel would offer, and the
- * conversation — with the diff one tab deeper, at Files.
+ * What a change's page says about where it stands, drawn once: the word and
+ * its note, the deploy worth linking, and the Preview card. The page's first
+ * paint and `pullStateFragment` both come through here, so the two can never
+ * disagree. Bounded the way the page is: `pullWord` and one `pullStatus`, no
+ * diff, no query per comment.
  */
-async function changeConversation(
-  ctx: Ctx,
-  repo: Repo,
-  pull: Pull,
-): Promise<Response> {
+async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull) {
   const record: AppRecord | undefined = getAppByRepo(ctx.app.db, repo.id);
   const db = ctx.app.db;
   const base = repoBase(repo);
@@ -305,12 +301,6 @@ async function changeConversation(
           requireReview: repo.requireReview,
         })
       : undefined;
-  // A change that loosens the policy is a person's call: said here, above
-  // the decision, as well as on the Files step beside the merge box.
-  const wall =
-    status === undefined
-      ? undefined
-      : await wallOf(wordCtx.dir, status.baseOid, status.headOid);
   const conflicted =
     status !== undefined && !status.mergeable && status.conflicts.length > 0;
   // A reader's head runs nothing until a writer approves it (#777): say
@@ -339,6 +329,86 @@ async function changeConversation(
     if (production?.runId)
       deploy = { id: production.runId, commitOid: production.commitOid };
   }
+
+  const checkLine = card(
+    html`<p
+      class="studio-pull-check"
+      data-head="${pull.mergedOid ?? pull.headOid}"
+    >
+      ${wordBadge(word)} <span class="muted small">${note}</span>
+      ${when(
+        tellsAnswered(db, repo.id, [pull]).get(pull.number),
+        (t) => html`<span class="where-sep" aria-hidden="true">·</span
+          >${tellLine(base, t)}`,
+      )}
+      ${when(
+        deploy,
+        (d) =>
+          html`<span class="where-sep" aria-hidden="true">·</span
+            ><a href="${base}/runs/${d.id}"
+              >deploy ${d.commitOid.slice(0, 7)}</a
+            >`,
+      )}
+    </p>`,
+  );
+
+  const preview = when(record, () => previewCard(ctx, repo, pull));
+  return {
+    record,
+    db,
+    base,
+    thread,
+    wordCtx,
+    word,
+    status,
+    conflicted,
+    note,
+    checkLine,
+    preview,
+  };
+}
+
+/**
+ * GET /:owner/:name/pulls/:number/state — the check line and the Preview
+ * card, bare. The page's live client fetches it when the change merges, when
+ * its preview deploys or production serves, and swaps the two in place.
+ * Authorized as the page is: a viewer who cannot read it gets the same 404.
+ */
+export async function pullStateFragment(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return fragment(html``, { status: 404 });
+  const { checkLine, preview } = await pullPanels(
+    ctx,
+    found.repo,
+    found.pull,
+  );
+  return fragment(
+    html`<div id="pull-check">${checkLine}</div>
+      <div id="pull-preview">${preview}</div>`,
+    { request: ctx.request },
+  );
+}
+
+/**
+ * A change is judged by what it does, not by its diff. The title and the
+ * author's own words (the opening post), who made it and when, the check
+ * and the preview in the studio's five words, the look when one has been
+ * taken, the same decision the asks panel would offer, and the
+ * conversation — with the diff one tab deeper, at Files.
+ */
+async function changeConversation(
+  ctx: Ctx,
+  repo: Repo,
+  pull: Pull,
+): Promise<Response> {
+  const { record, db, base, thread, wordCtx, word, status, conflicted, note, checkLine, preview } =
+    await pullPanels(ctx, repo, pull);
+  // A change that loosens the policy is a person's call: said here, above
+  // the decision, as well as on the Files step beside the merge box.
+  const wall =
+    status === undefined
+      ? undefined
+      : await wallOf(wordCtx.dir, status.baseOid, status.headOid);
   const crewDecision = decisionsFor(ctx, [repo], { evenDismissed: true }).find(
     (d) => d.pull?.id === pull.id,
   );
@@ -397,25 +467,6 @@ async function changeConversation(
         : crewDecision === undefined && !conflicted && !ownReady
           ? note
           : undefined;
-
-  const checkLine = card(
-    html`<p class="studio-pull-check">
-      ${wordBadge(word)} <span class="muted small">${note}</span>
-      ${when(
-        tellsAnswered(db, repo.id, [pull]).get(pull.number),
-        (t) => html`<span class="where-sep" aria-hidden="true">·</span
-          >${tellLine(base, t)}`,
-      )}
-      ${when(
-        deploy,
-        (d) =>
-          html`<span class="where-sep" aria-hidden="true">·</span
-            ><a href="${base}/runs/${d.id}"
-              >deploy ${d.commitOid.slice(0, 7)}</a
-            >`,
-      )}
-    </p>`,
-  );
 
   // A conflicted change never offers Ship as though it would work — pressing
   // it would only be refused. The button that helps posts to the very same
@@ -498,7 +549,7 @@ async function changeConversation(
       ownTitle: true,
     })}
     ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "change")}
-    ${checkLine} ${holdCard(ctx, repo, pull, { act: true })}
+    <div id="pull-check">${checkLine}</div> ${holdCard(ctx, repo, pull, { act: true })}
     ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
     ${when(wall, (w) => wallCard(w))} ${decisionSection}
     ${takeBackSection}
@@ -520,7 +571,7 @@ async function changeConversation(
           crewNote: threadNote(ctx.app.db, repo, pull),
         })}
       </div>
-      <aside>${when(record, () => previewCard(ctx, repo, pull))}</aside>
+      <aside><div id="pull-preview">${preview}</div></aside>
     </div>
     ${decision ? decisionForm(decision) : null}
     ${liveMount({
@@ -528,6 +579,7 @@ async function changeConversation(
       thread: "pull",
       number: pull.number,
       lastCommentId: talk.lastCommentId,
+      head: pull.mergedOid ?? pull.headOid,
     })}`;
 
   return page({

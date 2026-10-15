@@ -180,10 +180,24 @@ and stands under the `Later: …` umbrella where the repository keeps one.
 The owner moves an item out by unlinking it from the gate, or opens them
 all by closing the gate.
 
-A plan says which it is for every issue. The planner's brief tells it to
-link each issue it opens under its pillar or behind the gate, and the MCP
-`plan` tool refuses an item that says neither. A repository with no
-umbrella issues has no pillars, and plans as it always did.
+A plan says which it is for every issue. The planner plans through one
+route, `POST /api/v1/repos/:owner/:name/plan` with `{ "issues": [...] }`
+(`rw` scope; a crew member's run token may use it), which calls the same
+action as the MCP `plan` tool (`openPlan`): the same items, the same
+refusals, all or nothing. An item names its `pillar`, or is `later: true`
+with `why`; one that says neither is refused with `no_pillar` and nothing is
+opened, so the planner reads the refusal, names the pillar or defers the
+item, and posts again. The answer is `{ opened, ready, later, gate }`. A
+repository with no umbrella issues has no pillars, and plans as it always
+did.
+
+**An issue opened outside a plan.** A builder that finds its task too big
+for one run opens smaller issues one at a time and links them. Such a split
+child serves its parent's pillar: when the parent serves one, the builder
+makes that umbrella wait for the child as well (`POST …/issues/U/dependencies`
+with `{"blockedBy": child}`). It does not choose a pillar of its own and is
+never deferred by the builder; where the parent serves none, the child
+serves none either. Only a plan names new purposes.
 
 The umbrellas, the Later umbrella and the gate are the plan's own, not
 work. None of them is ever _ready_, so the crew never picks one and the map
@@ -361,7 +375,9 @@ asked, under **Settings → Autonomy**:
   missing reviewer never holds a pull silently. An agent's verdict stands
   only while the agent is a reviewer on the crew, and the reviewer gets two
   rounds of changes on a pull — a round is a head it asked changes on;
-  past them its request is advice. A builder's run that answers a change
+  past them its request is advice, and the third request hands the pull
+  to a person in one card summarising the three reviews (not parked, not
+  closed; a person's approval lands it). A builder's run that answers a change
   request without pushing parks the pull. A review run never resumes an
   earlier session, and the same verdict sent twice on one head is one. Nothing waits for a
   person: a pull whose check stays red past its tries, or whose branch
@@ -372,8 +388,8 @@ asked, under **Settings → Autonomy**:
   planned again within twenty minutes, and the planner is told the
   direction is never finished: when what it names is built, it proposes
   the next increment and leaves at least three ready issues. The reviewer
-  gets two rounds of changes on a pull; after that it lands and what is
-  left becomes an issue. The only pause is the day's ceiling. A person
+  gets two rounds of changes on a pull; the third hands the pull to a
+  person. The only pause is the day's ceiling. A person
   steers by editing the direction and the map; the crew does the rest. When nothing is
   ready and nothing is in flight, the map has run dry: the planner is
   given the direction.
@@ -395,7 +411,11 @@ it, assigns the planner, and the planner's brief says the rest: open
 issues each small enough for one run, link what waits for what, assign
 nobody, push nothing. The direction issue stays open, is never picked as
 work, and the planner is not asked again for twenty minutes unless its run
-ended.
+ended. Nor is it asked again with nothing new: when nobody but the planner
+has spoken on the direction since its last pass began, and no issue has
+been opened by anyone else or closed since that pass ended, the clock
+skips it and records one `guard` decision by rule. A busy crew counts the
+ready issues before it plans; full slots alone are not a thin map.
 
 **What counts as done and as taken.** A pull that says _Closes #12_
 closes #12 when it lands, as the person who landed it; that is what frees

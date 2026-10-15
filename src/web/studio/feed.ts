@@ -81,7 +81,7 @@ export function feedCard(
     <details class="fcard-more">
       <summary class="small muted" aria-label="${target ? "Steer, dismiss or mute" : "Tell the crew, dismiss or mute"}">${target ? "Steer" : "Tell"} · more</summary>
       <form method="post" action="${target ?? `/${item.app}/tell`}" class="fcard-form">
-        <textarea name="text" rows="2" maxlength="2000" required aria-label="${target ? "Steer this run" : "Tell the crew"}"></textarea>
+        <textarea class="input" name="text" rows="2" maxlength="2000" required aria-label="${target ? "Steer this run" : "Tell the crew"}"></textarea>
         ${btn(target ? "Steer" : "Tell", { size: "sm", variant: "primary" })}
       </form>
       <span class="fcard-acts">
@@ -112,7 +112,7 @@ export function composer(ctx: Ctx, user: User): Html {
   const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
   const first = slug(repos[0]!);
   return html`<form id="composer" class="composer" method="post" action="/tell">
-    <textarea name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew"></textarea>
+    <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew"></textarea>
     <div class="composer-bar">
       ${repos.length === 1
         ? html`<input type="hidden" name="app" value="${first}" /><span class="muted small">${first}</span>`

@@ -69,6 +69,9 @@ import {
 } from "../src/runs/log.ts";
 import { grantedCookie } from "./helpers/identity.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { portInsteadOfSocket } from "../src/git/hook-address.ts";
+
+const testBySocket = portInsteadOfSocket() ? test.skip : test;
 
 const DOMAIN = "apps.test";
 
@@ -634,7 +637,8 @@ describe("ensureEnvData path safety", () => {
     );
   });
 
-  test("a copy of an app's data leaves its sockets behind", async () => {
+  // Binds a unix socket itself; the check runs it where a sandbox refuses.
+  testBySocket("a copy of an app's data leaves its sockets behind", async () => {
     // An app that keeps a socket in its data — a forge does — must not
     // make a preview impossible, let alone take the forge down with it.
     const source = join(dataDir, "with-socket");

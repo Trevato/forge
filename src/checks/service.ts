@@ -36,6 +36,10 @@ import {
 } from "../core/runs.ts";
 import { Gate } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
+import { mergeForCheck } from "./merged.ts";
+import { giveHistory } from "./history.ts";
+import { readLearned } from "./learned.ts";
+import { getIssueById } from "../core/issues.ts";
 import { repoDir } from "../git/repos.ts";
 import { transact } from "../kernel/db.ts";
 import { createLog } from "../kernel/log.ts";
@@ -80,6 +84,16 @@ export interface ChecksHandle {
     issueId?: string,
     actorId?: string,
   ): Promise<Run | undefined>;
+  /**
+   * The full tier on a merge, before it is made (#1198): `commitOid` is the
+   * merge of the pull with its base, run in a clone of its own. Nothing is
+   * queued and no run is written; the answer is the verdict.
+   */
+  gate(
+    repo: Repo,
+    pull: Pull,
+    commitOid: string,
+  ): Promise<{ ok: boolean; error: string; lines: string[] }>;
   stop(): Promise<void>;
 }
 
@@ -163,6 +177,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   const capacity = (): number =>
     capacityCount(app.db, "checks.concurrency", options.concurrency ?? 1);
   const gate = new Gate(capacity());
+  /** Full gates on land in flight: not slots in the queue, but stopped with it. */
+  const gates = new Set<AbortController>();
   const inFlight = new Map<
     string,
     { promise: Promise<void>; abort: AbortController }
@@ -377,6 +393,63 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     | { ok: false; error: string; detail?: CheckDetail | undefined }
   > {
     const bare = await runDir(app.db, app.reposRoot, repo, run.issueId);
+    // A pull's check is the fast tier, judged against where the pull left
+    // the base; anything else is the whole check (`apps/manifest.ts`).
+    const issue =
+      run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
+    const pull =
+      issue?.kind === "pull" ? getPull(app.db, repo.id, issue.number) : undefined;
+    const outcome = await runTier({
+      bare,
+      repo,
+      id: run.id,
+      runId: run.id,
+      commitOid: run.commitOid,
+      pull,
+      tier: pull === undefined ? "run" : "fast",
+      write,
+      signal,
+    });
+    return outcome;
+  }
+
+  interface Execution {
+    readonly bare: string;
+    readonly repo: Repo;
+    /** Names the checkout. */
+    readonly id: string;
+    readonly runId?: string;
+    readonly commitOid: string;
+    readonly pull?: Pull | undefined;
+    /** `run`: a push to a branch; `fast`: a pull's push; `full`: on land. */
+    readonly tier: "run" | "fast" | "full";
+    readonly write: (line: string) => void;
+    readonly signal: AbortSignal;
+  }
+
+  async function runTier(
+    x: Execution,
+  ): Promise<
+    | { ok: true }
+    | { ok: false; error: string; detail?: CheckDetail | undefined }
+  > {
+    const { bare, repo, write, signal } = x;
+    // A pull's fast check is of the pull as it would land: its head merged
+    // into the base's tip. The gate comes from that tree, so a pull forked
+    // before the base learned something is judged with it.
+    let source = x.commitOid;
+    let tip: string | undefined;
+    let mergeLine = "";
+    if (x.tier === "fast" && x.pull !== undefined) {
+      tip = await resolveOid(bare, `refs/heads/${x.pull.baseBranch}`);
+      if (tip === undefined)
+        return { ok: false, error: `the base ${x.pull.baseBranch} could not be found` };
+      const merged = await mergeForCheck(bare, x.pull.baseBranch, tip, x.commitOid);
+      if (!merged.ok) return { ok: false, error: merged.error };
+      source = merged.commit;
+      mergeLine = merged.line;
+    }
+    const run = { id: x.id, commitOid: source };
     const [forgeJson, packageJson] = await Promise.all([
       readFileAt(bare, run.commitOid, "forge.json"),
       readFileAt(bare, run.commitOid, "package.json"),
@@ -392,19 +465,72 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       };
     if (declared.value === undefined)
       return { ok: false, error: "this commit declares no check" };
-    const manifest = declared.value;
+    // A pull does not choose its own gate: the commands and the timeout come
+    // from the base branch's `forge.json` where the pull left it. The
+    // branch's own supplies only what it needs to run (install, egress,
+    // limits).
+    let manifest = declared.value;
+    let baseTip: string | undefined;
+    if (x.pull !== undefined) {
+      baseTip = await resolveOid(bare, `refs/heads/${x.pull.baseBranch}`);
+      if (baseTip === undefined)
+        return { ok: false, error: "the pull's base branch could not be found" };
+      const [baseJson, basePackage] = await Promise.all([
+        readFileAt(bare, baseTip, "forge.json"),
+        readFileAt(bare, baseTip, "package.json"),
+      ]);
+      const gate = parseCheck(baseJson, basePackage);
+      if (!gate.ok)
+        return {
+          ok: false,
+          error:
+            gate.error.kind === "invalid"
+              ? `${x.pull.baseBranch}: ${gate.error.message}`
+              : "the base branch declares no check",
+        };
+      if (gate.value !== undefined) {
+        manifest = {
+          ...manifest,
+          run: gate.value.run,
+          fast: gate.value.fast,
+          full: gate.value.full,
+          timeout: gate.value.timeout,
+        };
+        write(
+          `tier ${x.tier} from ${x.pull.baseBranch}@${baseTip.slice(0, 7)}`,
+        );
+      }
+    }
+    const command =
+      x.tier === "full"
+        ? manifest.full
+        : x.tier === "fast"
+          ? (manifest.fast ?? manifest.run)
+          : manifest.run;
+    // The fast tier diffs what the pull changes against the base's tip,
+    // which the clone is given as a repository of its own: `origin/main` is
+    // not a ref there.
+    const base = manifest.fast !== null ? tip : undefined;
     const dir = join(checksRoot(app.config.dataDir), run.id);
     mkdirSync(dir, { recursive: true });
-    write(`checking out ${run.commitOid.slice(0, 7)}`);
+    write(mergeLine === "" ? `checking out ${run.commitOid.slice(0, 7)}` : mergeLine);
     const exported = await exportTree(bare, run.commitOid, dir);
     if (!exported.ok) return { ok: false, error: exported.error };
+    if (base !== undefined) {
+      const given = await giveHistory(bare, dir, base, run.commitOid);
+      if (!given.ok) {
+        rmSync(dir, { recursive: true, force: true });
+        return { ok: false, error: given.error };
+      }
+    }
     // The check is repository code: it runs in a cell of its own
     // (`apps/contain.ts`), its checkout and a home its only places to write,
     // the forge, the registry and what it declared its only way out.
     const cells = await cellsAvailable();
-    noteRunProgress(app.db, run.id, {
-      sandbox: { enforced: cells.ok, note: cells.ok ? "" : cells.reason },
-    });
+    if (x.runId !== undefined)
+      noteRunProgress(app.db, x.runId, {
+        sandbox: { enforced: cells.ok, note: cells.ok ? "" : cells.reason },
+      });
     if (!cells.ok)
       write(`uncontained here: ${cells.reason}; the check runs unrestricted`);
     const home = `${dir}.home`;
@@ -429,7 +555,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         CI: "1",
         FORGE_URL: options.forgeUrl,
         FORGE_CHECK: run.id,
-        FORGE_COMMIT: run.commitOid,
+        FORGE_COMMIT: x.commitOid,
+        ...(base === undefined
+          ? {}
+          : {
+              FORGE_CHECK_BASE: base,
+              FORGE_CHECK_LEARNED: readLearned(
+                app.config.dataDir,
+                x.pull!.id,
+              ).join(","),
+            }),
         // A cell inside a cell is not a cell. This check's own cell is the
         // boundary; a forge the tests boot inside it would wrap its apps in
         // nested cells, and those never answer in time. Its children run as
@@ -454,7 +589,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       // command's own; that echo is not output to summarise from.
       const checkLines: string[] = [];
       let sawEcho = false;
-      const ran = await runStep("check", manifest.run, {
+      const ran = await runStep("check", command, {
         cwd: dir,
         env,
         log: (line) => {
@@ -623,11 +758,33 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
 
   const handle: ChecksHandle = {
     request,
+    gate: async (repo, pull, commitOid) => {
+      const lines: string[] = [];
+      const controller = new AbortController();
+      gates.add(controller);
+      try {
+        const bare = await pullDir(app.db, app.reposRoot, repo, pull);
+        const done = await runTier({
+          bare,
+          repo,
+          id: `gate-${commitOid.slice(0, 12)}`,
+          commitOid,
+          pull,
+          tier: "full",
+          write: (line) => lines.push(line),
+          signal: controller.signal,
+        });
+        return { ok: done.ok, error: done.ok ? "" : done.error, lines };
+      } finally {
+        gates.delete(controller);
+      }
+    },
     stop: async () => {
       stopped = true;
       clearInterval(timer);
       unsubscribe();
       for (const { abort } of inFlight.values()) abort.abort();
+      for (const abort of gates) abort.abort();
       await Promise.all([...inFlight.values()].map((f) => f.promise));
     },
   };

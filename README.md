@@ -326,7 +326,11 @@ one the provider rests hands its runs to the other until the reset.
 **Sandbox.** An agent's shell is held to a policy — the network is the forge
 and the package registry, writes stay in the clone, the forge's data and the
 operator's credentials are unreadable — by bubblewrap and socat on Linux
-(both are in the image). A host that forbids unprivileged user namespaces
+(both are in the image). Inside it a builder can install the declared
+packages, type-check, and run the tests that boot a server: no unix socket is
+let through, so the run carries `FORGE_TEST_SOCKET=port` and the forge listens
+on a loopback port instead (`bun scripts/sandbox-probe.ts` prints each
+verdict). A host that forbids unprivileged user namespaces
 (many container platforms' seccomp profiles) cannot hold it, and the policy is
 then switched off rather than faked. To tell which a deployment is in: the
 boot log carries `agent sandbox not available here` with the reason, Settings →
@@ -527,3 +531,34 @@ a cookie — even that works script-free. Still **zero runtime dependencies**.
 
 Not yet: containers around apps, custom domains, and a gate that lands a
 pull on its own once review and checks agree.
+
+## Fuzz and chaos
+
+Invariants are proven by faults, not by hope. No dependencies were added.
+
+- **Fuzz** (`test/fuzz-parsers.test.ts`, helper `test/helpers/fuzz.ts`): the
+  manifest and check parsers, `contract.json`, hostnames, slugs, markdown, the
+  diff reader and the API's JSON bodies take a seeded generator's cases. A
+  failure prints `FUZZ_SEED` and the shrunk case; rerun with
+  `FUZZ_SEED=<n> FUZZ_RUNS=<n> bun test test/fuzz-parsers.test.ts` and keep the
+  case as a fixed test in `test/fuzz-found.test.ts`.
+- **Chaos** (`src/chaos/`): a side instance on a fresh temporary data directory
+  (it cannot name the live forge or a customer's app) takes four faults —
+  SIGKILL mid-run, a dropped SQLite connection, a temp area that refuses writes
+  (a stand-in for a full disk; nothing is actually filled), a delayed loopback —
+  and after each asserts: no run vanished and all are in a known state, the
+  database is whole and every open pull's head is in its repo, a snapshot taken
+  afterwards restores, no sealed value is in any file in the clear.
+  `test/chaos.test.ts` runs a small version in the gate (`CHAOS_SEED=<n>`).
+- **Nightly**: `bun src/chaos/run.ts [--seed N] [--rounds N] --report` with
+  `FORGE_URL`, `FORGE_TOKEN`. A broken invariant files an issue (fault, seed,
+  log) and stands it under the umbrella `FORGE_CHAOS_PILLAR_ISSUE` (the
+  P0 Trust issue waits for it); a quiet night comments one line on
+  `FORGE_CHAOS_RECOVERY_ISSUE`. Scheduling it is the operator's: this repo
+  ships the command, not a timer.
+
+## Check tiers
+
+`forge.json`'s `check` may declare `fast` beside `run` (the full gate; `full` names it explicitly). `bun scripts/test-shards.ts --tier fast --diff <base>..<head>` runs the tests that touch the diff (changed, named for a changed source file, or importing one within two hops), every test the times table records under 1 s, and any named by `--learned a,b`. `src/checks/tiers.ts` decides; it adds no dependency.
+
+In the forge itself: a pull's check runs `fast` when the manifest has one, in a clone holding the fork point and the head as `FORGE_CHECK_BASE` and `HEAD` (`origin/main` is not a ref there), with `FORGE_CHECK_LEARNED` naming tests earlier land attempts taught the pull (`src/checks/history.ts`, `learned.ts`). Landing (`landIfGreen`) runs `full` once on the merge with its base before merging (`src/checks/landing.ts`); red comments on the pull with the tests named, is remembered per head and base, and the files ride the pull's next fast run. The pull page's checks line shows the tier words.

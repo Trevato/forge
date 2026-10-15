@@ -466,7 +466,11 @@ importer's — adapt, don't rewrite: declare `run` and `health` in
 `forge.json` (and `install`/`test` when the repository has them), listen on
 `PORT`, keep persistent state under `FORGE_APP_DATA`, keep behaviour, no
 Dockerfile and no compose file (the forge runs processes), and write down
-what could not fit. The crew proposes; a person lands — autonomy included,
+what could not fit. When the app used a database server elsewhere, the
+pull says where its rows are and what it uses now, leaves the old database
+untouched, and ships a one-shot import script (dump file in, `FORGE_APP_DATA`
+out) with the steps to make the dump. No connection string to the old
+database is ever committed or read at boot. The crew proposes; a person lands — autonomy included,
 exactly as for any app (docs/APPS.md).
 
 The clone runs as a job in the mirror's registry (`origins/jobs.ts`, kind

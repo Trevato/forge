@@ -39,12 +39,13 @@ const OR_KEY = "sk-or-v1-openrouter-key-for-the-test-aaaaaaaa";
 const GATEWAY = "https://openrouter.ai/api";
 
 describe("a token's kind", () => {
-  test("is read from its shape, and anything else is refused", () => {
+  test("a setup-token is a plan; any other one-line secret is an API key; spaces, nothing and absurd lengths are refused", () => {
     expect(kindOfToken(OAT)).toBe("oauth");
     expect(kindOfToken(KEY)).toBe("api_key");
     expect(kindOfToken(OR_KEY)).toBe("api_key");
-    expect(kindOfToken("hunter2")).toBeUndefined();
-    expect(kindOfToken("hunter2", { apiBase: GATEWAY })).toBe("api_key");
+    expect(kindOfToken("sk-ant-usr01-credits-with-a-subscription")).toBe("api_key");
+    expect(kindOfToken("hunter2")).toBe("api_key");
+    expect(kindOfToken("")).toBeUndefined();
     expect(kindOfToken("sk-ant-oat01-with space")).toBeUndefined();
     expect(kindOfToken(`sk-ant-api03-${"x".repeat(600)}`)).toBeUndefined();
   });
@@ -93,7 +94,7 @@ describe("the pool", () => {
       error: "invalid_name",
     });
     expect(
-      addSubscription(app.db, dataDir, { name: "nope", token: "hunter2" }),
+      addSubscription(app.db, dataDir, { name: "nope", token: "hunter 2" }),
     ).toEqual({ ok: false, error: "invalid_token" });
     expect(JSON.stringify(listSubscriptions(app.db))).not.toContain(OAT);
     const raw = app.db
@@ -516,7 +517,7 @@ describe("the pages", () => {
     expect(added.status).toBe(303);
     const refused = await post("/settings/subscriptions", {
       name: "nope",
-      token: "hunter2",
+      token: "hunter 2",
     });
     expect(refused.status).toBe(303);
     expect(listSubscriptions(app.db).map((s) => s.name)).toEqual(["work"]);

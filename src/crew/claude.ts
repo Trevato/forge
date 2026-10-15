@@ -109,6 +109,11 @@ export function claudeSettings(
     sandbox: {
       enabled: sandbox.enforced,
       autoAllowBashIfSandboxed: true,
+      // The sandbox is the boundary, not a suggestion: no command runs
+      // outside it on request, and a host that was going to enforce it
+      // fails the run rather than running the shell open.
+      allowUnsandboxedCommands: false,
+      failIfUnavailable: sandbox.enforced,
       network: {
         allowedDomains: [...sandbox.allowHosts],
         // An app under test listens on a local port.
@@ -299,7 +304,8 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
       if (input.onUsage && typeof message === "object" && message !== null) {
         const m = message as Record<string, unknown>;
         if (typeof m["usage"] === "object" && m["usage"] !== null) {
-          const key = typeof m["id"] === "string" ? m["id"] : `#${perMessage.size}`;
+          const key =
+            typeof m["id"] === "string" ? m["id"] : `#${perMessage.size}`;
           perMessage.set(key, tokensOf(m["usage"]));
           let tokensIn = 0;
           let tokensOut = 0;

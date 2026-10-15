@@ -21,6 +21,7 @@ import {
   setIssueState,
 } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
+import { gateOnLand } from "../checks/landing.ts";
 import { mergeable, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { mergePull } from "../actions/pulls.ts";
@@ -82,7 +83,12 @@ import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
-import { capReached, ISSUE_RUN_CAP } from "./guard.ts";
+import {
+  capReached,
+  ISSUE_RUN_CAP,
+  SKIP_SUMMARY,
+  skipsReplan,
+} from "./guard.ts";
 import { interruptionOf } from "./interrupted.ts";
 import {
   PARK_NOTE,
@@ -343,17 +349,7 @@ export async function driveRepo(
   // operator's; at a wall nothing new starts until the reset.
   const paced = repoPace(app, repo, now);
   if (paced.slots === 0 && slotted.length === 0) return "waiting";
-  if (slotted.length >= paced.slots) {
-    // The builders are busy; the planner can still refill the map.
-    if (await planIfThin(app, repo, by, crew, active, 0, now)) return "planned";
-    return "full";
-  }
-
   const busyIssues = new Set(active.map((r) => r.issueId));
-  const inFlight = new Map<string, number>();
-  for (const r of active)
-    if (r.actorId !== null)
-      inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
   const graph = repoGraph(app.db, repo.id, { sealed: true });
   const proposed = proposedWork(app.db, repo);
   const ready = readyNow(graph).filter(
@@ -366,6 +362,19 @@ export async function driveRepo(
       !atRunCap(app, repo, r.issue) &&
       parkedCount(app, repo, r.issue.id) < PARK_STRIKES,
   );
+  if (slotted.length >= paced.slots) {
+    // The builders are busy; the planner can still refill the map, when
+    // it is thin — counted, never assumed: a full crew with a full map is
+    // not a reason to plan (#1097).
+    if (await planIfThin(app, repo, by, crew, active, ready.length, now))
+      return "planned";
+    return "full";
+  }
+
+  const inFlight = new Map<string, number>();
+  for (const r of active)
+    if (r.actorId !== null)
+      inFlight.set(r.actorId, (inFlight.get(r.actorId) ?? 0) + 1);
   const next = await nextOf(app, repo, ready);
   if (next !== undefined) {
     const routed = await routeIssue(app, repo, next.issue, crew, inFlight);
@@ -479,6 +488,13 @@ async function planIfThin(
       REPLAN_AFTER_MS
     )
       return notPlanned(repo, "planned recently");
+    // Nobody spoke and the map has not moved since the last pass: another
+    // would read its own summary and change nothing (#1097).
+    if (
+      owed.length === 0 &&
+      skipsReplan(app.db, repo, direction, planner, lastPlan.created_at)
+    )
+      return notPlanned(repo, SKIP_SUMMARY);
   } else if (direction.assigneeId === planner.user.id) {
     return notPlanned(repo, "the planner already holds the direction");
   }
@@ -1193,6 +1209,32 @@ export async function landIfGreen(
   // review lapsed.
   const review = await reviewed(app, repo, pull);
   if (review === "hold") return false;
+  // The full tier, once, on the merge with its base (#1198). Red is told to
+  // the pull once per head and base, and the pull waits for a push.
+  const red = latestDecision(app.db, pull.id, "land");
+  const gatedAt = `${pull.headOid}:${baseTip}`;
+  if (
+    red?.answer === "red" &&
+    typeof red.state === "object" &&
+    red.state !== null &&
+    (red.state as { at?: unknown }).at === gatedAt
+  )
+    return false;
+  const verdict = await gateOnLand(app, repo, pull, dir, baseTip);
+  if (!verdict.lands) {
+    recordDecision(app.db, {
+      kind: "land",
+      repoId: repo.id,
+      issueId: pull.id,
+      state: { head: pull.headOid, at: gatedAt },
+      answer: "red",
+      p: 1,
+      by: "rule",
+      ms: 0,
+    });
+    addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, verdict.comment);
+    return false;
+  }
   // Green and clear of the wall lands. An autonomous repository does not
   // wait on a person; the ledger keeps the landing as the rule it is, once
   // per head, so the week's numbers still add up.

@@ -114,18 +114,43 @@ describe("a spawned child's own keys and domain", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  test("a subscription token never goes to a child, and a key needs a budget", async () => {
+  test("a setup-token or a subscription's credits key may go to a child under a budget; a key needs a budget; a token with a space is refused", async () => {
     const oauth = await post({
       name: "maria",
       apps: ["alice/bakery"],
-      dryRun: false,
+      dryRun: true,
       modelKey: OAUTH,
       budgetUsd: 5,
     });
-    expect(oauth.status).toBe(422);
-    expect(await oauth.text()).toContain(
-      "a subscription token is a person's own plan",
-    );
+    expect(oauth.status).toBe(200);
+    expect(await oauth.json()).toMatchObject({ dryRun: true });
+    const credits = await post({
+      name: "maria",
+      apps: ["alice/bakery"],
+      dryRun: true,
+      modelKey: "sk-ant-usr01-credits-that-come-with-the-plan-CCCCCCCC",
+      budgetUsd: 5,
+    });
+    expect(credits.status).toBe(200);
+    const gatewayForOauth = await post({
+      name: "maria",
+      apps: ["alice/bakery"],
+      dryRun: true,
+      modelKey: OAUTH,
+      modelEndpoint: "https://openrouter.ai/api",
+      budgetUsd: 5,
+    });
+    expect(gatewayForOauth.status).toBe(422);
+    expect(await gatewayForOauth.text()).toContain("takes no base URL");
+    const spaced = await post({
+      name: "maria",
+      apps: ["alice/bakery"],
+      dryRun: true,
+      modelKey: "sk-ant-api03 with a space",
+      budgetUsd: 5,
+    });
+    expect(spaced.status).toBe(422);
+    expect(await spaced.text()).toContain("one line with no spaces");
     expect(
       (
         await post({
@@ -360,10 +385,11 @@ describe("a spawned child's own keys and domain", () => {
       const token = (
         JSON.parse(spawnBody) as { claimUrl: string }
       ).claimUrl.split("/claim#")[1]!;
-      const claimed = await fetch(`${childServers.url}/claim/${token}`, {
+      const claimed = await fetch(`${childServers.url}/claim`, {
         method: "POST",
         headers: { origin: childServers.url },
         body: new URLSearchParams({
+          token,
           username: "maria-owner",
           email: "m@x.test",
           password: "a-long-maria-passphrase",

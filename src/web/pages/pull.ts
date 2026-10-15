@@ -8,6 +8,7 @@
  * it needs.
  */
 
+import { askCheck } from "../../checks/again.ts";
 import { addCommentThrough } from "../../actions/issues.ts";
 import type { AccessError } from "../../actions/access.ts";
 import {
@@ -18,6 +19,9 @@ import {
   submitReview,
   approveHere,
 } from "../../actions/pulls.ts";
+import { readFileAt } from "../../apps/checkout.ts";
+import { parseCheck } from "../../apps/manifest.ts";
+import { tierLine, type TierState } from "../../checks/tiers.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { labelsFor, listLabels } from "../../core/issues.ts";
 import { marksByName } from "../../core/marks.ts";
@@ -203,8 +207,13 @@ function checksLine(
   isApp: boolean,
   /** The head is a reader's and no writer has approved it yet. */
   waiting = false,
+  /** `tierLine` for a repository whose check has a fast tier; else empty. */
+  tier = "",
+  /** A writer's button to ask for a check again; empty for anyone else. */
+  again: Html | "" = "",
 ): Html {
-  if (!isApp && !required && check.state === "none" && !waiting) return html``;
+  if (!isApp && !required && check.state === "none" && !waiting && again === "")
+    return html``;
   const run = check.run;
   const link =
     run === null
@@ -233,12 +242,50 @@ function checksLine(
                 : html`<span>${icon("clock")}No checks on this head yet</span>`;
   return html`<p class="checks-line">
     ${body}${when(
+      tier !== "",
+      () =>
+        html`<span class="where-sep" aria-hidden="true">·</span
+          ><span class="tier-line">${tier}</span>`,
+    )}${when(
       required,
       () =>
         html`<span class="where-sep" aria-hidden="true">·</span
           ><span>a passing deploy is required</span>`,
-    )}
+    )}${again}
   </p>`;
+}
+
+/**
+ * The tiers' words for a pull whose check declares a fast tier (#1198);
+ * nothing when it does not, or when no check has run on this head.
+ */
+async function tierOf(
+  dir: string,
+  head: string,
+  check: CheckSummary,
+): Promise<string> {
+  const run = check.run;
+  if (run === null || run.kind !== "check") return "";
+  const [forgeJson, packageJson] = await Promise.all([
+    readFileAt(dir, head, "forge.json"),
+    readFileAt(dir, head, "package.json"),
+  ]);
+  const declared = parseCheck(forgeJson, packageJson);
+  if (!declared.ok || declared.value?.fast == null) return "";
+  const state: TierState | undefined =
+    check.state === "ok"
+      ? "green"
+      : check.state === "failed"
+        ? "red"
+        : check.state === "queued" || check.state === "running"
+          ? check.state
+          : undefined;
+  if (state === undefined) return "";
+  const took =
+    run.startedAt !== null && run.finishedAt !== null
+      ? (Date.parse(run.finishedAt) - Date.parse(run.startedAt)) / 1000
+      : undefined;
+  return tierLine(state, took);
 }
 
 // ---- the merge box ----
@@ -256,6 +303,7 @@ function mergeBox(
   by: readonly Standing[],
   check: CheckSummary,
   isApp: boolean,
+  tier = "",
 ): Html {
   const thread = `${repoBase(repo)}/pulls/${pull.number}`;
   // A reader's head runs nothing until a writer approves it; say so rather
@@ -266,6 +314,12 @@ function mergeBox(
     repo.requireChecks,
     isApp,
     !pullMayRun(ctx.app.db, repo, pull, status.headOid),
+    tier,
+    pull.state === "open" && canWrite(ctx.app.db, repo, ctx.auth.user)
+      ? html`<form method="post" action="${thread}/checks" class="inline-form">
+          ${btn("Check again", { size: "sm", icon: "loader" })}
+        </form>`
+      : "",
   );
   const reopen = html`<form method="post" action="${thread}/state">
     <input type="hidden" name="state" value="open" />
@@ -670,6 +724,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   // reason the review gate is: the box and the merge answer one question.
   const check = checkSummary(ctx.app.db, pull.id, status.headOid);
   const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  const tier = await tierOf(dir, status.headOid, check);
   const threads = pullThreads(ctx.app, pull);
   const threadViews = threadStateViews(ctx, repo, threads);
   const unresolved = threads.filter((t) => t.resolvedAt === null).length;
@@ -759,7 +814,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     </p>
     ${when(wall, (w) => wallCard(w))}
     ${holdCard(ctx, repo, pull, { act: false })}
-    ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp)}
+    ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier)}
     <div class="split">
       <div>
         ${approveHereCard(ctx, repo, pull, status.headOid, `${thread}/approve-here`)}
@@ -1083,6 +1138,25 @@ export function threadResolveSubmit(
       message: resolved ? "Thread resolved." : "Thread reopened.",
     });
   };
+}
+
+// POST /:owner/:name/pulls/:number/checks — ask for a check at the head now.
+export async function pullChecksSubmit(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user || !canWrite(ctx.app.db, found.repo, ctx.auth.user))
+    return new Response("forbidden", { status: 403 });
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  const asked = await askCheck(ctx.app, ctx.auth.user, found.repo, found.pull);
+  return flashTo(
+    ctx,
+    dest,
+    asked.ok
+      ? { message: "Check asked for at the current head." }
+      : { tone: "danger", message: `No check was asked for: ${asked.message}.` },
+  );
 }
 
 // POST /:owner/:name/pulls/:number/merge

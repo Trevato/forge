@@ -1563,6 +1563,27 @@ export const migrations: readonly string[] = [
      WHERE id = NEW.id;
   END;
   `,
+  // 73 — authorization codes for the MCP's OAuth (#971): one per consent,
+  // kept by hash, spent by deleting. The code is never stored.
+  `
+  CREATE TABLE IF NOT EXISTS oauth_code (
+    code_hash     TEXT PRIMARY KEY,
+    client_id     TEXT NOT NULL REFERENCES oauth_client(id) ON DELETE CASCADE,
+    user_id       TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    redirect_uri  TEXT NOT NULL,
+    challenge     TEXT NOT NULL,
+    scope         TEXT NOT NULL CHECK (scope IN ('ro','rw')),
+    name          TEXT NOT NULL,
+    lifetime_s    INTEGER,
+    expires_at    TEXT NOT NULL
+  );
+  `,
+  // 74 — a look a person attached to a pull (#1066): who, and the one line
+  // saying what it shows. Both null for a look the forge took itself.
+  `
+  ALTER TABLE look ADD COLUMN attached_by TEXT;
+  ALTER TABLE look ADD COLUMN note TEXT;
+  `,
 ];
 
 /**
@@ -1578,11 +1599,25 @@ export const migrations: readonly string[] = [
  * idempotent — a second boot finds nothing and changes nothing.
  */
 export function dropLegacyNewAccountGuards(db: Database): string[] {
+  // The operator's emergency guards of 2026-10-05 were a family: triggers
+  // named `steward_…` on `repo`, `run` and `repo_crew` that refused anyone
+  // outside a hand-kept table of trusted owners ("new accounts cannot
+  // create repositories yet", "runs are not enabled for this account yet",
+  // "crew is not enabled for this account yet"), a later one that said
+  // "paused for new accounts while the forge adds spending and resource
+  // limits", and a hold on build checks. The limits they waited for exist
+  // (`guard_new_accounts`, ceilings, slots); the guards outlived them and
+  // refused the forge's own admin. Every one goes, on any table; nothing
+  // the schema itself declares is named `steward_…` or says those words.
   const names = db
     .query<{ name: string }, []>(
       `SELECT name FROM sqlite_master
-        WHERE type = 'trigger' AND tbl_name = 'repo'
-          AND sql LIKE '%new accounts cannot create repositories%'`,
+        WHERE type = 'trigger'
+          AND (name LIKE 'steward\\_%' ESCAPE '\\'
+            OR (tbl_name IN ('repo', 'app', 'run', 'repo_crew')
+              AND (sql LIKE '%new accounts cannot create repositories%'
+                OR sql LIKE '%paused for new accounts%'
+                OR sql LIKE '%not enabled for this account yet%')))`,
     )
     .all()
     .map((row) => row.name);

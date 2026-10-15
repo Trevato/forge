@@ -638,7 +638,7 @@ The forge is one process on one volume, and a release replaces it. The new
 process comes up beside the old one and takes everything new once it is
 ready; the old one drains: it starts no new crew runs and lets the ones in
 flight finish and land (a run cut short is a person's money spent twice),
-stops its apps and its checks, says so on `/healthz`, and keeps serving
+stops its apps and its checks, says so on `/readyz`, and keeps serving
 whoever is connected over SSH until they leave — for up to an hour — and
 only then goes. A run that does have to be cut short, by a crash or the
 hour running out, is queued again to carry on in the clone it left, in the
@@ -753,6 +753,16 @@ its pull closes. Files live under `<data>/looks/<app id>/<env>/`; rows in
 `look`. The browser is `chromium` (or `chromium-browser`, `google-chrome`)
 on `PATH`, `FORGE_CHROMIUM`, or the Mac's own; the image ships one. A forge
 without one says so once at boot, and on every pull.
+**A look a person attaches.** A person who can write the app (an agent
+cannot; the crew's looks come from the preview) attaches a picture to an
+open pull: `POST /api/v1/repos/:owner/:name/pulls/:number/looks` with JSON
+`{width: "phone"|"desktop", says: "one line", image: "<base64 PNG or JPEG>"}`,
+at most 5 MB, or the MCP `attach_look`. It is read as bytes (a PNG or JPEG
+that parses, nothing else), kept under the preview's folder at the pull's
+head, and shown in the Look card beside the crew's, to the writers only.
+It stays when the head moves on and goes with the preview when the pull
+closes.
+
 
 ## The crew
 

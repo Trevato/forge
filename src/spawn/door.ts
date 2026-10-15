@@ -167,7 +167,7 @@ export async function spawnDoor(
       "modelKey",
       "anonymous spawns carry no model key; claim the forge and add one there",
     );
-  // The child's model key: an API-billed key with a whole-life budget, or none. A
+  // The child's model key: a key or subscription token with a whole-life budget, or none. A
   // subscription token is a person's own plan and never travels.
   const modelEndpointRaw = raw["modelEndpoint"];
   let modelEndpoint: string | undefined;
@@ -181,14 +181,14 @@ export async function spawnDoor(
   }
   const modelKey = raw["modelKey"];
   if (modelKey !== undefined) {
-    if (
-      typeof modelKey !== "string" ||
-      kindOfToken(modelKey, { apiBase: modelEndpoint }) !== "api_key"
-    )
+    const kind = typeof modelKey === "string" ? kindOfToken(modelKey) : undefined;
+    if (kind === undefined)
       return invalid(
         "modelKey",
-        "must be an API key (sk-ant-api… or sk-or-v1-…); a subscription token is a person's own plan and never goes to a child",
+        "must be one line with no spaces: an Anthropic key (sk-ant-api…, sk-ant-usr…), a `claude setup-token` token (sk-ant-oat…), or a gateway's key with its base URL",
       );
+    if (kind === "oauth" && modelEndpoint !== undefined)
+      return invalid("modelEndpoint", "a subscription token (sk-ant-oat…) talks to Anthropic itself and takes no base URL");
     if (raw["budgetUsd"] === undefined) return invalid("budgetUsd", "a model key needs a budget in dollars, for its whole life");
   } else if (raw["budgetUsd"] !== undefined) {
     return invalid("budgetUsd", "a budget is for a model key; send modelKey with it");

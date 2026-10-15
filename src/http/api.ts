@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import {
@@ -98,6 +99,8 @@ import {
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
+import { attachLook } from "../actions/attach_look.ts";
+import { lookUrl } from "../core/looks.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
@@ -253,6 +256,7 @@ import {
   unlinkIssue,
   confirmIssue,
 } from "../actions/dependencies.ts";
+import { openPlan, parsePlan } from "../actions/plan.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
@@ -2386,6 +2390,28 @@ export function apiRoutes(router: Router<Handler>): void {
       );
     },
   );
+  // A plan, all or nothing: the same action as the MCP `plan` tool, so the
+  // same items and the same refusals (docs/PLANNING.md).
+  router.add("POST", "/api/v1/repos/:owner/:name/plan", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const items = parsePlan(input.issues);
+    if (!items.ok)
+      return apiError(items.error.error, 422, items.error.message);
+    const planned = openPlan(ctx.app, ctx.auth.user, repo, items.value);
+    if (!planned.ok) {
+      const { error, message } = planned.error;
+      return apiError(
+        error,
+        error === "not_found" ? 404 : error === "forbidden" ? 403 : 422,
+        message,
+      );
+    }
+    return json(planned.value, 201);
+  });
   router.add(
     "DELETE",
     "/api/v1/repos/:owner/:name/issues/:number/dependencies/:blocker",
@@ -2895,6 +2921,50 @@ export function apiRoutes(router: Router<Handler>): void {
       );
       if (!added.ok) return originAware(added.error);
       return json(added.value, 201);
+    },
+  );
+
+  // Attach a look: a picture a person took, at a stated width, with one line
+  // saying what it shows (`actions/attach_look.ts`). The picture is base64
+  // in the JSON body; the crew's own looks keep their path through the
+  // preview.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/looks",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const attached = attachLook(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        { width: str(input.width), note: str(input.says), image: str(input.image) },
+      );
+      if (!attached.ok)
+        return respondAccess(
+          attached.error,
+          attached.error === "too_large"
+            ? 413
+            : attached.error === "not_open" || attached.error === "no_app"
+              ? 409
+              : 422,
+        );
+      const look = attached.value;
+      return json(
+        {
+          id: look.id,
+          width: look.kind,
+          says: look.note,
+          by: look.attachedBy,
+          commit: look.commitOid,
+          url: lookUrl(`/${found.repo.ownerName}/${found.repo.name}`, look),
+        },
+        201,
+      );
     },
   );
 
@@ -4632,6 +4702,23 @@ export function apiRoutes(router: Router<Handler>): void {
         run: latest ?? null,
         runs,
       });
+    },
+  );
+
+  // A writer asks for a check again at the head as it is now.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/checks",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      if (!ctx.auth.user || !canWrite(ctx.app.db, found.repo, ctx.auth.user))
+        return apiError("forbidden", 403, "only a writer can ask for a check");
+      const asked = await askCheck(ctx.app, ctx.auth.user, found.repo, found.pull);
+      if (!asked.ok) return apiError(asked.error, 409, asked.message);
+      return json({ run: asked.run }, 202);
     },
   );
 

@@ -301,7 +301,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
           id="f-token"
           name="token"
           type="password"
-          placeholder="sk-ant-… or sk-or-v1-…"
+          placeholder="sk-ant-… or any provider's key"
           required
           autocomplete="off"
           spellcheck="false"
@@ -327,8 +327,8 @@ export function subscriptionsPage(ctx: Ctx): Response {
         <span class="hint"
           >Anthropic-compatible gateway for Claude Code. OpenRouter:
           <code>https://openrouter.ai/api</code> (no <code>/v1</code> — the
-          SDK adds it). Leave empty for Anthropic itself. With a base URL set,
-          non-<code>sk-ant</code> API keys are accepted.</span
+          SDK adds it). Leave empty for Anthropic itself; a setup-token
+          (sk-ant-oat…) takes none.</span
         >
       </div>
       <div>${btn("Add", { variant: "primary", size: "sm", icon: "plus" })}</div>
@@ -420,7 +420,7 @@ export async function subscriptionAdd(ctx: Ctx): Promise<Response> {
       invalid_name: `A name is a word or two, up to ${NAME_MAX} characters.`,
       name_taken: `There is already a subscription called ${name.trim()}.`,
       invalid_token:
-        "That is not a model token. One from `claude setup-token` begins sk-ant-oat; an Anthropic API key begins sk-ant-api; an OpenRouter key begins sk-or-v1. With an API base URL set, other API keys are accepted too.",
+        "That is not a model token: one line, no spaces. One from `claude setup-token` begins sk-ant-oat; anything else is taken as an API key (sk-ant-api…, sk-ant-usr…, sk-or-v1-…, or a gateway's own with its base URL).",
       invalid_api_base:
         "The API base URL must be https, with no credentials, query, or hash. For OpenRouter use https://openrouter.ai/api (a Claude subscription token cannot use a gateway).",
     };
