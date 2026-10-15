@@ -76,7 +76,7 @@ async function tellFrom(
     });
   const builder = routed.builder;
   return flashOrJson(ctx, back, {
-    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}. Watch it work below.`,
+    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}.${from === null ? " Watch it work below." : ""}`,
   });
 }
 

@@ -98,6 +98,14 @@ username and password — which links that key to your account, so the next
 connection is instant. `j`/`k` to move, `enter` to open, `esc` to go back, `/`
 to filter, `?` for the keys, `:` for the command palette, `t` for the theme.
 
+**Tell the crew from any page.** In a repository you may direct, the palette
+(`:`) has a *Tell the crew* row. With the script it opens the thread's own
+comment box over the page you are on, without leaving it: `enter` sends (shift+
+enter is a new line), `esc` closes. The tell remembers that page (`from`), and
+the answer comes back to it. Without a script the row is a link to a page of
+its own, `/:owner/:name/tell?from=/path`, which is the same box; `from` must be
+a path on this forge. Who may not direct the crew gets a 404 there and no row.
+
 **Milestones.** `:` → *Milestones in a repository* → `owner/name` lists a
 repository's limbs in the order the crew takes ready work (`enter` opens a
 limb's own limbs). A person who administers the repository presses `r` to
