@@ -212,7 +212,7 @@ function userMenu(ctx: Ctx, user: User, signOut: MenuItem): Html {
           { label: "Crew", href: "/settings/crew", icon: "bot" as const },
           ...(user.kind === "agent"
             ? []
-            : [{ label: "Boards", href: "/boards/data", icon: "activity" as const }]),
+            : [{ label: "Boards", href: "/boards", icon: "activity" as const }]),
         ]
       : []),
     { separator: true, label: "" },

@@ -1,0 +1,185 @@
+/**
+ * Boards, drawn: `/boards` lists them and makes one, `/boards/:slug` is the
+ * grid with each panel's chart and, under it, the panels' management (edit,
+ * move, remove) and the board's own (rename, range, refresh, duplicate,
+ * delete). The grid is a live region with an address of its own
+ * (`/boards/:slug/live`): a board that refreshes is refetched on its beat by
+ * the same swap the wall uses, no client framework. Every form posts to
+ * `boards-edit.ts`. Anyone but a person who is an admin gets the not-found page.
+ */
+import { listAllBoards, showBoard } from "../../actions/boards.ts";
+import { lineChart } from "../../boards/chart.ts";
+import { runQuery } from "../../boards/query.ts";
+import { MAX_H, MAX_PANELS, MAX_TITLE, MAX_W, RANGES, REFRESHES, type Board, type Panel } from "../../boards/store.ts";
+import type { App } from "../../app.ts";
+import type { Ctx } from "../../http/context.ts";
+import { liveRegionsJs } from "../client.ts";
+import { notFoundPage } from "../chrome.ts";
+import { html, raw, when, type Html } from "../html.ts";
+import { fragment, page } from "../layout.ts";
+import { btn, card, empty } from "../ui.ts";
+import { paramsOf, queryFields, readParams } from "./boards.ts";
+
+const RANGE_MS = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 } as const;
+const EVERY = { "10s": 10, "1m": 60 } as const;
+
+const option = (value: string, selected: boolean) =>
+  html`<option value="${value}" ${selected ? raw("selected") : null}>${value}</option>`;
+
+/** The panel's query as asked, with the board's range as its start when it names none. */
+function ranged(query: Record<string, unknown>, range: Board["range"]): Record<string, unknown> {
+  if (range === "all" || query.from !== undefined) return query;
+  return { ...query, from: new Date(Date.now() - RANGE_MS[range]).toISOString() };
+}
+
+function drawPanel(app: App, board: Board, panel: Panel): Html {
+  const answer = runQuery(app.db, ranged(panel.query, board.range), { repoIds: "all" });
+  const q = paramsOf(panel.query);
+  const body = !answer.ok
+    ? html`<p class="muted small">${answer.error}</p>`
+    : html`<div class="chart-box">${raw(
+        lineChart(
+          answer.rows.map((r) => ({ label: String(r.group ?? "all"), value: r.value ?? 0 })),
+          panel.title,
+        ),
+      )}</div>`;
+  const explore = new URLSearchParams(Object.entries(q).filter(([k, v]) => v !== "" && k !== "rows"));
+  return html`<div class="card bp-w${String(panel.w)} bp-h${String(panel.h)}">
+    <div class="card-head"><h2>${panel.title}</h2>
+      <a class="muted small" href="/boards/data?${explore.toString()}">explore</a></div>
+    <div class="card-body">${body}</div>
+  </div>`;
+}
+
+/** The grid alone: what the page shows and what the live address answers with. */
+function grid(app: App, slug: string, board: Board): Html {
+  const every = board.refresh === "off" ? null : EVERY[board.refresh];
+  return html`<section
+    class="bgrid"
+    id="board-grid"
+    ${every === null
+      ? null
+      : html`data-live="board.none" data-live-src="/boards/${slug}/live" data-live-every="${String(every)}"`}
+  >
+    ${board.panels.length === 0
+      ? html`<p class="muted">No panels yet. Add one below.</p>`
+      : board.panels.map((p) => drawPanel(app, board, p))}
+  </section>`;
+}
+
+const denied = (ctx: Ctx) => {
+  const u = ctx.auth.user;
+  return u?.isAdmin !== true || u.kind === "agent";
+};
+
+// GET /boards
+export async function boardsList(ctx: Ctx): Promise<Response> {
+  const listed = await listAllBoards(ctx.app, ctx.auth.user);
+  if (!listed.ok) return notFoundPage(ctx);
+  const make = html`<form method="post" action="/boards/new" class="row-actions">
+    <input class="input" name="title" required maxlength="${String(MAX_TITLE)}" placeholder="New board's title" aria-label="Title of the new board" />
+    ${btn("Make board", { variant: "primary" })}
+  </form>`;
+  const body =
+    listed.value.length === 0
+      ? empty({ icon: "activity", title: "No boards yet", note: "Make one above; it is saved as a file in forge/boards." })
+      : card(
+          html`<ul class="list">
+            ${listed.value.map(
+              ({ slug, board }) => html`<li class="row">
+                <a href="/boards/${slug}"><strong>${board.title}</strong></a>
+                <span class="muted small">${String(board.panels.length)} panel${board.panels.length === 1 ? "" : "s"} · ${board.range} · refresh ${board.refresh}</span>
+              </li>`,
+            )}
+          </ul>`,
+          { pad: false },
+        );
+  return page({
+    ctx,
+    title: "Boards",
+    body: html`<div class="page-head"><h1>Boards</h1>
+        ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
+      ${card(make)} ${body}`,
+  });
+}
+
+function panelForm(slug: string, op: string, p: Panel | undefined, index: number, fields: Html): Html {
+  return html`<form method="post" action="/boards/${slug}/${op}" class="row-actions">
+    ${op === "edit" ? html`<input type="hidden" name="index" value="${String(index)}" />` : null}
+    <input class="input" name="title" required maxlength="${String(MAX_TITLE)}" value="${p?.title ?? ""}" placeholder="Panel title" aria-label="Panel title" />
+    <select class="input" name="w" aria-label="Width in columns">
+      ${[1, 2, 3].slice(0, MAX_W).map((n) => html`<option value="${String(n)}" ${n === (p?.w ?? 1) ? raw("selected") : null}>${String(n)} wide</option>`)}
+    </select>
+    <select class="input" name="h" aria-label="Height">
+      ${[1, 2, 3].slice(0, MAX_H).map((n) => html`<option value="${String(n)}" ${n === (p?.h ?? 1) ? raw("selected") : null}>${String(n)} high</option>`)}
+    </select>
+    ${fields}
+    ${btn(op === "edit" ? "Save panel" : "Add panel", { variant: "primary" })}
+  </form>`;
+}
+
+function manage(slug: string, board: Board, adding: Html): Html {
+  const one = (p: Panel, i: number) => html`<li class="row bmanage">
+    <details>
+      <summary><strong>${p.title}</strong> <span class="muted small">${p.chart} · ${String(p.w)}×${String(p.h)}</span></summary>
+      ${panelForm(slug, "edit", p, i, queryFields(paramsOf(p.query)))}
+    </details>
+    <form method="post" action="/boards/${slug}/move" class="row-actions">
+      <input type="hidden" name="index" value="${String(i)}" />
+      ${btn("Up", { size: "sm", name: "by", value: "-1", label: `Move ${p.title} up` })}
+      ${btn("Down", { size: "sm", name: "by", value: "1", label: `Move ${p.title} down` })}
+    </form>
+    <form method="post" action="/boards/${slug}/remove">
+      <input type="hidden" name="index" value="${String(i)}" />
+      ${btn("Remove", { size: "sm", variant: "danger", label: `Remove ${p.title}` })}
+    </form>
+  </li>`;
+  return html`${card(
+      html`<ul class="list">${board.panels.map(one)}</ul>`,
+      { head: html`<h2>Panels</h2>`, pad: false },
+    )}
+    ${when(
+      board.panels.length < MAX_PANELS,
+      () => card(panelForm(slug, "add", undefined, 0, adding), { head: html`<h2>Add a panel</h2>` }),
+    )}
+    ${card(
+      html`<form method="post" action="/boards/${slug}/rename" class="row-actions">
+          <input class="input" name="title" required maxlength="${String(MAX_TITLE)}" value="${board.title}" aria-label="Board title" />
+          ${btn("Rename")}
+        </form>
+        <form method="post" action="/boards/${slug}/settings" class="row-actions">
+          <select class="input" name="range" aria-label="Range">${RANGES.map((r) => option(r, r === board.range))}</select>
+          <select class="input" name="refresh" aria-label="Refresh">${REFRESHES.map((r) => option(r, r === board.refresh))}</select>
+          ${btn("Save settings")}
+        </form>
+        <form method="post" action="/boards/${slug}/duplicate" class="row-actions">${btn("Duplicate")}</form>
+        <form method="post" action="/boards/${slug}/delete" class="row-actions">${btn("Delete this board", { variant: "danger" })}</form>`,
+      { head: html`<h2>Board</h2>` },
+    )}`;
+}
+
+// GET /boards/:slug
+export async function boardShow(ctx: Ctx): Promise<Response> {
+  const slug = ctx.params.slug ?? "";
+  const shown = await showBoard(ctx.app, ctx.auth.user, slug);
+  if (!shown.ok) return notFoundPage(ctx);
+  const board = shown.value;
+  return page({
+    ctx,
+    title: board.title,
+    body: html`<div class="page-head"><h1>${board.title}</h1>
+        ${btn("All boards", { href: "/boards", variant: "ghost" })}</div>
+      ${grid(ctx.app, slug, board)}
+      ${manage(slug, board, queryFields(readParams(ctx.url.searchParams)))}`,
+    scriptJs: liveRegionsJs,
+  });
+}
+
+// GET /boards/:slug/live
+export async function boardLive(ctx: Ctx): Promise<Response> {
+  if (denied(ctx)) return fragment(html``, { status: 404 });
+  const slug = ctx.params.slug ?? "";
+  const shown = await showBoard(ctx.app, ctx.auth.user, slug);
+  if (!shown.ok) return fragment(html``, { status: 404 });
+  return fragment(grid(ctx.app, slug, shown.value), { request: ctx.request });
+}

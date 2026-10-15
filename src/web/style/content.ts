@@ -378,6 +378,15 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .chart-box text { fill: var(--muted-fg); font-family: var(--mono); font-size: 10px; }
 .chart-box circle { fill: var(--accent); }
 .boards-result .table { margin-top: 12px; }
+.bgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+.bp-w2 { grid-column: span 2; }
+.bp-w3 { grid-column: span 3; }
+.bgrid .chart-box { max-width: none; }
+.bp-h2 .chart-box { aspect-ratio: 720 / 400; }
+.bp-h3 .chart-box { aspect-ratio: 720 / 540; }
+.bgrid h2 { font-size: 14px; }
+.bmanage { display: grid; gap: 8px; }
+@media (max-width: 720px) { .bgrid { grid-template-columns: minmax(0, 1fr); } .bp-w2, .bp-w3 { grid-column: auto; } }
 .fleet-svg { display: block; width: 100%; height: auto; aspect-ratio: 600 / 230; }
 .fleet-grid line { stroke: var(--border); stroke-width: 1; }
 .fleet-ticks text { fill: var(--muted-fg); font-size: 10px; text-anchor: end; font-family: var(--mono); }

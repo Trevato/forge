@@ -743,6 +743,13 @@ work here.
   gets a 404): the query is the URL (`?source=runs&aggregate=count&by=day&fcolumn=state&fvalue=failed`),
   drawn as a server-rendered line chart with its points in a table; a point opens the rows
   behind it, keeping your filter.
+  `/boards` holds the boards themselves: a board is one JSON file
+  (`{title, range, refresh: off|10s|1m, panels: [{title, chart, query, w, h}]}`) in
+  `forge/boards`, a repo the forge owns and makes on the first board; every save is a commit
+  by the admin who made it, and a file that does not validate is not shown. Make, rename,
+  duplicate, delete, add/edit/remove/reorder panels, or pin the query on `/boards/data`.
+  A board with a refresh redraws its grid on that beat through the live-region swap
+  (`/boards/:slug/live`, etag'd). No dependency was added.
 - **Issues** — labels, threaded comments, close/reopen, markdown.
 - **Pull requests** — open from a branch, a **beautiful diff viewer** (syntax
   highlighting composed with intra-line word highlighting, mobile-first,

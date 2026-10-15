@@ -12,6 +12,8 @@ import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { flowPage } from "../web/pages/flow.ts";
 import { limitsPage, limitsSet } from "../web/pages/admin-limits.ts";
 import { boardsPage } from "../web/pages/boards.ts";
+import { boardNew, boardPin, boardPost } from "../web/pages/boards-edit.ts";
+import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
 import {
   closeStreamsOf,
   closeStreamsOfSession,
@@ -702,7 +704,13 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings/access", accessPage);
   router.add("GET", "/settings/capacity", capacityPage);
   router.add("POST", "/settings/capacity", capacitySet);
+  router.add("GET", "/boards", boardsList);
   router.add("GET", "/boards/data", boardsPage);
+  router.add("POST", "/boards/new", boardNew);
+  router.add("POST", "/boards/pin", boardPin);
+  router.add("GET", "/boards/:slug", boardShow);
+  router.add("GET", "/boards/:slug/live", boardLive);
+  router.add("POST", "/boards/:slug/:op", boardPost);
   router.add("GET", "/admin/limits", limitsPage);
   router.add("POST", "/admin/limits", limitsSet);
   router.add("GET", "/settings/backups", backupsPage);

@@ -9,6 +9,7 @@
 import { lineChart } from "../../boards/chart.ts";
 import { runQuery, type Query } from "../../boards/query.ts";
 import { SOURCES } from "../../boards/sources.ts";
+import { listAllBoards } from "../../actions/boards.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage } from "../chrome.ts";
 import { html, raw } from "../html.ts";
@@ -24,8 +25,8 @@ type Bucket = keyof typeof BUCKET_MS;
 const isBucket = (s: string): s is Bucket => Object.hasOwn(BUCKET_MS, s);
 
 /** What the URL asks for: plain strings, bounded; `runQuery` judges them. */
-function readParams(url: URL) {
-  const get = (k: string, d = "") => (url.searchParams.get(k) ?? d).slice(0, MAX_PARAM);
+export function readParams(search: URLSearchParams) {
+  const get = (k: string, d = "") => (search.get(k) ?? d).slice(0, MAX_PARAM);
   return {
     source: get("source", "runs"),
     aggregate: get("aggregate", "count"),
@@ -41,9 +42,9 @@ function readParams(url: URL) {
     rows: get("rows") === "1" ? "1" : "",
   };
 }
-type Params = ReturnType<typeof readParams>;
+export type Params = ReturnType<typeof readParams>;
 
-function toQuery(p: Params): Query {
+export function toQuery(p: Params): Query {
   const src = Object.hasOwn(SOURCES, p.source) ? SOURCES[p.source]! : undefined;
   const q: Query = { source: p.source, aggregate: p.aggregate };
   if (p.column !== "") q.column = p.column;
@@ -92,11 +93,61 @@ function behind(p: Params, group: string | number | null): string | null {
 const option = (value: string, label: string, selected: boolean) =>
   html`<option value="${value}" ${selected ? raw("selected") : null}>${label}</option>`;
 
+/** The inputs that say a query, filled from `p`; the page's form and a panel's share them. */
+export function queryFields(p: Params) {
+  const src = Object.hasOwn(SOURCES, p.source) ? SOURCES[p.source]! : undefined;
+  const cols = src ? Object.keys(src.columns) : [];
+  return html`
+      <select class="input" name="source" aria-label="Source">
+      ${Object.keys(SOURCES).map((n) => option(n, n, n === p.source))}
+    </select>
+    <select class="input" name="aggregate" aria-label="Aggregate">
+      ${AGGREGATES.map((a) => option(a, a, a === p.aggregate))}
+    </select>
+    <select class="input" name="column" aria-label="Column to aggregate">
+      ${option("", "(rows)", p.column === "")}
+      ${cols.filter((c) => src!.columns[c] === "number").map((c) => option(c, c, c === p.column))}
+    </select>
+    <select class="input" name="by" aria-label="Group by">
+      ${(Object.keys(BUCKET_MS) as Bucket[]).map((b) => option(b, `per ${b}`, b === p.by))}
+      ${cols.map((c) => option(c, `by ${c}`, c === p.by))}
+    </select>
+    <input class="input mono" name="from" value="${p.from}" placeholder="from 2026-10-01" aria-label="From" maxlength="${MAX_PARAM}" />
+    <input class="input mono" name="to" value="${p.to}" placeholder="to 2026-10-08" aria-label="To" maxlength="${MAX_PARAM}" />
+    <select class="input" name="fcolumn" aria-label="Filter column">
+      ${option("", "(no filter)", p.fcolumn === "")}
+      ${cols.map((c) => option(c, c, c === p.fcolumn))}
+    </select>
+    <select class="input" name="fop" aria-label="Filter operator">
+      ${OPS.map((o) => option(o, o, o === p.fop))}
+    </select>
+    <input class="input mono" name="fvalue" value="${p.fvalue}" placeholder="value" aria-label="Filter value" maxlength="${MAX_PARAM}" />
+`;
+}
+
+/** The form's fields back from a stored query; what a form cannot say is dropped. */
+export function paramsOf(q: Record<string, unknown>): Params {
+  const text = (v: unknown) => (typeof v === "string" || typeof v === "number" ? String(v) : "");
+  const g = q.groupBy;
+  const f = Array.isArray(q.filter) ? (q.filter[0] as Record<string, unknown> | undefined) : undefined;
+  const base = readParams(new URLSearchParams());
+  return {
+    ...base,
+    source: text(q.source) || base.source,
+    aggregate: text(q.aggregate) || base.aggregate,
+    column: text(q.column),
+    by: typeof g === "string" ? g : typeof g === "object" && g !== null ? text((g as { bucket?: unknown }).bucket) : base.by,
+    from: text(q.from),
+    to: text(q.to),
+    ...(f ? { fcolumn: text(f.column), fop: text(f.op) || "eq", fvalue: text(f.value) } : {}),
+  };
+}
+
 // GET /boards/data
-export function boardsPage(ctx: Ctx): Response {
+export async function boardsPage(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (user?.isAdmin !== true || user.kind === "agent") return notFoundPage(ctx);
-  const p = readParams(ctx.url);
+  const p = readParams(ctx.url.searchParams);
   const src = Object.hasOwn(SOURCES, p.source) ? SOURCES[p.source]! : undefined;
   const answer = runQuery(ctx.app.db, toQuery(p), { repoIds: "all" });
   const cols = src ? Object.keys(src.columns) : [];
@@ -115,30 +166,7 @@ export function boardsPage(ctx: Ctx): Response {
 
   const form = card(
     html`<form method="get" action="/boards/data" class="row-actions">
-      <select class="input" name="source" aria-label="Source">
-        ${Object.keys(SOURCES).map((n) => option(n, n, n === p.source))}
-      </select>
-      <select class="input" name="aggregate" aria-label="Aggregate">
-        ${AGGREGATES.map((a) => option(a, a, a === p.aggregate))}
-      </select>
-      <select class="input" name="column" aria-label="Column to aggregate">
-        ${option("", "(rows)", p.column === "")}
-        ${cols.filter((c) => src!.columns[c] === "number").map((c) => option(c, c, c === p.column))}
-      </select>
-      <select class="input" name="by" aria-label="Group by">
-        ${(Object.keys(BUCKET_MS) as Bucket[]).map((b) => option(b, `per ${b}`, b === p.by))}
-        ${cols.map((c) => option(c, `by ${c}`, c === p.by))}
-      </select>
-      <input class="input mono" name="from" value="${p.from}" placeholder="from 2026-10-01" aria-label="From" maxlength="${MAX_PARAM}" />
-      <input class="input mono" name="to" value="${p.to}" placeholder="to 2026-10-08" aria-label="To" maxlength="${MAX_PARAM}" />
-      <select class="input" name="fcolumn" aria-label="Filter column">
-        ${option("", "(no filter)", p.fcolumn === "")}
-        ${cols.map((c) => option(c, c, c === p.fcolumn))}
-      </select>
-      <select class="input" name="fop" aria-label="Filter operator">
-        ${OPS.map((o) => option(o, o, o === p.fop))}
-      </select>
-      <input class="input mono" name="fvalue" value="${p.fvalue}" placeholder="value" aria-label="Filter value" maxlength="${MAX_PARAM}" />
+      ${queryFields(p)}
       ${btn("Draw", { variant: "primary" })}
     </form>`,
     { head: html`<h2>Query</h2>` },
@@ -174,10 +202,30 @@ export function boardsPage(ctx: Ctx): Response {
       </table>`;
   }
 
+  const listed = await listAllBoards(ctx.app, user);
+  const boards = listed.ok ? listed.value : [];
+  const pin =
+    boards.length === 0 || !answer.ok
+      ? null
+      : card(
+          html`<form method="post" action="/boards/pin" class="row-actions">
+            ${["source", "aggregate", "column", "by", "from", "to", "fcolumn", "fop", "fvalue"].map(
+              (k) => html`<input type="hidden" name="${k}" value="${p[k as keyof Params]}" />`,
+            )}
+            <input type="hidden" name="w" value="1" /><input type="hidden" name="h" value="1" />
+            <select class="input" name="slug" aria-label="Board">
+              ${boards.map((b) => html`<option value="${b.slug}">${b.board.title}</option>`)}
+            </select>
+            <input class="input" name="title" required maxlength="80" value="${`${p.aggregate} of ${p.source}`}" aria-label="Panel title" />
+            ${btn("Pin to board")}
+          </form>`,
+          { head: html`<h2>Pin this query</h2>` },
+        );
+
   return page({
     ctx,
     title: "Boards",
-    body: html`<div class="page-head"><h1>Boards</h1></div>
-      ${form} ${card(result, { head: html`<h2>${p.source}</h2>`, extra: "boards-result" })} ${sources}`,
+    body: html`<div class="page-head"><h1>Data</h1>${btn("All boards", { href: "/boards", variant: "ghost" })}</div>
+      ${form} ${card(result, { head: html`<h2>${p.source}</h2>`, extra: "boards-result" })} ${pin} ${sources}`,
   });
 }

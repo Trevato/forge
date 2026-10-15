@@ -1985,6 +1985,13 @@ export const liveRegionsJs = /* js */ `
     if (hit && timer === null)
       timer = setTimeout(refresh, Math.max(600, last + MIN_GAP - Date.now()));
   }
+  // A region with data-live-every="<seconds>" is also due on that beat, for
+  // what no event announces; it rides the same fetch, etag and swap.
+  Array.prototype.forEach.call(document.querySelectorAll('[data-live-every]'), function (r) {
+    var s = parseInt(r.getAttribute('data-live-every'), 10);
+    if (!r.id || !(s > 0)) return;
+    window.setInterval(function () { due[r.id] = true; if (timer === null) timer = setTimeout(refresh, 0); }, s * 1000);
+  });
   connect();
   // Back online: reconnect from the last id and look at every region once,
   // in case the replay window no longer reaches back that far.

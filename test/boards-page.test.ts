@@ -117,8 +117,8 @@ describe("/boards/data", () => {
   test("a non-admin and a stranger get 404; the admin's menu links Boards", async () => {
     expect((await get("/boards/data", "bob")).status).toBe(404);
     expect((await get("/boards/data", null)).status).toBe(404);
-    expect(await (await get("/", "admin")).text()).toContain('href="/boards/data"');
-    expect(await (await get("/", "bob")).text()).not.toContain('href="/boards/data"');
+    expect(await (await get("/", "admin")).text()).toContain('href="/boards"');
+    expect(await (await get("/", "bob")).text()).not.toContain('href="/boards"');
   });
 });
 
