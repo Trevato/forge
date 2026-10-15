@@ -31,6 +31,7 @@ export const GATE: readonly string[] = [
   "test/chaos.test.ts",
   "test/fuzz-found.test.ts",
   "test/fuzz-parsers.test.ts",
+  "test/attach-look.test.ts",
   "test/health.test.ts",
   "test/claim-link.test.ts",
   "test/client-address.test.ts",
@@ -257,8 +258,9 @@ export const EXCLUDED: readonly Exclusion[] = [
   },
   {
     file: "test/plan-route.test.ts",
-    reason: "slow: the planner route test times out at 30 s",
-    issue: 1438,
+    reason:
+      "waits up to 30 s on a fake planner run under the crew sandbox, over the 1 s budget; red where the sandbox cannot nest",
+    issue: 261,
   },
   { file: "test/parity.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/policy.test.ts", reason: "not yet admitted", issue: 261 },

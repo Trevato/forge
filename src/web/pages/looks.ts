@@ -8,13 +8,16 @@
  */
 
 import { sealedPreview } from "../../core/sealed.ts";
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, openSync, readSync } from "node:fs";
+import { jpegHeader } from "../../design/image/jpeg.ts";
+import { isPng, pngHeader } from "../../design/image/png.ts";
 import { join } from "node:path";
 import { isEnvName, previewEnv } from "../../apps/data.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import {
   DEFAULT_PAGE,
+  isAttached,
   LOOK_SIZES,
   lookSlot,
   looksForEnv,
@@ -79,7 +82,7 @@ export function lookImage(ctx: Ctx): Response {
   if (!existsSync(path)) return notFound();
   return new Response(Bun.file(path), {
     headers: {
-      "content-type": "image/png",
+      "content-type": path.endsWith(".jpg") ? "image/jpeg" : "image/png",
       // Kept for good only under the name of this taking (`lookVersion`);
       // asked for by its bare name, it is checked again every time, so a
       // retake at the same commit is never hidden behind a cached old one.
@@ -145,9 +148,11 @@ export function lookCard(
       (l.kind !== "thumb" && l.error === null && mayFetchLook(ctx, repo, record, l)),
   );
   if (!writer && looks.length === 0) return html``;
+  const attached = looks.filter(isAttached).reverse();
+  const taken = looks.filter((l) => !isAttached(l));
   const head = html`${icon("eye")}
     <h2>Look</h2>`;
-  if (looks.length === 0) {
+  if (taken.length === 0 && attached.length === 0) {
     if (pull.state !== "open" || pull.mergedAt !== null) return html``;
     return card(
       html`<p class="muted small">
@@ -158,7 +163,7 @@ export function lookCard(
   }
   // Home first, then the rest in the order the manifest is likeliest to
   // read them — alphabetically, since the row order says nothing about it.
-  const pages = [...new Set(looks.map((l) => l.page))].sort((a, b) =>
+  const pages = [...new Set(taken.map((l) => l.page))].sort((a, b) =>
     a === DEFAULT_PAGE ? -1 : b === DEFAULT_PAGE ? 1 : a.localeCompare(b),
   );
   const labelled = pages.length > 1;
@@ -177,7 +182,7 @@ export function lookCard(
     </a>`;
   };
   const group = (page: string): Html => {
-    const looksOfPage = looks.filter((l) => l.page === page);
+    const looksOfPage = taken.filter((l) => l.page === page);
     const phone = pictured(looksOfPage, "phone");
     const desktop = pictured(looksOfPage, "desktop");
     const failed = looksOfPage.find(
@@ -216,10 +221,54 @@ export function lookCard(
       >
     </div>`;
   };
+  // What people attached sits in the same strip, each with its line and
+  // who put it there. Their size is their own: the picture's, not a window's.
+  const person = (look: Look): Html => {
+    const url = lookUrl(base, look);
+    const size = attachedSize(ctx, look);
+    return html`<figure class="look-attached look-attached-${look.kind}">
+      <a class="look" href="${url}">
+        <img
+          src="${url}"
+          ${size === undefined ? html`` : html`width="${size.width}" height="${size.height}"`}
+          alt="${look.note ?? ""}"
+          loading="lazy"
+        />
+      </a>
+      <figcaption class="muted small">
+        ${look.note ?? ""} · ${look.kind} · attached by ${look.attachedBy ?? ""}
+        ${time(look.createdAt)}
+      </figcaption>
+    </figure>`;
+  };
   return card(
-    html`${pages.map(group)}`,
+    html`${pages.map(group)}${when(attached.length > 0, () =>
+      html`<div class="look-pair look-attachments">${attached.map(person)}</div>`,
+    )}`,
     { head, extra: "look-card" },
   );
+}
+
+/** An attached picture's own size, read from its header; none if it cannot be. */
+function attachedSize(
+  ctx: Ctx,
+  look: Look,
+): { width: number; height: number } | undefined {
+  let fd: number | undefined;
+  try {
+    fd = openSync(join(ctx.app.config.dataDir, look.path), "r");
+    const head = new Uint8Array(65536);
+    const n = readSync(fd, head, 0, head.length, 0);
+    const bytes = head.subarray(0, n);
+    const parsed = isPng(bytes) ? pngHeader(bytes) : jpegHeader(bytes);
+    return parsed.ok
+      ? { width: parsed.value.width, height: parsed.value.height }
+      : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 /**

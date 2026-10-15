@@ -473,6 +473,16 @@ out) with the steps to make the dump. No connection string to the old
 database is ever committed or read at boot. The crew proposes; a person lands — autonomy included,
 exactly as for any app (docs/APPS.md).
 
+A link can prefill the form: `/migrate?from=<host>/<owner>/<name>&crew=<agent>`.
+`from` is matched against the full host of each of your origins
+(`URL(webUrl).host`: host plus any port, lower-cased — not the display label)
+and then `/<owner>/<name>`; a match selects that repository. `crew` selects
+that agent when it exists. Either is capped (200 and 64 characters) and limited
+to ref characters; a value that matches nothing is ignored and named in one
+escaped line. The GET reads the lists the page already loads and starts nothing;
+the person still presses Migrate (POST, same-origin checked).
+(`src/web/pages/migrate-prefill.ts`)
+
 The clone runs as a job in the mirror's registry (`origins/jobs.ts`, kind
 `migrate`, owned by whoever started it — anyone else's is `not_found`).
 `/migrate/jobs/:job` refreshes until it stops, then lands on the repository

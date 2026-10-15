@@ -9,22 +9,30 @@
  */
 
 import type { App } from "../app.ts";
-import type { Operation } from "../core/fleet_ops.ts";
+import { listOperations, type Operation } from "../core/fleet_ops.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { askTargetsFor } from "../web/studio/asks.ts";
 import {
   applyFleetIds,
   getFleetOp,
+  isAsksOperation,
+  UNDO_WINDOW_MS,
   previewFleetIds,
   undoFleetOp,
   type FleetError,
   type Plan,
 } from "./fleet.ts";
 
-/** What a bulk action on asks may be: the fleet verb each one is. */
+/**
+ * What a bulk action on asks may be: the fleet verb each one is. Decline is
+ * the asks' word for dismiss; close takes one reason, said on each; mute
+ * silences the repository of each in the person's own On you.
+ */
 export const ASK_ACTIONS: Readonly<Record<string, string>> = {
   dismiss: "dismiss",
+  decline: "dismiss",
+  mute: "mute",
   ship: "ship",
   close: "close",
   replan: "replan",
@@ -43,8 +51,9 @@ function resolve(
   actor: User | undefined,
   action: unknown,
   items: unknown,
+  reason: unknown,
 ): Result<
-  { verb: string; ids: string[]; skipped: Skipped[]; query: string },
+  { verb: unknown; ids: string[]; skipped: Skipped[]; query: string },
   FleetError
 > {
   if (!actor)
@@ -71,9 +80,15 @@ function resolve(
       code: "too_many",
       message: `at most ${BULK_MAX} asks at once`,
     });
+  if (reason !== undefined && reason !== null && typeof reason !== "string")
+    return err({ code: "bad_action", message: "reason is a sentence" });
+  if (reason !== undefined && reason !== null && reason !== "" && verb !== "close")
+    return err({ code: "bad_action", message: "only close takes a reason" });
   const { issueIds, refused } = askTargetsFor(app.db, actor, list);
   return ok({
-    verb,
+    verb: verb === "close" && typeof reason === "string" && reason.trim() !== ""
+      ? { verb, value: reason }
+      : verb,
     ids: issueIds,
     skipped: refused,
     query: `asks: ${list.length} selected`,
@@ -86,8 +101,9 @@ export function previewAsksBulk(
   actor: User | undefined,
   action: unknown,
   items: unknown,
+  reason?: unknown,
 ): Result<Plan & { skipped: Skipped[] }, FleetError> {
-  const r = resolve(app, actor, action, items);
+  const r = resolve(app, actor, action, items, reason);
   if (!r.ok) return r;
   const plan = previewFleetIds(
     app,
@@ -107,8 +123,9 @@ export async function applyAsksBulk(
   actor: User | undefined,
   action: unknown,
   items: unknown,
+  reason?: unknown,
 ): Promise<Result<Operation & { skipped: Skipped[] }, FleetError>> {
-  const r = resolve(app, actor, action, items);
+  const r = resolve(app, actor, action, items, reason);
   if (!r.ok) return r;
   const op = await applyFleetIds(
     app,
@@ -120,15 +137,6 @@ export async function applyAsksBulk(
   );
   if (!op.ok) return op;
   return ok({ ...op.value, skipped: r.value.skipped });
-}
-
-/** Whether a fleet receipt is a bulk action on asks. */
-function isAsksOperation(op: Operation): boolean {
-  return (
-    op.kind === "issue" &&
-    op.query.startsWith("asks: ") &&
-    Object.values(ASK_ACTIONS).includes(op.verb)
-  );
 }
 
 /**
@@ -150,7 +158,31 @@ export function ownAsksOperation(
     : undefined;
 }
 
-/** Undo one's own bulk action on asks, once (`undoFleetOp`). */
+/** Whether a receipt is still inside its day. */
+export const undoable = (op: Operation, now = Date.now()): boolean =>
+  op.reversible &&
+  op.undoOf === null &&
+  op.undoneBy === null &&
+  now - Date.parse(op.createdAt) <= UNDO_WINDOW_MS;
+
+/**
+ * The viewer's latest bulk action on asks that can still be undone — the
+ * one undo link the On you card keeps for a day. Nothing when none.
+ */
+export function latestUndoable(
+  app: App,
+  actor: User | undefined,
+  now = Date.now(),
+): Operation | undefined {
+  if (!actor) return undefined;
+  const op = listOperations(app.db, actor.id, 5).find(
+    (o) => isAsksOperation(o) && o.undoOf === null,
+  );
+  if (op === undefined || !undoable(op, now)) return undefined;
+  return ownAsksOperation(app, actor, op.id);
+}
+
+/** Undo one's own bulk action on asks, once, within a day (`undoFleetOp` holds the window). */
 export async function undoAsksBulk(
   app: App,
   actor: User | undefined,

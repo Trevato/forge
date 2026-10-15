@@ -11,7 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { addComment, openIssue } from "../src/actions/issues.ts";
+import { addComment, assignIssue, openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import { listIssues } from "../src/core/issues.ts";
@@ -267,5 +267,33 @@ describe("home is the feed", () => {
     expect(first.next_cursor).not.toBeNull();
     const second = await call({ limit: 2, cursor: first.next_cursor });
     expect(second.items.map((i: any) => i.id)).toEqual(whole.slice(2, 4));
+  });
+
+  test("On you can be cleared in one move: a box each, select all, by kind and by repository, one form", async () => {
+    const one = openIssue(app, alice, garden, { title: "Sweep the path" });
+    const two = openIssue(app, alice, vault, { title: "Oil the hinges" });
+    if (!one.ok || !two.ok) throw new Error("issues");
+    for (const [repo, issue] of [[garden, one.value], [vault, two.value]] as const)
+      expect(assignIssue(app, alice, repo, issue, alice).ok).toBe(true);
+    const text = await (await get("/", aliceCookie)).text();
+    const card = text.slice(text.indexOf('id="live-on-you"')).replace(/\s+/g, " ");
+    expect(card).toContain("On you");
+    expect(card).toContain(`value="issue:${one.value.id}"`);
+    expect(card).toContain(`value="issue:${two.value.id}"`);
+    expect((card.match(/form="onyou-bulk"/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(card).toContain('data-pick="all"');
+    expect(card).toContain("data-pick-repo");
+    expect(card).toContain('<option value="' + garden.id + '">alice/garden</option>');
+    expect(card).toContain('id="onyou-bulk"');
+    expect(card).toContain('action="/asks/bulk"');
+    expect(card).toContain('name="reason"');
+    expect(card).toContain(">Mute repository<");
+    // The live region follows the operation, and the page ships the script.
+    expect(text).toContain("fleet.operated");
+    expect(text).toContain("data-pick");
+    expect(text).toContain('id="asks-link"');
+    // Alone, a single row stays a plain link.
+    const bobCard = await (await get("/", bobCookie)).text();
+    expect(bobCard).not.toContain('id="onyou-bulk"');
   });
 });
