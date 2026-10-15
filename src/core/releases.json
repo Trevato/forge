@@ -3,7 +3,7 @@
   "releases": [
     {
       "version": "0.7.77",
-      "migrations": 72
+      "migrations": 74
     },
     {
       "version": "0.7.76",
