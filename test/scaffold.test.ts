@@ -18,7 +18,11 @@ import {
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { createApp } from "../src/app.ts";
 import { parseManifest } from "../src/apps/manifest.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { createUser } from "../src/core/users.ts";
+import { serve } from "../src/http/server.ts";
 import { scaffoldFiles } from "../src/apps/scaffold.ts";
 
 /** A child that inherits nothing it was not handed. */
@@ -153,4 +157,115 @@ describe("a scaffolded app, written out and run on its own", () => {
     expect(manifest.ok).toBe(true);
     if (manifest.ok) expect(manifest.value.health).toBe("/healthz");
   });
+});
+
+describe("a scaffolded app signs a person in through the forge", () => {
+  test("OpenID Connect, code flow with PKCE: register, consent, return, session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "forge-signin-"));
+    const appDir = join(root, "app");
+    const dataDir = join(root, "data");
+    for (const file of scaffoldFiles({ name: "field-notes", description: "" })) {
+      const path = join(appDir, file.path);
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, file.content as string);
+    }
+    const forge = createApp({ dataDir: join(root, "forge"), port: 0 });
+    const servers = await serve(forge);
+    const made = await createUser(forge.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!made.ok) throw new Error(made.error);
+    const person = `forge_session=${createSession(forge.db, made.value.id).token}`;
+    const probe = Bun.serve({ port: 0, fetch: () => new Response("") });
+    const port = probe.port;
+    probe.stop(true);
+    const base = `http://127.0.0.1:${port}`;
+    const child = Bun.spawn([process.execPath, "run", "src/server.ts"], {
+      cwd: appDir,
+      env: {
+        PATH: process.env.PATH ?? "/usr/bin:/bin",
+        HOME: root,
+        PORT: String(port),
+        HOST: "127.0.0.1",
+        FORGE_APP_DATA: dataDir,
+        FORGE_APP_URL: base,
+        FORGE_URL: servers.url,
+      },
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    try {
+      for (let i = 0; i < 100; i++) {
+        if ((await fetch(`${base}/healthz`).catch(() => undefined))?.ok) break;
+        await Bun.sleep(100);
+      }
+      const manual = { redirect: "manual" as const };
+      // It registered itself on first boot, and kept the client id.
+      const registry = JSON.parse(
+        await readFile(join(dataDir, "oidc-client.json"), "utf8"),
+      ) as Record<string, string>;
+      expect(Object.keys(registry)).toEqual([`${base}/signin/callback`]);
+
+      // Out to the forge, bound to this browser.
+      const out = await fetch(`${base}/signin`, manual);
+      expect(out.status).toBe(303);
+      const bound = /signin=([^;]+)/.exec(out.headers.get("set-cookie") ?? "")![1]!;
+      expect(out.headers.get("set-cookie")).toContain("HttpOnly");
+      const authorize = new URL(out.headers.get("location")!);
+      expect(authorize.origin).toBe(servers.url);
+      expect(authorize.searchParams.get("code_challenge_method")).toBe("S256");
+
+      // The person consents at the forge.
+      const consent = await fetch(`${servers.url}/oauth/authorize`, {
+        method: "POST",
+        ...manual,
+        headers: { cookie: person, origin: servers.url },
+        body: new URLSearchParams({
+          ...Object.fromEntries(authorize.searchParams),
+          decision: "allow",
+          grant: "ro",
+          name: "field-notes",
+          lifetime: "day",
+        }),
+      });
+      expect(consent.status).toBe(303);
+      const back = new URL(consent.headers.get("location")!);
+      expect(`${back.origin}${back.pathname}`).toBe(`${base}/signin/callback`);
+
+      // A return from a browser that did not start it is refused.
+      const other = await fetch(back, { ...manual, headers: { cookie: "signin=other" } });
+      expect(other.headers.get("set-cookie") ?? "").not.toContain("session=");
+
+      // The right browser lands signed in.
+      const landed = await fetch(back, { ...manual, headers: { cookie: `signin=${bound}` } });
+      expect(landed.status).toBe(303);
+      const cookies = landed.headers.getSetCookie().join("\n");
+      const session = /(?:^|\n)session=([^;]+); .*HttpOnly/.exec(cookies)![1]!;
+      const page = await (await fetch(base, { headers: { cookie: `session=${session}` } })).text();
+      expect(page).toContain("<b>alice</b>");
+      expect(page).toContain('action="/signout"');
+
+      // The code was single-use: replaying the return signs nobody in.
+      const replay = await fetch(back, { ...manual, headers: { cookie: `signin=${bound}` } });
+      expect(replay.headers.getSetCookie().join("\n")).not.toMatch(/session=[^;]/);
+
+      // Signed out, the session is gone.
+      const out2 = await fetch(`${base}/signout`, {
+        method: "POST",
+        ...manual,
+        headers: { cookie: `session=${session}`, origin: base },
+      });
+      expect(out2.status).toBe(303);
+      const after = await (await fetch(base, { headers: { cookie: `session=${session}` } })).text();
+      expect(after).not.toContain("<b>alice</b>");
+    } finally {
+      child.kill();
+      servers.stop();
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
