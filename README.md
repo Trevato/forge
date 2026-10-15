@@ -721,6 +721,10 @@ work here.
   commit history) with README rendering and **syntax highlighting**, protected
   default branches (force-push and deletion refused, honest fast-forwards
   allowed).
+- **Boards** — `/boards/data`, for a forge admin who is a person (anyone else
+  gets a 404): the query is the URL (`?source=runs&aggregate=count&by=day&fcolumn=state&fvalue=failed`),
+  drawn as a server-rendered line chart with its points in a table; a point opens the rows
+  behind it, keeping your filter.
 - **Issues** — labels, threaded comments, close/reopen, markdown.
 - **Pull requests** — open from a branch, a **beautiful diff viewer** (syntax
   highlighting composed with intra-line word highlighting, mobile-first,

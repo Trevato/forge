@@ -208,7 +208,12 @@ function userMenu(ctx: Ctx, user: User, signOut: MenuItem): Html {
     { label: "SSH keys", href: "/settings/keys", icon: "lock" },
     { label: "Origins", href: "/settings/origins", icon: "globe" },
     ...(user.isAdmin
-      ? [{ label: "Crew", href: "/settings/crew", icon: "bot" as const }]
+      ? [
+          { label: "Crew", href: "/settings/crew", icon: "bot" as const },
+          ...(user.kind === "agent"
+            ? []
+            : [{ label: "Boards", href: "/boards/data", icon: "activity" as const }]),
+        ]
       : []),
     { separator: true, label: "" },
     signOut,

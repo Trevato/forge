@@ -10,6 +10,7 @@ import { unsealReleased } from "../actions/sealed.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { flowPage } from "../web/pages/flow.ts";
 import { limitsPage, limitsSet } from "../web/pages/admin-limits.ts";
+import { boardsPage } from "../web/pages/boards.ts";
 import {
   closeStreamsOf,
   closeStreamsOfSession,
@@ -697,6 +698,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/cloud/remove", cloudRemove);
   router.add("GET", "/settings/capacity", capacityPage);
   router.add("POST", "/settings/capacity", capacitySet);
+  router.add("GET", "/boards/data", boardsPage);
   router.add("GET", "/admin/limits", limitsPage);
   router.add("POST", "/admin/limits", limitsSet);
   router.add("GET", "/settings/backups", backupsPage);

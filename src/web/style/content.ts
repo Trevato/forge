@@ -373,6 +373,11 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .fleet-windows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 16px; margin: 0 0 16px; }
 .fleet-window { margin: 0; }
 .fleet-window figcaption { font-size: 13px; font-weight: 600; margin: 0 0 4px; display: flex; gap: 8px; align-items: baseline; }
+.chart-box { color: var(--accent); aspect-ratio: 720 / 260; max-width: 720px; }
+.chart-box .chart { display: block; width: 100%; height: auto; }
+.chart-box text { fill: var(--muted-fg); font-family: var(--mono); font-size: 10px; }
+.chart-box circle { fill: var(--accent); }
+.boards-result .table { margin-top: 12px; }
 .fleet-svg { display: block; width: 100%; height: auto; aspect-ratio: 600 / 230; }
 .fleet-grid line { stroke: var(--border); stroke-width: 1; }
 .fleet-ticks text { fill: var(--muted-fg); font-size: 10px; text-anchor: end; font-family: var(--mono); }

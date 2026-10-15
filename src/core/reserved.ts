@@ -63,6 +63,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "audit.csv",
   "big",
   "board",
+  "boards",
   "events",
   "explore",
   "fleet",
