@@ -34,8 +34,9 @@ export interface EnvCount {
  * One cause of the forge being off: the `needs` sentence, a `cause` key that
  * holds for as long as its condition does (`disk`, `errors`, `internal`,
  * `queue:<kind>`, `stuck:<runId>`), when it began by the forge's own evidence
- * (disk, errors and refused calls record no start, so those are `at`), and
- * where to look.
+ * (the oldest evidence the forge holds, else the first time this process saw
+ * it, held until the cause clears; `at` is never the answer to a repeat
+ * call), and where to look.
  */
 export interface Degraded {
   readonly cause: string;
@@ -75,12 +76,25 @@ export interface VitalsInput {
   readonly now?: number;
 }
 
+/** cause → when this process first saw it; a cause that clears is dropped. */
+const firstSeen = new Map<string, string>();
+
 export function vitals(input: VitalsInput): Vitals {
   const now = input.now ?? Date.now();
   const at = new Date(now).toISOString();
   const needs: string[] = [];
   const degraded: Degraded[] = [];
-  const need = (cause: string, sentence: string, since: string, href: string) => {
+  const need = (
+    cause: string,
+    sentence: string,
+    evidence: string | undefined,
+    href: string,
+  ) => {
+    let since = firstSeen.get(cause);
+    if (since === undefined || (evidence !== undefined && evidence < since)) {
+      since = evidence ?? at;
+      firstSeen.set(cause, since);
+    }
     needs.push(sentence);
     degraded.push({ cause, sentence, since, href });
   };
@@ -94,7 +108,7 @@ export function vitals(input: VitalsInput): Vitals {
     need(
       "disk",
       `Disk is nearly full: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free.`,
-      at,
+      undefined,
       "/settings/capacity",
     );
 
@@ -121,11 +135,13 @@ export function vitals(input: VitalsInput): Vitals {
         since: run.heartbeatAt ?? run.startedAt ?? run.createdAt,
       });
   }
-  if (stuck.length > 0) {
-    const sentence = `${stuck.length} run${stuck.length === 1 ? " is" : "s are"} stuck.`;
-    for (const s of stuck)
-      need(`stuck:${s.runId}`, sentence, s.since, `/${s.repo}/runs/${s.runId}`);
-  }
+  for (const s of stuck)
+    need(
+      `stuck:${s.runId}`,
+      `Run ${s.runId} is stuck: it has not moved since ${s.since}.`,
+      s.since,
+      `/${s.repo}/runs/${s.runId}`,
+    );
 
   const apps = { serving: 0, asleep: 0, previews: 0 };
   for (const e of input.envs ?? []) {
@@ -139,8 +155,8 @@ export function vitals(input: VitalsInput): Vitals {
     need(
       "errors",
       `${seen.lastHour} errors in the last hour (${ERROR_BURST} or more is a burst).`,
-      at,
-      "/api/v1/health",
+      seen.oldest,
+      "/audit",
     );
 
   const refused = refusedInternal(now);
@@ -148,9 +164,12 @@ export function vitals(input: VitalsInput): Vitals {
     need(
       "internal",
       `${refused.lastHour} internal call${refused.lastHour === 1 ? "" : "s"} without the boot secret refused in the last hour${refused.latest ? ` (latest ${refused.latest.method} ${refused.latest.path})` : ""}.`,
-      at,
-      "/api/v1/health",
+      refused.oldest,
+      "/audit",
     );
+
+  for (const cause of firstSeen.keys())
+    if (!degraded.some((d) => d.cause === cause)) firstSeen.delete(cause);
 
   return {
     ok: needs.length === 0,

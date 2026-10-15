@@ -123,6 +123,17 @@ Unset, only this machine may say so, and the named header is never read. Everyth
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 
+## Health
+
+`GET /api/v1/health` (and the MCP `health` tool) answer a site admin with
+`degraded`: one entry per thing that needs a person, `{cause, sentence,
+since, href}`. `cause` is a stable key (`disk`, `errors`, `internal`,
+`queue:<kind>`, `stuck:<runId>`); `since` is when it began, by the oldest
+evidence (oldest queued run, last heartbeat, oldest error or refused call in
+the hour) or else the first time the forge saw it, and holds until the cause
+clears; `href` is the page to look at. The board's forge strip links each
+entry, and the terminal dashboard prints each with its start.
+
 ## Origins
 
 Your forge is the index of everything you work on, wherever it actually lives.

@@ -139,7 +139,13 @@ function record(scope: string, message: string, now: number): void {
 export function recentErrors(
   limit = 5,
   now = Date.now(),
-): { lastHour: number; byScope: Record<string, number>; latest: ErrorLine[] } {
+): {
+  lastHour: number;
+  byScope: Record<string, number>;
+  latest: ErrorLine[];
+  /** The oldest kept line still inside the hour. */
+  oldest: string | undefined;
+} {
   prune(now);
   const byScope: Record<string, number> = {};
   let lastHour = 0;
@@ -149,7 +155,8 @@ export function recentErrors(
     byScope[scope] = n;
     lastHour += n;
   }
-  return { lastHour, byScope, latest: ring.slice(-limit).reverse() };
+  const oldest = ring.find((l) => now - new Date(l.at).getTime() < HOUR_MS)?.at;
+  return { lastHour, byScope, latest: ring.slice(-limit).reverse(), oldest };
 }
 
 /** Forget everything kept. For tests. */

@@ -38,9 +38,14 @@ export function noteRefusedInternal(
 export function refusedInternal(now: number = Date.now()): {
   lastHour: number;
   latest: RefusedCall | undefined;
+  oldest: string | undefined;
 } {
   const recent = seen.filter((c) => now - c.at < WINDOW_MS);
-  return { lastHour: recent.length, latest: recent.at(-1) };
+  return {
+    lastHour: recent.length,
+    latest: recent.at(-1),
+    oldest: recent[0] && new Date(recent[0].at).toISOString(),
+  };
 }
 
 /** For tests: forget everything. */

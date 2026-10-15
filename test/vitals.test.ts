@@ -205,8 +205,8 @@ test("an unauthenticated internal call is refused, logged and flagged; the probe
 });
 
 test("degraded names each cause, stable, with when it began", async () => {
-  const { createLog, clearErrors } = await import("../src/kernel/log.ts");
-  const { resetRefusedInternal } = await import("../src/kernel/internal_refused.ts");
+  const { createLog, clearErrors, recentErrors } = await import("../src/kernel/log.ts");
+  const { resetRefusedInternal, refusedInternal } = await import("../src/kernel/internal_refused.ts");
   const { ERROR_BURST, QUEUE_WAIT_MAX_MS } = await import("../src/kernel/vitals.ts");
   const orig = console.error;
   console.error = () => {};
@@ -243,15 +243,28 @@ test("degraded names each cause, stable, with when it began", async () => {
     for (let i = 0; i < ERROR_BURST; i++) log.error(`boom ${i}`);
     const a = vitals({ db: app.db, dataDir });
     const e = a.degraded.find((d) => d.cause === "errors");
-    expect(e?.since).toBe(a.at);
-    expect(vitals({ db: app.db, dataDir, now: Date.now() + 5 }).degraded.some((d) => d.cause === "errors")).toBe(true);
+    const later2 = vitals({ db: app.db, dataDir, now: Date.now() + 5000 });
+    expect(e?.since).toBe(recentErrors(100).oldest!);
+    expect(later2.degraded.find((d) => d.cause === "errors")?.since).toBe(e!.since);
+    expect(e?.href).toBe("/audit");
 
     // internal: refused calls.
     await fetchInternal(app.hookAddress.current, "/internal/hook", { method: "POST" });
     const i = vitals({ db: app.db, dataDir }).degraded.find((d) => d.cause === "internal");
-    expect(i?.since).toBeDefined();
+    expect(i?.href).toBe("/audit");
+    const i2 = vitals({ db: app.db, dataDir, now: Date.now() + 5000 }).degraded.find((d) => d.cause === "internal");
+    expect(i2?.since).toBe(i!.since);
+    expect(i!.since).toBe(refusedInternal().oldest!);
+    expect(entry!.sentence).toContain(run.id);
 
-    // every need has exactly one sentence match in degraded (stuck shares one).
+    // a cause that clears is forgotten: when it returns it began again.
+    const first = e!.since;
+    clearErrors();
+    expect(vitals({ db: app.db, dataDir }).degraded.some((d) => d.cause === "errors")).toBe(false);
+    for (let k = 0; k < ERROR_BURST; k++) log.error(`again ${k}`);
+    expect(vitals({ db: app.db, dataDir, now: Date.now() + 9000 }).degraded.find((d) => d.cause === "errors")?.since! >= first).toBe(true);
+
+    // every need has exactly one sentence match in degraded .
     const all = vitals({ db: app.db, dataDir });
     expect(new Set(all.degraded.map((d) => d.sentence))).toEqual(new Set(all.needs));
 

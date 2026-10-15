@@ -447,7 +447,7 @@ describe("the board's forge strip", () => {
       .run("2020-01-01T00:00:00.000Z", run.id);
     const stuck = await board("root");
     expect(stuck).not.toContain("All fine");
-    expect(stuck).toContain("1 run is stuck.");
+    expect(stuck).toContain(`Run ${run.id} is stuck: it has not moved since 2020-01-01T00:00:00.000Z.`);
     expect(stuck).toContain(`href="/root/stuck/runs/${run.id}"`);
 
     const other = await board("bob");
