@@ -7,6 +7,7 @@
  * (`actions/asks_bulk.ts`). `/asks` was its own screen; it lands here now.
  */
 
+import type { WaitingFor } from "../../core/waiting_for.ts";
 import {
   applyAsksBulk,
   BULK_MAX,
@@ -202,10 +203,16 @@ function decisionCard(ctx: Ctx, d: Decision, picked: ReadonlySet<string>): Html 
         <h2>${title}</h2>
         <span class="ask-meta muted small"
           ><b class="ask-kind">${KIND_LABEL[d.kind]}</b>${d.repo.ownerName}/${d.repo.name}</span
-        >`,
+        >${waitChip(d.waiting)}`,
     },
   );
 }
+
+/** What the row waits for and on whom: "ready to land · on you". */
+const waitChip = (w: WaitingFor): Html =>
+  html`<span class="ask-waiting small" data-waiting="${w.word}"
+    >${w.word} · on ${w.on}</span
+  >`;
 
 /** What a collapsed row says it holds. */
 const rowHead = (kind: Decision["kind"], n: number): string => {
@@ -267,7 +274,7 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
             />`
           : null}
         <h2>${rowHead(r.kind, r.items.length)}</h2>
-        <span class="muted small">${r.repo.ownerName}/${r.repo.name}</span>`,
+        <span class="muted small">${r.repo.ownerName}/${r.repo.name}</span>${waitChip(r.items[0]!.waiting)}`,
       // The row ranks by its weightiest ask (first, `askRows`): name it.
       foot: clause(
         undefined,
