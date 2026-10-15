@@ -127,6 +127,7 @@ export const GATE: readonly string[] = [
   "test/asks-expiry.test.ts",
   "test/asks-rank.test.ts",
   "test/plan-pillars.test.ts",
+  "test/plan-route.test.ts",
   "test/planner-declined.test.ts",
   "test/feed.test.ts",
   "test/feed-page.test.ts",
@@ -257,12 +258,6 @@ export const EXCLUDED: readonly Exclusion[] = [
   {
     file: "test/crew-interrupted.test.ts",
     reason: "not yet admitted",
-    issue: 261,
-  },
-  {
-    file: "test/plan-route.test.ts",
-    reason:
-      "waits up to 30 s on a fake planner run under the crew sandbox, over the 1 s budget; red where the sandbox cannot nest",
     issue: 261,
   },
   { file: "test/parity.test.ts", reason: "not yet admitted", issue: 261 },
