@@ -79,8 +79,11 @@ export function gateListAdds(diff: string): string[] | undefined {
   const exclusion = /^\{?\s*file:\s*"(test\/[A-Za-z0-9_.-]+\.test\.[cm]?[jt]sx?)",?/;
   const data = /^(\{|\},?|reason:\s*.*|issue:\s*\d+,?)$/;
   const added = new Set<string>();
+  let inHunk = false;
   for (const line of diff.split("\n")) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("@@")) inHunk = true;
+    // File headers precede the first hunk; inside one, `+++i;` is a real line.
+    if (!inHunk) continue;
     const sign = line[0];
     if (sign !== "+" && sign !== "-") continue;
     const text = line.slice(1).trim();

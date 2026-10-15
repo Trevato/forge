@@ -193,8 +193,12 @@ describe("the fast set, by measured coverage", () => {
       gateAdds: adds!,
     });
     expect(more.why.get("test/new.test.ts")).toBe("changed");
-    expect(gateListAdds('+  "test/a.test.ts",\n+export const X = 1;')).toBeUndefined();
-    expect(gateListAdds('-  if (x) return;')).toBeUndefined();
+    expect(gateListAdds('@@ -1 +1 @@\n+  "test/a.test.ts",\n+export const X = 1;')).toBeUndefined();
+    expect(gateListAdds('@@ -1 +1 @@\n-  if (x) return;')).toBeUndefined();
+    const hunk = "@@ -1,0 +2,2 @@\n";
+    expect(gateListAdds(`${hunk}+  "test/a.test.ts",\n+++i;`)).toBeUndefined();
+    expect(gateListAdds(`${hunk}+  "test/a.test.ts",\n---n;`)).toBeUndefined();
+    expect(gateListAdds(`--- a/scripts/gate.ts\n+++ b/scripts/gate.ts\n${hunk}+  "test/a.test.ts",`)).toEqual(["test/a.test.ts"]);
     const logic = fastSet({ ...base, changed: ["scripts/gate.ts"] });
     expect(logic.files).toEqual(base.tests);
   });
