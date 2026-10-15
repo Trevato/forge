@@ -231,10 +231,10 @@ export const GATE: readonly string[] = [
   "test/ssh-site.test.ts",
   "test/web-code.test.ts",
   "test/web-origins.test.ts",
+  "test/plan-route.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
-  { file: "test/plan-route.test.ts", reason: "times out on the runner and reads a file its stand-in never wrote", issue: 1468 },
   { file: "test/api-errors.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
   {

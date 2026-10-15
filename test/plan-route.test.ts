@@ -43,14 +43,14 @@ describe("POST …/plan", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-planroute-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    // The stand-in planner: takes the route from its brief, posts the plan
+    // The stand-in planner: takes the route from its brief (the system prompt is in its arguments), posts the plan
     // in plan1.json and then the one in plan2.json, and keeps the answers.
     const fake = join(dataDir, "fake-claude");
     writeFileSync(
       fake,
       `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
-IFS= read -r first; printf '%s\\n' "$first" > "${dataDir}/prompt"
+IFS= read -r first; printf '%s\\n' "$first" "$@" > "${dataDir}/prompt"
 echo '{"type":"system","subtype":"init","session_id":"p1","model":"fake"}'
 if grep -q "this run is a planning run" "${dataDir}/prompt"; then
   path=$(grep -o 'api/v1/repos/[^"\\\\ ]*/plan' "${dataDir}/prompt" | head -1)
@@ -137,7 +137,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Planned.",
     const served = second.opened[0].number;
     expect(
       app.db
-        .query("SELECT 1 FROM issue_dependency WHERE issue_id = ?1 AND blocker_id = (SELECT id FROM issue WHERE repo_id = ?2 AND number = ?3)")
+        .query("SELECT 1 FROM issue_dependency WHERE issue_id = ?1 AND blocked_by_id = (SELECT id FROM issue WHERE repo_id = ?2 AND number = ?3)")
         .get(trust.umbrella.id, repo.id, served),
     ).not.toBeNull();
   }, 40_000);
