@@ -408,6 +408,14 @@ not as a crew run; AWS audits look at us-east-1 only; over-provisioned
 droplets and forgotten DNS records need metrics or resolution and are not
 attempted; Backblaze audits find nothing yet. No dependency was added.
 
+## Share to the forge
+
+Install the forge to your home screen, then Share a link or text to it from
+any app: the home composer opens with it as a draft, and it is only sent when
+you tap Post. Signed out, you sign in (or up) first and land on the same
+draft. The share target is the web manifest's `share_target`, which only an
+**installed PWA on Android and Chrome** offers; iOS Safari does not.
+
 ## Develop
 
 ```sh
