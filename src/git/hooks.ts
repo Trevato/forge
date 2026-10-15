@@ -10,7 +10,12 @@
 
 import { chmod } from "node:fs/promises";
 import { join } from "node:path";
-import { FORWARDED_GIT_ENV, parseHookStdin } from "./hook-protocol.ts";
+import { fetchInternal } from "./hook-address.ts";
+import {
+  FORWARDED_GIT_ENV,
+  HOOK_SECRET_HEADER,
+  parseHookStdin,
+} from "./hook-protocol.ts";
 
 const HOOK_NAMES = ["pre-receive", "post-receive"] as const;
 type HookName = (typeof HOOK_NAMES)[number];
@@ -52,6 +57,7 @@ function selfInvocation(): { runtime: string; entry: string | undefined } {
 /** Env for a receive-pack spawn so its hooks can reach back into the forge. */
 export function hookEnv(input: {
   socketPath: string;
+  secret: string;
   repoId: string;
   actorId: string;
 }): Record<string, string> {
@@ -59,6 +65,7 @@ export function hookEnv(input: {
   const env: Record<string, string> = {
     FORGE_RUNTIME: self.runtime,
     FORGE_SOCKET: input.socketPath,
+    FORGE_HOOK_SECRET: input.secret,
     FORGE_REPO_ID: input.repoId,
     FORGE_ACTOR_ID: input.actorId,
   };
@@ -97,10 +104,12 @@ export async function runHookClient(hook: HookName): Promise<never> {
   }
 
   try {
-    const response = await fetch("http://forge/internal/hook", {
-      unix: socket,
+    const response = await fetchInternal(socket, "/internal/hook", {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        [HOOK_SECRET_HEADER]: process.env.FORGE_HOOK_SECRET ?? "",
+      },
       // A forge that has stopped answering must not become a push that never
       // returns. Without a deadline this relay waits forever, and the git
       // process holding the repo's ref lock waits with it — one wedged forge

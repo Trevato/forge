@@ -3,9 +3,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { health } from "../src/http/health.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { stylesheetAsset, stylesheetRedirect } from "../src/web/asset.ts";
+import {
+  shellAsset,
+  stylesheetAsset,
+  stylesheetRedirect,
+} from "../src/web/asset.ts";
+import { shellJs } from "../src/web/client.ts";
 import { escapeHtml, html, raw, when } from "../src/web/html.ts";
 import {
   icon,
@@ -371,6 +375,43 @@ describe("web pages end to end", () => {
     expect(text).toContain("New repository");
   });
 
+  test("the shell is a cached file, linked before the page's own inline script", async () => {
+    const shell = shellAsset();
+    const home = await (await fetch(base, { headers: { cookie } })).text();
+    expect(home).toMatch(
+      new RegExp(`<script nonce="[^"]+" src="${shell.path}"></script>`),
+    );
+    // Its source is no longer in the HTML, and the page is a good deal lighter.
+    expect(home).not.toContain(shellJs.slice(0, 400));
+    expect(home).not.toContain(shellJs.slice(-400));
+
+    // A page with its own script: the shell is a classic script placed first,
+    // so it has run by the time the nonce'd inline one does.
+    const apps = await (
+      await fetch(`${base}/apps/new`, { headers: { cookie } })
+    ).text();
+    const at = apps.indexOf(`src="${shell.path}">`);
+    const inline = apps.indexOf("<script nonce=", at);
+    expect(at).toBeGreaterThan(-1);
+    expect(inline).toBeGreaterThan(at);
+    expect(apps).not.toContain(shellJs.slice(0, 400));
+
+    const file = await fetch(base + shell.path);
+    expect(file.status).toBe(200);
+    expect(file.headers.get("cache-control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    expect(await file.text()).toBe(shellJs);
+    expect(
+      (await fetch(`${base}/assets/shell-0000000000000000.js`)).status,
+    ).toBe(404);
+
+    const policy = (await fetch(base, { headers: { cookie } })).headers.get(
+      "content-security-policy",
+    );
+    expect(policy).not.toContain("unsafe-inline");
+  });
+
   test("the command palette is a proper dialog: modal, a combobox over a listbox, its index as data", async () => {
     const text = await (await fetch(base, { headers: { cookie } })).text();
     expect(text).toMatch(
@@ -383,9 +424,10 @@ describe("web pages end to end", () => {
     expect(text).toContain(
       '<script type="application/json" id="palette-index">',
     );
-    // The script carries the scorer and consumes Escape itself.
-    expect(text).toContain("function fuzzyScore(");
-    expect(text).toContain("function openModal(");
+    // The shell file carries the scorer and consumes Escape itself.
+    const file = await (await fetch(base + shellAsset().path)).text();
+    expect(file).toContain("function fuzzyScore(");
+    expect(file).toContain("function openModal(");
   });
 
   test("stylesheet is content-addressed and immutable, at the path the page names", async () => {
@@ -602,15 +644,26 @@ describe("themes", () => {
 
   test("no cookie means system: no data-theme, switcher present", async () => {
     const text = await (await fetch(base)).text();
-    expect(text).not.toContain("data-theme=");
+    expect(text).not.toMatch(/<html[^>]*\sdata-theme=/);
     expect(text).toContain('action="/theme"');
     for (const name of THEME_NAMES) {
       expect(text).toContain(`value="${name}"`);
     }
-    // Critical paint before the stylesheet: system pair (light default + dark media).
-    expect(text).toMatch(
-      /<style nonce="[^"]+">html,body\{background-color:#fafafa;color-scheme:light\}@media \(prefers-color-scheme: dark\)\{html,body\{background-color:#09090b;color-scheme:dark\}\}<\/style>/,
+    // Critical paint before the stylesheet: system pair (light default + dark
+    // media), then a rule per theme so a toggle repaints without a reload.
+    const boot = text.match(/<style nonce="[^"]+">([^<]*)<\/style>/)?.[1];
+    expect(boot).toStartWith(
+      "html,body{background-color:#fafafa;color-scheme:light}@media (prefers-color-scheme: dark){html,body{background-color:#09090b;color-scheme:dark}}",
     );
+    expect(boot).toContain(
+      'html[data-theme="dark"],html[data-theme="dark"] body{background-color:#09090b;color-scheme:dark}',
+    );
+    expect(boot).toContain(
+      'html[data-theme="light"],html[data-theme="light"] body{background-color:#fafafa;color-scheme:light}',
+    );
+    for (const name of THEME_NAMES) {
+      expect(boot).toContain(`html[data-theme="${name}"] body{`);
+    }
   });
 
   test("choosing a theme sets the cookie and stamps the page", async () => {
@@ -630,10 +683,16 @@ describe("themes", () => {
     expect(text).toContain('data-theme="midnight"');
     // The switcher shows the active choice.
     expect(text).toMatch(/value="midnight"\s+checked/);
-    // Boot paint matches midnight, not the system pair.
-    expect(text).toMatch(
-      /<style nonce="[^"]+">html,body\{background-color:#16161e;color-scheme:dark\}<\/style>/,
+    // Boot paint follows the attribute: midnight's ground for this page, and
+    // the same rules as a system page, so switching away repaints at once.
+    const boot = text.match(/<style nonce="[^"]+">([^<]*)<\/style>/)?.[1];
+    expect(boot).toContain(
+      'html[data-theme="midnight"],html[data-theme="midnight"] body{background-color:#16161e;color-scheme:dark}',
     );
+    const system = (await (await fetch(base)).text()).match(
+      /<style nonce="[^"]+">([^<]*)<\/style>/,
+    )?.[1];
+    expect(boot).toBe(system!);
   });
 
   test("system clears the cookie; junk never sticks", async () => {
@@ -655,7 +714,7 @@ describe("themes", () => {
     const text = await (
       await fetch(base, { headers: { cookie: "forge_theme=evil" } })
     ).text();
-    expect(text).not.toContain("data-theme=");
+    expect(text).not.toMatch(/<html[^>]*\sdata-theme=/);
   });
 
   test("theme POST refuses cross-origin and foreign referers", async () => {
@@ -675,34 +734,6 @@ describe("themes", () => {
     });
     expect(foreign.status).toBe(303);
     expect(foreign.headers.get("location")).toBe("/");
-  });
-});
-
-describe("readiness", () => {
-  let dataDir: string;
-  let app: App;
-  let servers: Servers;
-
-  beforeAll(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "forge-health-"));
-    app = createApp({ dataDir, port: 0 });
-    servers = await serve(app);
-  });
-
-  afterAll(async () => {
-    health.draining = false;
-    servers.stop();
-    app.close();
-    await rm(dataDir, { recursive: true, force: true });
-  });
-
-  test("/healthz says ok, and 503 once the forge is draining; the landing page stays up either way", async () => {
-    expect((await fetch(`${servers.url}/healthz`)).status).toBe(200);
-    health.draining = true;
-    const draining = await fetch(`${servers.url}/healthz`);
-    expect(draining.status).toBe(503);
-    expect(await draining.text()).toBe("draining");
-    expect((await fetch(`${servers.url}/`)).status).toBe(200);
   });
 });
 

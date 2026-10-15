@@ -167,7 +167,7 @@ function asObject(bytes: Uint8Array): Record<string, unknown> {
   } catch {
     return {};
   }
-  return typeof value === "object" && value !== null
+  return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
 }

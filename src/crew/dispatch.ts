@@ -8,6 +8,7 @@
  * time. A missed wake-up costs a tick, never a run.
  */
 
+import { NO_MERGE } from "../checks/merged.ts";
 import { markHeard } from "../core/issues.ts";
 import { capacityCount, noteBooted } from "../core/capacity.ts";
 import { tmpdir } from "node:os";
@@ -15,6 +16,7 @@ import { emailVerified } from "../core/verify.ts";
 import { rmSync } from "node:fs";
 import type { App } from "../app.ts";
 import { transact } from "../kernel/db.ts";
+import { addComment } from "../actions/issues.ts";
 import { announceRun } from "../actions/runs.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import type { ForgeEvent } from "../core/events.ts";
@@ -31,7 +33,13 @@ import { accountActive } from "../core/accounts.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
-import { greenHead, sendToReview } from "./review.ts";
+import {
+  greenHead,
+  handedToPerson,
+  handoverNote,
+  reviewRounds,
+  sendToReview,
+} from "./review.ts";
 import {
   activeRunFor,
   hasQueuedRun,
@@ -433,6 +441,23 @@ function route(app: App, event: ForgeEvent): void {
       }
       // The crew is off: a verdict is read by people, and wakes no one.
       if (reviewerVerdict && repo.autonomy === "off") return;
+      if (reviewerVerdict) {
+        // The loop is bounded: the third round hands the pull to a person.
+        const pull = getPull(app.db, repo.id, number);
+        if (pull && handedToPerson(app.db, repo.id, pull)) {
+          // One card: a re-sent verdict does not post a second.
+          const last = listComments(app.db, issue.id, { kind: "comment" }).at(-1);
+          if (!last?.body.startsWith("Handed to a person"))
+            addComment(
+              app,
+              actor,
+              repo,
+              issue,
+              handoverNote(reviewRounds(app.db, repo.id, pull)),
+            );
+          return;
+        }
+      }
       const agent = agentFor(app, issue);
       if (!agent) return;
       // Said while the agent works: it hears the words now, as its next
@@ -749,6 +774,10 @@ export async function judgeFailedCheck(
   const run = getRun(app.db, runId);
   const failingTest = run?.checkDetail?.names[0];
   if (app.config.decider === undefined)
+    return { retry: "again", cause: "change", failingTest };
+  // A pull that does not merge is the change's, whatever a decider might
+  // guess: the builder is handed it to rebase.
+  if (run?.summary.includes(NO_MERGE))
     return { retry: "again", cause: "change", failingTest };
   const tail = readRunLog(app.config.dataDir, runId, 8 * 1024).lines.slice(-25);
   const decided = await decideAndRecord(

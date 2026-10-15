@@ -189,6 +189,8 @@ export function runTmpDir(dataDir: string, agentName: string, runId: string): st
   return join(crewRoot(dataDir), agentName, ".t", runId.slice(-12));
 }
 
+const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
 export function sandboxPolicy(input: {
   dataDir: string;
   agentName: string;
@@ -201,17 +203,17 @@ export function sandboxPolicy(input: {
   /** The run this is for: it gets a temp directory of its own (`tmpDir`). */
   runId?: string | undefined;
 }): SandboxPolicy {
-  // Loopback is the host's own: every app, preview cell and internal listener
-  // sits there. It is allowed as host:port, the forge's port and no other.
   const hosts = new Set<string>(["registry.npmjs.org"]);
   for (const url of input.urls) {
     try {
       const parsed = new URL(url);
-      const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(
-        parsed.hostname,
+      // Loopback is allowed by port, never whole: the proxy reaches outside
+      // the sandbox, so a bare 127.0.0.1 would be every local service.
+      hosts.add(
+        LOOPBACK.has(parsed.hostname) && parsed.port !== ""
+          ? parsed.host
+          : parsed.hostname,
       );
-      const port = parsed.port || (parsed.protocol === "https:" ? "443" : "80");
-      hosts.add(loopback ? `${parsed.hostname}:${port}` : parsed.hostname);
     } catch {
       // Not a URL: nothing to allow.
     }

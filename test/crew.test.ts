@@ -304,12 +304,10 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     // Enforced where this host can hold a run to it; switched off, and said
     // so, where it cannot (a locked-down container has no bubblewrap).
     expect(settings.sandbox.enabled).toBe((await sandboxAvailable()).ok);
-    // Loopback only as the forge's own host:port, never the whole host.
-    expect(settings.sandbox.network.allowedDomains).toContain(
-      new URL(servers.url).host,
-    );
-    expect(settings.sandbox.network.allowedDomains).not.toContain("localhost");
-    expect(settings.sandbox.network.allowedDomains).not.toContain("127.0.0.1");
+    const domains = settings.sandbox.network.allowedDomains;
+    expect(domains).toContain(new URL(servers.url).host);
+    expect(domains).not.toContain("127.0.0.1");
+    expect(domains).not.toContain("localhost");
     expect(settings.sandbox.network.allowedDomains).toContain(
       "registry.npmjs.org",
     );
