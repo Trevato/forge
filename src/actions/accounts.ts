@@ -157,6 +157,34 @@ export function retirementPlan(
   );
 }
 
+/**
+ * Take apart every repository `owner` has: its apps torn down, then the
+ * repository itself. Stops at the first that will not go and names it;
+ * `removed` collects the ones that did. Null means all are gone.
+ */
+async function removeOwnedRepos(
+  app: App,
+  admin: User,
+  owner: User,
+  removed: string[] = [],
+): Promise<string | null> {
+  const runtime = appsRuntime(app);
+  for (const repo of listReposOwnedBy(app.db, owner.id)) {
+    if (runtime !== undefined) await runtime.teardownAll(repo.id);
+    const label = `${owner.username}/${repo.name}`;
+    const deleted = await destroyRepo(app.db, app.reposRoot, repo);
+    if (!deleted.ok) return label;
+    removed.push(label);
+    if (owner.kind === "org")
+      app.bus.append({
+        kind: "repo.deleted",
+        actorId: admin.id,
+        payload: { repo: label, by: "org_retired" },
+      });
+  }
+  return null;
+}
+
 /** What a retirement did: every thing removed, in order, and what stopped it. */
 export interface Retired {
   removed: string[];
@@ -187,25 +215,13 @@ export async function retireAndRemoveAccount(
   setSuspended(app.db, user.id, new Date().toISOString());
   dropCredentials(app.db, user.id);
   await quiet(app, admin.value, user);
-  const runtime = appsRuntime(app);
   for (const org of soleOwnedOrgs(app.db, user.id)) {
     await quiet(app, admin.value, org);
-    for (const repo of listReposOwnedBy(app.db, org.id)) {
-      if (runtime !== undefined) await runtime.teardownAll(repo.id);
-      const label = `${org.username}/${repo.name}`;
-      const deleted = await destroyRepo(app.db, app.reposRoot, repo);
-      if (!deleted.ok) {
-        out.failed = label;
-        return ok(out);
-      }
-      out.removed.push(label);
-      app.bus.append({
-        kind: "repo.deleted",
-        actorId: admin.value.id,
-        payload: { repo: label, by: "org_retired" },
-      });
-    }
-    retireOrg(app.db, org.id, new Date().toISOString());
+    out.failed = await removeOwnedRepos(app, admin.value, org, out.removed);
+    if (out.failed !== null) return ok(out);
+    const at = new Date().toISOString();
+    retireOrg(app.db, org.id, at);
+    scrubAccount(app.db, org.id, at);
     out.removed.push(org.username);
     app.bus.append({
       kind: "org.retired",
@@ -213,16 +229,8 @@ export async function retireAndRemoveAccount(
       payload: { org: org.username, with: user.username },
     });
   }
-  for (const repo of listReposOwnedBy(app.db, user.id)) {
-    if (runtime !== undefined) await runtime.teardownAll(repo.id);
-    const label = `${user.username}/${repo.name}`;
-    const deleted = await destroyRepo(app.db, app.reposRoot, repo);
-    if (!deleted.ok) {
-      out.failed = label;
-      return ok(out);
-    }
-    out.removed.push(label);
-  }
+  out.failed = await removeOwnedRepos(app, admin.value, user, out.removed);
+  if (out.failed !== null) return ok(out);
   scrubAccount(app.db, user.id, new Date().toISOString());
   out.removed.push(user.username);
   app.bus.append({
@@ -252,12 +260,8 @@ export async function removeAccount(
   setSuspended(app.db, user.id, new Date().toISOString());
   dropCredentials(app.db, user.id);
   await quiet(app, admin.value, user);
-  const runtime = appsRuntime(app);
-  for (const repo of listReposOwnedBy(app.db, user.id)) {
-    if (runtime !== undefined) await runtime.teardownAll(repo.id);
-    const deleted = await destroyRepo(app.db, app.reposRoot, repo);
-    if (!deleted.ok) return deleted;
-  }
+  if ((await removeOwnedRepos(app, admin.value, user)) !== null)
+    return err("delete_failed");
   scrubAccount(app.db, user.id, new Date().toISOString());
   app.bus.append({
     kind: "account.removed",

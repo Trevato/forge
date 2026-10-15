@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, renameSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,7 @@ import { getAgent } from "../src/core/agents.ts";
 import { listEvents } from "../src/core/events.ts";
 import { addKey, fingerprint, parseAuthorizedKey } from "../src/core/keys.ts";
 import { repoDir } from "../src/git/repos.ts";
+import { listReposOwnedBy } from "../src/core/repos.ts";
 import { createRun, getRun } from "../src/core/runs.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -512,6 +513,46 @@ describe("accounts: the owner sees, suspends and removes", () => {
     expect(kinds).toContain("org.retired");
     expect(kinds).toContain("account.removed");
     expect(kinds).toContain("repo.deleted");
+  });
+
+  test("a retirement that stops partway says what went, keeps the rest, and a second call finishes", async () => {
+    const { user: boss } = await outsider("sam");
+    const org = createOrg(app.db, "samco", boss.id);
+    if (!org.ok) throw new Error(org.error);
+    for (const name of ["one", "two"]) {
+      const made = await createRepo(app, org.value, { name });
+      if (!made.ok) throw new Error(made.error);
+    }
+    const order = listReposOwnedBy(app.db, org.value.id).map((r) => r.name);
+    const [first, second] = order as [string, string];
+    // The second repository's directory is gone, so it cannot be removed.
+    const secondDir = repoDir(app.reposRoot, "samco", second);
+    const parked = `${secondDir}.parked`;
+    renameSync(secondDir, parked);
+    const del = () =>
+      api("/api/v1/admin/accounts/sam", {
+        method: "DELETE",
+        token: ownerToken,
+        body: JSON.stringify({ retireOrgs: true, confirm: true }),
+      });
+
+    const failed = await del();
+    expect(failed.status).toBe(500);
+    const result = (await failed.json()) as { failed: string; removed: string[] };
+    expect(result.failed).toBe(`samco/${second}`);
+    expect(result.removed).toEqual([`samco/${first}`]);
+    expect(existsSync(repoDir(app.reposRoot, "samco", first))).toBe(false);
+    expect(getUserByName(app.db, "samco")?.removedAt).toBeNull();
+    expect(getUserByName(app.db, "sam")?.removedAt).toBeNull();
+    expect(getUserByName(app.db, "sam")?.suspendedAt).not.toBeNull();
+
+    // Call again: the repository's row went with the first attempt, so the
+    // job finishes.
+    const again = await del();
+    expect(again.status).toBe(200);
+    expect(listReposOwnedBy(app.db, org.value.id)).toEqual([]);
+    expect(getUserByName(app.db, "samco")?.removedAt).not.toBeNull();
+    expect(getUserByName(app.db, "sam")?.removedAt).not.toBeNull();
   });
 
   test("an account with nothing in it can be removed too", async () => {
