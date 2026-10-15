@@ -17,10 +17,11 @@ import {
 import { getAppByRepo, type AppRecord } from "../../core/apps.ts";
 import { listPulls, type Pull } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
-import { listRuns } from "../../core/runs.ts";
+import { latestRunsForIssues, listRuns, type Run } from "../../core/runs.ts";
 import type { Ctx } from "../../http/context.ts";
 import { readRunLogTail } from "../../runs/log.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
+import { testsClause } from "./words.ts";
 import { html, when, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
 import {
@@ -81,6 +82,17 @@ function previewBadge(env: EnvStatus | undefined): Html {
   return badge(word, { tone, icon: ic });
 }
 
+/** The tests clause for a serving preview, only when the green check is of
+ * the very commit being served — a stale check says nothing. */
+export function previewVerdict(
+  env: EnvStatus | undefined,
+  check: Run | undefined,
+): string | undefined {
+  if (env?.state !== "running" || check?.state !== "ok") return undefined;
+  if (check.commitOid !== env.commitOid) return undefined;
+  return testsClause(check) || undefined;
+}
+
 /**
  * One open pull's preview, as one row: its host is the click, its state is
  * the badge, and its meta line says what the change page's Preview card
@@ -102,6 +114,7 @@ function previewRow(
   pull: Pull,
   env: EnvStatus | undefined,
   writer: boolean,
+  check: Run | undefined,
 ): Html {
   const href =
     runtime === undefined
@@ -113,7 +126,9 @@ function previewRow(
       : runtime.urlFor(record, previewEnv(pull.number)).replace(/^https?:\/\//, "");
   const bits: Html[] = [html`#${pull.number} ${pull.title}`];
   if (env !== undefined) bits.push(...envLine(base, env));
-  const say = env?.error ?? env?.failedDeploy?.error ?? env?.note;
+  // A serving preview whose deploy finished green says what its tests did.
+  const say =
+    env?.error ?? env?.failedDeploy?.error ?? env?.note ?? previewVerdict(env, check);
   if (say) bits.push(html`${say}`);
   const asleep = env === undefined ? null : dormantNote(env);
   if (asleep !== null) bits.push(asleep);
@@ -160,6 +175,7 @@ function previewsPanel(
   openPulls: readonly Pull[],
   envs: readonly EnvStatus[],
   writer: boolean,
+  checks: ReadonlyMap<string, Run>,
 ): Html | null {
   if (openPulls.length === 0) return null;
   const byPull = new Map(
@@ -169,7 +185,7 @@ function previewsPanel(
   );
   return listCard(
     openPulls.map((p) =>
-      previewRow(base, runtime, record, p, byPull.get(p.number), writer),
+      previewRow(base, runtime, record, p, byPull.get(p.number), writer, checks.get(p.id)),
     ),
     {
       head: html`${icon("rocket")}
@@ -274,7 +290,8 @@ export function appPanels(
   const runtime = appsRuntime(ctx.app);
   const envs: EnvStatus[] = envsFor(ctx.app, ctx.auth.user, record);
   const writer = canSeeOwnerFacts(db, repo, ctx.auth.user);
-  const previews = previewsPanel(base, runtime, record, openPulls, envs, writer);
+  const checks = latestRunsForIssues(db, openPulls.map((p) => p.id));
+  const previews = previewsPanel(base, runtime, record, openPulls, envs, writer, checks);
   const production = envs.find((e) => e.env === "production");
   const url = runtime?.urlFor(record, "production");
   const tail = productionTail(ctx, repo, production, writer);

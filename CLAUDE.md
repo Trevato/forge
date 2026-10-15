@@ -13,7 +13,9 @@ isn't understood yet.
 
 1. **Zero runtime dependencies.** `package.json` `dependencies` is empty and
    stays empty. Never `bun add` a runtime dep. Need a 20-line utility? Write it
-   as a 20-line file. `devDependencies` is types + `tsc` only.
+   as a 20-line file. `devDependencies` is types + `tsc` only (`typescript` is
+   the native 7.x checker; `typescript-api` is 5.x for `scripts/hollow.ts`'s
+   AST walk).
 2. **Bun, not npm/yarn/pnpm.** Install, run, test, build all go through `bun`.
    The runtime provides everything: `Bun.serve`, `Bun.spawn`, `bun:sqlite`,
    `Bun.password` (argon2), WebCrypto, gzip.
@@ -248,7 +250,7 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   don't invent a new shape.
 - **Add a schema change:** add one file to `core/migrations/`, named by the
   UTC second you wrote it — `$(date -u +%Y%m%d%H%M%S)-what-it-adds.ts`,
-  whose default export is the SQL — never the next number: `0001`–`0090`
+  whose default export is the SQL — never the next number: `0001`–`0091`
   are the numbered history, and a shared next number is what parallel pulls
   collided on (#1837). Files run in name order, once each, recognised by a
   hash of their text in `schema_migration` (`kernel/migrate.ts`), so two

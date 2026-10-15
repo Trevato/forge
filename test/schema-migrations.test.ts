@@ -312,7 +312,7 @@ describe("a migration is a file named by a sortable id (#1837)", () => {
     // A digest of every numbered migration's recorded id, in order: what
     // a database already applied is recognised exactly as before the split.
     expect(sha256(migrations.slice(0, NUMBERED).map(migrationId).join("\n"))).toBe(
-      "967a2e3ebb67460dc74cfcea5c3ae592555df401261e2468691019e5d39ba627",
+      "0d6d9f86125ddb1e0929090cd2842bde09fbc804fea4fa202d684dbc75500302",
     );
     // Every one since is stamped: a new numbered file would be the next
     // number two builders fight over.

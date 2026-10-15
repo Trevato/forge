@@ -71,6 +71,10 @@ import {
   type CellSpec,
 } from "../apps/contain.ts";
 import { summariseCheckFailure } from "./summary.ts";
+import type { Result } from "../kernel/result.ts";
+import { placementFromEnv, type Placement } from "./placement.ts";
+import { runJobStep } from "./job_step.ts";
+import type { JobOptions } from "../cluster/jobs.ts";
 import type { CheckDetail } from "../core/runs.ts";
 
 const log = createLog("checks");
@@ -93,6 +97,13 @@ export interface ChecksOptions {
    * @default 0
    */
   readonly drainMs?: number | undefined;
+  /**
+   * Where a check's commands run (`checks/placement.ts`). @default from the
+   * environment: `process`.
+   */
+  readonly placement?: Placement | undefined;
+  /** The kube client a `job` placement speaks through; tests stand one in. */
+  readonly job?: JobOptions | undefined;
 }
 
 export interface ChecksHandle {
@@ -198,6 +209,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   const capacity = (): number =>
     capacityCount(app.db, "checks.concurrency", options.concurrency ?? 1);
   const gate = new Gate(capacity());
+  const placement = options.placement ?? placementFromEnv();
   /** Full gates on land in flight: not slots in the queue, but stopped with it. */
   const gates = new Set<AbortController>();
   const inFlight = new Map<
@@ -657,15 +669,29 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     // The check is repository code: it runs in a cell of its own
     // (`apps/contain.ts`), its checkout and a home its only places to write,
     // the forge, the registry and what it declared its only way out.
-    const cells = await cellsAvailable();
+    const job = placement.mode === "job" ? placement : undefined;
     if (x.runId !== undefined)
-      noteRunProgress(app.db, x.runId, {
-        sandbox: { enforced: cells.ok, note: cells.ok ? "" : cells.reason },
-      });
-    if (!cells.ok)
-      write(`uncontained here: ${cells.reason}; the check runs unrestricted`);
+      noteRunProgress(app.db, x.runId, { placement: placement.mode });
+    // A Job is its own boundary: no cell here, the cluster holds it.
+    const cells = job === undefined ? await cellsAvailable() : undefined;
+    if (cells !== undefined) {
+      if (x.runId !== undefined)
+        noteRunProgress(app.db, x.runId, {
+          sandbox: { enforced: cells.ok, note: cells.ok ? "" : cells.reason },
+        });
+      if (!cells.ok)
+        write(`uncontained here: ${cells.reason}; the check runs unrestricted`);
+    } else {
+      // The cluster holds a Job, but not as a cell does: the egress a
+      // check declared is not enforced here, and the run says so.
+      if (x.runId !== undefined)
+        noteRunProgress(app.db, x.runId, {
+          sandbox: { enforced: false, note: "egress not enforced on a cluster job" },
+        });
+      write("placement: job");
+    }
     const home = `${dir}.home`;
-    const cell: CellSpec | undefined = cells.ok
+    const cell: CellSpec | undefined = cells?.ok
       ? {
           dir,
           writable: [],
@@ -701,36 +727,55 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         // plain processes here — as they do on a runner without bwrap.
         FORGE_CELLS: "off",
       });
-      if (manifest.install !== null) {
-        const installed = await runStep("install", manifest.install, {
-          cwd: dir,
+      let ran: Result<void, string>;
+      const checkLines: string[] = [];
+      if (job !== undefined) {
+        ran = await runJobStep(job, {
+          runId: run.id,
+          dir,
+          commands: manifest.install === null ? [command] : [manifest.install, command],
           env,
           log: write,
+          output: checkLines,
+          signal,
+          timeoutMs: manifest.timeout * 1000,
+          limits: resolveLimits("step", manifest.limits),
+          onNode: (node) => {
+            if (x.runId !== undefined) noteRunProgress(app.db, x.runId, { node });
+          },
+          ...(options.job === undefined ? {} : { options: options.job }),
+        });
+      } else {
+        if (manifest.install !== null) {
+          const installed = await runStep("install", manifest.install, {
+            cwd: dir,
+            env,
+            log: write,
+            signal,
+            timeoutMs: manifest.timeout * 1000,
+            cell,
+          });
+          if (!installed.ok) return { ok: false, error: installed.error };
+        }
+        // The check step's own lines are kept beside what `write` already
+        // logs, so a failure can be summarised once here — never by reading
+        // the log back, on this run or any later render of it. `runStep`
+        // echoes the command as its first line before any output of the
+        // command's own; that echo is not output to summarise from.
+        let sawEcho = false;
+        ran = await runStep("check", command, {
+          cwd: dir,
+          env,
+          log: (line) => {
+            if (sawEcho) checkLines.push(line);
+            sawEcho = true;
+            write(line);
+          },
           signal,
           timeoutMs: manifest.timeout * 1000,
           cell,
         });
-        if (!installed.ok) return { ok: false, error: installed.error };
       }
-      // The check step's own lines are kept beside what `write` already
-      // logs, so a failure can be summarised once here — never by reading
-      // the log back, on this run or any later render of it. `runStep`
-      // echoes the command as its first line before any output of the
-      // command's own; that echo is not output to summarise from.
-      const checkLines: string[] = [];
-      let sawEcho = false;
-      const ran = await runStep("check", command, {
-        cwd: dir,
-        env,
-        log: (line) => {
-          if (sawEcho) checkLines.push(line);
-          sawEcho = true;
-          write(line);
-        },
-        signal,
-        timeoutMs: manifest.timeout * 1000,
-        cell,
-      });
       if (!ran.ok) {
         const { summary, detail } = summariseCheckFailure(
           checkLines,

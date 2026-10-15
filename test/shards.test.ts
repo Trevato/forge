@@ -508,15 +508,25 @@ describe("the gate audit alone, first in the check", () => {
     expect(green.err).toBe("");
   }, 30_000);
 
-  test("forge.json audits before tsc, and tsc runs incremental from the check's cache", async () => {
+  test("forge.json audits before tsc, and the native tsc runs incremental from the check's cache", async () => {
     const check = parseCheck(readFileSync(new URL("../forge.json", import.meta.url), "utf8"), undefined);
     if (!check.ok || check.value === undefined) throw new Error("no check");
     for (const command of [check.value.run, check.value.fast ?? ""]) {
       expect(command.startsWith("bun scripts/gate.ts && ")).toBe(true);
-      expect(command.indexOf("scripts/gate.ts")).toBeLessThan(command.indexOf("tsc.js"));
-      expect(command).toContain("--max-old-space-size=2048");
+      // TypeScript 7 (#1864): a Go binary, so its heap bound is GOMEMLIMIT, not node's.
+      expect(command).toContain(" && GOMEMLIMIT=2GiB ./node_modules/typescript/bin/tsc --noEmit ");
+      expect(command.indexOf("scripts/gate.ts")).toBeLessThan(command.indexOf("bin/tsc"));
       expect(command).toContain(`--incremental --tsBuildInfoFile ${CHECK_CACHE}/tsc.tsbuildinfo`);
     }
+  });
+
+  test("`typescript` is the native 7.x checker; 5.x stays only as the compiler API hollow.ts walks", async () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    expect(pkg.dependencies ?? {}).toEqual({});
+    expect(pkg.devDependencies["typescript"]).toMatch(/^\^7\./);
+    expect(pkg.devDependencies["typescript-api"]).toMatch(/^npm:typescript@\^5\./);
+    const checker = await import("typescript/package.json");
+    expect(checker.version).toMatch(/^7\./);
   });
 });
 

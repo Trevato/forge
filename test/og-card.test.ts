@@ -56,6 +56,16 @@ describe("og card", () => {
     wellFormed(renderCard({ kind: "app", title: "" }));
   });
 
+  test("XML 1.0's Char ranges keep both ends and drop what lies between", () => {
+    // https://www.w3.org/TR/xml/#charsets — #x20-#xD7FF | #xE000-#xFFFD | #x10000-#x10FFFF
+    const kept = "\u0020\uD7FF\uE000\uFFFD\u{10000}\u{10FFFF}";
+    for (const dropped of ["\u0001", "\u001F", "\uD800", "\uDFFF", "\uFFFE", "\uFFFF"]) {
+      const svg = renderCard({ kind: "repo", title: `a${kept}${dropped}b` });
+      wellFormed(svg);
+      expect(svg).toContain(`a${kept}b`);
+    }
+  });
+
   test("fit and escapeXml", () => {
     expect(fit("short", 30, 1000)).toBe("short");
     expect(fit("a".repeat(200), 30, 300).endsWith("…")).toBe(true);
