@@ -25,6 +25,7 @@ import { field, readForm } from "../form.ts";
 import { html, raw, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { btn, card, icon, selectField, field as formField } from "../ui.ts";
+import { prefill, originHost } from "./migrate-prefill.ts";
 import { hostLabel } from "./origins.ts";
 
 interface MigrateValues {
@@ -41,6 +42,7 @@ interface MigrateValues {
 interface OriginChoices {
   readonly label: string;
   readonly id: string;
+  readonly host: string;
   readonly repos: readonly OriginRepoRow[];
 }
 
@@ -52,6 +54,7 @@ async function originChoices(ctx: Ctx): Promise<OriginChoices[]> {
     if (!listed.ok || listed.value.length === 0) continue;
     out.push({
       id: origin.id,
+      host: originHost(origin.webUrl),
       label: `${origin.login} @ ${hostLabel(origin.webUrl)}`,
       repos: listed.value,
     });
@@ -74,6 +77,7 @@ function migrateForm(
   values: MigrateValues,
   origins: readonly OriginChoices[],
   error?: string,
+  unmatched: readonly string[] = [],
 ): Html {
   const user = ctx.auth.user!;
   const writeOrgs = listOrgsForUser(ctx.app.db, user.id).filter((org) =>
@@ -122,6 +126,12 @@ function migrateForm(
     ${pageHead("Migrate a repository", {
       sub: "A one-time clone of the whole history — every branch, every tag — into a repository that lives here from now on. Nothing is written back to where it came from.",
     })}
+    ${unmatched.length === 0
+      ? null
+      : html`<p class="muted small mb" id="prefill-unmatched">
+          ${icon("globe")} Ignored, nothing here matches:
+          ${unmatched.join(", ")}
+        </p>`}
     ${card(
       html`<form method="post" action="/migrate">
         <h3 class="mb">Source</h3>
@@ -256,12 +266,13 @@ function show(
   origins: readonly OriginChoices[],
   error?: string,
   status = 200,
+  unmatched: readonly string[] = [],
 ): Response {
   return page(
     {
       ctx,
       title: "Migrate",
-      body: migrateForm(ctx, values, origins, error),
+      body: migrateForm(ctx, values, origins, error, unmatched),
       scriptJs: migrateJs,
     },
     status,
@@ -272,18 +283,30 @@ function show(
 export async function migratePage(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const q = ctx.url.searchParams;
+  const origins = await originChoices(ctx);
+  const agents = listAllAgents(ctx.app, ctx.auth.user);
+  const linked = prefill(
+    { from: q.get("from"), crew: q.get("crew") },
+    origins,
+    agents.ok ? agents.value.map((a) => a.user.username) : [],
+  );
   return show(
     ctx,
     {
-      source: q.get("source") ?? "",
+      source: linked.repo
+        ? pickValue(linked.repo.originId, linked.repo.fullName)
+        : (q.get("source") ?? ""),
       url: q.get("url") ?? "",
       owner: q.get("owner") ?? ctx.auth.user.username,
-      name: q.get("name") ?? "",
+      name: q.get("name") ?? (linked.repo?.fullName.split("/").pop() ?? ""),
       visibility: "private",
-      agent: "",
+      agent: linked.agent ?? "",
       autonomous: false,
     },
-    await originChoices(ctx),
+    origins,
+    undefined,
+    200,
+    linked.unmatched,
   );
 }
 
