@@ -30,11 +30,15 @@ import { getPull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
-import { createUser, type User } from "../src/core/users.ts";
+import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { addComment, setIssueState } from "../src/actions/issues.ts";
 import {
   autonomyStatus,
   driveRepo,
+  holdWhy,
+  holdWords,
+  plannerHold,
   landIfGreen,
   pickBuilder,
   sweepGreen,
@@ -110,15 +114,15 @@ describe("a repository on its own", () => {
       if (!agent.ok) throw new Error(String(agent.error));
       expect(addToCrew(app, alice, repo, name).ok).toBe(true);
     }
-    scout = (await import("../src/core/users.ts")).getUserByName(
+    scout = getUserByName(
       app.db,
       "scout",
     )!;
-    mason = (await import("../src/core/users.ts")).getUserByName(
+    mason = getUserByName(
       app.db,
       "mason",
     )!;
-    atlas = (await import("../src/core/users.ts")).getUserByName(
+    atlas = getUserByName(
       app.db,
       "atlas",
     )!;
@@ -664,7 +668,7 @@ describe("the slot count is the rule the loop enforces", () => {
       if (!agent.ok) throw new Error(String(agent.error));
       expect(addToCrew(app, alice, repo, name).ok).toBe(true);
     }
-    const byName = (await import("../src/core/users.ts")).getUserByName;
+    const byName = getUserByName;
     builder = byName(app.db, "brick")!;
     reviewer = byName(app.db, "quill")!;
     planner = byName(app.db, "chart")!;
@@ -748,5 +752,132 @@ describe("the crew in a preview", () => {
       else process.env.FORGE_APP_ENV = before;
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the planner is held while nothing lands or the plate is full", () => {
+  let dataDir: string;
+  let app: App;
+  let alice: User;
+  let repo: Repo;
+  let planner: User;
+  const fresh = () => getRepoById(app.db, repo.id)!;
+  const direction = () => getIssueById(app.db, fresh().directionIssueId!)!;
+  let n = 0;
+  const closedPull = async (merged: boolean) => {
+    n += 1;
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: `feature/p${n}`,
+      base: "main",
+      message: `P${n}`,
+      files: [{ path: `p${n}.ts`, content: `export const p = ${n};\n` }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: `P${n}`,
+      baseBranch: "main",
+      headBranch: `feature/p${n}`,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const closed = setIssueState(app, alice, repo, opened.value, "closed");
+    if (!closed.ok) throw new Error(String(closed.error));
+    if (merged)
+      app.db
+        .query("UPDATE pull SET merged_at = ?2 WHERE issue_id = ?1")
+        .run(opened.value.id, new Date().toISOString());
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-held-"));
+    app = createApp({ dataDir, port: 0 });
+    const a = await createUser(app.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const made = await createRepo(app, alice, { name: "held", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# held\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    for (const name of ["brick", "chart"]) {
+      const agent = await createAgent(app, alice, { username: name });
+      if (!agent.ok) throw new Error(String(agent.error));
+      expect(addToCrew(app, alice, repo, name).ok).toBe(true);
+    }
+    const byName = getUserByName;
+    planner = byName(app.db, "chart")!;
+    setCrewRole(app.db, repo.id, planner.id, "planner");
+    const on = await updateRepoSettings(app, alice, repo, {
+      autonomy: "autonomous",
+      autonomyDirection: "Weave the loom",
+      autonomyCeilingUsd: 10,
+      autonomySlots: 1,
+      autonomyBy: alice.id,
+    });
+    expect(on.ok).toBe(true);
+  });
+
+  afterAll(async () => {
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("nothing landed with a pull closed unmerged holds it; a merge releases it; the owner's steer goes through", async () => {
+    // Nothing closed yet: a quiet repository is not a stuck one.
+    expect(plannerHold(app, fresh())).toBeNull();
+    await closedPull(false);
+    const hold = plannerHold(app, fresh());
+    expect(hold?.kind).toBe("nothing landed");
+    expect(holdWhy(hold!)).toMatch(/^nothing landed since \d{4}-\d\d-\d\d$/);
+    expect(holdWords(hold!)).toMatch(/^Planning paused: nothing has landed since \w{3} \d+$/);
+    await driveRepo(app, fresh());
+    expect(direction().assigneeId).toBeNull();
+    // The owner steers on the direction issue: never held.
+    const said = addComment(app, alice, fresh(), direction(), "Try the shuttle first");
+    expect(said.ok).toBe(true);
+    expect(plannerHold(app, fresh())).toBeNull();
+    // A reader's or an agent's word is not a steer.
+    app.db.query("DELETE FROM comment WHERE issue_id = ?1").run(direction().id);
+    expect(plannerHold(app, fresh())?.kind).toBe("nothing landed");
+    // A pull merges: the hold lifts and the planner is asked.
+    await closedPull(true);
+    expect(plannerHold(app, fresh())).toBeNull();
+    await driveRepo(app, fresh());
+    expect(direction().assigneeId).toBe(planner.id);
+  });
+
+  test("a merge older than 48 h does not release it, and a closed pull older than that does not hold", async () => {
+    const day3 = new Date(Date.now() + 72 * 60 * 60_000);
+    expect(plannerHold(app, fresh(), day3)).toBeNull();
+    await closedPull(false);
+    // Three days on, the old merge is stale; the unmerged pull is too.
+    expect(plannerHold(app, fresh(), day3)).toBeNull();
+    // Two days after the last merge, with a fresh refusal: held.
+    const day2 = new Date(Date.now() + 49 * 60 * 60_000);
+    app.db.query("UPDATE issue SET closed_at = ?1 WHERE kind = 'pull'").run(new Date(day2.getTime() - 60_000).toISOString());
+    expect(plannerHold(app, fresh(), day2)?.kind).toBe("nothing landed");
+  });
+
+  test("more than slots × 3 ready unassigned issues is a full plate, and it drains", () => {
+    app.db.query("DELETE FROM issue WHERE kind = 'pull'").run();
+    const made: Issue[] = [];
+    for (let i = 0; i < 4; i++) {
+      const o = openIssue(app, alice, fresh(), { title: `Thread ${i}` });
+      if (!o.ok) throw new Error(String(o.error));
+      made.push(o.value);
+    }
+    const hold = plannerHold(app, fresh());
+    expect(hold).toEqual({ kind: "plate full", ready: 4 });
+    expect(holdWhy(hold!)).toBe("plate full (4 ready)");
+    expect(setIssueState(app, alice, fresh(), made[0]!, "closed").ok).toBe(true);
+    expect(plannerHold(app, fresh())).toBeNull();
   });
 });

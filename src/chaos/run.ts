@@ -12,9 +12,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FAULTS, type Fault } from "./faults.ts";
-import { INVARIANTS } from "./invariants.ts";
+import { INVARIANTS, type Invariant } from "./invariants.ts";
 import { fileReport, type Finding } from "./report.ts";
-import { bootWorld } from "./world.ts";
+import { bootWorld, type World } from "./world.ts";
 
 /** mulberry32: a seed in, the same sequence out. */
 export function rng(seed: number): () => number {
@@ -35,18 +35,33 @@ export interface Night {
   readonly log: readonly string[];
 }
 
+export interface Options {
+  /** A world already booted (the caller closes it); default is a fresh one per night. */
+  readonly world?: World;
+  readonly invariants?: readonly Invariant[];
+}
+
 export async function chaos(
   seed: number,
   rounds = FAULTS.length,
   faults: readonly Fault[] = FAULTS,
+  options: Options = {},
 ): Promise<Night> {
+  const invariants = options.invariants ?? INVARIANTS;
   const rand = rng(seed);
   const root = mkdtempSync(join(tmpdir(), "forge-chaos-"));
   const log: string[] = [];
   const findings: Finding[] = [];
   const order: string[] = [];
   try {
-    const world = await bootWorld(join(root, "data"));
+    const world = options.world ?? (await bootWorld(join(root, "data")));
+    const assertAll = async (which: readonly Invariant[], fault: string): Promise<void> => {
+      for (const invariant of which) {
+        const broken = await invariant.check(world).catch((e) => [`check threw: ${String(e)}`]);
+        log.push(`  ${broken.length === 0 ? "holds" : "BROKEN"}: ${invariant.name}`);
+        if (broken.length > 0) findings.push({ fault, broken: broken.map((b) => `${invariant.name}: ${b}`) });
+      }
+    };
     try {
       for (let i = 0; i < rounds; i++) {
         const fault = faults[Math.floor(rand() * faults.length)]!;
@@ -59,14 +74,11 @@ export async function chaos(
           log.push(`  failed: ${String(error)}`);
           continue;
         }
-        for (const invariant of INVARIANTS) {
-          const broken = await invariant.check(world).catch((e) => [`check threw: ${String(e)}`]);
-          log.push(`  ${broken.length === 0 ? "holds" : "BROKEN"}: ${invariant.name}`);
-          if (broken.length > 0) findings.push({ fault: fault.name, broken: broken.map((b) => `${invariant.name}: ${b}`) });
-        }
+        await assertAll(invariants.filter((i) => i.final !== true), fault.name);
       }
+      if (order.length > 0) await assertAll(invariants.filter((i) => i.final === true), order[order.length - 1]!);
     } finally {
-      world.app.close();
+      if (options.world === undefined) world.app.close();
     }
   } finally {
     rmSync(root, { recursive: true, force: true });

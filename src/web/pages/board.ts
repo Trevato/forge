@@ -59,6 +59,8 @@ import { listActiveRuns, listRuns, type Run } from "../../core/runs.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import {
   autonomyStatus,
+  holdWords,
+  plannerHold,
   plannerDeclines,
   startOfTodayUtc,
   truncateAtWord,
@@ -928,6 +930,9 @@ function today(ctx: Ctx, scope: BoardScope): Html {
       }).filter((p) => p.mergedAt !== null && p.mergedAt >= since).length;
       const share = s.ceilingUsd > 0 ? s.spentTodayUsd / s.ceilingUsd : 0;
       const review = reviewWords(reviewStats(db, repo.id, since));
+      const held =
+        repo.autonomy === "autonomous" ? plannerHold(ctx.app, repo, now) : null;
+      const holdLine = held === null ? null : holdWords(held);
       const note =
         s.paused === "ceiling"
           ? "at its ceiling until 00:00 UTC"
@@ -957,6 +962,12 @@ function today(ctx: Ctx, scope: BoardScope): Html {
           <span class="board-app-week"
             >${perShippedWords(week.get(repo.id))} this week</span
           >
+          ${when(
+            holdLine !== null,
+            () => html`<span class="board-app-week board-app-hold"
+              >${holdLine}</span
+            >`,
+          )}
           ${when(
             review !== null,
             () => html`<span class="board-app-week board-app-review"

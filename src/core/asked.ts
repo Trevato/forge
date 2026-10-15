@@ -19,6 +19,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { alreadyDone } from "./done_on_main.ts";
 import { getIssuesByIds, type Issue } from "./issues.ts";
 import { closesFromBody } from "./pulls.ts";
 import { getRepo, listReposWritableTo, type Repo } from "./repos.ts";
@@ -53,6 +54,8 @@ export interface Asked {
   /** The crew's last word on it: its newest agent run or agent comment, on
    * the ask or a pull that closes it. Null when the crew never touched it. */
   readonly lastCrewAt: string | null;
+  /** The commits the crew found it done by on the base, while it waits for the asker to close it; empty otherwise. */
+  readonly doneBy: readonly string[];
 }
 
 export type AskedShow = "all" | "unshipped" | "flagged";
@@ -78,7 +81,7 @@ const DAY = 24 * 60 * 60 * 1000;
 const SCAN_STEP = 500;
 
 /** An ask with everything but the crew's last activity, which is read per page. */
-type Scanned = Omit<Asked, "lastCrewAt">;
+type Scanned = Omit<Asked, "lastCrewAt" | "doneBy">;
 
 const shown = (a: Scanned, show: AskedShow): boolean =>
   show === "all" ||
@@ -277,13 +280,17 @@ export function askedIn(
     db,
     page.flatMap((a) => [a.issue.id, ...a.pulls.map((p) => p.id)]),
   );
+  const done = alreadyDone(
+    db,
+    page.filter((a) => a.issue.state === "open").map((a) => a.issue.id),
+  );
   return page.map((a) => {
     let at: string | null = last.get(a.issue.id) ?? null;
     for (const p of a.pulls) {
       const t = last.get(p.id);
       if (t !== undefined && (at === null || t > at)) at = t;
     }
-    return { ...a, lastCrewAt: at };
+    return { ...a, lastCrewAt: at, doneBy: done.get(a.issue.id) ?? [] };
   });
 }
 
@@ -409,6 +416,7 @@ export function askedJson(a: Asked) {
     stale: a.stale,
     flagged: a.flagged,
     lastCrewAt: a.lastCrewAt,
+    doneBy: a.doneBy,
     pulls: a.pulls.map((p) => ({
       number: p.number,
       title: p.title,

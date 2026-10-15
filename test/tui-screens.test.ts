@@ -221,6 +221,24 @@ describe("the terminal UI, against a real forge", () => {
     h.stop();
   });
 
+  test("the dashboard says why planning is paused on an autonomous app, and only there", async () => {
+    const made = await createRepo(forge, alice, { name: "loom", visibility: "public" });
+    if (!made.ok) throw new Error("repo creation failed");
+    for (let i = 0; i < 4; i++) openIssue(forge, alice, made.value, { title: `Thread ${i}` });
+    // Assisted: the same plate, but nothing is planning, so nothing is held.
+    forge.db.query("UPDATE repo SET autonomy = 'assisted' WHERE id = ?1").run(made.value.id);
+    let h = boot(forge, asAlice());
+    await h.settle();
+    expect(h.text()).not.toContain("Planning paused");
+    h.stop();
+    forge.db.query("UPDATE repo SET autonomy = 'autonomous' WHERE id = ?1").run(made.value.id);
+    h = boot(forge, asAlice());
+    await h.settle();
+    expect(h.text()).toContain("Planning paused: 4 issues are ready and waiting");
+    h.stop();
+    forge.db.query("UPDATE repo SET autonomy = 'off' WHERE id = ?1").run(made.value.id);
+  });
+
   test("filter-as-you-type narrows the repository list", async () => {
     const h = boot(forge, asAlice());
     await h.settle();

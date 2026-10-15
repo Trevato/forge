@@ -23,12 +23,14 @@ import { issueMayRun } from "../core/pull_trust.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
   cancelRun,
+  cancelRunsForPull,
   checksForHead,
   claimRun,
   createRun,
   finishRun,
   listActive,
   noteRunProgress,
+  overranBefore,
   requeueCheck,
   REQUEUED_SUMMARY,
   sweepAbandonedChecks,
@@ -41,6 +43,7 @@ import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
 import { getIssueById } from "../core/issues.ts";
 import { repoDir } from "../git/repos.ts";
+import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
 import { transact } from "../kernel/db.ts";
 import { createLog } from "../kernel/log.ts";
 import { holdLease } from "../runs/lease.ts";
@@ -72,6 +75,8 @@ export interface ChecksOptions {
   readonly concurrency?: number | undefined;
   /** The forge's public URL, told to the check as `FORGE_URL`. */
   readonly forgeUrl: string;
+  /** How long a check may run before it is killed. @default BUDGETS.gate */
+  readonly budgetMs?: number | undefined;
 }
 
 export interface ChecksHandle {
@@ -356,7 +361,45 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       const write = (line: string): void =>
         appendRunLog(app.config.dataDir, run.id, line);
       const started = Date.now();
-      const outcome = await check(claimed, repo, write, signal).finally(lease);
+      // The budget: past it the check is aborted, whatever it is doing.
+      const limit = options.budgetMs ?? BUDGETS.gate;
+      const budget = new AbortController();
+      let overran = false;
+      const forward = (): void => budget.abort();
+      signal.addEventListener("abort", forward, { once: true });
+      const clock = setTimeout(() => {
+        overran = true;
+        budget.abort();
+      }, limit);
+      const outcome = await check(claimed, repo, write, budget.signal).finally(
+        () => {
+          clearTimeout(clock);
+          signal.removeEventListener("abort", forward);
+          lease();
+        },
+      );
+      if (overran) {
+        const summary = budgetSummary(
+          "a full gate",
+          Date.now() - started,
+          limit,
+        );
+        write(summary);
+        if (!overranBefore(app.db, claimed)) {
+          const moved = requeueCheck(app.db, run.id, undefined, summary);
+          if (moved) {
+            announceRun(app, moved.again, run.actorId ?? undefined);
+            return;
+          }
+        }
+        // The second overrun: a failure, and the card the vitals carry.
+        const failed = finishRun(app.db, run.id, {
+          state: "failed",
+          summary,
+        });
+        if (failed) announceRun(app, failed);
+        return;
+      }
       if (!outcome.ok && stopped && signal.aborted) {
         // Cut off by this forge stopping, not by the check: the same check
         // goes back on the queue, and the forge that carries on runs it.
@@ -735,6 +778,24 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
             pull.id,
             actor,
           );
+        return;
+      }
+      // Landed or closed: nothing left to check, so nothing waits in the lane.
+      case "pull.merged":
+      case "pull.closed": {
+        const number = event.payload["number"];
+        if (typeof number !== "number") return;
+        const pull = getPull(app.db, repo.id, number);
+        if (!pull) return;
+        const cancelled = cancelRunsForPull(
+          app.db,
+          pull.id,
+          event.kind === "pull.merged" ? "pull landed" : "pull closed",
+        );
+        for (const run of cancelled) {
+          inFlight.get(run.id)?.abort.abort();
+          announceRun(app, run);
+        }
         return;
       }
       default:

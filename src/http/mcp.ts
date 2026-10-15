@@ -37,6 +37,15 @@ import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { clientRows } from "../spawn/clients.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
+import { contextNote, parseContext } from "../actions/tell_context.ts";
+import {
+  CARD_KINDS,
+  CARD_MIME,
+  CARD_OF_TOOL,
+  CARD_SHELL,
+  CARD_URI,
+  cardFor,
+} from "../web/studio/cards.ts";
 import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
 import { readReturns, reportSpend } from "../actions/returns.ts";
 import {
@@ -59,7 +68,7 @@ import { getIssue, getIssueById, listOpenAgentPullsVisibleTo } from "../core/iss
 import { waitsForPerson } from "../crew/review.ts";
 import { attachLook } from "../actions/attach_look.ts";
 import { lookUrl } from "../core/looks.ts";
-import { getPull } from "../core/pulls.ts";
+import { getPull, pullDir, pullMergeState } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
@@ -76,6 +85,7 @@ import { plannerDeclines } from "../crew/autonomy.ts";
 import { listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { getUsersByIds, type User } from "../core/users.ts";
+import { openapi } from "../contract/openapi.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
@@ -286,14 +296,41 @@ const TOOLS: readonly Tool[] = [
       "Tell an app's crew what should change. One sentence or several; the first line becomes the title. A builder is picked and starts on the crew's next tick.",
     inputSchema: {
       type: "object",
-      properties: { repo: REPO_ARG, text: { type: "string", maxLength: 8000 } },
+      properties: {
+        repo: REPO_ARG,
+        text: { type: "string", maxLength: 8000 },
+        context: {
+          type: "object",
+          description:
+            "Where this was told from, so the builder sees it: page (http/https address), run (id), commit (hex), said (the person's own words).",
+          properties: {
+            page: { type: "string" },
+            run: { type: "string" },
+            commit: { type: "string" },
+            said: { type: "string", maxLength: 2000 },
+          },
+        },
+      },
       required: ["repo", "text"],
     },
     writes: true,
     async run(ctx, user, args) {
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
-      const told = await tell(ctx.app, user, repo, str(args["text"]));
+      const where = parseContext(args["context"]);
+      if (where === null)
+        return bad(
+          "invalid",
+          "context is { page?: http(s) address, run?: id, commit?: hex, said?: words }",
+        );
+      const told = await tell(
+        ctx.app,
+        user,
+        repo,
+        str(args["text"]) === ""
+          ? ""
+          : `${str(args["text"])}${contextNote(where)}`,
+      );
       if (!told.ok)
         return bad(
           told.error,
@@ -370,6 +407,43 @@ const TOOLS: readonly Tool[] = [
       return said.ok
         ? good({ says: `Said on #${issue.number}.` })
         : bad("refused", "that could not be said here");
+    },
+  },
+  {
+    name: "pull",
+    description:
+      "Read a pull: its title, state and head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`). The same two fields as GET /api/v1/repos/:owner/:name/pulls/:number.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "integer", minimum: 1 },
+      },
+      required: ["repo", "number"],
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = args["number"];
+      const pull =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getPull(ctx.app.db, repo.id, n)
+          : undefined;
+      if (pull === undefined || !mayView(ctx.app.db, repo, pull, user))
+        return bad("no_such_pull", `no pull #${String(n)}`);
+      const state = await pullMergeState(
+        await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull),
+        pull,
+      );
+      return good({
+        number: pull.number,
+        title: pull.title,
+        state: pull.mergedAt !== null ? "merged" : pull.state,
+        base: pull.baseBranch,
+        head: pull.headBranch,
+        ...(state ?? {}),
+      });
     },
   },
   {
@@ -1732,6 +1806,12 @@ function adminNote(ctx: Ctx, user: User): string {
   }`;
 }
 
+/** A card's model beside the text, for a host that draws `ui://` resources. */
+function cardResult(name: string, value: unknown): Record<string, unknown> {
+  const card = cardFor(name, value);
+  return card === undefined ? {} : { structuredContent: { card } };
+}
+
 function rpcOne(
   ctx: Ctx,
   user: User,
@@ -1763,7 +1843,7 @@ function rpcOne(
         protocolVersion: (PROTOCOLS as readonly string[]).includes(asked)
           ? asked
           : PROTOCOLS[0],
-        capabilities: { tools: {} },
+        capabilities: { tools: {}, resources: {} },
         serverInfo: server(),
         instructions: `This is a person's forge: their apps, and the crew that builds them. \`tell\` and \`say\` are how they direct it. Keep what you relay short — three sentences and the real options.${adminNote(ctx, user)}`,
       });
@@ -1778,10 +1858,33 @@ function rpcOne(
             description: t.description,
             inputSchema: t.inputSchema,
             annotations: { readOnlyHint: !t.writes },
+            ...(CARD_OF_TOOL[t.name] === undefined
+              ? {}
+              : {
+                  _meta: {
+                    ui: { resourceUri: CARD_URI(CARD_OF_TOOL[t.name]!) },
+                  },
+                }),
           })),
           REPORT_TOOL,
         ],
       });
+    case "resources/list":
+      return reply({
+        resources: CARD_KINDS.map((k) => ({
+          uri: CARD_URI(k),
+          name: `forge-${k}-card`,
+          mimeType: CARD_MIME,
+        })),
+      });
+    case "resources/read": {
+      const uri = str(params["uri"]);
+      const kind = CARD_KINDS.find((k) => CARD_URI(k) === uri);
+      if (kind === undefined) return refuse(-32002, `no resource ${uri}`);
+      return reply({
+        contents: [{ uri, mimeType: CARD_MIME, text: CARD_SHELL(kind) }],
+      });
+    }
     case "tools/call": {
       const tool = TOOLS.find((t) => t.name === params["name"]);
       if (tool === undefined)
@@ -1803,6 +1906,7 @@ function rpcOne(
           answer.ok
             ? {
                 content: [{ type: "text", text: JSON.stringify(answer.value) }],
+                ...cardResult(String(params["name"]), answer.value),
               }
             : {
                 content: [
@@ -1962,4 +2066,10 @@ export function mcpRoutes(router: Router<Handler>): void {
   // for a proxy to cut.
   router.add("GET", "/mcp", () => NOT_HERE("POST"));
   router.add("DELETE", "/mcp", () => NOT_HERE("POST"));
+  // The public API as OpenAPI, for any client that reads it.
+  router.add("GET", "/contract/openapi.json", (ctx) =>
+    json(openapi(ctx.url.origin, running().version), 200, {
+      "cache-control": "public, max-age=300",
+    }),
+  );
 }
