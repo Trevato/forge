@@ -957,7 +957,9 @@ export function parkPull(
   const issue = getIssueById(app.db, pull.id);
   if (!issue || issue.state !== "open") return false;
   addComment(app, by, repo, issue, `${PARK_NOTE}${why}`);
-  const closed = setIssueState(app, by, repo, issue, "closed");
+  const closed = setIssueState(app, by, repo, issue, "closed", {
+    reason: "parked",
+  });
   if (!closed.ok) return false;
   for (const number of closesFromBody(pull.body)) {
     const about = getIssue(app.db, repo.id, number);

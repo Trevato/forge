@@ -501,6 +501,25 @@ describe("checks", () => {
     expect(second.state).toBe("ok");
   }, 60_000);
 
+  test("a commit already proven green is not run again; the re-request answers with the earlier verdict (#1795)", async () => {
+    const made = await commitToBranch(app, alice, repo, {
+      message: "Proven once",
+      files: [
+        { path: "forge.json", content: checkJson("echo ran-once; test -f OK.md # proven") },
+        { path: "OK.md", content: "ok\n" },
+      ],
+    });
+    if (!made.ok) throw new Error(JSON.stringify(made.error));
+    const first = await settled((r) => r.commitOid === made.value.commitOid);
+    expect(first.state).toBe("ok");
+    expect(readRunLog(dataDir, first.id).lines.join("\n")).toContain("ran-once");
+    const asked = await checks.request(repo, "main", made.value.commitOid, "again");
+    const second = await settled((r) => r.id === asked!.id);
+    expect(second.state).toBe("ok");
+    expect(second.summary).toBe(`already proven green by ${first.id}`);
+    expect(readRunLog(dataDir, second.id).lines.join("\n")).not.toContain("ran-once");
+  }, 60_000);
+
   test("a newer commit supersedes a check still waiting for the same environment", async () => {
     const slow = await commitToBranch(app, alice, repo, {
       message: "A slow check",
@@ -591,7 +610,7 @@ describe("checks", () => {
         files: [
           {
             path: "forge.json",
-            content: checkJson("sleep 2 && test -f OK.md"),
+            content: checkJson(`sleep 2 && test -f OK.md # ${ending}`),
           },
         ],
       });
@@ -800,7 +819,7 @@ describe("checks", () => {
       concurrency: 1,
       drainMs: 30_000,
     });
-    const id = await slowCheck("sleep 2 && test -f OK.md", "A drained check");
+    const id = await slowCheck("sleep 2 && test -f OK.md # drained", "A drained check");
     await checks.stop();
     const run = getRun(app.db, id);
     expect(run?.state).toBe("ok");

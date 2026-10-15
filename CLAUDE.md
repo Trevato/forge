@@ -13,7 +13,9 @@ isn't understood yet.
 
 1. **Zero runtime dependencies.** `package.json` `dependencies` is empty and
    stays empty. Never `bun add` a runtime dep. Need a 20-line utility? Write it
-   as a 20-line file. `devDependencies` is types + `tsc` only.
+   as a 20-line file. `devDependencies` is types + `tsc` only (`typescript` is
+   the native 7.x checker; `typescript-api` is 5.x for `scripts/hollow.ts`'s
+   AST walk).
 2. **Bun, not npm/yarn/pnpm.** Install, run, test, build all go through `bun`.
    The runtime provides everything: `Bun.serve`, `Bun.spawn`, `bun:sqlite`,
    `Bun.password` (argon2), WebCrypto, gzip.

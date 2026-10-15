@@ -33,12 +33,13 @@ feeling on a foundation sized for one person.
 ## Run it
 
 ```sh
-bun install          # dev-only: types + tsc, no runtime deps
+bun install          # dev-only: types + tsc (native, 7.x), no runtime deps
 bun run src/main.ts  # web on :3000, ssh on :2222 (FORGE_SSH_PORT=0 turns it off; a taken port turns it off with one warning)
 bun src/main.ts --preflight  # can this tree boot? config parses, migrations run on a copy of the database; one line, exit 0 or 1, no socket opened. Run it before the swap, not under load: the copy is not atomic against a live writer, and a `preflight-*` directory a killed run left behind is swept by the next run once an hour old, and a missing data directory is created, as boot would
+bun src/main.ts --rollback <sha>  # swap back to a kept release: a full 40-hex sha under $FORGE_DATA/releases/, PORT as the running forge's. Exit 0 once that release reads healthy as that sha, else 1 with one line
 ```
 
-Set `FORGE_REPO=owner/name` to the forge's own code and a pull the crew lands there is written to `$FORGE_DATA/releases/<sha>/` (the newest `FORGE_RELEASES_KEEP`, default 5, are kept), preflighted with that tree's own `--preflight`, and recorded in the `release` table (sha, landed pull, verdict, its line, when). A red preflight is asked again once (the copy of the live database can tear under load); a second red is logged and told to the landed pull. Other repositories are untouched, and nothing is swapped unless `FORGE_SELF_SWAP=1`: then the forge binds its port with SO_REUSEPORT, a green release is started from `releases/<sha>/` beside it on the same port (`FORGE_COMMIT` set to the sha), `/api/v1/health` is read until an answer names that sha and is well (`FORGE_SWAP_BUDGET_S`, default 60), and only then does this process drain as a SIGTERM does. A release not healthy in its budget is killed, the old keeps serving, and the log and the landed pull say so. One swap per process: a landing while another swap is in its budget, or after one succeeded, is released and recorded but not started (the new process runs it from the next restart). The SSH terminal is not handed over yet (the new process cannot bind the old one's port), so a process holding the SSH listener refuses the swap and tells the landed pull; run with `FORGE_SSH_PORT=0` to swap. The swap also needs `net.ipv4.tcp_migrate_req=1` (Linux 5.14+): without it the kernel resets the connections still queued on the old listener when it closes, so a swap is refused (and told to the landed pull) rather than failing requests. The release is a child of the old process, so the swap is for a forge run directly, not under a supervisor that kills its children when the old process exits (PID 1 of a container, a systemd unit with the default `KillMode=control-group`). SO_REUSEPORT lets any process of the forge's user bind the same port and take a share of its connections, so `FORGE_SELF_SWAP=1` assumes nothing else runs as the forge's user on the host network (agents and apps are sandboxed or in cells). `FORGE_REPO` also names the parent code that spawned child forges fork.
+Set `FORGE_REPO=owner/name` to the forge's own code and a pull the crew lands there is written to `$FORGE_DATA/releases/<sha>/` (the newest `FORGE_RELEASES_KEEP`, default 5, are kept), preflighted with that tree's own `--preflight`, and recorded in the `release` table (sha, landed pull, verdict, its line, when). A red preflight is asked again once (the copy of the live database can tear under load); a second red is logged and told to the landed pull. Other repositories are untouched, and nothing is swapped unless `FORGE_SELF_SWAP=1`: then the forge binds its port with SO_REUSEPORT, a green release is started from `releases/<sha>/` beside it on the same port (`FORGE_COMMIT` set to the sha), `/api/v1/health` is read until an answer names that sha and is well (`FORGE_SWAP_BUDGET_S`, default 60), and only then does this process drain as a SIGTERM does. A release not healthy in its budget is killed, the old keeps serving, and the log and the landed pull say so. One swap per process: a landing while another swap is in its budget, or after one succeeded, is released and recorded but not started (the new process runs it from the next restart). The SSH terminal is not handed over yet (the new process cannot bind the old one's port), so a process holding the SSH listener refuses the swap and tells the landed pull; run with `FORGE_SSH_PORT=0` to swap. The swap also needs `net.ipv4.tcp_migrate_req=1` (Linux 5.14+): without it the kernel resets the connections still queued on the old listener when it closes, so a swap is refused (and told to the landed pull) rather than failing requests. The release is a child of the old process, so the swap is for a forge run directly, not under a supervisor that kills its children when the old process exits (PID 1 of a container, a systemd unit with the default `KillMode=control-group`). SO_REUSEPORT lets any process of the forge's user bind the same port and take a share of its connections, so `FORGE_SELF_SWAP=1` assumes nothing else runs as the forge's user on the host network (agents and apps are sandboxed or in cells). `--rollback <sha>` starts the kept release beside the running forge by the same health-read swap (`FORGE_SWAP_BUDGET_S` does not apply: it waits the default 60s), and a release that is not healthy is killed with the old still serving. It refuses, with one line and exit 1, a sha that is not kept (never checked out, or pruned) and a release whose schema has fewer migrations than the live database has applied (`<sha> predates schema N; rolling back would need a down-migration`); a release with a newer schema is allowed, as it migrates forward on boot, and the database's refusal of a future schema is unchanged. It does not drain the forge that was serving: until part 2 of the rollback does, both processes share the port and the operator stops the old one (the command prints that). It does not check `tcp_migrate_req` or SSH either; stopping the old process cleanly needs the same `net.ipv4.tcp_migrate_req=1` setup as the swap, and the SSH port stays with the old process. `FORGE_REPO` also names the parent code that spawned child forges fork.
 
 If your shell already has `FORGE_URL` set — a crew workspace sets it to the
 forge you work for — this forge takes it as its own canonical address and
@@ -478,6 +479,15 @@ or `x` on the issue in the terminal); the close writes "Closed: already done
 on main in …" on the thread. A claim with no commit, or with one that is not
 on the base, is an ordinary decline and is parked as one.
 
+**A red pull.** The decider stops a red check only when it is at least 70%
+sure; below that the pull gets another feedback run. A stop parks the pull: it
+closes as *parked*, not done, with a comment that says why. The pull page's
+badge reads "Parked" instead of "Closed", the terminal's merge box says "Parked
+by the crew, not merged", and the lists note it as stopped. Reopening it clears
+the mark. Only the crew parks: the API and the page refuse `reason: "parked"`.
+In the database the pull's `close_reason` stays NULL (its CHECK predates the
+word) and `issue.parked = 1` carries it, so raw SQL never reads it as done.
+
 An autonomous app's planner is **held** while nothing is landing or the plate
 is full: no pull has merged in 48 h while one was closed unmerged, or more than
 `slots × 3` ready, unassigned issues are waiting. The tick log says which
@@ -560,6 +570,15 @@ The terminal has no backups view, so it has no readout.
 into scratch, opens it, counts what is there and unseals a value; the page
 waits for it, up to 10 minutes, and the last drill shows there as one line.
 Only one runs at a time. See `docs/SNAPSHOT.md`.
+
+A red drill, or none in eight days, is one line for the forge's admin on the
+board's forge strip, in the terminal's dashboard (same `forgeNeeds`), and in
+MCP `health` and `asks`; it names the failed step and the next green drill
+clears it. An admin with a phone URL gets one push per cause (a new red
+drill, or the silence), also when eight days pass with no event: the notifier
+wakes every 10 minutes for it. The time the forge first owed a drill is kept
+at boot in `drill/first-seen`; if the disk will not take it, a warning is
+logged and a forge with no drill ever is not flagged.
 
 `docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
 grew up in switched off: what a host owes it, the moves in order, and what is
@@ -665,6 +684,19 @@ and `FORGE_CHECK_SHARDS=2` turns that down on a small or busy host. Each
 shard's output is written whole as it finishes; the log ends with every
 failing test from every shard, or on green with one line — how many tests,
 across how many files, in how long, then the slowest and fastest shard.
+
+The check's first step is the gate-list audit (`bun scripts/gate.ts`), so a
+test file listed in neither `GATE` nor `EXCLUDED` fails in under a second,
+before install-heavy work. `tsc` then runs `--incremental` with a 2 GB heap,
+its build info in `.forge-cache/`. It is TypeScript 7, the native compiler (a
+Go binary, so the bound is `GOMEMLIMIT=2GiB`): on this tree a cold check is
+~3 s and ~17 CPU-s where 5.9 took ~30 s and ~50 CPU-s (#1864). 5.9 stays as
+the dev dependency `typescript-api` only because `scripts/hollow.ts` walks
+its AST, which 7.0 has no stable JS API for. The forge restores
+`.forge-cache/` from the base's own green check and keeps it only from green checks of the default
+branch (`src/checks/cache.ts`), so a pull's code never fills a cache another
+check reads. The full gate also writes every file's time there, and the next
+split weighs every file by measurement rather than the 41 the table named.
 
 The fast tier picks by measurement. The full gate runs each file in a
 `bun test` of its own under Bun's coverage (`--impact`; coverage is per
@@ -903,6 +935,8 @@ Invariants are proven by faults, not by hope. No dependencies were added.
 
 In the forge itself: a pull's check runs `fast` when the manifest has one, in a clone holding the fork point and the head as `FORGE_CHECK_BASE` and `HEAD` (`origin/main` is not a ref there), with `FORGE_CHECK_LEARNED` naming tests earlier land attempts taught the pull (`src/checks/history.ts`, `learned.ts`). Landing (`landIfGreen`) runs `full` once on the merge with its base before merging (`src/checks/landing.ts`); red comments on the pull with the tests named, is remembered per head and base, and the files ride the pull's next fast run. The pull page's checks line shows the tier words.
 
+While the default branch's own last check is red, the forge holds its pulls' checks queued rather than fail each one on the same test (`src/checks/red_main.ts`): the vitals carry one card naming the failing test and how many checks wait, and main going green releases them. A check a person asks for again runs at once, and no check is held more than 20 minutes, so the pull that fixes main can always show green.
+
 ## Limits
 
 Every limit the owner can hit is declared in `src/settings/limits.ts` with its default, bounds and reason, and changed live by a forge admin at `/admin/limits`, `PUT /api/v1/admin/limits/:key` or the `limits` MCP tool (never by an agent). Each change is kept with who made it.
@@ -919,3 +953,10 @@ terminal. Each person has one vote per pull, kept as a `lean` row in the
 decision ledger. A dislike closes the pull and leaves its one-line reason as a
 comment the builder reads; the last open sibling shows Ship. Readers see the
 cards and no buttons.
+
+While two or more siblings are open and none has shipped, a writer's feed holds
+one **Choose** item for the group ("choose among N open variants of …") that
+links to the deck, whatever the number of siblings; it is never muted away.
+Once a sibling ships or all but one close, the item leaves the feed. The
+terminal has no feed; the item is in `GET /api/v1/feed` and the MCP feed tool
+as kind `choose`.

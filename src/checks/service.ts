@@ -37,11 +37,14 @@ import {
   sweepAbandonedChecks,
   type Run,
 } from "../core/runs.ts";
-import { Gate } from "../git/env.ts";
+import { Gate, runGit } from "../git/env.ts";
 import { resolveOid } from "../git/merge.ts";
 import { mergeForCheck } from "./merged.ts";
+import { checkKey, provenBy, recordProven } from "./proven.ts";
 import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
+import { keepCache, restoreCache } from "./cache.ts";
+import { ASKED, redMain, unheld } from "./red_main.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { getIssueById } from "../core/issues.ts";
 import { repoDir } from "../git/repos.ts";
@@ -79,6 +82,11 @@ export interface ChecksOptions {
   readonly forgeUrl: string;
   /** How long a check may run before it is killed. @default BUDGETS.gate */
   readonly budgetMs?: number | undefined;
+  /**
+   * How long a red main holds a pull's check (`checks/red_main.ts`). @default 0,
+   * nothing held; the forge says `RED_HOLD_MS`.
+   */
+  readonly redHoldMs?: number | undefined;
   /**
    * How long `stop` lets checks already running finish before it cuts them
    * off and queues them again (#1796). Nothing new starts meanwhile.
@@ -237,7 +245,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const { run, fresh } = transact(app.db, () => {
       for (const active of listActive(app.db, "check")) {
         if (active.repoId !== repo.id || active.env !== env) continue;
-        if (active.commitOid === commitOid)
+        // A person asking for a check a red main holds queues it as theirs,
+        // which runs (`checks/red_main.ts`); any other repeat is the same check.
+        if (
+          active.commitOid === commitOid &&
+          !(reason === ASKED && active.state === "queued" && active.reason !== ASKED)
+        )
           return { run: active, fresh: false };
         // A pull's running check is for a head nobody will land either:
         // it is stopped too, below, once the row says so.
@@ -302,8 +315,13 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const limit = capacity();
     gate.resize(limit);
     while (inFlight.size < limit) {
-      const queued = listActive(app.db, "check").filter(
-        (run) => run.state === "queued" && !inFlight.has(run.id),
+      // A pull's check waits while its main is red (`checks/red_main.ts`).
+      const queued = unheld(
+        listActive(app.db, "check").filter(
+          (run) => run.state === "queued" && !inFlight.has(run.id),
+        ),
+        (repoId) => redMain(app.db, repoId),
+        options.redHoldMs ?? 0,
       );
       const next = pickNext(queued);
       if (!next) return;
@@ -435,7 +453,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       const done = finishRun(app.db, run.id, {
         state: outcome.ok ? "ok" : "failed",
         summary: outcome.ok
-          ? `check passed in ${seconds}s`
+          ? outcome.proven === undefined
+            ? `check passed in ${seconds}s`
+            : `already proven green by ${outcome.proven}`
           : `check failed: ${outcome.error}`,
         ...(outcome.ok || outcome.detail === undefined
           ? {}
@@ -454,7 +474,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     write: (line: string) => void,
     signal: AbortSignal,
   ): Promise<
-    | { ok: true }
+    | { ok: true; proven?: string }
     | { ok: false; error: string; detail?: CheckDetail | undefined }
   > {
     const bare = await runDir(app.db, app.reposRoot, repo, run.issueId);
@@ -472,6 +492,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       commitOid: run.commitOid,
       pull,
       tier: pull === undefined ? "run" : "fast",
+      keep: run.issueId === null && run.env === repo.defaultBranch,
       keepImpact: pull === undefined && run.env === repo.defaultBranch,
       write,
       signal,
@@ -489,6 +510,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     readonly pull?: Pull | undefined;
     /** `run`: a push to a branch; `fast`: a pull's push; `full`: on land. */
     readonly tier: "run" | "fast" | "full";
+    /** A check of the default branch's own push: its cache is kept. */
+    readonly keep?: boolean;
     /** A green run keeps the impact map it measured; `full` always does. */
     readonly keepImpact?: boolean;
     readonly write: (line: string) => void;
@@ -498,7 +521,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   async function runTier(
     x: Execution,
   ): Promise<
-    | { ok: true }
+    | { ok: true; proven?: string }
     | { ok: false; error: string; detail?: CheckDetail | undefined }
   > {
     const { bare, repo, write, signal } = x;
@@ -579,6 +602,29 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     // which the clone is given as a repository of its own: `origin/main` is
     // not a ref there.
     const base = manifest.fast !== null ? tip : undefined;
+    // The tree this runs on under this gate has been green before: that is
+    // the verdict, and nothing is checked out (#1795).
+    const learned =
+      base === undefined ? "" : readLearned(app.config.dataDir, x.pull!.id).join(",");
+    const tree = await runGit(["rev-parse", `${run.commitOid}^{tree}`], { cwd: bare });
+    const key = tree.ok
+      ? checkKey({
+          repoId: repo.id,
+          treeOid: tree.value.trim(),
+          command,
+          install: manifest.install,
+          timeout: manifest.timeout,
+          egress: manifest.egress,
+          limits: manifest.limits,
+          base,
+          learned,
+        })
+      : undefined;
+    const earlier = key === undefined ? undefined : provenBy(app.db, key);
+    if (earlier !== undefined) {
+      write(`already proven green by ${earlier}`);
+      return { ok: true, proven: earlier };
+    }
     const dir = join(checksRoot(app.config.dataDir), run.id);
     mkdirSync(dir, { recursive: true });
     write(mergeLine === "" ? `checking out ${run.commitOid.slice(0, 7)}` : mergeLine);
@@ -591,6 +637,15 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         return { ok: false, error: given.error };
       }
     }
+    // What the base's own check left (`checks/cache.ts`): tsc's build info
+    // and the gate's per-file times, keyed by the commit this one builds on.
+    const cached = restoreCache(
+      app.config.dataDir,
+      repo.id,
+      tip === undefined ? [] : [tip],
+      dir,
+    );
+    if (cached !== undefined) write(`cache from ${cached.slice(0, 7)}`);
     // Every check starts from the impact map the last green default-branch
     // run measured; the fast tier selects by it.
     try {
@@ -638,10 +693,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           ? {}
           : {
               FORGE_CHECK_BASE: base,
-              FORGE_CHECK_LEARNED: readLearned(
-                app.config.dataDir,
-                x.pull!.id,
-              ).join(","),
+              FORGE_CHECK_LEARNED: learned,
             }),
         // A cell inside a cell is not a cell. This check's own cell is the
         // boundary; a forge the tests boot inside it would wrap its apps in
@@ -686,6 +738,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         );
         return { ok: false, error: summary, detail };
       }
+      // Only a green check of the default branch is kept for the next.
+      if (
+        x.keep === true &&
+        keepCache(app.config.dataDir, repo.id, run.commitOid, dir)
+      )
+        write(`cache kept for ${run.commitOid.slice(0, 7)}`);
       if (x.tier === "full" || x.keepImpact === true) {
         try {
           const kept = keepImpact(app.config.dataDir, repo.id, dir);
@@ -694,6 +752,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           write(`impact map not kept: ${String(error)}`);
         }
       }
+      if (key !== undefined) recordProven(app.db, key, x.id);
       return { ok: true };
     } finally {
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });

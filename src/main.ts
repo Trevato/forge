@@ -25,6 +25,7 @@ import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { resolveAppDomain } from "./apps/host.ts";
 import { requeueAbandonedChecks, startChecks } from "./checks/service.ts";
+import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { startLooks } from "./looks/service.ts";
 import { startProbes } from "./contract/probes.ts";
 import { startSnapshots } from "./snapshot/service.ts";
@@ -68,6 +69,27 @@ if (process.argv.includes("--preflight")) {
   const result = preflight(process.env, import.meta.dir, migrations);
   // CLI answer on the stream a person or a script reads.
   (result.ok ? console.log : console.error)(result.line);
+  process.exit(result.ok ? 0 : 1);
+}
+
+// `--rollback <sha>` starts a kept release beside the running forge and
+// exits once it reads healthy as that sha (release/rollback.ts).
+if (process.argv[2] === "--rollback") {
+  const { rollback } = await import("./release/rollback.ts");
+  const port = Number(process.env.PORT ?? 3000);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.error(`PORT must be a port number, not ${JSON.stringify(process.env.PORT ?? "").slice(0, 40)}`);
+    process.exit(1);
+  }
+  const result = await rollback({
+    dataDir: dataDirOf(process.env),
+    sha: process.argv[3] ?? "",
+    port,
+    env: process.env,
+  });
+  // CLI answer on the stream a person or a script reads.
+  if (result.ok) console.log(`rolled back: pid ${result.pid} is healthy; the previous forge is still running on the port, stop it yourself`);
+  else console.error(result.line);
   process.exit(result.ok ? 0 : 1);
 }
 
@@ -279,6 +301,7 @@ const checks =
     : startChecks(app, {
         forgeUrl,
         concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, 1),
+        redHoldMs: RED_HOLD_MS,
         // A roll lets running checks finish this long before cutting them off.
         drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 300) * 1000,
       });

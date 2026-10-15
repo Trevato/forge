@@ -10,7 +10,7 @@
 
 import type { App } from "../app.ts";
 import { createLog } from "../kernel/log.ts";
-import { reportVerdict } from "./verdict.ts";
+import { reportVerdict, seedFirstSeen } from "./verdict.ts";
 import {
   KEEP,
   listSnapshots,
@@ -154,6 +154,7 @@ export function startSnapshots(
       recordDrill(app.db, result);
       // The card and the recovery issue hear of every drill, whoever asked.
       const posted = await reportVerdict(app.config.dataDir, result);
+      app.bus.append({ kind: "drill.finished", payload: { verdict: result.verdict, step: result.failedStep } });
       log.info("restore drill", { verdict: result.verdict, step: result.failedStep ?? "none", posted });
       return result;
     })().finally(() => {
@@ -172,6 +173,13 @@ export function startSnapshots(
     }, untilNightly());
   };
   schedule();
+
+  // The board only reads; the time the forge first owed a drill is kept here.
+  try {
+    seedFirstSeen(app.config.dataDir);
+  } catch (error) {
+    log.warn("drill: first-seen time not kept; a missing drill will not be flagged", { error: String(error) });
+  }
 
   let drillTimer: ReturnType<typeof setTimeout> | undefined;
   const scheduleDrill = (): void => {

@@ -19,3 +19,6 @@ typesafe-api-key
 /forge.db*
 /ssh/
 /*.sock
+
+# what a check keeps for the next one (src/checks/cache.ts)
+/.forge-cache/

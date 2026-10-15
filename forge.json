@@ -14,8 +14,8 @@
     }
   },
   "check": {
-    "fast": "node --max-old-space-size=1024 ./node_modules/typescript/lib/tsc.js --noEmit && bun scripts/test-shards.ts --timeout 60000 --tier fast --diff $FORGE_CHECK_BASE..HEAD --learned \"$FORGE_CHECK_LEARNED\"",
-    "run": "node --max-old-space-size=1024 ./node_modules/typescript/lib/tsc.js --noEmit && bun scripts/test-shards.ts --timeout 60000 --gate --impact",
+    "fast": "bun scripts/gate.ts && GOMEMLIMIT=2GiB ./node_modules/typescript/bin/tsc --noEmit --incremental --tsBuildInfoFile .forge-cache/tsc.tsbuildinfo && bun scripts/test-shards.ts --timeout 60000 --tier fast --diff $FORGE_CHECK_BASE..HEAD --learned \"$FORGE_CHECK_LEARNED\"",
+    "run": "bun scripts/gate.ts && GOMEMLIMIT=2GiB ./node_modules/typescript/bin/tsc --noEmit --incremental --tsBuildInfoFile .forge-cache/tsc.tsbuildinfo && bun scripts/test-shards.ts --timeout 60000 --gate --impact",
     "timeout": 7200,
     "limits": {
       "memory": 8192,

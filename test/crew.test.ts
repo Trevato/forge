@@ -1,45 +1,32 @@
 /**
- * The crew loop with a stand-in for Claude Code: a script that speaks
- * stream-json, edits a file, commits and pushes — so the whole harness is
- * exercised (dispatch off the outbox, the per-run token, the clone and
- * branch, the prompt, landing the pull, the follow-up that resumes the
- * session, the bounds) without spending a cent or needing a login.
+ * The crew loop with a stand-in for Claude Code (`helpers/crew-standin.ts`):
+ * one pull's life — assigned, cloned, worked, landed, fed back on, closed.
+ * The rest of the loop is in the other `crew-*.test.ts` files, each on a
+ * forge of its own so they run apart and in parallel (#1798).
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
   realpathSync,
   symlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createApp, type App } from "../src/app.ts";
-import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import type { App } from "../src/app.ts";
 import {
   addComment,
   assignIssue,
   openIssue,
   setIssueState,
 } from "../src/actions/issues.ts";
-import { mergePull } from "../src/actions/pulls.ts";
-import { openPull } from "../src/actions/pulls.ts";
-import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { sandboxAvailable } from "../src/crew/sandbox.ts";
-import {
-  queueAgentRun,
-  startCrew,
-  type CrewHandle,
-} from "../src/crew/dispatch.ts";
+import { queueAgentRun, type CrewHandle } from "../src/crew/dispatch.ts";
 import { workdirFor } from "../src/crew/runner.ts";
-import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
-import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
-import { listReviews } from "../src/core/reviews.ts";
+import { getAgentByName } from "../src/core/agents.ts";
 import { getIssue, listComments } from "../src/core/issues.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
@@ -47,10 +34,16 @@ import { listPaths } from "../src/git/read.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { getForkOf, type Repo } from "../src/core/repos.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
-import { createUser, type User } from "../src/core/users.ts";
-import { serve, type Servers } from "../src/http/server.ts";
+import type { User } from "../src/core/users.ts";
+import type { Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
 import { spellings, stripForgeDirs } from "../src/runs/paths.ts";
+import {
+  agentRunSettled,
+  startStandInCrew,
+  stopStandInCrew,
+  type StandInCrew,
+} from "./helpers/crew-standin.ts";
 
 describe("stripForgeDirs", () => {
   test("strips a known directory, leaves the rest of the path", () => {
@@ -138,137 +131,26 @@ describe("stripForgeDirs", () => {
 });
 
 describe("the crew, with a stand-in Claude Code", () => {
+  let standIn: StandInCrew;
   let dataDir: string;
   let app: App;
   let servers: Servers;
   let crew: CrewHandle;
-  let checks: ChecksHandle;
   let alice: User;
   let bot: User;
   let repo: Repo;
   let argsFile: string;
   let promptFile: string;
 
-  async function settled(
-    where: (run: Run) => boolean,
-    timeoutMs = 30_000,
-  ): Promise<Run> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const run = listRuns(app.db, repo.id, { kind: "agent" }).find(where);
-      if (
-        run &&
-        (run.state === "ok" ||
-          run.state === "failed" ||
-          run.state === "cancelled")
-      )
-        return run;
-      await Bun.sleep(100);
-    }
-    throw new Error("agent run did not settle");
-  }
+  const settled = (where: (run: Run) => boolean, timeoutMs?: number) =>
+    agentRunSettled(app, repo, where, timeoutMs);
 
   beforeAll(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "forge-crew-"));
-    app = createApp({ dataDir, port: 0 });
-    servers = await serve(app);
-    argsFile = join(dataDir, "fake.args");
-    promptFile = join(dataDir, "fake.prompt");
-    // The stand-in: records its argv and prompt, does the work, pushes.
-    const fake = join(dataDir, "fake-claude");
-    writeFileSync(
-      fake,
-      `#!/bin/sh
-if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
-printf '%s\\n' "$@" > "${argsFile}"
-IFS= read -r first; printf '%s\\n' "$first" > "${promptFile}"
-echo '{"type":"system","subtype":"init","session_id":"fake-1","model":"fake"}'
-if grep -q LIMIT-ME "${promptFile}" && [ ! -f PAUSED.md ]; then
-  echo "half-done" > PAUSED.md
-  echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You\u2019ve hit your session limit \u00b7 resets 7:20am (UTC)","total_cost_usd":0.02,"num_turns":2,"session_id":"fake-1","terminal_reason":"api_error"}'
-  exit 0
-fi
-if grep -q "Carry on from where you stopped" "${promptFile}"; then
-  if [ -f PAUSED.md ]; then kept=yes; else kept=no; fi
-  echo '{"type":"assistant","message":{"content":[{"type":"text","text":"PAUSED.md present: '"$kept"'"}]}}'
-fi
-if grep -q DECLINE-ME "${promptFile}"; then
-  echo "half-done edit" > SHOULD-NOT-LAND.md
-  echo '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: this is out of scope for me.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-2","terminal_reason":"completed"}'
-  exit 0
-fi
-if grep -q DONE-ON-MAIN "${promptFile}"; then
-  tip=$(git rev-parse HEAD)
-  if grep -q NAMED "${promptFile}"; then said="already done on main in $tip"
-  elif grep -q ABSENT "${promptFile}"; then said="already done on main in deadbeefdeadbeef"
-  else said="already done on main"; fi
-  printf '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: %s","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-4","terminal_reason":"completed"}\n' "$said"
-  exit 0
-fi
-if grep -q "You are the reviewer on this crew" "${promptFile}"; then
-  if grep -q SLOW-REVIEW "${promptFile}"; then exec sleep 60; fi
-  path=$(grep -o 'api/v1/repos/[^"\\]*/review-states' "${promptFile}" | head -1)
-  curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "\${FORGE_URL%/}/$path" -d '{"state":"changes_requested","body":"Name the fence."}' > "${dataDir}/review.out"
-  echo '{"type":"result","subtype":"success","is_error":false,"result":"Reviewed.","total_cost_usd":0.004,"num_turns":1,"session_id":"fake-3","terminal_reason":"completed"}'
-  exit 0
-fi
-if grep -q "The check on your pull" "${promptFile}"; then echo "daffodils" >> CREW.md; fi
-echo "work by the crew $(date +%s%N)" >> CREW.md
-# What a sandboxed shell leaves beside the code: a temp directory with a
-# package cache in it. Never the work; the clone's exclude keeps it out.
-mkdir -p .tmp/cache && echo "junk" > .tmp/cache/leftover
-git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
-echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Added CREW.md."},{"type":"tool_use","name":"Read","input":{"file_path":"'"$(pwd)"'/CREW.md"}},{"type":"tool_use","name":"Bash","input":{"command":"cat /etc/hosts"}},{"type":"tool_use","name":"Bash","input":{"command":"git push"}}]}}'
-echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW.md as asked.","total_cost_usd":0.01,"num_turns":3,"session_id":"fake-1","terminal_reason":"completed"}'
-`,
-    );
-    chmodSync(fake, 0o755);
-    checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
-    crew = await startCrew(app, {
-      forgeUrl: servers.url,
-      localUrl: servers.url,
-      binary: fake,
-      concurrency: 1,
-      budgetUsd: 1,
-      runTimeoutMs: 60_000,
-      reviewBudgetMs: 4_000,
-    });
-    const a = await createUser(app.db, {
-      trusted: true,
-      username: "alice",
-      email: "alice@forge.local",
-      password: "a-good-passphrase",
-      adminIfFirst: true,
-    });
-    if (!a.ok) throw new Error(a.error);
-    alice = a.value;
-    const made = await createAgent(app, alice, {
-      username: "bot",
-      brief: "Be brief.",
-    });
-    if (!made.ok) throw new Error(String(made.error));
-    bot = made.value.user;
-    const created = await createRepo(app, alice, {
-      name: "garden",
-      visibility: "private",
-    });
-    if (!created.ok) throw new Error(String(created.error));
-    repo = created.value;
-    const seeded = await commitToBranch(app, alice, repo, {
-      message: "Start",
-      files: [{ path: "README.md", content: "# garden\n" }],
-    });
-    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    expect(addToCrew(app, alice, repo, "bot").ok).toBe(true);
+    standIn = await startStandInCrew();
+    ({ dataDir,app,servers,crew,alice,bot,repo,argsFile,promptFile } = standIn);
   }, 30_000);
 
-  afterAll(async () => {
-    await crew.stop();
-    await checks.stop();
-    servers.stop();
-    app.close();
-    await rm(dataDir, { recursive: true, force: true });
-  });
+  afterAll(() => stopStandInCrew(standIn));
 
   test("the stand-in is detected", () => {
     expect(crew.ready).toBe(true);
@@ -445,55 +327,6 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     ).toBe(tip);
   }, 60_000);
 
-  test("an agent may decline: nothing lands, the reason is on the run, not a comment", async () => {
-    const issue = openIssue(app, alice, repo, {
-      title: "Do something shady",
-      body: "DECLINE-ME",
-    });
-    expect(issue.ok).toBe(true);
-    if (!issue.ok) return;
-    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
-    const run = await settled((r) => r.issueId === issue.value.id);
-    expect(run.state).toBe("failed");
-    expect(run.summary).toBe("declined: this is out of scope for me.");
-    // No pull for it, no branch pushed, and the half-done edit stayed home.
-    const pulls = listPulls(app.db, repo.id, { state: "open" });
-    expect(pulls.some((p) => p.title === "Do something shady")).toBe(false);
-    const tip = await resolveOid(
-      repoDir(app.reposRoot, repo.ownerName, repo.name),
-      `refs/heads/${run.branch}`,
-    );
-    expect(tip).toBeUndefined();
-    const comments = listComments(app.db, issue.value.id);
-    expect(comments.some((c) => c.authorName === "bot")).toBe(false);
-  }, 60_000);
-
-  test("a decline naming a commit on main is an already-done run; without one that is on the base it is a decline", async () => {
-    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
-    const main = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
-    const ask = async (title: string, marker: string) => {
-      const issue = openIssue(app, alice, repo, {
-        title,
-        body: `DONE-ON-MAIN ${marker}`,
-      });
-      if (!issue.ok) throw new Error("issue");
-      expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
-      return settled((r) => r.issueId === issue.value.id);
-    };
-    const named = await ask("Already built", "NAMED");
-    expect(named.state).toBe("ok");
-    expect(named.summary).toBe(`already done: ${main}`);
-    expect(named.summary).toMatch(/^already done: [0-9a-f]{40}$/);
-    const none = await ask("Built, says who", "NONE");
-    expect(none.state).toBe("failed");
-    expect(none.summary).toBe("declined: already done on main");
-    const absent = await ask("Built somewhere", "ABSENT");
-    expect(absent.state).toBe("failed");
-    expect(absent.summary).toBe(
-      "declined: already done on main in deadbeefdeadbeef",
-    );
-  }, 90_000);
-
   test("closing the pull removes the clone; a closed issue starts nothing", async () => {
     const pull = listPulls(app.db, repo.id, { state: "open" })[0]!;
     const dir = workdirFor(
@@ -513,61 +346,8 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(listRuns(app.db, repo.id, { kind: "agent" }).length).toBe(before);
   }, 30_000);
 
-  test("a pull merged before its run begins: the follow-up branches from the default branch and lands as a new pull", async () => {
-    const issue = openIssue(app, alice, repo, {
-      title: "Prune roses",
-      body: "Before spring.",
-    });
-    if (!issue.ok) throw new Error(String(issue.error));
-    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
-    const built = await settled(
-      (r) => r.issueId === issue.value.id && r.reason === "assigned",
-    );
-    expect(built.summary).toMatch(/^opened pull #\d+/);
-    const pull = listPulls(app.db, repo.id, { state: "open" }).find(
-      (p) => p.headBranch === `bot/${issue.value.number}-prune-roses`,
-    )!;
-    expect(pull).toBeDefined();
-    const merged = await mergePull(app, alice, repo, pull, "merge");
-    expect(merged.ok).toBe(true);
-
-    // The race: feedback queued while the pull was open, begun after the
-    // merge. The branch is spent; the work goes on a fresh one from the
-    // default branch, in the same session, and lands as a pull of its own.
-    const pullIssue = getIssue(app.db, repo.id, pull.number)!;
+  test("a pull closed without a merge has nothing to continue: its follow-up fails before it begins", async () => {
     const agent = getAgentByName(app.db, "bot")!;
-    // The word that queued it, said after the run that opened the pull.
-    await Bun.sleep(5);
-    app.db
-      .query(
-        "INSERT INTO comment (id, issue_id, author_id, body) VALUES (?1, ?2, ?3, 'Shorter, please.')",
-      )
-      .run(`c-${pull.number}`, pullIssue.id, alice.id);
-    const queued = queueAgentRun(
-      app,
-      repo,
-      pullIssue,
-      agent,
-      "feedback",
-      alice.id,
-    );
-    expect(queued).toBeDefined();
-    const run = await settled((r) => r.id === queued!.id);
-    expect(run.state).toBe("ok");
-    expect(run.summary).toMatch(/^opened pull #\d+/);
-    expect(run.branch).toBe(`bot/${pull.number}-prune-roses`);
-    expect(readFileSync(promptFile, "utf8")).toContain(
-      `Pull #${pull.number} has been merged`,
-    );
-    expect(readFileSync(argsFile, "utf8")).toContain("--resume\nfake-1");
-    const next = listPulls(app.db, repo.id, { state: "open" }).find(
-      (p) => p.headBranch === run.branch,
-    )!;
-    expect(next).toBeDefined();
-    expect(next.baseBranch).toBe(repo.defaultBranch);
-    expect(next.body).toContain(`Continues #${pull.number}`);
-    expect(next.body).not.toContain("Closes #");
-
     // Closed without a merge, the proposal was declined: nothing to continue.
     const closed = listPulls(app.db, repo.id, { state: "closed" }).find(
       (p) => p.mergedAt === null,
@@ -586,239 +366,5 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(outcome.summary).toBe(
       `pull #${closed.number} was closed before the run began`,
     );
-  }, 90_000);
-
-  test("a pull whose branch lives in the repository itself is not the crew's to move", async () => {
-    // A branch a person pushed to the repository, proposed the old way.
-    const seeded = await commitToBranch(app, alice, repo, {
-      branch: "alice/hedge",
-      message: "A hedge",
-      files: [{ path: "HEDGE.md", content: "# hedge\n" }],
-    });
-    expect(seeded.ok).toBe(true);
-    const opened = await openPull(app, alice, repo, {
-      title: "A hedge",
-      baseBranch: repo.defaultBranch,
-      headBranch: "alice/hedge",
-    });
-    if (!opened.ok) throw new Error(String(opened.error));
-    expect(assignIssue(app, alice, repo, opened.value, bot).ok).toBe(true);
-    const run = await settled((r) => r.issueId === opened.value.id);
-    expect(run.state).toBe("failed");
-    expect(run.summary).toContain("lives in the repository itself");
-    expect(run.costUsd).toBe(0);
   }, 30_000);
-
-  test("a run the provider turns away pauses, and carries on in its clone when the limit lifts", async () => {
-    const issue = openIssue(app, alice, repo, {
-      title: "Water the ferns",
-      body: "LIMIT-ME: once a day, before noon.",
-    });
-    if (!issue.ok) throw new Error(String(issue.error));
-    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
-    const paused = await settled(
-      (r) => r.issueId === issue.value.id && r.attempt === 0,
-    );
-    expect(paused.state).toBe("cancelled");
-    expect(paused.summary).toMatch(
-      /^paused: the 5-hour window is full until 07:20 UTC; resumes 07:21 UTC/,
-    );
-    expect(paused.summary).toContain("resumes 07:21 UTC");
-    expect(paused.sessionId).toBe("fake-1");
-    // Nothing landed: no branch pushed, no pull.
-    expect(
-      listPulls(app.db, repo.id, { state: "open" }).some(
-        (p) => p.headBranch === `bot/${issue.value.number}-water-the-ferns`,
-      ),
-    ).toBe(false);
-    // The task waits for the reset, once.
-    const waiting = listRuns(app.db, repo.id, { kind: "agent" }).find(
-      (r) => r.issueId === issue.value.id && r.state === "queued",
-    )!;
-    expect(waiting).toBeDefined();
-    expect(waiting.attempt).toBe(1);
-    expect(waiting.reason).toBe("assigned");
-    expect(new Date(waiting.notBefore!).getTime()).toBeGreaterThan(Date.now());
-    expect(waiting.summary).toContain("resumes 07:21 UTC");
-    // The half-done work is still in the clone.
-    const dir = workdirFor(
-      dataDir,
-      getAgentByName(app.db, "bot")!,
-      repo,
-      issue.value.number,
-    );
-    expect(existsSync(join(dir, "PAUSED.md"))).toBe(true);
-
-    // The limit lifts. (The forge waits for the clock; the test does not.)
-    app.db
-      .query("UPDATE run SET not_before = NULL WHERE id = ?1")
-      .run(waiting.id);
-    const resumed = await settled((r) => r.id === waiting.id);
-    expect(resumed.state).toBe("ok");
-    expect(resumed.summary).toMatch(/^opened pull #\d+/);
-    expect(readFileSync(argsFile, "utf8")).toContain("--resume\nfake-1");
-    const prompt = readFileSync(promptFile, "utf8");
-    expect(prompt).toContain("Carry on from where you stopped");
-    expect(prompt).toContain(`Issue #${issue.value.number}: Water the ferns`);
-    const log = readRunLog(dataDir, resumed.id).lines.join("\n");
-    expect(log).toContain("clone kept as it was left");
-    expect(log).toContain("PAUSED.md present: yes");
-  }, 90_000);
-
-  test("a failing check on the agent's pull comes back to it, and it fixes it", async () => {
-    const made = await createRepo(app, alice, {
-      name: "orchard",
-      visibility: "private",
-    });
-    if (!made.ok) throw new Error(String(made.error));
-    const orchard = made.value;
-    const seeded = await commitToBranch(app, alice, orchard, {
-      message: "Start",
-      files: [
-        { path: "README.md", content: "# orchard\n" },
-        {
-          path: "forge.json",
-          content:
-            '{"check": {"run": "grep -q daffodils CREW.md", "install": ""}}\n',
-        },
-      ],
-    });
-    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    expect(addToCrew(app, alice, orchard, "bot").ok).toBe(true);
-    const issue = openIssue(app, alice, orchard, {
-      title: "Plant daffodils",
-      body: "Along the wall.",
-    });
-    if (!issue.ok) throw new Error(String(issue.error));
-    expect(assignIssue(app, alice, orchard, issue.value, bot).ok).toBe(true);
-    const runs = (kind: "agent" | "check") =>
-      listRuns(app.db, orchard.id, { kind, limit: 50 });
-    const until = async <T>(
-      find: () => T | undefined,
-      timeoutMs = 60_000,
-    ): Promise<T> => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const found = find();
-        if (found !== undefined) return found;
-        await Bun.sleep(100);
-      }
-      throw new Error("did not happen in time");
-    };
-    const built = await until(() =>
-      runs("agent").find((r) => r.reason === "assigned" && r.state === "ok"),
-    );
-    expect(built.summary).toMatch(/^opened pull #\d+/);
-    // The pull's own commit is checked in `pull-<number>`; the initial
-    // commit to the default branch (no CREW.md yet) is checked too, in
-    // `production`, and fails for its own reason (no such file) — so the
-    // pull's check is picked out by its environment, not just "failed".
-    const pullNumber = Number(built.summary.match(/#(\d+)/)?.[1]);
-    const pullChecks = () =>
-      listRuns(app.db, orchard.id, {
-        kind: "check",
-        env: `pull-${pullNumber}`,
-        limit: 50,
-      });
-    // The forge checks the pull: no daffodils yet.
-    const failed = await until(() =>
-      pullChecks().find((r) => r.state === "failed"),
-    );
-    expect(failed.summary).toBe("check failed: check exited with code 1");
-    // …and the agent hears about it, with the log, and answers.
-    const fixed = await until(() =>
-      runs("agent").find(
-        (r) => r.reason === "check_failed" && r.state === "ok",
-      ),
-    );
-    expect(fixed.summary).toMatch(/^updated pull #\d+/);
-    const prompt = readFileSync(promptFile, "utf8");
-    expect(prompt).toContain("The check on your pull #");
-    expect(prompt).toContain("check exited with code 1");
-    expect(prompt).toContain("The end of the check log:");
-    const passed = await until(() =>
-      pullChecks().find((r) => r.state === "ok"),
-    );
-    expect(passed.summary).toMatch(/^check passed/);
-  }, 120_000);
-
-  test("a reviewer's run that posts its verdict is ok, though it pushes nothing", async () => {
-    const made = await createAgent(app, alice, { username: "rev" });
-    if (!made.ok) throw new Error(String(made.error));
-    expect(addToCrew(app, alice, repo, "rev").ok).toBe(true);
-    setCrewRole(app.db, repo.id, made.value.user.id, "reviewer");
-    const branch = await commitToBranch(app, alice, repo, {
-      branch: "fence",
-      base: "main",
-      message: "A fence",
-      files: [{ path: "FENCE.md", content: "a fence\n" }],
-    });
-    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
-    const opened = await openPull(app, alice, repo, {
-      title: "A fence",
-      baseBranch: "main",
-      headBranch: "fence",
-    });
-    if (!opened.ok) throw new Error(String(opened.error));
-    const issue = getIssue(app.db, repo.id, opened.value.number)!;
-    expect(queueAgentRun(app, repo, issue, made.value, "review")).toBeDefined();
-
-    const run = await settled(
-      (r) => r.reason === "review" && r.issueId === issue.id,
-    );
-    expect(run.state).toBe("ok");
-    expect(run.summary).toBe("reviewed: changes requested");
-    expect(
-      listReviews(app.db, issue.id).map((r) => [r.authorId, r.state]),
-    ).toEqual([[made.value.user.id, "changes_requested"]]);
-    // Nothing pushed and nothing said on the pull: the verdict is the word.
-    expect(listComments(app.db, issue.id)).toHaveLength(0);
-
-    // A second pass reads afresh: no earlier session carries an older
-    // head into it, and the same verdict again is not a second review.
-    expect(queueAgentRun(app, repo, issue, made.value, "review")).toBeDefined();
-    const again = await settled(
-      (r) => r.reason === "review" && r.issueId === issue.id && r.id !== run.id,
-    );
-    expect(again.state).toBe("ok");
-    expect(readFileSync(argsFile, "utf8")).not.toContain("--resume");
-    expect(listReviews(app.db, issue.id)).toHaveLength(1);
-  }, 60_000);
-
-  test("a review run past its budget is queued again once; the second overrun fails it", async () => {
-    const made = await createAgent(app, alice, { username: "slowrev" });
-    if (!made.ok) throw new Error(String(made.error));
-    expect(addToCrew(app, alice, repo, "slowrev").ok).toBe(true);
-    setCrewRole(app.db, repo.id, made.value.user.id, "reviewer");
-    const branch = await commitToBranch(app, alice, repo, {
-      branch: "slow-fence",
-      base: "main",
-      message: "A slow fence",
-      files: [{ path: "SLOW.md", content: "slow\n" }],
-    });
-    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
-    const opened = await openPull(app, alice, repo, {
-      title: "SLOW-REVIEW fence",
-      baseBranch: "main",
-      headBranch: "slow-fence",
-    });
-    if (!opened.ok) throw new Error(String(opened.error));
-    const issue = getIssue(app.db, repo.id, opened.value.number)!;
-    expect(queueAgentRun(app, repo, issue, made.value, "review")).toBeDefined();
-
-    const failed = await settled(
-      (r) =>
-        r.reason === "review" && r.issueId === issue.id && r.state === "failed",
-    );
-    expect(failed.summary).toMatch(
-      /^budget: a review run took \d+ min, limit \d+$/,
-    );
-    const reviews = listRuns(app.db, repo.id, { kind: "agent" }).filter(
-      (r) => r.reason === "review" && r.issueId === issue.id,
-    );
-    expect(reviews).toHaveLength(2);
-    expect(reviews.find((r) => r.state === "cancelled")?.summary).toMatch(
-      /^budget: a review run/,
-    );
-  }, 90_000);
 });

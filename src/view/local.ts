@@ -96,6 +96,7 @@ export function localSource(
     createdAt: string;
     updatedAt: string;
     closedAt: string | null;
+    closeReason?: string | null;
     id: string;
   }
 
@@ -119,6 +120,7 @@ export function localSource(
     createdAt: issue.createdAt,
     updatedAt: issue.updatedAt,
     closedAt: issue.closedAt,
+    ...(issue.closeReason === "parked" ? { parked: true } : {}),
     labels,
     commentCount,
   });

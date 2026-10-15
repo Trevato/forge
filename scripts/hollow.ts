@@ -46,7 +46,9 @@
 
 import { readdirSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
-import ts from "typescript";
+// TypeScript 5's compiler API, under an alias: `typescript` is the native
+// 7.x checker (a Go binary), and 7.0 ships no stable JS API to walk an AST.
+import ts from "typescript-api";
 import { ALLOWED, type Allowed } from "./hollow-allow.ts";
 
 const ACTIONS = "src/actions/";
