@@ -176,6 +176,7 @@ import {
   newTellPage,
 } from "../web/pages/issues.ts";
 import { tellPage } from "../web/studio/tell.ts";
+import { tellHerePage } from "../web/studio/tell_here.ts";
 import { globalMapPage, mapPage } from "../web/pages/map.ts";
 import {
   milestonePage,
@@ -926,6 +927,7 @@ export function buildRouter(): Router<Handler> {
   );
   // The studio's verbs on an app: tell, ship, say, and — on a shipped
   // change — take it back.
+  router.add("GET", "/:owner/:name/tell", tellHerePage);
   router.add("POST", "/:owner/:name/tell", tellSubmit);
   // The home's composer without a script: a tell to the app it names (#599).
   router.add("POST", "/tell", composerSubmit);

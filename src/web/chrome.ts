@@ -28,6 +28,7 @@ import { page, redirect, type PaletteItem } from "./layout.ts";
 import {
   browseActions,
   hostOf,
+  tellRow,
   localScope,
   studioOriginNote,
   upstreamHref,
@@ -369,9 +370,7 @@ export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
       // Telling the crew is for who may direct it (`mayDirectCrew`: a
       // writer, or anyone signed in where the owner let outsiders in), so
       // nobody else is offered a door that leads nowhere.
-      ...(mayDirectCrew(ctx.app.db, repo, ctx.auth.user)
-        ? [{ t: `${name} — Tell the crew`, h: `${base}#tell`, c: "This repo" }]
-        : []),
+      ...tellRow(ctx, repo, "This repo"),
       ...(mayReadRuns(ctx.app, ctx.auth.user, repo)
         ? [{ t: `${name} — Runs`, h: `${base}/runs`, c: "This repo" }]
         : []),

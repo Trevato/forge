@@ -642,6 +642,36 @@ describe("web ui", () => {
 
   // ---- keyboard ----
 
+  test("the tell composer is the thread's comment box, on the page and in place", async () => {
+    const as = async (path: string) =>
+      (await fetch(`${base}${path}`, { headers: { cookie: owner } })).text();
+    const keys = /<form[^>]*class="card comment-form"[^>]*data-box="[^"]+"[^>]*data-submit-key/;
+    // Two kinds of page: the issue's comment box, and the tell composer.
+    const issue = await as("/mel/proj/issues/1");
+    const page = await as("/mel/proj/tell?from=/mel/proj/issues/1");
+    for (const html of [issue, page]) {
+      expect(html).toMatch(keys);
+      expect(html).toContain('class="input"');
+    }
+    expect(issue).toContain('data-box="Write a comment"');
+    expect(page).toContain('data-box="Tell the crew"');
+    expect(page).toContain('action="/mel/proj/tell"');
+    expect(page).toContain('name="text"');
+    expect(page).toContain('<input type="hidden" name="from" value="/mel/proj/issues/1"');
+    // In place it is the form alone, one line.
+    const bit = await as("/mel/proj/tell?from=/mel/proj/issues/1&in=place");
+    expect(bit.trim().startsWith("<form")).toBe(true);
+    expect(bit).toContain('rows="1"');
+    expect(bit).not.toContain("<html");
+    // A `from` that is not a path on this forge is dropped, not echoed.
+    const bad = await as("/mel/proj/tell?from=https://evil.example/");
+    expect(bad).not.toContain('name="from"');
+    expect(bad).not.toContain("evil.example");
+    // Signed out it goes to sign in; a reader who may not direct finds nothing.
+    const out = await fetch(`${base}/mel/proj/tell`, { redirect: "manual" });
+    expect(out.status).toBe(303);
+  });
+
   test("the composer, the verdicts and the settings sections carry their keys", async () => {
     const as = async (path: string, cookie = "") =>
       (
@@ -710,7 +740,11 @@ describe("web ui", () => {
       .split("\n")
       .filter((l) => /requestSubmit|\.submit\(/.test(l));
     expect(sends).toHaveLength(1);
-    expect(shellJs).not.toMatch(/'Enter' && !e\.(shift|meta|ctrl)Key/);
+    // The one plain Enter is the palette's in-place tell: one line, in a box
+    // the script itself laid over the page (`tellInPlace`, client.ts).
+    const inPlace = shellJs.match(/function tellInPlace[\s\S]*?\n  var closePalette/)?.[0] ?? "";
+    expect(inPlace).toContain("e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target === ta");
+    expect(shellJs.replace(inPlace, "")).not.toMatch(/'Enter' && !e\.(shift|meta|ctrl)Key/);
   });
 
   // ---- CSRF ----
