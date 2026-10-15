@@ -16,13 +16,13 @@ import {
   type Skipped,
 } from "../../actions/asks_bulk.ts";
 import type { FleetValue } from "../../core/fleet_ops.ts";
-import { removeMutes } from "../../core/interactions.ts";
+import { muteRepo, removeMutes } from "../../core/interactions.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { User } from "../../core/users.ts";
 import { onYouAnswer, studioHome } from "./home.ts";
 import { notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
-import { listReposVisibleTo } from "../../core/repos.ts";
+import { canRead, getRepoById, listReposVisibleTo } from "../../core/repos.ts";
 import { html, type Html } from "../html.ts";
 import { redirect } from "../layout.ts";
 import { btn, card, icon, row } from "../ui.ts";
@@ -36,6 +36,7 @@ import {
   decisionForm,
   decisionsFor,
   forgeNeedsFor,
+  silencedRepos,
   type AskRow,
   type Consequence,
   type Decision,
@@ -205,6 +206,20 @@ const rowHead = (kind: Decision["kind"], n: number): string => {
 };
 
 /** One card for one kind in one repository: a line per ask, each with its own actions. */
+/** A row and, under it, the chip that mutes its repository (`asksMute`). */
+function mutableRow(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Html {
+  return html`${rowCard(ctx, r, picked)}
+    <form class="bar" method="post" action="/asks/mute">
+      <input type="hidden" name="repo" value="${r.repo.id}" />
+      <button
+        type="submit"
+        class="btn btn-sm btn-ghost"
+        title="Stop its asks reaching your home, inbox and phone"
+        >Mute ${r.repo.ownerName}/${r.repo.name}</button
+      >
+    </form>`;
+}
+
 function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Html {
   const only = r.items.length === 1 ? r.items[0] : undefined;
   if (only) return decisionCard(ctx, only, picked);
@@ -307,10 +322,21 @@ export function needsYouSection(
   );
   const needs = forgeNeedsFor(ctx, user);
   const rows = askRows(decisions);
+  const silenced = silencedRepos(ctx.app.db, user, listReposVisibleTo(ctx.app.db, user, { limit: 200 }));
+  const silencedNote =
+    silenced.length === 0
+      ? null
+      : html`<form class="bar" method="post" action="/asks/listen">
+          ${silenced.map((r) => html`<input type="hidden" name="repo" value="${r.id}" />`)}
+          <span class="muted small" title="${silenced.map((r) => `${r.ownerName}/${r.name}`).join(", ")}"
+            >${silenced.length} muted ${silenced.length === 1 ? "repository still asks" : "repositories still ask"}</span
+          >
+          <button type="submit" class="btn btn-sm btn-ghost">Listen again</button>
+        </form>`;
   const count = rows.length + needs.length;
   if (count === 0 && top === undefined)
     return {
-      body: html`<h2 id="asks-sentence" class="sr-only">${askSentence(0)}</h2>`,
+      body: html`<h2 id="asks-sentence" class="sr-only">${askSentence(0)}</h2>${silencedNote}`,
       scriptJs: "",
     };
   // The forge's own health first, then the few asks that matter most;
@@ -330,19 +356,19 @@ export function needsYouSection(
   const restMore =
     rest.length === 0
       ? null
-      : more("asks-more", rest.length, html`${rest.map((r) => rowCard(ctx, r, picked))}`);
+      : more("asks-more", rest.length, html`${rest.map((r) => mutableRow(ctx, r, picked))}`);
   // The asks come first, so the first Tab after #needs-you lands on one;
   // the bulk step acts on what was picked, after them.
   const body = html`<section id="needs-you" class="needs-you stack">
     <h2 id="asks-sentence">${askSentence(count)}</h2>
     ${top?.banner ?? null}
-    ${needs.map(forgeCard)} ${first.map((r) => rowCard(ctx, r, picked))}
+    ${needs.map(forgeCard)} ${first.map((r) => mutableRow(ctx, r, picked))}
     ${middle.length === 0
       ? null
       : more(
           "asks-phone-more",
           rows.length - first.length,
-          html`${middle.map((r) => rowCard(ctx, r, picked))} ${restMore}`,
+          html`${middle.map((r) => mutableRow(ctx, r, picked))} ${restMore}`,
         )}
     ${pickable < 2
       ? null
@@ -609,5 +635,19 @@ export async function asksListen(ctx: Ctx): Promise<Response> {
     .filter((r): r is string => typeof r === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(r))
     .slice(0, BULK_MAX);
   removeMutes(ctx.app.db, ctx.auth.user.id, repos.map((r) => `repo:${r}`));
+  return redirect("/");
+}
+
+/** POST /asks/mute — the viewer mutes one repository they can read: its asks leave their home, inbox and phone. */
+export async function asksMute(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const id = form.get("repo");
+  if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(id))
+    return notFoundPage(ctx);
+  const repo = getRepoById(ctx.app.db, id);
+  if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
+  muteRepo(ctx.app.db, ctx.auth.user.id, repo.id);
   return redirect("/");
 }
