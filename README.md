@@ -437,6 +437,18 @@ changes, a line comment — and the agent picks it up in the background,
 resuming its session. A failed check re-engages it too, a bounded number of
 times before a person must speak.
 
+**Three rounds, then a person.** When the crew reviewer has asked for
+changes three times on one pull with no approval and no word from a person
+who may direct the crew between, no more feedback runs start on it. The
+thread keeps a note ("Handed to a person by the crew:") with the three
+asks, and the pull becomes a **hand-over** card in asks: *Tell them what to
+try*, or *Close it*. Rounds are counted from the reviews, not the runs, so a
+restart never adds one. A person resets the count by commenting as a
+director (the crew then resumes) or by approving the pull from its page; the
+card ends when the pull is approved, closed or merged. Hand-overs can be
+closed in bulk like the other pull asks. The terminal's On you card lists
+them as "handed over" rows: `enter` opens the pull, `x` closes it.
+
 **Already done.** A builder that finds its issue already built on the base
 branch declines with `DECLINED: already done on main in <commit>`, naming the
 full or abbreviated id of each commit that did it (at most five). The forge

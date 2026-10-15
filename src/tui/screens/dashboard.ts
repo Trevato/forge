@@ -94,6 +94,8 @@ interface OnYouItem {
   readonly repo: Repo;
   /** A hand-over card that asks this person: the crew's issue, not assigned to them. */
   readonly hand?: true;
+  /** A pull the crew handed to a person: closed, marked and opened like any row. */
+  readonly over?: true;
 }
 
 /** The `tab` order, whichever of these the frame had room for. */
@@ -191,22 +193,35 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   };
 
   /**
-   * The parked cards that ask this person, which the breaker leaves assigned
-   * to the agent: listed after their own work, only where a decider can take them.
+   * The cards that ask this person and are not assigned to them: parked
+   * ones, which the breaker leaves assigned to the agent (only where a
+   * decider can take them), and pulls the crew handed over after three
+   * reviews. Listed after their own work.
    */
   const handOvers = (have: readonly OnYouItem[]): OnYouItem[] => {
-    if (f.user === undefined || f.app.config.decider === undefined) return [];
-    const ids = askLinesFor(f.db, f.user)
-      .filter((row) => row.kind === "parked")
-      .flatMap((row) => row.items)
-      .filter((id) => id.startsWith("parked:"))
-      .map((id) => id.slice("parked:".length));
+    if (f.user === undefined) return [];
+    const rows = askLinesFor(f.db, f.user);
+    const idsOf = (kind: string, prefix: string): string[] =>
+      rows
+        .filter((row) => row.kind === kind)
+        .flatMap((row) => row.items)
+        .filter((id) => id.startsWith(prefix))
+        .map((id) => id.slice(prefix.length));
+    const wanted: { id: string; flag: "hand" | "over" }[] = [
+      ...(f.app.config.decider === undefined
+        ? []
+        : idsOf("parked", "parked:").map((id) => ({ id, flag: "hand" as const }))),
+      ...idsOf("handover", "handover:").map((id) => ({ id, flag: "over" as const })),
+    ];
     const out: OnYouItem[] = [];
-    for (const id of new Set(ids)) {
-      if (have.some((item) => item.issue.id === id)) continue;
+    const seen = new Set<string>();
+    for (const { id, flag } of wanted) {
+      if (seen.has(id) || have.some((item) => item.issue.id === id)) continue;
+      seen.add(id);
       const issue = getIssueById(f.db, id);
       const repo = issue === undefined ? undefined : getRepoById(f.db, issue.repoId);
-      if (issue !== undefined && repo !== undefined) out.push({ issue, repo, hand: true });
+      if (issue !== undefined && repo !== undefined)
+        out.push({ issue, repo, ...(flag === "hand" ? { hand: true as const } : { over: true as const }) });
     }
     return out;
   };
@@ -221,7 +236,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
   /** One verb for the set, through the same action the web and API use. */
   const clear = (action: "close" | "mute" | "ship", reason?: string): void => {
-    const items = targets().map((t) => `issue:${t.issue.id}`);
+    const items = targets().map((t) => `${t.over === true ? "handover" : "issue"}:${t.issue.id}`);
     if (items.length === 0) return;
     runAsync(ctx, async () => {
       const done = await applyAsksBulk(f.app, f.user, action, items, reason);
@@ -643,7 +658,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               ? PULL_MARK
               : ISSUE_MARK;
         return {
-          title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : ""}${mark} #${item.issue.number} ${item.issue.title}`,
+          title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : ""}${mark} #${item.issue.number} ${item.issue.title}`,
           meta: `${item.repo.ownerName}/${item.repo.name}`,
         };
       }),

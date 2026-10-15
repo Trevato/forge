@@ -51,6 +51,7 @@ import {
 } from "../../crew/autonomy.ts";
 import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
+import { handoverLines, handoverOf, type Handover } from "../../crew/guard.ts";
 import { isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
 import { waitsForPerson, waitsForReviewer, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -98,7 +99,7 @@ export function writableAppsOf(ctx: Ctx, user: User | undefined) {
   );
 }
 
-export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined";
+export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
@@ -154,6 +155,11 @@ export const ASK_WORDS: Readonly<Record<DecisionKind, AskWords>> = {
     options: ["Tell them"],
     ifNothing: "nothing more starts on it",
   },
+  handover: {
+    decision: "The reviewer asked for changes three times: what should the builder try?",
+    options: ["Tell them what to try", "Close it"],
+    ifNothing: "no more feedback runs start; the pull waits for you",
+  },
   declined: {
     decision: "The planner declined the direction: answer it?",
     options: ["Answer the planner"],
@@ -183,6 +189,7 @@ export const KIND_TIER: Readonly<Record<DecisionKind, Consequence>> = {
   declined: { score: 70, why: "the planner has stopped for this app" },
   stopped: { score: 50, why: "red, and the crew stopped" },
   review: { score: 45, why: "an agent's change waits for a review" },
+  handover: { score: 55, why: "three reviews without an approval: handed to a person" },
   parked: { score: 40, why: "parked by the crew" },
   look: { score: 30, why: "green, waiting" },
 };
@@ -225,6 +232,8 @@ interface AskCandidate {
   readonly stoppedByDecider?: boolean;
   /** For "declined": the declining run and what the planner said. */
   readonly decline?: { readonly runId: string; readonly words: string };
+  /** For "handover": the reviews that asked for changes. */
+  readonly handover?: Handover;
 }
 
 /**
@@ -274,6 +283,22 @@ function askCandidatesFor(
     const who = issue.authorName;
     // The crew is on it: that is working, not a question for a person.
     if (activeRunFor(db, "agent", issue.id) !== undefined) continue;
+    // Three reviews without an approval: the crew stopped, and says so
+    // before anything about the check (`guard.ts`).
+    const over = handoverOf(db, repo, issue.id);
+    if (over !== undefined) {
+      out.push({
+        kind: "handover",
+        id: `handover:${pull.id}`,
+        since: over.at,
+        repo,
+        pull,
+        who,
+        authorIsAgent: issue.authorIsAgent,
+        handover: over,
+      });
+      continue;
+    }
     if (check?.state === "failed") {
       // Automatic retries, and the limit that stops them, are the crew's
       // own machinery — a person's own failing pull never accrues tries,
@@ -606,14 +631,14 @@ function waitingOn(
 }
 
 /** How an ask that is no longer asked ended, when nobody dismissed it. */
-function endOf(
+export function endOf(
   db: Database,
   viewerId: string,
   askId: string,
   raisedAt: string,
 ): Exclude<AskEnd, "dismissed"> {
   const [kind, what] = askId.split(":") as [DecisionKind, string];
-  if (kind === "look" || kind === "review" || kind === "stopped") {
+  if (kind === "look" || kind === "review" || kind === "stopped" || kind === "handover") {
     const pull = getIssueById(db, what);
     // Shipped or closed: someone decided. Held by the one it asked: they
     // answered "not yet". Still open otherwise: the cause went away.
@@ -691,6 +716,8 @@ function lineOf(c: AskCandidate): string {
     return `the crew parked #${c.issue!.number} after three failed runs`;
   if (c.kind === "declined")
     return "the planner declined the direction and waits for you";
+  if (c.kind === "handover")
+    return `"${c.pull?.title ?? ""}" had three reviews asking for changes and waits for you`;
   const title = c.pull?.title ?? "";
   if (c.kind === "review")
     return `"${title}" waits for your review: ${reviewWhy(c.reviewWait)}`;
@@ -715,6 +742,7 @@ export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> =
   review: (n) => `${n} agent changes wait for your review`,
   stopped: (n) => `the crew stopped on ${n} changes`,
   parked: (n) => `the crew parked ${n} issues after three failed runs`,
+  handover: (n) => `${n} changes had three reviews asking for changes and wait for you`,
   declined: (n) => `the planner declined ${n} times and waits for you`,
   paused: (n) => `${n} pauses at the ceiling`,
 };
@@ -843,6 +871,16 @@ export function decisionsFor(
         says: `The planner declined the direction: \u201c${c.decline.words}\u201d. It plans nothing more until you answer on #${c.issue.number}.`,
         short: `the planner declined the direction: \u201c${c.decline.words}\u201d`,
       };
+    if (c.kind === "handover" && c.pull && c.handover)
+      return {
+        kind: "handover",
+        id: `handover:${c.pull.id}`,
+        repo: c.repo,
+        pull: c.pull,
+        who: c.who,
+        says: `The reviewer asked for changes three times with no approval between, so the crew stopped. ${handoverLines(c.handover).join(" ")} Say what to try (or approve it on its page), or close it.`,
+        short: `"${c.pull.title}" had three reviews asking for changes`,
+      };
     if (c.kind === "stopped" && c.pull) {
       const tries = c.tries ?? 0;
       const stopped = c.stoppedByDecider ?? false;
@@ -919,7 +957,7 @@ export function decisionForm(d: Decision, back?: string): Html | null {
   if (pull === undefined) return null;
   const base = repoBase(d.repo);
   const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
-  if (d.kind === "stopped")
+  if (d.kind === "stopped" || d.kind === "handover")
     return html`<form ${own} action="${base}/pulls/${pull.number}/state">
       <input type="hidden" name="state" value="closed" />${where}
     </form>`;
@@ -951,7 +989,7 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
       : getAppByRepo(ctx.app.db, d.repo.id) === undefined
         ? undefined
         : `${base}/app/pull-${pull.number}/open`;
-  if (d.kind === "stopped" && pull)
+  if ((d.kind === "stopped" || d.kind === "handover") && pull)
     return {
       primary: btn("Tell them", {
         href: `${changeHref(base, pull.number)}#comment-body`,
@@ -1065,7 +1103,12 @@ export function asksAnswer(ctx: Ctx, user: User) {
  */
 export function askItemsOf(issue: Issue): string[] {
   return issue.kind === "pull"
-    ? [`ask:look:${issue.id}`, `ask:review:${issue.id}`, `ask:stopped:${issue.id}`]
+    ? [
+        `ask:look:${issue.id}`,
+        `ask:review:${issue.id}`,
+        `ask:stopped:${issue.id}`,
+        `ask:handover:${issue.id}`,
+      ]
     : [`ask:parked:${issue.id}`];
 }
 

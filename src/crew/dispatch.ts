@@ -35,9 +35,6 @@ import { getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
 import {
   greenHead,
-  handedToPerson,
-  handoverNote,
-  reviewRounds,
   sendToReview,
 } from "./review.ts";
 import {
@@ -53,7 +50,7 @@ import {
   listQueued,
   type Run,
 } from "../core/runs.ts";
-import { getUserById } from "../core/users.ts";
+import { getUserById, type User } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
@@ -62,6 +59,10 @@ import { breakerTripped } from "./breaker.ts";
 import {
   CAP_NOTE,
   capReached,
+  HANDOVER_NOTE,
+  handoverNote,
+  handoverOf,
+  type Handover,
   ISSUE_RUN_CAP,
   recordCap,
   skipsFeedback,
@@ -249,6 +250,25 @@ export async function startCrew(
   };
   handles.set(app, handle);
   return handle;
+}
+
+/** Say the hand-over on the pull's thread, once per hand-over. */
+function handOver(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  by: User,
+  over: Handover,
+): void {
+  const said = listComments(app.db, issue.id).some(
+    (c) => c.body.startsWith(HANDOVER_NOTE) && c.createdAt >= over.at,
+  );
+  if (said) return;
+  addComment(app, by, repo, issue, handoverNote(over));
+  log.info("handed to a person after three reviews", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    pull: issue.number,
+  });
 }
 
 /** Queue a run about an issue for an agent, unless one is already waiting. */
@@ -458,20 +478,13 @@ function route(app: App, event: ForgeEvent): void {
       }
       // The crew is off: a verdict is read by people, and wakes no one.
       if (reviewerVerdict && repo.autonomy === "off") return;
-      if (reviewerVerdict) {
-        // The loop is bounded: the third round hands the pull to a person.
-        const pull = getPull(app.db, repo.id, number);
-        if (pull && handedToPerson(app.db, repo.id, pull)) {
-          // One card: a re-sent verdict does not post a second.
-          const last = listComments(app.db, issue.id, { kind: "comment" }).at(-1);
-          if (!last?.body.startsWith("Handed to a person"))
-            addComment(
-              app,
-              actor,
-              repo,
-              issue,
-              handoverNote(reviewRounds(app.db, repo.id, pull)),
-            );
+      // The third changes-requested with no approval or person's word
+      // between is a person's to answer: one card on the pull, and no
+      // feedback run, now or for the verdicts after (`guard.ts`).
+      if (reviewerVerdict && event.payload["state"] === "changes_requested") {
+        const over = handoverOf(app.db, repo, issue.id);
+        if (over !== undefined) {
+          handOver(app, repo, issue, actor, over);
           return;
         }
       }

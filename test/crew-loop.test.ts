@@ -14,7 +14,8 @@ import { addComment, openIssue } from "../src/actions/issues.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
 import { openPull, submitReview } from "../src/actions/pulls.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
-import { handedToPerson, sendToReview, waitsForPerson } from "../src/crew/review.ts";
+import { HANDOVER_NOTE, handoverOf } from "../src/crew/guard.ts";
+import { sendToReview, waitsForPerson } from "../src/crew/review.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
 import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
@@ -25,6 +26,12 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { driveRepo, settleAgentRun } from "../src/crew/autonomy.ts";
 import { startCrew, queueAgentRun, type CrewHandle } from "../src/crew/dispatch.ts";
 import { getAgent } from "../src/core/agents.ts";
+import type { Ctx } from "../src/http/context.ts";
+import { setIssueState } from "../src/actions/issues.ts";
+import { ASK_WORDS, KIND_TIER, askLinesFor, decisionActions, decisionForm, decisionsFor, endOf } from "../src/web/studio/asks.ts";
+import { createForgeApp } from "../src/tui/forge.ts";
+import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { settleApp } from "./helpers/tui.ts";
 import { breakerParked, breakerTripped } from "../src/crew/breaker.ts";
 
 describe("an agent's own comment never starts its next run", () => {
@@ -351,10 +358,10 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
     await ask("Second: the test is missing.");
     await push(2);
     expect(feedback(pull).length).toBe(1);
-    expect(handedToPerson(app.db, repo.id, pull)).toBe(false);
+    expect(handoverOf(app.db, fresh(), pull.id)).toBeUndefined();
     await ask("Third: still no fence.");
     expect(feedback(pull).length).toBe(1);
-    expect(handedToPerson(app.db, repo.id, pull)).toBe(true);
+    expect(handoverOf(app.db, fresh(), pull.id)).toBeDefined();
     expect(cards().length).toBe(1);
     for (const said of ["First: name", "Second: the test", "Third: still"])
       expect(cards()[0]!.body).toContain(said);
@@ -367,7 +374,7 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
     // A person's approval ends the handover.
     const ok = await submitReview(app, alice, fresh(), pull, { state: "approved" });
     if (!ok.ok) throw new Error(String(ok.error));
-    expect(handedToPerson(app.db, repo.id, pull)).toBe(false);
+    expect(handoverOf(app.db, fresh(), pull.id)).toBeUndefined();
   });
 
   test("in off, the verdict queues nothing", async () => {
@@ -383,5 +390,180 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
     });
     await settle();
     expect(feedback(pull).length).toBe(0);
+  });
+
+  /** The builder's queued follow-ups end, so each round is counted on its own. */
+  const settleFeedback = (pull: Pull) => {
+    for (const r of feedback(pull)) {
+      claimRun(app.db, r.id);
+      finishRun(app.db, r.id, { state: "ok", summary: "Pushed a fix." });
+    }
+  };
+  const verdict = async (pull: Pull, body: string, state = "changes_requested") => {
+    await submitReview(app, sentinel, fresh(), pull, {
+      state: state as "changes_requested",
+      body,
+    });
+    await settle();
+  };
+  const handoverNotes = (pull: Pull) =>
+    listComments(app.db, pull.id).filter((c) =>
+      c.body.startsWith("Handed to a person by the crew:"),
+    );
+
+  test("the third changes-requested hands the pull to a person; a fourth queues nothing", async () => {
+    const set = await updateRepoSettings(app, alice, fresh(), {
+      autonomy: "autonomous",
+      autonomyCeilingUsd: 100,
+      autonomyBy: alice.id,
+    });
+    if (!set.ok) throw new Error(JSON.stringify(set.error));
+    const pull = await masonPull("rounds");
+    await verdict(pull, "Round one: the token is logged.");
+    expect(feedback(pull).length).toBe(1);
+    settleFeedback(pull);
+    await verdict(pull, "Round two: still logged.");
+    expect(feedback(pull).length).toBe(2);
+    settleFeedback(pull);
+    expect(handoverNotes(pull).length).toBe(0);
+    await verdict(pull, "Round three: and the retry loops.");
+    expect(feedback(pull).length).toBe(2);
+    const notes = handoverNotes(pull);
+    expect(notes.length).toBe(1);
+    expect(notes[0]!.body).toContain("1. sentinel: Round one");
+    expect(notes[0]!.body).toContain("3. sentinel: Round three");
+    // Not parked, not closed: it is still open and asks a person.
+    expect(getIssueById(app.db, pull.id)!.state).toBe("open");
+    const asked = askLinesFor(app.db, alice).filter((a) => a.kind === "handover");
+    expect(asked.length).toBe(1);
+    expect(asked[0]!.number).toBe(pull.number);
+    await verdict(pull, "Round four.");
+    expect(feedback(pull).length).toBe(2);
+    expect(handoverNotes(pull).length).toBe(1);
+  });
+
+  test("a person's comment resets the count", async () => {
+    const pull = await masonPull("reset-comment");
+    await verdict(pull, "One.");
+    settleFeedback(pull);
+    await verdict(pull, "Two.");
+    settleFeedback(pull);
+    await verdict(pull, "Three.");
+    expect(handoverNotes(pull).length).toBe(1);
+    addComment(app, alice, fresh(), getIssueById(app.db, pull.id)!, "Try the other way.");
+    await settle();
+    settleFeedback(pull);
+    expect(askLinesFor(app.db, alice).some((a) => a.number === pull.number && a.kind === "handover")).toBe(false);
+    const before = feedback(pull).length;
+    await verdict(pull, "Four, a new first round.");
+    expect(feedback(pull).length).toBe(before + 1);
+  });
+
+  test("changes-requested from someone who is not the crew's reviewer does not count", async () => {
+    const pull = await masonPull("not-reviewer");
+    for (const n of [1, 2, 3]) {
+      await submitReview(app, alice, fresh(), pull, {
+        state: "changes_requested",
+        body: `A person's ${n}.`,
+      });
+      await settle();
+    }
+    expect(handoverOf(app.db, fresh(), pull.id)).toBeUndefined();
+    expect(handoverNotes(pull).length).toBe(0);
+  });
+
+  test("an approval resets the count", async () => {
+    const pull = await masonPull("reset-approval");
+    await verdict(pull, "One.");
+    settleFeedback(pull);
+    await verdict(pull, "Two.");
+    settleFeedback(pull);
+    await verdict(pull, "Fine now.", "approved");
+    await verdict(pull, "Three.");
+    expect(handoverNotes(pull).length).toBe(0);
+  });
+  test("the hand-over card offers three words, a close and a way to speak; closing or approving ends it", async () => {
+    const pull = await masonPull("card");
+    await verdict(pull, "One.");
+    settleFeedback(pull);
+    await verdict(pull, "Two.");
+    settleFeedback(pull);
+    await verdict(pull, "Three.");
+    expect(ASK_WORDS.handover.options).toEqual(["Tell them what to try", "Close it"]);
+    expect(KIND_TIER.handover).toBeDefined();
+    const ctx = {
+      app,
+      request: new Request("http://forge.test/"),
+      url: new URL("http://forge.test/"),
+      params: {},
+      auth: { user: alice, scope: undefined, via: "session" },
+      theme: undefined,
+    } as Ctx;
+    const card = decisionsFor(ctx, [fresh()]).find((d) => d.kind === "handover");
+    expect(card?.pull?.number).toBe(pull.number);
+    expect(card!.consequence.why).toBe(KIND_TIER.handover.why);
+    expect(card!.says).toContain("Say what to try");
+    expect(askLinesFor(app.db, alice).find((a) => a.kind === "handover")!.words).toEqual(ASK_WORDS.handover);
+    const form = String(decisionForm(card!));
+    expect(form).toContain(`/pulls/${pull.number}/state`);
+    expect(form).toContain('value="closed"');
+    const actions = String(decisionActions(ctx, card!));
+    expect(actions).toContain("Tell them");
+    expect(actions).toContain("Close");
+    expect(actions).not.toContain("Approve");
+    const ask = `handover:${pull.id}`;
+    const raised = new Date(0).toISOString();
+    expect(endOf(app.db, alice.id, ask, raised)).toBe("expired");
+    await verdict(pull, "Fine now.", "approved");
+    expect(askLinesFor(app.db, alice).some((a) => a.number === pull.number && a.kind === "handover")).toBe(false);
+    await setIssueState(app, alice, fresh(), getIssueById(app.db, pull.id)!, "closed");
+    expect(endOf(app.db, alice.id, ask, raised)).toBe("acted");
+  });
+
+  test("a comment that only looks like the hand-over note is not a director's word", async () => {
+    const pull = await masonPull("note-lookalike");
+    await verdict(pull, "One.");
+    settleFeedback(pull);
+    await verdict(pull, "Two.");
+    settleFeedback(pull);
+    await verdict(pull, "Three.");
+    expect(handoverOf(app.db, fresh(), pull.id)).toBeDefined();
+    const issue = getIssueById(app.db, pull.id)!;
+    addComment(app, alice, fresh(), issue, `${HANDOVER_NOTE} pasted by the owner`);
+    expect(handoverOf(app.db, fresh(), pull.id)).toBeDefined();
+    addComment(app, alice, fresh(), issue, "Try the other way.");
+    expect(handoverOf(app.db, fresh(), pull.id)).toBeUndefined();
+  });
+
+  test("the terminal's On you lists a handed-over pull, and x closes it", async () => {
+    const pull = await masonPull("terminal-card");
+    await verdict(pull, "One.");
+    settleFeedback(pull);
+    await verdict(pull, "Two.");
+    settleFeedback(pull);
+    await verdict(pull, "Three.");
+    const first = askLinesFor(app.db, alice)
+      .filter((a) => a.kind === "handover")
+      .flatMap((a) => a.items)[0]!
+      .slice("handover:".length);
+    const terminal = headlessTerminal(200, 40);
+    const { app: ui } = createForgeApp(
+      app,
+      { sshUsername: "alice", remoteAddress: "127.0.0.1", fingerprint: "SHA256:t", user: alice },
+      { terminal, exitHooks: false },
+    );
+    ui.start();
+    const press = async (key: string) => {
+      ui.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
+      await settleApp(ui);
+    };
+    await settleApp(ui);
+    await press("tab");
+    expect(ui.screen.toText()).toContain("handed over");
+    expect(getIssueById(app.db, first)!.state).toBe("open");
+    await press("x");
+    await press("enter");
+    expect(getIssueById(app.db, first)!.state).toBe("closed");
+    ui.stop();
   });
 });

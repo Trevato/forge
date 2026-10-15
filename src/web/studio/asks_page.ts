@@ -62,7 +62,7 @@ const ASK_KIND_WORDS: Readonly<Record<string, string>> = {
 };
 
 /** The kinds a bulk action takes: a ceiling and a planner's decline are decided where they live. */
-const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "review", "stopped", "parked"]);
+const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "review", "stopped", "handover", "parked"]);
 
 /** A row's box for the bulk form, which sits apart (`form="asks-bulk"`): forms do not nest. */
 const pick = (d: Decision, picked: ReadonlySet<string>): Html | null =>
@@ -161,6 +161,7 @@ const KIND_LABEL: Readonly<Record<Decision["kind"], string>> = {
   look: "Ready to ship",
   review: "Needs review",
   stopped: "Stopped",
+  handover: "Handed over",
   parked: "Parked",
   declined: "Declined",
   paused: "Paused",

@@ -176,3 +176,98 @@ export function guardCounts(
     rows.find((r) => r.answer === answer)?.n ?? 0;
   return { skipped: of("skipped"), capped: of("capped") };
 }
+
+/** Crew `changes_requested` verdicts on one pull, with no approval or person's word between, before it is a person's. */
+export const HANDOVER_ROUNDS = 3;
+
+/** What the hand-over card starts with: the thread's own record of it, and what `handover` ignores as a person's word. */
+export const HANDOVER_NOTE = "Handed to a person by the crew:";
+
+export interface Handover {
+  /** The crew reviewer's verdicts that asked for changes, oldest first. */
+  readonly reviews: readonly { id: string; author: string; body: string; at: string }[];
+  /** When the third one landed: the card's age. */
+  readonly at: string;
+}
+
+/**
+ * Whether `pullId` has had `HANDOVER_ROUNDS` crew `changes_requested` verdicts
+ * since the last approval or the last word of a person who may direct the
+ * crew. Counted from the verdict rows, never the runs: a run a restart
+ * repeats is one verdict.
+ */
+export function handoverOf(
+  db: Database,
+  repo: Repo,
+  pullId: string,
+): Handover | undefined {
+  // The common pull has fewer than three crew verdicts: one cheap count
+  // answers it before the approval, comment and director lookups.
+  const crewAsked = db
+    .query<{ n: number }, [string, string]>(
+      `SELECT COUNT(*) AS n FROM review r
+         JOIN repo_crew c ON c.user_id = r.author_id AND c.repo_id = ?2
+        WHERE r.issue_id = ?1 AND r.state = 'changes_requested' AND c.role = 'reviewer'`,
+    )
+    .get(pullId, repo.id)!.n;
+  if (crewAsked < HANDOVER_ROUNDS) return undefined;
+  const approved =
+    db
+      .query<{ at: string | null }, [string]>(
+        "SELECT MAX(created_at) AS at FROM review WHERE issue_id = ?1 AND state = 'approved'",
+      )
+      .get(pullId)?.at ?? "";
+  const spoke = db
+    .query<{ id: string; at: string }, [string, string]>(
+      `SELECT author_id AS id, MAX(created_at) AS at FROM comment
+        WHERE issue_id = ?1 AND origin_author IS NULL AND kind != 'review'
+          AND body NOT LIKE ?2
+        GROUP BY author_id`,
+    )
+    .all(pullId, `${HANDOVER_NOTE}%`);
+  const directors = new Set(
+    directorsAmong(
+      db,
+      repo,
+      spoke.map((s) => s.id),
+    ),
+  );
+  const since = spoke
+    .filter((s) => directors.has(s.id))
+    .map((s) => s.at)
+    .reduce((a, b) => (a > b ? a : b), approved);
+  const rounds = db
+    .query<
+      { id: string; author: string; body: string; at: string },
+      [string, string, string]
+    >(
+      `SELECT r.id AS id, u.username AS author, r.body AS body, r.created_at AS at
+         FROM review r JOIN user u ON u.id = r.author_id
+         JOIN repo_crew c ON c.user_id = r.author_id AND c.repo_id = ?3
+        WHERE r.issue_id = ?1 AND r.state = 'changes_requested'
+          AND r.created_at > ?2 AND c.role = 'reviewer'
+        ORDER BY r.created_at, r.id`,
+    )
+    .all(pullId, since, repo.id);
+  if (rounds.length < HANDOVER_ROUNDS) return undefined;
+  return { reviews: rounds, at: rounds[HANDOVER_ROUNDS - 1]!.at };
+}
+
+/** One line per review, for the card and the thread: who asked, and the first line of what. */
+export function handoverLines(h: Handover): string[] {
+  return h.reviews.slice(0, HANDOVER_ROUNDS).map((r, n) => {
+    const first = (r.body.split("\n").find((l) => l.trim() !== "") ?? "no words")
+      .trim()
+      .slice(0, 140);
+    return `${n + 1}. ${r.author}: ${first}`;
+  });
+}
+
+/** The note the pull's thread keeps of the hand-over. */
+export function handoverNote(h: Handover): string {
+  return [
+    `${HANDOVER_NOTE} the reviewer asked for changes three times with no approval between, so no more feedback runs start here until you say what to try.`,
+    "",
+    ...handoverLines(h),
+  ].join("\n");
+}
