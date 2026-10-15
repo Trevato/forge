@@ -43,6 +43,9 @@ export type JobResult = {
   node?: string;
 };
 
+/** The Job, or the pod that carried it, is gone: evicted, deleted, its node lost. */
+export class JobVanished extends Error {}
+
 export type Credentials = { server: string; token: string; ca?: string; namespace: string };
 
 export type JobOptions = {
@@ -151,7 +154,7 @@ type Job = { status?: { succeeded?: number; failed?: number } };
 type Pod = {
   metadata?: { name?: string };
   spec?: { nodeName?: string };
-  status?: { containerStatuses?: { state?: { terminated?: { exitCode?: number } } }[] };
+  status?: { reason?: string; containerStatuses?: { state?: { terminated?: { exitCode?: number } } }[] };
 };
 type PodList = { items?: Pod[] };
 
@@ -207,7 +210,10 @@ export async function runJob(spec: JobSpec, opts: JobOptions = {}): Promise<JobR
     let done: "succeeded" | "failed" | null = null;
     while (!done) {
       if (opts.signal?.aborted) throw new Error("job cancelled");
-      const job = await json<Job>("GET", jobPath);
+      const res = await call("GET", jobPath);
+      if (res.status === 404) throw new JobVanished("the job is gone");
+      if (!res.ok) throw new Error(`kube GET ${res.status}`);
+      const job = (await res.json()) as Job;
       if ((job.status?.succeeded ?? 0) > 0) done = "succeeded";
       else if ((job.status?.failed ?? 0) > 0) done = "failed";
       else if (now() >= deadline) {
@@ -217,6 +223,10 @@ export async function runJob(spec: JobSpec, opts: JobOptions = {}): Promise<JobR
       else await sleep(pollMs);
     }
     const pod = await findPod();
+    // A failed Job with no pod, or a pod the kubelet evicted, never ran its
+    // command to an exit: it vanished, which is not the check failing.
+    if (done === "failed" && (!pod || pod.status?.reason === "Evicted"))
+      throw new JobVanished(pod ? "the job's pod was evicted" : "the job's pod is gone");
     const code: unknown = pod?.status?.containerStatuses?.[0]?.state?.terminated?.exitCode;
     const exitCode = typeof code === "number" ? code : done === "succeeded" ? 0 : null;
     return { exitCode, lines: await logLines(pod?.metadata?.name), timedOut: false, ...nodeOf(pod) };

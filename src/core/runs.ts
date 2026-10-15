@@ -436,6 +436,9 @@ export function failAbandonedRuns(
 /** What a check the forge's own restart cut off says as it is queued again. */
 export const REQUEUED_SUMMARY = "interrupted by a restart; queued again";
 
+/** What a check whose cluster Job vanished says as it is queued again. */
+export const VANISHED_SUMMARY = "interrupted: its cluster job vanished; queued again";
+
 /**
  * How many times one check may be cut off by its forge going away and be
  * queued again. Past it the check fails once, saying so: a check that kills
@@ -490,6 +493,15 @@ export function requeueCheck(
  * compared: a run notes its branch as it works, its queued retry starts bare.
  */
 export function overranBefore(db: Database, run: Run): boolean {
+  return cutOffBefore(db, run, BUDGET_PREFIX);
+}
+
+/** Whether the attempt just before this one lost its cluster Job: it is queued again once. */
+export function vanishedBefore(db: Database, run: Run): boolean {
+  return cutOffBefore(db, run, VANISHED_SUMMARY);
+}
+
+function cutOffBefore(db: Database, run: Run, prefix: string): boolean {
   return (
     db
       .query(
@@ -504,7 +516,7 @@ export function overranBefore(db: Database, run: Run): boolean {
         run.issueId ?? "",
         run.attempt - 1,
         run.id,
-        BUDGET_PREFIX,
+        prefix,
       ) !== null
   );
 }

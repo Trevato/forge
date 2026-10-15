@@ -4,12 +4,15 @@
  * holds. The Job's log is written into the run's log and its node recorded;
  * the answer has `runStep`'s shape, so the caller is the same for both.
  */
-import { runJob, type JobOptions, type JobSpec } from "../cluster/jobs.ts";
+import { JobVanished, runJob, type JobOptions, type JobSpec } from "../cluster/jobs.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { Placement } from "./placement.ts";
 
 /** What a NetworkPolicy selects a check's pod by (docs/APPS.md, Placement). */
 export const JOB_LABELS = { "forge-check": "true" };
+
+/** The error a vanished Job answers with; the service queues the run again. */
+export const JOB_VANISHED = "the cluster job vanished";
 
 export async function runJobStep(
   placement: Extract<Placement, { mode: "job" }>,
@@ -48,6 +51,10 @@ export async function runJobStep(
     result = await runJob(spec, { timeoutMs: input.timeoutMs, signal: input.signal, ...input.options });
   } catch (error) {
     if (input.signal.aborted) return err("check cancelled");
+    if (error instanceof JobVanished) {
+      input.log(`${JOB_VANISHED}: ${error.message}`);
+      return err(JOB_VANISHED);
+    }
     return err(`job could not run: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (result.node) input.onNode(result.node);
