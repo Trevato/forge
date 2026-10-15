@@ -342,7 +342,9 @@ from before this record say nothing).
 mechanical rather than advisory.
 
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
-what "ready now" means to a person and to the crew.
+what "ready now" means to a person and to the crew. The map also shows each
+pillar's ask-to-live: the median hours from an issue opening to its change live
+in production, over the last 7 days (also in the map and milestones API and MCP).
 
 `docs/STUDIO.md` is the front door from the top of this page in full: the five
 words and where each is decided, the box, the three lists, a tell, a run

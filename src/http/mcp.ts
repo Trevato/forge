@@ -62,6 +62,7 @@ import { lookUrl } from "../core/looks.ts";
 import { getPull } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
+import { askToLiveFor } from "../web/ask_to_live.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import {
   canRead,
@@ -1152,12 +1153,13 @@ const TOOLS: readonly Tool[] = [
       required: ["app"],
     },
     writes: false,
-    run(ctx, user, args) {
+    async run(ctx, user, args) {
       const repo = planRepo(ctx, user, args);
       if (isAnswer(repo)) return repo;
       const graph = repoGraph(ctx.app.db, repo.id, {
         ...sealedScope(ctx.app.db, repo, user),
       });
+      const pillars = pillarView(ctx.app.db, repo);
       return good(
         mapJson(
           repo,
@@ -1168,7 +1170,8 @@ const TOOLS: readonly Tool[] = [
             graph,
             listActiveRuns(ctx.app.db, [repo.id]),
           ),
-          pillarView(ctx.app.db, repo),
+          pillars,
+          await askToLiveFor(ctx.app, repo, pillars, user),
         ),
       );
     },
@@ -1191,14 +1194,15 @@ const TOOLS: readonly Tool[] = [
       required: ["app"],
     },
     writes: false,
-    run(ctx, user, args) {
+    async run(ctx, user, args) {
       const repo = planRepo(ctx, user, args);
       if (isAnswer(repo)) return repo;
-      if (args["issue"] === undefined) return good(milestonesJson(ctx, repo));
+      if (args["issue"] === undefined)
+        return good(await milestonesJson(ctx, repo));
       const number = args["issue"];
       const data =
         typeof number === "number" && Number.isInteger(number) && number > 0
-          ? milestoneData(ctx, repo, number)
+          ? await milestoneData(ctx, repo, number)
           : undefined;
       return data === undefined
         ? bad(
