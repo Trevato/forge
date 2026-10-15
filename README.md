@@ -151,6 +151,21 @@ Unset, only this machine may say so, and the named header is never read. Everyth
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 
+`FORGE_PARENT_URL` names the forge this one was spawned from. It must be
+`https://` with no credentials or query (the forge refuses to boot otherwise).
+The parent serves `/releases.json` as `{"releases":[{"name","url"}]}`, newest
+first; the child reads it with a 3 s timeout, no redirects and a 256 KB cap,
+caches it under `FORGE_APP_DATA` for 10 minutes, and says "N releases behind
+<parent>" on a fork's following card, in the terminal's About card (`I`), and as `parentForge`
+(`{host, behind, releases, fetchedAt, down}`, null when unset) in
+`GET /api/v1/repos/:owner/:name/following` and the MCP `following` tool. A
+page never waits for the parent: it shows the cached copy and refreshes in the
+background, and a parent that is down or answering garbage leaves a "could not
+be reached" with the age of the last copy. Unset, nothing is shown. Read only:
+taking a release is not done here. This forge publishes its own
+`/releases.json` (the version names, each linking to that document), so any
+forge can be a parent. The terminal shows the count, not the release names.
+
 ## Health
 
 `GET /api/v1/health` (and the MCP `health` tool) answer a site admin with

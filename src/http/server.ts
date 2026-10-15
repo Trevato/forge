@@ -132,6 +132,7 @@ import {
   changePassword,
   iconPng,
   llmsTxt,
+  releasesJson,
   robotsTxt,
   securityTxt,
   sitemapXml,
@@ -548,6 +549,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/llms.txt", llmsTxt);
   router.add("GET", "/.well-known/change-password", changePassword);
   router.add("GET", "/robots.txt", robotsTxt);
+  router.add("GET", "/releases.json", releasesJson);
   router.add("GET", "/sitemap.xml", sitemapXml);
   router.add("GET", "/manifest.webmanifest", webManifest);
   router.add("GET", "/icons/:spec.png", iconPng);

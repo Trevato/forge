@@ -16,6 +16,8 @@
  */
 
 import { isPinned } from "../../core/pins.ts";
+import { parentReleases, releasesSentence } from "../../core/parent_releases.ts";
+import { running } from "../../kernel/version.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -136,6 +138,28 @@ export function aboutScreen(
 }
 
 /**
+ * The web following card's releases sentence, for a fork on a forge that
+ * names a parent forge: the same words, from the same cache.
+ */
+export function releasesRow(
+  f: Session,
+  repo: Repo | undefined,
+): [string, string][] {
+  const { parentUrl, dataDir, parentLoopback } = f.app.config;
+  if (repo === undefined || repo.forkParentId === null) return [];
+  if (parentUrl === undefined) return [];
+  const view = parentReleases(dataDir, parentUrl, {
+    loopback: parentLoopback === true,
+  });
+  return [
+    [
+      "releases",
+      releasesSentence(view, running().version, new URL(parentUrl).host),
+    ],
+  ];
+}
+
+/**
  * The label/value block. A repository we hold gets the clone URLs (the single
  * most-copied string on any forge, and the one thing a terminal can hand over
  * without a mouse); a live browse gets the page it is reading instead.
@@ -171,6 +195,7 @@ function aboutFacts(
   const upstream = forkOf(f, src);
   const fork: [string, string][] =
     upstream === "" ? [] : [["fork of", upstream]];
+  const releases = releasesRow(f, repo);
   // "browsing" only when it is not the obvious answer: a row that repeats
   // the line above it is a row nobody reads.
   const browsing: [string, string][] =
@@ -181,6 +206,7 @@ function aboutFacts(
       ...browsing,
       ...counts,
       ...fork,
+      ...releases,
       ...originFacts(repo),
       ...cloneFacts(f, repo),
     ];

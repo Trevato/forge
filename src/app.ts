@@ -152,6 +152,13 @@ export interface ForgeConfig {
    * `releases/<sha>/` and preflighted (`release/`, #1662).
    */
   forgeRepo?: string;
+  /**
+   * The forge this one was spawned from (`FORGE_PARENT_URL`): https, no
+   * credentials. Its `/releases.json` is read for the following page.
+   */
+  parentUrl?: string;
+  /** Lets `parentUrl` be plain http. Tests only; boot never sets it. */
+  parentLoopback?: boolean;
   /** How many `releases/<sha>/` checkouts to keep (`FORGE_RELEASES_KEEP`). @default 5 */
   releasesKeep?: number;
 }

@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
@@ -121,8 +122,16 @@ if (turnstileSecret !== "" && turnstileSiteKey === "") {
   process.exit(1);
 }
 
+const parentUrl = (process.env.FORGE_PARENT_URL ?? "").trim();
+const parentProblem = parentUrl === "" ? null : parentUrlProblem(parentUrl);
+if (parentProblem !== null) {
+  console.error(`FORGE_PARENT_URL: ${parentProblem}`);
+  process.exit(1);
+}
+
 const app = createApp({
   dataDir,
+  ...(parentUrl === "" ? {} : { parentUrl }),
   port: Number(process.env.PORT ?? 3000),
   ...(process.env.FORGE_HOST === undefined
     ? {}

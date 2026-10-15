@@ -9,6 +9,7 @@
  */
 
 import { voteVariant } from "../actions/variants.ts";
+import { parentForgeFor } from "../core/parent_releases.ts";
 import { readFlow } from "../flow/read.ts";
 import { runQuery } from "../boards/query.ts";
 import { SOURCES } from "../boards/sources.ts";
@@ -1838,6 +1839,7 @@ export function apiRoutes(router: Router<Handler>): void {
       conflicts: relation.conflicts,
       forkTip: relation.forkTip,
       parentTip: relation.parentTip,
+      parentForge: parentForgeFor(ctx.app.config),
       converge:
         converge === undefined
           ? null

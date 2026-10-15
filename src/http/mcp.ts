@@ -131,6 +131,7 @@ import {
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { readHealth } from "../actions/health.ts";
 import { running } from "../kernel/version.ts";
+import { parentForgeFor } from "../core/parent_releases.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
@@ -917,6 +918,7 @@ const TOOLS: readonly Tool[] = [
         ahead: relation.ahead,
         clean: relation.clean,
         conflicts: relation.conflicts,
+        parentForge: parentForgeFor(ctx.app.config),
         converge: converge?.kind ?? null,
       });
     },

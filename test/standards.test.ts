@@ -4,6 +4,8 @@
  * an installable manifest with real icons, and the metadata a link needs
  * to unfurl.
  */
+import { parseReleases } from "../src/core/parent_releases.ts";
+import releasesFile from "../src/core/releases.json" with { type: "json" };
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -80,6 +82,17 @@ describe("what the open web expects", () => {
     });
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe("/settings/password");
+  });
+
+  test("releases.json is the shipped releases, newest first, in the shape a child reads", async () => {
+    const res = await fetch(`${base}/releases.json`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    const doc = (await res.json()) as { releases: unknown[] };
+    const read = parseReleases(doc, true);
+    expect(read!.length).toBe(doc.releases.length);
+    expect(read![0]!.name).toBe(releasesFile.releases[0]!.version);
+    expect(read![0]!.url).toStartWith(`${base}/releases.json#`);
   });
 
   test("robots keeps crawlers out of accounts and points at the sitemap", async () => {
