@@ -23,6 +23,7 @@ import { issueMayRun } from "../core/pull_trust.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
   cancelRun,
+  cancelRunsForPull,
   checksForHead,
   claimRun,
   createRun,
@@ -777,6 +778,24 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
             pull.id,
             actor,
           );
+        return;
+      }
+      // Landed or closed: nothing left to check, so nothing waits in the lane.
+      case "pull.merged":
+      case "pull.closed": {
+        const number = event.payload["number"];
+        if (typeof number !== "number") return;
+        const pull = getPull(app.db, repo.id, number);
+        if (!pull) return;
+        const cancelled = cancelRunsForPull(
+          app.db,
+          pull.id,
+          event.kind === "pull.merged" ? "pull landed" : "pull closed",
+        );
+        for (const run of cancelled) {
+          inFlight.get(run.id)?.abort.abort();
+          announceRun(app, run);
+        }
         return;
       }
       default:
