@@ -28,6 +28,7 @@ import {
   openOnWeb,
   runAsync,
 } from "./screens/common.ts";
+import { askedScreen } from "./screens/asked.ts";
 import { familyScreen } from "./screens/family.ts";
 import { familyLines, familyView } from "../spawn/family.ts";
 import { issueScreen } from "./screens/issue.ts";
@@ -167,6 +168,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               ctx.push(signInScreen(session, ctx, () => ctx.invalidate())),
           },
     );
+    // What you asked for and what became of it, as /asked says it: a signed-in person's.
+    if (session.signedIn)
+      commands.push({
+        id: "asked",
+        title: "Asked",
+        hint: "your thoughts and what became of them",
+        run: () => ctx.push(askedScreen(session, ctx)),
+      });
     if (session.signedIn)
       commands.push(
         {

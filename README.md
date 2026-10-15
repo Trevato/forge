@@ -94,6 +94,12 @@ sees `Reduced protection: …` in one line, under the filter on the terminal's
 first screen and in the web footer; nobody else does, and a fully protected
 forge shows nothing.
 
+What you asked for: `Ctrl+K`, then **Asked**, is `/asked` in the terminal — your
+thoughts, then the issues you can write to that are not shipped, oldest first
+(`j`/`k` move, `enter` gives the issue's web address, `r` refreshes). It is read
+only, shows a guest nothing, and names nothing of a placement in a repository
+you cannot read.
+
 The family across forges: `:` → Family in the terminal, `/family` on the web,
 `GET /api/v1/family` and the MCP `family` tool all give the same view. The
 forge that sent this one is shown to anyone; the forges it sent, only to a
