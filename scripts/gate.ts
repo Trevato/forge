@@ -33,6 +33,7 @@ export const GATE: readonly string[] = [
   "test/fuzz-parsers.test.ts",
   "test/attach-look.test.ts",
   "test/tui-limbs.test.ts",
+  "test/claim-link.test.ts",
   "test/og-card.test.ts",
   "test/health.test.ts",
   "test/client-address.test.ts",
@@ -242,7 +243,6 @@ export const GATE: readonly string[] = [
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
-  { file: "test/claim-link.test.ts", reason: "two cases fail on the runner since children.max derives from memory", issue: 1517 },
   { file: "test/api-errors.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
   {

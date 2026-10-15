@@ -115,11 +115,16 @@ export function capacityDefault(key: CapacityKey): string {
 const GIB = 1024 ** 3;
 const MIB = 1024 ** 2;
 
-/** One hosted child per 512 MiB of room above the forge's own 2 GiB (32 GiB gives 60), at least one. */
+/**
+ * One hosted child per 512 MiB of room above the forge's own 2 GiB (32 GiB
+ * gives 60), never fewer than five: a small machine (a CI runner, a laptop)
+ * still sends the forges the tests and a first owner expect (#1517).
+ */
 export function childrenForMemory(bytes: number): number {
   const n = Math.floor((bytes - 2 * GIB) / (512 * MIB));
-  return Math.min(1000, Math.max(1, Number.isFinite(n) ? n : 1));
+  return Math.min(1000, Math.max(MIN_CHILDREN, Number.isFinite(n) ? n : MIN_CHILDREN));
 }
+const MIN_CHILDREN = 5;
 
 /** The pod's memory limit (cgroup v2, then v1), else the machine's memory. */
 export function memoryLimitBytes(): number {
