@@ -197,7 +197,16 @@ if grep -q DECLINE-ME "${promptFile}"; then
   echo '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: this is out of scope for me.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-2","terminal_reason":"completed"}'
   exit 0
 fi
+if grep -q DONE-ON-MAIN "${promptFile}"; then
+  tip=$(git rev-parse HEAD)
+  if grep -q NAMED "${promptFile}"; then said="already done on main in $tip"
+  elif grep -q ABSENT "${promptFile}"; then said="already done on main in deadbeefdeadbeef"
+  else said="already done on main"; fi
+  printf '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: %s","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-4","terminal_reason":"completed"}\n' "$said"
+  exit 0
+fi
 if grep -q "You are the reviewer on this crew" "${promptFile}"; then
+  if grep -q SLOW-REVIEW "${promptFile}"; then exec sleep 60; fi
   path=$(grep -o 'api/v1/repos/[^"\\]*/review-states' "${promptFile}" | head -1)
   curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "\${FORGE_URL%/}/$path" -d '{"state":"changes_requested","body":"Name the fence."}' > "${dataDir}/review.out"
   echo '{"type":"result","subtype":"success","is_error":false,"result":"Reviewed.","total_cost_usd":0.004,"num_turns":1,"session_id":"fake-3","terminal_reason":"completed"}'
@@ -222,6 +231,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       concurrency: 1,
       budgetUsd: 1,
       runTimeoutMs: 60_000,
+      reviewBudgetMs: 4_000,
     });
     const a = await createUser(app.db, {
       trusted: true,
@@ -457,6 +467,32 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     const comments = listComments(app.db, issue.value.id);
     expect(comments.some((c) => c.authorName === "bot")).toBe(false);
   }, 60_000);
+
+  test("a decline naming a commit on main is an already-done run; without one that is on the base it is a decline", async () => {
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const main = await resolveOid(dir, `refs/heads/${repo.defaultBranch}`);
+    const ask = async (title: string, marker: string) => {
+      const issue = openIssue(app, alice, repo, {
+        title,
+        body: `DONE-ON-MAIN ${marker}`,
+      });
+      if (!issue.ok) throw new Error("issue");
+      expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+      return settled((r) => r.issueId === issue.value.id);
+    };
+    const named = await ask("Already built", "NAMED");
+    expect(named.state).toBe("ok");
+    expect(named.summary).toBe(`already done: ${main}`);
+    expect(named.summary).toMatch(/^already done: [0-9a-f]{40}$/);
+    const none = await ask("Built, says who", "NONE");
+    expect(none.state).toBe("failed");
+    expect(none.summary).toBe("declined: already done on main");
+    const absent = await ask("Built somewhere", "ABSENT");
+    expect(absent.state).toBe("failed");
+    expect(absent.summary).toBe(
+      "declined: already done on main in deadbeefdeadbeef",
+    );
+  }, 90_000);
 
   test("closing the pull removes the clone; a closed issue starts nothing", async () => {
     const pull = listPulls(app.db, repo.id, { state: "open" })[0]!;
@@ -748,4 +784,41 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(readFileSync(argsFile, "utf8")).not.toContain("--resume");
     expect(listReviews(app.db, issue.id)).toHaveLength(1);
   }, 60_000);
+
+  test("a review run past its budget is queued again once; the second overrun fails it", async () => {
+    const made = await createAgent(app, alice, { username: "slowrev" });
+    if (!made.ok) throw new Error(String(made.error));
+    expect(addToCrew(app, alice, repo, "slowrev").ok).toBe(true);
+    setCrewRole(app.db, repo.id, made.value.user.id, "reviewer");
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "slow-fence",
+      base: "main",
+      message: "A slow fence",
+      files: [{ path: "SLOW.md", content: "slow\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "SLOW-REVIEW fence",
+      baseBranch: "main",
+      headBranch: "slow-fence",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const issue = getIssue(app.db, repo.id, opened.value.number)!;
+    expect(queueAgentRun(app, repo, issue, made.value, "review")).toBeDefined();
+
+    const failed = await settled(
+      (r) =>
+        r.reason === "review" && r.issueId === issue.id && r.state === "failed",
+    );
+    expect(failed.summary).toMatch(
+      /^budget: a review run took \d+ min, limit \d+$/,
+    );
+    const reviews = listRuns(app.db, repo.id, { kind: "agent" }).filter(
+      (r) => r.reason === "review" && r.issueId === issue.id,
+    );
+    expect(reviews).toHaveLength(2);
+    expect(reviews.find((r) => r.state === "cancelled")?.summary).toMatch(
+      /^budget: a review run/,
+    );
+  }, 90_000);
 });

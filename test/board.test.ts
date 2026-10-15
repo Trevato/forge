@@ -456,6 +456,19 @@ describe("the board's forge strip", () => {
     expect(other).not.toContain("stuck.");
   });
 
+  test("the home says the lane when checks are queued, to an admin only", async () => {
+    app.db.query("UPDATE run SET state = 'cancelled' WHERE state IN ('queued','running')").run();
+    const idle = await board("root");
+    expect(idle).not.toContain("Lane:");
+    const made = await createRepo(app, admin, { name: "laned" });
+    if (!made.ok) throw new Error(String(made.error));
+    for (let i = 0; i < 3; i++) createRun(app.db, { repoId: made.value.id, kind: "check" });
+    const busy = await board("root");
+    expect(busy).toContain("Lane: 3 checks queued");
+    expect(await board("bob")).not.toContain("Lane:");
+    app.db.query("UPDATE run SET state = 'cancelled' WHERE state IN ('queued','running')").run();
+  });
+
   test("a setting that is not the default is no incident: the strip stays fine and the cards render", async () => {
     const made = await createRepo(app, admin, { name: "calm" });
     if (!made.ok) throw new Error(String(made.error));

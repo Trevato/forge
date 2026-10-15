@@ -13,7 +13,12 @@ import { statfsSync } from "node:fs";
 import { freemem, totalmem } from "node:os";
 import { refusedInternal } from "./internal_refused.ts";
 import { recentErrors, type ErrorLine } from "./log.ts";
-import { leaseLapsed, listRunning, queueDepth } from "../core/runs.ts";
+import {
+  budgetFailures,
+  leaseLapsed,
+  listRunning,
+  queueDepth,
+} from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 
 /** Free disk under this share of the volume is something to say. */
@@ -45,6 +50,17 @@ export interface Degraded {
   readonly href: string;
 }
 
+/** How many finished checks the median is taken over. */
+export const MEDIAN_OVER = 20;
+
+/** The check lane: one at a time, so depth times the median is the wait. */
+export interface Lane {
+  readonly queued: number;
+  readonly running: { pull: number | null; since: string } | null;
+  readonly medianMinutes: number | null;
+  readonly clearsInMinutes: number | null;
+}
+
 export interface Vitals {
   readonly ok: boolean;
   readonly needs: string[];
@@ -56,6 +72,7 @@ export interface Vitals {
     hostTotalBytes: number;
   };
   readonly queue: Record<string, number>;
+  readonly lane: Lane;
   readonly stuck: {
     runId: string;
     repo: string;
@@ -84,6 +101,74 @@ export interface VitalsInput {
  * another instant must not move when a cause began.
  */
 const firstSeen = new Map<string, string>();
+
+/** The lane as one line (no label; callers add their own), or null when nothing is queued. */
+export function laneLine(lane: Lane, now = Date.now()): string | null {
+  if (lane.queued === 0) return null;
+  const parts = [`${lane.queued} check${lane.queued === 1 ? "" : "s"} queued`];
+  if (lane.running !== null) {
+    const age = Math.max(
+      0,
+      Math.round((now - new Date(lane.running.since).getTime()) / 60_000),
+    );
+    parts.push(
+      `running ${lane.running.pull === null ? "a check" : `#${lane.running.pull}`} for ${age} min`,
+    );
+  }
+  if (lane.medianMinutes !== null) parts.push(`median ${lane.medianMinutes} min`);
+  if (lane.clearsInMinutes !== null)
+    parts.push(
+      `clears in ~${lane.clearsInMinutes >= 120 ? `${Math.round(lane.clearsInMinutes / 60)} h` : `${lane.clearsInMinutes} min`}`,
+    );
+  return parts.join(" · ");
+}
+
+/** Depth, the running check, and the median of the last finished ones. */
+function readLane(
+  db: Database,
+  running: ReturnType<typeof listRunning>,
+  now: number,
+): Lane {
+  const queued =
+    db
+      .query<{ n: number }, []>(
+        "SELECT COUNT(*) AS n FROM run WHERE kind = 'check' AND state = 'queued'",
+      )
+      .get()?.n ?? 0;
+  const first = running.find(
+    (r) => r.run.kind === "check" && !leaseLapsed(r.run, STALE_AFTER_MS, now),
+  );
+  const durations = db
+    .query<{ ms: number }, [number]>(
+      `SELECT (julianday(finished_at) - julianday(started_at)) * 86400000 AS ms
+       FROM run WHERE kind = 'check' AND state IN ('ok','failed')
+         AND started_at IS NOT NULL AND finished_at IS NOT NULL
+       ORDER BY finished_at DESC LIMIT ?1`,
+    )
+    .all(MEDIAN_OVER)
+    .map((r) => r.ms)
+    .sort((a, b) => a - b);
+  const mid = durations.length >> 1;
+  const medianMs =
+    durations.length === 0
+      ? null
+      : durations.length % 2
+        ? durations[mid]!
+        : (durations[mid - 1]! + durations[mid]!) / 2;
+  const medianMinutes = medianMs === null ? null : Math.round(medianMs / 60_000);
+  return {
+    queued,
+    running: first
+      ? {
+          pull: first.issue,
+          since: first.run.startedAt ?? first.run.createdAt,
+        }
+      : null,
+    medianMinutes,
+    clearsInMinutes:
+      medianMinutes === null || queued === 0 ? null : queued * medianMinutes,
+  };
+}
 
 export function vitals(input: VitalsInput): Vitals {
   const now = input.now ?? Date.now();
@@ -118,20 +203,30 @@ export function vitals(input: VitalsInput): Vitals {
       "/settings/capacity",
     );
 
+  const running = listRunning(input.db);
+  const lane = readLane(input.db, running, now);
   const queue: Record<string, number> = {};
   for (const row of queueDepth(input.db, now)) {
     queue[row.kind] = row.queued;
     if (now - new Date(row.oldest).getTime() > QUEUE_WAIT_MAX_MS)
       need(
         `queue:${row.kind}`,
-        `The ${row.kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes.`,
+        row.kind === "check"
+          ? [
+              `The check queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes`,
+              laneLine(lane, now),
+              "one lane, checks run one at a time",
+            ]
+              .filter((part) => part !== null)
+              .join("; ") + "."
+          : `The ${row.kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes.`,
         new Date(row.oldest).toISOString(),
         "/settings/capacity",
       );
   }
 
   const stuck: Vitals["stuck"] = [];
-  for (const { run, repo, issue } of listRunning(input.db)) {
+  for (const { run, repo, issue } of running) {
     const started = new Date(run.startedAt ?? run.createdAt).getTime();
     if (leaseLapsed(run, STALE_AFTER_MS, now) || now - started > NO_PROGRESS_MS)
       stuck.push({
@@ -147,6 +242,18 @@ export function vitals(input: VitalsInput): Vitals {
       `Run ${s.runId} is stuck: it has not moved since ${s.since}.`,
       s.since,
       `/${s.repo}/runs/${s.runId}`,
+    );
+
+  // A run killed twice for its budget is a card, for a day.
+  for (const run of budgetFailures(
+    input.db,
+    new Date(now - 24 * 3_600_000).toISOString(),
+  ))
+    need(
+      `budget:${run.id}`,
+      `A run was killed twice: ${run.summary}.`,
+      run.finishedAt ?? undefined,
+      "/settings/capacity",
     );
 
   const apps = { serving: 0, asleep: 0, previews: 0 };
@@ -188,6 +295,7 @@ export function vitals(input: VitalsInput): Vitals {
       hostTotalBytes: totalmem(),
     },
     queue,
+    lane,
     stuck,
     apps,
     errors: { lastHour: seen.lastHour, latest: seen.latest },

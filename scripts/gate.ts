@@ -9,7 +9,10 @@
  * cannot sit outside the gate silently.
  *
  * A file joins the gate by moving from `EXCLUDED` to `GATE` in a pull whose
- * check is green.
+ * check is green and whose description carries ten green runs in random
+ * order under load (`bun scripts/flake-hunt.ts admit <file>`). A flaky file
+ * leaves it only through `bun scripts/flake-hunt.ts quarantine`, under the
+ * issue the nightly hunt filed (`.forgejo/workflows/flake-hunt.yml`).
  */
 
 export type Exclusion = {
@@ -47,6 +50,7 @@ export const GATE: readonly string[] = [
   "test/event-order.test.ts",
   "test/refresh-meta.test.ts",
   "test/restore-card.test.ts",
+  "test/recovery-doc.test.ts",
   "test/returns.test.ts",
   "test/review-route.test.ts",
   "test/review-lines.test.ts",
@@ -61,6 +65,8 @@ export const GATE: readonly string[] = [
   "test/crew-sandbox.test.ts",
   "test/crew-remotes.test.ts",
   "test/crew-brief-gate.test.ts",
+  "test/passport.test.ts",
+  "test/passport-edge.test.ts",
   "test/crew-direction.test.ts",
   "test/crew-direction-autonomy.test.ts",
   "test/crew-guard.test.ts",
@@ -95,8 +101,10 @@ export const GATE: readonly string[] = [
   "test/front.test.ts",
   "test/fork-counts.test.ts",
   "test/fork-flow.test.ts",
+  "test/approve-here.test.ts",
   "test/fork-pull-approval.test.ts",
   "test/cross-repo-pull.test.ts",
+  "test/pull-mergeable.test.ts",
   "test/pulls.test.ts",
   "test/api-reader-marks.test.ts",
   "test/app-members.test.ts",
@@ -163,6 +171,7 @@ export const GATE: readonly string[] = [
   "test/diff-edge-cases.test.ts",
   "test/diff.test.ts",
   "test/edge-auth.test.ts",
+  "test/own-session.test.ts",
   "test/edit-words.test.ts",
   "test/edits-security.test.ts",
   "test/edits.test.ts",
@@ -211,6 +220,7 @@ export const GATE: readonly string[] = [
   "test/origins.test.ts",
   "test/overlap.test.ts",
   "test/outsiders-switch.test.ts",
+  "test/check-budget.test.ts",
   "test/check-list.test.ts",
   "test/check-tiers.test.ts",
   "test/pull-check-again.test.ts",
@@ -229,6 +239,7 @@ export const GATE: readonly string[] = [
   "test/app-env.test.ts",
   "test/apps-ssh.test.ts",
   "test/pacing.test.ts",
+  "test/openapi.test.ts",
   "test/palette.test.ts",
   "test/qr.test.ts",
   "test/branches.test.ts",
@@ -237,6 +248,8 @@ export const GATE: readonly string[] = [
   "test/counts.test.ts",
   "test/crew-loop.test.ts",
   "test/crew-totals.test.ts",
+  "test/flake.test.ts",
+  "test/crew-locks.test.ts",
   "test/ssh-site.test.ts",
   "test/web-code.test.ts",
   "test/web-origins.test.ts",

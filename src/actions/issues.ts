@@ -55,6 +55,7 @@ import {
 } from "../crew/direct.ts";
 import { laterGate } from "../crew/later.ts";
 import { handedOverAt } from "../crew/parks.ts";
+import { alreadyDone, CLOSED_NOTE } from "../core/done_on_main.ts";
 import { listReviews } from "../core/reviews.ts";
 import {
   applyLabelNames,
@@ -420,7 +421,25 @@ export function setIssueState(
       if (children.length === 0) return err("invalid_reason");
     } else if (closing.into !== undefined) return err("invalid_reason");
   }
-  const changed = writeState(app.db, issue.id, state, reason);
+  // Done on main already, by the commits the crew named: the close keeps
+  // them, whichever door it comes through. The note goes in with the
+  // state change or not at all.
+  const doneBy =
+    state === "closed" && issue.kind === "issue"
+      ? (alreadyDone(app.db, [issue.id]).get(issue.id) ?? [])
+      : [];
+  const changed = app.db.transaction(() => {
+    const written = writeState(app.db, issue.id, state, reason);
+    if (written && doneBy.length > 0)
+      insertComment(app.db, {
+        issueId: issue.id,
+        authorId: user.value.id,
+        body: `${CLOSED_NOTE}${doneBy
+          .map((o) => `[\`${o.slice(0, 7)}\`](/${repo.ownerName}/${repo.name}/commit/${o})`)
+          .join(", ")}.`,
+      });
+    return written;
+  })();
   if (!changed) return ok(getIssueById(app.db, issue.id) ?? issue);
   if (children.length > 0)
     moveBlockersToChildren(app.db, issue, children, user.value.id);

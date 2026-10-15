@@ -27,6 +27,8 @@ import {
 import {
   listAccounts,
   removeAccount,
+  retireAndRemoveAccount,
+  retirementPlan,
   suspendAccount,
   unsuspendAccount,
   verifyAccount,
@@ -95,6 +97,7 @@ import {
   refreshPullHead,
   resolveReviewThread,
   submitReview,
+  approveHere,
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
@@ -160,6 +163,7 @@ import {
   listPulls,
   pullDiff,
   pullDir,
+  pullMergeStates,
   type Pull,
 } from "../core/pulls.ts";
 import {
@@ -339,6 +343,7 @@ import {
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
+import { passportRoutes } from "./passport_edge.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -1092,6 +1097,7 @@ function membersAnswer<T>(result: Result<T, AppMembersError>): Response {
   }
 }
 export function apiRoutes(router: Router<Handler>): void {
+  passportRoutes(router);
   // ── accounts ─────────────────────────────────────────────────────────
 
   router.add("POST", "/api/v1/users", async (ctx) => {
@@ -1145,7 +1151,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!verified.ok) return unauthorized();
     const session = createSession(ctx.app.db, verified.value.id);
     return json(publicUser(verified.value), 201, {
-      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url),
+      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
     });
   });
 
@@ -1155,7 +1161,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
     return json({}, 200, {
-      "set-cookie": sessionCookie("", new Date(0), ctx.url),
+      "set-cookie": sessionCookie("", new Date(0), ctx.url, ctx.app.config.url),
     });
   });
 
@@ -1312,6 +1318,24 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("DELETE", "/api/v1/admin/accounts/:username", async (ctx) => {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
+    const input = await body(ctx.request);
+    if (input.retireOrgs === true) {
+      const name = ctx.params.username!;
+      if (input.confirm !== true) {
+        const plan = retirementPlan(ctx.app, ctx.auth.user, name);
+        return plan.ok ? json({ confirm_required: true, retire: plan.value }) : accountError(plan.error);
+      }
+      const retired = await retireAndRemoveAccount(ctx.app, ctx.auth.user, name, {
+        confirmed: true,
+      });
+      if (!retired.ok) return accountError(retired.error);
+      if (retired.value.failed !== null)
+        return json(
+          { error: "delete_failed", failed: retired.value.failed, removed: retired.value.removed },
+          500,
+        );
+      return json({ removed: name, retired: retired.value.removed });
+    }
     const done = await removeAccount(ctx.app, ctx.auth.user, ctx.params.username!);
     if (!done.ok && done.error === "last_owner") {
       const user = getUserByName(ctx.app.db, ctx.params.username!);
@@ -2713,17 +2737,23 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // ── pull requests — so automation drives the review/merge loop ───────
 
-  router.add("GET", "/api/v1/repos/:owner/:name/pulls", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/pulls", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = withLabelsMany(
-      ctx,
-      listPulls(ctx.app.db, repo.id, {
-        ...query,
-        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-      }),
+    const pulls = listPulls(ctx.app.db, repo.id, {
+      ...query,
+      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+    });
+    const states = await pullMergeStates(
+      await Promise.all(
+        pulls.map(async (p) => ({ dir: await pullDirOf(ctx, repo, p), pull: p })),
+      ),
     );
+    const items = withLabelsMany(ctx, pulls).map((item, i) => ({
+      ...item,
+      ...(states[i] ?? {}),
+    }));
     return json(paged(items, query.limit, (p) => p.number));
   });
 
@@ -2785,6 +2815,9 @@ export function apiRoutes(router: Router<Handler>): void {
     const hold = getHold(ctx.app.db, found.pull.id);
     return json({
       ...withLabels(ctx, found.pull),
+      ...(found.pull.state === "open" && found.pull.mergedAt === null
+        ? { mergeable: status.mergeable, conflicts: status.conflicts }
+        : {}),
       status,
       diff,
       hold: hold === undefined ? null : holdJson(hold),
@@ -3114,6 +3147,43 @@ export function apiRoutes(router: Router<Handler>): void {
         return originAware(submitted.error, 422);
       }
       return json(submitted.value, 201);
+    },
+  );
+
+  // Let an origin fork's pull run here: a person who can write approves its
+  // current head, and its check and preview start.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/approve-here",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const done = await approveHere(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+      );
+      if (!done.ok) {
+        if (done.error === "self_review")
+          return apiError(
+            "self_review",
+            422,
+            "you cannot approve your own pull request",
+          );
+        if (done.error === "not_foreign")
+          return apiError(
+            "not_foreign",
+            422,
+            "this pull needs no approval to run",
+          );
+        if (done.error === "not_open")
+          return apiError("not_open", 422, "this pull is closed");
+        return respondAccess(done.error, 422);
+      }
+      return json(done.value, 201);
     },
   );
 

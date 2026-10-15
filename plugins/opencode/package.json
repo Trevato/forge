@@ -1,0 +1,7 @@
+{
+  "name": "opencode-forge",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "forge.ts",
+  "description": "The forge's MCP server and a forge command for OpenCode"
+}

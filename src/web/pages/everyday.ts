@@ -182,7 +182,7 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
     });
   const session = createSession(ctx.app.db, made.value.id);
   return redirect("/", {
-    cookie: sessionCookie(session.token, session.expiresAt, ctx.url),
+    cookie: sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
     url: ctx.url,
     flash: {
       message: `You are signed in as ${made.value.username}, your everyday account. Sign in as ${admin.username} when you mean to change the forge.`,
@@ -215,7 +215,7 @@ export async function everydaySwitch(ctx: Ctx): Promise<Response> {
   if (!daily) return new Response("not found", { status: 404 });
   signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
   return redirect("/signin", {
-    cookie: sessionCookie("", new Date(0), ctx.url),
+    cookie: sessionCookie("", new Date(0), ctx.url, ctx.app.config.url),
     url: ctx.url,
     flash: { message: `Sign in as ${daily.username}, your everyday account.` },
   });

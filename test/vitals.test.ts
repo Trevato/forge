@@ -82,7 +82,7 @@ test("a site admin with a read-only token gets the shape; others get the short o
   expect(Object.keys(v).sort()).toEqual(
     [
       "apps", "at", "checkedAt", "commit", "degraded", "disk", "draining", "errors",
-      "incidents", "memory", "needs", "ok", "queue", "rollout", "stale", "stuck",
+      "incidents", "lane", "memory", "needs", "ok", "queue", "rollout", "stale", "stuck",
       "version",
     ].sort(),
   );
@@ -149,8 +149,8 @@ test("the number of queries does not grow with runs", () => {
     if (i % 2) app.db.query("UPDATE run SET state='running' WHERE id=?1").run(r.id);
   }
   expect(count()).toBe(before);
-  // The queue and the running runs.
-  expect(before).toBe(2);
+  // The queue, the running runs, the runs killed twice for their budget, and the lane's depth and finished checks.
+  expect(before).toBe(5);
 });
 
 test("errors are counted, bounded, redacted, and a burst is said", async () => {
@@ -185,6 +185,47 @@ test("errors are counted, bounded, redacted, and a burst is said", async () => {
   }
 });
 
+test("the lane: depth, the running check and its age, the median of the last finished, the time to clear", async () => {
+  const { laneLine } = await import("../src/kernel/vitals.ts");
+  app.db.query("DELETE FROM run").run();
+  const now = Date.now();
+  const iso = (ms: number) => new Date(ms).toISOString();
+  // Empty lane: no line.
+  expect(vitals({ db: app.db, dataDir, now }).lane).toEqual({
+    queued: 0, running: null, medianMinutes: null, clearsInMinutes: null,
+  });
+  expect(laneLine(vitals({ db: app.db, dataDir, now }).lane, now)).toBeNull();
+  // Three finished checks of 10, 20 and 30 minutes: the median is 20.
+  for (const min of [10, 20, 30]) {
+    const r = createRun(app.db, { repoId, kind: "check" });
+    app.db
+      .query("UPDATE run SET state='ok', started_at=?2, finished_at=?3 WHERE id=?1")
+      .run(r.id, iso(now - 3_600_000), iso(now - 3_600_000 + min * 60_000));
+  }
+  const live = createRun(app.db, { repoId, kind: "check" });
+  app.db
+    .query("UPDATE run SET state='running', started_at=?2, heartbeat_at=?3 WHERE id=?1")
+    .run(live.id, iso(now - 6 * 60_000), iso(now));
+  for (let i = 0; i < 6; i++) createRun(app.db, { repoId, kind: "check" });
+  const lane = vitals({ db: app.db, dataDir, now }).lane;
+  expect(lane.queued).toBe(6);
+  expect(lane.running?.since).toBe(iso(now - 6 * 60_000));
+  expect(lane.medianMinutes).toBe(20);
+  expect(lane.clearsInMinutes).toBe(120);
+  expect(laneLine(lane, now)).toBe(
+    "6 checks queued · running a check for 6 min · median 20 min · clears in ~2 h",
+  );
+  // The same, in one call for an admin.
+  const body = (await (await health(admin)).json()) as { lane: typeof lane };
+  expect(body.lane.queued).toBe(6);
+  expect(body.lane.medianMinutes).toBe(20);
+  // Waiting past thirty minutes names the cause, not only the symptom.
+  const later = vitals({ db: app.db, dataDir, now: now + 3_600_000 });
+  const cause = later.needs.find((n) => n.includes("one lane"));
+  expect(cause).toMatch(/^The check queue has waited over 30 minutes; 6 checks queued .*; one lane, checks run one at a time\.$/);
+  expect(cause).not.toContain("Lane:");
+});
+
 test("an unauthenticated internal call is refused, logged and flagged; the probe is not", async () => {
   const { resetRefusedInternal } = await import("../src/kernel/internal_refused.ts");
   resetRefusedInternal();
@@ -217,6 +258,8 @@ test("degraded names each cause, stable, with when it began", async () => {
     expect(base.degraded.map((d) => d.cause)).not.toContain("errors");
 
     // queue: since is the oldest queued run's createdAt.
+    app.db.query("DELETE FROM run").run();
+    createRun(app.db, { repoId, kind: "agent" });
     const oldest = (
       app.db.query("SELECT MIN(created_at) AS m FROM run WHERE state='queued' AND kind='agent'").get() as { m: string }
     ).m;
