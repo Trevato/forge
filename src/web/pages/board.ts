@@ -19,6 +19,7 @@ import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { askMeasure } from "../../core/ask_ledger.ts";
 import { reviewersOf, waitsForPerson } from "../../crew/review.ts";
 import { tokenReturns } from "../../core/returns.ts";
+import { needLine } from "../../actions/health.ts";
 import { returnsRepos } from "../../actions/returns.ts";
 import {
   listDecisionsForRepos,
@@ -306,13 +307,6 @@ export function bigRedirect(ctx: Ctx): Response {
 
 // ---- the forge ----
 
-/** Where a need can be acted on, when it can: a stuck run's page. */
-function needHref(need: string, v: Vitals): string | undefined {
-  if (/ stuck\.$/.test(need) && v.stuck[0] !== undefined)
-    return `/${v.stuck[0].repo}/runs/${v.stuck[0].runId}`;
-  return undefined;
-}
-
 /** The sentinel's open findings, a link to them; nothing when there are none. */
 function sentinelSpan(app: Ctx["app"]): Html {
   const n = sentinelNotice(app.db);
@@ -359,12 +353,10 @@ function forgeStrip(ctx: Ctx): Html | null {
     ${
       ok
         ? html`<span class="board-forge-ok">All fine</span>`
-        : v.needs.map((need) => {
-            const href = needHref(need, v);
-            return href === undefined
-              ? html`<span class="board-forge-need">${need}</span>`
-              : html`<a class="board-forge-need" href="${href}">${need}</a>`;
-          })
+        : v.degraded.map(
+            (d) =>
+              html`<a class="board-forge-need" href="${d.href}">${needLine(d)}</a>`,
+          )
     }
   </div>`;
 }

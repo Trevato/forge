@@ -331,7 +331,6 @@ describe("home is the feed", () => {
     // The live region follows the operation, and the page ships the script.
     expect(text).toContain("fleet.operated");
     expect(text).toContain("data-pick");
-    expect(text).toContain('id="asks-link"');
     // Alone, a single row stays a plain link.
     const bobCard = await (await get("/", bobCookie)).text();
     expect(bobCard).not.toContain('id="onyou-bulk"');

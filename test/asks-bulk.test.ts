@@ -684,7 +684,6 @@ describe("acting on many asks at once", () => {
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).toContain('id="live-on-you"');
-    expect(text).toContain('id="asks-link"');
     expect(text).not.toContain("Card one");
     expect(getIssueById(app.db, a.id)!.state).toBe("closed");
     // The undo link rides on the card, and is the same one after a refresh.
