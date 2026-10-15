@@ -8,6 +8,7 @@
  * it needs.
  */
 
+import { askCheck } from "../../checks/again.ts";
 import { addCommentThrough } from "../../actions/issues.ts";
 import type { AccessError } from "../../actions/access.ts";
 import {
@@ -207,8 +208,11 @@ function checksLine(
   waiting = false,
   /** `tierLine` for a repository whose check has a fast tier; else empty. */
   tier = "",
+  /** A writer's button to ask for a check again; empty for anyone else. */
+  again: Html | "" = "",
 ): Html {
-  if (!isApp && !required && check.state === "none" && !waiting) return html``;
+  if (!isApp && !required && check.state === "none" && !waiting && again === "")
+    return html``;
   const run = check.run;
   const link =
     run === null
@@ -246,7 +250,7 @@ function checksLine(
       () =>
         html`<span class="where-sep" aria-hidden="true">·</span
           ><span>a passing deploy is required</span>`,
-    )}
+    )}${again}
   </p>`;
 }
 
@@ -310,6 +314,11 @@ function mergeBox(
     isApp,
     !pullMayRun(ctx.app.db, repo, pull, status.headOid),
     tier,
+    pull.state === "open" && canWrite(ctx.app.db, repo, ctx.auth.user)
+      ? html`<form method="post" action="${thread}/checks" class="inline-form">
+          ${btn("Check again", { size: "sm", icon: "loader" })}
+        </form>`
+      : "",
   );
   const reopen = html`<form method="post" action="${thread}/state">
     <input type="hidden" name="state" value="open" />
@@ -1052,6 +1061,25 @@ export function threadResolveSubmit(
       message: resolved ? "Thread resolved." : "Thread reopened.",
     });
   };
+}
+
+// POST /:owner/:name/pulls/:number/checks — ask for a check at the head now.
+export async function pullChecksSubmit(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user || !canWrite(ctx.app.db, found.repo, ctx.auth.user))
+    return new Response("forbidden", { status: 403 });
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  const asked = await askCheck(ctx.app, ctx.auth.user, found.repo, found.pull);
+  return flashTo(
+    ctx,
+    dest,
+    asked.ok
+      ? { message: "Check asked for at the current head." }
+      : { tone: "danger", message: `No check was asked for: ${asked.message}.` },
+  );
 }
 
 // POST /:owner/:name/pulls/:number/merge
