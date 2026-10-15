@@ -253,6 +253,7 @@ import {
   unlinkIssue,
   confirmIssue,
 } from "../actions/dependencies.ts";
+import { openPlan, parsePlan } from "../actions/plan.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
@@ -2386,6 +2387,28 @@ export function apiRoutes(router: Router<Handler>): void {
       );
     },
   );
+  // A plan, all or nothing: the same action as the MCP `plan` tool, so the
+  // same items and the same refusals (docs/PLANNING.md).
+  router.add("POST", "/api/v1/repos/:owner/:name/plan", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const input = await body(ctx.request);
+    const items = parsePlan(input.issues);
+    if (!items.ok)
+      return apiError(items.error.error, 422, items.error.message);
+    const planned = openPlan(ctx.app, ctx.auth.user, repo, items.value);
+    if (!planned.ok) {
+      const { error, message } = planned.error;
+      return apiError(
+        error,
+        error === "not_found" ? 404 : error === "forbidden" ? 403 : 422,
+        message,
+      );
+    }
+    return json(planned.value, 201);
+  });
   router.add(
     "DELETE",
     "/api/v1/repos/:owner/:name/issues/:number/dependencies/:blocker",
