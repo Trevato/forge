@@ -72,6 +72,27 @@ if (process.argv.includes("--preflight")) {
   process.exit(result.ok ? 0 : 1);
 }
 
+// `--rollback <sha>` starts a kept release beside the running forge and
+// exits once it reads healthy as that sha (release/rollback.ts).
+if (process.argv[2] === "--rollback") {
+  const { rollback } = await import("./release/rollback.ts");
+  const port = Number(process.env.PORT ?? 3000);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    console.error(`PORT must be a port number, not ${JSON.stringify(process.env.PORT ?? "").slice(0, 40)}`);
+    process.exit(1);
+  }
+  const result = await rollback({
+    dataDir: dataDirOf(process.env),
+    sha: process.argv[3] ?? "",
+    port,
+    env: process.env,
+  });
+  // CLI answer on the stream a person or a script reads.
+  if (result.ok) console.log(`rolled back: pid ${result.pid} is healthy; the previous forge is still running on the port, stop it yourself`);
+  else console.error(result.line);
+  process.exit(result.ok ? 0 : 1);
+}
+
 // A forge can be an app of a forge (docs/APPS.md, "The forge as an app of
 // itself"). The host's `FORGE_APP_*` say where this one lives and what it
 // answers to; `FORGE_URL` there names the host, not this forge. Hosted, the
