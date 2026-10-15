@@ -156,7 +156,13 @@ export class ErrorLedger {
   recent(
     limit = 5,
     now = Date.now(),
-  ): { lastHour: number; byScope: Record<string, number>; latest: ErrorLine[] } {
+  ): {
+    lastHour: number;
+    byScope: Record<string, number>;
+    latest: ErrorLine[];
+    /** The oldest kept line still inside the hour. */
+    oldest: string | undefined;
+  } {
     this.prune(now);
     const byScope: Record<string, number> = {};
     let lastHour = 0;
@@ -166,7 +172,8 @@ export class ErrorLedger {
       byScope[scope] = n;
       lastHour += n;
     }
-    return { lastHour, byScope, latest: this.ring.slice(-limit).reverse() };
+    const oldest = this.ring.find((l) => now - new Date(l.at).getTime() < HOUR_MS)?.at;
+    return { lastHour, byScope, latest: this.ring.slice(-limit).reverse(), oldest };
   }
 
   clear(): void {
@@ -206,7 +213,7 @@ export function recentErrors(
   limit = 5,
   now = Date.now(),
   ledger: ErrorLedger = processLedger,
-): { lastHour: number; byScope: Record<string, number>; latest: ErrorLine[] } {
+): ReturnType<ErrorLedger["recent"]> {
   return ledger.recent(limit, now);
 }
 

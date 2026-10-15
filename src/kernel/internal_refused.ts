@@ -36,9 +36,14 @@ export class RefusedLedger {
   recent(now: number = Date.now()): {
     lastHour: number;
     latest: RefusedCall | undefined;
+    oldest: string | undefined;
   } {
     const recent = this.seen.filter((c) => now - c.at < WINDOW_MS);
-    return { lastHour: recent.length, latest: recent.at(-1) };
+    return {
+      lastHour: recent.length,
+      latest: recent.at(-1),
+      oldest: recent[0] && new Date(recent[0].at).toISOString(),
+    };
   }
 
   clear(): void {
