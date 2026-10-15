@@ -364,12 +364,17 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         binding(["enter"], "open"),
         binding(["/"], "find"),
         binding(["p"], "pin", { disabled: !f.signedIn }),
-        binding(["space"], "mark", { disabled: focus !== "onyou" }),
-        binding(["x"], "close", { disabled: focus !== "onyou" }),
-        binding(["m"], "mute", { disabled: focus !== "onyou" }),
-        binding(["S"], "ship", { disabled: focus !== "onyou" }),
-        binding(["u"], "undo", { disabled: lastSet === undefined }),
-        binding(["L"], "listen again", { disabled: silenced.size === 0 }),
+        // The On you verbs show only where they act, so the bar stays short.
+        ...(focus === "onyou" && onYou.length > 0
+          ? [
+              binding(["space"], "mark"),
+              binding(["x"], "close"),
+              binding(["m"], "mute"),
+              binding(["S"], "ship"),
+            ]
+          : []),
+        ...(lastSet !== undefined ? [binding(["u"], "undo")] : []),
+        ...(silenced.size > 0 ? [binding(["L"], "listen again")] : []),
         binding(["d"], "unpin", {
           disabled: focus !== "machine" || pins.length === 0,
         }),
