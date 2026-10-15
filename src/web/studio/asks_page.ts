@@ -9,15 +9,17 @@
 
 import {
   applyAsksBulk,
+  BULK_MAX,
   ownAsksOperation,
   undoAsksBulk,
   previewAsksBulk,
   type Skipped,
 } from "../../actions/asks_bulk.ts";
 import type { FleetValue } from "../../core/fleet_ops.ts";
+import { removeMutes } from "../../core/interactions.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { User } from "../../core/users.ts";
-import { studioHome } from "./home.ts";
+import { onYouAnswer, studioHome } from "./home.ts";
 import { notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { listReposVisibleTo } from "../../core/repos.ts";
@@ -40,6 +42,14 @@ import {
 } from "./asks.ts";
 import { changeHref } from "./nouns.ts";
 
+/** The kinds, in a word each, for "select by kind". */
+const ASK_KIND_WORDS: Readonly<Record<string, string>> = {
+  look: "Looks",
+  review: "Reviews",
+  stopped: "Stopped",
+  parked: "Parked",
+};
+
 /** The kinds a bulk action takes: a ceiling and a planner's decline are decided where they live. */
 const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "review", "stopped", "parked"]);
 
@@ -52,17 +62,62 @@ const pick = (d: Decision, picked: ReadonlySet<string>): Html | null =>
         name="item"
         value="${d.id}"
         form="asks-bulk"
+        data-repo="${d.repo.id}"
+        data-kind="${d.kind}"
         ${picked.has(d.id) ? html`checked` : null}
         aria-label="Select ${d.pull?.title ?? d.issue?.title ?? d.id}"
       />`
     : null;
 
-/** "Select all of this kind": the one box on a collapsed row's head. */
-const SELECT_ALL_JS = `document.addEventListener('change', function (e) {
+/**
+ * Selecting many, and acting on them in place. A box belongs to a bulk form
+ * by `form="<id>"`; a `data-pick` button or the repository chooser ticks
+ * the boxes of one form by all, kind or repository. A bulk form marked
+ * `data-bulk` posts without leaving the page and swaps the On you region
+ * and the top bar's count with what the server answers; on any trouble it
+ * falls back to the plain post, which says what happened.
+ */
+const SELECT_JS = `document.addEventListener('change', function (e) {
   var t = e.target;
-  if (!t || !t.matches || !t.matches('[data-select-all]')) return;
-  var card = t.closest('.card');
-  if (card) card.querySelectorAll('input[name="item"]').forEach(function (b) { b.checked = t.checked; });
+  if (!t || !t.matches) return;
+  if (t.matches('[data-select-all]')) {
+    var card = t.closest('.card');
+    if (card) card.querySelectorAll('input[name="item"]').forEach(function (b) { b.checked = t.checked; });
+  } else if (t.matches('select[data-pick-repo]') && t.value) {
+    pick(t.form, function (b) { return b.getAttribute('data-repo') === t.value; });
+    t.value = '';
+  }
+});
+function pick(form, test) {
+  if (!form || !form.id) return;
+  document.querySelectorAll('input[form="' + form.id + '"][name="item"]').forEach(function (b) { b.checked = test(b); });
+}
+document.addEventListener('click', function (e) {
+  var t = e.target && e.target.closest && e.target.closest('[data-pick]');
+  if (!t) return;
+  var want = t.getAttribute('data-pick');
+  pick(t.form, function (b) { return want === 'all' || 'kind:' + b.getAttribute('data-kind') === want; });
+});
+document.addEventListener('submit', function (e) {
+  var f = e.target;
+  if (!f || !f.matches || !f.matches('form[data-bulk]') || !window.fetch) return;
+  if (!new FormData(f).has('item')) return;
+  e.preventDefault();
+  var region = document.getElementById('live-on-you');
+  if (region) region.setAttribute('data-busy', '');
+  fetch(f.action, { method: 'POST', body: new URLSearchParams(new FormData(f)), credentials: 'same-origin', headers: { 'x-forge-fragment': '1' } })
+    .then(function (r) { return r.ok ? r.text() : Promise.reject(r); })
+    .then(function (text) {
+      var t = document.createElement('template');
+      t.innerHTML = text;
+      var fresh = t.content.getElementById('live-on-you');
+      var link = t.content.getElementById('asks-link');
+      if (region && fresh) region.innerHTML = fresh.innerHTML;
+      var mine = document.getElementById('asks-link');
+      if (mine && link) mine.innerHTML = link.innerHTML;
+    })
+    .catch(function () { f.removeAttribute('data-bulk'); f.submit(); })
+    .then(function () { if (region) region.removeAttribute('data-busy'); });
 });`;
 
 /** The rows shown before "N more": the few that matter most. */
@@ -184,6 +239,7 @@ export interface AsksTop {
   /** The asks the preview is about, kept ticked. */
   readonly picked?: ReadonlySet<string>;
   readonly action?: string;
+  readonly reason?: string;
 }
 
 /** GET /asks — the home, scrolled to what needs you; `?op=<id>` (a bulk
@@ -259,18 +315,23 @@ export function needsYouSection(
     ${pickable < 2
       ? null
       : html`<form id="asks-bulk" method="post" action="/asks/bulk" class="bar">
+          ${pickControls(
+            "asks-bulk",
+            [...new Map(decisions.filter((d) => BULK_KINDS.has(d.kind)).map((d) => [d.kind, { id: d.kind, label: ASK_KIND_WORDS[d.kind] ?? d.kind }])).values()],
+            [...new Map(decisions.filter((d) => BULK_KINDS.has(d.kind)).map((d) => [d.repo.id, { id: d.repo.id, label: `${d.repo.ownerName}/${d.repo.name}` }])).values()],
+          )}
           <select name="action" class="input" aria-label="What to do with the selected asks">
-            ${Object.entries(VERB_WORDS).map(
-              ([value, words]) =>
-                html`<option value="${value}" ${top?.action === value ? html`selected` : null}>${words}</option>`,
+            ${ASK_VERBS.map(
+              (value) =>
+                html`<option value="${value}" ${top?.action === value ? html`selected` : null}>${VERB_WORDS[value]}</option>`,
             )}
           </select>
-          ${btn("Preview", { size: "sm" })}
+          ${reasonInput(top?.reason)} ${btn("Preview", { size: "sm" })}
           <span class="muted small">on the selected asks</span>
         </form>`}
     ${decisions.map((d) => decisionForm(d))}
   </section>`;
-  return { body, scriptJs: pickable < 2 ? "" : SELECT_ALL_JS };
+  return { body, scriptJs: SELECT_JS };
 }
 
 /** The home with a bulk step's preview or receipt on top of what needs
@@ -285,10 +346,94 @@ async function asksScreen(ctx: Ctx, top: AsksTop): Promise<Response> {
 
 const VERB_WORDS: Readonly<Record<string, string>> = {
   dismiss: "Dismiss",
+  decline: "Decline",
+  mute: "Mute repository",
   ship: "Ship",
   close: "Close",
   replan: "Hand back to the planner",
 };
+
+/** What the asks below can be given in one move; mute is the On you card's. */
+const ASK_VERBS = ["decline", "ship", "close", "replan"] as const;
+
+/** What the On you card's set can be given. */
+const CARD_VERBS = ["close", "mute", "ship"] as const;
+
+/** One reason, written on each pull or issue closed. */
+const reasonInput = (value = ""): Html =>
+  html`<input
+    class="input"
+    name="reason"
+    maxlength="300"
+    value="${value}"
+    placeholder="Reason, written on each closed"
+    aria-label="Reason, written on each closed"
+  />`;
+
+/**
+ * Pick-by-set controls for the bulk form `formId`: all, by kind, by
+ * repository. Plain buttons the page's script answers; the boxes still work alone.
+ */
+export function pickControls(
+  formId: string,
+  kinds: readonly { id: string; label: string }[],
+  repos: readonly { id: string; label: string }[],
+): Html {
+  return html`<span class="bar" role="group" aria-label="Select">
+    <button type="button" class="btn" data-size="sm" form="${formId}" data-pick="all">Select all</button>
+    ${kinds.length < 2
+      ? null
+      : kinds.map(
+          (k) =>
+            html`<button type="button" class="btn" data-size="sm" form="${formId}" data-pick="kind:${k.id}">${k.label}</button>`,
+        )}
+    ${repos.length < 2
+      ? null
+      : html`<select class="input" form="${formId}" data-pick-repo aria-label="Select by repository">
+          <option value="">By repository…</option>
+          ${repos.map((r) => html`<option value="${r.id}">${r.label}</option>`)}
+        </select>`}
+  </span>`;
+}
+
+/**
+ * The On you card's one form: a verb for the set, one reason, one request.
+ * `receipt` is the day's undo link for the last set acted on.
+ */
+export function onYouBulk(
+  kinds: readonly { id: string; label: string }[],
+  repos: readonly { id: string; label: string }[],
+  receipt: { id: string; verb: string; done: number } | undefined,
+  withForm = true,
+  muted: readonly { id: string; label: string }[] = [],
+): Html {
+  return html`${muted.length === 0
+      ? null
+      : html`<form class="bar" method="post" action="/asks/listen">
+          ${muted.map((r) => html`<input type="hidden" name="repo" value="${r.id}" />`)}
+          <span class="muted small" title="${muted.map((r) => r.label).join(", ")}"
+            >${muted.length} ${muted.length === 1 ? "repository" : "repositories"} muted</span
+          >
+          <button type="submit" class="btn btn-sm btn-ghost">Listen again</button>
+        </form>`}
+    ${receipt === undefined
+      ? null
+      : html`<form class="bar" method="post" action="/asks/bulk/${receipt.id}/undo" role="status">
+          <span class="small">${VERB_WORDS[receipt.verb] ?? receipt.verb}: ${receipt.done} done</span>
+          ${btn("Undo", { size: "sm" })}
+          <span class="muted small">kept for a day</span>
+        </form>`}
+    ${withForm
+      ? html`<form id="onyou-bulk" method="post" action="/asks/bulk" class="bar" data-bulk>
+          <input type="hidden" name="apply" value="1" />
+          ${pickControls("onyou-bulk", kinds, repos)}
+          <select name="action" class="input" aria-label="What to do with the selected">
+            ${CARD_VERBS.map((v) => html`<option value="${v}">${VERB_WORDS[v]}</option>`)}
+          </select>
+          ${reasonInput()} ${btn("Do it", { size: "sm" })}
+        </form>`
+      : null}`;
+}
 
 const shown = (v: FleetValue): string =>
   v === null ? "nobody" : Array.isArray(v) ? v.join(", ") : String(v);
@@ -360,21 +505,40 @@ export async function asksBulkSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const action = field(form, "action");
+  const reason = field(form, "reason").trim();
   const items = form.getAll("item").filter((i): i is string => typeof i === "string");
   if (items.length === 0)
     return await asksScreen(ctx, nothingDone("select at least one ask first"));
   const verb = VERB_WORDS[action] ?? action;
   if (field(form, "apply") === "1") {
-    const op = await applyAsksBulk(ctx.app, ctx.auth.user, action, items);
-    if (!op.ok) return await asksScreen(ctx, nothingDone(op.error.message));
+    const op = await applyAsksBulk(ctx.app, ctx.auth.user, action, items, reason);
+    const inPlace = ctx.request.headers.get("x-forge-fragment") === "1";
+    // The script falls back to the plain post on a refusal, which says why.
+    if (!op.ok)
+      return inPlace
+        ? new Response(op.error.message, { status: 422 })
+        : await asksScreen(ctx, nothingDone(op.error.message));
+    // The page's own script asks for the card alone, and swaps it in place.
+    if (inPlace) {
+      const why = [
+        ...op.value.rows.filter((r) => r.outcome !== "ok").map((r) => r.reason),
+        ...op.value.skipped.map((s) => s.reason),
+      ];
+      const note =
+        why.length === 0
+          ? undefined
+          : `${why.length} not done: ${[...new Set(why.filter((w) => w !== ""))].join("; ") || "refused"}`;
+      return onYouAnswer(ctx, ctx.auth.user, note);
+    }
     return redirect(`/?op=${op.value.id}#asks-bulk-result`);
   }
-  const plan = previewAsksBulk(ctx.app, ctx.auth.user, action, items);
+  const plan = previewAsksBulk(ctx.app, ctx.auth.user, action, items, reason);
   if (!plan.ok) return await asksScreen(ctx, nothingDone(plan.error.message));
   const p = plan.value;
   const foot = html`<form method="post" action="/asks/bulk" class="bar">
     <input type="hidden" name="action" value="${action}" />
     <input type="hidden" name="apply" value="1" />
+    <input type="hidden" name="reason" value="${reason}" />
     ${items.map((i) => html`<input type="hidden" name="item" value="${i}" />`)}
     ${p.counts.change > 0 ? btn(`${verb} ${p.counts.change}`, { size: "sm", variant: "primary" }) : null}
     <span class="muted small"
@@ -386,6 +550,7 @@ export async function asksBulkSubmit(ctx: Ctx): Promise<Response> {
     banner: bulkCard(`${verb}: ${p.counts.change} of ${items.length}`, bulkRows(p.rows, p.skipped), foot),
     picked: new Set(items),
     action,
+    reason,
   });
 }
 
@@ -400,4 +565,17 @@ export async function asksBulkUndo(ctx: Ctx): Promise<Response> {
       ? notFoundPage(ctx)
       : await asksScreen(ctx, nothingDone(op.error.message));
   return redirect(`/?op=${op.value.id}#asks-bulk-result`);
+}
+
+/** POST /asks/listen — take back the viewer's own mute of the repositories named. */
+export async function asksListen(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const repos = form
+    .getAll("repo")
+    .filter((r): r is string => typeof r === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(r))
+    .slice(0, BULK_MAX);
+  removeMutes(ctx.app.db, ctx.auth.user.id, repos.map((r) => `repo:${r}`));
+  return redirect("/");
 }

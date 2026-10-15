@@ -19,6 +19,7 @@ import { askMeasure, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts
 import {
   getIssueById,
   labelsForIssues,
+  listAssignedTo,
   listComments,
   listOpenPullsVisibleTo,
   type Issue,
@@ -1049,9 +1050,16 @@ export function askTargetsFor(
   );
   const issueIds: string[] = [];
   const refused: { item: string; reason: string }[] = [];
+  // `issue:<id>` names an issue or pull assigned to the viewer — what the
+  // home's On you card holds — rather than an ask it raises.
+  const assigned = new Map(
+    listAssignedTo(db, user.id, 200).map((i) => [`issue:${i.id}`, i]),
+  );
   for (const item of new Set(items)) {
     const ask = asks.get(item);
-    if (ask === undefined) refused.push({ item, reason: "it no longer asks you" });
+    const mine = assigned.get(item);
+    if (mine !== undefined) issueIds.push(mine.id);
+    else if (ask === undefined) refused.push({ item, reason: "it no longer asks you" });
     else if (ask.kind === "paused")
       refused.push({ item, reason: "a ceiling is raised in the app's settings" });
     else if (ask.kind === "declined")

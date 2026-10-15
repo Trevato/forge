@@ -151,10 +151,11 @@ function themeMenu(active: ThemeName | undefined): Html {
  * The way to what needs you, with how many things ask the viewer — the very
  * count the home's pinned section leads with (`askCountFor`).
  */
-function asksLink(ctx: Ctx): Html {
+export function asksLink(ctx: Ctx): Html {
   if (!ctx.auth.user) return html``;
   const count = askCountFor(ctx, ctx.auth.user);
   return html`<a
+    id="asks-link"
     class="btn"
     data-size="sm"
     href="/#needs-you"

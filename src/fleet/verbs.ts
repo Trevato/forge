@@ -24,7 +24,7 @@ import { isCrew } from "../core/agents.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { bringUpToDate } from "../crew/autonomy.ts";
 import { getHold } from "../core/holds.ts";
-import { recordInteraction, removeDismissals } from "../core/interactions.ts";
+import { recordInteraction, removeDismissals, removeMutes } from "../core/interactions.ts";
 import { getPull } from "../core/pulls.ts";
 import { askItemsOf } from "../web/studio/asks.ts";
 import type { FleetValue } from "../core/fleet_ops.ts";
@@ -59,6 +59,8 @@ export interface Target {
   readonly viewerId?: string;
   /** For an issue: whether the viewer's dismissal of its ask still holds. */
   readonly askDismissed?: boolean;
+  /** Whether the viewer muted this repository. */
+  readonly muted?: boolean;
   /** For a pull: merged, its latest check green, and whether it merges as it stands. */
   readonly merged?: boolean;
   readonly green?: boolean;
@@ -328,17 +330,54 @@ export const VERBS: Record<string, Verb> = {
       done(requeueRepoRun(app, actor, t.repo, t.id)),
   },
 
+  // Close: with a reason (one sentence), it is said on each before it
+  // closes; undo opens it again and the reason stays in the conversation.
   close: {
     kind: "issue",
     reversible: true,
-    parse: noValue,
+    parse: (_app, value) =>
+      value === null || value === undefined || value === ""
+        ? ok(null)
+        : typeof value === "string" && value.length <= 300
+          ? ok(value.trim().replace(/\s+/g, " "))
+          : err("a reason is one sentence of at most 300 characters"),
     read: (t) => t.issue?.state ?? null,
     next: () => "closed",
     refuse: (app, t) => (isMirror(app, t.repo) ? words("mirrored") : undefined),
-    async write(app, actor, t, after) {
+    async write(app, actor, t, after, value) {
       if (!t.issue || (after !== "open" && after !== "closed"))
         return words("not_found");
-      return done(setIssueState(app, actor, t.repo, t.issue, after));
+      const closed = done(setIssueState(app, actor, t.repo, t.issue, after));
+      // Said after the close, so a refused close leaves no comment behind.
+      if (closed === undefined && after === "closed" && typeof value === "string" && value !== "") {
+        const said = addComment(app, actor, t.repo, t.issue, `Closed: ${value}`);
+        if (!said.ok) return words(String(said.error));
+      }
+      return closed;
+    },
+  },
+
+  // Mute: the actor's own "not this app, not now": its repository goes
+  // quiet in their feed and their On you card. Undo listens again.
+  mute: {
+    kind: "issue",
+    reversible: true,
+    personal: true,
+    parse: noValue,
+    read: (t) => (t.muted ? "muted" : "listening"),
+    next: () => "muted",
+    refuse: () => undefined,
+    async write(app, actor, t, after) {
+      if (after === "listening") removeMutes(app.db, actor.id, [`repo:${t.repo.id}`]);
+      else
+        recordInteraction(app.db, {
+          viewerId: actor.id,
+          itemId: `repo:${t.repo.id}`,
+          kind: "muted",
+          repoId: t.repo.id,
+          actorId: null,
+        });
+      return undefined;
     },
   },
 
