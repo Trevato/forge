@@ -16,7 +16,7 @@ import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos, getAppByRepo, listApps } from "../../core/apps.ts";
 import { latestDecision, stopStands } from "../../core/decisions.ts";
 import { getHold, holdsFor } from "../../core/holds.ts";
-import { askDismissals } from "../../core/interactions.ts";
+import { askDismissals, mutedRepos } from "../../core/interactions.ts";
 import { askMeasure, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
 import {
   getIssueById,
@@ -29,6 +29,8 @@ import {
 import { looksForApps } from "../../core/looks.ts";
 import { closesFromBody, getPull, joinMany, type Pull } from "../../core/pulls.ts";
 import {
+  canRead,
+  getReposByIds,
   listReposVisibleTo,
   canWrite,
   listReposWritableTo,
@@ -473,7 +475,8 @@ const groupId = (a: { kind: DecisionKind; repo: Repo }): string =>
   `${a.kind}:${a.repo.id}`;
 
 /**
- * The asks the viewer has not set aside: a dismissal — of the ask, or of
+ * The asks the viewer has not set aside: a muted repository's asks are all
+ * out (they still exist, and `repoAsks` still counts them); a dismissal — of the ask, or of
  * the row it collapsed into — holds until the ask's cause is newer than it
  * (a check ran again, it was parked again, a new day's pause).
  */
@@ -482,12 +485,14 @@ function notDismissed<T extends AskCandidate>(
   user: User,
   asks: readonly T[],
 ): T[] {
+  const muted = mutedRepos(db, user.id);
   const dismissed = askDismissals(db, user.id);
-  if (dismissed.size === 0) return [...asks];
+  if (dismissed.size === 0 && muted.size === 0) return [...asks];
   const holds = (id: string, since: string): boolean =>
     (dismissed.get(`ask:${id}`) ?? "") > since;
   return asks.filter(
-    (a) => !holds(a.id, a.since) && !holds(groupId(a), a.since),
+    (a) =>
+      !muted.has(a.repo.id) && !holds(a.id, a.since) && !holds(groupId(a), a.since),
   );
 }
 
@@ -542,6 +547,40 @@ function scoredFor(
   const asks = askCandidatesFor(db, user, repos);
   const scores = consequencesOf(db, asks, now);
   return asks.map((a) => ({ ...a, consequence: scores.get(a.id)! }));
+}
+
+/**
+ * The viewer's muted repositories that hold asks right now: said on the
+ * home, never silent, so a mute is always one tap from being taken back.
+ */
+export function silencedRepos(
+  db: Database,
+  user: User,
+): Repo[] {
+  const muted = mutedRepos(db, user.id);
+  if (muted.size === 0) return [];
+  const inMuted = [...getReposByIds(db, [...muted]).values()].filter((r) =>
+    canRead(db, r, user),
+  );
+  const held = new Map<string, Repo>();
+  for (const a of scoredFor(db, user, inMuted)) held.set(a.repo.id, a.repo);
+  return [...held.values()];
+}
+
+/**
+ * How many rows ask the viewer in this one repository, mute or no mute: the
+ * repository's own page counts what its home leaves out.
+ */
+export function repoAsks(
+  db: Database,
+  user: User | undefined,
+  repo: Repo,
+): { count: number; muted: boolean } {
+  if (!user) return { count: 0, muted: false };
+  return {
+    count: askRows(scoredFor(db, user, [repo])).length,
+    muted: mutedRepos(db, user.id).has(repo.id),
+  };
 }
 
 /** What asks the viewer now: candidates, less what they set aside. */

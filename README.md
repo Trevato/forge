@@ -229,6 +229,8 @@ my machine", and the dashboard grows an **On your machine** card listing them.
 The server remembers only the choice — nothing about the state of a laptop —
 and `forge sync` below is what acts on it.
 
+**Muting a repository from the home**: each ask row on the home carries a "Mute owner/name" chip. A muted repository's asks leave the home, `/api/v1/asks`, the header count and the phone's pushes (the same per-user mute the On you card uses, no new table); the home says "N muted repositories still ask" with a "Listen again" button, and an app's own page still counts them.
+
 **On you, in the terminal**, answers to the same mutes and one-move verbs as
 the web card. Repositories you muted are hidden and counted ("2 repositories
 muted"). On the On you card: `space` marks a row, `x` closes the marked rows
