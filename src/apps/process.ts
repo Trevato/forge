@@ -307,7 +307,7 @@ export async function runStep(
 }
 
 /** The cell a step of this deploy runs in: the checkout and the home, the registry and what the app declared. */
-function stepCell(input: StartInput): CellSpec | undefined {
+export function stepCell(input: StartInput): CellSpec | undefined {
   const base = input.cell;
   if (base === undefined) return undefined;
   return {
