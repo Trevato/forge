@@ -99,6 +99,9 @@ export const FORGE_TARGET = "forge";
 /** How many thoughts stand at the top of the feed. */
 const THOUGHTS_SHOWN = 3;
 
+/** A thought stays at the top for a day, then leaves the feed (it is still kept). */
+const THOUGHT_AGE_MS = 24 * 60 * 60 * 1000;
+
 /**
  * A thought as the owner's post: their own words, verbatim (escaped here,
  * once; line breaks kept by CSS), marked "received". It has no controls.
@@ -144,26 +147,28 @@ export function sharedDraft(params: URLSearchParams): string {
  */
 export function composer(ctx: Ctx, user: User): Html {
   const { repos } = writableAppsOf(ctx, user);
-  if (repos.length === 0)
-    return empty({
-      icon: "rocket",
-      title: "No apps yet",
-      note: "Make one, tell the crew what it is, and watch it come up here.",
-      action: html`${btn("New app", { href: "/apps/new", variant: "primary" })}
-        ${btn("Repositories", { href: `/${user.username}` })}`,
-    });
   const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
-  return html`<form id="composer" class="composer" method="post" action="/tell">
+  const noApps = html`${empty({
+    icon: "rocket",
+    title: "No apps yet",
+    note: "Make one, tell the crew what it is, and watch it come up here.",
+    action: html`${btn("New app", { href: "/apps/new", variant: "primary" })}
+      ${btn("Repositories", { href: `/${user.username}` })}`,
+  })}`;
+  const form = html`<form id="composer" class="composer" method="post" action="/tell">
     <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew">${sharedDraft(ctx.url.searchParams)}</textarea>
     <div class="composer-bar">
-      <select name="app" class="input" aria-label="Send to">
+      ${repos.length === 0
+        ? html`<input type="hidden" name="app" value="${FORGE_TARGET}" /><span class="muted small">the forge</span>`
+        : html`<select name="app" class="input" aria-label="Send to">
         ${repos.map((r) => html`<option value="${slug(r)}">${slug(r)}</option>`)}
         <option value="${FORGE_TARGET}">the forge</option>
-      </select>
+      </select>`}
       <span class="spacer"></span>
       ${btn("Post", { variant: "primary" })}
     </div>
   </form>`;
+  return repos.length === 0 ? html`${form}${noApps}` : form;
 }
 
 /**
@@ -189,7 +194,7 @@ export function feedRegion(user: User, ctx: Ctx): Html {
   const items = readFeed(ctx.app.db, user, { limit: FEED_FIRST_PAGE }).items.filter(
     (item) => item.kind !== "ask",
   );
-  const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN);
+  const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN, new Date(Date.now() - THOUGHT_AGE_MS).toISOString());
   // Who each poster is, asked once for the page (`core/marks.ts`).
   const marks = marksByName(
     ctx.app.db,
@@ -301,7 +306,7 @@ ${outboxJs}
     var box = composer.elements.text;
     var app = composer.elements.app;
     var text = box ? box.value.trim() : '';
-    if (!text || !app || app.value === 'forge') return;
+    if (!text || !app || app.value === '${FORGE_TARGET}') return;
     if (!queue('/api/v1/feed/tells', { app: app.value, text: text })) return;
     e.preventDefault();
     box.value = '';

@@ -313,6 +313,26 @@ describe("home is the feed", () => {
     expect(app.db.query("SELECT count(*) AS n FROM thought").get()).toEqual({ n: 1 });
   });
 
+  test("a person with no apps can still send to the forge, and a day-old thought leaves the feed", async () => {
+    const empty = await get("/", bobCookie).then((r) => r.text());
+    expect(empty).toContain('name="app" value="forge"');
+    expect(empty).toContain("No apps yet");
+    const old = new Date(Date.now() - 2 * 86_400_000).toISOString();
+    app.db
+      .query("INSERT INTO thought (id, author, text, source, received_at) VALUES ('old1', ?1, 'ancient musing', 'composer', ?2)")
+      .run(bob.id, old);
+    expect(await get("/", bobCookie).then((r) => r.text())).not.toContain("ancient musing");
+    await fetch(`${servers.url}/tell`, {
+      method: "POST",
+      headers: { cookie: bobCookie, origin: servers.url },
+      body: new URLSearchParams({ app: "forge", text: "fresh musing" }),
+      redirect: "manual",
+    });
+    const after = await get("/", bobCookie).then((r) => r.text());
+    expect(after).toContain("fresh musing");
+    expect(after).not.toContain("ancient musing");
+  });
+
   test("the MCP feed answers the same posts, page by page", async () => {
     const token = createToken(app.db, alice.id, "ro", "ro").token;
     const call = async (args: unknown) => {

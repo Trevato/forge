@@ -13,15 +13,15 @@ export interface Thought {
   receivedAt: string;
 }
 
-/** The author's newest thoughts, newest first; the text exactly as kept. */
-export function recentThoughts(db: Database, authorId: string, limit: number): Thought[] {
+/** The author's newest thoughts received at or after `since` (ISO), newest first; the text exactly as kept. */
+export function recentThoughts(db: Database, authorId: string, limit: number, since = ""): Thought[] {
   return db
     .query<
       { id: string; text: string; source: string; received_at: string },
-      [string, number]
+      [string, string, number]
     >(
-      "SELECT id, text, source, received_at FROM thought WHERE author = ?1 ORDER BY received_at DESC, id DESC LIMIT ?2",
+      "SELECT id, text, source, received_at FROM thought WHERE author = ?1 AND received_at >= ?2 ORDER BY received_at DESC, id DESC LIMIT ?3",
     )
-    .all(authorId, limit)
+    .all(authorId, since, limit)
     .map((r) => ({ id: r.id, text: r.text, source: r.source, receivedAt: r.received_at }));
 }
