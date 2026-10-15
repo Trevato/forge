@@ -20,6 +20,7 @@ import {
   queueDepth,
 } from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
+import { failedSentence, lastVerdict } from "../snapshot/verdict.ts";
 
 /** Free disk under this share of the volume is something to say. */
 export const DISK_FREE_MIN = 0.1;
@@ -271,6 +272,12 @@ export function vitals(input: VitalsInput): Vitals {
       run.finishedAt ?? undefined,
       "/settings/capacity",
     );
+
+  // A failed restore drill is a card until a drill passes.
+  const drill = lastVerdict(input.dataDir);
+  const failed = failedSentence(drill);
+  if (failed !== undefined)
+    need("drill", failed, drill?.at, "/settings/backups");
 
   const apps = { serving: 0, asleep: 0, previews: 0 };
   for (const e of input.envs ?? []) {

@@ -88,6 +88,8 @@ describe("the restore drill", () => {
     store: store(),
     dataDir: join(root, "drill-data"),
     passphrase: PASS,
+    // The boot has its own test (drill-verdict); here it answers healthy.
+    boot: async () => ({ ok: true, reason: "" }),
     ...extra,
   });
 

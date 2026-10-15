@@ -63,6 +63,7 @@ describe("the drill on the Backups page", () => {
           snapshotId: "snap-stub-1",
           ms: 1234,
           counts: { repositories: 7, issues: 42 },
+          health: verdict === "green" ? "ok" : "unreached",
           verdict,
           failedStep: verdict === "green" ? null : "unseal",
           reason: verdict === "green" ? null : "a sealed value does not open",

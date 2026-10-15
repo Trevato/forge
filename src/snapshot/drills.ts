@@ -46,6 +46,9 @@ export function lastDrill(db: Database): DrillResult | undefined {
         snapshotId: row.snapshot_id,
         ms: row.ms,
         counts: { repositories: row.repositories, issues: row.issues },
+        // Not stored: green means health read ok; a red one failed at it or never got there.
+        health:
+          row.verdict === "green" ? "ok" : row.failed_step === "health" ? "failed" : "unreached",
         verdict: row.verdict,
         failedStep: row.failed_step,
         reason: row.reason,

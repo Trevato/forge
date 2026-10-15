@@ -10,6 +10,7 @@
 
 import type { App } from "../app.ts";
 import { createLog } from "../kernel/log.ts";
+import { reportVerdict } from "./verdict.ts";
 import {
   KEEP,
   listSnapshots,
@@ -50,6 +51,18 @@ export interface SnapshotsHandle {
 const handles = new WeakMap<App, SnapshotsHandle>();
 export const snapshotsOf = (app: App): SnapshotsHandle | undefined =>
   handles.get(app);
+
+/** The weekly restore drill: Sunday, an hour after the nightly snapshot. */
+const DRILL_DAY_UTC = 0;
+const DRILL_HOUR_UTC = 9;
+
+export function untilDrill(now = Date.now()): number {
+  const next = new Date(now);
+  next.setUTCHours(DRILL_HOUR_UTC, 0, 0, 0);
+  while (next.getTime() <= now || next.getUTCDay() !== DRILL_DAY_UTC)
+    next.setUTCDate(next.getUTCDate() + 1);
+  return next.getTime() - now;
+}
 
 export function untilNightly(now = Date.now()): number {
   const next = new Date(now);
@@ -139,6 +152,9 @@ export function startSnapshots(
         passphrase: options.passphrase,
       });
       recordDrill(app.db, result);
+      // The card and the recovery issue hear of every drill, whoever asked.
+      const posted = await reportVerdict(app.config.dataDir, result);
+      log.info("restore drill", { verdict: result.verdict, step: result.failedStep ?? "none", posted });
       return result;
     })().finally(() => {
       drilling = undefined;
@@ -156,6 +172,17 @@ export function startSnapshots(
     }, untilNightly());
   };
   schedule();
+
+  let drillTimer: ReturnType<typeof setTimeout> | undefined;
+  const scheduleDrill = (): void => {
+    if (options.nightly === false || stopped) return;
+    drillTimer = setTimeout(() => {
+      drill()
+        .catch((error) => log.error("restore drill failed to run", { error: String(error) }))
+        .finally(scheduleDrill);
+    }, untilDrill());
+  };
+  scheduleDrill();
 
   const handle: SnapshotsHandle = {
     get store() {
@@ -176,6 +203,7 @@ export function startSnapshots(
     stop: async () => {
       stopped = true;
       if (timer !== undefined) clearTimeout(timer);
+      if (drillTimer !== undefined) clearTimeout(drillTimer);
       if (inFlight !== undefined) await inFlight.catch(() => {});
       if (handles.get(app) === handle) handles.delete(app);
     },
