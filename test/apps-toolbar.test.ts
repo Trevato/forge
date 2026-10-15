@@ -12,6 +12,9 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { createApp, type App } from "../src/app.ts";
 import { newApp } from "../src/actions/apps.ts";
+import { commitToBranch } from "../src/actions/repos.ts";
+import { getAppByRepo } from "../src/core/apps.ts";
+import { listRuns } from "../src/core/runs.ts";
 import { AppsRuntime, type EnvStatus } from "../src/apps/runtime.ts";
 import { parseManifest } from "../src/apps/manifest.ts";
 import { REWRITE_MAX, TOOLBAR_PATH, toolbarJs, withToolbar } from "../src/apps/toolbar.ts";
@@ -203,4 +206,92 @@ describe("the forge pill", () => {
     const bad = app(',"toolbar":"no"');
     expect(bad.ok).toBe(false);
   });
+});
+
+describe("the opt-out, from forge.json to the proxy", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let runtime: AppsRuntime;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-app-toolbar-off-"));
+    app = createApp({ dataDir, port: 0, host: "forge.test" });
+    servers = await serve(app);
+    runtime = new AppsRuntime(app, {
+      domain: DOMAIN,
+      scheme: "http",
+      publicPort: servers.port,
+      forgeUrl: servers.url,
+      concurrency: 1,
+    });
+    await runtime.start();
+  }, 120_000);
+
+  afterAll(async () => {
+    await runtime.stop();
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test('a deployed "toolbar": false reaches envStatus and the page loses its pill', async () => {
+    const a = await createUser(app.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    const made = await newApp(app, a.value, {
+      name: "notes",
+      description: "A place for words",
+      visibility: "public",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const repo = made.value.repo;
+    const record = getAppByRepo(app.db, repo.id)!;
+    const settled = async (commitOid?: string) => {
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline) {
+        const run = listRuns(app.db, repo.id, { kind: "deploy", limit: 50 }).find(
+          (r) =>
+            r.env === "production" &&
+            (commitOid === undefined || r.commitOid === commitOid),
+        );
+        if (run && run.state !== "queued" && run.state !== "running") return run;
+        await Bun.sleep(100);
+      }
+      throw new Error("the deploy did not settle");
+    };
+    const page = async () =>
+      (
+        await fetch(`${servers.url}/`, {
+          headers: { host: `notes.${DOMAIN}`, accept: "text/html" },
+          redirect: "manual",
+        })
+      ).text();
+
+    // As created: the pill is on, so the page below has something to lose.
+    expect((await settled()).state).toBe("ok");
+    expect(runtime.envStatus(record, "production")?.toolbar).toBe(true);
+    expect(await page()).toContain(TOOLBAR_PATH);
+
+    const off = await commitToBranch(app, a.value, repo, {
+      message: "Turn the pill off",
+      files: [
+        {
+          path: "forge.json",
+          content: `${JSON.stringify({ app: { run: "bun run src/server.ts" }, toolbar: false })}\n`,
+        },
+      ],
+    });
+    if (!off.ok) throw new Error(JSON.stringify(off.error));
+    expect((await settled(off.value.commitOid)).state).toBe("ok");
+    expect(runtime.envStatus(record, "production")?.toolbar).toBe(false);
+    const html = await page();
+    expect(html).toContain("<");
+    expect(html).not.toContain(TOOLBAR_PATH);
+  }, 180_000);
 });

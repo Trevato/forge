@@ -601,7 +601,9 @@ export async function proxyApp(
     : response.body;
   answered();
   // The forge's pill goes into an HTML page the app sent whole and plain;
-  // anything the proxy cannot rewrite safely goes through as it came.
+  // anything the proxy cannot rewrite safely goes through as it came. The
+  // body is read after answered() on purpose, as the streaming path does: the
+  // request hold covers the wait for the app's answer, not the client's read.
   if (
     request.method !== "HEAD" &&
     !target.nested &&
