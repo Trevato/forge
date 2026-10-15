@@ -122,6 +122,14 @@ git objects; anything you then do here is **written through** to the origin
 first and reflected locally after it succeeds. For a mirror the origin is
 truth, exactly as git is truth for a native repo.
 
+A pull from an outsider's fork on the origin is someone else's code, so its
+check and preview wait. A person with write access lets that exact head run:
+on the pull page, **Approve to run here**; in the terminal, `A` on the pull
+("approve to run here"); over the API, `POST
+/api/v1/repos/:o/:n/pulls/:n/approve-here`. It is a local record — a review
+written through to, or imported from, the origin never counts — and a new push
+waits for a new approval.
+
 Connect one at **Settings → Origins** (or `A` then `o` in the terminal). Which
 way in you get is a property of the forge, not a preference:
 

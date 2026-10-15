@@ -21,6 +21,11 @@ import { listRuns } from "../src/core/runs.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { createForgeApp } from "../src/tui/forge.ts";
+import { settleApp } from "./helpers/tui.ts";
+import { pullScreen } from "../src/tui/screens/pull.ts";
+import { local } from "../src/tui/screens/where.ts";
+import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { forgeHttp, type ForgeHttp } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -44,7 +49,7 @@ describe("a local writer approval lets an origin fork's pull run", () => {
     );
 
   /** Carol's fork pull, then marked as the origin's: its head is elsewhere. */
-  async function originPull() {
+  async function originPull(foreign = true) {
     const branch = `b${++n}`;
     if (!carolFork) {
       const forked = await forkRepo(app, carol, lib, "fork");
@@ -65,10 +70,11 @@ describe("a local writer approval lets an origin fork's pull run", () => {
       headRepo: fork.value,
     });
     if (!opened.ok) throw new Error(String(opened.error));
-    app.db.run("UPDATE pull SET origin_head_repo = ?1 WHERE issue_id = ?2", [
-      "octo/lib",
-      opened.value.id,
-    ]);
+    if (foreign)
+      app.db.run("UPDATE pull SET origin_head_repo = ?1 WHERE issue_id = ?2", [
+        "octo/lib",
+        opened.value.id,
+      ]);
     const pull = getPull(app.db, lib.id, opened.value.number)!;
     return { pull, fork: fork.value, head: committed.value.commitOid };
   }
@@ -183,5 +189,65 @@ describe("a local writer approval lets an origin fork's pull run", () => {
     expect(res.status).toBe(201);
     expect(pullMayRun(app.db, lib, pull, head)).toBe(true);
     expect(await page()).not.toContain("approve-here");
+  }, 60_000);
+
+  test("the API refuses a non-writer (403) and a pull that is not foreign (422)", async () => {
+    http ??= forgeHttp(app);
+    const url = "http://forge.test";
+    const post = (who: User, number: number) =>
+      http!.handle(
+        new Request(
+          `${url}/api/v1/repos/alice/lib/pulls/${number}/approve-here`,
+          {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${createToken(app.db, who.id, "t", "rw").token}`,
+            },
+          },
+        ),
+      );
+    const foreign = await originPull();
+    const denied = await post(carol, foreign.pull.number);
+    expect(denied.status).toBe(403);
+    expect(pullMayRun(app.db, lib, foreign.pull, foreign.head)).toBe(false);
+
+    const own = await originPull(false);
+    const res = await post(alice, own.pull.number);
+    expect(res.status).toBe(422);
+    expect(JSON.stringify(await res.json())).toContain("not_foreign");
+  }, 60_000);
+
+  test("the terminal's A approves an origin fork's head to run", async () => {
+    const { pull, head } = await originPull();
+    const terminal = headlessTerminal(140, 44);
+    const { app: tui, session } = createForgeApp(
+      app,
+      {
+        sshUsername: "alice",
+        remoteAddress: "127.0.0.1",
+        fingerprint: "SHA256:alice",
+        user: alice,
+      },
+      { terminal, exitHooks: false },
+    );
+    tui.start();
+    try {
+      tui.ctx.push(pullScreen(session, tui.ctx, local(session, lib), pull.number));
+      const end = Date.now() + 20_000;
+      while (!tui.screen.toText().includes("approve to run here")) {
+        if (Date.now() > end) throw new Error(tui.screen.toText());
+        await settleApp(tui);
+        await Bun.sleep(20);
+      }
+      expect(pullMayRun(app.db, lib, pull, head)).toBe(false);
+      tui.dispatch({ type: "key", key: "A", ctrl: false, alt: false, shift: true });
+      while (!pullMayRun(app.db, lib, pull, head) && Date.now() < end)
+        await Bun.sleep(20);
+      expect(pullMayRun(app.db, lib, pull, head)).toBe(true);
+      await settleApp(tui);
+      expect(tui.screen.toText()).not.toContain("approve to run here");
+    } finally {
+      tui.stop();
+    }
   }, 60_000);
 });
