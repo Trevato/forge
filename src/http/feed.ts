@@ -3,7 +3,12 @@
  * are the signed-in viewer's own — there is no way to ask for another's.
  */
 
-import { tell, UNVERIFIED_WORDS } from "../actions/tell.ts";
+import {
+  parseVariants,
+  tell,
+  UNVERIFIED_WORDS,
+  VARIANTS_MAX,
+} from "../actions/tell.ts";
 import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { getEvent } from "../core/events.ts";
@@ -154,20 +159,39 @@ export function feedRoutes(router: Router<Handler>): void {
     const text = str(input.text).trim();
     if (text === "" || text.length > 2000)
       return apiError("invalid_text", 422, "text is 1 to 2000 characters");
+    const variants = parseVariants(input.variants);
+    if (variants === undefined)
+      return apiError(
+        "invalid_variants",
+        400,
+        `variants is a whole number, 1 to ${VARIANTS_MAX}`,
+      );
     const [owner, name, extra] = str(input.app).split("/");
     const repo =
       owner && name && extra === undefined
         ? getRepo(ctx.app.db, owner, name)
         : undefined;
     if (!repo || !canRead(ctx.app.db, repo, viewer)) return notFound();
-    const told = await tell(ctx.app, viewer, repo, text);
+    const told = await tell(ctx.app, viewer, repo, text, variants);
     if (!told.ok)
       return told.error === "forbidden"
         ? apiError("forbidden", 403, DIRECTION_NOTE)
         : told.error === "unverified"
           ? apiError("unverified", 403, UNVERIFIED_WORDS)
           : apiError("refused", told.error === "unauthorized" ? 403 : 422, "that could not be told");
-    return json({ issue: told.value.issue.number }, 201);
+    return json(
+      {
+        issue: told.value.issue.number,
+        ...(told.value.variantGroup === null
+          ? {}
+          : {
+              issues: told.value.issues.map((i) => i.number),
+              assigned: told.value.assignedNumbers,
+              variantGroup: told.value.variantGroup,
+            }),
+      },
+      201,
+    );
   });
 
   router.add("POST", "/api/v1/share", async (ctx) => {

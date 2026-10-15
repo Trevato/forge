@@ -27,6 +27,8 @@ interface Known {
   /** The pull's head the answer was taken at, as the database names it. */
   readonly head: string;
   readonly stale: boolean;
+  /** The files that stop it merging; 0 when it merges or is simply already in. */
+  readonly conflicts: number;
   /** When a sweep last saw it go from not merging to merging: its ask is new from then. */
   readonly mergesSince?: string;
 }
@@ -47,6 +49,19 @@ export function isStalePull(
 ): boolean {
   const known = knownByDb.get(db)?.get(pullId);
   return known !== undefined && known.stale && known.head === headOid;
+}
+
+/**
+ * How many files stop this pull, at this head, from merging, as the last
+ * sweep found it: 0 when it merges, or when no sweep has answered yet.
+ */
+export function conflictsOf(
+  db: Database,
+  pullId: string,
+  headOid: string,
+): number {
+  const known = knownByDb.get(db)?.get(pullId);
+  return known !== undefined && known.head === headOid ? known.conflicts : 0;
 }
 
 /**
@@ -115,6 +130,7 @@ export async function sweepStaleAsks(app: App): Promise<void> {
         between,
         head: pull.headOid,
         stale,
+        conflicts: status.mergeable ? 0 : status.conflicts.length,
         ...(mergesSince === undefined ? {} : { mergesSince }),
       });
     } catch (error) {

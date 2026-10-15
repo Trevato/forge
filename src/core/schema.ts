@@ -1639,7 +1639,23 @@ export const migrations: readonly string[] = [
   ALTER TABLE run ADD COLUMN variant_group TEXT;
   CREATE INDEX pull_variant_group ON pull(variant_group) WHERE variant_group IS NOT NULL;
   `,
-  // 79 — thoughts (#1658): what a person typed, kept exactly, forever. One
+  // 79 — degraded history (#1296): one row per stretch a cause held, kept
+  // 30 days past its close (`kernel/degraded_history.ts`). Times are epoch ms;
+  // `closed_at` is null while the cause still holds, and at most one span
+  // per cause is open.
+  `
+  CREATE TABLE degraded_span (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    cause     TEXT NOT NULL,
+    sentence  TEXT NOT NULL,
+    href      TEXT NOT NULL,
+    opened_at INTEGER NOT NULL,
+    closed_at INTEGER
+  );
+  CREATE UNIQUE INDEX degraded_span_open ON degraded_span(cause) WHERE closed_at IS NULL;
+  CREATE INDEX degraded_span_closed ON degraded_span(closed_at) WHERE closed_at IS NOT NULL;
+  `,
+  // 80 — thoughts (#1658): what a person typed, kept exactly, forever. One
   // row per thought, appended and never changed: the triggers refuse an
   // UPDATE or DELETE, and there is no foreign key so no cascade can remove
   // one when an account goes. The author is an id, not a reference.
