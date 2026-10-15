@@ -43,6 +43,7 @@ import { getHold } from "../core/holds.ts";
 import { certain } from "./decide.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { sentinelTick } from "./sentinel.ts";
+import { triageTick } from "./triage.ts";
 import { wallOf, wallSentence } from "../contract/policy.ts";
 import {
   getIssue,
@@ -1068,6 +1069,12 @@ export async function autonomyTick(app: App, now = new Date()): Promise<void> {
         error: String(error),
       });
     }
+  }
+  // Every thought is placed within minutes (`crew/triage.ts`).
+  try {
+    await triageTick(app, now);
+  } catch (error) {
+    log.error("triage failed", { error: String(error) });
   }
   // The forge hunts its own faults on the same clock (`crew/sentinel.ts`).
   try {

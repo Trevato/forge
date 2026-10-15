@@ -51,6 +51,7 @@ import {
   cardFor,
 } from "../web/studio/cards.ts";
 import { keepThought } from "../actions/thought.ts";
+import { placementJson, placementOf, thoughtAuthor } from "../core/placements.ts";
 import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
 import { readReturns, reportSpend } from "../actions/returns.ts";
 import {
@@ -1100,6 +1101,26 @@ const TOOLS: readonly Tool[] = [
     async run(ctx, user) {
       const steps = await nextStepsFor(ctx.app, user);
       return good({ steps: steps ?? [] });
+    },
+  },
+  {
+    name: "thought",
+    description:
+      "Where one of your thoughts went: its id (from `tell` without a repo) answers with the planner's placement — the kind (work, amendment, vision, decision, reversal), the issues it opened, amended, deferred or marked superseded, and the one-or-two-line reply, with a question when it was unsure. `placement` is null while the planner has not reached it (within a few minutes).",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", maxLength: 64 } },
+      required: ["id"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const thoughtId = args["id"];
+      if (typeof thoughtId !== "string" || thoughtId === "")
+        return bad("invalid", "id is a thought id");
+      // Not yours and not there answer alike (a thought belongs to its author).
+      if (thoughtAuthor(ctx.app.db, thoughtId) !== user.id)
+        return bad("not_found", "no such thought");
+      return good({ id: thoughtId, placement: placementJson(placementOf(ctx.app.db, thoughtId)) });
     },
   },
   {

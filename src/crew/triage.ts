@@ -1,0 +1,325 @@
+/**
+ * Triage (#652): the planner places every thought. A person streams
+ * thoughts; within minutes each is read as one of five kinds (work, an
+ * amendment to an open issue, a vision, a decision, a reversal), acted on
+ * in the map, and answered in a line or two under the thought in the feed.
+ *
+ * The kind, the issue it concerns and the pillar are chosen by the decider
+ * among fixed choices (`decide.ts`); a rule answers when it is absent, slow
+ * or wrong. Nothing here is a run: it spends no builder slot, and stops
+ * where the day's ceiling stops the repository. Thoughts that arrive within
+ * `BATCH_MS` of each other are placed together, in the order they came, so
+ * a later one that reverses an earlier one sees what the earlier did.
+ */
+
+import type { App } from "../app.ts";
+import { addComment } from "../actions/issues.ts";
+import { openPlan } from "../actions/plan.ts";
+import { addDependency } from "../core/dependencies.ts";
+import { getIssue, MAX_TITLE, type Issue } from "../core/issues.ts";
+import {
+  authorsWithUnplaced,
+  KINDS,
+  savePlacement,
+  thoughtAuthor,
+  unplaced,
+  type Kind,
+  type Placed,
+  type Placement,
+} from "../core/placements.ts";
+import { isStructural, pillarsOf, type Pillars } from "../core/pillars.ts";
+import { listAutonomousRepos, type Repo } from "../core/repos.ts";
+import { getUserById, type User } from "../core/users.ts";
+import { createLog } from "../kernel/log.ts";
+import { autonomyStatus, ensureDirectionIssue } from "./autonomy.ts";
+import { certain, decideOr, type Answers, type Questions } from "./decide.ts";
+import { crewOffInPreview } from "./preview.ts";
+
+const log = createLog("triage");
+
+/** Thoughts this close together are placed in one pass. */
+export const BATCH_MS = 2 * 60_000;
+/** The most thoughts one pass places. */
+export const BATCH_MAX = 10;
+/** Under this probability the kind is a guess and the reply asks. */
+export const SURE = 0.6;
+/** A thought older than this is no longer the planner's to place. */
+const STALE_MS = 24 * 60 * 60_000;
+const OPEN_SHOWN = 40;
+const TEXT_SHOWN = 2_000;
+
+const STOP = new Set("the a an and or to of in on for with is are be it this that we i you should would could can will not do so as at by from have has just also".split(" "));
+const words = (text: string): Set<string> =>
+  new Set((text.toLowerCase().match(/[a-z][a-z0-9-]{2,}/g) ?? []).filter((w) => !STOP.has(w)));
+const overlap = (a: Set<string>, b: Set<string>): number => [...a].filter((w) => b.has(w)).length;
+
+interface Open {
+  readonly number: number;
+  readonly title: string;
+}
+
+/** What the rule reads a thought as, with how sure it is. */
+export function ruleKind(text: string, hasOpen: boolean): { kind: Kind; p: number } {
+  const t = text.toLowerCase();
+  if (/\b(actually|never ?mind|scrap (that|this)|forget (that|this|what)|instead of|revert|undo|reverse|stop (doing|building|working)|changed my mind|no longer)\b/.test(t))
+    return { kind: "reversal", p: 0.7 };
+  if (/\b(vision|direction|long[- ]term|from now on|north star|should become|the goal|where this is going)\b/.test(t))
+    return { kind: "vision", p: 0.7 };
+  if (/\b(decided|decision|we will|we'll go with|let's go with|go with|the answer is|use \S+ not)\b/.test(t))
+    return { kind: "decision", p: 0.7 };
+  if (hasOpen && /#\d+\b|\b(also|in addition|while you're at it|one more thing|add to)\b/.test(t))
+    return { kind: "amendment", p: 0.65 };
+  if (words(text).size < 3) return { kind: "work", p: 0.4 };
+  return { kind: "work", p: 0.7 };
+}
+
+function targetOf(text: string, open: readonly Open[]): Open | undefined {
+  for (const m of text.matchAll(/#(\d+)\b/g)) {
+    const hit = open.find((o) => o.number === Number(m[1]));
+    if (hit) return hit;
+  }
+  const mine = words(text);
+  let best: Open | undefined;
+  let most = 1;
+  for (const o of open) {
+    const n = overlap(mine, words(o.title));
+    if (n > most) (best = o), (most = n);
+  }
+  return best;
+}
+
+function pillarOf(text: string, set: Pillars): string | undefined {
+  if (set.pillars.length === 0) return undefined;
+  const mine = words(text);
+  let best = set.pillars[0]!;
+  let most = 0;
+  for (const p of set.pillars) {
+    const n = overlap(mine, words(`${p.name} ${p.umbrella.title}`));
+    if (n > most) (best = p), (most = n);
+  }
+  return best.short;
+}
+
+const clip = (text: string, max: number): string => {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+};
+const quote = (text: string): string => text.split("\n").map((l) => `> ${l}`).join("\n");
+
+function openIssues(app: App, repo: Repo, set: Pillars, direction: Issue | undefined): Open[] {
+  return app.db
+    .query<{ id: string; number: number; title: string }, [string, number]>(
+      "SELECT id, number, title FROM issue WHERE repo_id = ?1 AND kind = 'issue' AND state = 'open' ORDER BY number DESC LIMIT ?2",
+    )
+    .all(repo.id, OPEN_SHOWN)
+    .filter((i) => i.id !== direction?.id && !isStructural(set, i.id))
+    .map((i) => ({ number: i.number, title: i.title }));
+}
+
+/** Where the author's thoughts go: their autonomous repository, "forge" first. */
+export function homeOf(app: App, authorId: string): Repo | undefined {
+  const mine = listAutonomousRepos(app.db).filter(
+    (r) => r.ownerId === authorId && r.autonomyBy !== null,
+  );
+  return mine.find((r) => r.name === "forge") ?? mine[0];
+}
+
+export interface Thought {
+  readonly id: string;
+  readonly text: string;
+}
+
+/** Place one thought. Always answers: a best placement, and a question when unsure. */
+export async function placeThought(
+  app: App,
+  repo: Repo,
+  by: User,
+  thought: Thought,
+  now = new Date(),
+): Promise<Placement> {
+  const slug = `${repo.ownerName}/${repo.name}`;
+  const set = pillarsOf(app.db, repo);
+  const direction = ensureDirectionIssue(app, by, repo);
+  const open = openIssues(app, repo, set, direction);
+  const text = thought.text;
+  const ref = `From thought \`${thought.id}\`:`;
+
+  // The same words again are the same thought: link, never duplicate.
+  const before = app.db
+    .query<{ thought_id: string; kind: string; placed: string }, [string, string]>(
+      `SELECT p.thought_id, p.kind, p.placed FROM placement p JOIN thought t ON t.id = p.thought_id
+        WHERE t.text = ?1 AND t.id != ?2 AND t.author = (SELECT author FROM thought WHERE id = ?2)
+        ORDER BY p.placed_at DESC LIMIT 1`,
+    )
+    .get(text, thought.id);
+  const earlier = before ? (JSON.parse(before.placed) as Placed[])[0] : undefined;
+  if (before && earlier)
+    return finish(app, thought, before.kind as Kind, "rule", false, [{ ...earlier, action: "linked" }],
+      `Same as an earlier thought; it is already at #${earlier.number}.`);
+
+  const ruled = ruleKind(text, open.length > 0);
+  const ruledTarget = targetOf(text, open);
+  const ruledPillar = pillarOf(text, set);
+  const questions: Record<string, { options: readonly string[]; about: string }> = {
+    kind: {
+      options: KINDS,
+      about:
+        "What is this thought? work: something new to build. amendment: a change to an open issue. vision: a change of direction. decision: a choice already made. reversal: it takes back an earlier thought or issue.",
+    },
+  };
+  if (open.length > 0)
+    questions["target"] = {
+      options: [...open.map((o) => `#${o.number}`), "none"],
+      about: "Which open issue does this thought concern, if any?",
+    };
+  if (set.pillars.length > 0)
+    questions["pillar"] = {
+      options: set.pillars.map((p) => p.short),
+      about: "Which pillar does work from this thought serve?",
+    };
+  const rule = (): Answers<Questions> => {
+    const out: Record<string, ReturnType<typeof certain>> = {
+      kind: {
+        choice: ruled.kind,
+        p: ruled.p,
+        probabilities: Object.fromEntries(KINDS.map((k) => [k, k === ruled.kind ? ruled.p : (1 - ruled.p) / 4])),
+      },
+    };
+    if (questions["target"]) out["target"] = certain(questions["target"].options, ruledTarget ? `#${ruledTarget.number}` : "none");
+    if (questions["pillar"]) out["pillar"] = certain(questions["pillar"].options, ruledPillar!);
+    return out;
+  };
+  const decided = await decideOr(
+    app.config.decider,
+    {
+      thought: clip(text, TEXT_SHOWN),
+      pillars: set.pillars.map((p) => p.name),
+      open: open.map((o) => `#${o.number} ${clip(o.title, 120)}`),
+    },
+    questions,
+    rule,
+  );
+  let kind = decided.answers["kind"]!.choice as Kind;
+  const sure = decided.answers["kind"]!.p >= SURE;
+  const pickedTarget = decided.answers["target"]?.choice;
+  const target = open.find((o) => `#${o.number}` === pickedTarget);
+  const pillar = decided.answers["pillar"]?.choice;
+
+  const placed: Placed[] = [];
+  const say: string[] = [];
+  let question = sure ? "" : `I read this as ${kind === "amendment" ? "an amendment" : `a ${kind}`}; is that right?`;
+  const comment = (issue: Issue, lead: string): void => {
+    const done = addComment(app, by, repo, issue, `${lead}\n\n${ref}\n\n${quote(text)}`);
+    if (!done.ok) log.warn("could not comment", { issue: issue.number, error: String(done.error) });
+  };
+  const here = (n: number): Issue | undefined => getIssue(app.db, repo.id, n);
+
+  if ((kind === "amendment" || kind === "reversal") && !target) {
+    // Nothing to amend or take back was named: keep the words where they will be seen.
+    question = kind === "reversal" ? "Which issue does this take back?" : "Is this an amendment to an open issue? Which one?";
+    kind = kind === "reversal" ? "decision" : "work";
+  }
+  if (kind === "work") {
+    const first = text.trim().split("\n")[0] ?? "";
+    const opened = openPlan(app, by, repo, [
+      {
+        key: "thought",
+        title: clip(first, Math.min(MAX_TITLE, 120)) || "Thought",
+        body: `${ref}\n\n${quote(text)}${pillar ? `\n\nServes ${set.pillars.find((p) => p.short === pillar)?.name}.` : ""}`,
+        blockedBy: [],
+        ...(pillar ? { pillar } : {}),
+      },
+    ]);
+    if (opened.ok) {
+      const number = opened.value.opened[0]!.number;
+      placed.push({ action: "opened", repo: slug, number, ...(pillar ? { pillar } : {}) });
+      const name = set.pillars.find((p) => p.short === pillar)?.name;
+      say.push(`Opened #${number}${name ? ` under ${name}` : ""}.`);
+    } else if (direction) {
+      comment(direction, "A thought that could not be opened as an issue:");
+      placed.push({ action: "amended", repo: slug, number: direction.number });
+      say.push(`Could not open it as an issue (${opened.error.message}); kept on #${direction.number}.`);
+    }
+  } else if (kind === "amendment" && target) {
+    const issue = here(target.number);
+    if (issue) {
+      comment(issue, "Amended by a new thought:");
+      placed.push({ action: "amended", repo: slug, number: issue.number });
+      say.push(`Added to #${issue.number}.`);
+    }
+  } else if (kind === "reversal" && target) {
+    const issue = here(target.number);
+    if (issue) {
+      comment(issue, "Superseded by a later thought; this is not to be built as written:");
+      const gate = set.gate;
+      const deferred = gate && issue.id !== gate.id && addDependency(app.db, issue, gate, by.id).ok;
+      if (deferred && gate)
+        app.bus.append({ kind: "issue.blocked", repoId: repo.id, actorId: by.id, payload: { number: issue.number, blockedBy: gate.number } });
+      placed.push({ action: deferred ? "deferred" : "superseded", repo: slug, number: issue.number });
+      say.push(deferred ? `Superseded #${issue.number} and put it behind the Later gate.` : `Marked #${issue.number} superseded.`);
+    }
+  } else if (direction) {
+    comment(direction, kind === "vision" ? "The direction changes:" : "A decision:");
+    placed.push({ action: "amended", repo: slug, number: direction.number });
+    say.push(`${kind === "vision" ? "Noted as direction" : "Recorded as a decision"} on #${direction.number}.`);
+  }
+  if (say.length === 0) say.push("Kept; nothing on the map changed.");
+  return finish(app, thought, kind, decided.by, question !== "", placed, [say.join(" "), question].filter(Boolean).join(" "), now);
+}
+
+function finish(
+  app: App,
+  thought: Thought,
+  kind: Kind,
+  decidedBy: string,
+  asked: boolean,
+  placed: Placed[],
+  reply: string,
+  now = new Date(),
+): Placement {
+  const placement: Placement = {
+    thoughtId: thought.id,
+    kind,
+    placed,
+    reply,
+    asked,
+    decidedBy,
+    placedAt: now.toISOString(),
+  };
+  savePlacement(app.db, placement);
+  const author = thoughtAuthor(app.db, thought.id);
+  app.bus.append({ kind: "thought.placed", ...(author ? { actorId: author } : {}), payload: { id: thought.id, kind } });
+  return placement;
+}
+
+/** One turn of triage: every author's quiet batch of thoughts, placed. Returns how many. */
+export async function triageTick(app: App, now = new Date()): Promise<number> {
+  if (crewOffInPreview()) return 0;
+  let placedCount = 0;
+  // Thoughts older than a day are never placed; the cutoff is in the query so they cannot crowd out fresh ones.
+  const since = new Date(now.getTime() - STALE_MS).toISOString();
+  for (const authorId of authorsWithUnplaced(app.db, since)) {
+    try {
+      const repo = homeOf(app, authorId);
+      const by = repo?.autonomyBy ? getUserById(app.db, repo.autonomyBy) : undefined;
+      if (!repo || !by) continue;
+      const waiting = unplaced(app.db, authorId, since, BATCH_MAX * 3);
+      const oldest = waiting[0];
+      if (!oldest) continue;
+      const first = new Date(oldest.receivedAt).getTime();
+      // The batch closes once its first thought is two minutes old.
+      if (now.getTime() - first < BATCH_MS) continue;
+      // Over the day's ceiling the planner waits; so does the repository.
+      const paused = autonomyStatus(app, repo, now).paused;
+      if (paused === "ceiling" || paused === "forge ceiling") continue;
+      const batch = waiting.filter((t) => new Date(t.receivedAt).getTime() - first <= BATCH_MS).slice(0, BATCH_MAX);
+      for (const t of batch) {
+        await placeThought(app, repo, by, t, now);
+        placedCount++;
+      }
+    } catch (error) {
+      log.error("triage failed", { author: authorId, error: String(error) });
+    }
+  }
+  return placedCount;
+}

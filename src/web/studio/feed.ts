@@ -11,6 +11,7 @@
 import { marksByName, type Mark } from "../../core/marks.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
+import { placementsOf, type Placement } from "../../core/placements.ts";
 import { recentThoughts, type Thought } from "../../core/thoughts.ts";
 import { readFeed } from "../../feed/feed.ts";
 import type { FeedItem } from "../../feed/rank.ts";
@@ -22,7 +23,7 @@ import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
 export const FEED_LIVE =
-  "run.finished,issue.opened,issue.commented,pull.commented,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,issue.closed,decision.*,thought.received";
+  "run.finished,issue.opened,issue.commented,pull.commented,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,issue.closed,decision.*,thought.received,thought.placed";
 
 export const FEED_FIRST_PAGE = 20;
 
@@ -106,7 +107,7 @@ const THOUGHT_AGE_MS = 24 * 60 * 60 * 1000;
  * A thought as the owner's post: their own words, verbatim (escaped here,
  * once; line breaks kept by CSS), marked "received". It has no controls.
  */
-export function thoughtCard(thought: Thought, who: string): Html {
+export function thoughtCard(thought: Thought, who: string, placement?: Placement): Html {
   return html`<article class="fcard fcard-thought" data-kind="thought" data-thought="${thought.id}">
     <div class="fcard-head">
       ${avatar(who)}
@@ -116,7 +117,18 @@ export function thoughtCard(thought: Thought, who: string): Html {
       <span class="badge">Received</span>
     </div>
     <p class="fcard-reason fcard-text">${thought.text}</p>
+    ${placement ? replyUnder(placement) : ""}
   </article>`;
+}
+
+/** The planner's answer under a thought: one or two lines, `#N` linking to the issue it names. */
+export function replyUnder(placement: Placement): Html {
+  const where = new Map(placement.placed.map((p) => [p.number, p.repo]));
+  const parts = placement.reply.split(/(#\d+)/).map((part) => {
+    const repo = /^#(\d+)$/.test(part) ? where.get(Number(part.slice(1))) : undefined;
+    return repo === undefined ? part : html`<a href="/${repo}/issues/${part.slice(1)}">${part}</a>`;
+  });
+  return html`<p class="fcard-reply small" data-placement="${placement.kind}"><span class="muted">Planner · ${placement.kind}</span> ${parts}</p>`;
 }
 
 /** The longest tell the composer takes (its textarea's `maxlength`). */
@@ -195,6 +207,7 @@ export function feedRegion(user: User, ctx: Ctx): Html {
     (item) => item.kind !== "ask",
   );
   const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN, new Date(Date.now() - THOUGHT_AGE_MS).toISOString());
+  const placed = placementsOf(ctx.app.db, thoughts.map((t) => t.id));
   // Who each poster is, asked once for the page (`core/marks.ts`).
   const marks = marksByName(
     ctx.app.db,
@@ -207,7 +220,7 @@ export function feedRegion(user: User, ctx: Ctx): Html {
     data-live="${FEED_LIVE}"
     data-live-src="/live/feed"
   >
-    ${thoughts.map((t) => thoughtCard(t, user.username))}
+    ${thoughts.map((t) => thoughtCard(t, user.username, placed.get(t.id)))}
     ${items.length === 0 && thoughts.length === 0
       ? empty({
           icon: "activity",

@@ -17,6 +17,7 @@ import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createRun, listRuns } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { savePlacement } from "../src/core/placements.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { limitChanges, limitValue } from "../src/settings/limits.ts";
 
@@ -182,6 +183,7 @@ describe("the forge over MCP", () => {
       "take_updates",
       "converge",
       "next_steps",
+      "thought",
       "asked",
       "app_members",
       "explore",
@@ -265,6 +267,20 @@ describe("the forge over MCP", () => {
     expect(
       (await tool(rw, "tell", { repo: "nobody/none", text: "x" })).error,
     ).toContain("not_found");
+  });
+
+  test("thought returns its placement to its author only (#652)", async () => {
+    const kept = await tool(rw, "tell", { text: "build a thing" });
+    const id = kept.value.thought;
+    expect((await tool(rw, "thought", { id })).value).toEqual({ id, placement: null });
+    savePlacement(app.db, {
+      thoughtId: id, kind: "work", placed: [{ action: "opened", repo: "alice/game", number: 3 }],
+      reply: "Opened #3.", asked: false, decidedBy: "rule", placedAt: new Date().toISOString(),
+    });
+    const got = await tool(rw, "thought", { id });
+    expect(got.value.placement).toMatchObject({ kind: "work", reply: "Opened #3.", asked: false });
+    expect((await tool(bobRw, "thought", { id })).error).toContain("not_found");
+    expect((await tool(rw, "thought", { id: "nope" })).error).toContain("not_found");
   });
 
   test("tell is the studio's tell: an issue, a builder, a run", async () => {

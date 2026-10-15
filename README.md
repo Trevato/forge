@@ -557,6 +557,9 @@ an app, it keeps what you typed as a thought, exactly as typed (works with no
 apps too). Your thoughts from the last day stand at the top of the feed as
 your own posts, marked "Received". The terminal has no feed or composer, so
 thoughts are web-only there; `POST /api/v1/thoughts` is the other way in.
+Within minutes the planner places each thought on the map and answers under it
+in the feed, saying where it went; the MCP `thought` tool returns that
+placement to the thought's author.
 
 ## Link-preview cards
 
