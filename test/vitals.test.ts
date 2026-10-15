@@ -226,7 +226,7 @@ test("the lane: depth, the running check and its age, the median of the last fin
   // Waiting past thirty minutes names the cause, not only the symptom.
   const later = vitals({ db: app.db, signals: app.signals, dataDir, now: now + 3_600_000 });
   const cause = later.needs.find((n) => n.includes("one lane"));
-  expect(cause).toMatch(/^The check queue has waited over 30 minutes; 6 checks queued .*; one lane, checks run one at a time\.$/);
+  expect(cause).toMatch(/^6 checks wait behind one lane; the oldest since \d\d:\d\d; the lane runs nothing\.$/);
   expect(cause).not.toContain("Lane:");
 });
 
@@ -408,4 +408,33 @@ test("since is kept per forge: one forge's cause neither lends nor loses its sta
     other.close();
     await rm(dirB, { recursive: true, force: true });
   }
+});
+
+test("a lane older than its budget is degraded with its cause; a silent run is stuck past three minutes", () => {
+  app.db.query("DELETE FROM run").run();
+  const now = Date.now();
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const live = createRun(app.db, { repoId, kind: "check" });
+  app.db
+    .query("UPDATE run SET state='running', started_at=?2, heartbeat_at=?3 WHERE id=?1")
+    .run(live.id, iso(now - 31 * 60_000), iso(now));
+  for (let i = 0; i < 3; i++) {
+    const r = createRun(app.db, { repoId, kind: "check" });
+    app.db.query("UPDATE run SET created_at=?2 WHERE id=?1").run(r.id, iso(now - (9 + i * 2) * 60_000));
+  }
+  // The oldest has waited 13 minutes: past the lane's ten.
+  const v = vitals({ db: app.db, signals: app.signals, dataDir, now });
+  const lane = v.degraded.find((d) => d.cause === "queue:check");
+  expect(lane?.sentence).toMatch(
+    /^3 checks wait behind one lane; the oldest since \d\d:\d\d; the lane runs a check for 31 min \(limit 60\)\.$/,
+  );
+  expect(v.ok).toBe(false);
+  // Five minutes in, the oldest is under its budget: nothing to say.
+  app.db.query("UPDATE run SET created_at=?1 WHERE state='queued'").run(iso(now - 5 * 60_000));
+  expect(vitals({ db: app.db, signals: app.signals, dataDir, now }).degraded.map((d) => d.cause)).toEqual([]);
+  // A run whose heart stopped four minutes ago is stuck, in words of the budget.
+  app.db.query("UPDATE run SET heartbeat_at=?2 WHERE id=?1").run(live.id, iso(now - 4 * 60_000));
+  const stuck = vitals({ db: app.db, signals: app.signals, dataDir, now }).degraded.find((d) => d.cause === `stuck:${live.id}`);
+  expect(stuck?.sentence).toBe(`Run ${live.id} is stuck: no heartbeat for 4 min (limit 3).`);
+  app.db.query("DELETE FROM run").run();
 });

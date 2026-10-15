@@ -20,6 +20,7 @@ import {
   queueDepth,
 } from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
+import { BUDGETS } from "./budgets.ts";
 
 /** Free disk under this share of the volume is something to say. */
 export const DISK_FREE_MIN = 0.1;
@@ -184,6 +185,28 @@ function readLane(
   };
 }
 
+/**
+ * The lane's one sentence, with its cause: how many wait, since when, and
+ * what the lane is doing — "22 checks wait behind one lane; the oldest since
+ * 04:13; the lane runs #1212 for 31 min (limit 60)".
+ */
+export function laneSentence(
+  queued: number,
+  oldest: string,
+  lane: Lane,
+  now: number,
+): string {
+  const since = new Date(oldest).toISOString().slice(11, 16);
+  const head = `${queued} check${queued === 1 ? "" : "s"} ${queued === 1 ? "waits" : "wait"} behind one lane; the oldest since ${since}`;
+  if (lane.running === null) return `${head}; the lane runs nothing.`;
+  const age = Math.max(
+    0,
+    Math.round((now - new Date(lane.running.since).getTime()) / 60_000),
+  );
+  const what = lane.running.pull === null ? "a check" : `#${lane.running.pull}`;
+  return `${head}; the lane runs ${what} for ${age} min (limit ${BUDGETS.gate / 60_000}).`;
+}
+
 export function vitals(input: VitalsInput): Vitals {
   const now = input.now ?? Date.now();
   const at = new Date(now).toISOString();
@@ -224,18 +247,18 @@ export function vitals(input: VitalsInput): Vitals {
   const queue: Record<string, number> = {};
   for (const row of queueDepth(input.db, now)) {
     queue[row.kind] = row.queued;
-    if (now - new Date(row.oldest).getTime() > QUEUE_WAIT_MAX_MS)
+    const waited = now - new Date(row.oldest).getTime();
+    if (row.kind === "check" && waited > BUDGETS.laneWait)
+      need(
+        "queue:check",
+        laneSentence(row.queued, row.oldest, lane, now),
+        new Date(row.oldest).toISOString(),
+        "/settings/capacity",
+      );
+    else if (row.kind !== "check" && waited > QUEUE_WAIT_MAX_MS)
       need(
         `queue:${row.kind}`,
-        row.kind === "check"
-          ? [
-              `The check queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes`,
-              laneLine(lane, now),
-              "one lane, checks run one at a time",
-            ]
-              .filter((part) => part !== null)
-              .join("; ") + "."
-          : `The ${row.kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes.`,
+        `The ${row.kind} queue has waited over ${QUEUE_WAIT_MAX_MS / 60_000} minutes.`,
         new Date(row.oldest).toISOString(),
         "/settings/capacity",
       );
@@ -244,7 +267,10 @@ export function vitals(input: VitalsInput): Vitals {
   const stuck: Vitals["stuck"] = [];
   for (const { run, repo, issue } of running) {
     const started = new Date(run.startedAt ?? run.createdAt).getTime();
-    if (leaseLapsed(run, STALE_AFTER_MS, now) || now - started > NO_PROGRESS_MS)
+    if (
+      leaseLapsed(run, BUDGETS.heartbeat, now) ||
+      now - started > NO_PROGRESS_MS
+    )
       stuck.push({
         runId: run.id,
         repo,
@@ -255,7 +281,10 @@ export function vitals(input: VitalsInput): Vitals {
   for (const s of stuck)
     need(
       `stuck:${s.runId}`,
-      `Run ${s.runId} is stuck: it has not moved ${sinceWords(s.since, now)}.`,
+      now - new Date(s.since).getTime() > BUDGETS.heartbeat &&
+      now - new Date(s.since).getTime() < 24 * 3_600_000
+        ? `Run ${s.runId} is stuck: no heartbeat for ${Math.round((now - new Date(s.since).getTime()) / 60_000)} min (limit ${BUDGETS.heartbeat / 60_000}).`
+        : `Run ${s.runId} is stuck: it has not moved ${sinceWords(s.since, now)}.`,
       s.since,
       `/${s.repo}/runs/${s.runId}`,
     );

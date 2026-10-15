@@ -15,6 +15,10 @@ export const BUDGETS = {
   gate: 60 * 60_000,
   /** A reviewer's run on a pull, in ms. */
   review: 10 * 60_000,
+  /** A check waiting in the lane for its turn, in ms; past it the lane is a cause. */
+  laneWait: 10 * 60_000,
+  /** A running run that has not beaten its heart this long is stuck, in ms. */
+  heartbeat: 3 * 60_000,
 } as const;
 
 /** The summary prefix every budget kill carries; vitals and retries read it. */

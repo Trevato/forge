@@ -23,8 +23,8 @@ import {
 } from "../core/capacity.ts";
 import { decisionsSince } from "../core/decisions.ts";
 import { getAgentByName } from "../core/agents.ts";
-import { getIssueById } from "../core/issues.ts";
-import { getRepo } from "../core/repos.ts";
+import { getIssueById, getLabel, setAssignee, setIssueLabels as writeLabels, type Issue } from "../core/issues.ts";
+import { getRepo, type Repo } from "../core/repos.ts";
 import { leaseLapsed, listRunning } from "../core/runs.ts";
 import { migrations } from "../core/schema.ts";
 import { getUserByName, type User } from "../core/users.ts";
@@ -58,6 +58,8 @@ export interface Finding {
   readonly evidence: readonly string[];
   readonly pillar: string;
   readonly lookFor: string;
+  /** A budget breach: filed at once, labelled, handed to the sentinel's own run. */
+  readonly urgent?: true;
   /** What a person or a run would do, when it is mechanical and reversible. */
   readonly fix?: string;
 }
@@ -385,9 +387,53 @@ export function degradedCauses(db: Database, now: number): Finding[] {
   return out;
 }
 
+/** The causes that are a budget breached: the lane, a silent run, a run killed twice. */
+const BREACH_CAUSE = /^(queue:check|stuck:|budget:)/;
+
+/**
+ * Each budget breach that holds right now, however briefly: the crew hears
+ * at once, not when the day has added up. The finding shares its key with
+ * `degradedCauses`, so one cause is one issue.
+ */
+export function budgetBreaches(db: Database, now: number): Finding[] {
+  const out: Finding[] = [];
+  for (const s of spans(db, now - DAY_MS, now)) {
+    if (s.closedAt !== null || !BREACH_CAUSE.test(s.cause)) continue;
+    out.push({
+      key: `degraded:${keyPart(s.cause)}`,
+      title: `${s.cause} is past its budget: ${clip(oneLine(s.sentence), 120)}`,
+      evidence: [
+        `cause: ${s.cause}`,
+        `sentence: ${oneLine(s.sentence)}`,
+        `since: ${new Date(s.openedAt).toISOString()}`,
+        `href: ${s.href}`,
+        ...runLogLines(db, s.cause),
+      ],
+      pillar: "P0 Trust: the forge says when it is not well, and is well again",
+      lookFor: `\`${s.cause}\` is gone from the degraded list and the cause is fixed, not waited out.`,
+      fix: "Diagnose the cause from the evidence and hand the mechanical fix to a builder as its own issue.",
+      urgent: true,
+    });
+  }
+  return out;
+}
+
+/** The last log lines of the run a `stuck:` or `budget:` cause names, when it names one. */
+function runLogLines(db: Database, cause: string): string[] {
+  const id = /^(?:stuck|budget):(.+)$/.exec(cause)?.[1];
+  if (id === undefined) return [];
+  const run = db
+    .query<{ summary: string | null; state: string }, [string]>(
+      "SELECT summary, state FROM run WHERE id = ?1",
+    )
+    .get(id);
+  return run === null ? [] : [`run ${id}: ${run.state}${run.summary ? `, ${oneLine(run.summary)}` : ""}`];
+}
+
 /** Everything the sentinel reads, in one pass. */
 export function findFaults(db: Database, now = Date.now()): Finding[] {
   const found = [
+    ...budgetBreaches(db, now),
     ...heldSlots(db, now),
     ...settingsAway(db, now),
     ...strayTriggers(db),
@@ -396,7 +442,10 @@ export function findFaults(db: Database, now = Date.now()): Finding[] {
     ...repeatedErrors(now),
     ...degradedCauses(db, now),
   ];
-  return found.map((f) => ({
+  const keys = new Set<string>();
+  return found
+    .filter((f) => !keys.has(f.key) && keys.add(f.key))
+    .map((f) => ({
     ...f,
     title: scrub(f.title),
     evidence: f.evidence.map(scrub),
@@ -455,6 +504,40 @@ const bodyOf = (f: Finding, now: string): string =>
     "",
     `Found by the sentinel at ${now}.`,
   ].join("\n");
+
+/**
+ * A breach is crew work at once: the P0 Trust label, and the sentinel
+ * assigned, whose run the dispatcher queues on the assignment event. Each
+ * step may fail alone (no such label, the actor is a person): the issue is
+ * filed either way, and the failure is said.
+ */
+function handOver(app: App, repo: Repo, actor: User, issue: Issue): void {
+  try {
+    // The forge acts on its own finding: no access check stands between it
+    // and its label, as none stands between it and the issue it just filed.
+    const label = getLabel(app.db, repo.id, "P0 Trust");
+    if (label === undefined) log.warn("sentinel has no P0 Trust label to apply", { issue: issue.number });
+    else {
+      writeLabels(app.db, issue.id, [label.id]);
+      app.bus.append({
+        kind: "issue.labeled",
+        repoId: repo.id,
+        actorId: actor.id,
+        payload: { number: issue.number, labels: [label.name] },
+      });
+    }
+    if (actor.kind !== "agent") return;
+    if (setAssignee(app.db, issue.id, actor.id) === undefined) return;
+    app.bus.append({
+      kind: "issue.assigned",
+      repoId: repo.id,
+      actorId: actor.id,
+      payload: { number: issue.number, assignee: actor.username, agent: true },
+    });
+  } catch (error) {
+    log.error("sentinel could not hand over", { issue: issue.number, error: String(error) });
+  }
+}
 
 /**
  * Read, file, record. One open issue per finding: a tracked finding whose
@@ -519,6 +602,7 @@ export function hunt(
           }
           issueId = made.value.id;
           filed++;
+          if (f.urgent) handOver(app, repo, actor, made.value);
         }
         app.db
           .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)")
@@ -592,9 +676,14 @@ export function sentinelTick(app: App, now = Date.now()): HuntResult | null {
   const repoPath = sentinelRepoPath();
   const last = sentinelStanding(app.db).lastHuntAt;
   const since = last === null ? Infinity : now - new Date(last).getTime();
-  if (since < SIGNAL_GAP_MS) return null;
+  const breaches = budgetBreaches(app.db, now);
+  if (since < SIGNAL_GAP_MS && breaches.length === 0) return null;
   if (since < HUNT_EVERY_MS) {
-    const signals = [...heldSlots(app.db, now), ...settingsAway(app.db, now)];
+    // A breach is not held back by the gap: the crew hears within a tick.
+    const signals = [
+      ...breaches,
+      ...(since < SIGNAL_GAP_MS ? [] : [...heldSlots(app.db, now), ...settingsAway(app.db, now)]),
+    ];
     const tracked = new Set(
       app.db
         .query<{ key: string }, []>(

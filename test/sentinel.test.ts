@@ -13,11 +13,14 @@ import { createRepo } from "../src/actions/repos.ts";
 import { setCapacity } from "../src/core/capacity.ts";
 import { clearErrors, createLog } from "../src/kernel/log.ts";
 import { recordDecision } from "../src/core/decisions.ts";
-import { listComments, listIssues } from "../src/core/issues.ts";
+import { createLabel, labelsFor, listComments, listIssues } from "../src/core/issues.ts";
+import { addCrew, createAgentRow } from "../src/core/agents.ts";
+import { listEvents } from "../src/core/events.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import {
+  budgetBreaches,
   degradedCauses,
   findFaults,
   hunt,
@@ -422,5 +425,86 @@ describe("degraded causes", () => {
     plantSpan("disk", day - 5 * 3_600_000, 6);
     plantSpan("disk", day - 3 * 3_600_000, 6);
     expect(degradedCauses(dapp.db, day).map((f) => f.key)).toEqual(["degraded:disk"]);
+  });
+});
+
+// ---- budget breaches (#1270) ----
+
+describe("a budget breach is crew work at once", () => {
+  let bapp: App;
+  let brepo: Repo;
+  let bdir: string;
+  let sentinelId = "";
+  beforeAll(async () => {
+    bdir = await mkdtemp(join(tmpdir(), "forge-sentinel-breach-"));
+    bapp = createApp({ dataDir: bdir, port: 0 });
+    const a = await createUser(bapp.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    const made = await createRepo(bapp, a.value, { name: "forge", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    brepo = made.value;
+    const s = await createUser(bapp.db, {
+      username: "sentinel",
+      email: "sentinel@a.invalid",
+      agent: true,
+    });
+    if (!s.ok) throw new Error("agent");
+    sentinelId = s.value.id;
+    createAgentRow(bapp.db, { userId: sentinelId, brief: "hunt", createdBy: a.value.id });
+    addCrew(bapp.db, brepo.id, sentinelId, a.value.id);
+    createLabel(bapp.db, brepo.id, "P0 Trust", "b4533a");
+  });
+  afterAll(async () => {
+    bapp.db.close();
+    await rm(bdir, { recursive: true, force: true });
+  });
+
+  test("an open lane breach is filed once, labelled, and handed to the sentinel's run", () => {
+    bapp.db
+      .query(
+        "INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES ('queue:check', '22 checks wait behind one lane; the oldest since 04:13; the lane runs #1212 for 31 min (limit 60).', '/settings/capacity', ?1)",
+      )
+      .run(NOW - 2 * 60_000);
+    const found = budgetBreaches(bapp.db, NOW);
+    expect(found.map((f) => f.key)).toEqual(["degraded:queue-check"]);
+    expect(found[0]!.evidence.join("\n")).toContain("the lane runs #1212 for 31 min");
+
+    // Two minutes old: a day's total is nowhere near ten minutes, yet it is filed.
+    expect(hunt(bapp, "alice/forge", NOW).filed).toBe(1);
+    expect(hunt(bapp, "alice/forge", NOW + 60_000).filed).toBe(0);
+    expect(hunt(bapp, "alice/forge", NOW + 120_000).filed).toBe(0);
+    const open = listIssues(bapp.db, brepo.id, { state: "open" } as never);
+    expect(open.length).toBe(1);
+    const issue = open[0]!;
+    expect(issue.assigneeId).toBe(sentinelId);
+    expect(labelsFor(bapp.db, issue.id).map((l) => l.name)).toEqual(["P0 Trust"]);
+    const assigned = listEvents(bapp.db, { kind: "issue.assigned" });
+    expect(assigned.length).toBe(1);
+    expect(assigned[0]!.payload["agent"]).toBe(true);
+  });
+
+  test("a breach brings a hunt within a tick, inside the signal gap", () => {
+    const t = Date.parse("2026-10-14T12:00:00.000Z");
+    hunt(bapp, "alice/forge", t);
+    bapp.db
+      .query(
+        "INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES ('stuck:run1', 'Run run1 is stuck: no heartbeat for 4 min (limit 3).', '/x', ?1)",
+      )
+      .run(t);
+    const prior = process.env.FORGE_SENTINEL_REPO;
+    process.env.FORGE_SENTINEL_REPO = "alice/forge";
+    try {
+      expect(sentinelTick(bapp, t + 60_000)?.filed).toBe(1);
+      expect(sentinelTick(bapp, t + 120_000)).toBeNull();
+    } finally {
+      if (prior === undefined) delete process.env.FORGE_SENTINEL_REPO;
+      else process.env.FORGE_SENTINEL_REPO = prior;
+    }
   });
 });
