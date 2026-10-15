@@ -179,11 +179,10 @@ describe("accounts: the confirm page for removing an organization too", () => {
   });
 
   test("a person's own repository is named, and the lead no longer says only the account", async () => {
-    const u = await mkUser("rh");
+    await mkUser("rh");
     proveAll(app);
     const made = await createRepo(app, getUserByName(app.db, "rh")!, { name: "notes" });
     if (!made.ok) throw new Error(made.error);
-    expect(u.id).toBeTruthy();
     const res = await fetch(`${base}/settings/accounts/rh/retire`, { headers: admin });
     const body = await res.text();
     expect(body).toContain("rh/notes");

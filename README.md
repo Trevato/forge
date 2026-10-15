@@ -882,7 +882,8 @@ work here.
   only). An account that is the last owner of an organization answers 409 with
   the organizations named. Send `{"retireOrgs": true}` to preview: the answer
   lists each organization, its repositories (and the app each runs) and its
-  teams, and changes nothing. Send `{"retireOrgs": true, "confirm": true}` to
+  teams, and changes nothing; the account's own repositories and the app each
+  runs are listed too, under `own`. Send `{"retireOrgs": true, "confirm": true}` to
   do it: apps are stopped, repositories deleted, organizations retired (the
   name stays taken), then the account. If a repository will not go, the answer
   is 500 with `failed` and `removed`; what is left is intact and the same call

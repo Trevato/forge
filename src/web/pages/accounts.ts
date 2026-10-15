@@ -416,7 +416,7 @@ export function retirePage(ctx: Ctx): Response {
                     alone own`}, with everything below.`}
           This cannot be undone.
         </p>
-        ${orgs.length === 0
+        ${orgs.length === 0 && own.length === 0
           ? html`<p class="muted">They own no organization alone.</p>`
           : null}
         <ul class="rows">
