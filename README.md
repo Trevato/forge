@@ -659,14 +659,23 @@ shard's output is written whole as it finishes; the log ends with every
 failing test from every shard, or on green with one line — how many tests,
 across how many files, in how long, then the slowest and fastest shard.
 
-The fast tier picks by measurement. The full gate runs each file under
-Bun's coverage (`--impact`) and writes `scripts/test-impact.json`: test
-file → the `src/**` files it executed. A diff intersected with it is the
-set of tests the change reaches; the check line says `N changed files
-reach M tests; src/x.ts reaches none` (a coverage gap). Tests the map has
-never seen fall back to the import-hop guess, and a change to `forge.json`,
-`package.json`, `scripts/**` or `src/kernel/**` runs everything. Until a
-release commits the map, the fast tier guesses by imports as before.
+The fast tier picks by measurement. The full gate runs each file in a
+`bun test` of its own under Bun's coverage (`--impact`; coverage is per
+process, so a shard of many files would blur theirs together) and writes
+the impact map: test file → the `src/**` files whose functions it called.
+A file merely imported — its top level run, none of its functions — does
+not count; that is the import graph again (#1794). Under the forge the map
+is handed over as `$FORGE_CHECK_IMPACT` in the checkout: every check is
+seeded with the one the last green default-branch run kept (under
+the forge's data directory, `checks/impact/`, `src/checks/impact-store.ts`), and
+only such a run, or the full gate on land, keeps a new one. By hand it is
+`scripts/test-impact.json`. A diff intersected with it is the set of tests
+the change reaches; the plan line says `by coverage: N changed files reach
+M tests; src/x.ts reaches none` (a coverage gap). A measured test is
+guessed by imports only against the changes the map cannot see; tests the
+map has never seen fall back to the import-hop guess, and a change to
+`forge.json`, `package.json`, `scripts/**` or `src/kernel/**` runs
+everything. With no map yet the line says `by imports (no impact map)`.
 
 Files go to shards by how long they take, not how big they are: longest
 first onto the least-loaded shard, weighed from `scripts/test-times.json`

@@ -47,11 +47,16 @@ import {
   type ShardResult,
 } from "./shards.ts";
 import { auditGate, EXCLUDED, GATE } from "./gate.ts";
-import { executedFiles, formatImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
+import { executedFiles, formatImpact, handedImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
 import { fastSet, importsOf, duration } from "../src/checks/tiers.ts";
 
 const TIMES = new URL("./test-times.json", import.meta.url).pathname;
-const IMPACT = new URL("./test-impact.json", import.meta.url).pathname;
+// The forge hands the map over in the checkout (`src/checks/impact-store.ts`):
+// seeded from the last green default-branch run, kept from this one when
+// it is green. By hand, it is scripts/test-impact.json.
+const handed = handedImpact(process.env["FORGE_CHECK_IMPACT"]);
+const IMPACT = handed ?? new URL("./test-impact.json", import.meta.url).pathname;
+const IMPACT_NAME = handed ?? "scripts/test-impact.json";
 
 const argv = process.argv.slice(2);
 const record = argv.includes("--record");
@@ -235,7 +240,7 @@ if (tier === "fast") {
   try {
     const parsed = parseImpact(readFileSync(IMPACT, "utf8"));
     if (parsed.ok) impact = parsed.value;
-    else console.log(`test-shards: scripts/test-impact.json refused (${parsed.error}); guessing by imports`);
+    else console.log(`test-shards: ${IMPACT_NAME} refused (${parsed.error}); guessing by imports`);
   } catch {
     // no map yet: the import guess stands
   }
@@ -328,18 +333,23 @@ if (table !== "") {
     );
 }
 const weight = weigher(files, size, times);
-// Recording runs one file per process, so every file is its own slice.
+// Recording and measuring run one file per process, so every file is its
+// own slice: Bun's coverage is per process, and a shard of many files would
+// merge theirs into one (#1794).
 // FORGE_CHECK_SHARDS=1 on the isolated Actions runner still OOMed when one
 // bun test held the whole gate (#386/#388, exit 137 ~15–17m). Same count
 // with one-file-per-process, serial, keeps peak RSS to a single suite.
 const serialFiles = !record && count.value === 1;
+const perFile = record || measure || serialFiles;
 const slices =
-  record || serialFiles
+  perFile
     ? files.map((file) => [file])
     : splitFiles(files, count.value, weight);
 
 const banner = record
   ? `test-shards: recording ${files.length} files, ${count.value} at a time`
+  : measure && !serialFiles
+    ? `test-shards: measuring ${files.length} files under coverage, one bun test each, ${count.value} at a time`
   : serialFiles
     ? `test-shards: ${files.length} files serial (one bun test each; FORGE_CHECK_SHARDS=1), ` +
       `expected ${files.reduce((sum, file) => sum + weight(file), 0).toFixed(0)}s`
@@ -486,7 +496,7 @@ const started = performance.now();
 // Serial one-file processes when SHARDS=1; record keeps its worker width;
 // multi-shard still runs every slice side by side.
 const results = await pool(
-  serialFiles ? 1 : record ? count.value : slices.length,
+  serialFiles ? 1 : record || measure ? count.value : slices.length,
 );
 if (results.length < slices.length) {
   const skipped = slices.length - results.length;
@@ -518,21 +528,21 @@ if (record) {
   }
 }
 if (measure) {
-  if (ending.code !== 0 || unmeasured.size > 0 || !(record || serialFiles)) {
-    console.log("test-shards: not writing scripts/test-impact.json: the run was not green and measured, one file at a time");
+  if (ending.code !== 0 || unmeasured.size > 0) {
+    console.log(`test-shards: not writing ${IMPACT_NAME}: the run was not green and measured`);
   } else {
     // A partial run refreshes what it ran and forgets nothing else.
     let old = new Map<string, string[]>();
     try {
       const parsed = parseImpact(readFileSync(IMPACT, "utf8"));
       if (parsed.ok) old = parsed.value;
-      else console.log(`test-shards: scripts/test-impact.json refused (${parsed.error}); writing a fresh map`);
+      else console.log(`test-shards: ${IMPACT_NAME} refused (${parsed.error}); writing a fresh map`);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT")
-        console.log(`test-shards: scripts/test-impact.json unreadable (${String(error)}); writing a fresh map`);
+        console.log(`test-shards: ${IMPACT_NAME} unreadable (${String(error)}); writing a fresh map`);
     }
     writeFileSync(IMPACT, formatImpact(mergeImpact(old, measured, GATE)));
-    console.log(`test-shards: wrote ${measured.size} test impacts to scripts/test-impact.json`);
+    console.log(`test-shards: wrote ${measured.size} test impacts to ${IMPACT_NAME}`);
   }
 }
 process.exit(ending.code);

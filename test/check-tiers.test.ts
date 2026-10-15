@@ -27,11 +27,14 @@ import {
 import {
   executedFiles,
   formatImpact,
+  handedImpact,
   mergeImpact,
   parseImpact,
   reach,
 } from "../src/checks/impact.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
+import { IMPACT_FILE, keepImpact, seedImpact } from "../src/checks/impact-store.ts";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 
 const tests = [
   "test/snapshot-store.test.ts",
@@ -137,6 +140,28 @@ describe("the fast set, by measured coverage", () => {
     );
   });
 
+  test("beside an unreached file, a measured test is guessed only against what the map cannot see", () => {
+    // store.ts is reached by coverage, x.ts by nothing: only x.ts may bring
+    // in a measured test by a guess.
+    const imports2 = (file: string): readonly string[] =>
+      file === "test/web-phone.test.ts" ? ["src/snapshot/store.ts"] : imports(file);
+    const plan = fastSet({
+      ...base,
+      imports: imports2,
+      times: new Map(),
+      changed: ["src/snapshot/store.ts", "src/web/x.ts"],
+    });
+    // web-phone imports store.ts but never executed it: not picked.
+    expect(plan.files).toEqual(["test/snapshot-store.test.ts", "test/snapshot.test.ts"]);
+    const unseen = fastSet({
+      ...base,
+      imports: (file) => (file === "test/web-phone.test.ts" ? ["src/web/x.ts"] : imports(file)),
+      times: new Map(),
+      changed: ["src/snapshot/store.ts", "src/web/x.ts"],
+    });
+    expect(unseen.why.get("test/web-phone.test.ts")).toBe("imports src/web/x.ts");
+  });
+
   test("an unreached source file is found by the name guess, not left to run nothing", () => {
     const plan = fastSet({ ...base, changed: ["src/snapshot/extra.ts"], tests: [...tests, "test/snapshot-extra.test.ts"] });
     expect(plan.files).toContain("test/snapshot-extra.test.ts");
@@ -174,6 +199,18 @@ describe("the fast set, by measured coverage", () => {
   test("lcov: only src files with a line hit count as executed", () => {
     const lcov = "SF:src/a.ts\nDA:1,0\nend_of_record\nSF:src/b.ts\nDA:1,3\nend_of_record\nSF:test/x.test.ts\nDA:1,1\nend_of_record\n";
     expect(executedFiles(lcov)).toEqual(["src/b.ts"]);
+  });
+
+  test("lcov: where a file has functions, one must be called; loading it is not executing it", () => {
+    const lcov = [
+      // imported only: its top level ran, none of its three functions did
+      "SF:src/loaded.ts\nFNF:3\nFNH:0\nDA:1,1\nDA:2,1\nLF:2\nLH:2\nend_of_record",
+      "SF:src/called.ts\nFNF:3\nFNH:1\nDA:1,1\nDA:5,2\nend_of_record",
+      // constants only: no functions to call, so a line hit counts
+      "SF:src/table.ts\nFNF:0\nFNH:0\nDA:1,1\nend_of_record",
+      "SF:src/unloaded.ts\nFNF:0\nFNH:0\nDA:1,0\nend_of_record",
+    ].join("\n");
+    expect(executedFiles(lcov)).toEqual(["src/called.ts", "src/table.ts"]);
   });
 });
 
@@ -636,6 +673,56 @@ describe("a pull's fast check is of the merge", () => {
     expect(clash.summary).toContain("does not merge into main: shared.txt");
   });
 
+  test("a green default-branch run keeps the impact map, and the next fast check is seeded with it", async () => {
+    const map = '{"test/a.test.ts":["src/a.ts"]}';
+    const main = await commitToBranch(app, alice, repo, {
+      message: "Measure",
+      files: [
+        {
+          path: "forge.json",
+          content: JSON.stringify({
+            check: {
+              run: `printf '%s' '${map}' > "$FORGE_CHECK_IMPACT"; echo MEASURED`,
+              fast: 'echo "SEEDED $(cat "$FORGE_CHECK_IMPACT")"',
+            },
+          }),
+        },
+      ],
+    });
+    if (!main.ok) throw new Error(JSON.stringify(main.error));
+    const deadline = Date.now() + 30_000;
+    let run: Run | undefined;
+    while (Date.now() < deadline) {
+      run = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
+        (r) => r.issueId === null && r.commitOid === main.value.commitOid,
+      );
+      if (run && (run.state === "ok" || run.state === "failed")) break;
+      await Bun.sleep(50);
+    }
+    expect(run?.state).toBe("ok");
+    expect(readRunLog(dataDir, run!.id).lines.join("\n")).toContain("impact map kept: 1 tests");
+
+    const branched = await commitToBranch(app, alice, repo, {
+      branch: "measured",
+      message: "Touch m",
+      files: [{ path: "m.txt", content: "m\n" }],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Measured",
+      baseBranch: "main",
+      headBranch: "measured",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const fast = await settled(branched.value.commitOid);
+    expect(fast.state).toBe("ok");
+    const log = readRunLog(dataDir, fast.id).lines.join("\n");
+    expect(log).toContain("impact map: 1 tests, from the last green main");
+    expect(log).toContain('SEEDED {\n  "test/a.test.ts": ["src/a.ts"]\n}'.split("\n")[0]!);
+    // A pull's own run never replaces the kept map.
+    expect(log).not.toContain("impact map kept");
+  });
+
   test("a writer asks for a check again at the current head", async () => {
     const pull = listPulls(app.db, repo.id, { state: "open", limit: 5 }).find(
       (p) => p.headBranch === "late",
@@ -644,5 +731,75 @@ describe("a pull's fast check is of the merge", () => {
     if (!asked.ok) throw new Error(asked.message);
     expect(asked.run.reason).toBe("asked");
     expect(asked.run.commitOid).toBe(pull.headOid);
+  });
+});
+
+describe("the impact map kept beside the forge", () => {
+  const map = '{"test/a.test.ts":["src/a.ts"]}';
+  let root: string;
+  let data: string;
+  let checkout: string;
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), "impact-store-"));
+  });
+  afterAll(() => rmSync(root, { recursive: true, force: true }));
+  const fresh = (name: string): void => {
+    data = join(root, name, "data");
+    checkout = join(root, name, "checkout");
+    mkdirSync(data, { recursive: true });
+    mkdirSync(checkout, { recursive: true });
+  };
+
+  test("FORGE_CHECK_IMPACT names a plain file in the checkout, nothing else", () => {
+    expect(handedImpact(".forge-impact.json")).toBe(".forge-impact.json");
+    expect(handedImpact(IMPACT_FILE)).toBe(IMPACT_FILE);
+    for (const bad of [undefined, "", "../x.json", "a/b.json", "/etc/passwd", "..", "-rf"])
+      expect(handedImpact(bad)).toBeUndefined();
+  });
+
+  test("kept from one checkout, seeded into the next", () => {
+    fresh("round");
+    expect(seedImpact(data, "repo1", checkout)).toBe(0);
+    expect(existsSync(join(checkout, IMPACT_FILE))).toBe(false);
+    expect(keepImpact(data, "repo1", checkout)).toBeUndefined();
+    writeFileSync(join(checkout, IMPACT_FILE), map);
+    expect(keepImpact(data, "repo1", checkout)).toBe("impact map kept: 1 tests");
+    const next = join(root, "round", "next");
+    mkdirSync(next);
+    expect(seedImpact(data, "repo1", next)).toBe(1);
+    const back = parseImpact(readFileSync(join(next, IMPACT_FILE), "utf8"));
+    expect(back).toEqual({ ok: true, value: new Map([["test/a.test.ts", ["src/a.ts"]]]) });
+    // Another repository's checks see nothing of it.
+    expect(seedImpact(data, "repo2", join(root, "round"))).toBe(0);
+  });
+
+  test("a map the check left that is not one is refused, and the kept one stands", () => {
+    fresh("refused");
+    writeFileSync(join(checkout, IMPACT_FILE), map);
+    keepImpact(data, "r", checkout);
+    for (const bad of ["nope", "{}", '{"test/a.test.ts":["../../etc/passwd"]}']) {
+      writeFileSync(join(checkout, IMPACT_FILE), bad);
+      expect(keepImpact(data, "r", checkout)).toStartWith("impact map not kept");
+    }
+    const next = join(root, "refused", "next");
+    mkdirSync(next);
+    expect(seedImpact(data, "r", next)).toBe(1);
+  });
+
+  test("a symlink in the checkout is neither read on keep nor written through on seed", () => {
+    fresh("link");
+    const outside = join(root, "link", "outside.json");
+    writeFileSync(outside, map);
+    symlinkSync(outside, join(checkout, IMPACT_FILE));
+    expect(keepImpact(data, "r", checkout)).toBe("impact map not kept: not a plain file");
+    // Keep a real map, then seed a checkout whose file points outside.
+    rmSync(join(checkout, IMPACT_FILE));
+    writeFileSync(join(checkout, IMPACT_FILE), '{"test/b.test.ts":["src/b.ts"]}');
+    keepImpact(data, "r", checkout);
+    rmSync(join(checkout, IMPACT_FILE));
+    symlinkSync(outside, join(checkout, IMPACT_FILE));
+    expect(seedImpact(data, "r", checkout)).toBe(1);
+    expect(readFileSync(outside, "utf8")).toBe(map);
+    expect(readFileSync(join(checkout, IMPACT_FILE), "utf8")).toContain("test/b.test.ts");
   });
 });
