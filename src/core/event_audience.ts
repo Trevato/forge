@@ -48,8 +48,14 @@ export function eventAudience(kind: string): EventAudience {
     kind === "repo.crew_outsiders"
   )
     return "admins";
-  // A fleet operation spans repositories; its receipt is its actor's.
-  if (kind === "repo.pinned" || kind === "repo.unpinned" || kind.startsWith("fleet."))
+  // A fleet operation spans repositories; its receipt is its actor's. So is
+  // a thought: it belongs to no repository and to nobody but its author.
+  if (
+    kind === "repo.pinned" ||
+    kind === "repo.unpinned" ||
+    kind.startsWith("fleet.") ||
+    kind.startsWith("thought.")
+  )
     return "actor";
   // A run's summary, an app's serving state and its pictures can carry the
   // app's own output: for a private app they are for those who may enter it
