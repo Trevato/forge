@@ -14,11 +14,16 @@
 
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
-import { readMigrations } from "../kernel/migrate.ts";
+import { type MigrationFile, readMigrations } from "../kernel/migrate.ts";
 
-export const migrations: readonly string[] = readMigrations(
+export const migrationFiles: readonly MigrationFile[] = readMigrations(
   join(import.meta.dir, "migrations"),
 );
+
+export const migrations: readonly string[] = migrationFiles.map((m) => m.sql);
+
+/** How many migrations were numbered in one list before #1837. */
+export const NUMBERED = 88;
 
 /**
  * Drop hand-installed "operator's guard" triggers that refused new accounts

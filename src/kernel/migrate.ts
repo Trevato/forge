@@ -34,12 +34,18 @@ import { sha256 } from "./hash.ts";
 const QUOTE_MAX = 80;
 
 /**
- * A migration file's name: a sortable id — four digits for the ones that
- * were numbered in a list, a UTC `YYYYMMDDHHMMSS` for every one since —
- * then a slug. Both kinds sort as text: every numbered id starts `0`, every
+ * A migration file's name: a sortable id — `0001` to `0088` for the ones
+ * that were numbered in a list, a UTC `YYYYMMDDHHMMSS` for every one since
+ * — then a slug. Both kinds sort as text: every numbered id starts `0`, every
  * stamped one `2`.
  */
-export const MIGRATION_FILE = /^(\d{4}|\d{14})-[a-z0-9]+(?:-[a-z0-9]+)*\.ts$/;
+export const MIGRATION_FILE = /^(0\d{3}|\d{14})-[a-z0-9]+(?:-[a-z0-9]+)*\.ts$/;
+
+/** A migration as its file holds it: the name without `.ts`, and its SQL. */
+export interface MigrationFile {
+  readonly name: string;
+  readonly sql: string;
+}
 
 /**
  * The migrations in `dir`, one file each, in the order their names sort.
@@ -47,19 +53,20 @@ export const MIGRATION_FILE = /^(\d{4}|\d{14})-[a-z0-9]+(?:-[a-z0-9]+)*\.ts$/;
  * the list is the schema, so a name that does not fit or a file that
  * exports no SQL is a defect, never a migration quietly skipped.
  */
-export function readMigrations(dir: string): string[] {
-  const names = readdirSync(dir).sort();
-  return names.map((name) => {
-    if (!MIGRATION_FILE.test(name))
-      defect(
-        "db.migration_name",
-        `${name} in ${dir} is not <id>-<slug>.ts (id: four digits or YYYYMMDDHHMMSS)`,
-      );
-    const sql: unknown = require(join(dir, name)).default;
-    if (typeof sql !== "string")
-      defect("db.migration_missing", `${name} has no default export of SQL`);
-    return sql;
-  });
+export function readMigrations(dir: string): MigrationFile[] {
+  return readdirSync(dir)
+    .sort()
+    .map((file) => {
+      if (!MIGRATION_FILE.test(file))
+        defect(
+          "db.migration_name",
+          `${file} in ${dir} is not <id>-<slug>.ts (id: 0NNN or YYYYMMDDHHMMSS)`,
+        );
+      const sql: unknown = require(join(dir, file)).default;
+      if (typeof sql !== "string")
+        defect("db.migration_missing", `${file} has no default export of SQL`);
+      return { name: file.slice(0, -".ts".length), sql };
+    });
 }
 
 /**

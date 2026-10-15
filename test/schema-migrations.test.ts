@@ -10,14 +10,22 @@
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
-import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import { openDb } from "../src/kernel/db.ts";
 import { ForgeError } from "../src/kernel/error.ts";
-import { statements } from "../src/kernel/migrate.ts";
-import { migrations } from "../src/core/schema.ts";
+import { sha256 } from "../src/kernel/hash.ts";
+import { migrationId, readMigrations, statements } from "../src/kernel/migrate.ts";
+import { migrationFiles, migrations, NUMBERED } from "../src/core/schema.ts";
 import { failureReason } from "../src/apps/process.ts";
 
 const root = mkdtempSync(join(tmpdir(), "forge-schema-"));
@@ -215,5 +223,113 @@ describe("statements", () => {
     const db = openDb(":memory:", migrations);
     expect(has(db, "usage")).toBe(true);
     db.close();
+  });
+});
+
+describe("a migration is a file named by a sortable id (#1837)", () => {
+  const source = join(import.meta.dir, "../src/core/migrations");
+
+  /** The forge's migrations directory, copied, with `extra` files beside them. */
+  function directory(extra: Record<string, string>): string {
+    const dir = join(root, `migrations-${++n}`);
+    cpSync(source, dir, { recursive: true });
+    for (const [name, sql] of Object.entries(extra))
+      writeFileSync(join(dir, name), `export default ${JSON.stringify(sql)};\n`);
+    return dir;
+  }
+
+  const listIn = (dir: string): string[] => readMigrations(dir).map((m) => m.sql);
+
+  /** Everything a schema is but the record of how it got there. */
+  function shape(path: string): unknown[] {
+    const db = new Database(path, { readonly: true, strict: true });
+    try {
+      return db
+        .query(
+          "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name != 'schema_migration' ORDER BY type, name",
+        )
+        .all();
+    } finally {
+      db.close();
+    }
+  }
+
+  const recorded = (path: string): string[] => {
+    const db = new Database(path, { readonly: true, strict: true });
+    try {
+      return db
+        .query<{ id: string }, []>("SELECT id FROM schema_migration ORDER BY id")
+        .all()
+        .map((row) => row.id);
+    } finally {
+      db.close();
+    }
+  };
+
+  test("two pulls' migrations land in either order and the schema ends the same", () => {
+    // Two builders, each adding one migration at the second they wrote it:
+    // a's after b's, so b sorts first whichever lands first.
+    const a = { "20261015120000-deploy-note.ts": "CREATE TABLE deploy_note (id TEXT PRIMARY KEY, body TEXT NOT NULL DEFAULT '')" };
+    const b = { "20261015110000-user-motto.ts": "ALTER TABLE user ADD COLUMN motto TEXT NOT NULL DEFAULT ''; CREATE INDEX user_motto ON user(motto)" };
+    const both = listIn(directory({ ...a, ...b }));
+    expect(both.length).toBe(migrations.length + 2);
+
+    const aFirst = production(listIn(directory(a)));
+    boot(aFirst, both);
+    const bFirst = production(listIn(directory(b)));
+    boot(bFirst, both);
+    const together = production(both);
+
+    expect(shape(aFirst)).toEqual(shape(together));
+    expect(shape(bFirst)).toEqual(shape(together));
+    expect(recorded(aFirst)).toEqual(recorded(together));
+    expect(recorded(bFirst)).toEqual(recorded(together));
+    expect(recorded(together).length).toBe(migrations.length + 2);
+    const db = openDb(together, both);
+    expect(has(db, "deploy_note")).toBe(true);
+    db.close();
+  });
+
+  test("stamped ids sort after every numbered one, and among themselves by time", () => {
+    const names = readMigrations(
+      directory({
+        "20261015120000-later.ts": "CREATE TABLE later (id TEXT)",
+        "20261015110000-earlier.ts": "CREATE TABLE earlier (id TEXT)",
+      }),
+    ).map((m) => m.name);
+    expect(names.slice(-3)).toEqual([
+      migrationFiles[migrationFiles.length - 1]!.name,
+      "20261015110000-earlier",
+      "20261015120000-later",
+    ]);
+  });
+
+  test("the numbered migrations keep their names, their order and their text", () => {
+    const numbered = migrationFiles.slice(0, NUMBERED).map((m) => m.name);
+    expect(numbered.map((name) => name.slice(0, 4))).toEqual(
+      Array.from({ length: NUMBERED }, (_, i) => String(i + 1).padStart(4, "0")),
+    );
+    // A digest of every numbered migration's recorded id, in order: what
+    // a database already applied is recognised exactly as before the split.
+    expect(sha256(migrations.slice(0, NUMBERED).map(migrationId).join("\n"))).toBe(
+      "60c47597dcb8b804198ff5b3b9020b63bfc431c724b699f4a9d3ad76b011ec63",
+    );
+    // Every one since is stamped: a new numbered file would be the next
+    // number two builders fight over.
+    for (const m of migrationFiles.slice(NUMBERED)) expect(m.name).toMatch(/^\d{14}-/);
+  });
+
+  test("a file that is not a migration is refused, never skipped", () => {
+    for (const [name, body] of [
+      ["0089-next.sql", "export default 'CREATE TABLE x (id TEXT)';\n"],
+      ["2026-10-15-dated.ts", "export default 'CREATE TABLE x (id TEXT)';\n"],
+      ["20261015120000-Upper.ts", "export default 'CREATE TABLE x (id TEXT)';\n"],
+      ["20261015120000-no-sql.ts", "export default 42;\n"],
+    ] as const) {
+      const dir = join(root, `refused-${++n}`);
+      mkdirSync(dir);
+      writeFileSync(join(dir, name), body);
+      expect(() => readMigrations(dir)).toThrow(ForgeError);
+    }
   });
 });
