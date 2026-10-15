@@ -92,6 +92,7 @@ import {
   type OriginTarget,
 } from "./contribute.ts";
 import { commitsScreen } from "./commits.ts";
+import { deploysScreen } from "./deploys.ts";
 import {
   Filter,
   ListState,
@@ -1284,6 +1285,7 @@ export function workspaceScreen(
               binding(["y"], "copy path"),
               binding(["i", "p", "C"], "issues / pulls / commits"),
               binding(["I"], "about this repository"),
+              ...(repo === undefined ? [] : [binding(["d"], "production deploys")]),
               ...(repo !== undefined && admin()
                 ? [binding(["R"], `decisions by ${(getRepoById(f.db, repo.id) ?? repo).decisionsBy} (cycle)`)]
                 : []),
@@ -1600,6 +1602,10 @@ export function workspaceScreen(
       }
       if (plain && e.key === "C") {
         ctx.push(commitsScreen(f, ctx, src, ref));
+        return true;
+      }
+      if (plain && e.key === "d" && repo !== undefined) {
+        ctx.push(deploysScreen(f, ctx, repo));
         return true;
       }
       if (plain && e.key === "I") {
