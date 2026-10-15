@@ -200,7 +200,7 @@ const WAITING_WORDS =
  * a repository with neither has no checks, and should not grow furniture
  * for them. A run is named so the reader can go and look at its log.
  */
-function checksLine(
+export function checksLine(
   base: string,
   check: CheckSummary,
   required: boolean,
@@ -211,6 +211,8 @@ function checksLine(
   tier = "",
   /** A writer's button to ask for a check again; empty for anyone else. */
   again: Html | "" = "",
+  /** Files the pull conflicts in; a passing check is not a green mark then. */
+  conflicts = 0,
 ): Html {
   if (!isApp && !required && check.state === "none" && !waiting && again === "")
     return html``;
@@ -223,7 +225,11 @@ function checksLine(
             >deploy ${run.commitOid.slice(0, 7)}</a
           >`;
   const body =
-    check.state === "ok"
+    check.state === "ok" && conflicts > 0
+      ? html`<span class="bad"
+          >${icon("x")}Conflicts in ${conflicts} ${conflicts === 1 ? "file" : "files"}</span
+        >${link}`
+    : check.state === "ok"
       ? html`<span class="ok">${icon("check")}Checks passed</span>${link}`
       : check.state === "failed"
         ? html`<span class="bad">${icon("x")}Checks failed</span>${link}`
@@ -320,6 +326,7 @@ function mergeBox(
           ${btn("Check again", { size: "sm", icon: "loader" })}
         </form>`
       : "",
+    status.conflicts.length,
   );
   const reopen = html`<form method="post" action="${thread}/state">
     <input type="hidden" name="state" value="open" />
