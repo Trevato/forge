@@ -23,6 +23,7 @@ import { issueMayRun } from "../core/pull_trust.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
   cancelRun,
+  getRun,
   cancelRunsForPull,
   checksForHead,
   claimRun,
@@ -77,6 +78,12 @@ export interface ChecksOptions {
   readonly forgeUrl: string;
   /** How long a check may run before it is killed. @default BUDGETS.gate */
   readonly budgetMs?: number | undefined;
+  /**
+   * How long `stop` lets checks already running finish before it cuts them
+   * off and queues them again (#1796). Nothing new starts meanwhile.
+   * @default 0
+   */
+  readonly drainMs?: number | undefined;
 }
 
 export interface ChecksHandle {
@@ -406,6 +413,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           summary,
         });
         if (failed) announceRun(app, failed);
+        return;
+      }
+      // Ended from outside while it ran: its pull landed or closed, and
+      // the row says so. That is not this check failing.
+      if (!outcome.ok && getRun(app.db, run.id)?.state === "cancelled") {
+        write(`superseded: ${getRun(app.db, run.id)?.summary ?? "cancelled"}`);
         return;
       }
       if (!outcome.ok && stopped && signal.aborted) {
@@ -852,9 +865,23 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       stopped = true;
       clearInterval(timer);
       unsubscribe();
+      // A roll waits for the checks under way, up to the budget, and only
+      // then cuts off what is left (it is queued again, not lost).
+      const running = Promise.all([...inFlight.values()].map((f) => f.promise));
+      const drainMs = options.drainMs ?? 0;
+      if (drainMs > 0 && inFlight.size > 0) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          running,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, drainMs);
+          }),
+        ]);
+        clearTimeout(timer);
+      }
       for (const { abort } of inFlight.values()) abort.abort();
       for (const abort of gates) abort.abort();
-      await Promise.all([...inFlight.values()].map((f) => f.promise));
+      await running;
     },
   };
   handles.set(app, handle);

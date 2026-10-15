@@ -774,6 +774,58 @@ describe("checks", () => {
     expect(done.state).toBe("ok");
   }, 60_000);
 
+  async function slowCheck(command: string, message: string): Promise<string> {
+    const made = await commitToBranch(app, alice, repo, {
+      message,
+      files: [{ path: "forge.json", content: checkJson(command) }],
+    });
+    if (!made.ok) throw new Error(JSON.stringify(made.error));
+    const oid = made.value.commitOid;
+    const deadline = Date.now() + 20_000;
+    let found: Run | undefined;
+    while (Date.now() < deadline && found?.state !== "running") {
+      found = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
+        (r) => r.commitOid === oid,
+      );
+      await Bun.sleep(50);
+    }
+    expect(found?.state).toBe("running");
+    return found!.id;
+  }
+
+  test("a roll waits for a running check to finish, within its budget, instead of throwing it away", async () => {
+    await checks.stop();
+    checks = startChecks(app, {
+      forgeUrl: servers.url,
+      concurrency: 1,
+      drainMs: 30_000,
+    });
+    const id = await slowCheck("sleep 2 && test -f OK.md", "A drained check");
+    await checks.stop();
+    const run = getRun(app.db, id);
+    expect(run?.state).toBe("ok");
+    expect(
+      listRuns(app.db, repo.id, { kind: "check", limit: 50 }).some(
+        (r) => r.state === "queued",
+      ),
+    ).toBe(false);
+    checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
+  }, 60_000);
+
+  test("a check whose pull lands while it runs ends as superseded, not failed", async () => {
+    const id = await slowCheck("sleep 2 && false", "A check overtaken");
+    cancelRun(app.db, id, "pull landed");
+    const deadline = Date.now() + 20_000;
+    let lines = "";
+    while (Date.now() < deadline && !lines.includes("superseded")) {
+      await Bun.sleep(100);
+      lines = readRunLog(dataDir, id).lines.join("\n");
+    }
+    expect(lines).toContain("superseded: pull landed");
+    expect(lines).not.toContain("failed:");
+    expect(getRun(app.db, id)?.state).toBe("cancelled");
+  }, 60_000);
+
   test("a check that is declared wrong fails with the reason", async () => {
     const wrong = await commitToBranch(app, alice, repo, {
       message: "A wrong check",

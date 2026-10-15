@@ -277,6 +277,8 @@ const checks =
     : startChecks(app, {
         forgeUrl,
         concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, 1),
+        // A roll lets running checks finish this long before cutting them off.
+        drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 300) * 1000,
       });
 // The look: a picture of every environment that comes up green, taken
 // through this forge's own listener.
