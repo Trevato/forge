@@ -98,6 +98,8 @@ import {
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
+import { attachLook } from "../actions/attach_look.ts";
+import { lookUrl } from "../core/looks.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
@@ -2918,6 +2920,50 @@ export function apiRoutes(router: Router<Handler>): void {
       );
       if (!added.ok) return originAware(added.error);
       return json(added.value, 201);
+    },
+  );
+
+  // Attach a look: a picture a person took, at a stated width, with one line
+  // saying what it shows (`actions/attach_look.ts`). The picture is base64
+  // in the JSON body; the crew's own looks keep their path through the
+  // preview.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/looks",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const attached = attachLook(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        { width: str(input.width), note: str(input.says), image: str(input.image) },
+      );
+      if (!attached.ok)
+        return respondAccess(
+          attached.error,
+          attached.error === "too_large"
+            ? 413
+            : attached.error === "not_open" || attached.error === "no_app"
+              ? 409
+              : 422,
+        );
+      const look = attached.value;
+      return json(
+        {
+          id: look.id,
+          width: look.kind,
+          says: look.note,
+          by: look.attachedBy,
+          commit: look.commitOid,
+          url: lookUrl(`/${found.repo.ownerName}/${found.repo.name}`, look),
+        },
+        201,
+      );
     },
   );
 
