@@ -48,14 +48,17 @@ const title = (v: unknown): v is string =>
 const span = (v: unknown, max: number): v is number =>
   typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= max;
 
-/** A slug is a file name: lowercase, short, and never the `data` page's. */
+/** Names that belong to a page or an API door of their own, never a board's. */
+const TAKEN = new Set(["data", "sources", "query"]);
+
+/** A slug is a file name: lowercase, short, and never one of `TAKEN`. */
 export const isSlug = (s: unknown): s is string =>
-  typeof s === "string" && /^[a-z0-9][a-z0-9-]{0,39}$/.test(s) && s !== "data";
+  typeof s === "string" && /^[a-z0-9][a-z0-9-]{0,39}$/.test(s) && !TAKEN.has(s);
 
 /** A board's slug from its title, or "" when the title has no letters or digits. */
 export function slugOf(t: string): string {
   const s = t.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/, "");
-  return isSlug(s) ? s : s === "data" ? "data-board" : "";
+  return isSlug(s) ? s : TAKEN.has(s) ? `${s}-board` : "";
 }
 
 /** A panel, judged: the plain value or the reason it is not one. */

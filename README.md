@@ -789,7 +789,8 @@ work here.
   by the admin who made it, and a file that does not validate is not shown. Make, rename,
   duplicate, delete, add/edit/remove/reorder panels, or pin the query on `/boards/data`.
   A board with a refresh redraws its grid on that beat through the live-region swap
-  (`/boards/:slug/live`, etag'd). No dependency was added.
+  (`/boards/:slug/live`, etag'd). The same doors are in the API: `GET /api/v1/boards`, `GET|PUT|DELETE /api/v1/boards/:slug`
+  (an agent is 403, anyone but an admin 404; a panel whose query cannot run is refused with 422). No dependency was added.
 - **Issues** — labels, threaded comments, close/reopen, markdown.
 - **Pull requests** — open from a branch, a **beautiful diff viewer** (syntax
   highlighting composed with intra-line word highlighting, mobile-first,

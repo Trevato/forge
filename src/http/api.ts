@@ -11,6 +11,7 @@
 import { voteVariant } from "../actions/variants.ts";
 import { parentForgeFor } from "../core/parent_releases.ts";
 import { readFlow } from "../flow/read.ts";
+import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
 import { runQuery } from "../boards/query.ts";
 import { SOURCES } from "../boards/sources.ts";
 import { bodyCapFor, readBounded } from "./limits.ts";
@@ -1296,6 +1297,50 @@ export function apiRoutes(router: Router<Handler>): void {
     return answer.ok
       ? json({ rows: answer.rows })
       : apiError("bad_query", 400, answer.error);
+  });
+
+  const boardFailed = (e: BoardError): Response => {
+    if (e === "not_found") return notFound();
+    if (typeof e === "object") return apiError("refused", 422, e.refused);
+    return apiError(e, e === "exists" || e === "branch_moved" ? 409 : 422, "that board could not be saved");
+  };
+
+  router.add("GET", "/api/v1/boards", async (ctx) => {
+    const denied = boardsAdmin(ctx);
+    if (denied) return denied;
+    const listed = await listAllBoards(ctx.app, ctx.auth.user);
+    return listed.ok
+      ? json({ boards: listed.value.map((b) => ({ slug: b.slug, ...b.board })) })
+      : notFound();
+  });
+
+  router.add("GET", "/api/v1/boards/:slug", async (ctx) => {
+    const denied = boardsAdmin(ctx);
+    if (denied) return denied;
+    const shown = await showBoard(ctx.app, ctx.auth.user, ctx.params.slug!);
+    return shown.ok ? json({ slug: ctx.params.slug, ...shown.value }) : notFound();
+  });
+
+  router.add("PUT", "/api/v1/boards/:slug", async (ctx) => {
+    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const bytes = await readBounded(ctx.request, bodyCapFor(ctx.request));
+    if (bytes === "too_large") return apiError("too_large", 413, "that is too large to read here");
+    let input: unknown;
+    try {
+      input = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      return apiError("bad_json", 400, "the body must be a JSON board");
+    }
+    const done = await writeBoard(ctx.app, ctx.auth.user, ctx.params.slug!, input);
+    return done.ok ? json({ slug: ctx.params.slug, ...done.value }) : boardFailed(done.error);
+  });
+
+  router.add("DELETE", "/api/v1/boards/:slug", async (ctx) => {
+    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const done = await deleteBoard(ctx.app, ctx.auth.user, ctx.params.slug!);
+    return done.ok ? json({ deleted: true }) : boardFailed(done.error);
   });
 
   // The forge's capacity (`core/capacity.ts`): read and changed live by an
