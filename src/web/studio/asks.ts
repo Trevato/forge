@@ -794,6 +794,8 @@ export function askLinesFor(
   line: string;
   kind: DecisionKind;
   repoId: string;
+  /** The app, as owner/name: what `say` and `tell` take as `repo`. */
+  repo: string;
   /** Where a person decides it: the pull or issue, or the row on the home. */
   link: string;
   /** The pull's or issue's number, for a row of one that is about one. */
@@ -813,6 +815,7 @@ export function askLinesFor(
       id: row.id,
       kind: row.kind,
       repoId: row.repo.id,
+      repo: `${row.repo.ownerName}/${row.repo.name}`,
       items: row.items.map((c) => c.id),
       words: ASK_WORDS[row.kind],
       consequence: row.consequence,

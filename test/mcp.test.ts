@@ -662,7 +662,7 @@ describe("the forge over MCP", () => {
       cardFor("now", [{ who: "scout", app: "alice/game", run: "r1", on: "#1", state: "going" }]),
       cardFor("asks", {
         rows: [
-          { line: "a", kind: "look", items: ["x:1"], words: {} },
+          { line: "a", kind: "look", items: ["x:1"], repo: "alice/game", number: 3, words: {} },
           { line: "b", kind: "review", items: ["x:2"], words: {} },
         ],
       }),
@@ -673,7 +673,8 @@ describe("the forge over MCP", () => {
         actions++;
         expect(a.args["dryRun"]).not.toBe(false);
         const t = tools.find((x: any) => x.name === a.tool);
-        for (const f of t.inputSchema.required ?? []) {
+        // A words action gets `text` from the shell's field when pressed.
+        for (const f of (t.inputSchema.required ?? []).filter((f: string) => !(a.words && f === "text"))) {
           expect(a.args[f]).toBeDefined();
           expect(a.args[f]).not.toBe("");
         }

@@ -209,6 +209,7 @@ export const GATE: readonly string[] = [
   "test/feed.test.ts",
   "test/feed-choose.test.ts",
   "test/feed-page.test.ts",
+  "test/card-shell.test.ts",
   "test/offline.test.ts",
   "test/share.test.ts",
   "test/cloud.test.ts",
