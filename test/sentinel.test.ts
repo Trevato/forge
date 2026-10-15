@@ -21,6 +21,8 @@ import {
   findFaults,
   hunt,
   sentinelLine,
+  sentinelNotice,
+  sentinelSummary,
   scrub,
   sentinelStanding,
   sentinelTick,
@@ -192,8 +194,13 @@ describe("the ledger", () => {
         by: "rule",
         ms: 1,
       });
-    const f = findFaults(app.db, NOW).find((x) => x.key === `stops:${getRepoById(app.db, repo.id)!.id}`);
-    expect(f?.evidence[0]).toContain("3 of 3");
+    const stops = () => findFaults(app.db, NOW).find((x) => x.key === `stops:${getRepoById(app.db, repo.id)!.id}`);
+    // A genuinely red repository: stopping is the right answer.
+    expect(stops()).toBeUndefined();
+    const green = plantRun("check", "ok", "ok", new Date(Date.now() + 60_000).toISOString());
+    expect(stops()?.evidence[0]).toContain("3 of 3");
+    expect(stops()?.evidence.join("\n")).toContain(green);
+    app.db.query("DELETE FROM run WHERE id = ?1").run(green);
   });
 });
 
@@ -227,8 +234,38 @@ describe("the log", () => {
     expect(hits[0]!.evidence.join("\n")).toContain("3 ERROR lines");
     expect(hits[0]!.evidence.join("\n")).toContain("disk write failed");
     clearErrors();
+    const own = createLog("sentinel");
+    for (let n = 0; n < 4; n++) own.error("sentinel filing failed");
+    expect(findFaults(app.db, Date.now()).some((x) => x.key.startsWith("log:"))).toBe(false);
+    clearErrors();
     l.error("once");
     expect(findFaults(app.db, Date.now()).some((x) => x.key.startsWith("log:"))).toBe(false);
+  });
+});
+
+describe("a hunt with nowhere to file", () => {
+  test("is recorded as unfiled, never as finding nothing", () => {
+    const stray = "CREATE TRIGGER stray_nowhere AFTER INSERT ON user BEGIN SELECT 1; END";
+    app.db.run(stray);
+    try {
+      const r = hunt(app, "nobody/missing", NOW);
+      expect(r.found).toBeGreaterThan(0);
+      expect(r.filed).toBe(0);
+      expect(r.cannotFile).toBe("nobody/missing not found");
+      const prev = process.env["FORGE_SENTINEL_REPO"];
+      process.env["FORGE_SENTINEL_REPO"] = "nobody/missing";
+      try {
+        const line = sentinelSummary(app.db)!;
+        expect(line).toContain("The sentinel cannot file: nobody/missing not found");
+        expect(line).not.toContain("found nothing");
+        expect(sentinelNotice(app.db)?.text).toBe("The sentinel cannot file: nobody/missing not found");
+      } finally {
+        if (prev === undefined) delete process.env["FORGE_SENTINEL_REPO"];
+        else process.env["FORGE_SENTINEL_REPO"] = prev;
+      }
+    } finally {
+      app.db.run("DROP TRIGGER stray_nowhere");
+    }
   });
 });
 

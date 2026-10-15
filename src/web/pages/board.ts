@@ -14,7 +14,7 @@
  * pointer. The old big view (`/big`, every address it had) lands here.
  */
 
-import { sentinelSummary } from "../../crew/sentinel.ts";
+import { sentinelNotice } from "../../crew/sentinel.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { askMeasure } from "../../core/ask_ledger.ts";
 import { reviewersOf, waitsForPerson } from "../../crew/review.ts";
@@ -311,11 +311,11 @@ function needHref(need: string, v: Vitals): string | undefined {
   return undefined;
 }
 
-/** The sentinel's open findings and last hunt. */
+/** The sentinel's open findings, a link to them; nothing when there are none. */
 function sentinelSpan(app: Ctx["app"]): Html {
-  const line = sentinelSummary(app.db);
-  if (line === null) return html``;
-  return html`<span class="board-forge-need" id="sentinel">${line}</span>`;
+  const n = sentinelNotice(app.db);
+  if (n === null) return html``;
+  return html`<a class="board-forge-need" id="sentinel" href="${n.href}">${n.text}</a>`;
 }
 
 /**

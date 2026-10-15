@@ -8,6 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { createRepo } from "../src/actions/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { hunt } from "../src/crew/sentinel.ts";
 import { forgeCommands, Session } from "../src/tui/forge.ts";
@@ -57,14 +58,40 @@ afterAll(async () => {
 });
 
 describe("the sentinel command", () => {
-  test("an admin has it, and it says what the board says", () => {
+  test("an admin has it, and it says what the board says", async () => {
     const { found, toasts } = sentinelCommand(admin);
     expect(found).toBeDefined();
     found!.run();
     expect(toasts).toEqual(["The sentinel has not hunted yet"]);
-    hunt(app, "alice/none", Date.parse("2026-10-13T12:00:00.000Z"));
-    found!.run();
+    const made = await createRepo(app, admin, { name: "none", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    process.env["FORGE_SENTINEL_REPO"] = "alice/none";
+    try {
+      hunt(app, "alice/none", Date.parse("2026-10-13T12:00:00.000Z"));
+      found!.run();
+    } finally {
+      delete process.env["FORGE_SENTINEL_REPO"];
+    }
     expect(toasts[1]).toBe("The sentinel found nothing · last hunt 2026-10-13 12:00");
+  });
+
+  test("a hunt that could not file does not say it found nothing", () => {
+    app.db.run("CREATE TRIGGER stray_t AFTER INSERT ON user BEGIN SELECT 1; END");
+    try {
+      const { found, toasts } = sentinelCommand(admin);
+      const prev = process.env["FORGE_SENTINEL_REPO"];
+      process.env["FORGE_SENTINEL_REPO"] = "alice/gone";
+      try {
+        expect(hunt(app, "alice/gone", Date.parse("2026-10-13T13:00:00.000Z")).filed).toBe(0);
+        found!.run();
+        expect(toasts[0]).toBe("The sentinel cannot file: alice/gone not found · last hunt 2026-10-13 13:00");
+      } finally {
+        if (prev === undefined) delete process.env["FORGE_SENTINEL_REPO"];
+        else process.env["FORGE_SENTINEL_REPO"] = prev;
+      }
+    } finally {
+      app.db.run("DROP TRIGGER stray_t");
+    }
   });
 
   test("a member and a guest are not offered it", () => {

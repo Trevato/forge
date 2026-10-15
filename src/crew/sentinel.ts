@@ -192,21 +192,34 @@ export function settingsAway(db: Database, now: number): Finding[] {
 export function ledgerStreaks(db: Database, now: number): Finding[] {
   const out: Finding[] = [];
   const since = new Date(now - 7 * DAY_MS).toISOString();
-  const byRepo = new Map<string, { stops: string[]; total: number }>();
+  const byRepo = new Map<string, { stops: string[]; total: number; firstAt: string }>();
   for (const d of decisionsSince(db, "retry", since)) {
-    const r = byRepo.get(d.repoId) ?? { stops: [], total: 0 };
+    const r = byRepo.get(d.repoId) ?? { stops: [], total: 0, firstAt: d.createdAt };
     r.total++;
+    if (d.createdAt < r.firstAt) r.firstAt = d.createdAt;
     if (d.answer === "stop") r.stops.push(d.id);
     byRepo.set(d.repoId, r);
   }
   for (const [repoId, r] of byRepo) {
     if (r.stops.length < STREAK || r.stops.length !== r.total) continue;
+    // Stopping on a genuinely red repository is right; it is a fault only
+    // when a check went green after the first stop, so the stop was wrong
+    // or the retry never came.
+    const first = r.firstAt;
+    const green = db
+      .query<
+        { id: string; finished_at: string },
+        [string, string]
+      >("SELECT id, finished_at FROM run WHERE repo_id = ?1 AND kind = 'check' AND state = 'ok' AND finished_at > ?2 ORDER BY finished_at DESC LIMIT 1")
+      .get(repoId, first);
+    if (green === null) continue;
     out.push({
       key: `stops:${repoId}`,
       title: `Every retry decision in ${repoSlug(db, repoId)} this week was stop`,
       evidence: [
         `${r.stops.length} of ${r.total} \`retry\` decisions answered stop since ${since}`,
         `decisions: ${r.stops.slice(0, 5).join(", ")}`,
+        `a check passed after the first stop: run ${green.id} at ${green.finished_at}`,
       ],
       pillar: "Throughput: red checks end in a fix, not a stop",
       lookFor: "A retry decision that is not stop, or a green check after a stop.",
@@ -305,7 +318,8 @@ export function runStreaks(db: Database): Finding[] {
 
 /** The same error line over and over in the pod's own log. */
 export function repeatedErrors(now: number): Finding[] {
-  const seen = recentErrors(100, now).latest;
+  // The sentinel's own failures are not a fault to file about itself.
+  const seen = recentErrors(100, now).latest.filter((l) => l.scope !== "sentinel");
   const groups = new Map<string, typeof seen>();
   for (const line of seen) {
     const k = `${line.scope}: ${oneLine(line.message).replace(/\d+/g, "N")}`;
@@ -351,17 +365,36 @@ export interface HuntResult {
   readonly found: number;
   readonly filed: number;
   readonly commented: number;
+  /** Why nothing could be filed, when the hunt had no place or no author. */
+  readonly cannotFile?: string;
 }
 
-function sentinelActor(app: App): User | undefined {
-  if (getAgentByName(app.db, "sentinel") !== undefined)
-    return getUserByName(app.db, "sentinel");
-  const admin = app.db
+/** `filed` in a recorded hunt that had nowhere to file. */
+const UNFILED = -1;
+
+export const sentinelRepoPath = (): string =>
+  (process.env.FORGE_SENTINEL_REPO ?? "trevato/forge").trim();
+
+/** Why a hunt could not file, or undefined when it can. */
+export function cannotFile(
+  db: Database,
+  path = sentinelRepoPath(),
+): string | undefined {
+  const [owner = "", name = ""] = path.split("/");
+  if (getRepo(db, owner, name) === undefined) return `${path} not found`;
+  if (sentinelActor(db) === undefined) return "no sentinel or admin to file as";
+  return undefined;
+}
+
+function sentinelActor(db: Database): User | undefined {
+  if (getAgentByName(db, "sentinel") !== undefined)
+    return getUserByName(db, "sentinel");
+  const admin = db
     .query<{ username: string }, []>(
       "SELECT username FROM user WHERE is_admin = 1 ORDER BY created_at LIMIT 1",
     )
     .get();
-  return admin === null ? undefined : getUserByName(app.db, admin.username);
+  return admin === null ? undefined : getUserByName(db, admin.username);
 }
 
 const bodyOf = (f: Finding, now: string): string =>
@@ -395,7 +428,7 @@ export function hunt(
   let commented = 0;
   const [owner = "", name = ""] = repoPath.split("/");
   const repo = getRepo(app.db, owner, name);
-  const actor = sentinelActor(app);
+  const actor = sentinelActor(app.db);
   if (repo !== undefined && actor !== undefined) {
     for (const f of findings) {
       try {
@@ -451,10 +484,17 @@ export function hunt(
       }
     }
   }
+  // A hunt with nowhere to file is recorded as such, never as a quiet one.
+  const unfiled = repo === undefined || actor === undefined;
   app.db
     .query("INSERT INTO sentinel_hunt (at, found, filed) VALUES (?1, ?2, ?3)")
-    .run(at, findings.length, filed);
-  return { found: findings.length, filed, commented };
+    .run(at, findings.length, unfiled ? UNFILED : filed);
+  return {
+    found: findings.length,
+    filed,
+    commented,
+    ...(unfiled ? { cannotFile: cannotFile(app.db, repoPath) ?? "nothing to file with" } : {}),
+  };
 }
 
 // ---- standing ----
@@ -462,11 +502,13 @@ export function hunt(
 export interface SentinelStanding {
   readonly lastHuntAt: string | null;
   readonly openFindings: number;
+  /** The last hunt had no repository or author to file with. */
+  readonly lastUnfiled: boolean;
 }
 
 export function sentinelStanding(db: Database): SentinelStanding {
   const last = db
-    .query<{ at: string }, []>("SELECT at FROM sentinel_hunt ORDER BY id DESC LIMIT 1")
+    .query<{ at: string; filed: number }, []>("SELECT at, filed FROM sentinel_hunt ORDER BY id DESC LIMIT 1")
     .get();
   const open = db
     .query<{ n: number }, []>(
@@ -476,6 +518,7 @@ export function sentinelStanding(db: Database): SentinelStanding {
   return {
     lastHuntAt: last?.at ?? null,
     openFindings: open?.n ?? 0,
+    lastUnfiled: last?.filed === UNFILED,
   };
 }
 
@@ -491,6 +534,9 @@ export function sentinelSummary(db: Database): string | null {
   const s = sentinelStanding(db);
   if (s.lastHuntAt === null) return sentinelLine(db);
   const when = s.lastHuntAt.slice(0, 16).replace("T", " ");
+  const why = s.lastUnfiled ? cannotFile(db) : undefined;
+  if (s.lastUnfiled)
+    return `The sentinel cannot file: ${why ?? "its last hunt had nowhere to file"} · last hunt ${when}`;
   return `${sentinelLine(db) ?? "The sentinel found nothing"} · last hunt ${when}`;
 }
 
@@ -499,7 +545,7 @@ export function sentinelSummary(db: Database): string | null {
  * setting away) not yet tracked, and not within ten minutes of the last.
  */
 export function sentinelTick(app: App, now = Date.now()): HuntResult | null {
-  const repoPath = (process.env.FORGE_SENTINEL_REPO ?? "trevato/forge").trim();
+  const repoPath = sentinelRepoPath();
   const last = sentinelStanding(app.db).lastHuntAt;
   const since = last === null ? Infinity : now - new Date(last).getTime();
   if (since < SIGNAL_GAP_MS) return null;
@@ -516,4 +562,22 @@ export function sentinelTick(app: App, now = Date.now()): HuntResult | null {
     if (!signals.some((s) => !tracked.has(s.key))) return null;
   }
   return hunt(app, repoPath, now);
+}
+
+/**
+ * What the board's strip says, only when there is something to act on: open
+ * findings, or a sentinel that cannot file. Null otherwise — no banner.
+ */
+export function sentinelNotice(
+  db: Database,
+): { text: string; href: string } | null {
+  const s = sentinelStanding(db);
+  const path = sentinelRepoPath();
+  const href = `/${path}/issues`;
+  if (s.lastUnfiled) {
+    const why = cannotFile(db);
+    if (why !== undefined) return { text: `The sentinel cannot file: ${why}`, href: "/" };
+  }
+  const line = sentinelLine(db);
+  return line === null ? null : { text: line, href };
 }

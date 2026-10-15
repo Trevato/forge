@@ -507,15 +507,17 @@ describe("the board's forge strip", () => {
     app.db
       .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'")
       .run("2020-01-01T00:00:00.000Z");
+    process.env["FORGE_SENTINEL_REPO"] = "root/stuck";
     try {
       expect(hunt(app, "root/stuck").filed).toBeGreaterThan(0);
       const seen = await board("root");
-      expect(seen).toMatch(/<span class="board-forge-need" id="sentinel">The sentinel has \d+ open findings? · last hunt \d{4}-\d\d-\d\d \d\d:\d\d<\/span>/);
+      expect(seen).toMatch(/<a class="board-forge-need" id="sentinel" href="\/root\/stuck\/issues">The sentinel has \d+ open findings?<\/a>/);
       expect(seen).not.toContain('class="board-forge-ok" id="sentinel"');
       expect(await board("bob")).not.toMatch(/sentinel/i);
       const guest = await (await fetch(`${servers.url}/board`)).text();
       expect(guest).not.toMatch(/sentinel/i);
     } finally {
+      delete process.env["FORGE_SENTINEL_REPO"];
       setCapacity(app.db, "checks.concurrency", "1", admin.id);
     }
   });
