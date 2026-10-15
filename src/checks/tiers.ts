@@ -9,7 +9,7 @@
  * only decides.
  */
 
-import { needsFull, reach, reachLine, type Impact } from "./impact.ts";
+import { GATE_FILE, needsFull, reach, reachLine, type Impact } from "./impact.ts";
 
 /** A test under this many seconds is always in the fast tier. */
 export const QUICK_SECONDS = 1;
@@ -73,6 +73,8 @@ export interface FastInput {
   readonly tests: readonly string[];
   /** A file's relative imports; `[]` for one that cannot be read. */
   readonly imports: (file: string) => readonly string[];
+  /** The tests a diff of scripts/gate.ts adds (`gateListAdds`); `undefined` when it is logic or unread. */
+  readonly gateAdds?: readonly string[];
   /** Seconds each test took last time (`scripts/test-times.json`). */
   readonly times: ReadonlyMap<string, number>;
   /** Tests a red full gate on land taught this pull. */
@@ -111,19 +113,24 @@ export function fastSet(input: FastInput): FastPlan {
     return { files, why, expected, overBudget: expected > FAST_BUDGET_SECONDS, line };
   };
   // What the map cannot bound runs everything.
-  const unbounded = needsFull(input.changed);
+  const unbounded = needsFull(input.changed, input.gateAdds);
   if (unbounded !== undefined) {
     for (const test of input.tests) why.set(test, `full: ${unbounded} changed`);
     return finish(`full tier, ${unbounded} changed`);
   }
+  // A gate.ts that only lists tests is those tests, nothing more.
+  const diffed =
+    input.gateAdds === undefined
+      ? input.changed
+      : [...input.changed.filter((f) => f !== GATE_FILE), ...input.gateAdds];
   const impact = input.impact !== undefined && input.impact.size > 0 ? input.impact : undefined;
-  const reached = impact && reach(input.changed, impact);
+  const reached = impact && reach(diffed, impact);
   // A change the map cannot see (a src file no test executes, or a file
   // outside src/ and test/) is judged by the guesses for every test.
   const blind =
     reached !== undefined &&
     (reached.unreached.length > 0 ||
-      input.changed.some(
+      diffed.some(
         (f) =>
           !f.startsWith("src/") &&
           !f.startsWith("test/") &&
@@ -136,10 +143,10 @@ export function fastSet(input: FastInput): FastPlan {
   const take = (test: string, reason: string): void => {
     if (tests.has(test) && !why.has(test)) why.set(test, reason);
   };
-  const changed = new Set(input.changed);
+  const changed = new Set(diffed);
   for (const file of changed) take(file, "changed");
 
-  const sources = input.changed.filter((file) => !tests.has(file));
+  const sources = diffed.filter((file) => !tests.has(file));
   const names = new Map<string, string>();
   for (const source of sources)
     for (const name of namesOf(source)) names.set(name, source);
@@ -179,7 +186,7 @@ export function fastSet(input: FastInput): FastPlan {
       take(test, "quick");
   }
 
-  const nChanged = input.changed.length;
+  const nChanged = diffed.length;
   return finish(
     reached
       ? `by coverage${blind ? " and imports" : ""}: ${reachLine(nChanged, reached.tests.size, reached.unreached)}`

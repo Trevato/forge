@@ -27,6 +27,7 @@ import {
 import {
   executedFiles,
   formatImpact,
+  gateListAdds,
   mergeImpact,
   parseImpact,
   reach,
@@ -169,6 +170,33 @@ describe("the fast set, by measured coverage", () => {
       expect(plan.line).toContain("full tier");
     }
     expect(fastSet({ ...base, changed: ["scripts/test-times.json"] }).files).toEqual([]);
+  });
+
+  test("a gate.ts diff that only lists tests selects those tests; logic runs full", () => {
+    const listed = [
+      "@@ -10,0 +11,2 @@",
+      '+  "test/new.test.ts",',
+      '+  { file: "test/other.test.ts", reason: "slow", issue: 5 },',
+      "@@ -20 +22,0 @@",
+      '-  "test/old.test.ts",',
+    ].join("\n");
+    const adds = gateListAdds(listed);
+    expect(adds).toEqual(["test/new.test.ts", "test/other.test.ts"]);
+    const plan = fastSet({ ...base, changed: ["scripts/gate.ts"], gateAdds: adds });
+    expect(plan.line).not.toContain("full tier");
+    expect(plan.files).not.toContain("test/web-phone.test.ts");
+    expect(plan.files.length).toBeLessThan(base.tests.length);
+    const more = fastSet({
+      ...base,
+      tests: [...base.tests, "test/new.test.ts"],
+      changed: ["scripts/gate.ts"],
+      gateAdds: adds,
+    });
+    expect(more.why.get("test/new.test.ts")).toBe("changed");
+    expect(gateListAdds('+  "test/a.test.ts",\n+export const X = 1;')).toBeUndefined();
+    expect(gateListAdds('-  if (x) return;')).toBeUndefined();
+    const logic = fastSet({ ...base, changed: ["scripts/gate.ts"], gateAdds: undefined });
+    expect(logic.files).toEqual(base.tests);
   });
 
   test("lcov: only src files with a line hit count as executed", () => {
