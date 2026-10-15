@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import {
@@ -4594,6 +4595,23 @@ export function apiRoutes(router: Router<Handler>): void {
         run: latest ?? null,
         runs,
       });
+    },
+  );
+
+  // A writer asks for a check again at the head as it is now.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/checks",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      if (!ctx.auth.user || !canWrite(ctx.app.db, found.repo, ctx.auth.user))
+        return apiError("forbidden", 403, "only a writer can ask for a check");
+      const asked = await askCheck(ctx.app, ctx.auth.user, found.repo, found.pull);
+      if (!asked.ok) return apiError(asked.error, 409, asked.message);
+      return json({ run: asked.run }, 202);
     },
   );
 
