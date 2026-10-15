@@ -306,4 +306,11 @@ describe("boards API", () => {
     const raw = await call("/api/v1/boards/query", "admin", "not json");
     expect(raw.status).toBe(400);
   });
+
+  test("a body over the cap is a 413, not a 400", async () => {
+    const big = JSON.stringify({ source: "runs", aggregate: "count", pad: "x".repeat(17 * 1024 * 1024) });
+    const res = await call("/api/v1/boards/query", "admin", big);
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as { error: string }).error).toBe("too_large");
+  });
 });

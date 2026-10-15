@@ -1273,9 +1273,9 @@ export function apiRoutes(router: Router<Handler>): void {
     const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
     const bytes = await readBounded(ctx.request, bodyCapFor(ctx.request));
+    if (bytes === "too_large") return apiError("too_large", 413, "that is too large to read here");
     let query: unknown;
     try {
-      if (bytes === "too_large") throw new Error("too large");
       query = JSON.parse(new TextDecoder().decode(bytes));
     } catch {
       return apiError("bad_json", 400, "the body must be a JSON query object");
