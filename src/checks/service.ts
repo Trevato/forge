@@ -943,6 +943,23 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           inFlight.get(run.id)?.abort.abort();
           announceRun(app, run);
         }
+        // A land moves the default branch without a push event: check its
+        // new head, or a red main stays red until someone pushes to it.
+        const mergeOid = event.payload["mergeOid"];
+        if (
+          event.kind === "pull.merged" &&
+          pull.baseBranch === repo.defaultBranch &&
+          typeof mergeOid === "string" &&
+          /^[0-9a-f]{40}$/.test(mergeOid)
+        )
+          await request(
+            repo,
+            repo.defaultBranch,
+            mergeOid,
+            "push",
+            undefined,
+            actor,
+          );
         return;
       }
       default:
