@@ -18,6 +18,7 @@
 
 import { sha256 } from "../kernel/hash.ts";
 import { createLog } from "../kernel/log.ts";
+import { shellJs } from "./client.ts";
 import { css } from "./style.ts";
 
 const log = createLog("web");
@@ -110,4 +111,20 @@ export function stylesheetRedirect(): Response {
       "x-content-type-options": "nosniff",
     },
   });
+}
+
+let shell: BuiltAsset | null = null;
+
+/**
+ * The shell script, content-addressed like the stylesheet. Hashed once per
+ * process. Linked as a classic (blocking) script ahead of the page's own
+ * inline one, so everything it defines is in scope when that runs, exactly as
+ * when the two were one inline block.
+ */
+export function shellAsset(): BuiltAsset {
+  if (shell === null) {
+    const name = `shell-${sha256(shellJs).slice(0, 16)}`;
+    shell = { path: `/assets/${name}.js`, name, code: shellJs };
+  }
+  return shell;
 }

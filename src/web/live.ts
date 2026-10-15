@@ -38,6 +38,12 @@ export interface LiveConfig {
   /** Id of the last comment already on the page (for the ?after= fetch). */
   lastCommentId?: string;
   /**
+   * The commit production serves once this change has shipped (its merge
+   * commit, else its head), for a pull page: an `app.serving` for production
+   * at exactly this commit swaps the check line and Preview card in place.
+   */
+  head?: string;
+  /**
    * The studio app page: a deploy run event for this repo fetches
    * `<repo>/app/state` and swaps the head card and previews list in place,
    * rather than only offering the pill.
@@ -55,6 +61,7 @@ export function liveMount(config: LiveConfig): Html {
       data-thread="${config.thread ?? ""}"
       data-number="${config.number ?? ""}"
       data-last="${config.lastCommentId ?? ""}"
+      data-head="${config.head ?? ""}"
       data-app="${config.app ? "1" : ""}"
     ></div>
     <p
@@ -77,6 +84,7 @@ export const liveClientJs = /* js */ `
   var number = cfg.getAttribute('data-number');
   var lastId = cfg.getAttribute('data-last') || '';
   var isApp = cfg.getAttribute('data-app') === '1';
+  var head = cfg.getAttribute('data-head') || '';
   var pill = document.getElementById('live-pill');
   var status = document.getElementById('live-status');
   var conv = document.getElementById('conversation');
@@ -227,9 +235,55 @@ export const liveClientJs = /* js */ `
       });
   }
 
+  // A change's own page: its word, note, deploy link and Preview card follow
+  // the change without a reload. Only three things move them — this pull
+  // merging, a deploy run of its own preview, and production serving at its
+  // head — and a burst of them collapses to one fetch in flight.
+  var pullBusy = false, pullQueued = false;
+  function movesPull(data) {
+    if (thread !== 'pull' || !data || !data.payload) return false;
+    if (data.kind === 'pull.merged') return String(data.payload.number) === String(number);
+    if (data.kind.indexOf('run.') === 0) return data.payload.env === 'pull-' + number;
+    if (data.kind === 'app.serving') {
+      return data.payload.env === 'production' && !!head && data.payload.commitOid === head;
+    }
+    return false;
+  }
+  function refreshPull() {
+    if (pullBusy) { pullQueued = true; return; }
+    pullBusy = true;
+    fetch(repo + '/pulls/' + number + '/state', { headers: { accept: 'text/html' } })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (text) {
+        if (!text) return;
+        var holder = document.createElement('div');
+        holder.innerHTML = text;
+        ['pull-check', 'pull-preview'].forEach(function (id) {
+          var mine = document.getElementById(id);
+          var theirs = holder.querySelector('#' + id);
+          if (mine && theirs && mine.innerHTML !== theirs.innerHTML) mine.replaceWith(theirs);
+        });
+        var mark = document.querySelector('#pull-check [data-head]');
+        if (mark && mark.getAttribute('data-head')) head = mark.getAttribute('data-head');
+        var word = textOf(document.querySelector('#pull-check .badge'));
+        if (status && word) status.textContent = word.charAt(0).toUpperCase() + word.slice(1);
+      })
+      .catch(function () {})
+      .then(function () {
+        pullBusy = false;
+        if (pullQueued) { pullQueued = false; refreshPull(); }
+      });
+  }
+
   function onEvent(e) {
     var data;
     try { data = JSON.parse(e.data); } catch (_) { return; }
+    if (movesPull(data)) {
+      refreshPull();
+      // A merge changes more than the word (the decision, the composer):
+      // it still offers the refresh. A run or a serving moves only the swap.
+      if (data.kind !== 'pull.merged') return;
+    }
     if (isDeploy(data) || isServing(data)) { refreshApp(); return; }
     if (relevant(data) && conv && (data.kind === thread + '.commented')) {
       appendNew();

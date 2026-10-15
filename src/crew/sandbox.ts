@@ -189,6 +189,8 @@ export function runTmpDir(dataDir: string, agentName: string, runId: string): st
   return join(crewRoot(dataDir), agentName, ".t", runId.slice(-12));
 }
 
+const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
 export function sandboxPolicy(input: {
   dataDir: string;
   agentName: string;
@@ -201,14 +203,17 @@ export function sandboxPolicy(input: {
   /** The run this is for: it gets a temp directory of its own (`tmpDir`). */
   runId?: string | undefined;
 }): SandboxPolicy {
-  const hosts = new Set<string>([
-    "127.0.0.1",
-    "localhost",
-    "registry.npmjs.org",
-  ]);
+  const hosts = new Set<string>(["registry.npmjs.org"]);
   for (const url of input.urls) {
     try {
-      hosts.add(new URL(url).hostname);
+      const parsed = new URL(url);
+      // Loopback is allowed by port, never whole: the proxy reaches outside
+      // the sandbox, so a bare 127.0.0.1 would be every local service.
+      hosts.add(
+        LOOPBACK.has(parsed.hostname) && parsed.port !== ""
+          ? parsed.host
+          : parsed.hostname,
+      );
     } catch {
       // Not a URL: nothing to allow.
     }
