@@ -29,6 +29,7 @@ import {
   type Team,
 } from "../../core/orgs.ts";
 import { appsForRepos } from "../../core/apps.ts";
+import { LIST_LIMIT_MAX } from "../../core/issues.ts";
 import { listReposByOwner, type Repo } from "../../core/repos.ts";
 import { getUserByName, hiddenFrom, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -36,6 +37,7 @@ import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { icon } from "../icons.ts";
+import { ownerLine } from "../describe.ts";
 import { flashTo, page } from "../layout.ts";
 import { secretsSection } from "./secrets.ts";
 import { agentsOnForge, grantsSection, saveGrants } from "./subscriptions.ts";
@@ -362,7 +364,20 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
     )}
     ${isOrg ? orgSecrets(ctx, owner.username) : null}`;
 
-  return page({ ctx, title: owner.username, body });
+  const listed = listReposByOwner(ctx.app.db, owner.username, undefined, {
+    limit: LIST_LIMIT_MAX,
+  });
+  return page({
+    ctx,
+    title: owner.username,
+    description: ownerLine({
+      org: isOrg,
+      name: owner.username,
+      publicRepos: listed.length,
+      more: listed.length >= LIST_LIMIT_MAX,
+    }),
+    body,
+  });
 }
 
 function orgSecrets(ctx: Ctx, name: string): Html | null {

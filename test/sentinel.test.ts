@@ -88,6 +88,21 @@ describe("a clean forge", () => {
   });
 });
 
+describe("a decline is not a failed push", () => {
+  test("runs that say 'pushed nothing' file no push fault", async () => {
+    const made = await createRepo(app, alice, { name: "quiet", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    for (let n = 0; n < 5; n++) {
+      const run = createRun(app.db, { repoId: made.value.id, kind: "agent" });
+      app.db
+        .query("UPDATE run SET state = 'failed', summary = ?2, created_at = ?3 WHERE id = ?1")
+        .run(run.id, "declined: I made no changes and pushed nothing.", ago((30 + n) * HOUR));
+    }
+    const keys = findFaults(app.db, NOW).map((f) => f.key);
+    expect(keys).not.toContain(`push:${made.value.id}`);
+  });
+});
+
 describe("the faults of the day", () => {
   let queuedId = "";
   beforeAll(() => {

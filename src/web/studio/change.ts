@@ -12,6 +12,7 @@
 import { getIssueById } from "../../core/issues.ts";
 import { mayEditIssue } from "../../actions/issues.ts";
 import { marksByName, type Mark } from "../../core/marks.ts";
+import { waitingFor } from "../../core/waiting_for.ts";
 import { mayView } from "../../core/sealed.ts";
 import { threadNote } from "../../crew/direct.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
@@ -41,6 +42,7 @@ import {
 } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import type { IconName as Glyph } from "../icons.ts";
+import { threadLine } from "../describe.ts";
 import { fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { liveClientJs, liveMount } from "../live.ts";
@@ -451,6 +453,12 @@ async function changeConversation(
               : "This app does not wait on the check to ship. Look at the preview, then ship it or say what is off.",
         short: word === "look" ? "the check is green" : "ready to ship",
         consequence: KIND_TIER.look,
+        waiting: waitingFor({
+          kind: "look",
+          conflicts: conflicted ? 1 : 0,
+          assignedToViewer: pull.assigneeId === ctx.auth.user?.id,
+          who: pull.authorName,
+        }),
       }
     : undefined;
   // Whoever opened it, Ship is offered only where `mergePull` would take
@@ -598,6 +606,12 @@ async function changeConversation(
   return page({
     ctx,
     title: `${pull.title} · ${repo.name}`,
+    description: threadLine({
+      private: repo.visibility === "private",
+      word,
+      title: pull.title,
+      body: pull.body,
+    }),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,

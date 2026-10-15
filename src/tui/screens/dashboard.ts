@@ -17,10 +17,14 @@
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { forgeLane, forgeNeeds } from "../../actions/health.ts";
+import { clientAppRows } from "../../core/client-apps.ts";
+import { nextStepsFor } from "../../core/next-steps.ts";
+import { agentsLine } from "../../web/studio/client_home.ts";
 import { mayView } from "../../core/sealed.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
 import { getIssueById, listAssignedTo, type Issue } from "../../core/issues.ts";
 import { askLinesFor } from "../../web/studio/asks.ts";
+import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import {
   applyAsksBulk,
@@ -96,6 +100,8 @@ interface OnYouItem {
   readonly hand?: true;
   /** A pull the crew handed to a person: closed, marked and opened like any row. */
   readonly over?: true;
+  /** What it waits for, and on whom: the word the web's asks row shows. */
+  readonly waiting: WaitingFor;
 }
 
 /** The `tab` order, whichever of these the frame had room for. */
@@ -115,6 +121,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** Why planning is paused, for the autonomous apps where it is; as on the board. */
   let holds = new Map<string, string>();
   let forge: string[] | undefined;
+  /** A client's apps, one sentence each on whether its agents work or wait (#1812). */
+  let clientLines: string[] = [];
   /** The check lane, as the board's strip says it; null when nothing is queued. */
   let lane: string | null = null;
   const filter = new Filter();
@@ -125,6 +133,19 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     machine: new ListState(),
   };
   let focus: PaneId = "repos";
+
+  const loadClientLines = async (): Promise<void> => {
+    clientLines = [];
+    if (!f.user || (await nextStepsFor(f.app, f.user)) === undefined) return;
+    const apps = await clientAppRows(f.app, f.user);
+    clientLines =
+      apps.length === 0
+        ? ["Your apps will appear here."]
+        : apps.map(
+            (a) => `${a.repo.name}: ${agentsLine(a.working, a.queued)}`,
+          );
+    ctx.invalidate();
+  };
 
   const reload = (): void => {
     // The server remembers the *choice* and nothing about the laptop, so
@@ -168,6 +189,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    */
   const assignedToMe = (): OnYouItem[] => {
     if (f.user === undefined) return [];
+    const rows = askLinesFor(f.db, f.user);
+    /** The ask row's word for an issue or pull, by its id; a plain assignment says so. */
+    const waitingOf = (id: string): WaitingFor =>
+      rows.find((row) => row.items.some((item) => item.slice(item.indexOf(":") + 1) === id))
+        ?.waitingFor ??
+      waitingFor({ kind: "stopped", conflicts: 0, assignedToViewer: true, who: "you" });
     const issues = listAssignedTo(f.db, f.user.id, 50);
     const muted = mutedRepos(f.db, f.user.id);
     const byId = getReposByIds(f.db, [...new Set([...issues.map((i) => i.repoId), ...muted])]);
@@ -187,9 +214,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       )
         return [];
       if (muted.has(repo.id)) return [];
-      return [{ issue, repo }];
+      return [{ issue, repo, waiting: waitingOf(issue.id) }];
     });
-    return [...assigned, ...handOvers(assigned)];
+    return [...assigned, ...handOvers(assigned, rows, waitingOf)];
   };
 
   /**
@@ -198,9 +225,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    * decider can take them), and pulls the crew handed over after three
    * reviews. Listed after their own work.
    */
-  const handOvers = (have: readonly OnYouItem[]): OnYouItem[] => {
+  const handOvers = (
+    have: readonly OnYouItem[],
+    rows: ReturnType<typeof askLinesFor>,
+    waitingOf: (id: string) => WaitingFor,
+  ): OnYouItem[] => {
     if (f.user === undefined) return [];
-    const rows = askLinesFor(f.db, f.user);
     const idsOf = (kind: string, prefix: string): string[] =>
       rows
         .filter((row) => row.kind === kind)
@@ -221,7 +251,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       const issue = getIssueById(f.db, id);
       const repo = issue === undefined ? undefined : getRepoById(f.db, issue.repoId);
       if (issue !== undefined && repo !== undefined)
-        out.push({ issue, repo, ...(flag === "hand" ? { hand: true as const } : { over: true as const }) });
+        out.push({ issue, repo, waiting: waitingOf(id), ...(flag === "hand" ? { hand: true as const } : { over: true as const }) });
     }
     return out;
   };
@@ -489,7 +519,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // functions of the outbox, so one subscription refreshes all of them.
       live(f, signal, {}, reload);
       reload();
-      return Promise.resolve();
+      return loadClientLines();
     },
     render(area, s) {
       const c = ctx.theme.c;
@@ -497,10 +527,24 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // A site admin's forge strip, as the board's: "All fine" or a line
       // per cause. Anyone else gets no rows and no reads.
       let body = area;
+      if (clientLines.length > 0) {
+        const lines = clientLines.slice(0, 5);
+        const [strip, rest] = split(body, "v", [len(lines.length), fill(1)]);
+        lines.forEach((line, i) =>
+          s.text(
+            strip!.x,
+            strip!.y + i,
+            truncate(line, strip!.w),
+            style(c.fg, c.bg),
+            strip!.x + strip!.w,
+          ),
+        );
+        body = rest!;
+      }
       if (forge !== undefined) {
         const lines = forge.length === 0 ? ["All fine"] : forge.slice(0, 3);
         if (lane !== null) lines.push(`Lane: ${lane}`);
-        const [strip, rest] = split(area, "v", [len(lines.length), fill(1)]);
+        const [strip, rest] = split(body, "v", [len(lines.length), fill(1)]);
         lines.forEach((line, i) =>
           s.text(
             strip!.x,
@@ -658,8 +702,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               ? PULL_MARK
               : ISSUE_MARK;
         return {
-          title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : ""}${mark} #${item.issue.number} ${item.issue.title}`,
-          meta: `${item.repo.ownerName}/${item.repo.name}`,
+          title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : ""}${mark} #${item.issue.number} ${item.issue.title} · ${item.repo.ownerName}/${item.repo.name}`,
+          meta: `${item.waiting.word} · on ${item.waiting.on}`,
         };
       }),
       on,

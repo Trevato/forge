@@ -153,6 +153,7 @@ import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
+import { placementWords } from "../checks/placement.ts";
 import { everydayOf } from "../core/everyday.ts";
 import { nextStepsFor } from "../core/next-steps.ts";
 
@@ -755,6 +756,7 @@ const TOOLS: readonly Tool[] = [
             since: r.startedAt ?? r.createdAt,
             // What a run costs is the owner's fact (`canSeeOwnerFacts`).
             costUsd: owned.has(r.repoId) ? r.costUsd : 0,
+            ...(placementWords(r) === "" ? {} : { ran: placementWords(r) }),
           };
         }),
       ]);

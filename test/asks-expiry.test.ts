@@ -13,7 +13,9 @@ import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { setAssignee } from "../src/core/issues.ts";
+import { addComment, setAssignee } from "../src/core/issues.ts";
+import { openIssue } from "../src/actions/issues.ts";
+import { BREAKER_NOTE } from "../src/crew/breaker.ts";
 import { recordInteraction } from "../src/core/interactions.ts";
 import type { Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -281,5 +283,56 @@ describe("asks that expire, hold and collapse", () => {
     expect(new Set(lines).size).toBe(kinds.length);
     for (const k of kinds.filter((k) => k !== "look"))
       expect(ROW_PLURAL[k](3)).not.toContain("green changes");
+  });
+
+  test("a stopped pull that cannot merge says conflicts with main, on its author (#1825)", async () => {
+    const figs = await botPull("figs", [{ path: "README.md", content: "# figs\n" }]);
+    green(figs);
+    await commitToBranch(app, aliceUser, repo, {
+      message: "main moves again",
+      files: [{ path: "README.md", content: "# orchard, again\n" }],
+    });
+    await sweepStaleAsks(app);
+    await tick();
+    // The check is run again at the same head and fails, twice tried by the crew.
+    const failed = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: figs.id,
+      env: `pull-${figs.number}`,
+      commitOid: figs.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, failed.id);
+    finishRun(app.db, failed.id, { state: "failed", summary: "red" });
+    const bot = getUserByName(app.db, "bot")!;
+    for (let i = 0; i < 2; i++) {
+      const tried = createRun(app.db, {
+        repoId: repo.id,
+        kind: "agent",
+        issueId: figs.id,
+        actorId: bot.id,
+        reason: "check_failed",
+      });
+      claimRun(app.db, tried.id);
+      finishRun(app.db, tried.id, { state: "failed", summary: "no luck" });
+    }
+    const row = askLinesFor(app.db, aliceUser).find((l) => l.id === `stopped:${figs.id}`);
+    expect(row?.waitingFor).toEqual({ word: "conflicts with main", on: figs.authorName });
+  });
+
+  test("a parked issue assigned to the viewer says assigned to you (#1825)", () => {
+    const made = openIssue(app, aliceUser, repo, { title: "Stuck", body: "" });
+    if (!made.ok) throw new Error(String(made.error));
+    addComment(app.db, {
+      issueId: made.value.id,
+      authorId: getUserByName(app.db, "bot")!.id,
+      body: BREAKER_NOTE,
+    });
+    const before = askLinesFor(app.db, aliceUser).find((l) => l.id === `parked:${made.value.id}`);
+    expect(before?.waitingFor).toEqual({ word: "a decision", on: "you" });
+    setAssignee(app.db, made.value.id, aliceUser.id);
+    const after = askLinesFor(app.db, aliceUser).find((l) => l.id === `parked:${made.value.id}`);
+    expect(after?.waitingFor).toEqual({ word: "assigned to you", on: "you" });
   });
 });

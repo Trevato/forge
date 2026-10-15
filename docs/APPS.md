@@ -358,6 +358,23 @@ A `check` that is present and wrong fails with the reason, so a commit is
 never silently unchecked. A check under way when the forge restarts is
 queued again, and the forge that carries on runs it from the start.
 
+**Placement.** `FORGE_CHECKS_PLACEMENT=process` (the default) runs a check
+in a cell on the forge's machine. `job` runs install and check as one
+Kubernetes Job (`src/cluster/jobs.ts`) instead: `FORGE_CHECKS_IMAGE` is its
+image, `FORGE_CHECKS_CLAIM` a ReadWriteMany claim holding the forge's checks
+root (mounted at the same path, where the checkout is exported),
+`FORGE_CHECKS_NODE_SELECTOR` (`key=value,…`) and `FORGE_CHECKS_TOLERATIONS`
+(a JSON list) say where it may land. Only `CI` and `FORGE_*` variables cross
+to the Job. Its log is written into the run's log when it ends, and the run
+records `placement` and the `node` its pod ran on. A malformed setting leaves
+`process` in place. No cell wraps a Job. The pod mounts only its own
+checkout (`subPath` = the run id), mounts no service-account token, runs
+non-root without privilege escalation, and carries the check's limits as
+`resources.limits`. **Egress is not enforced by the forge on a Job**: the
+run is recorded as uncontained ("egress not enforced on a cluster job"), and
+the pod carries the label `forge-check=true` so an operator's NetworkPolicy
+can select it and hold what `egress` declares.
+
 Checks share `FORGE_CHECKS_CONCURRENCY` slots (default `1`), and when one
 frees, it goes to the most recently requested check waiting, not the one
 queued longest — a fresh push is never stuck behind pulls that queued hours
@@ -1079,6 +1096,7 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_PREVIEW_IDLE_DAYS` | `3`                             | days a pull may sit untouched before its preview sleeps; `0` = never |
 | `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once (live: Settings → Capacity)    |
 | `FORGE_CHECKS_CONCURRENCY` | `1`                            | checks at once (live: Settings → Capacity)        |
+| `FORGE_CHECKS_PLACEMENT`  | `process`                       | `job` runs a check's commands as a cluster Job (see Placement above) |
 | `FORGE_CHECKS_DRAIN_S`       | `300`                          | seconds a roll lets running checks finish first   |
 | `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
 | `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |

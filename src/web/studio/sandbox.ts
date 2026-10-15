@@ -6,7 +6,14 @@
  */
 
 import type { Run } from "../../core/runs.ts";
+import { placementWords } from "../../checks/placement.ts";
 import { html, type Html } from "../html.ts";
+
+/** Where a check ran, when that was a cluster job; nothing for the default. */
+export function placementLine(run: Run): Html | null {
+  const words = placementWords(run);
+  return words === "" ? null : html`<p class="muted small" id="run-placement">${words[0]!.toUpperCase() + words.slice(1)}.</p>`;
+}
 
 export function sandboxLine(run: Run): Html | null {
   if (run.sandboxEnforced === null) return null;
