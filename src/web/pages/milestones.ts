@@ -519,7 +519,7 @@ export async function milestonesJson(
   const plan = readPlan(ctx.app.db, repo, {
     spend: canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user),
   });
-  const ask = await askByUmbrella(ctx, repo);
+  const ask = askByUmbrella(ctx, repo);
   return {
     repo: { owner: repo.ownerName, name: repo.name },
     limbs: plan.limbs.map((limb) => ({
@@ -530,18 +530,18 @@ export async function milestonesJson(
 }
 
 /** Each pillar's ask-to-live, by its umbrella's number: what its limb shows too. */
-async function askByUmbrella(
+function askByUmbrella(
   ctx: Ctx,
   repo: Repo,
   only?: number,
-): Promise<Map<number, AskToLive | null>> {
+): Map<number, AskToLive | null> {
   const out = new Map<number, AskToLive | null>();
   const view = pillarView(ctx.app.db, repo);
   if (view === undefined) return out;
-  // A milestone that is no pillar's umbrella has none: ask git for nothing.
+  // A milestone that is no pillar's umbrella has none: read nothing.
   if (only !== undefined && !view.set.pillars.some((p) => p.umbrella.number === only))
     return out;
-  const ask = await askToLiveFor(ctx.app, repo, view, ctx.auth.user);
+  const ask = askToLiveFor(ctx.app, repo, view, ctx.auth.user);
   for (const pillar of view.set.pillars)
     out.set(
       pillar.umbrella.number,
@@ -569,7 +569,7 @@ export async function milestoneData(
     : {
         repo: { owner: repo.ownerName, name: repo.name },
         ...milestoneJson(milestone, owner),
-        ...askOf(await askByUmbrella(ctx, repo, number), number),
+        ...askOf(askByUmbrella(ctx, repo, number), number),
         // Whether the caller watches it; a caller who cannot has no answer.
         ...(viewer?.kind === "user"
           ? {

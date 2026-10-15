@@ -11,6 +11,9 @@
 
 import type { Database } from "bun:sqlite";
 import { runLocal } from "../git/local.ts";
+import { repoDir } from "../git/repos.ts";
+import { PILLAR_DAYS } from "./pillars.ts";
+import { getRepoById } from "./repos.ts";
 
 const FULL_OID = /^[0-9a-f]{40,64}$/;
 /** Most commits one walk reads; past this a deploy records what it saw. */
@@ -66,6 +69,44 @@ export async function recordCarried(
       insert.run(input.runId, p.issueId, p.number, p.mergedOid);
   })();
   return carried.map((p) => p.number);
+}
+
+/**
+ * Record what earlier production deploys carried, for the deploys of the
+ * ask-to-live window that have no record yet (they finished before deploys
+ * wrote one). A boot step, never a page view; a deploy that carries nothing
+ * is walked again on each boot, bounded by the window. Returns how many
+ * deploys it recorded something for.
+ */
+export async function backfillCarried(
+  db: Database,
+  reposRoot: string,
+  now = new Date(),
+): Promise<number> {
+  const since = new Date(now.getTime() - PILLAR_DAYS * 86_400_000).toISOString();
+  const runs = db
+    .query<{ id: string; repoId: string; oid: string }, [string]>(
+      `SELECT id, repo_id AS repoId, commit_oid AS oid FROM run
+        WHERE kind = 'deploy' AND env = 'production' AND state = 'ok' AND commit_oid != ''
+          AND COALESCE(serving_at, finished_at) >= ?1
+          AND NOT EXISTS (SELECT 1 FROM deploy_pull WHERE run_id = run.id)
+        ORDER BY COALESCE(serving_at, finished_at)`,
+    )
+    .all(since);
+  let recorded = 0;
+  for (const run of runs) {
+    const repo = getRepoById(db, run.repoId);
+    if (repo === undefined) continue;
+    const dir = repoDir(reposRoot, repo.ownerName, repo.name);
+    const carried = await recordCarried(db, {
+      runId: run.id,
+      repoId: run.repoId,
+      commitOid: run.oid,
+      dir,
+    });
+    if (carried.length > 0) recorded++;
+  }
+  return recorded;
 }
 
 /** The pull numbers a deploy run carries, ascending. */

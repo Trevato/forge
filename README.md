@@ -517,6 +517,10 @@ Where the whole forge waits is a forge admin's: `/flow` shows each stage from re
 what "ready now" means to a person and to the crew. The map also shows each
 pillar's ask-to-live: the median hours from an issue opening to its change live
 in production, over the last 7 days (also in the map and milestones API and MCP).
+It reads the `deploy_pull` record a production deploy writes when it finishes,
+so a page view runs no git; an issue closed by several pulls counts once, at
+its first time live. On boot the forge records what the last 7 days of earlier
+production deploys carried, so work that went live before the record is counted.
 
 `docs/STUDIO.md` is the front door from the top of this page in full: the five
 words and where each is decided, the box, the three lists, a tell, a run

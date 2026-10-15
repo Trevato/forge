@@ -2712,7 +2712,7 @@ export function apiRoutes(router: Router<Handler>): void {
           listActiveRuns(ctx.app.db, [repo.id]),
         ),
         pillars,
-        await askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
+        askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
       ),
     );
   });

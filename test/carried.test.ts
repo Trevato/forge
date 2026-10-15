@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { carriedBy, recordCarried } from "../src/core/carried.ts";
+import { backfillCarried, carriedBy, recordCarried } from "../src/core/carried.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { repoDir } from "../src/git/repos.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -109,5 +109,18 @@ describe("carried", () => {
         dir,
       }),
     ).toEqual([]);
+  });
+
+  test("backfill records what a recent production deploy carried before the record existed, once", async () => {
+    app.db
+      .query(
+        `INSERT INTO run (id, repo_id, kind, env, commit_oid, state, serving_at, finished_at)
+         VALUES ('old-prod', ?1, 'deploy', 'production', ?2, 'ok', ?3, ?3)`,
+      )
+      .run(repo.id, merged[0]!.oid, new Date().toISOString());
+    expect(await backfillCarried(app.db, app.reposRoot)).toBe(1);
+    expect(carriedBy(app.db, "old-prod")).toEqual([merged[0]!.number]);
+    // Already recorded: not walked again.
+    expect(await backfillCarried(app.db, app.reposRoot)).toBe(0);
   });
 });

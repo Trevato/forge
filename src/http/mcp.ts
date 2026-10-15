@@ -1420,7 +1420,7 @@ const TOOLS: readonly Tool[] = [
             listActiveRuns(ctx.app.db, [repo.id]),
           ),
           pillars,
-          await askToLiveFor(ctx.app, repo, pillars, user),
+          askToLiveFor(ctx.app, repo, pillars, user),
         ),
       );
     },

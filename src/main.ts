@@ -9,6 +9,7 @@ import { handover } from "./release/swap.ts";
 import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
+import { backfillCarried } from "./core/carried.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
@@ -265,6 +266,10 @@ const apps = appDomain?.ok
     })
   : undefined;
 await apps?.start();
+// What deploys before the record carried, so ask-to-live is not blank for them.
+void backfillCarried(app.db, app.reposRoot).catch((error) =>
+  app.log.error("could not backfill what deploys carried", { error: String(error) }),
+);
 // A repository's own check, on every push a pull or the default branch takes.
 const checks =
   process.env.FORGE_CHECKS === "0"

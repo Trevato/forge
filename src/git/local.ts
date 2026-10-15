@@ -861,56 +861,6 @@ export async function isAncestor(
   return out.ok;
 }
 
-const FULL_OID = /^[0-9a-f]{40,64}$/;
-const KNOWN_LIMIT = 1000;
-const KNOWN_DIRS = 200;
-
-/**
- * Whether one commit contains another, for a repository's directory.
- *
- * Only a real answer is remembered — an ancestry between two commits never
- * changes — and the oldest answer goes first when the memory is full. A
- * missing object or directory is "no" now and asked again later, because it
- * may be mended. The promise never rejects.
- */
-export function reachesIn(
-  dir: string,
-): (ancestor: string, descendant: string) => Promise<boolean> {
-  return async (ancestor, descendant) => {
-    if (!FULL_OID.test(ancestor) || !FULL_OID.test(descendant)) return false;
-    if (ancestor === descendant) return true;
-    const key = `${ancestor}\0${descendant}`;
-    const known = reachKnown.get(dir)?.get(key);
-    if (known !== undefined) return known;
-    try {
-      const out = await runLocal(
-        ["merge-base", "--is-ancestor", ancestor, descendant],
-        { cwd: dir },
-      );
-      if (out.ok) return remember(dir, key, true);
-      return out.error.code === 1 ? remember(dir, key, false) : false;
-    } catch {
-      return false;
-    }
-  };
-}
-
-/** Answers per repository directory, so one busy repository cannot evict another's. */
-const reachKnown = new Map<string, Map<string, boolean>>();
-
-function remember(dir: string, key: string, value: boolean): boolean {
-  let known = reachKnown.get(dir);
-  if (known === undefined) {
-    if (reachKnown.size >= KNOWN_DIRS)
-      reachKnown.delete(reachKnown.keys().next().value as string);
-    known = new Map();
-    reachKnown.set(dir, known);
-  }
-  if (known.size >= KNOWN_LIMIT) known.delete(known.keys().next().value as string);
-  known.set(key, value);
-  return value;
-}
-
 /** `rev-list --left-right --count a...b` — what each side has alone. */
 export async function aheadBehind(
   dir: string,

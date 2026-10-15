@@ -477,25 +477,45 @@ describe("pillars", () => {
     setCreated(parts[0]!, 10);
     setMerged(queuePull.id, 8);
     setMerged(composerPull.id, 6);
-    const deploy = (env: string, oid: string, state: string, hoursAgo: number) =>
+    // A deploy and the merged pulls it carries (the `deploy_pull` record).
+    const deploy = (
+      env: string,
+      oid: string,
+      state: string,
+      hoursAgo: number,
+      carries: { id: string; oid: string }[],
+    ) => {
+      const id = `ask-${nextId++}`;
       app.db
         .query(
           `INSERT INTO run (id, repo_id, kind, env, commit_oid, state, serving_at, finished_at)
            VALUES (?1, ?2, 'deploy', ?3, ?4, ?5, ?6, ?6)`,
         )
-        .run(`ask-${nextId++}`, repo.id, env, oid, state, at(hoursAgo));
+        .run(id, repo.id, env, oid, state, at(hoursAgo));
+      for (const p of carries)
+        app.db
+          .query(
+            `INSERT INTO deploy_pull (run_id, issue_id, pull_number, merged_oid)
+             VALUES (?1, ?2, 0, ?3)`,
+          )
+          .run(id, p.id, p.oid);
+    };
     // A preview and a failed deploy are not production; they count for nothing.
-    deploy("pull-9", queuePull.oid, "ok", 19);
-    deploy("production", composerPull.oid, "failed", 5.5);
+    deploy("pull-9", queuePull.oid, "ok", 19, [sandboxPull, queuePull]);
+    deploy("production", composerPull.oid, "failed", 5.5, [composerPull]);
     // Before the merge: it cannot hold it.
-    deploy("production", sandboxPull.oid, "ok", 25);
+    deploy("production", sandboxPull.oid, "ok", 25, [sandboxPull]);
     // The first live deploy holding sandbox's merge: 30h asked, live 12h later.
-    // It runs a later commit on main, so only git ancestry says it holds it.
-    deploy("production", queuePull.oid, "ok", 18);
+    // The record, not the commit it ran, says which merges it holds.
+    deploy("production", queuePull.oid, "ok", 18, [sandboxPull]);
     // Holds queue's merge, and sandbox's before it: queue was asked 10h ago, live 5h.
-    deploy("production", queuePull.oid, "ok", 5);
+    deploy("production", queuePull.oid, "ok", 5, [sandboxPull, queuePull]);
     const view = pillarView(app.db, fresh(), new Date(T))!;
-    const asked = await askToLiveFor(app, fresh(), view, alice);
+    // The record answers: with no repository on disk, no git can have run.
+    const realRoot = app.reposRoot;
+    (app as { reposRoot: string }).reposRoot = "/nonexistent";
+    const asked = askToLiveFor(app, fresh(), view, alice);
+    (app as { reposRoot: string }).reposRoot = realRoot;
     const ask = (name: string) =>
       asked.find((a) => a.pillar === name)!.askToLive;
     // sandbox: 30h -> deploy at 18h ago = 12h; queue: 10h -> 5h ago = 5h.
@@ -584,6 +604,33 @@ describe("pillars", () => {
       ).toBe(sandbox.number);
     } finally {
       seal(0);
+    }
+  });
+
+  test("ask-to-live counts an issue once when two merged pulls close it, at its first time live", async () => {
+    // Continues the tests above: the queue pull now also closes sandbox.
+    const queueIssue = app.db
+      .query<{ id: string; body: string }, []>(
+        "SELECT id, body FROM issue WHERE title = 'Land queue'",
+      )
+      .get()!;
+    app.db
+      .query("UPDATE issue SET body = ?1 WHERE id = ?2")
+      .run(`Closes #${sandbox.number}`, queueIssue.id);
+    try {
+      const view = pillarView(app.db, fresh(), new Date())!;
+      const trustAsk = askToLiveFor(app, fresh(), view, alice).find(
+        (a) => a.pillar === "P0 Trust",
+      )!.askToLive;
+      // sandbox once, live 12h after it was asked (the first of its two pulls to go live).
+      expect(trustAsk).toEqual({
+        medianHours: 12,
+        slowest: { number: sandbox.number, hours: 12 },
+      });
+    } finally {
+      app.db
+        .query("UPDATE issue SET body = ?1 WHERE id = ?2")
+        .run(queueIssue.body, queueIssue.id);
     }
   });
 
