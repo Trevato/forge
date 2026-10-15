@@ -23,6 +23,7 @@ import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { studioRunJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
+import { runLine } from "../describe.ts";
 import { page } from "../layout.ts";
 import { btn, sha } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
@@ -315,6 +316,12 @@ export async function runView(
   return page({
     ctx,
     title: `${title} · ${repo.name}`,
+    description: runLine({
+      private: repo.visibility === "private",
+      word,
+      commitOid: run.kind === "agent" ? "" : run.commitOid,
+      summary: run.summary,
+    }),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
