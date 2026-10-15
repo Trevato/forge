@@ -17,6 +17,7 @@ import {
 } from "../src/actions/destination.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { resolveDestination } from "../src/snapshot/destination.ts";
+import { dirStore, type Store } from "../src/snapshot/store.ts";
 import { startSnapshots } from "../src/snapshot/service.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -135,6 +136,50 @@ describe("the snapshot destination", () => {
     expect(sentence).not.toContain(input.secretKey);
     expect(sentence).not.toContain(input.accessKey);
   });
+
+  test("the page says a snapshot is being taken, even before there is a first one", async () => {
+    const slow: Store = {
+      ...dirStore(mkdtempSync(join(tmpdir(), "forge-slow-"))),
+      where: "slow",
+      put: async () => {
+        await Bun.sleep(150);
+      },
+    };
+    const svc = startSnapshots(app, slow, { version: "t", nightly: false });
+    const servers: Servers = await serve(app);
+    try {
+      const signedIn = await fetch(`${servers.url}/signin`, {
+        method: "POST",
+        headers: { origin: servers.url },
+        body: new URLSearchParams({
+          username: "alice",
+          password: "a-good-passphrase",
+        }),
+        redirect: "manual",
+      });
+      const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0]!;
+      const page = async () =>
+        (
+          await fetch(`${servers.url}/settings/backups`, { headers: { cookie } })
+        ).text();
+      expect(await page()).not.toContain("A snapshot is being taken");
+      expect(await page()).not.toContain("http-equiv=\"refresh\"");
+      const taking = svc.now();
+      let html = "";
+      for (let i = 0; i < 100 && !html.includes("A snapshot is being taken"); i++) {
+        await Bun.sleep(50);
+        html = await page();
+      }
+      expect(html).toContain("A snapshot is being taken");
+      expect(html).toContain("http-equiv=\"refresh\"");
+      expect(html).toMatch(/[1-9]\d* objects/);
+      await taking;
+      expect(await page()).not.toContain("A snapshot is being taken");
+    } finally {
+      servers.stop();
+      await svc.stop();
+    }
+  }, 20_000);
 
   test("bad input is refused and non-admins are told nothing", async () => {
     for (const bad of [

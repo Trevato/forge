@@ -27,7 +27,14 @@ import { dirname, join } from "node:path";
 import { runGit } from "../git/env.ts";
 import { installHooks } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
-import { keyOf, listSnapshots, SNAPSHOT_PREFIX, type Manifest } from "./snapshot.ts";
+import {
+  isRunBundle,
+  keyOf,
+  listSnapshots,
+  SNAPSHOT_PREFIX,
+  unpackRuns,
+  type Manifest,
+} from "./snapshot.ts";
 import { unwrapKey, WRAPPED_KEY } from "./wrap.ts";
 import { resolveDestination } from "./destination.ts";
 import type { Store } from "./store.ts";
@@ -111,6 +118,16 @@ export async function restoreSnapshot(
         `snapshot ${name}: ${entry.path} is ${body.byteLength} bytes, not ${entry.bytes}`,
       );
     if (entry.path === WRAPPED_KEY) continue;
+    // A day's run logs in one object come back as the logs they were.
+    if (isRunBundle(entry.path)) {
+      for (const run of unpackRuns(body)) {
+        const out = join(dataDir, "runs", run.path);
+        mkdirSync(dirname(out), { recursive: true });
+        await Bun.write(out, run.body);
+        files++;
+      }
+      continue;
+    }
     const bundle = entry.path.match(/^repos\/([^/]+)\/([^/]+)\.bundle$/);
     // A bundle is not a file of the forge's; it becomes a repository below.
     const target = bundle

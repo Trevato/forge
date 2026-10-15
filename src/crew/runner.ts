@@ -51,6 +51,7 @@ import {
   finishRun,
   lastAgentRun,
   noteRunProgress,
+  overranBefore,
   type Run,
 } from "../core/runs.ts";
 import { createToken, deleteToken } from "../core/tokens.ts";
@@ -60,6 +61,7 @@ import { runGitCapture } from "../git/env.ts";
 import { looksForEnv } from "../core/looks.ts";
 import { aheadCount, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
 import { createLog, redactValues } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { holdLease } from "../runs/lease.ts";
@@ -81,6 +83,7 @@ import {
   resumeAt,
   whenText,
 } from "./limits.ts";
+import { clearStaleLocks, lockedOut } from "./locks.ts";
 import { interruptedSummary } from "./interrupted.ts";
 import { laterGate } from "./later.ts";
 import { parkedTwice } from "./parks.ts";
@@ -107,6 +110,7 @@ import { workdirFor } from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
 import { feedbackSince } from "./news.ts";
 import { SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
+import { passportEnv } from "./passport_env.ts";
 
 const log = createLog("crew");
 
@@ -120,6 +124,8 @@ export interface CrewOptions {
   /** Spend per run when the agent's own budget is 0. */
   readonly budgetUsd: number;
   readonly runTimeoutMs: number;
+  /** How long a review run may take. @default BUDGETS.review */
+  readonly reviewBudgetMs?: number | undefined;
   /** A `CLAUDE_CONFIG_DIR` for runs, when the operator wants one. */
   readonly configDir?: string | undefined;
   /** Hosts an agent's shell may reach beyond the forge and the registry. */
@@ -267,6 +273,15 @@ export async function executeAgentRun(
     appendRunLog(app.config.dataDir, run.id, line);
   announceRun(app, claimed);
   const started = Date.now();
+  // A reviewer past its budget is stopped, whatever it is doing.
+  let overran = false;
+  const clock =
+    claimed.reason === "review"
+      ? setTimeout(() => {
+          overran = true;
+          controller.abort();
+        }, options.reviewBudgetMs ?? BUDGETS.review)
+      : undefined;
   const meter: Meter = {
     tokensIn: 0,
     tokensOut: 0,
@@ -292,6 +307,7 @@ export async function executeAgentRun(
       summary: `the run failed: ${String(error).slice(0, 200)}`,
     };
   } finally {
+    clearTimeout(clock);
     untrackAgentRun(run.id);
     steering.delete(run.id);
     lease();
@@ -302,6 +318,26 @@ export async function executeAgentRun(
   await reapOrphans(app, run, write);
   forgetLandedClone(app, run);
   meterUsage(app, claimed, outcome, meter, started);
+  if (overran) {
+    const summary = budgetSummary(
+      "a review run",
+      Date.now() - started,
+      options.reviewBudgetMs ?? BUDGETS.review,
+    );
+    write(summary);
+    if (!overranBefore(app.db, claimed)) {
+      const again = cancelRun(app.db, run.id, summary);
+      if (again) announceRun(app, again);
+      return {
+        resumeAt: new Date().toISOString(),
+        attempt: run.attempt + 1,
+        summary: `${summary}; queued again`,
+      };
+    }
+    const failed = finishRun(app.db, run.id, { state: "failed", summary });
+    if (failed) announceRun(app, failed);
+    return undefined;
+  }
   if (outcome.state === "paused") {
     write(outcome.summary);
     noteRunProgress(app.db, run.id, {
@@ -548,6 +584,8 @@ function meterUsage(
 export interface Pause {
   readonly resumeAt: string;
   readonly attempt: number;
+  /** What the queued task says while it waits, when not the provider's limit. */
+  readonly summary?: string | undefined;
 }
 
 async function work(
@@ -892,6 +930,7 @@ async function work(
       ...identity,
       FORGE_URL: options.forgeUrl,
       FORGE_TOKEN: token.token,
+      ...passportEnv(app.config.dataDir),
       ...credentialEnv(picked),
       ...grant.env,
       ...(options.configDir === undefined
@@ -1261,6 +1300,7 @@ async function prepareClone(
   write: (line: string) => void,
   signal: AbortSignal,
   keep = false,
+  fresh = false,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   // Two addresses for one forge. The forge itself clones and fetches over
   // `localUrl`, on this machine. The agent's remotes carry `forgeUrl`, the
@@ -1287,6 +1327,9 @@ async function prepareClone(
         error: `clone failed: ${cloned.error.stderr.slice(0, 200)}`,
       };
   } else {
+    // A kept clone may carry the locks of a run the forge cut off. This run
+    // owns the clone now, so a lock a minute old is nobody's.
+    clearStaleLocks(dir, write);
     const fetched = await runGit(
       [
         "fetch",
@@ -1359,6 +1402,37 @@ async function prepareClone(
     cwd: dir,
     env,
   });
+  if (!checked.ok && !fresh && lockedOut(checked.error.stderr)) {
+    // A lock too young to clear, or one the sweep missed: start over once
+    // from a fresh clone rather than failing the follow-up.
+    // Only when nothing would be lost: a cut-off run may hold commits that
+    // were never pushed, and those live nowhere else.
+    const unpushed = await runGit(
+      ["rev-list", "--branches", "--not", "--remotes=origin"],
+      { cwd: dir, env },
+    );
+    if (!unpushed.ok || unpushed.value.trim() !== "")
+      return {
+        ok: false,
+        error:
+          "checkout blocked by a git lock, and the kept clone holds commits that were never pushed; left as it is",
+      };
+    write("checkout blocked by a git lock; cloning afresh");
+    rmSync(dir, { recursive: true, force: true });
+    return prepareClone(
+      app,
+      options,
+      repo,
+      fork,
+      branch,
+      dir,
+      env,
+      write,
+      signal,
+      false,
+      true,
+    );
+  }
   if (!checked.ok)
     return {
       ok: false,

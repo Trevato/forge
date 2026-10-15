@@ -54,8 +54,18 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hasAdmin } from "../../spawn/claim.ts";
 
-export function sessionCookie(value: string, expires: Date, url: URL): string {
-  const secure = url.protocol === "https:" ? "; Secure" : "";
+export function sessionCookie(
+  value: string,
+  expires: Date,
+  url: URL,
+  forgeUrl?: string,
+): string {
+  // Secure when the request or the forge's own address is https: behind a
+  // proxy that ends TLS the request itself arrives as http.
+  const secure =
+    url.protocol === "https:" || forgeUrl?.startsWith("https://")
+      ? "; Secure"
+      : "";
   return `forge_session=${value}; Path=/; HttpOnly; SameSite=Lax; Expires=${expires.toUTCString()}${secure}`;
 }
 
@@ -521,7 +531,7 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
   const session = createSession(ctx.app.db, verified.value.id);
   return redirect(
     safeNext(ctx.url.searchParams.get("next")) ?? "/",
-    sessionCookie(session.token, session.expiresAt, ctx.url),
+    sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
   );
 }
 
@@ -577,7 +587,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
   const session = createSession(ctx.app.db, created.value.id);
   return redirect(
     safeNext(ctx.url.searchParams.get("next")) ?? "/",
-    sessionCookie(session.token, session.expiresAt, ctx.url),
+    sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
   );
 }
 
@@ -610,7 +620,7 @@ export function logoutSubmit(ctx: Ctx): Response {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log))
     return new Response("forbidden", { status: 403 });
   signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
-  return redirect("/", sessionCookie("", new Date(0), ctx.url));
+  return redirect("/", sessionCookie("", new Date(0), ctx.url, ctx.app.config.url));
 }
 
 // ---- new repository ----

@@ -39,6 +39,7 @@ import {
   type Issue,
 } from "../src/core/issues.ts";
 import { pillarsOf, pillarView } from "../src/core/pillars.ts";
+import { askToLiveFor } from "../src/web/ask_to_live.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -424,7 +425,13 @@ describe("pillars", () => {
     ];
     expect(pillarView(app.db, fresh())!.merged).toEqual(want);
     const data = await api("/api/v1/repos/alice/engine/map");
-    expect(data.mergedByPillar).toEqual({ days: 7, counts: want });
+    // Nothing has gone live yet, so each pillar's ask-to-live is null: a dash.
+    expect(data.mergedByPillar).toEqual({
+      days: 7,
+      counts: want.map((w) =>
+        w.pillar === null ? w : { ...w, askToLive: null },
+      ),
+    });
 
     const board = await get("/board");
     expect(board).toMatch(/merged in\s+7 days/);
@@ -438,6 +445,146 @@ describe("pillars", () => {
         `data-zero="yes"\\s+href="/alice/engine/milestones/${later.number}"`,
       ),
     );
+  });
+
+  test("ask-to-live: per pillar, an issue opening to the first production deploy holding the merge of the pull that closed it", async () => {
+    // Reads the pulls the test above landed: sandbox and queue for P0 Trust,
+    // composer for P1 Feed. Hours are counted back from one instant.
+    const T = Date.now();
+    const at = (hoursAgo: number) =>
+      new Date(T - hoursAgo * 3_600_000).toISOString();
+    const pullOf = (title: string) =>
+      app.db
+        .query<{ id: string; oid: string }, [string]>(
+          `SELECT p.issue_id AS id, p.merged_oid AS oid FROM pull p
+             JOIN issue i ON i.id = p.issue_id WHERE i.title = ?1`,
+        )
+        .get(`Land ${title}`)!;
+    const sandboxPull = pullOf("sandbox");
+    const queuePull = pullOf("queue");
+    const composerPull = pullOf("composer");
+    expect(queuePull.oid).toMatch(/^[0-9a-f]{40}$/);
+    const setCreated = (issue: Issue, hoursAgo: number) =>
+      app.db
+        .query("UPDATE issue SET created_at = ?1 WHERE id = ?2")
+        .run(at(hoursAgo), issue.id);
+    const setMerged = (id: string, hoursAgo: number) =>
+      app.db
+        .query("UPDATE pull SET merged_at = ?1 WHERE issue_id = ?2")
+        .run(at(hoursAgo), id);
+    setCreated(sandbox, 30);
+    setMerged(sandboxPull.id, 20);
+    setCreated(parts[0]!, 10);
+    setMerged(queuePull.id, 8);
+    setMerged(composerPull.id, 6);
+    const deploy = (env: string, oid: string, state: string, hoursAgo: number) =>
+      app.db
+        .query(
+          `INSERT INTO run (id, repo_id, kind, env, commit_oid, state, serving_at, finished_at)
+           VALUES (?1, ?2, 'deploy', ?3, ?4, ?5, ?6, ?6)`,
+        )
+        .run(`ask-${nextId++}`, repo.id, env, oid, state, at(hoursAgo));
+    // A preview and a failed deploy are not production; they count for nothing.
+    deploy("pull-9", queuePull.oid, "ok", 19);
+    deploy("production", composerPull.oid, "failed", 5.5);
+    // Before the merge: it cannot hold it.
+    deploy("production", sandboxPull.oid, "ok", 25);
+    // The first live deploy holding sandbox's merge: 30h asked, live 12h later.
+    // It runs a later commit on main, so only git ancestry says it holds it.
+    deploy("production", queuePull.oid, "ok", 18);
+    // Holds queue's merge, and sandbox's before it: queue was asked 10h ago, live 5h.
+    deploy("production", queuePull.oid, "ok", 5);
+    const view = pillarView(app.db, fresh(), new Date(T))!;
+    const asked = await askToLiveFor(app, fresh(), view, alice);
+    const ask = (name: string) =>
+      asked.find((a) => a.pillar === name)!.askToLive;
+    // sandbox: 30h -> deploy at 18h ago = 12h; queue: 10h -> 5h ago = 5h.
+    expect(ask("P0 Trust")).toEqual({
+      medianHours: 8.5,
+      slowest: { number: sandbox.number, hours: 12 },
+    });
+    // composer merged but never live in production.
+    expect(ask("P1 Feed")).toBeUndefined();
+    expect(ask("Later")).toBeUndefined();
+
+    const data = await api("/api/v1/repos/alice/engine/map");
+    const counts = data.mergedByPillar.counts;
+    expect(counts[0]).toEqual({
+      pillar: "P0 Trust",
+      merged: 2,
+      askToLive: {
+        medianHours: 8.5,
+        slowest: { number: sandbox.number, hours: 12 },
+      },
+    });
+    expect(counts[1].askToLive).toBeNull();
+    const mcp = await tool("map", { app: "alice/engine" });
+    expect(mcp.value.mergedByPillar).toEqual(data.mergedByPillar);
+    const limbs = await tool("milestones", { app: "alice/engine" });
+    const limb = limbs.value.limbs.find((l: any) => l.number === trust.number);
+    expect(limb.askToLive).toEqual(counts[0].askToLive);
+    expect(
+      limbs.value.limbs.find((l: any) => l.number === feed.number).askToLive,
+    ).toBeNull();
+
+    const page = await get("/alice/engine/map");
+    expect(page).toContain("8.5h median");
+    expect(page).toContain(`#${sandbox.number}`);
+    expect(page).toMatch(/P1 Feed[\s\S]*?ask to live\s+—/);
+  });
+
+  test("ask-to-live leaves out sealed issues for a reader who may not see them", async () => {
+    // Continues the test above: sandbox was the slowest at 12h, queue 5h.
+    const seal = (sealed: number) =>
+      app.db.query("UPDATE issue SET sealed = ?1 WHERE id = ?2").run(sealed, sandbox.id);
+    const bobToken = createToken(app.db, bob.id, "ro", "ro").token;
+    const asBob = async (path: string) =>
+      (await fetch(`${base}${path}`, { headers: { authorization: `Bearer ${bobToken}` } })).json() as Promise<any>;
+    const bobTool = async (name: string) => {
+      const res = await fetch(`${base}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${bobToken}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: nextId++,
+          method: "tools/call",
+          params: { name, arguments: { app: "alice/engine" } },
+        }),
+      });
+      const body = (await res.json()) as any;
+      return JSON.parse(body.result.content[0].text);
+    };
+    seal(1);
+    try {
+      const sealedLink = `/issues/${sandbox.number}"`;
+      const guest = await (await fetch(`${base}/alice/engine/map`)).text();
+      expect(guest).toContain("5h median");
+      expect(guest).not.toContain(sealedLink);
+      const data = await asBob("/api/v1/repos/alice/engine/map");
+      expect(data.mergedByPillar.counts[0].askToLive).toEqual({
+        medianHours: 5,
+        slowest: { number: parts[0]!.number, hours: 5 },
+      });
+      expect(JSON.stringify(data)).not.toContain(`"number":${sandbox.number},"hours"`);
+      const viaMcp = await bobTool("map");
+      expect(viaMcp.mergedByPillar).toEqual(data.mergedByPillar);
+      const limbs = await bobTool("milestones");
+      expect(
+        limbs.limbs.find((l: any) => l.number === trust.number).askToLive.slowest.number,
+      ).toBe(parts[0]!.number);
+      // A writer still sees it.
+      expect(await get("/alice/engine/map")).toContain(sealedLink);
+      expect(
+        (await api("/api/v1/repos/alice/engine/map")).mergedByPillar.counts[0].askToLive
+          .slowest.number,
+      ).toBe(sandbox.number);
+    } finally {
+      seal(0);
+    }
   });
 
   test("a repository with no pillars shows none of it", async () => {

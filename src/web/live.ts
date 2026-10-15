@@ -302,7 +302,7 @@ export const liveClientJs = /* js */ `
     'label.created', 'label.updated', 'label.deleted',
     'run.queued', 'run.started', 'run.finished', 'app.serving',
     'app.created', 'app.updated', 'app.deleted', 'app.stopped',
-    'issue.assigned', 'pull.assigned', 'crew.added', 'crew.removed',
+    'limb.moved', 'issue.assigned', 'pull.assigned', 'crew.added', 'crew.removed',
   ];
   var extra = (cfg.getAttribute('data-repos') || '').split(' ').filter(Boolean);
   var watching = [repo].concat(extra).filter(function (r, i, all) {

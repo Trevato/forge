@@ -59,6 +59,7 @@ import {
   pullDir,
 } from "../core/pulls.ts";
 import {
+  canWrite,
   getRepoById,
   listAutonomousRepos,
   setDirectionIssue,
@@ -439,6 +440,104 @@ function notPlanned(repo: Repo, why: string): false {
   return false;
 }
 
+/** Nothing landing for this long, with a pull closed unmerged, holds the planner. */
+const LANDING_WINDOW_MS = 48 * 60 * 60_000;
+/** More ready, unassigned issues than slots × this fill the plate. */
+const PLATE_PER_SLOT = 3;
+
+export type PlannerHold =
+  | { readonly kind: "nothing landed"; readonly since: string }
+  | { readonly kind: "plate full"; readonly ready: number };
+
+/** Why a hold is held, as the tick log says it. */
+export function holdWhy(hold: PlannerHold): string {
+  return hold.kind === "plate full"
+    ? `plate full (${hold.ready} ready)`
+    : `nothing landed since ${hold.since.slice(0, 10)}`;
+}
+
+/** The same reason in plain words, for the board. */
+export function holdWords(hold: PlannerHold): string {
+  if (hold.kind === "plate full")
+    return `Planning paused: ${hold.ready} issues are ready and waiting`;
+  const at = new Date(hold.since);
+  const day = at.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+  return `Planning paused: nothing has landed since ${day}`;
+}
+
+/**
+ * A word on the direction issue from someone who may write here, newer than
+ * the planner's last pass: the owner steering, which is never held.
+ */
+function steered(app: App, repo: Repo): boolean {
+  if (repo.directionIssueId === null) return false;
+  const last = app.db
+    .query<{ created_at: string }, [string]>(
+      `SELECT created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
+       ORDER BY created_at DESC LIMIT 1`,
+    )
+    .get(repo.directionIssueId);
+  return app.db
+    .query<{ id: string }, [string, string]>(
+      `SELECT DISTINCT author_id AS id FROM comment
+        WHERE issue_id = ?1 AND created_at > ?2 AND origin_author IS NULL`,
+    )
+    .all(repo.directionIssueId, last?.created_at ?? "")
+    .some((r) => {
+      const who = getUserById(app.db, r.id);
+      return who !== undefined && who.kind !== "agent" && canWrite(app.db, repo, who);
+    });
+}
+
+/**
+ * Whether the planner is held for this repository: no pull merged in 48 h
+ * while one closed unmerged, or more ready, unassigned issues than
+ * `slots × 3`. A steer from a writer on the direction issue lifts it.
+ */
+export function plannerHold(
+  app: App,
+  repo: Repo,
+  now = new Date(),
+): PlannerHold | null {
+  if (steered(app, repo)) return null;
+  const cutoff = new Date(now.getTime() - LANDING_WINDOW_MS).toISOString();
+  const merged = app.db
+    .query<{ at: string | null }, [string]>(
+      `SELECT MAX(p.merged_at) AS at FROM pull p JOIN issue i ON i.id = p.issue_id
+        WHERE i.repo_id = ?1`,
+    )
+    .get(repo.id)?.at ?? null;
+  if (merged === null || merged < cutoff) {
+    const refused = app.db
+      .query<{ n: number }, [string, string]>(
+        `SELECT COUNT(*) AS n FROM issue i JOIN pull p ON p.issue_id = i.id
+          WHERE i.repo_id = ?1 AND i.kind = 'pull' AND i.state = 'closed'
+            AND p.merged_at IS NULL AND i.closed_at >= ?2`,
+      )
+      .get(repo.id, cutoff)?.n ?? 0;
+    if (refused > 0) return { kind: "nothing landed", since: merged ?? cutoff };
+  }
+  const ready = readyNow(repoGraph(app.db, repo.id, { sealed: true })).filter(
+    (r) => r.issue.id !== repo.directionIssueId && r.issue.assigneeId === null,
+  ).length;
+  if (ready > Math.max(1, repo.autonomySlots) * PLATE_PER_SLOT)
+    return { kind: "plate full", ready };
+  return null;
+}
+
+function held(repo: Repo, why: string): false {
+  log.info("tick", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    planner: "held",
+    why,
+  });
+  return false;
+}
+
 async function planIfThin(
   app: App,
   repo: Repo,
@@ -472,6 +571,10 @@ async function planIfThin(
   if (ready >= THIN_MAP && owed.length === 0) return false;
   if (atRunCap(app, repo, direction))
     return notPlanned(repo, "parked: the direction is at its run cap");
+  // An issue the crew handed over is owed its pass whatever the hold: the
+  // planner splitting it is how work starts landing again.
+  const hold = owed.length === 0 ? plannerHold(app, repo, now) : null;
+  if (hold !== null) return held(repo, holdWhy(hold));
   if (lastPlan !== null && lastPlan !== undefined) {
     // A planner that declined the direction is not asked again until a
     // person has said something on it, or the crew hands it an issue.

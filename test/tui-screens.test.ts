@@ -11,6 +11,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -218,6 +219,24 @@ describe("the terminal UI, against a real forge", () => {
     expect(text).not.toContain("Organizations");
     expect(text).not.toMatch(/issue\.opened|repo\.created|label\.created/);
     h.stop();
+  });
+
+  test("the dashboard says why planning is paused on an autonomous app, and only there", async () => {
+    const made = await createRepo(forge, alice, { name: "loom", visibility: "public" });
+    if (!made.ok) throw new Error("repo creation failed");
+    for (let i = 0; i < 4; i++) openIssue(forge, alice, made.value, { title: `Thread ${i}` });
+    // Assisted: the same plate, but nothing is planning, so nothing is held.
+    forge.db.query("UPDATE repo SET autonomy = 'assisted' WHERE id = ?1").run(made.value.id);
+    let h = boot(forge, asAlice());
+    await h.settle();
+    expect(h.text()).not.toContain("Planning paused");
+    h.stop();
+    forge.db.query("UPDATE repo SET autonomy = 'autonomous' WHERE id = ?1").run(made.value.id);
+    h = boot(forge, asAlice());
+    await h.settle();
+    expect(h.text()).toContain("Planning paused: 4 issues are ready and waiting");
+    h.stop();
+    forge.db.query("UPDATE repo SET autonomy = 'off' WHERE id = ?1").run(made.value.id);
   });
 
   test("filter-as-you-type narrows the repository list", async () => {
@@ -679,3 +698,61 @@ function fakeSshSession(): SshSession & {
   };
   return session;
 }
+
+describe("the forge's health in the terminal", () => {
+  test("a site admin sees a degraded cause's sentence; anyone else sees nothing", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-tui-health-"));
+    const guard = await mkdtemp(join(tmpdir(), "forge-tui-guard-"));
+    process.env["FORGE_GUARD_DIR"] = guard;
+    const forge = createApp({ dataDir, port: 0 });
+    try {
+      const a = await signUp(forge, {
+        username: "chief",
+        email: "chief@forge.test",
+        password: "a-long-passphrase",
+      });
+      const b = await signUp(forge, {
+        username: "bob",
+        email: "bob@forge.test",
+        password: "another-long-passphrase",
+      });
+      if (!a.ok || !b.ok) throw new Error("signup failed");
+      expect(a.value.isAdmin).toBe(true);
+      expect(b.value.isAdmin).toBe(false);
+      const as = (user: User): TuiIdentity => ({
+        sshUsername: user.username,
+        remoteAddress: "127.0.0.1",
+        fingerprint: "SHA256:test",
+        user,
+      });
+
+      const fine = boot(forge, as(a.value));
+      await fine.settle();
+      expect(fine.text()).toContain("All fine");
+      fine.stop();
+
+      writeFileSync(
+        join(guard, "status.json"),
+        JSON.stringify({ incidents: { stuck: "quota refused" } }),
+      );
+      writeFileSync(join(guard, "checkedAt"), new Date().toISOString());
+
+      const admin = boot(forge, as(a.value));
+      await admin.settle();
+      expect(admin.text()).toContain("rollout blocked: quota refused");
+      expect(admin.text()).not.toContain("All fine");
+      admin.stop();
+
+      const other = boot(forge, as(b.value));
+      await other.settle();
+      expect(other.text()).not.toContain("rollout blocked");
+      expect(other.text()).not.toContain("All fine");
+      other.stop();
+    } finally {
+      delete process.env["FORGE_GUARD_DIR"];
+      forge.close();
+      await rm(dataDir, { recursive: true, force: true });
+      await rm(guard, { recursive: true, force: true });
+    }
+  });
+});

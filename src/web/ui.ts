@@ -924,6 +924,8 @@ export interface MenuItem {
   separator?: boolean;
   /** Renders as a submit button inside its own POST form. */
   post?: string;
+  /** Shown but not usable: the reason, in words, under the label. */
+  disabled?: string;
 }
 
 /** A dropdown built on `<details>` — the only construct correct with JS off. */
@@ -958,6 +960,13 @@ export function menu(o: {
         if (item instanceof Html) return item;
         const i = item;
         if (i.separator) return html`<hr class="menu-sep" />`;
+        if (i.disabled !== undefined) {
+          return html`<span class="menu-item" aria-disabled="true" title="${i.disabled}"
+            >${i.icon ? icon(i.icon) : null}<span class="grow"
+              >${i.label}<small class="muted">${i.disabled}</small></span
+            ></span
+          >`;
+        }
         if (i.post !== undefined) {
           return html`<form method="post" action="${i.post}">
             <button class="menu-item" type="submit">

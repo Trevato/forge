@@ -160,6 +160,7 @@ import {
   listPulls,
   pullDiff,
   pullDir,
+  pullMergeStates,
   type Pull,
 } from "../core/pulls.ts";
 import {
@@ -258,6 +259,7 @@ import {
 import { openPlan, parsePlan } from "../actions/plan.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
+import { askToLiveFor } from "../web/ask_to_live.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import {
@@ -338,6 +340,7 @@ import {
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
+import { passportRoutes } from "./passport_edge.ts";
 import type { Router } from "./router.ts";
 import { clientAddress, clientBucket } from "./peer.ts";
 import { manifestFor } from "../actions/here.ts";
@@ -1091,6 +1094,7 @@ function membersAnswer<T>(result: Result<T, AppMembersError>): Response {
   }
 }
 export function apiRoutes(router: Router<Handler>): void {
+  passportRoutes(router);
   // ── accounts ─────────────────────────────────────────────────────────
 
   router.add("POST", "/api/v1/users", async (ctx) => {
@@ -1144,7 +1148,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!verified.ok) return unauthorized();
     const session = createSession(ctx.app.db, verified.value.id);
     return json(publicUser(verified.value), 201, {
-      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url),
+      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
     });
   });
 
@@ -1154,7 +1158,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
     return json({}, 200, {
-      "set-cookie": sessionCookie("", new Date(0), ctx.url),
+      "set-cookie": sessionCookie("", new Date(0), ctx.url, ctx.app.config.url),
     });
   });
 
@@ -2465,20 +2469,22 @@ export function apiRoutes(router: Router<Handler>): void {
   );
   // Milestones as data: the plan's limbs with their weights, and one
   // milestone opened. The same numbers as the pages.
-  router.add("GET", "/api/v1/repos/:owner/:name/milestones", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/milestones", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(milestonesJson(ctx, repo));
+    return json(await milestonesJson(ctx, repo));
   });
   router.add(
     "GET",
     "/api/v1/repos/:owner/:name/milestones/:number",
-    (ctx) => {
+    async (ctx) => {
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
       const number = positiveInt(ctx.params.number);
       const data =
-        number === undefined ? undefined : milestoneData(ctx, repo, number);
+        number === undefined
+          ? undefined
+          : await milestoneData(ctx, repo, number);
       return data === undefined ? notFound() : json(data);
     },
   );
@@ -2510,7 +2516,7 @@ export function apiRoutes(router: Router<Handler>): void {
       },
     );
   // One action on a whole limb (#733): defer, resume, or close as not
-  // doing. A fleet operation in every respect — a dry run by default with a
+  // doing, or raise or lower it among its siblings (#1064). A fleet operation in every respect — a dry run by default with a
   // read credential, an admin token to apply, the receipt in
   // /api/v1/fleet/ops/:id and its undo at …/undo.
   router.add(
@@ -2525,11 +2531,14 @@ export function apiRoutes(router: Router<Handler>): void {
       const number = positiveInt(ctx.params.number);
       if (!repo || number === undefined) return notFound();
       if (!isLimbAction(input.action))
-        return apiError("bad_action", 422, "action is defer, resume or close");
+        return apiError("bad_action", 422, "action is defer, resume, close, raise or lower");
       const request = {
         action: input.action,
         ...(typeof input.reason === "string" ? { reason: input.reason } : {}),
         ...(typeof input.pillar === "string" ? { pillar: input.pillar } : {}),
+        ...(typeof input.under === "string" || typeof input.under === "number"
+          ? { under: String(input.under) }
+          : {}),
       };
       if (dryRun) {
         const plan = previewLimb(ctx.app, ctx.auth.user, repo, number, request);
@@ -2543,12 +2552,13 @@ export function apiRoutes(router: Router<Handler>): void {
   );
   // The map as data: ready now, blocked on, the critical path, every edge,
   // and where the crew is.
-  router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/map", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const graph = repoGraph(ctx.app.db, repo.id, {
       ...sealedScope(ctx.app.db, repo, ctx.auth.user),
     });
+    const pillars = pillarView(ctx.app.db, repo);
     return json(
       mapJson(
         repo,
@@ -2559,7 +2569,8 @@ export function apiRoutes(router: Router<Handler>): void {
           graph,
           listActiveRuns(ctx.app.db, [repo.id]),
         ),
-        pillarView(ctx.app.db, repo),
+        pillars,
+        await askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
       ),
     );
   });
@@ -2705,17 +2716,23 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // ── pull requests — so automation drives the review/merge loop ───────
 
-  router.add("GET", "/api/v1/repos/:owner/:name/pulls", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/pulls", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = withLabelsMany(
-      ctx,
-      listPulls(ctx.app.db, repo.id, {
-        ...query,
-        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-      }),
+    const pulls = listPulls(ctx.app.db, repo.id, {
+      ...query,
+      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+    });
+    const states = await pullMergeStates(
+      await Promise.all(
+        pulls.map(async (p) => ({ dir: await pullDirOf(ctx, repo, p), pull: p })),
+      ),
     );
+    const items = withLabelsMany(ctx, pulls).map((item, i) => ({
+      ...item,
+      ...(states[i] ?? {}),
+    }));
     return json(paged(items, query.limit, (p) => p.number));
   });
 
@@ -2777,6 +2794,9 @@ export function apiRoutes(router: Router<Handler>): void {
     const hold = getHold(ctx.app.db, found.pull.id);
     return json({
       ...withLabels(ctx, found.pull),
+      ...(found.pull.state === "open" && found.pull.mergedAt === null
+        ? { mergeable: status.mergeable, conflicts: status.conflicts }
+        : {}),
       status,
       diff,
       hold: hold === undefined ? null : holdJson(hold),

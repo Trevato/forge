@@ -8,6 +8,7 @@
 
 import { listChildren, reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
 import type { App } from "../app.ts";
+import { maxChildren } from "../core/capacity.ts";
 import { getAgentByName } from "../core/agents.ts";
 import { canRead, getRepo } from "../core/repos.ts";
 import { kindOfToken, parseApiBase } from "../core/subscriptions.ts";
@@ -90,7 +91,7 @@ function placementFor(app: App): Placement {
   if (!p) {
     const store = memoryBodies();
     seedBodies(app, store);
-    p = hostedPlacement({ host: childHost(app), store });
+    p = hostedPlacement({ host: childHost(app), store, maxChildren: () => maxChildren(app.db) });
     placements.set(app, p);
   }
   return p;

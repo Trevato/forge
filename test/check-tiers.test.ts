@@ -165,6 +165,28 @@ describe("forge.json", () => {
   });
 });
 
+describe("forge.json: check.fast", () => {
+  const parse = (check: string) => parseCheck(`{"check": ${check}}`, undefined);
+
+  test("is trimmed", () => {
+    const r = parse('{"run": "a", "fast": " b "}');
+    expect(r.ok && r.value?.fast).toBe("b");
+  });
+
+  test("an empty fast is no fast tier", () => {
+    const r = parse('{"run": "a", "fast": ""}');
+    expect(r.ok && r.value?.fast).toBeNull();
+  });
+
+  test("a non-string or multi-line fast fails with the reason", () => {
+    for (const fast of ["1", '"a\\nb"']) {
+      const r = parse(`{"run": "a", "fast": ${fast}}`);
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(JSON.stringify(r.error)).toContain("check.fast");
+    }
+  });
+});
+
 describe("the tiers in the forge's own checks service", () => {
   let dataDir: string;
   let app: App;
