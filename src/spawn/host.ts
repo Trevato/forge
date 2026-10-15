@@ -171,7 +171,10 @@ export async function resolveHostedChildApp(
   // A child that is named exactly so is the child itself, not an app of one.
   const own = readLedgerSync(parent, label);
   if (own !== undefined && own.done) return undefined;
-  for (let i = label.indexOf("--"); i > 0; i = label.indexOf("--", i + 2)) {
+  // A child name is at most 38 characters, so only a split that leaves one
+  // that short can name a child: the ledger reads are bounded, not per label.
+  const from = Math.max(1, label.length - 40);
+  for (let i = label.indexOf("--", from - 1); i > 0; i = label.indexOf("--", i + 2)) {
     const name = label.slice(i + 2);
     if (!CHILD_NAME.test(name)) continue;
     const ledger = readLedgerSync(parent, name);

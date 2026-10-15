@@ -12,6 +12,7 @@ import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
 import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
+import { createApp as createAppRecord } from "../src/core/apps.ts";
 import { createUser } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";
 import { repoDir } from "../src/git/repos.ts";
@@ -34,6 +35,7 @@ describe("a hosted child's apps run in the parent", () => {
   let runtime: AppsRuntime;
   let checks: ChecksHandle;
   let childDir = "";
+  let numberedDir = "";
 
   /** One request for `host` through the parent's Host dispatch, as `serve` does it. */
   const ask = async (host: string): Promise<Response> => {
@@ -62,6 +64,9 @@ describe("a hosted child's apps run in the parent", () => {
     if (!made.ok) throw new Error("user");
     const repo = await createRepo(parent, made.value, { name: "bakery", visibility: "public" });
     if (!repo.ok) throw new Error("repo");
+    // The parent runs `bakery` too: its preview hosts are `bakery--<pull>`.
+    const record = createAppRecord(parent.db, { repoId: repo.value.id, slug: "bakery", access: "public" });
+    if (!record.ok) throw new Error(record.error);
     const c = await commitFiles(repoDir(parent.reposRoot, "alice", "bakery"), {
       branch: "main",
       message: "bakery",
@@ -94,6 +99,21 @@ describe("a hosted child's apps run in the parent", () => {
     if (!spawned.ok) throw new Error(JSON.stringify(spawned.error));
     childDir = childDirOf(parent, spawned.value.bodyId);
     await bootHostedChild(parent, "maria");
+    // A child named like a pull number, with the same app as the parent's.
+    const numbered = await spawnForge(
+      parent,
+      made.value,
+      { name: "12", org: "twelve", apps: ["alice/bakery"], carryBriefs: false, carrySubscriptions: false },
+      { catalog: [{ ref: "alice/bakery", readable: true, bytes: 10, forgeJsonBytes: 0 }], briefs: [], subscriptions: [] },
+      {
+        placement: hostedPlacement({ host: "forge.test" }),
+        request: new Request("https://forge.test/x", { method: "POST", headers: { origin: "https://forge.test" } }),
+        url: new URL("https://forge.test/x"),
+      },
+    );
+    if (!numbered.ok) throw new Error(JSON.stringify(numbered.error));
+    numberedDir = childDirOf(parent, numbered.value.bodyId);
+    await bootHostedChild(parent, "12");
     servers = await serve(parent);
   }, 120_000);
 
@@ -145,4 +165,15 @@ describe("a hosted child's apps run in the parent", () => {
     const home = await fetch(servers.url + "/healthz", { headers: { host: "maria--forge.test" } });
     expect(home.status).toBe(200);
   });
+
+  test("the parent's own preview host wins over a child named like its pull number", async () => {
+    if (servers === undefined) throw new Error("the parent's listener did not start");
+    // The child's app is up and would answer this very host if it were asked.
+    expect((await get("bakery--12--forge.test")).status).toBe(200);
+    const res = await fetch(servers.url + "/", { headers: { host: "bakery--12--forge.test" } });
+    expect(res.status).not.toBe(200);
+    const body = await res.text();
+    expect(body.startsWith(join(numberedDir, "apps"))).toBe(false);
+    expect(body.startsWith(join(childDir, "apps"))).toBe(false);
+  }, 60_000);
 });
