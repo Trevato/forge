@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { CACHE_KEEP, CHECK_CACHE, keepCache, restoreCache } from "../src/checks/cache.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
@@ -34,7 +36,6 @@ import {
 } from "../src/checks/impact.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "../src/checks/impact-store.ts";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 
 const tests = [
   "test/snapshot-store.test.ts",
@@ -589,7 +590,7 @@ describe("a pull's fast check is of the merge", () => {
     process.env["FORGE_CELLS"] = "off";
     dataDir = await mkdtemp(join(tmpdir(), "forge-merged-"));
     app = createApp({ dataDir, port: 0 });
-    checks = startChecks(app, { forgeUrl: "http://127.0.0.1:1", concurrency: 1 });
+    checks = startChecks(app, { forgeUrl: "http://127.0.0.1:1", concurrency: 1, redHoldMs: 60_000 });
     const a = await createUser(app.db, {
       trusted: true,
       username: "alice",
@@ -731,6 +732,213 @@ describe("a pull's fast check is of the merge", () => {
     if (!asked.ok) throw new Error(asked.message);
     expect(asked.run.reason).toBe("asked");
     expect(asked.run.commitOid).toBe(pull.headOid);
+  });
+
+  test("a red main holds pulls' checks; a person's ask runs; green main releases the rest", async () => {
+    const mainRun = async (commitOid: string): Promise<Run> => {
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const run = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
+          (r) => r.commitOid === commitOid && r.issueId === null,
+        );
+        if (run && (run.state === "ok" || run.state === "failed")) return run;
+        await Bun.sleep(50);
+      }
+      throw new Error("main's check did not finish");
+    };
+    // Settle what earlier tests left in the lane first.
+    await askCheck(app, alice, repo, listPulls(app.db, repo.id, { state: "open", limit: 5 }).find((p) => p.headBranch === "late")!);
+    await settled((await resolveOid(repoDir(app.reposRoot, "alice", "merged"), "refs/heads/late"))!);
+    const red = await commit(undefined, [
+      { path: "forge.json", content: JSON.stringify({ check: { run: "exit 1", fast: "true" } }) },
+    ]);
+    expect((await mainRun(red)).state).toBe("failed");
+    const heads: Record<string, string> = {};
+    for (const branch of ["held", "asked"]) {
+      heads[branch] = await commit(branch, [{ path: `${branch}.txt`, content: "x\n" }]);
+      const opened = await openPull(app, alice, repo, { title: branch, baseBranch: "main", headBranch: branch });
+      if (!opened.ok) throw new Error(String(opened.error));
+    }
+    await Bun.sleep(500);
+    const queuedFor = (oid: string) =>
+      listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find((r) => r.commitOid === oid && r.issueId !== null);
+    expect(queuedFor(heads["held"]!)?.state).toBe("queued");
+    expect(queuedFor(heads["asked"]!)?.state).toBe("queued");
+
+    const pull = listPulls(app.db, repo.id, { state: "open", limit: 10 }).find((p) => p.headBranch === "asked")!;
+    const asked = await askCheck(app, alice, repo, pull);
+    if (!asked.ok) throw new Error(asked.message);
+    expect(asked.run.reason).toBe("asked");
+    expect((await settled(heads["asked"]!)).state).toBe("ok");
+    expect(queuedFor(heads["held"]!)?.state).toBe("queued");
+
+    const green = await commit(undefined, [
+      { path: "forge.json", content: JSON.stringify({ check: { run: "true", fast: "true" } }) },
+    ]);
+    expect((await mainRun(green)).state).toBe("ok");
+    expect((await settled(heads["held"]!)).state).toBe("ok");
+  }, 90_000);
+});
+
+describe("what a check keeps for the next one", () => {
+  const dirs: string[] = [];
+  afterAll(async () => {
+    for (const dir of dirs) await rm(dir, { recursive: true, force: true });
+  });
+  const fresh = async (): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-cache-"));
+    dirs.push(dir);
+    return dir;
+  };
+  const oid = (c: string): string => c.repeat(40);
+
+  test("a kept cache seeds the next checkout: by its key, else the newest", async () => {
+    const data = await fresh();
+    const one = await fresh();
+    mkdirSync(join(one, CHECK_CACHE));
+    writeFileSync(join(one, CHECK_CACHE, "tsc.tsbuildinfo"), "A");
+    expect(keepCache(data, "r1", oid("a"), one)).toBe(true);
+    writeFileSync(join(one, CHECK_CACHE, "tsc.tsbuildinfo"), "B");
+    expect(keepCache(data, "r1", oid("b"), one)).toBe(true);
+    utimesSync(join(data, "check-cache", "r1", oid("a")), 1, 1);
+
+    const next = await fresh();
+    expect(restoreCache(data, "r1", [oid("a")], next)).toBe(oid("a"));
+    expect(readFileSync(join(next, CHECK_CACHE, "tsc.tsbuildinfo"), "utf8")).toBe("A");
+    expect(restoreCache(data, "r1", [oid("c")], next)).toBe(oid("b"));
+    expect(readFileSync(join(next, CHECK_CACHE, "tsc.tsbuildinfo"), "utf8")).toBe("B");
+    // Another repository's cache is not this one's.
+    const other = await fresh();
+    expect(restoreCache(data, "r2", [oid("a")], other)).toBeUndefined();
+    expect(readdirSync(join(other, CHECK_CACHE))).toEqual([]);
+  });
+
+  test("a symlink is never followed, in or out, and a key is a commit id", async () => {
+    const data = await fresh();
+    const outside = await fresh();
+    writeFileSync(join(outside, "secret"), "s3cret");
+    const linked = await fresh();
+    symlinkSync(outside, join(linked, CHECK_CACHE));
+    expect(keepCache(data, "r", oid("a"), linked)).toBe(false);
+    const planted = await fresh();
+    mkdirSync(join(planted, CHECK_CACHE));
+    symlinkSync(join(outside, "secret"), join(planted, CHECK_CACHE, "secret"));
+    writeFileSync(join(planted, CHECK_CACHE, "ok"), "fine");
+    expect(keepCache(data, "r", oid("a"), planted)).toBe(true);
+    expect(readdirSync(join(data, "check-cache", "r", oid("a")))).toEqual(["ok"]);
+    expect(keepCache(data, "r", "../../x", planted)).toBe(false);
+    // The tree's own `.forge-cache` link is replaced, not written through.
+    const next = await fresh();
+    symlinkSync(outside, join(next, CHECK_CACHE));
+    restoreCache(data, "r", [oid("a")], next);
+    expect(readdirSync(outside)).toEqual(["secret"]);
+    expect(readdirSync(join(next, CHECK_CACHE))).toEqual(["ok"]);
+  });
+
+  test("only the newest few commits are kept", async () => {
+    const data = await fresh();
+    const dir = await fresh();
+    mkdirSync(join(dir, CHECK_CACHE));
+    writeFileSync(join(dir, CHECK_CACHE, "t"), "x");
+    const keys = "abcdef".split("").map(oid);
+    keys.forEach((key, i) => {
+      keepCache(data, "r", key, dir);
+      utimesSync(join(data, "check-cache", "r", key), 1000 + i, 1000 + i);
+    });
+    expect(readdirSync(join(data, "check-cache", "r")).sort()).toEqual(keys.slice(-CACHE_KEEP).sort());
+  });
+});
+
+describe("the cache between the forge's own checks", () => {
+  let dataDir: string;
+  let app: App;
+  let checks: ChecksHandle;
+  let alice: User;
+  let repo: Repo;
+  const cells = process.env["FORGE_CELLS"];
+
+  beforeAll(async () => {
+    process.env["FORGE_CELLS"] = "off";
+    dataDir = await mkdtemp(join(tmpdir(), "forge-kept-"));
+    app = createApp({ dataDir, port: 0 });
+    checks = startChecks(app, { forgeUrl: "http://127.0.0.1:1", concurrency: 1 });
+    const a = await createUser(app.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const made = await createRepo(app, alice, { name: "kept", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+  });
+
+  afterAll(async () => {
+    await checks.stop();
+    app.close();
+    if (cells === undefined) delete process.env["FORGE_CELLS"];
+    else process.env["FORGE_CELLS"] = cells;
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const settled = async (commit: string): Promise<Run> => {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      const run = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
+        (r) => r.commitOid === commit && (r.state === "ok" || r.state === "failed"),
+      );
+      if (run) return run;
+      await Bun.sleep(50);
+    }
+    throw new Error(`no check settled for ${commit}`);
+  };
+
+  test("main's green check is what the next check starts from; a pull's writes are not kept", async () => {
+    const manifest = JSON.stringify({
+      check: {
+        run: 'echo "MAIN-SAW $(cat .forge-cache/note 2>/dev/null)"; echo "$FORGE_COMMIT" > .forge-cache/note',
+        fast: 'echo "PULL-SAW $(cat .forge-cache/note 2>/dev/null)"; echo pull > .forge-cache/note',
+      },
+    });
+    const first = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "forge.json", content: manifest }],
+    });
+    if (!first.ok) throw new Error(JSON.stringify(first.error));
+    const a = first.value.commitOid;
+    const ranA = await settled(a);
+    expect(ranA.state).toBe("ok");
+    expect(readRunLog(dataDir, ranA.id).lines.join("\n")).toContain("MAIN-SAW \n");
+
+    const branched = await commitToBranch(app, alice, repo, {
+      branch: "feature",
+      message: "Feature",
+      files: [{ path: "f.txt", content: "f\n" }],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Feature",
+      baseBranch: "main",
+      headBranch: "feature",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pulled = await settled(branched.value.commitOid);
+    const pullLog = readRunLog(dataDir, pulled.id).lines.join("\n");
+    expect(pullLog).toContain(`PULL-SAW ${a}`);
+    expect(pullLog).toContain(`cache from ${a.slice(0, 7)}`);
+
+    const moved = await commitToBranch(app, alice, repo, {
+      message: "Main moves",
+      files: [{ path: "m.txt", content: "m\n" }],
+    });
+    if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    const ranB = await settled(moved.value.commitOid);
+    const mainLog = readRunLog(dataDir, ranB.id).lines.join("\n");
+    expect(mainLog).toContain(`MAIN-SAW ${a}`);
+    expect(mainLog).not.toContain("MAIN-SAW pull");
   });
 });
 

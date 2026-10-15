@@ -25,6 +25,7 @@ import { startForgeSsh } from "./tui/ssh.ts";
 import { AppsRuntime } from "./apps/runtime.ts";
 import { resolveAppDomain } from "./apps/host.ts";
 import { requeueAbandonedChecks, startChecks } from "./checks/service.ts";
+import { RED_HOLD_MS } from "./checks/red_main.ts";
 import { startLooks } from "./looks/service.ts";
 import { startProbes } from "./contract/probes.ts";
 import { startSnapshots } from "./snapshot/service.ts";
@@ -279,6 +280,7 @@ const checks =
     : startChecks(app, {
         forgeUrl,
         concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, 1),
+        redHoldMs: RED_HOLD_MS,
         // A roll lets running checks finish this long before cutting them off.
         drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 300) * 1000,
       });
