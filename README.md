@@ -261,6 +261,12 @@ file), and if you named an agent, the sentence became issue #1, assigned.
   redeployed on each push and gone when the pull closes. Its data starts as
   a copy of production's — copy-on-write where the filesystem can — and
   never writes back. Merging moves code and touches no data.
+- **A run has a budget** (`src/kernel/budgets.ts`): a check past `gate`
+  (60 min) or a reviewer's run past `review` (10 min) is killed with
+  `budget: <what> took <n> min, limit <m>`, queued again once, and failed
+  the second time, which the vitals carry as a need for a day. `gate` is 60
+  min because this repository's own gate takes 18–25 min alone and 45 beside
+  another check; it comes down when the gate does.
 - **Every deploy is a run**, and the run is the check on the pull. Turn on
   **require checks** and a pull cannot merge until its head is green.
 - A **private** app answers only to someone the forge has vouched for

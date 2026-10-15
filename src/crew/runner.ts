@@ -51,6 +51,7 @@ import {
   finishRun,
   lastAgentRun,
   noteRunProgress,
+  overranBefore,
   type Run,
 } from "../core/runs.ts";
 import { createToken, deleteToken } from "../core/tokens.ts";
@@ -60,6 +61,7 @@ import { runGitCapture } from "../git/env.ts";
 import { looksForEnv } from "../core/looks.ts";
 import { aheadCount, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
 import { createLog, redactValues } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { holdLease } from "../runs/lease.ts";
@@ -120,6 +122,8 @@ export interface CrewOptions {
   /** Spend per run when the agent's own budget is 0. */
   readonly budgetUsd: number;
   readonly runTimeoutMs: number;
+  /** How long a review run may take. @default BUDGETS.review */
+  readonly reviewBudgetMs?: number | undefined;
   /** A `CLAUDE_CONFIG_DIR` for runs, when the operator wants one. */
   readonly configDir?: string | undefined;
   /** Hosts an agent's shell may reach beyond the forge and the registry. */
@@ -267,6 +271,15 @@ export async function executeAgentRun(
     appendRunLog(app.config.dataDir, run.id, line);
   announceRun(app, claimed);
   const started = Date.now();
+  // A reviewer past its budget is stopped, whatever it is doing.
+  let overran = false;
+  const clock =
+    claimed.reason === "review"
+      ? setTimeout(() => {
+          overran = true;
+          controller.abort();
+        }, options.reviewBudgetMs ?? BUDGETS.review)
+      : undefined;
   const meter: Meter = {
     tokensIn: 0,
     tokensOut: 0,
@@ -292,6 +305,7 @@ export async function executeAgentRun(
       summary: `the run failed: ${String(error).slice(0, 200)}`,
     };
   } finally {
+    clearTimeout(clock);
     untrackAgentRun(run.id);
     steering.delete(run.id);
     lease();
@@ -302,6 +316,26 @@ export async function executeAgentRun(
   await reapOrphans(app, run, write);
   forgetLandedClone(app, run);
   meterUsage(app, claimed, outcome, meter, started);
+  if (overran) {
+    const summary = budgetSummary(
+      "a review run",
+      Date.now() - started,
+      options.reviewBudgetMs ?? BUDGETS.review,
+    );
+    write(summary);
+    if (!overranBefore(app.db, claimed)) {
+      const again = cancelRun(app.db, run.id, summary);
+      if (again) announceRun(app, again);
+      return {
+        resumeAt: new Date().toISOString(),
+        attempt: run.attempt + 1,
+        summary: `${summary}; queued again`,
+      };
+    }
+    const failed = finishRun(app.db, run.id, { state: "failed", summary });
+    if (failed) announceRun(app, failed);
+    return undefined;
+  }
   if (outcome.state === "paused") {
     write(outcome.summary);
     noteRunProgress(app.db, run.id, {
@@ -548,6 +582,8 @@ function meterUsage(
 export interface Pause {
   readonly resumeAt: string;
   readonly attempt: number;
+  /** What the queued task says while it waits, when not the provider's limit. */
+  readonly summary?: string | undefined;
 }
 
 async function work(
