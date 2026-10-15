@@ -255,6 +255,11 @@ export const EXCLUDED: readonly Exclusion[] = [
     reason: "not yet admitted",
     issue: 261,
   },
+  {
+    file: "test/plan-route.test.ts",
+    reason: "slow: the planner route test times out at 30 s",
+    issue: 1438,
+  },
   { file: "test/parity.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/policy.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/probe.test.ts", reason: "not yet admitted", issue: 261 },
