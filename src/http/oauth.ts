@@ -10,6 +10,7 @@
  */
 import type { App } from "../app.ts";
 import { createClient, parseRegistration, redeemCode } from "../core/oauth.ts";
+import { jwks, userinfo } from "../core/oidc.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { Handler } from "./context.ts";
 import { clientBucket } from "./peer.ts";
@@ -71,11 +72,12 @@ export function oauthRoutes(router: Router<Handler>): void {
     if (get === null) return grantError("invalid_request", 413);
     if (get("grant_type") !== "authorization_code")
       return grantError("unsupported_grant_type");
-    const minted = redeemCode(ctx.app.db, {
+    const minted = await redeemCode(ctx.app.db, ctx.app.config.dataDir, {
       code: get("code"),
       clientId: get("client_id"),
       redirectUri: get("redirect_uri"),
       verifier: get("code_verifier"),
+      issuer: ctx.url.origin,
     });
     if (!minted.ok) return grantError(minted.error);
     return json(
@@ -83,6 +85,7 @@ export function oauthRoutes(router: Router<Handler>): void {
         access_token: minted.value.token,
         token_type: "Bearer",
         scope: minted.value.scope,
+        ...(minted.value.idToken === undefined ? {} : { id_token: minted.value.idToken }),
         ...(minted.value.expiresIn === null
           ? {}
           : { expires_in: minted.value.expiresIn }),
@@ -91,6 +94,44 @@ export function oauthRoutes(router: Router<Handler>): void {
       noStore,
     );
   });
+  router.add("GET", "/oauth/jwks", async (ctx) =>
+    json(await jwks(ctx.app.db, ctx.app.config.dataDir), 200, docHeaders),
+  );
+  const userinfoRoute: Handler = (ctx) => {
+    const header = ctx.request.headers.get("authorization") ?? "";
+    const presented = /^Bearer (\S+)$/i.exec(header)?.[1];
+    const claims = presented === undefined ? null : userinfo(ctx.app.db, presented);
+    if (claims === null || !claims.ok)
+      return json({ error: "invalid_token" }, 401, {
+        ...noStore,
+        "www-authenticate": 'Bearer error="invalid_token"',
+      });
+    return json(claims.value, 200, noStore);
+  };
+  router.add("GET", "/oauth/userinfo", userinfoRoute);
+  router.add("POST", "/oauth/userinfo", userinfoRoute);
+  router.add("GET", "/.well-known/openid-configuration", (ctx) =>
+    json(
+      {
+        issuer: ctx.url.origin,
+        authorization_endpoint: `${ctx.url.origin}/oauth/authorize`,
+        token_endpoint: `${ctx.url.origin}/oauth/token`,
+        userinfo_endpoint: `${ctx.url.origin}/oauth/userinfo`,
+        jwks_uri: `${ctx.url.origin}/oauth/jwks`,
+        registration_endpoint: `${ctx.url.origin}/oauth/register`,
+        scopes_supported: ["openid", "profile", "email", "ro", "rw", "admin"],
+        response_types_supported: ["code"],
+        grant_types_supported: ["authorization_code"],
+        subject_types_supported: ["public"],
+        id_token_signing_alg_values_supported: ["ES256"],
+        code_challenge_methods_supported: ["S256"],
+        token_endpoint_auth_methods_supported: ["none"],
+        claims_supported: ["sub", "iss", "aud", "exp", "iat", "nonce", "name", "preferred_username", "email", "email_verified"],
+      },
+      200,
+      docHeaders,
+    ),
+  );
   router.add("GET", "/.well-known/oauth-protected-resource", (ctx) =>
     json(
       {

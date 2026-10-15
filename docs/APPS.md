@@ -1122,3 +1122,14 @@ refused), `placement` (`"metal"` or `"cloud"`, optional) and `volumes`
 sync cadence in seconds, 10–86400). `src/apps/service.ts` validates it; the
 manifest carries it as `service`, `null` for a web app. Running it, exposing
 the ports and syncing volumes are not built yet (issue #391).
+
+## The forge as an OpenID Connect provider
+
+Discovery is at `/.well-known/openid-configuration`. Register a client at
+`/oauth/register`, send a person to `/oauth/authorize` with `scope=openid`
+(optionally `profile email`), a `nonce`, and a PKCE S256 challenge. The
+`/oauth/token` answer carries an `id_token` (ES256) beside the ordinary
+ro/rw access token — the same grant, not a second credential. Present that
+access token to `/oauth/userinfo` for the claims. `/oauth/jwks` publishes the
+current signing key and the previous one; keys rotate every 30 days and live
+in the database, never in the repository.

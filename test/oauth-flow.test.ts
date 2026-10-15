@@ -12,6 +12,7 @@ import { createApp, type App } from "../src/app.ts";
 import { listTokens } from "../src/core/tokens.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { verifyIdToken } from "../src/core/oidc.ts";
 import { sha256 } from "../src/kernel/hash.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -273,5 +274,80 @@ describe("oauth authorize and token", () => {
     expect(to.searchParams.get("error")).toBe("access_denied");
     expect(to.searchParams.get("state")).toBe("st-1");
     expect(to.searchParams.get("code")).toBeNull();
+  });
+
+  const b64 = (part: string) => JSON.parse(Buffer.from(part, "base64url").toString());
+
+  test("scope=openid with a nonce returns a verifiable id_token beside the access token, and userinfo answers", async () => {
+    const q = query({ scope: "openid profile email", nonce: "n-0S6_WzA2Mj" });
+    const code = new URL((await consent(q)).headers.get("location")!).searchParams.get("code")!;
+    const res = await exchange({ code });
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as any;
+    expect(out.access_token.startsWith("forge_")).toBe(true);
+    const claims = b64(out.id_token.split(".")[1]);
+    expect(claims.iss).toBe(base);
+    expect(claims.aud).toBe(clientId);
+    expect(claims.sub).toBe(alice.id);
+    expect(claims.nonce).toBe("n-0S6_WzA2Mj");
+    expect(claims.preferred_username).toBe("alice");
+    expect(claims.email).toBe("alice@forge.local");
+    const verified = await verifyIdToken(app.db, dataDir, out.id_token, { issuer: base, clientId });
+    expect(verified.ok).toBe(true);
+    // The same grant: the id_token is not a second credential.
+    const info = await fetch(`${base}/oauth/userinfo`, {
+      headers: { authorization: `Bearer ${out.access_token}` },
+    });
+    expect(info.status).toBe(200);
+    expect(await info.json()).toMatchObject({ sub: alice.id, email: "alice@forge.local" });
+    expect((await fetch(`${base}/oauth/userinfo`, { headers: { authorization: `Bearer ${out.id_token}` } })).status).toBe(401);
+    expect((await fetch(`${base}/oauth/userinfo`)).status).toBe(401);
+  });
+
+  test("consent lists the identity an openid grant shares, and a plain grant lists none", async () => {
+    const open = await (await get(query({ scope: "openid email" }))).text();
+    expect(open).toContain("What it will learn about you");
+    expect(open).toContain("your email address");
+    expect(open).not.toContain("your username and name");
+    const profile = await (await get(query({ scope: "openid profile email" }))).text();
+    expect(profile).toContain("your username and name");
+    const plain = await (await get(query())).text();
+    expect(plain).not.toContain("What it will learn about you");
+    expect(plain).not.toContain("your email address");
+  });
+
+  test("a plain grant has no id_token and its token is refused by userinfo", async () => {
+    const out = (await (await exchange({ code: await codeFrom() })).json()) as any;
+    expect(out.id_token).toBeUndefined();
+    const info = await fetch(`${base}/oauth/userinfo`, {
+      headers: { authorization: `Bearer ${out.access_token}` },
+    });
+    expect(info.status).toBe(401);
+  });
+
+  test("a person suspended between consent and exchange gets no token and no id_token", async () => {
+    const tokensBefore = listTokens(app.db, alice.id).length;
+    for (const q of [query({ scope: "openid", nonce: "n-0S6_WzA2Mj" }), query()]) {
+      const code = new URL((await consent(q)).headers.get("location")!).searchParams.get("code")!;
+      const tokensConsented = listTokens(app.db, alice.id).length;
+      app.db.query("UPDATE user SET suspended_at = ?1 WHERE id = ?2").run(new Date().toISOString(), alice.id);
+      try {
+        const res = await exchange({ code });
+        expect(res.status).toBe(400);
+        const out = (await res.json()) as any;
+        expect(out.error).toBe("invalid_grant");
+        expect(out.id_token).toBeUndefined();
+        expect(out.access_token).toBeUndefined();
+        expect(listTokens(app.db, alice.id).length).toBe(tokensConsented);
+      } finally {
+        app.db.query("UPDATE user SET suspended_at = NULL WHERE id = ?1").run(alice.id);
+      }
+    }
+    expect(listTokens(app.db, alice.id).length).toBe(tokensBefore);
+  });
+
+  test("an overlong nonce is refused",async () => {
+    const res = await get(query({ scope: "openid", nonce: "n".repeat(300) }));
+    expect(res.status).toBe(400);
   });
 });
