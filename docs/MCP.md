@@ -177,6 +177,10 @@ answers
   when the manifest names a route it lacks.
 - **Where a tell came from.** `tell` takes `context`: `page` (http/https),
   `run`, `commit` (hex) and `said` (the person's words). Malformed context is
-  refused; the rest is appended to the issue body.
+  refused; the rest is appended to the issue body. `tell` also takes `from`: a
+  same-forge path (at most 512 characters, like `/alice/notes/pulls/3`) that
+  becomes the "Told from" link on the issue; a bad one is refused. It differs
+  from `context.page`, which is any http(s) address appended as context, not
+  linked as the origin.
 - **Plugins.** `plugins/opencode` and `plugins/claude-code` register this
   server and add a `forge` command (tell, status, decide). They hold no logic.

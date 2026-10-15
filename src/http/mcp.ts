@@ -51,8 +51,14 @@ import {
   cardFor,
 } from "../web/studio/cards.ts";
 import { keepThought } from "../actions/thought.ts";
+import {
+  FROM_WORDS,
+  parseFrom,
+  tell,
+  toldWords,
+  UNVERIFIED_WORDS,
+} from "../actions/tell.ts";
 import { placementJson, placementOf, thoughtAuthor } from "../core/placements.ts";
-import { tell, toldWords, UNVERIFIED_WORDS } from "../actions/tell.ts";
 import { readReturns, reportSpend } from "../actions/returns.ts";
 import {
   readUsage,
@@ -307,6 +313,12 @@ const TOOLS: readonly Tool[] = [
       properties: {
         repo: REPO_ARG,
         text: { type: "string", maxLength: 8000 },
+        from: {
+          type: "string",
+          maxLength: 512,
+          description:
+            "The page this was told from: a path on this forge, like /alice/notes/pulls/3. The issue links to it.",
+        },
         context: {
           type: "object",
           description:
@@ -340,6 +352,8 @@ const TOOLS: readonly Tool[] = [
           "invalid",
           "context is { page?: http(s) address, run?: id, commit?: hex, said?: words }",
         );
+      const from = parseFrom(args["from"]);
+      if (from === undefined) return bad("invalid", FROM_WORDS);
       const told = await tell(
         ctx.app,
         user,
@@ -347,6 +361,8 @@ const TOOLS: readonly Tool[] = [
         str(args["text"]) === ""
           ? ""
           : `${str(args["text"])}${contextNote(where)}`,
+        1,
+        from,
       );
       if (!told.ok)
         return bad(

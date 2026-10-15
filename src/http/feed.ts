@@ -5,6 +5,8 @@
 
 import {
   parseVariants,
+  parseFrom,
+  FROM_WORDS,
   tell,
   UNVERIFIED_WORDS,
   VARIANTS_MAX,
@@ -185,13 +187,15 @@ export function feedRoutes(router: Router<Handler>): void {
         400,
         `variants is a whole number, 1 to ${VARIANTS_MAX}`,
       );
+    const from = parseFrom(input.from);
+    if (from === undefined) return apiError("invalid_from", 400, FROM_WORDS);
     const [owner, name, extra] = str(input.app).split("/");
     const repo =
       owner && name && extra === undefined
         ? getRepo(ctx.app.db, owner, name)
         : undefined;
     if (!repo || !canRead(ctx.app.db, repo, viewer)) return notFound();
-    const told = await tell(ctx.app, viewer, repo, text, variants);
+    const told = await tell(ctx.app, viewer, repo, text, variants, from);
     if (!told.ok)
       return told.error === "forbidden"
         ? apiError("forbidden", 403, DIRECTION_NOTE)

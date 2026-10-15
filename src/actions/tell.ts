@@ -43,8 +43,30 @@ export function parseVariants(raw: unknown): number | undefined {
   return raw >= 1 && raw <= VARIANTS_MAX ? raw : undefined;
 }
 
+/** The longest `from` a tell may carry. */
+export const FROM_MAX = 512;
+
+/**
+ * `from` as the doors take it: absent is none; otherwise a same-forge path
+ * (leading single `/`, no scheme, no backslash, no control or space) of at
+ * most 512 characters. Undefined for no.
+ */
+export function parseFrom(raw: unknown): string | null | undefined {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > FROM_MAX)
+    return undefined;
+  if (!raw.startsWith("/") || raw.startsWith("//")) return undefined;
+  if (/[\\\s\x00-\x1f\x7f<>()\[\]`"'*]/.test(raw)) return undefined;
+  return raw;
+}
+
+/** What a bad `from` is refused with, at every door. */
+export const FROM_WORDS =
+  "from is a path on this forge, like /alice/notes/pulls/3, at most 512 characters";
+
 export type TellError =
   | "empty"
+  | "bad_from"
   | "not_found"
   | "unauthorized"
   /** Someone who may not direct the crew here (`crew/direct.ts`). */
@@ -61,6 +83,7 @@ export async function tell(
   repo: Repo,
   said: string,
   variants = 1,
+  from: string | null = null,
 ): Promise<Result<Told, TellError>> {
   // A tell is a run: only someone who may direct the crew here says one,
   // and a refused tell opens nothing (`crew/direct.ts`).
@@ -72,6 +95,7 @@ export async function tell(
   if (!requireVerified(app, participant.value).ok) return err("unverified");
   const text = said.trim();
   if (text === "") return err("empty");
+  if (from !== null && parseFrom(from) !== from) return err("bad_from");
   const firstLine = text.split(/\n/)[0]!.trim();
   const title =
     firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 77).trimEnd()}…`;
@@ -90,10 +114,11 @@ export async function tell(
   const assignedNumbers: number[] = [];
   for (let k = 1; k <= variants; k++) {
     const note = many ? `Variant ${k} of ${variants}.` : "";
+    const origin = from === null ? "" : `Told from [${from}](${from})`;
     const rest = text === firstLine ? "" : text;
     const opened = openIssue(app, actor, repo, {
       title,
-      body: [rest, note].filter((s) => s !== "").join("\n\n"),
+      body: [rest, note, origin].filter((s) => s !== "").join("\n\n"),
     });
     if (!opened.ok) return issues.length === 0 ? opened : ok(told());
     issues.push(opened.value);

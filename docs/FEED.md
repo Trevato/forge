@@ -88,7 +88,9 @@ a card, and paging past the first 20.
 - Browser sessions now honour `Idempotency-Key` on `/api/v1/` mutations, scoped
   to the person (as tokens' are to the token): a replay returns the first
   answer. `POST /api/v1/feed/tells { app, text }` is the JSON tell the outbox
-  sends. `variants` (an integer, 1 to 4; anything else is a 400 and opens
+  sends. `from` (optional) is the page the tell was told from: a path on this
+  forge, at most 512 characters; anything else is a 400 `invalid_from` and
+  opens nothing. The issue reads "Told from <link>". `variants` (an integer, 1 to 4; anything else is a 400 and opens
   nothing) opens that many issues from the one tell, each handed to a builder
   run, all in one server-made group their pulls carry (`variant_group`), kept
   when a run is queued again. With more than one, the 201 also carries
