@@ -65,6 +65,7 @@ import {
   recordCap,
   skipsFeedback,
 } from "./guard.ts";
+import { noteProtection } from "../kernel/protection.ts";
 import { dataInTemp, sandboxAvailable, sweepRunTmp } from "./sandbox.ts";
 import { mayDirectCrew } from "./direct.ts";
 import {
@@ -143,6 +144,7 @@ export async function startCrew(
   // The default the Capacity page shows and goes back to (`core/capacity.ts`).
   noteBooted(app.db, "crew.concurrency", String(options.concurrency));
   const sandbox = await sandboxAvailable();
+  noteProtection("crew shells", sandbox);
   // Temp directories of runs a stopped forge never finished: old enough
   // that no forge beside this one (a rollout) can still be using them.
   try {

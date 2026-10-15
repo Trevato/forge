@@ -35,6 +35,7 @@ export const GATE: readonly string[] = [
   "test/fuzz-found.test.ts",
   "test/fuzz-parsers.test.ts",
   "test/attach-look.test.ts",
+  "test/protection.test.ts",
   "test/tui-limbs.test.ts",
   "test/tui-onyou.test.ts",
   "test/claim-link.test.ts",

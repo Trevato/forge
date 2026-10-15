@@ -84,6 +84,7 @@ import { parseManifest, type AppManifest } from "./manifest.ts";
 import { identityKey } from "./proxy.ts";
 import { noteReached } from "./egress_report.ts";
 import { egressSetting } from "../core/capacity.ts";
+import { noteProtection } from "../kernel/protection.ts";
 import { cellsAvailable, resolveLimits, type CellSpec } from "./contain.ts";
 import {
   startProcess,
@@ -578,6 +579,7 @@ export class AppsRuntime {
   /** Rebuild every environment from git and the open pulls, then listen. */
   async start(): Promise<void> {
     this.cells = await cellsAvailable();
+    noteProtection("apps", this.cells);
     if (!this.cells.ok)
       log.warn("apps run uncontained here", { reason: this.cells.reason });
     // Deploys are failed; a check the last forge left is queued again while

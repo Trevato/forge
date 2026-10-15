@@ -14,6 +14,7 @@
  * whole of this screen's design.
  */
 
+import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { forgeLane, forgeNeeds } from "../../actions/health.ts";
 import { mayView } from "../../core/sealed.ts";
@@ -443,8 +444,25 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       drawn = here;
       if (!here.has(focus)) focus = "repos";
 
-      const [box, list] = split(main, "v", [len(1), fill(1)]);
+      // A site admin is told once, under the filter, when the forge runs
+      // with less than its default protection — the web footer's line.
+      const reduced = f.user?.isAdmin === true ? protectionNotice() : undefined;
+      const [box, warn, list] = split(
+        main,
+        "v",
+        reduced === undefined
+          ? [len(1), len(0), fill(1)]
+          : [len(1), len(1), fill(1)],
+      );
       ctx.setCursor(filter.render(s, box!, c, "find a repository"));
+      if (reduced !== undefined)
+        s.text(
+          warn!.x,
+          warn!.y,
+          truncate(reduced, warn!.w),
+          style(c.attn, c.bg),
+          warn!.x + warn!.w,
+        );
       drawRepos(s, list!, c, set);
       if (aside === undefined) return;
       if (!f.signedIn) {

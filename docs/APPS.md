@@ -245,6 +245,11 @@ are capped by the machine (`FORGE_CELL_MEMORY_MAX_MIB`, default 4096; the
 number of cores; `FORGE_CELL_DISK_MAX_MIB`, default 16384). A cell's `/tmp`
 holds at most 256 MiB.
 
+Where the host cannot hold cells (or the crew's shell sandbox), the forge
+runs uncontained and says so in one line: a boot warning, and, in the foot of
+every page a site admin reads, `Reduced protection: apps (<reason>) runs
+uncontained.` (`kernel/protection.ts`). A fully protected forge shows nothing.
+
 A release that turns egress on must not break an app whose writers have
 not declared what it uses yet, so the operator can start it reported:
 `FORGE_CELLS_EGRESS=report` lets an undeclared public host through (on 80
