@@ -489,6 +489,20 @@ signing one (see [CONTRACT.md](CONTRACT.md)).
 
 ## Who is there: identity from the forge
 
+**Sign-in is OpenID Connect.** The scaffold's "Sign in" (`/signin`) is the
+code flow with PKCE against `FORGE_URL` (see the last section). On first boot
+it registers its own redirect address, `<FORGE_APP_URL>/signin/callback`, and
+keeps the client id in `FORGE_APP_DATA/oidc-client.json`, so production and
+each preview are separate clients. It verifies the `id_token` itself and keeps
+a session in an HttpOnly cookie; a person signed in this way is a `user`. The
+headers below remain only until a follow-up change retires them: once no app
+reads `x-forge-identity` and `x-forge-signature`, the forge stops sending them
+and `FORGE_APP_IDENTITY_KEY` goes with them (that change also settles where
+`admin` comes from, which an `id_token` does not carry, and the scaffold's
+sign-out, which still ends at the header-era `/__forge/signout`). Until then a
+valid signed header outranks a session, so an admin who signs in this way stays
+an admin.
+
 An app never writes sign-in. The forge tells it who is there, on every
 request it proxies, in two headers:
 
@@ -1065,6 +1079,7 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_PREVIEW_IDLE_DAYS` | `3`                             | days a pull may sit untouched before its preview sleeps; `0` = never |
 | `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once (live: Settings → Capacity)    |
 | `FORGE_CHECKS_CONCURRENCY` | `1`                            | checks at once (live: Settings → Capacity)        |
+| `FORGE_CHECKS_DRAIN_S`       | `300`                          | seconds a roll lets running checks finish first   |
 | `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
 | `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |
 | `FORGE_CREW_BUDGET_USD`   | `5`                             | spend per run unless the agent says otherwise     |
@@ -1122,6 +1137,17 @@ a column holding a secret or free text is never listed).
 It answers `{"rows": [{"group", "value"}]}`, at most 1000 rows. A query the
 module refuses is `400 bad_query` with its message; a body that is not JSON
 is `400 bad_json`; a body over the cap is `413 too_large`.
+
+The `machine` source is what the machine itself used (`boards/sampler.ts`):
+every 15 s the forge reads its pod's cgroup v2 (`cpu.stat` `usage_usec` as a
+rate, `memory.current`), each labelled check and app cell's process tree
+(`check:<run id>`, `app:<slug>/<env>`), and the node (`/proc/stat`,
+`/proc/meminfo`, `/proc/loadavg`). `boards/ring.ts` keeps it in
+`machine_sample`: 15-s points for 24 h and 5-min mean and max for 30 days,
+dropping what leaves its window on every write. A file this machine lacks
+leaves its series absent, never zero, and `/boards/data?source=machine`
+names each one. Its rows belong to no repo, so only an every-repo scope
+reads them; the sources list carries each column's unit in `docs`.
 
     POST /api/v1/boards/query
     {"source": "runs", "aggregate": "count", "groupBy": "state"}

@@ -203,6 +203,7 @@ import {
 } from "../web/studio/actions.ts";
 import { everydayCreate, everydayKeep, everydaySwitch } from "../web/pages/everyday.ts";
 import { claimFragmentPage, claimSubmit } from "../web/pages/claim.ts";
+import { familyPage } from "../web/pages/family.ts";
 import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
 import { askedPage } from "../web/studio/asked_page.ts";
@@ -324,6 +325,7 @@ import {
   repoDelete,
   settingsPage,
   settingsUpdate,
+  waveCut,
   webhookCreate,
   webhookDelete,
 } from "../web/pages/settings.ts";
@@ -580,6 +582,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/claim", claimSubmit);
   // "+ New forge": the spawn door as a page, any signed-in person (spawn/door.ts).
   router.add("GET", "/forges", forgesPage);
+  router.add("GET", "/family", familyPage);
   router.add("POST", "/forges/:name/claim-link", forgeLinkSubmit);
   router.add("GET", "/forges/new", newForgePage);
   router.add("POST", "/forges/new", newForgeSubmit);
@@ -1135,6 +1138,7 @@ export function buildRouter(): Router<Handler> {
   // Settings (owner-gated inside the handlers).
   router.add("GET", "/:owner/:name/settings", settingsPage);
   router.add("POST", "/:owner/:name/settings", settingsUpdate);
+  router.add("POST", "/:owner/:name/settings/wave", waveCut);
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);

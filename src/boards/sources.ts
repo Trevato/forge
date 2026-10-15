@@ -14,14 +14,18 @@ export type Source = {
   table: string;
   /**
    * How a row belongs to a repo: its own `repo_id`, or through the issue
-   * its `issue_id` names. Every query is narrowed by this.
+   * its `issue_id` names. Every query is narrowed by this. `admin` rows
+   * belong to no repo (the machine itself): only a scope of every repo
+   * reads them.
    */
-  owner: "repo_id" | "issue";
+  owner: "repo_id" | "issue" | "admin";
   /** Fixed predicate narrowing the table to this source; no input in it. */
   where?: string;
   /** The column `from`, `to` and `{bucket}` apply to. */
   time: string;
   columns: Readonly<Record<string, ColumnType>>;
+  /** What a column means, with its unit, where the name alone does not say. */
+  docs?: Readonly<Record<string, string>>;
 };
 
 export const SOURCES: Readonly<Record<string, Source>> = {
@@ -92,6 +96,32 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       subscription_id: "text", kind: "text", tokens_in: "number",
       tokens_out: "number", cost_usd: "number", wall_ms: "number",
       outcome: "text", at: "time",
+    },
+  },
+  // What the machine used (`boards/sampler.ts`, kept by `boards/ring.ts`):
+  // 15-s points for the last day, 5-min points before that, never both
+  // for one moment.
+  machine: {
+    table: "machine_sample",
+    owner: "admin",
+    where:
+      "(step = 15 OR at <= COALESCE((SELECT strftime('%Y-%m-%dT%H:%M:%fZ', MIN(at), '-300 seconds') " +
+      "FROM machine_sample WHERE step = 15), '9999'))",
+    time: "at",
+    columns: {
+      target: "text", at: "time", step: "number",
+      cpu_cores: "number", cpu_cores_max: "number",
+      memory_bytes: "number", memory_bytes_max: "number", load: "number",
+    },
+    docs: {
+      target: "forge (the pod), check:<run id>, app:<slug>/<env>, or node",
+      at: "when the point was read (15 s) or its window began (5 min), UTC",
+      step: "seconds the point covers: 15, or 300 for a 5-min roll-up",
+      cpu_cores: "cores in use, mean over the step (CPU seconds per second)",
+      cpu_cores_max: "cores, the highest 15-s point in the step",
+      memory_bytes: "bytes resident, mean over the step",
+      memory_bytes_max: "bytes, the highest 15-s point in the step",
+      load: "node only: the 1-min load average, runnable tasks",
     },
   },
 };

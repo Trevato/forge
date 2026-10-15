@@ -358,6 +358,7 @@ describe("a spawned child's own keys and domain", () => {
       ) as Record<string, unknown>;
       expect(Object.keys(record).sort()).toEqual([
         "apps",
+        "beatKey",
         "keepAccess",
         "name",
         "org",

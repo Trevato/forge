@@ -145,26 +145,45 @@ export function fastSet(input: FastInput): FastPlan {
   };
   const changed = new Set(diffed);
   for (const file of changed) take(file, "changed");
+  // What a guess looks for. A test the map has measured already answered
+  // for every change the map can see, by what it executes; it is guessed
+  // only against the changes the map cannot see, so one unreached file
+  // does not bring back every importer of the rest of the diff.
+  const unseen = new Set(
+    diffed.filter(
+      (f) => reached === undefined || reached.unreached.includes(f) || !f.startsWith("src/"),
+    ),
+  );
+  const lookFor = (test: string): ReadonlySet<string> =>
+    impact === undefined || !impact.has(test) ? changed : unseen;
+  const namesFor = (from: ReadonlySet<string>): Map<string, string> => {
+    const names = new Map<string, string>();
+    for (const source of from)
+      if (!tests.has(source))
+        for (const name of namesOf(source)) names.set(name, source);
+    return names;
+  };
+  const allNames = namesFor(changed);
+  const unseenNames = namesFor(unseen);
 
-  const sources = diffed.filter((file) => !tests.has(file));
-  const names = new Map<string, string>();
-  for (const source of sources)
-    for (const name of namesOf(source)) names.set(name, source);
   if (reached)
     for (const [test, source] of reached.tests)
       take(test, `executes ${source}`);
   for (const test of input.tests) {
     if (!guessed(test)) continue;
+    const names = lookFor(test) === changed ? allNames : unseenNames;
     const hit = names.get(stemOf(test));
     if (hit !== undefined) take(test, `named for ${hit}`);
   }
 
   for (const test of input.tests) {
     if (why.has(test) || !guessed(test)) continue;
+    const from = lookFor(test);
+    if (from.size === 0) continue;
     let frontier: readonly string[] = input.imports(test);
     const seen = new Set<string>();
     for (let depth = 0; depth <= IMPORT_DEPTH && frontier.length > 0; depth++) {
-      const hit = frontier.find((file) => changed.has(file));
+      const hit = frontier.find((file) => from.has(file));
       if (hit !== undefined) {
         take(test, `imports ${hit}`);
         break;

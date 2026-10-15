@@ -29,12 +29,14 @@ export type Query = {
   groupBy?: string | { bucket: string };
   aggregate: string;
   column?: string;
+  /** A second grouping column: each group is split into one row per value (stacked area, heat strip). */
+  series?: string;
 };
 
 /** Whose rows the asker may see: these repos, or every repo (an admin). */
 export type Scope = { repoIds: readonly string[] | "all" };
 
-export type Row = { group: string | number | null; value: number | null };
+export type Row = { group: string | number | null; value: number | null; series?: string | number | null };
 export type Refusal = { ok: false; error: string };
 export type Answer = { ok: true; rows: Row[] } | Refusal;
 
@@ -66,6 +68,7 @@ export function runQuery(db: Database, q: unknown, scope: Scope): Answer {
   const cols = src.columns;
   const where: string[] = src.where ? [src.where] : [];
   const params: (string | number)[] = [];
+  if (ids !== "all" && src.owner === "admin") return { ok: true, rows: [] };
   if (ids !== "all") {
     const marks = ids.map(() => "?").join(",");
     where.push(
@@ -121,10 +124,18 @@ export function runQuery(db: Database, q: unknown, scope: Scope): Answer {
     groupParam = BUCKETS[b as Bucket];
   }
 
+  let seriesSql = "";
+  const s = query.series;
+  if (s !== undefined) {
+    if (typeof s !== "string" || !has(cols, s)) return refuse(`unknown column: ${JSON.stringify(s)}`);
+    seriesSql = `, ${ident(s)} AS "series"`;
+  }
+  const grouped = [groupSql === "NULL" ? "" : "1", seriesSql === "" ? "" : "3"].filter(Boolean).join(", ");
+
   const sql =
-    `SELECT ${groupSql} AS "group", ${valueSql} AS "value" FROM ${ident(src.table)}` +
+    `SELECT ${groupSql} AS "group", ${valueSql} AS "value"${seriesSql} FROM ${ident(src.table)}` +
     (where.length ? ` WHERE ${where.join(" AND ")}` : "") +
-    (groupSql === "NULL" ? "" : ` GROUP BY 1 ORDER BY 1`) +
+    (grouped === "" ? "" : ` GROUP BY ${grouped} ORDER BY ${grouped}`) +
     ` LIMIT ${MAX_ROWS}`;
   const bound = groupParam === undefined ? params : [groupParam, ...params];
   return { ok: true, rows: db.query(sql).all(...bound) as Row[] };

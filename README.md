@@ -86,6 +86,11 @@ sees `Reduced protection: …` in one line, under the filter on the terminal's
 first screen and in the web footer; nobody else does, and a fully protected
 forge shows nothing.
 
+The family across forges: `:` → Family in the terminal, `/family` on the web,
+`GET /api/v1/family` and the MCP `family` tool all give the same view. The
+forge that sent this one is shown to anyone; the forges it sent, only to a
+site admin (docs/SPAWN.md, "The family across forges").
+
 Passkeys: Settings → Passkeys lists, adds and removes them (several per
 account; `src/auth/webauthn.ts` verifies, no dependency, `none` attestation).
 The sign-in page's "Sign in with a passkey" gives the same HttpOnly session a
@@ -659,14 +664,23 @@ shard's output is written whole as it finishes; the log ends with every
 failing test from every shard, or on green with one line — how many tests,
 across how many files, in how long, then the slowest and fastest shard.
 
-The fast tier picks by measurement. The full gate runs each file under
-Bun's coverage (`--impact`) and writes `scripts/test-impact.json`: test
-file → the `src/**` files it executed. A diff intersected with it is the
-set of tests the change reaches; the check line says `N changed files
-reach M tests; src/x.ts reaches none` (a coverage gap). Tests the map has
-never seen fall back to the import-hop guess, and a change to `forge.json`,
-`package.json`, `scripts/**` or `src/kernel/**` runs everything. Until a
-release commits the map, the fast tier guesses by imports as before.
+The fast tier picks by measurement. The full gate runs each file in a
+`bun test` of its own under Bun's coverage (`--impact`; coverage is per
+process, so a shard of many files would blur theirs together) and writes
+the impact map: test file → the `src/**` files whose functions it called.
+A file merely imported — its top level run, none of its functions — does
+not count; that is the import graph again (#1794). Under the forge the map
+is handed over as `$FORGE_CHECK_IMPACT` in the checkout: every check is
+seeded with the one the last green default-branch run kept (under
+the forge's data directory, `checks/impact/`, `src/checks/impact-store.ts`), and
+only such a run, or the full gate on land, keeps a new one. By hand it is
+`scripts/test-impact.json`. A diff intersected with it is the set of tests
+the change reaches; the plan line says `by coverage: N changed files reach
+M tests; src/x.ts reaches none` (a coverage gap). A measured test is
+guessed by imports only against the changes the map cannot see; tests the
+map has never seen fall back to the import-hop guess, and a change to
+`forge.json`, `package.json`, `scripts/**` or `src/kernel/**` runs
+everything. With no map yet the line says `by imports (no impact map)`.
 
 Files go to shards by how long they take, not how big they are: longest
 first onto the least-loaded shard, weighed from `scripts/test-times.json`
@@ -773,6 +787,13 @@ work here.
 
 ## What works today
 
+- **Cut a wave** — Settings → *Cut a wave* (repository admins, same-origin
+  POST; web-only, the terminal's settings hand over to the web) opens a pull
+  adding `waves/<next>.md`, listing the pulls merged since the last wave and
+  not already in an earlier wave. The headline and highlights are `TODO`
+  placeholders; no model is called. It refuses, writing nothing, when an
+  earlier wave does not parse (naming the file) or nothing new has merged.
+
 - **Accounts & access** — register/sign in, personal access tokens with coarse
   scopes (ro/rw/admin), public and private repositories.
 - **Git** — push and pull over HTTPS **and SSH**, browse code (tree, blob with line anchors,
@@ -781,8 +802,12 @@ work here.
   allowed).
 - **Boards** — `/boards/data`, for a forge admin who is a person (anyone else
   gets a 404): the query is the URL (`?source=runs&aggregate=count&by=day&fcolumn=state&fvalue=failed`),
-  drawn as a server-rendered line chart with its points in a table; a point opens the rows
-  behind it, keeping your filter.
+  drawn server-side as the chart chosen beside it (`chart=line|bar|area|number|table|heat`)
+  with its points in a table; a point opens the rows behind it, keeping your filter.
+  `series=<column>` splits each group by a second column: stacked area draws one band per
+  value (eight at most, the rest folded into "other"), the heat strip one row per value
+  (twelve at most) with time across, the table a series column; line, bar and number set
+  it aside. Number is the latest group's value over a sparkline of all of them.
   `/boards` holds the boards themselves: a board is one JSON file
   (`{title, range, refresh: off|10s|1m, panels: [{title, chart, query, w, h}]}`) in
   `forge/boards`, a repo the forge owns and makes on the first board; every save is a commit

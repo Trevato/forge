@@ -537,6 +537,53 @@ describe("checks", () => {
     expect(middle?.summary).toContain("superseded by");
   }, 60_000);
 
+  test("a new head on a pull stops its running check for the old head, superseded not failed", async () => {
+    const slow = await commitToBranch(app, alice, repo, {
+      branch: "supersede",
+      message: "A very slow check",
+      files: [
+        { path: "forge.json", content: checkJson("sleep 30") },
+        { path: "S.md", content: "s\n" },
+      ],
+    });
+    if (!slow.ok) throw new Error(JSON.stringify(slow.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "supersede",
+      baseBranch: "main",
+      headBranch: "supersede",
+    });
+    if (!opened.ok) throw new Error(JSON.stringify(opened.error));
+    const env = `pull-${opened.value.number}`;
+    const old = await checks.request(
+      repo,
+      env,
+      slow.value.commitOid,
+      "push",
+      opened.value.id,
+    );
+    if (!old) throw new Error("no run");
+    const began = Date.now();
+    while (getRun(app.db, old.id)?.state !== "running") {
+      if (Date.now() - began > 20_000) throw new Error("never started");
+      await Bun.sleep(50);
+    }
+    const next = await commitToBranch(app, alice, repo, {
+      branch: "supersede",
+      message: "Fast",
+      files: [
+        { path: "forge.json", content: checkJson("test -f S.md") },
+      ],
+    });
+    if (!next.ok) throw new Error(JSON.stringify(next.error));
+    const fresh = await settled((r) => r.commitOid === next.value.commitOid);
+    expect(fresh.state).toBe("ok");
+    const stopped = getRun(app.db, old.id);
+    expect(stopped?.state).toBe("cancelled");
+    expect(stopped?.summary).toContain("superseded by");
+    // Well short of the 30 s the old check would have taken.
+    expect(Date.now() - began).toBeLessThan(25_000);
+  }, 60_000);
+
   for (const ending of ["merge", "close"] as const)
     test(`${ending === "merge" ? "merging" : "closing"} a pull leaves no queued or running run for it`, async () => {
       const blocker = await commitToBranch(app, alice, repo, {
@@ -725,6 +772,58 @@ describe("checks", () => {
     checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
     const done = await settled((r) => r.id === again!.id);
     expect(done.state).toBe("ok");
+  }, 60_000);
+
+  async function slowCheck(command: string, message: string): Promise<string> {
+    const made = await commitToBranch(app, alice, repo, {
+      message,
+      files: [{ path: "forge.json", content: checkJson(command) }],
+    });
+    if (!made.ok) throw new Error(JSON.stringify(made.error));
+    const oid = made.value.commitOid;
+    const deadline = Date.now() + 20_000;
+    let found: Run | undefined;
+    while (Date.now() < deadline && found?.state !== "running") {
+      found = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
+        (r) => r.commitOid === oid,
+      );
+      await Bun.sleep(50);
+    }
+    expect(found?.state).toBe("running");
+    return found!.id;
+  }
+
+  test("a roll waits for a running check to finish, within its budget, instead of throwing it away", async () => {
+    await checks.stop();
+    checks = startChecks(app, {
+      forgeUrl: servers.url,
+      concurrency: 1,
+      drainMs: 30_000,
+    });
+    const id = await slowCheck("sleep 2 && test -f OK.md", "A drained check");
+    await checks.stop();
+    const run = getRun(app.db, id);
+    expect(run?.state).toBe("ok");
+    expect(
+      listRuns(app.db, repo.id, { kind: "check", limit: 50 }).some(
+        (r) => r.state === "queued",
+      ),
+    ).toBe(false);
+    checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
+  }, 60_000);
+
+  test("a check whose pull lands while it runs ends as superseded, not failed", async () => {
+    const id = await slowCheck("sleep 2 && false", "A check overtaken");
+    cancelRun(app.db, id, "pull landed");
+    const deadline = Date.now() + 20_000;
+    let lines = "";
+    while (Date.now() < deadline && !lines.includes("superseded")) {
+      await Bun.sleep(100);
+      lines = readRunLog(dataDir, id).lines.join("\n");
+    }
+    expect(lines).toContain("superseded: pull landed");
+    expect(lines).not.toContain("failed:");
+    expect(getRun(app.db, id)?.state).toBe("cancelled");
   }, 60_000);
 
   test("a check that is declared wrong fails with the reason", async () => {

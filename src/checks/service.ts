@@ -23,6 +23,7 @@ import { issueMayRun } from "../core/pull_trust.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import {
   cancelRun,
+  getRun,
   cancelRunsForPull,
   checksForHead,
   claimRun,
@@ -41,6 +42,7 @@ import { resolveOid } from "../git/merge.ts";
 import { mergeForCheck } from "./merged.ts";
 import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
+import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { getIssueById } from "../core/issues.ts";
 import { repoDir } from "../git/repos.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
@@ -77,6 +79,12 @@ export interface ChecksOptions {
   readonly forgeUrl: string;
   /** How long a check may run before it is killed. @default BUDGETS.gate */
   readonly budgetMs?: number | undefined;
+  /**
+   * How long `stop` lets checks already running finish before it cuts them
+   * off and queues them again (#1796). Nothing new starts meanwhile.
+   * @default 0
+   */
+  readonly drainMs?: number | undefined;
 }
 
 export interface ChecksHandle {
@@ -225,17 +233,22 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     // is still waiting, and the same commit is not checked twice. Looked for
     // and written in one write transaction, so a second forge process over
     // this database (a roll) cannot queue the same check beside it.
+    const superseded: Run[] = [];
     const { run, fresh } = transact(app.db, () => {
       for (const active of listActive(app.db, "check")) {
         if (active.repoId !== repo.id || active.env !== env) continue;
         if (active.commitOid === commitOid)
           return { run: active, fresh: false };
-        if (active.state === "queued")
-          cancelRun(
+        // A pull's running check is for a head nobody will land either:
+        // it is stopped too, below, once the row says so.
+        if (active.state === "queued" || issueId !== undefined) {
+          const gone = cancelRun(
             app.db,
             active.id,
             `superseded by ${commitOid.slice(0, 7)}`,
           );
+          if (gone && active.state === "running") superseded.push(gone);
+        }
       }
       const created = createRun(app.db, {
         repoId: repo.id,
@@ -248,6 +261,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       });
       return { run: created, fresh: true };
     });
+    // The row is cancelled, so the check's own end finishes nothing and
+    // announces nothing; the abort is what frees its slot and its checkout.
+    for (const old of superseded) inFlight.get(old.id)?.abort.abort();
     if (!fresh) return run;
     announceRun(app, run, actorId);
     schedule();
@@ -400,6 +416,12 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         if (failed) announceRun(app, failed);
         return;
       }
+      // Ended from outside while it ran: its pull landed or closed, and
+      // the row says so. That is not this check failing.
+      if (!outcome.ok && getRun(app.db, run.id)?.state === "cancelled") {
+        write(`superseded: ${getRun(app.db, run.id)?.summary ?? "cancelled"}`);
+        return;
+      }
       if (!outcome.ok && stopped && signal.aborted) {
         // Cut off by this forge stopping, not by the check: the same check
         // goes back on the queue, and the forge that carries on runs it.
@@ -450,6 +472,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       commitOid: run.commitOid,
       pull,
       tier: pull === undefined ? "run" : "fast",
+      keepImpact: pull === undefined && run.env === repo.defaultBranch,
       write,
       signal,
     });
@@ -466,6 +489,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     readonly pull?: Pull | undefined;
     /** `run`: a push to a branch; `fast`: a pull's push; `full`: on land. */
     readonly tier: "run" | "fast" | "full";
+    /** A green run keeps the impact map it measured; `full` always does. */
+    readonly keepImpact?: boolean;
     readonly write: (line: string) => void;
     readonly signal: AbortSignal;
   }
@@ -566,6 +591,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         return { ok: false, error: given.error };
       }
     }
+    // Every check starts from the impact map the last green default-branch
+    // run measured; the fast tier selects by it.
+    try {
+      const seeded = seedImpact(app.config.dataDir, repo.id, dir);
+      if (seeded > 0) write(`impact map: ${seeded} tests, from the last green ${repo.defaultBranch}`);
+    } catch (error) {
+      write(`impact map not seeded: ${String(error)}`);
+    }
     // The check is repository code: it runs in a cell of its own
     // (`apps/contain.ts`), its checkout and a home its only places to write,
     // the forge, the registry and what it declared its only way out.
@@ -589,6 +622,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           onUndeclared: (host, port) =>
             noteReached(app.config.dataDir, repo.id, host, port),
           egressMode: egressSetting(app.db),
+          label: `check:${run.id}`,
         }
       : undefined;
     try {
@@ -599,6 +633,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         FORGE_URL: options.forgeUrl,
         FORGE_CHECK: run.id,
         FORGE_COMMIT: x.commitOid,
+        FORGE_CHECK_IMPACT: IMPACT_FILE,
         ...(base === undefined
           ? {}
           : {
@@ -650,6 +685,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           ran.error,
         );
         return { ok: false, error: summary, detail };
+      }
+      if (x.tier === "full" || x.keepImpact === true) {
+        try {
+          const kept = keepImpact(app.config.dataDir, repo.id, dir);
+          if (kept !== undefined) write(kept);
+        } catch (error) {
+          write(`impact map not kept: ${String(error)}`);
+        }
       }
       return { ok: true };
     } finally {
@@ -844,9 +887,23 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       stopped = true;
       clearInterval(timer);
       unsubscribe();
+      // A roll waits for the checks under way, up to the budget, and only
+      // then cuts off what is left (it is queued again, not lost).
+      const running = Promise.all([...inFlight.values()].map((f) => f.promise));
+      const drainMs = options.drainMs ?? 0;
+      if (drainMs > 0 && inFlight.size > 0) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          running,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, drainMs);
+          }),
+        ]);
+        clearTimeout(timer);
+      }
       for (const { abort } of inFlight.values()) abort.abort();
       for (const abort of gates) abort.abort();
-      await Promise.all([...inFlight.values()].map((f) => f.promise));
+      await running;
     },
   };
   handles.set(app, handle);

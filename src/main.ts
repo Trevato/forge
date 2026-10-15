@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { startSampler } from "./boards/sampler.ts";
 import { sweepStanding } from "./crew/standing.ts";
 import { handover } from "./release/swap.ts";
 import { parentUrlProblem } from "./core/parent_releases.ts";
@@ -13,6 +14,7 @@ import { backfillCarried } from "./core/carried.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
+import { startHeartbeat } from "./spawn/heartbeat.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
@@ -277,6 +279,8 @@ const checks =
     : startChecks(app, {
         forgeUrl,
         concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, 1),
+        // A roll lets running checks finish this long before cutting them off.
+        drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 300) * 1000,
       });
 // The look: a picture of every environment that comes up green, taken
 // through this forge's own listener.
@@ -300,6 +304,9 @@ const snapshots = startSnapshots(
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
   },
 );
+// What the machine uses (boards/sampler.ts): the pod, each cell and the
+// node, every 15 s into a ring the `machine` board source reads.
+const sampler = startSampler(app);
 const crewHeldOff = crewOffInPreview();
 if (appsOn && crewHeldOff)
   app.log.info(CREW_OFF_IN_PREVIEW, {
@@ -325,6 +332,8 @@ const crew = appsOn && !crewHeldOff
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);
+// A spawned child reports its standing to its parent (spawn/heartbeat.ts).
+const heartbeatTimer = startHeartbeat(app);
 // Prompts from Instagram (docs/APPS.md): once a day, for each repository
 // that connected an account, the top comment on its latest Reel is told to
 // the crew. A minute's clock; nothing leaves the box until a source exists.
@@ -470,6 +479,7 @@ function shutdown(signal: NodeJS.Signals): void {
   // process that replaced this one, not to this one while it finishes.
   drainStreams();
   clearInterval(deliveryTimer);
+  clearInterval(heartbeatTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);
   clearInterval(leaseTimer);
@@ -486,6 +496,7 @@ function shutdown(signal: NodeJS.Signals): void {
     looks?.stop(),
     probes?.stop(),
     snapshots.stop(),
+    sampler.stop(),
   ])
     .catch(() => {})
     .then(() => {

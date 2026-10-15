@@ -216,6 +216,22 @@ describe("/boards", () => {
     expect((await readBoard(app.reposRoot, "fleet-health"))!.panels.at(-1)!.title).toBe("pinned");
   });
 
+  test("a panel keeps its chart and series: chosen in the form, saved in the file, drawn on the board", async () => {
+    await post("/boards/new", { title: "Charts" });
+    const q = { source: "runs", aggregate: "count", column: "", by: "day", series: "kind", from: "", to: "", fcolumn: "", fop: "eq", fvalue: "" };
+    expect((await post("/boards/charts/add", { ...q, chart: "heat", title: "heat", w: "1", h: "1" })).status).toBe(303);
+    expect((await post("/boards/charts/add", { ...q, chart: "bar", title: "bar", w: "1", h: "1" })).status).toBe(303);
+    const board = (await readBoard(app.reposRoot, "charts"))!;
+    expect(board.panels.map((p) => [p.chart, p.query.series])).toEqual([["heat", "kind"], ["bar", "kind"]]);
+    const page = await (await asAdmin("/boards/charts")).text();
+    // runs in range: three days × three kinds for the heat strip; three days of bars, the series set aside
+    expect(page.match(/<rect class="cell"/g)?.length).toBe(9);
+    expect(page.match(/<rect class="bar"/g)?.length).toBe(3);
+    expect(page).toContain('<option value="heat" selected>heat strip</option>');
+    expect(parseBoard({ ...board, panels: [{ ...board.panels[0], chart: "pie" }] }).ok).toBe(false);
+    await deleteBoard(app, alice, "charts");
+  });
+
   test("a cross-origin post changes nothing, and duplicates are refused as unnamed", async () => {
     const before = await readBoard(app.reposRoot, "fleet-health");
     for (const path of ["/boards/fleet-health/rename", "/boards/fleet-health/delete", "/boards/new", "/boards/pin"]) {

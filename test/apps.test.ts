@@ -195,8 +195,8 @@ describe("apps: production, previews, data, gates, crew", () => {
     expect(html).toContain("<h1>hello</h1>");
     expect(html).toContain("production");
     expect(html).toContain(run.commitOid.slice(0, 7));
-    // A stranger is offered the forge's door; a signed identity is greeted.
-    expect(html).toContain("/__forge/signin");
+    // A stranger is offered the app's sign-in; a signed identity is greeted.
+    expect(html).toContain('href="/signin"');
     const greeted = await (
       await viaHost(`hello.${DOMAIN}`, "/", {
         headers: {
@@ -205,7 +205,7 @@ describe("apps: production, previews, data, gates, crew", () => {
       })
     ).text();
     expect(greeted).toContain("<b>alice</b>");
-    expect(greeted).toContain("/__forge/signout");
+    expect(greeted).toContain('action="/signout"');
   }, 90_000);
 
   test("the proxy carries a form post; production data persists", async () => {
