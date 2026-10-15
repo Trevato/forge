@@ -569,6 +569,15 @@ into scratch, opens it, counts what is there and unseals a value; the page
 waits for it, up to 10 minutes, and the last drill shows there as one line.
 Only one runs at a time. See `docs/SNAPSHOT.md`.
 
+A red drill, or none in eight days, is one line for the forge's admin on the
+board's forge strip, in the terminal's dashboard (same `forgeNeeds`), and in
+MCP `health` and `asks`; it names the failed step and the next green drill
+clears it. An admin with a phone URL gets one push per cause (a new red
+drill, or the silence), also when eight days pass with no event: the notifier
+wakes every 10 minutes for it. The time the forge first owed a drill is kept
+at boot in `drill/first-seen`; if the disk will not take it, a warning is
+logged and a forge with no drill ever is not flagged.
+
 `docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.
