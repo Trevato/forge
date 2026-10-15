@@ -154,6 +154,7 @@ export function startSnapshots(
       recordDrill(app.db, result);
       // The card and the recovery issue hear of every drill, whoever asked.
       const posted = await reportVerdict(app.config.dataDir, result);
+      app.bus.append({ kind: "drill.finished", payload: { verdict: result.verdict, step: result.failedStep } });
       log.info("restore drill", { verdict: result.verdict, step: result.failedStep ?? "none", posted });
       return result;
     })().finally(() => {

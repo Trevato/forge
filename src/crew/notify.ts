@@ -27,15 +27,18 @@ import { lookup } from "node:dns/promises";
 import type { App } from "../app.ts";
 import { isPrivateHost } from "../actions/migrate.ts";
 import { getUserSetting, setUserSetting } from "../core/settings.ts";
-import { getUserById } from "../core/users.ts";
+import { getUserById, type User } from "../core/users.ts";
 import { landedLines } from "../core/watches.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { forgeSince } from "../kernel/vitals.ts";
+import { drillNeed, lastVerdict } from "../snapshot/verdict.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
 const KEY = "notify_url";
 export const MAX_URL = 200;
 const HOURLY = 10;
 const HOUR_MS = 3_600_000;
+const CLOCK_MS = 10 * 60_000;
 const SEND_TIMEOUT_MS = 5_000;
 const BACKOFF_FIRST_MS = 60_000;
 const BACKOFF_MAX_MS = HOUR_MS;
@@ -53,6 +56,7 @@ const WAKES = new Set([
   "account.notify_set",
   "user.created",
   "mail.ceiling",
+  "drill.finished",
 ]);
 
 export type NotifyUrlError =
@@ -148,6 +152,22 @@ const post: Sender = async (url, body, headers) => {
   return res.status >= 200 && res.status < 300;
 };
 
+/**
+ * The forge's admin hears of a red restore drill, or none in eight days,
+ * once per cause: the id is the drill's own key, so a repeat tick is not news.
+ */
+export function drillLines(
+  app: App,
+  user: User,
+  now = Date.now(),
+): { id: string; line: string; items: readonly string[] }[] {
+  if (!user.isAdmin || user.kind !== "user") return [];
+  const need = drillNeed(lastVerdict(app.config.dataDir), now, () => forgeSince(app.config.dataDir, now));
+  if (need === undefined) return [];
+  const id = `drill:${need.key}`;
+  return [{ id, line: need.sentence, items: [id] }];
+}
+
 export interface Notifier {
   /** Resolves when the work queued so far is done. For tests and shutdown. */
   settled(): Promise<void>;
@@ -200,6 +220,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       ...newAccountLines(app.db, user, now()),
       ...landedLines(app.db, user, now()),
       ...mailCeilingLines(app, user, now()),
+      ...drillLines(app, user, now()),
     ];
     const before = seen.get(userId);
     // What is gone may ask again later, and then it is new again. Seen by
@@ -266,10 +287,23 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
     for (const id of people()) await tell(id, true).catch(() => undefined);
   });
 
+  // Eight days of silence is no event: the clock wakes the notifier too.
+  const clock = setInterval(() => {
+    queue = queue.then(async () => {
+      try {
+        for (const id of people()) await tell(id, false);
+      } catch (error) {
+        app.log.error("notify failed", { error: String(error) });
+      }
+    });
+  }, CLOCK_MS);
+  clock.unref();
+
   return {
     settled: () => queue,
     stop() {
       stopped = true;
+      clearInterval(clock);
       unsubscribe();
     },
   };
