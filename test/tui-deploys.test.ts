@@ -43,12 +43,12 @@ afterAll(async () => {
 });
 
 const screenText = async (
-  who: User | null = alice,
+  who: User = alice,
   of: Repo = repo,
 ): Promise<string> => {
   const { app, session } = createForgeApp(
     forge,
-    { sshUsername: who?.username ?? "guest", remoteAddress: "127.0.0.1", user: who },
+    { sshUsername: who.username, remoteAddress: "127.0.0.1", user: who },
     { terminal: headlessTerminal(120, 30), exitHooks: false },
   );
   app.start();
