@@ -120,6 +120,20 @@ describe("/boards/data", () => {
     expect(await (await get("/", "admin")).text()).toContain('href="/boards"');
     expect(await (await get("/", "bob")).text()).not.toContain('href="/boards"');
   });
+
+  test("the machine source draws its points and says what this machine cannot measure", async () => {
+    app.db.run(
+      "INSERT INTO machine_sample (at, step, target, cpu_cores, memory_bytes) VALUES ('2026-10-15T12:00:15.000Z', 15, 'forge', 0.25, 1048576)",
+    );
+    const body = await (await get("/boards/data?source=machine&aggregate=avg&column=cpu_cores&by=target", "admin")).text();
+    expect(body).toContain("What this machine measures");
+    // Each absent series is named with its file; on a machine with them all, it says so instead.
+    expect(body).toMatch(/Absent — forge cpu_cores: \/sys\/fs\/cgroup\/cpu.stat|Every series is readable on this machine/);
+    expect(body).toContain("cores in use, mean over the step");
+    expect(body).toContain(">forge</a></td>");
+    expect(body).toContain(">0.25</td>");
+    expect(await (await get("/boards/data?source=runs", "admin")).text()).not.toContain("What this machine measures");
+  });
 });
 
 describe("lineChart", () => {

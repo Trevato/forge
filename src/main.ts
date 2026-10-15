@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { startSampler } from "./boards/sampler.ts";
 import { sweepStanding } from "./crew/standing.ts";
 import { handover } from "./release/swap.ts";
 import { parentUrlProblem } from "./core/parent_releases.ts";
@@ -295,6 +296,9 @@ const snapshots = startSnapshots(
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
   },
 );
+// What the machine uses (boards/sampler.ts): the pod, each cell and the
+// node, every 15 s into a ring the `machine` board source reads.
+const sampler = startSampler(app);
 const crewHeldOff = crewOffInPreview();
 if (appsOn && crewHeldOff)
   app.log.info(CREW_OFF_IN_PREVIEW, {
@@ -481,6 +485,7 @@ function shutdown(signal: NodeJS.Signals): void {
     looks?.stop(),
     probes?.stop(),
     snapshots.stop(),
+    sampler.stop(),
   ])
     .catch(() => {})
     .then(() => {

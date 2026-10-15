@@ -66,6 +66,7 @@ export function runQuery(db: Database, q: unknown, scope: Scope): Answer {
   const cols = src.columns;
   const where: string[] = src.where ? [src.where] : [];
   const params: (string | number)[] = [];
+  if (ids !== "all" && src.owner === "admin") return { ok: true, rows: [] };
   if (ids !== "all") {
     const marks = ids.map(() => "?").join(",");
     where.push(

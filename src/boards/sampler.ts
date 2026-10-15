@@ -1,0 +1,173 @@
+/**
+ * What the machine is using, every 15 s, into the ring (`boards/ring.ts`),
+ * for the `machine` source a board queries:
+ *
+ * - `forge`: the pod, from its cgroup v2 — `cpu.stat` `usage_usec` as a
+ *   rate, and `memory.current`.
+ * - `check:<run id>` and `app:<slug>/<env>`: each labelled cell, from the
+ *   watch that holds it to its limits (`apps/contain.ts`). A container
+ *   cannot make a cgroup per cell, so this is the cell's process tree read
+ *   from `/proc`: user + system CPU as a rate, and resident memory.
+ * - `node`: `/proc/stat` busy time as a rate, `MemTotal − MemAvailable`
+ *   from `/proc/meminfo`, and the 1-min load from `/proc/loadavg`.
+ *
+ * A file that is missing or unreadable (not Linux, no cgroup v2) leaves its
+ * series null — never a guess — and `gaps` names it for the page.
+ */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { App } from "../app.ts";
+import { cellCounters, type CellCounter } from "../apps/contain.ts";
+import { FINE_MS, record, type Point } from "./ring.ts";
+
+export type Paths = { cgroup: string; proc: string };
+export const SYSTEM: Paths = { cgroup: "/sys/fs/cgroup", proc: "/proc" };
+
+/** `/proc/stat` counts in USER_HZ, 100 a second on every Linux the forge runs on. */
+const USER_HZ = 100;
+
+/** Cumulative counters at one instant; a rate needs two of them. */
+export type Counters = {
+  /** Epoch ms. */
+  at: number;
+  forge: { cpuUsec: number | null; memoryBytes: number | null };
+  node: { cpuUsec: number | null; memoryBytes: number | null; load: number | null };
+  cells: readonly CellCounter[];
+};
+
+function read(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+const finite = (n: number) => (Number.isFinite(n) && n >= 0 ? n : null);
+
+/** `usage_usec` from a cgroup v2 `cpu.stat`, µs of CPU since the cgroup began. */
+export function parseCpuStat(text: string | null): number | null {
+  const m = text === null ? null : /^usage_usec (\d+)$/m.exec(text);
+  return m ? finite(Number(m[1])) : null;
+}
+
+/** Busy CPU time of the whole node from `/proc/stat`'s `cpu` line, µs: user nice system irq softirq steal (guest is inside user). */
+export function parseProcStat(text: string | null): number | null {
+  const m = text === null ? null : /^cpu +(.*)$/m.exec(text);
+  if (!m) return null;
+  const f = m[1]!.trim().split(/\s+/).map(Number);
+  if (f.length < 4 || f.some((n) => !Number.isFinite(n))) return null;
+  const busy = f[0]! + f[1]! + f[2]! + (f[5] ?? 0) + (f[6] ?? 0) + (f[7] ?? 0);
+  return (busy * 1_000_000) / USER_HZ;
+}
+
+/** Memory in use on the node, bytes: `MemTotal − MemAvailable` (kB × 1024). */
+export function parseMeminfo(text: string | null): number | null {
+  if (text === null) return null;
+  const total = /^MemTotal:\s+(\d+) kB$/m.exec(text);
+  const avail = /^MemAvailable:\s+(\d+) kB$/m.exec(text);
+  return total && avail ? finite((Number(total[1]) - Number(avail[1])) * 1024) : null;
+}
+
+/** The 1-min load average: the first field of `/proc/loadavg`. */
+export function parseLoadavg(text: string | null): number | null {
+  const first = text?.trim().split(/\s+/)[0];
+  return first === undefined || first === "" ? null : finite(Number(first));
+}
+
+/** Read every counter now. */
+export function readCounters(paths: Paths, cells: readonly CellCounter[], at: number): Counters {
+  const mem = read(join(paths.cgroup, "memory.current"));
+  return {
+    at,
+    forge: {
+      cpuUsec: parseCpuStat(read(join(paths.cgroup, "cpu.stat"))),
+      memoryBytes: mem === null || !/^\d+\s*$/.test(mem) ? null : Number(mem),
+    },
+    node: {
+      cpuUsec: parseProcStat(read(join(paths.proc, "stat"))),
+      memoryBytes: parseMeminfo(read(join(paths.proc, "meminfo"))),
+      load: parseLoadavg(read(join(paths.proc, "loadavg"))),
+    },
+    cells,
+  };
+}
+
+/** Cores between two readings of one counter: Δµs / 10⁶ / Δs. Null without both, or when the counter went back. */
+function cores(a: number | null | undefined, b: number | null | undefined, seconds: number): number | null {
+  if (a == null || b == null || seconds <= 0 || b < a) return null;
+  return (b - a) / 1_000_000 / seconds;
+}
+
+/**
+ * The points between two readings. Without a reading before, CPU is null
+ * (a rate needs two). A target with nothing readable has no point at all.
+ * A label's cells are summed; a cell new since `prev` adds its memory but
+ * not yet its CPU.
+ */
+export function pointsOf(prev: Counters | undefined, next: Counters): Point[] {
+  const seconds = prev === undefined ? 0 : (next.at - prev.at) / 1000;
+  const out: Point[] = [];
+  const push = (p: Point) => {
+    if (p.cpuCores !== null || p.memoryBytes !== null || p.load !== null) out.push(p);
+  };
+  push({
+    at: next.at, target: "forge",
+    cpuCores: cores(prev?.forge.cpuUsec, next.forge.cpuUsec, seconds),
+    memoryBytes: next.forge.memoryBytes, load: null,
+  });
+  const before = new Map((prev?.cells ?? []).map((c) => [c.key, c]));
+  const byLabel = new Map<string, Point>();
+  for (const c of next.cells) {
+    const p = byLabel.get(c.label) ?? { at: next.at, target: c.label, cpuCores: null, memoryBytes: 0, load: null };
+    const rate = cores(before.get(c.key)?.cpuUsec, c.cpuUsec, seconds);
+    if (rate !== null) p.cpuCores = (p.cpuCores ?? 0) + rate;
+    p.memoryBytes = (p.memoryBytes ?? 0) + c.memoryBytes;
+    byLabel.set(c.label, p);
+  }
+  for (const p of [...byLabel.values()].sort((a, b) => (a.target < b.target ? -1 : 1))) push(p);
+  push({
+    at: next.at, target: "node",
+    cpuCores: cores(prev?.node.cpuUsec, next.node.cpuUsec, seconds),
+    memoryBytes: next.node.memoryBytes, load: next.node.load,
+  });
+  return out;
+}
+
+/** The series this machine cannot read, each with the file that would have said it. */
+export function gaps(paths: Paths): string[] {
+  const out: string[] = [];
+  const missing = (file: string) => read(file) === null;
+  const say = (series: string, file: string) => `${series}: ${file} is not readable here`;
+  if (missing(join(paths.cgroup, "cpu.stat"))) out.push(say("forge cpu_cores", join(paths.cgroup, "cpu.stat")));
+  if (missing(join(paths.cgroup, "memory.current"))) out.push(say("forge memory_bytes", join(paths.cgroup, "memory.current")));
+  if (missing(join(paths.proc, "stat"))) out.push(say("node cpu_cores", join(paths.proc, "stat")));
+  if (missing(join(paths.proc, "meminfo"))) out.push(say("node memory_bytes", join(paths.proc, "meminfo")));
+  if (missing(join(paths.proc, "loadavg"))) out.push(say("node load", join(paths.proc, "loadavg")));
+  return out;
+}
+
+export type Sampler = { tick(now?: number): void; stop(): void };
+
+/** Sample every 15 s into `app.db` until stopped. A failed tick is logged and the next one tries again. */
+export function startSampler(
+  app: App,
+  options: { paths?: Paths; cells?: () => readonly CellCounter[]; everyMs?: number } = {},
+): Sampler {
+  const paths = options.paths ?? SYSTEM;
+  const cells = options.cells ?? cellCounters;
+  let prev: Counters | undefined;
+  const tick = (now = Date.now()) => {
+    try {
+      const next = readCounters(paths, cells(), now);
+      record(app.db, pointsOf(prev, next), now);
+      prev = next;
+    } catch (error) {
+      app.log.warn("machine sample failed", { error: String(error) });
+    }
+  };
+  tick();
+  const timer = setInterval(tick, options.everyMs ?? FINE_MS);
+  timer.unref?.();
+  return { tick, stop: () => clearInterval(timer) };
+}

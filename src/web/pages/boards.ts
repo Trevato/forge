@@ -8,6 +8,7 @@
  */
 import { lineChart } from "../../boards/chart.ts";
 import { runQuery, type Query } from "../../boards/query.ts";
+import { gaps, SYSTEM } from "../../boards/sampler.ts";
 import { SOURCES } from "../../boards/sources.ts";
 import { listAllBoards } from "../../actions/boards.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -158,6 +159,9 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
         ([name, s]) => html`<li class="row">
           <a href="${link({ ...p, source: name, by: "day", column: "", fcolumn: "", fvalue: "", gcolumn: "", gvalue: "", rows: "" })}"><strong>${name}</strong></a>
           <span class="muted small mono">${Object.entries(s.columns).map(([c, t]) => `${c}:${t}`).join(" ")}</span>
+          ${s.docs && name === p.source
+            ? html`<dl class="small">${Object.entries(s.docs).map(([c, d]) => html`<dt class="mono">${c}</dt><dd class="muted">${d}</dd>`)}</dl>`
+            : null}
         </li>`,
       )}
     </ul>`,
@@ -222,10 +226,23 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
           { head: html`<h2>Pin this query</h2>` },
         );
 
+  // The machine source says what it cannot measure here, rather than draw nothing as zero.
+  const missing = p.source === "machine" ? gaps(SYSTEM) : [];
+  const absent =
+    p.source !== "machine"
+      ? null
+      : card(
+          html`<p class="muted small">Sampled every 15 s: the forge's pod from its cgroup, each check and app cell from its process tree, the node from /proc.</p>
+          ${missing.length === 0
+            ? html`<p class="small">Every series is readable on this machine.</p>`
+            : html`<ul class="small">${missing.map((g) => html`<li>Absent — ${g}</li>`)}</ul>`}`,
+          { head: html`<h2>What this machine measures</h2>`, extra: "machine-gaps" },
+        );
+
   return page({
     ctx,
     title: "Boards",
     body: html`<div class="page-head"><h1>Data</h1>${btn("All boards", { href: "/boards", variant: "ghost" })}</div>
-      ${form} ${card(result, { head: html`<h2>${p.source}</h2>`, extra: "boards-result" })} ${pin} ${sources}`,
+      ${form} ${absent} ${card(result, { head: html`<h2>${p.source}</h2>`, extra: "boards-result" })} ${pin} ${sources}`,
   });
 }

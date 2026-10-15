@@ -1313,6 +1313,7 @@ export class AppsRuntime {
         noteReached(dataDir, record.repoId, host, port),
       // Asked at every start: an admin's flip reaches the next cell.
       egressMode: egressSetting(this.app.db),
+      label: `app:${record.slug}/${env}`,
     };
   }
 
@@ -1362,6 +1363,7 @@ export class AppsRuntime {
               terminal: true,
               onUndeclared: base.onUndeclared,
               egressMode: base.egressMode,
+              label: base.label,
             },
     };
   }

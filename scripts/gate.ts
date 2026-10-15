@@ -37,6 +37,7 @@ export const GATE: readonly string[] = [
   "test/boards-query.test.ts",
   "test/boards-page.test.ts",
   "test/boards-store.test.ts",
+  "test/boards-sampler.test.ts",
   "test/turnstile.test.ts",
   "test/variants-deck.test.ts",
   "test/variants-surfaces.test.ts",

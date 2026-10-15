@@ -80,6 +80,8 @@ export interface CellBase {
   readonly onUndeclared?: ((host: string, port: number) => void) | undefined;
   /** The egress mode, as the forge's setting says at this start. */
   readonly egressMode?: "enforce" | "report" | undefined;
+  /** Whose cell, for the machine sampler: `app:<slug>/<env>`. */
+  readonly label?: string | undefined;
 }
 
 export type StartStage = "install" | "test" | "start" | "ready";
@@ -318,6 +320,7 @@ function stepCell(input: StartInput): CellSpec | undefined {
     limits: resolveLimits("step", undefined),
     onUndeclared: base.onUndeclared,
     egressMode: base.egressMode,
+    label: base.label,
   };
 }
 
@@ -390,6 +393,7 @@ export async function startProcess(
             listen: port,
             onUndeclared: input.cell.onUndeclared,
             egressMode: input.cell.egressMode,
+            label: input.cell.label,
           },
           log,
         );
