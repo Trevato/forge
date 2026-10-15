@@ -156,6 +156,7 @@ export const GATE: readonly string[] = [
   "test/apps-identity.test.ts",
   "test/apps-new.test.ts",
   "test/apps-slow-test.test.ts",
+  "test/apps-tests-clause.test.ts",
   "test/apps-adversarial.test.ts",
   "test/apps-busy.test.ts",
   "test/apps-token.test.ts",

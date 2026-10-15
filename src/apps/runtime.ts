@@ -156,6 +156,11 @@ const BUSY_GRACE_MS = 45 * 60_000;
  * the studio reads the same constant to word its badge. */
 export const VERIFYING_NOTE = "serving — still verifying its tests";
 
+/** What a finished deploy's summary ends with: the studio words its green
+ * from these, so a pull says whether its tests ran (`words.ts`). */
+export const TESTS_PASSED_TAIL = " · its tests passed";
+export const NO_TESTS_TAIL = " · no tests declared, none run";
+
 export interface EnvStatus {
   readonly env: EnvName;
   readonly state: EnvState;
@@ -1112,7 +1117,7 @@ export class AppsRuntime {
     if (tested.ok) {
       const done = finishRun(this.app.db, run.id, {
         state: "ok",
-        summary: `running at ${url}`,
+        summary: `running at ${url}${live.manifest.test === null ? NO_TESTS_TAIL : TESTS_PASSED_TAIL}`,
       });
       write(`done: ${url}`);
       if (done && state.env === "production") await this.noteCarried(repo, done);

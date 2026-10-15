@@ -10,7 +10,12 @@
 
 import type { Database } from "bun:sqlite";
 import { ancestorsOf } from "../../git/merge.ts";
-import type { AppsRuntime, EnvStatus } from "../../apps/runtime.ts";
+import {
+  NO_TESTS_TAIL,
+  TESTS_PASSED_TAIL,
+  type AppsRuntime,
+  type EnvStatus,
+} from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { canEnterApp, getRepoById } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
@@ -151,11 +156,28 @@ function detailNote(detail: CheckDetail): string {
   return `${detail.passed} passed, ${detail.failed} failed: ${names}`;
 }
 
+/**
+ * What a green deploy says about its tests, from the summary the runtime
+ * wrote when it finished: the one clause every surface that draws a green
+ * change uses. Empty for a run that predates the clause.
+ */
+export function testsClause(run: Run | null): string {
+  const summary = run?.summary ?? "";
+  if (summary.endsWith(TESTS_PASSED_TAIL)) return "its tests passed";
+  if (summary.endsWith(NO_TESTS_TAIL)) return "it answered, no tests were run";
+  return "";
+}
+
 /** A single open pull's check, in the studio's own words — never dev's
  * "Checks passed/failed": the same five words as the rest of the page. */
 function checkRunWord(check: CheckSummary): { word: Word; note: string } {
-  if (check.state === "ok")
-    return { word: "look", note: "green — ready for a look" };
+  if (check.state === "ok") {
+    const clause = testsClause(check.run);
+    return {
+      word: "look",
+      note: `green — ${clause === "" ? "" : `${clause}, `}ready for a look`,
+    };
+  }
   if (check.state === "failed") {
     const base =
       check.run?.servingAt != null

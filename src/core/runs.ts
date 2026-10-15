@@ -252,6 +252,12 @@ export function markServing(db: Database, runId: string): Run | undefined {
  * Finish a run. Only a running run finishes; a cancelled one stays
  * cancelled however late its worker reports in. Returns the final row, or
  * undefined when nothing changed.
+ *
+ * A deploy's `summary` ends with `TESTS_PASSED_TAIL` or `NO_TESTS_TAIL`
+ * (`apps/runtime.ts`); `testsClause` (`web/studio/words.ts`) reads it back by
+ * suffix. That is a contract kept in free text, chosen over a new column to
+ * avoid a migration; both sides use the exported constants, never literals,
+ * and a run without either tail (older runs) simply says nothing.
  */
 export function finishRun(
   db: Database,

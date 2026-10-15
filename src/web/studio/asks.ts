@@ -42,6 +42,7 @@ import {
   activeRunFor,
   automaticRunsSince,
   latestRunsForIssues,
+  type Run,
 } from "../../core/runs.ts";
 import { getUserById, type User } from "../../core/users.ts";
 import {
@@ -62,6 +63,7 @@ import { btn, card, icon, row } from "../ui.ts";
 import { lookUrl } from "../../core/looks.ts";
 import { lookThumb, thumbLook } from "../pages/looks.ts";
 import { changeHref } from "./nouns.ts";
+import { testsClause } from "./words.ts";
 
 /** Repos narrowed to those with an app record, with the records — the one
  * join `appsOf` and `writableAppsOf` share. */
@@ -225,6 +227,8 @@ interface AskCandidate {
    * differently for a person's own change than for the crew's (below).
    * Absent for "paused", which names no author at all. */
   readonly authorIsAgent?: boolean;
+  /** For "look": the green check, whose summary says what its tests did. */
+  readonly check?: Run;
   /** For "review": why the agent's change waits for a person, and since when. */
   readonly reviewWait?: ReviewWait;
   /** For "stopped": how many automatic tries, and whether the decider itself stopped it. */
@@ -348,6 +352,7 @@ function askCandidatesFor(
         pull,
         who,
         authorIsAgent: issue.authorIsAgent,
+        check,
       });
     } else if (
       check?.state === "ok" &&
@@ -910,6 +915,7 @@ export function decisionsFor(
       };
     if (c.kind === "look" && c.pull) {
       const picture = pictureOf(c.repo, c.pull);
+      const clause = testsClause(c.check ?? null);
       // The crew's own words say who finished it; a person's own change
       // gets the wording that is true of it — nobody "finished" it for
       // them, it is simply green and waiting.
@@ -920,11 +926,11 @@ export function decisionsFor(
         pull: c.pull,
         who: c.who,
         says: c.authorIsAgent
-          ? `${c.who} finished "${c.pull.title}" and the check is green. Look at the preview, then ship it or say what is off.`
-          : `"${c.pull.title}" is green — ready for a look. Ship it, or say what is off.`,
+          ? `${c.who} finished "${c.pull.title}" and the check is green${clause === "" ? "" : ` (${clause})`}. Look at the preview, then ship it or say what is off.`
+          : `"${c.pull.title}" is green — ${clause === "" ? "" : `${clause}, `}ready for a look. Ship it, or say what is off.`,
         short: c.authorIsAgent
-          ? `${c.who} finished it; the check is green`
-          : `green — ready for a look`,
+          ? `${c.who} finished it; the check is green${clause === "" ? "" : ` (${clause})`}`
+          : `green — ${clause === "" ? "" : `${clause}, `}ready for a look`,
         ...(picture === undefined ? {} : { picture }),
       };
     }
