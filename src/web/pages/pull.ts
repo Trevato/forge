@@ -918,7 +918,7 @@ function mergeFailure(error: AccessError | MergePullError): string {
  * who can write this repository approves this head. Shown only while that
  * is the state of things.
  */
-function approveHereCard(
+export function approveHereCard(
   ctx: Ctx,
   repo: Repo,
   pull: Pull,

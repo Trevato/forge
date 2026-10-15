@@ -21,7 +21,7 @@ import { listRuns } from "../src/core/runs.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { serve, type Servers } from "../src/http/server.ts";
+import { forgeHttp, type ForgeHttp } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -29,7 +29,7 @@ quietLogs();
 describe("a local writer approval lets an origin fork's pull run", () => {
   let dataDir: string;
   let app: App;
-  let servers: Servers | undefined;
+  let http: ForgeHttp | undefined;
   let checks: ChecksHandle;
   let alice: User;
   let carol: User;
@@ -113,7 +113,7 @@ describe("a local writer approval lets an origin fork's pull run", () => {
 
   afterAll(async () => {
     await checks.stop();
-    servers?.stop();
+    http?.close();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
   });
@@ -160,19 +160,25 @@ describe("a local writer approval lets an origin fork's pull run", () => {
   }, 60_000);
 
   test("the pull page offers the control to a writer, and the API approves", async () => {
-    servers = await serve(app);
-    const url = servers.url;
+    http = forgeHttp(app);
+    const url = "http://forge.test";
     const cookie = `forge_session=${createSession(app.db, alice.id).token}`;
     const { pull, head } = await originPull();
     const page = () =>
-      fetch(`${url}/alice/lib/pulls/${pull.number}`, {
-        headers: { cookie },
-      }).then((r) => r.text());
+      http!
+        .handle(
+          new Request(`${url}/alice/lib/pulls/${pull.number}`, {
+            headers: { cookie },
+          }),
+        )
+        .then((r) => r.text());
     expect(await page()).toContain("approve-here");
     const token = createToken(app.db, alice.id, "t", "rw").token;
-    const res = await fetch(
-      `${url}/api/v1/repos/alice/lib/pulls/${pull.number}/approve-here`,
-      { method: "POST", headers: { authorization: `Bearer ${token}` } },
+    const res = await http.handle(
+      new Request(
+        `${url}/api/v1/repos/alice/lib/pulls/${pull.number}/approve-here`,
+        { method: "POST", headers: { authorization: `Bearer ${token}` } },
+      ),
     );
     expect(res.status).toBe(201);
     expect(pullMayRun(app.db, lib, pull, head)).toBe(true);
