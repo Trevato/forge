@@ -108,7 +108,10 @@ nothing else can.
 Configuration is environment variables, all with defaults: `FORGE_DATA`
 (`data/`; the forge refuses to boot when it is the checkout itself or a path
 inside it that git does not ignore), `PORT` (`3000`), `FORGE_SSH_PORT` (`2222`; `0` turns SSH off), and
-`FORGE_HOST` (`localhost`, the hostname in clone URLs). Connecting origins
+`FORGE_HOST` (`localhost`, the hostname in clone URLs). `FORGE_DRAIN_LINGER_S`
+(`10`, 0 to 120) is how long a forge sent SIGTERM keeps answering while
+routers learn it is going, so a roll refuses nobody (`docs/ops/ROLL.md`).
+Connecting origins
 adds `FORGE_URL` (the canonical public base URL, needed for OAuth callbacks),
 `FORGE_GITHUB_CLIENT_ID` / `FORGE_GITHUB_CLIENT_SECRET`, and
 `FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN). Behind a
@@ -225,6 +228,8 @@ header (`p` on a row in the terminal, `P` on a repo's home) says "keep this on
 my machine", and the dashboard grows an **On your machine** card listing them.
 The server remembers only the choice — nothing about the state of a laptop —
 and `forge sync` below is what acts on it.
+
+**Muting a repository from the home**: each ask row on the home carries a "Mute owner/name" chip. A muted repository's asks leave the home, `/api/v1/asks`, the header count and the phone's pushes (the same per-user mute the On you card uses, no new table); the home says "N muted repositories still ask" with a "Listen again" button, and an app's own page still counts them.
 
 **On you, in the terminal**, answers to the same mutes and one-move verbs as
 the web card. Repositories you muted are hidden and counted ("2 repositories
@@ -463,6 +468,11 @@ huge one); restore unpacks them. While one runs, progress shows on
 **Settings → Backups** and as a line in the log every 500 objects or minute.
 The terminal has no backups view, so it has no readout.
 
+**Run a drill** on the same page (admins only) restores the newest snapshot
+into scratch, opens it, counts what is there and unseals a value; the page
+waits for it, up to 10 minutes, and the last drill shows there as one line.
+Only one runs at a time. See `docs/SNAPSHOT.md`.
+
 `docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.
@@ -524,6 +534,13 @@ any app: the home composer opens with it as a draft, and it is only sent when
 you tap Post. Signed out, you sign in (or up) first and land on the same
 draft. The share target is the web manifest's `share_target`, which only an
 **installed PWA on Android and Chrome** offers; iOS Safari does not.
+
+## Link-preview cards
+
+`/og/repo/owner~name.svg`, `/og/app/slug.svg`, `/og/issue/owner~name~N.svg`,
+`/og/pull/owner~name~N.svg` and `/og/run/owner~name~runid.svg` are 1200×630
+social cards. They show only what an anonymous reader can open; anything
+private, sealed or unknown is the same 404.
 
 ## Develop
 

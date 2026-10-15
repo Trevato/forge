@@ -2,7 +2,8 @@
  * The restore drill: a backup nobody has restored is a hope. `runDrill`
  * takes the newest snapshot, restores it into a fresh directory, opens the
  * database read-only, counts what is in it, opens one sealed value with the
- * restored key, and removes the directory whatever happened.
+ * restored key, boots the restored directory on a side port and reads
+ * `/api/v1/health`, and removes the directory whatever happened.
  *
  * Plain data out: when it ran, which snapshot, how long, what it counted,
  * and a verdict. A red verdict names the step that failed; a step that
@@ -11,6 +12,7 @@
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { bootRestored } from "./boot.ts";
 import { forgetKey, open } from "../kernel/secret.ts";
 import { restoreSnapshot } from "./restore.ts";
 import { listSnapshots } from "./snapshot.ts";
@@ -18,7 +20,7 @@ import type { Store } from "./store.ts";
 
 export const DRILL_TIMEOUT_MS = 10 * 60_000;
 
-export type DrillStep = "fetch" | "restore" | "open" | "count" | "unseal";
+export type DrillStep = "fetch" | "restore" | "open" | "count" | "unseal" | "health";
 
 export interface DrillDeps {
   readonly store: Store;
@@ -29,6 +31,8 @@ export interface DrillDeps {
   readonly now?: (() => Date) | undefined;
   /** Test seam: the restore itself. */
   readonly restore?: typeof restoreSnapshot | undefined;
+  /** Test seam: boot a data directory on a side port and say whether it is healthy. */
+  readonly boot?: typeof bootRestored | undefined;
 }
 
 export interface DrillResult {
@@ -36,6 +40,8 @@ export interface DrillResult {
   readonly snapshotId: string | null;
   readonly ms: number;
   readonly counts: { readonly repositories: number; readonly issues: number };
+  /** The side-booted forge's word; "unreached" when an earlier step failed. */
+  readonly health: "ok" | "failed" | "unreached";
   readonly verdict: "green" | "red";
   readonly failedStep: DrillStep | null;
   /** Why it is red, for the person reading; never a value. */
@@ -63,6 +69,7 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
   let step: DrillStep = "fetch";
   let scratch: string | undefined;
   let reason: string | null = null;
+  let health: DrillResult["health"] = "unreached";
   try {
     // One clock for the whole drill, so a hang in any step ends it red.
     const deadline = started + timeoutMs;
@@ -122,6 +129,14 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
     } finally {
       db.close();
     }
+
+    step = "health";
+    const booted = await within(
+      (deps.boot ?? bootRestored)(target, left()),
+      left(),
+    );
+    health = booted.ok ? "ok" : "failed";
+    if (!booted.ok) throw new Error(booted.reason);
   } catch (error) {
     reason =
       error instanceof StepTimeout
@@ -144,6 +159,7 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
       snapshotId,
       ms: Math.round(performance.now() - started),
       counts,
+      health,
       verdict: failedStep === null ? "green" : "red",
       failedStep,
       reason,

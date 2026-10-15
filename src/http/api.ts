@@ -111,6 +111,7 @@ import { lookUrl } from "../core/looks.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
+import { THOUGHT_MAX, keepThought } from "../actions/thought.ts";
 import { search } from "../actions/search.ts";
 import {
   commitToBranch,
@@ -2595,6 +2596,20 @@ export function apiRoutes(router: Router<Handler>): void {
       return data === undefined ? notFound() : json(data);
     },
   );
+  // Keep a thought exactly as typed (#1658): append-only, never edited.
+  router.add("POST", "/api/v1/thoughts", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const kept = keepThought(ctx.app, ctx.auth.user, input.text, "api");
+    if (kept.ok) return json({ id: kept.value.id }, 201);
+    if (kept.error === "unauthorized") return unauthorized();
+    return apiError(
+      "invalid",
+      422,
+      `send {"text": "…"} as a string of at most ${THOUGHT_MAX.toLocaleString("en-US")} characters`,
+    );
+  });
   // Watch a milestone, or stop (#732): the caller's own watch, so a write
   // token and nothing more. The read above says `watching`.
   for (const method of ["PUT", "DELETE"] as const)

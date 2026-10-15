@@ -14,7 +14,7 @@ import { THEMES } from "../../design/themes.ts";
 export const CARD_WIDTH = 1200;
 export const CARD_HEIGHT = 630;
 
-export const CARD_KINDS = ["repo", "issue", "pull", "app", "page"] as const;
+export const CARD_KINDS = ["repo", "issue", "pull", "run", "app", "page"] as const;
 export type CardKind = (typeof CARD_KINDS)[number];
 
 export interface CardInput {
@@ -41,6 +41,7 @@ const KIND_COLOR: Record<CardKind, string> = {
   repo: T.accent,
   issue: T.success,
   pull: T.merged,
+  run: T.primary,
   app: T.attn,
   page: T.primary,
 };

@@ -46,10 +46,23 @@ import {
 } from "../ui.ts";
 import { changesHref, tellsHref } from "./nouns.ts";
 import { nowCard, nowRegion } from "./now.ts";
+import { repoAsks } from "./asks.ts";
 import { appPanels } from "./previews.ts";
 import { noCrewLine, servingHistory, type WordCtx } from "./words.ts";
 import { crewKeyNote } from "./crew.ts";
 import { noteAppOpened } from "../../core/next-steps.ts";
+
+/**
+ * What asks the viewer in this repository, muted or not: a mute quiets the
+ * home, the inbox and the phone, never the repository's own page.
+ */
+function askingLine(ctx: Ctx, repo: Repo): Html | null {
+  const { count, muted } = repoAsks(ctx.app.db, ctx.auth.user, repo);
+  if (count === 0) return null;
+  return html`<p class="small muted" id="repo-asks">
+    ${count} ${count === 1 ? "thing asks" : "things ask"} you here${muted ? " (muted from your home)" : ""}.
+  </p>`;
+}
 
 /**
  * The week's decisions in one line: how many, how many the decider took
@@ -446,6 +459,7 @@ export async function studioApp(
     })}
     ${following === undefined ? "" : followingCard(ctx, repo, following)}
     <div id="app-head">${head}</div>
+    ${askingLine(ctx, repo)}
     ${await policyLine(ctx, repo, record)}
     ${ownerFacts ? crewKeyNote(ctx) : null}
     ${ownerFacts

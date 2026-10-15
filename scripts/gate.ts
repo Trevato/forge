@@ -27,12 +27,14 @@ export type Exclusion = {
 export const GATE: readonly string[] = [
   "test/accounts-retire.test.ts",
   "test/accounts.test.ts",
+  "test/asks-mute.test.ts",
   "test/agents.test.ts",
   "test/app-domains.test.ts",
   "test/app.test.ts",
   "test/apps-idle.test.ts",
   "test/body-limits.test.ts",
   "test/boards-query.test.ts",
+  "test/thoughts.test.ts",
   "test/webauthn.test.ts",
   "test/chaos.test.ts",
   "test/flow-stage.test.ts",
@@ -138,6 +140,8 @@ export const GATE: readonly string[] = [
   "test/helpers.test.ts",
   "test/shards.test.ts",
   "test/snapshot-drill.test.ts",
+  "test/drill-verdict.test.ts",
+  "test/snapshot-drill-page.test.ts",
   "test/snapshot-store.test.ts",
   "test/migrate.test.ts",
   "test/schema-additive.test.ts",
@@ -275,6 +279,7 @@ export const GATE: readonly string[] = [
   "test/web-code.test.ts",
   "test/web-origins.test.ts",
   "test/roll.test.ts",
+  "test/rehearsal.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [

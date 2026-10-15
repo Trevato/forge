@@ -98,6 +98,7 @@ import { secretDelete, secretSet, secretsPage } from "../web/pages/secrets.ts";
 import {
   backupsClear,
   backupsDestination,
+  backupsDrill,
   backupsNow,
   backupsPage,
   backupsTest,
@@ -196,6 +197,7 @@ import {
   asksDecide,
   asksDecideUndo,
   asksListen,
+  asksMute,
   asksPage,
 } from "../web/studio/asks_page.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
@@ -584,6 +586,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/asks/bulk", asksBulkSubmit);
   router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
   router.add("POST", "/asks/listen", asksListen);
+  router.add("POST", "/asks/mute", asksMute);
   router.add("POST", "/asks/decide", asksDecide);
   router.add("POST", "/asks/decide/:id/undo", asksDecideUndo);
   // What people asked of the crew, and what became of it (core/asked.ts).
@@ -678,6 +681,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/admin/limits", limitsSet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
+  router.add("POST", "/settings/backups/drill", backupsDrill);
   router.add("POST", "/settings/backups/destination", backupsDestination);
   router.add("POST", "/settings/backups/test", backupsTest);
   router.add("POST", "/settings/backups/clear", backupsClear);
@@ -1004,6 +1008,9 @@ export function buildRouter(): Router<Handler> {
   // The public social cards: a repo as owner~name, an app as its slug.
   router.add("GET", "/og/repo/:ref.svg", ogCard("repo"));
   router.add("GET", "/og/app/:ref.svg", ogCard("app"));
+  router.add("GET", "/og/issue/:ref.svg", ogCard("issue"));
+  router.add("GET", "/og/pull/:ref.svg", ogCard("pull"));
+  router.add("GET", "/og/run/:ref.svg", ogCard("run"));
   // The pictures of an environment, read like the repository.
   router.add("GET", "/:owner/:name/looks/:env/:commit/:kind.png", lookImage);
 

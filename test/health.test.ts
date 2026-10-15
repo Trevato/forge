@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import {
+  DRAIN_LINGER_DEFAULT_S,
+  DRAIN_LINGER_MAX_S,
+  drainLingerMs,
   health,
   liveResponse,
   readyResponse,
@@ -129,5 +132,24 @@ describe("the served paths", () => {
     const head = await fetch(`${servers.url}/readyz`, { method: "HEAD" });
     expect(head.status).toBe(200);
     expect(await head.text()).toBe("");
+  });
+});
+
+describe("the drain linger: FORGE_DRAIN_LINGER_S", () => {
+  test("unset or blank is the default, longer than the chart's 5 s readiness period", () => {
+    expect(drainLingerMs(undefined)).toBe(DRAIN_LINGER_DEFAULT_S * 1000);
+    expect(drainLingerMs("  ")).toBe(DRAIN_LINGER_DEFAULT_S * 1000);
+    expect(DRAIN_LINGER_DEFAULT_S).toBeGreaterThan(5);
+  });
+
+  test("whole seconds from 0 to the most are milliseconds", () => {
+    expect(drainLingerMs("0")).toBe(0);
+    expect(drainLingerMs(" 30 ")).toBe(30_000);
+    expect(drainLingerMs(String(DRAIN_LINGER_MAX_S))).toBe(DRAIN_LINGER_MAX_S * 1000);
+  });
+
+  test("anything else is refused, never guessed", () => {
+    for (const bad of ["-1", "1.5", "10s", "1e3", "abc", String(DRAIN_LINGER_MAX_S + 1), "0x10"])
+      expect(drainLingerMs(bad)).toBeNull();
   });
 });

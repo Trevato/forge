@@ -70,6 +70,20 @@ Delete the old ones from the bucket if the bucket is not trusted.
 The store is `Bun.S3Client` or a directory behind one small interface
 (`src/snapshot/store.ts`): put, get, list, delete. Nothing else.
 
+## The restore drill
+
+A backup nobody has restored is a hope. **Settings → Backups → Run a drill**
+(admins only; anyone else gets 403) restores the newest snapshot into a
+scratch directory under the data directory, opens the database read-only,
+counts repositories and issues, opens one sealed value with the restored key,
+and removes the scratch whatever happened. The page waits until it finishes,
+for up to 10 minutes; a step that hangs past that is red and names the step.
+One drill runs at a time: a second click, or a retry after a proxy timeout,
+joins the drill already running rather than starting another restore. Every
+run is a row in the `drill` table, and the last one shows as a line on the
+Backups page: when, which snapshot, how long, the counts, and green or the
+step that failed.
+
 ## Restore
 
 The printable card, seven lines, is [RESTORE.md](RESTORE.md); a test runs it.
