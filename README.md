@@ -261,6 +261,12 @@ file), and if you named an agent, the sentence became issue #1, assigned.
   redeployed on each push and gone when the pull closes. Its data starts as
   a copy of production's — copy-on-write where the filesystem can — and
   never writes back. Merging moves code and touches no data.
+- **A run has a budget** (`src/kernel/budgets.ts`): a check past `gate`
+  (60 min) or a reviewer's run past `review` (10 min) is killed with
+  `budget: <what> took <n> min, limit <m>`, queued again once, and failed
+  the second time, which the vitals carry as a need for a day. `gate` is 60
+  min because this repository's own gate takes 18–25 min alone and 45 beside
+  another check; it comes down when the gate does.
 - **Every deploy is a run**, and the run is the check on the pull. Turn on
   **require checks** and a pull cannot merge until its head is green.
 - A **private** app answers only to someone the forge has vouched for
@@ -329,6 +335,13 @@ open with a note naming the commits, the asked list and the issue page say
 or `x` on the issue in the terminal); the close writes "Closed: already done
 on main in …" on the thread. A claim with no commit, or with one that is not
 on the base, is an ordinary decline and is parked as one.
+
+An autonomous app's planner is **held** while nothing is landing or the plate
+is full: no pull has merged in 48 h while one was closed unmerged, or more than
+`slots × 3` ready, unassigned issues are waiting. The tick log says which
+(`planner: held`), and the board and the terminal's repository list say it in
+words. A comment on the direction issue from someone who may write there lifts
+the hold; an issue handed to the planner is still owed its pass.
 
 The forge asks the host for one more binary: `claude`, on `PATH` or at
 `FORGE_CLAUDE`, authenticated as the operator (an `ANTHROPIC_API_KEY` in the

@@ -160,6 +160,7 @@ import {
   listPulls,
   pullDiff,
   pullDir,
+  pullMergeStates,
   type Pull,
 } from "../core/pulls.ts";
 import {
@@ -2713,17 +2714,23 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // ── pull requests — so automation drives the review/merge loop ───────
 
-  router.add("GET", "/api/v1/repos/:owner/:name/pulls", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/pulls", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = withLabelsMany(
-      ctx,
-      listPulls(ctx.app.db, repo.id, {
-        ...query,
-        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-      }),
+    const pulls = listPulls(ctx.app.db, repo.id, {
+      ...query,
+      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+    });
+    const states = await pullMergeStates(
+      await Promise.all(
+        pulls.map(async (p) => ({ dir: await pullDirOf(ctx, repo, p), pull: p })),
+      ),
     );
+    const items = withLabelsMany(ctx, pulls).map((item, i) => ({
+      ...item,
+      ...(states[i] ?? {}),
+    }));
     return json(paged(items, query.limit, (p) => p.number));
   });
 
@@ -2785,6 +2792,9 @@ export function apiRoutes(router: Router<Handler>): void {
     const hold = getHold(ctx.app.db, found.pull.id);
     return json({
       ...withLabels(ctx, found.pull),
+      ...(found.pull.state === "open" && found.pull.mergedAt === null
+        ? { mergeable: status.mergeable, conflicts: status.conflicts }
+        : {}),
       status,
       diff,
       hold: hold === undefined ? null : holdJson(hold),

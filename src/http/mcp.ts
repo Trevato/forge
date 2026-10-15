@@ -59,7 +59,7 @@ import { getIssue, getIssueById, listOpenAgentPullsVisibleTo } from "../core/iss
 import { waitsForPerson } from "../crew/review.ts";
 import { attachLook } from "../actions/attach_look.ts";
 import { lookUrl } from "../core/looks.ts";
-import { getPull } from "../core/pulls.ts";
+import { getPull, pullDir, pullMergeState } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
@@ -370,6 +370,43 @@ const TOOLS: readonly Tool[] = [
       return said.ok
         ? good({ says: `Said on #${issue.number}.` })
         : bad("refused", "that could not be said here");
+    },
+  },
+  {
+    name: "pull",
+    description:
+      "Read a pull: its title, state and head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`). The same two fields as GET /api/v1/repos/:owner/:name/pulls/:number.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "integer", minimum: 1 },
+      },
+      required: ["repo", "number"],
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const n = args["number"];
+      const pull =
+        typeof n === "number" && Number.isInteger(n) && n > 0
+          ? getPull(ctx.app.db, repo.id, n)
+          : undefined;
+      if (pull === undefined || !mayView(ctx.app.db, repo, pull, user))
+        return bad("no_such_pull", `no pull #${String(n)}`);
+      const state = await pullMergeState(
+        await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull),
+        pull,
+      );
+      return good({
+        number: pull.number,
+        title: pull.title,
+        state: pull.mergedAt !== null ? "merged" : pull.state,
+        base: pull.baseBranch,
+        head: pull.headBranch,
+        ...(state ?? {}),
+      });
     },
   },
   {

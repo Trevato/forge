@@ -206,6 +206,7 @@ if grep -q DONE-ON-MAIN "${promptFile}"; then
   exit 0
 fi
 if grep -q "You are the reviewer on this crew" "${promptFile}"; then
+  if grep -q SLOW-REVIEW "${promptFile}"; then exec sleep 60; fi
   path=$(grep -o 'api/v1/repos/[^"\\]*/review-states' "${promptFile}" | head -1)
   curl -sS -X POST -H "authorization: Bearer $FORGE_TOKEN" -H "content-type: application/json" "\${FORGE_URL%/}/$path" -d '{"state":"changes_requested","body":"Name the fence."}' > "${dataDir}/review.out"
   echo '{"type":"result","subtype":"success","is_error":false,"result":"Reviewed.","total_cost_usd":0.004,"num_turns":1,"session_id":"fake-3","terminal_reason":"completed"}'
@@ -230,6 +231,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       concurrency: 1,
       budgetUsd: 1,
       runTimeoutMs: 60_000,
+      reviewBudgetMs: 4_000,
     });
     const a = await createUser(app.db, {
       trusted: true,
@@ -782,4 +784,41 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(readFileSync(argsFile, "utf8")).not.toContain("--resume");
     expect(listReviews(app.db, issue.id)).toHaveLength(1);
   }, 60_000);
+
+  test("a review run past its budget is queued again once; the second overrun fails it", async () => {
+    const made = await createAgent(app, alice, { username: "slowrev" });
+    if (!made.ok) throw new Error(String(made.error));
+    expect(addToCrew(app, alice, repo, "slowrev").ok).toBe(true);
+    setCrewRole(app.db, repo.id, made.value.user.id, "reviewer");
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: "slow-fence",
+      base: "main",
+      message: "A slow fence",
+      files: [{ path: "SLOW.md", content: "slow\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "SLOW-REVIEW fence",
+      baseBranch: "main",
+      headBranch: "slow-fence",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const issue = getIssue(app.db, repo.id, opened.value.number)!;
+    expect(queueAgentRun(app, repo, issue, made.value, "review")).toBeDefined();
+
+    const failed = await settled(
+      (r) =>
+        r.reason === "review" && r.issueId === issue.id && r.state === "failed",
+    );
+    expect(failed.summary).toMatch(
+      /^budget: a review run took \d+ min, limit \d+$/,
+    );
+    const reviews = listRuns(app.db, repo.id, { kind: "agent" }).filter(
+      (r) => r.reason === "review" && r.issueId === issue.id,
+    );
+    expect(reviews).toHaveLength(2);
+    expect(reviews.find((r) => r.state === "cancelled")?.summary).toMatch(
+      /^budget: a review run/,
+    );
+  }, 90_000);
 });
