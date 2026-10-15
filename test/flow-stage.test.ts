@@ -304,6 +304,17 @@ describe("readFlow over real records", () => {
         .run(issue.value.id, mergedAt);
       const flow = () => readFlow(app.db, repo, { now: new Date(), scope: { sealed: true } });
       expect(flow().live).toEqual([]);
+      const landing = flow().open.find((s) => s.number === issue.value.number);
+      expect(landing).toMatchObject({ stage: "land", unblock: "wait for the production deploy" });
+
+      const failed = createRun(app.db, { repoId: repo.id, kind: "deploy", env: "production" });
+      claimRun(app.db, failed.id);
+      finishRun(app.db, failed.id, { state: "failed", summary: "" });
+      expect(flow().open.find((s) => s.number === issue.value.number)).toMatchObject({
+        stage: "land",
+        unblock: "redeploy production",
+      });
+      expect(flow().live).toEqual([]);
 
       const deploy = createRun(app.db, { repoId: repo.id, kind: "deploy", env: "production" });
       claimRun(app.db, deploy.id);
@@ -311,6 +322,7 @@ describe("readFlow over real records", () => {
       const live = flow().live;
       expect(live).toHaveLength(1);
       expect(live[0]).toMatchObject({ number: issue.value.number, stage: "live", pull: pr.number });
+      expect(flow().open.find((s) => s.number === issue.value.number)).toBeUndefined();
     } finally {
       app.close();
       await rm(dir, { recursive: true, force: true });

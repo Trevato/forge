@@ -29,6 +29,7 @@ export interface FlowOptions {
 }
 
 export interface Flow {
+  /** Every open issue, and merged ones production has not yet served (`land`). */
   readonly open: FlowStage[];
   /** Went live in the last 24 hours, newest first. */
   readonly live: (FlowStage & { liveAt: string })[];
@@ -196,6 +197,8 @@ export function readFlow(
   for (const issue of candidates.values()) {
     if (issue.state !== "closed") continue;
     const stage = flowStage(build(issue), now);
+    // Merged and closed, not yet served by production: still in the flow.
+    if (stage.stage === "land") out.open.push(stage);
     const liveAt = stage.stage === "live" ? stage.since : null;
     if (liveAt !== null && liveAt >= cutoff) out.live.push({ ...stage, liveAt });
   }
