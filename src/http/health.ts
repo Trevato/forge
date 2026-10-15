@@ -52,6 +52,31 @@ export function liveResponse(ping: () => unknown, log: Log): Response {
   return new Response("ok", { status: 200 });
 }
 
+/**
+ * How long a draining forge keeps its listener open after SIGTERM, however
+ * little it holds (#873). The platform takes the old process out of rotation
+ * at the same time it signals it, but routers hear of that a beat later: a
+ * readiness period (5 s in the chart), plus however long the ingress takes
+ * to reload. A forge that exits in milliseconds refuses whatever arrives in
+ * that beat, and the ingress turns each refusal into a 502. Ten seconds
+ * covers the beat; the chart's grace period (300 s) covers the linger.
+ */
+export const DRAIN_LINGER_DEFAULT_S = 10;
+export const DRAIN_LINGER_MAX_S = 120;
+
+/**
+ * `FORGE_DRAIN_LINGER_S` as milliseconds: whole seconds, 0 to
+ * {@link DRAIN_LINGER_MAX_S}. Unset is the default; anything else that is
+ * not such a number is null, so the boot says so instead of guessing.
+ */
+export function drainLingerMs(raw: string | undefined): number | null {
+  const text = (raw ?? "").trim();
+  if (text === "") return DRAIN_LINGER_DEFAULT_S * 1000;
+  if (!/^\d{1,3}$/.test(text)) return null;
+  const seconds = Number(text);
+  return seconds <= DRAIN_LINGER_MAX_S ? seconds * 1000 : null;
+}
+
 /** Readiness: 200 while the forge takes new work, 503 once it drains. */
 export function readyResponse(): Response {
   return health.draining
