@@ -391,10 +391,6 @@ function reportInstead(ctx: Ctx, repo: Repo): Response {
 }
 
 /** What a refused report is told: the shape that would have been taken. */
-/** A drill's observations: each of health and the board, and the whole body. */
-const DRILL_SEEN_MAX = 8_000;
-const DRILL_BODY_MAX = 32_000;
-
 const REPORT_HINT = `send JSON {title, body?, page?}: plain text, a title of 1-${TITLE_MAX} characters, a body of at most ${BODY_MAX}, page an http(s) address`;
 
 // ---- shapes ----
@@ -1294,6 +1290,9 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // A domain drill and its verdict (`kernel/domain_drill.ts`): an admin
   // person's, kept whether green or red.
+  /** A drill's observations: each of health and the board, and the whole body. */
+  const DRILL_SEEN_MAX = 8_000;
+  const DRILL_BODY_MAX = 32_000;
   router.add("POST", "/api/v1/drills", async (ctx) => {
     const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
     if (denied) return denied;
@@ -1311,7 +1310,7 @@ export function apiRoutes(router: Router<Handler>): void {
     )
       return apiError("invalid_seen", 422, `seen needs health and board as text of at most ${DRILL_SEEN_MAX} characters each`);
     if (typeof back !== "number" || !Number.isInteger(back) || back < 0 || back > 31_536_000)
-      return apiError("invalid_back", 422, "backSeconds must be a whole number of seconds, 0 or more");
+      return apiError("invalid_back", 422, "backSeconds must be a whole number of seconds, 0 to 31536000");
     const observed = { health, board };
     const verdict = drillVerdict(domain, observed, back);
     return json(recordDrill(ctx.app.db, ctx.auth.user!.id, domain.key, observed, back, verdict), 201);
