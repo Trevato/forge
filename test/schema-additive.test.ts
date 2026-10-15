@@ -6,7 +6,11 @@
  */
 import { describe, expect, test } from "bun:test";
 import releases from "../src/core/releases.json" with { type: "json" };
-import { migrations } from "../src/core/schema.ts";
+import {
+  migrationFiles,
+  migrations,
+  NUMBERED,
+} from "../src/core/schema.ts";
 import { notAdditive } from "../src/kernel/migrate.ts";
 
 describe("migrations are additive across a roll", () => {
@@ -59,21 +63,63 @@ describe("migrations are additive across a roll", () => {
       expect(notAdditive(sql)).toEqual([]);
   });
 
-  test("every migration newer than the releases still in play is additive", () => {
-    const counts = releases.releases.slice(0, 2).map((r) => r.migrations);
-    expect(counts.length).toBeGreaterThan(0);
-    const floor = Math.min(...counts);
-    expect(floor).toBeLessThanOrEqual(migrations.length);
-    const offenders = migrations
-      .map((sql, i) => ({ n: i + 1, problems: notAdditive(sql) }))
-      .slice(floor)
+  test("every migration not in both releases still in play is additive", () => {
+    const inPlay = record.releases.slice(0, 2).map(shipped);
+    expect(inPlay.length).toBeGreaterThan(0);
+    const offenders = migrationFiles
+      .filter((m) => inPlay.some((ids) => !ids.has(m.name)))
+      .map((m) => ({ name: m.name, problems: notAdditive(m.sql) }))
       .filter((m) => m.problems.length > 0);
     expect(offenders).toEqual([]);
   });
 
   test("the release record is newest first and never ahead of the schema", () => {
-    const counts = releases.releases.map((r) => r.migrations);
+    const counts = record.releases.map((r) => r.migrations);
     expect([...counts].sort((a, b) => b - a)).toEqual(counts);
-    for (const c of counts) expect(c).toBeLessThanOrEqual(migrations.length);
+    const names = new Set(migrationFiles.map((m) => m.name));
+    for (const r of record.releases) {
+      expect(r.migrations).toBeLessThanOrEqual(migrations.length);
+      if (r.ids === undefined) {
+        expect(r.migrations).toBeLessThanOrEqual(NUMBERED);
+        continue;
+      }
+      // The count is the ids applied: every numbered one and the stamped
+      // ones it names, each a file this schema has.
+      expect(r.migrations).toBe(NUMBERED + r.ids.length);
+      for (const id of r.ids) {
+        expect(id).not.toMatch(/^\d{4}-/);
+        expect(names.has(id)).toBe(true);
+      }
+    }
+  });
+
+  test("which migrations a release shipped is read by id, not by position", () => {
+    // A stamped migration written before another but landing after it
+    // sorts first; the release that shipped only the later one still names
+    // exactly that one, so the earlier one is the one held to additive.
+    const numbered = migrationFiles.slice(0, NUMBERED).map((m) => m.name);
+    const ids = shipped({ migrations: NUMBERED + 1, ids: ["20261016000000-b"] });
+    expect(ids.size).toBe(NUMBERED + 1);
+    for (const name of numbered) expect(ids.has(name)).toBe(true);
+    expect(ids.has("20261016000000-b")).toBe(true);
+    expect(ids.has("20261015000000-a")).toBe(false);
+    expect(shipped({ migrations: 2 })).toEqual(new Set(numbered.slice(0, 2)));
   });
 });
+
+interface Release {
+  readonly migrations: number;
+  readonly ids?: readonly string[];
+}
+
+const record: { readonly releases: readonly Release[] } = releases;
+
+/** The migration ids a release applied, by name. */
+function shipped(release: Release): Set<string> {
+  return new Set([
+    ...migrationFiles
+      .slice(0, Math.min(release.migrations, NUMBERED))
+      .map((m) => m.name),
+    ...(release.ids ?? []),
+  ]);
+}
