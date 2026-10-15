@@ -14,6 +14,7 @@ import { page } from "../layout.ts";
 import { reissueDoor } from "../../spawn/door.ts";
 import { readForm } from "../form.ts";
 import { btn, card, empty, time } from "../ui.ts";
+import { noRoom } from "../../spawn/door.ts";
 import { claimLinkBody } from "./new-forge.ts";
 
 const STATE: Record<"yes" | "no" | "unknown" | "making", string> = {
@@ -67,11 +68,12 @@ export async function forgesPage(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (!user?.isAdmin) return notFoundPage(ctx);
   const rows = await clientRows(ctx.app);
-  const action = btn("New forge", {
-    href: "/forges/new",
-    variant: "primary",
-    size: "sm",
-  });
+  const full = noRoom(ctx.app);
+  const action =
+    full === undefined
+      ? btn("New forge", { href: "/forges/new", variant: "primary", size: "sm" })
+      : html`<button type="button" class="btn" data-variant="primary" data-size="sm" disabled title="${full}">New forge</button>
+          <p class="muted small" role="status">${full}</p>`;
   return page({
     ctx,
     title: "Forges you sent",

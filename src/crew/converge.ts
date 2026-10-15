@@ -24,12 +24,21 @@ import {
   takeUpdates,
   type ForkRelation,
 } from "../core/following.ts";
-import { listIssues, setAssignee, type Issue } from "../core/issues.ts";
+import {
+  addComment as insertComment,
+  listIssues,
+  setAssignee,
+  setIssueState,
+  type Issue,
+} from "../core/issues.ts";
 import { closesFromBody, listPulls, type Pull } from "../core/pulls.ts";
-import { getRepoById, type Repo } from "../core/repos.ts";
-import { activeRunFor, listRuns } from "../core/runs.ts";
+import { getRepoById, listAllForks, type Repo } from "../core/repos.ts";
+import { activeRunFor, cancelRun, listRuns } from "../core/runs.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, type User } from "../core/users.ts";
+import { runGit } from "../git/env.ts";
+import { isSafeOid } from "../git/guard.ts";
+import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { parkedCount } from "./autonomy.ts";
 import { PARK_STRIKES } from "./parks.ts";
@@ -245,4 +254,115 @@ async function diverged(app: App, fork: Repo, parent: Repo): Promise<void> {
       fork: `${fork.ownerName}/${fork.name}`,
       why: outcome.kind,
     });
+}
+
+/**
+ * Close a fork's converge issue once the parent's tip is inside the fork's
+ * default branch: the work it asked for is done, whoever did it. A queued
+ * run for it is cancelled; one already running finishes on its own and
+ * finds the issue closed. The comment names both commits. Returns whether
+ * an issue was closed.
+ */
+export async function settleConverge(
+  app: App,
+  fork: Repo,
+  parent: Repo,
+): Promise<boolean> {
+  const issue = convergeIssue(app, fork, parent);
+  if (issue === undefined) return false;
+  const relation = await forkRelation(app, fork, parent);
+  if (relation === undefined) return false;
+  if (relation.state !== "synced" && relation.state !== "ahead") return false;
+  if (relation.parentTip === "") return false;
+  const holder =
+    relation.state === "synced"
+      ? relation.forkTip
+      : await holdingCommit(app, fork, relation);
+  const parentName = `${parent.ownerName}/${parent.name}`;
+  const body = `${parentName}'s \`${parent.defaultBranch}\` at ${relation.parentTip.slice(0, 7)} is already in \`${fork.defaultBranch}\`, held by ${holder.slice(0, 7)}. Nothing is left to take, so this is closed and no run is needed.`;
+  for (const run of listRuns(app.db, fork.id, { kind: "agent", limit: 50 }))
+    if (run.issueId === issue.id && run.state === "queued")
+      cancelRun(app.db, run.id, "parent's tip already in the fork");
+  const closed = setIssueState(app.db, issue.id, "closed", "done");
+  if (closed === undefined) return false;
+  const said = insertComment(app.db, {
+    issueId: issue.id,
+    authorId: issue.authorId,
+    body,
+  });
+  app.bus.append({
+    kind: "issue.closed",
+    repoId: fork.id,
+    payload: { number: issue.number, reason: "done" },
+  });
+  if (said.ok)
+    app.bus.append({
+      kind: "issue.commented",
+      repoId: fork.id,
+      payload: { number: issue.number, body, commentId: said.value.id },
+    });
+  log.info("converge already done", {
+    fork: `${fork.ownerName}/${fork.name}`,
+    issue: issue.number,
+    parentTip: relation.parentTip.slice(0, 7),
+  });
+  return true;
+}
+
+/** The oldest commit on the fork's default branch that has the parent's tip behind it. */
+async function holdingCommit(
+  app: App,
+  fork: Repo,
+  relation: ForkRelation,
+): Promise<string> {
+  if (!isSafeOid(relation.parentTip) || !isSafeOid(relation.forkTip))
+    return relation.forkTip;
+  const dir = repoDir(app.reposRoot, fork.ownerName, fork.name);
+  const walked = await runGit(
+    ["rev-list", "--ancestry-path", "--reverse", `${relation.parentTip}..${relation.forkTip}`],
+    { cwd: dir },
+  );
+  const first = walked.ok ? walked.value.split("\n").find(Boolean) : undefined;
+  return first ?? relation.forkTip;
+}
+
+/**
+ * Settle every fork's converge issue: on a push or landed pull on the
+ * fork's default branch, and (see `settleAll`) on the tick. Returns the
+ * unsubscribe.
+ */
+export function settleOnPush(app: App): () => void {
+  return app.bus.subscribe((event) => {
+    if (event.repoId === null) return;
+    if (event.kind !== "push" && event.kind !== "pull.merged") return;
+    const fork = getRepoById(app.db, event.repoId);
+    if (fork === undefined || fork.forkParentId === null) return;
+    const parent = getRepoById(app.db, fork.forkParentId);
+    if (parent === undefined) return;
+    settleConverge(app, fork, parent).catch((error) =>
+      log.error("could not settle a converge issue", {
+        fork: `${fork.ownerName}/${fork.name}`,
+        error: String(error),
+      }),
+    );
+  });
+}
+
+/** The tick's pass: every fork with a converge issue still open. */
+export async function settleAll(app: App): Promise<number> {
+  let closed = 0;
+  for (const fork of listAllForks(app.db)) {
+    const parent =
+      fork.forkParentId === null ? undefined : getRepoById(app.db, fork.forkParentId);
+    if (parent === undefined) continue;
+    try {
+      if (await settleConverge(app, fork, parent)) closed++;
+    } catch (error) {
+      log.error("could not settle a converge issue", {
+        fork: `${fork.ownerName}/${fork.name}`,
+        error: String(error),
+      });
+    }
+  }
+  return closed;
 }

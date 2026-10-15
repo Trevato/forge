@@ -258,6 +258,7 @@ import {
 import { openPlan, parsePlan } from "../actions/plan.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
+import { askToLiveFor } from "../web/ask_to_live.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import {
@@ -2465,20 +2466,22 @@ export function apiRoutes(router: Router<Handler>): void {
   );
   // Milestones as data: the plan's limbs with their weights, and one
   // milestone opened. The same numbers as the pages.
-  router.add("GET", "/api/v1/repos/:owner/:name/milestones", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/milestones", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(milestonesJson(ctx, repo));
+    return json(await milestonesJson(ctx, repo));
   });
   router.add(
     "GET",
     "/api/v1/repos/:owner/:name/milestones/:number",
-    (ctx) => {
+    async (ctx) => {
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
       const number = positiveInt(ctx.params.number);
       const data =
-        number === undefined ? undefined : milestoneData(ctx, repo, number);
+        number === undefined
+          ? undefined
+          : await milestoneData(ctx, repo, number);
       return data === undefined ? notFound() : json(data);
     },
   );
@@ -2510,7 +2513,7 @@ export function apiRoutes(router: Router<Handler>): void {
       },
     );
   // One action on a whole limb (#733): defer, resume, or close as not
-  // doing. A fleet operation in every respect — a dry run by default with a
+  // doing, or raise or lower it among its siblings (#1064). A fleet operation in every respect — a dry run by default with a
   // read credential, an admin token to apply, the receipt in
   // /api/v1/fleet/ops/:id and its undo at …/undo.
   router.add(
@@ -2525,11 +2528,14 @@ export function apiRoutes(router: Router<Handler>): void {
       const number = positiveInt(ctx.params.number);
       if (!repo || number === undefined) return notFound();
       if (!isLimbAction(input.action))
-        return apiError("bad_action", 422, "action is defer, resume or close");
+        return apiError("bad_action", 422, "action is defer, resume, close, raise or lower");
       const request = {
         action: input.action,
         ...(typeof input.reason === "string" ? { reason: input.reason } : {}),
         ...(typeof input.pillar === "string" ? { pillar: input.pillar } : {}),
+        ...(typeof input.under === "string" || typeof input.under === "number"
+          ? { under: String(input.under) }
+          : {}),
       };
       if (dryRun) {
         const plan = previewLimb(ctx.app, ctx.auth.user, repo, number, request);
@@ -2543,12 +2549,13 @@ export function apiRoutes(router: Router<Handler>): void {
   );
   // The map as data: ready now, blocked on, the critical path, every edge,
   // and where the crew is.
-  router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/map", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const graph = repoGraph(ctx.app.db, repo.id, {
       ...sealedScope(ctx.app.db, repo, ctx.auth.user),
     });
+    const pillars = pillarView(ctx.app.db, repo);
     return json(
       mapJson(
         repo,
@@ -2559,7 +2566,8 @@ export function apiRoutes(router: Router<Handler>): void {
           graph,
           listActiveRuns(ctx.app.db, [repo.id]),
         ),
-        pillarView(ctx.app.db, repo),
+        pillars,
+        await askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
       ),
     );
   });

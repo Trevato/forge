@@ -16,6 +16,7 @@ import {
   pruneSnapshots,
   takeSnapshot,
   type Manifest,
+  type Progress,
 } from "./snapshot.ts";
 import type { Store } from "./store.ts";
 
@@ -31,6 +32,8 @@ export interface SnapshotsHandle {
   readonly wraps: boolean;
   /** Take one now; waits for any in flight. */
   readonly now: () => Promise<Manifest>;
+  /** How far the snapshot being taken is; undefined when none is. */
+  readonly progress: () => Progress | undefined;
   /** The newest first, from the store. */
   readonly list: () => Promise<Manifest[]>;
   /** The last one taken by this process, and what it said. */
@@ -72,6 +75,7 @@ export function startSnapshots(
   };
   let stopped = false;
   let inFlight: Promise<Manifest> | undefined;
+  let running: Progress | undefined;
   let last: { manifest?: Manifest; error?: string; at?: string } = {};
 
   const take = (): Promise<Manifest> => {
@@ -81,6 +85,7 @@ export function startSnapshots(
       const store = current();
       if (store === undefined)
         throw new Error("this forge has nowhere to put a snapshot");
+      running = { objects: 0, bytes: 0, elapsedMs: 0 };
       const manifest = await takeSnapshot(
         {
           db: app.db,
@@ -88,9 +93,14 @@ export function startSnapshots(
           reposRoot: app.reposRoot,
           version: options.version,
           passphrase: options.passphrase,
+          onLand: (p) => {
+            running = p;
+          },
         },
         store,
-      );
+      ).finally(() => {
+        running = undefined;
+      });
       await pruneSnapshots(store, KEEP);
       return manifest;
     });
@@ -130,6 +140,7 @@ export function startSnapshots(
       return store === undefined ? [] : listSnapshots(store);
     },
     last: () => last,
+    progress: () => running,
     forget: () => {
       resolved = undefined;
     },
