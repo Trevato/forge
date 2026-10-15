@@ -20,6 +20,7 @@ import { forgeLane, forgeNeeds } from "../../actions/health.ts";
 import { mayView } from "../../core/sealed.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
 import { listAssignedTo, type Issue } from "../../core/issues.ts";
+import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import {
   applyAsksBulk,
   latestUndoable,
@@ -269,6 +270,37 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     });
   };
 
+  /** The decision `U` undoes: the decider's latest set-aside this session. */
+  let lastHand: string | undefined;
+
+  /** Hand the row under the cursor to the decider, through the action the web and API use. */
+  const handToDecider = (): void => {
+    const here = onYou[at("onyou").index];
+    if (here === undefined) return;
+    runAsync(ctx, async () => {
+      const done = await decideAsk(f.app, f.user, `issue:${here.issue.id}`);
+      if (!done.ok) {
+        ctx.toast(done.error.message, "danger");
+        return;
+      }
+      lastHand = done.value.setAside ? done.value.id : undefined;
+      reload();
+      ctx.toast(done.value.reason + (done.value.setAside ? " · U undoes" : ""), "success");
+    });
+  };
+
+  const undoHand = (): void => {
+    const id = lastHand;
+    if (id === undefined) {
+      ctx.toast("nothing to undo", "attn");
+      return;
+    }
+    const done = undoDecideAsk(f.app, f.user, id);
+    if (done.ok) lastHand = undefined;
+    reload();
+    ctx.toast(done.ok ? "back on your board" : done.error.message, done.ok ? "success" : "danger");
+  };
+
   const listenAgain = (): void => {
     if (f.user === undefined || silenced.size === 0) return;
     removeMutes(
@@ -501,8 +533,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         if (e.key === "x") return closeSet(), true;
         if (e.key === "m") return clear("mute"), true;
         if (e.key === "S") return shipSet(), true;
+        if (e.key === "D" && item !== undefined) return handToDecider(), true;
       }
       if (e.key === "u" && f.user) return undoSet(), true;
+      if (e.key === "U" && f.user) return undoHand(), true;
       if (e.key === "L" && f.user) return listenAgain(), true;
       if (e.key === "d" && focus === "machine") {
         unpin(pins[at("machine").index]);

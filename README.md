@@ -219,6 +219,18 @@ muted"). On the On you card: `space` marks a row, `x` closes the marked rows
 again to every muted repository. Each goes through `applyAsksBulk`, so the
 per-row access checks and refusals are the web's, shown in the toast.
 
+**Let the decider** answers a hand-over card (an issue the crew parked) when
+you would rather not: the third tap on the card, `POST /api/v1/asks/decide`
+(`{"item": "parked:<id>"}`), the MCP tool `asks_decide`, or `D` on the On you
+card in the terminal. It sees only the direction text, whether you pinned or
+muted the app, the day's spend against the ceiling, your last ten decisions
+there and the card's own evidence; the decision ledger row carries exactly
+that, with a reason and a confidence. A sure answer (70% or more) to set it
+aside takes the card off your board; an unsure one, a failure, or no decider
+configured leaves it with you. Undo for a day (`/api/v1/asks/decide/<id>/undo`,
+`asks_undecide`, `U`). Each tap is a paid call, so one card is handed over
+once in ten minutes.
+
 ## On your machine
 
 The forge holds the truth; `forge` keeps a copy of the parts you work on, the

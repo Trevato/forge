@@ -19,6 +19,7 @@ import {
   parseCursor,
   readFeed,
 } from "../feed/feed.ts";
+import { decideAsk, undoDecideAsk } from "../actions/asks_decide.ts";
 import { asksAnswer } from "../web/studio/asks.ts";
 import {
   applyAsksBulk,
@@ -99,6 +100,24 @@ export function feedRoutes(router: Router<Handler>): void {
     const op = await undoAsksBulk(ctx.app, ctx.auth.user, ctx.params.id!);
     if (!op.ok) return bulkError(op.error);
     return json(op.value, 201);
+  });
+
+  // Let the decider answer a hand-over (`actions/asks_decide.ts`), and undo it.
+  router.add("POST", "/api/v1/asks/decide", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const done = await decideAsk(ctx.app, ctx.auth.user, input.item);
+    if (!done.ok) return bulkError(done.error);
+    return json(done.value, 201);
+  });
+
+  router.add("POST", "/api/v1/asks/decide/:id/undo", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const undone = undoDecideAsk(ctx.app, ctx.auth.user, ctx.params.id);
+    if (!undone.ok) return bulkError(undone.error);
+    return json(undone.value, 201);
   });
 
   router.add("POST", "/api/v1/feed/interactions", async (ctx) => {
@@ -211,7 +230,7 @@ function bulkError(error: FleetError): Response {
   if (error.code === "unauthorized") return unauthorized();
   return apiError(
     error.code,
-    error.code === "forbidden" ? 403 : error.code === "already_undone" || error.code === "expired" ? 409 : 422,
+    error.code === "forbidden" ? 403 : error.code === "too_many" ? 429 : error.code === "already_undone" || error.code === "expired" ? 409 : 422,
     error.message,
   );
 }

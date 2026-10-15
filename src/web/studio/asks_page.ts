@@ -18,7 +18,7 @@ import {
 import { getDecision } from "../../core/decisions.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { getRepoById, ownerFactRepoIds } from "../../core/repos.ts";
-import { letDeciderHandle, undoHandled } from "../../crew/handover.ts";
+import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import type { FleetValue } from "../../core/fleet_ops.ts";
 import { removeMutes } from "../../core/interactions.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -38,7 +38,6 @@ import {
   ROW_PLURAL,
   decisionButtons,
   decisionForm,
-  askTargetsFor,
   decisionsFor,
   forgeNeedsFor,
   type AskRow,
@@ -632,36 +631,25 @@ export async function asksBulkUndo(ctx: Ctx): Promise<Response> {
 
 /** POST /asks/decide — hand one hand-over card to the decider; the ledger keeps what it saw. */
 export async function asksDecide(ctx: Ctx): Promise<Response> {
-  const user = ctx.auth.user;
-  if (!user) return signInFirst(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const ask = field(form, "ask");
-  if (!/^parked:[A-Za-z0-9_-]{1,64}$/.test(ask))
-    return await asksScreen(ctx, nothingDone("only a hand-over can be handed to the decider"));
-  if (ctx.app.config.decider === undefined)
-    return await asksScreen(ctx, nothingDone("no decider is set up on this forge"));
-  // The same access the card itself has: it must ask this person now.
-  const { issueIds } = askTargetsFor(ctx.app.db, user, [ask]);
-  const issue = issueIds[0] === undefined ? undefined : getIssueById(ctx.app.db, issueIds[0]);
-  const repo = issue === undefined ? undefined : getRepoById(ctx.app.db, issue.repoId);
-  if (issue === undefined || repo === undefined)
-    return await asksScreen(ctx, nothingDone("it no longer asks you"));
-  const { decision } = await letDeciderHandle(ctx.app, user, repo, issue);
-  return redirect(`/?decided=${decision.id}#asks-bulk-result`);
+  const done = await decideAsk(ctx.app, ctx.auth.user, field(form, "ask"));
+  if (!done.ok) return await asksScreen(ctx, nothingDone(done.error.message));
+  return redirect(`/?decided=${done.value.id}#asks-bulk-result`);
 }
 
 /** POST /asks/decide/:id/undo — put a set-aside card back on the board, within a day. */
 export async function asksDecideUndo(ctx: Ctx): Promise<Response> {
-  const user = ctx.auth.user;
-  if (!user) return signInFirst(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const undone = undoHandled(ctx.app, user, ctx.params.id ?? "");
-  if (undone === "not_found") return notFoundPage(ctx);
-  if (undone === "too_late")
-    return await asksScreen(ctx, nothingDone("a day has passed; it stays set aside"));
-  return redirect(`/?decided=${undone.id}#asks-bulk-result`);
+  const undone = undoDecideAsk(ctx.app, ctx.auth.user, ctx.params.id);
+  if (!undone.ok)
+    return undone.error.code === "not_found"
+      ? notFoundPage(ctx)
+      : await asksScreen(ctx, nothingDone(undone.error.message));
+  return redirect(`/?decided=${undone.value.id}#asks-bulk-result`);
 }
 
 /** POST /asks/listen — take back the viewer's own mute of the repositories named. */

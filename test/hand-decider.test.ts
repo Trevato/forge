@@ -15,6 +15,8 @@ import { createApp as registerApp } from "../src/core/apps.ts";
 import { getDecision, listDecisions } from "../src/core/decisions.ts";
 import type { Issue } from "../src/core/issues.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { decideAsk } from "../src/actions/asks_decide.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { BREAKER_NOTE } from "../src/crew/breaker.ts";
 import type { Decider } from "../src/crew/decide.ts";
@@ -235,5 +237,96 @@ describe("let the decider answer a hand-over", () => {
     expect(wrongKind.status).not.toBe(303);
     expect(listDecisions(app.db, repo.id, { kind: "hand" })).toHaveLength(count);
     expect(asking(issue)).toBe(true);
+  });
+
+  describe("the other doors", () => {
+    const api = async (token: string, path: string, payload: unknown = {}) => {
+      const res = await fetch(`${servers.url}${path}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      return { status: res.status, body: (await res.json()) as any };
+    };
+    const mcp = async (token: string, name: string, args: unknown) => {
+      const res = await fetch(`${servers.url}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: args },
+        }),
+      });
+      const body = (await res.json()) as { result: { isError?: boolean; content: { text: string }[] } };
+      return { error: body.result.isError === true, text: body.result.content[0]!.text };
+    };
+    let rw = "";
+    let ro = "";
+    let bobRw = "";
+    beforeAll(() => {
+      rw = createToken(app.db, alice.id, "rw", "rw").token;
+      ro = createToken(app.db, alice.id, "ro", "ro").token;
+      bobRw = createToken(app.db, getUserByName(app.db, "bob")!.id, "rw", "rw").token;
+      app.config.decider = standIn;
+      says = 0.9;
+    });
+
+    test("the JSON API answers, refuses a read-only token and a stranger, and undoes", async () => {
+      const issue = parked("api card");
+      expect((await api(ro, "/api/v1/asks/decide", { item: `parked:${issue.id}` })).status).toBe(403);
+      expect((await api(bobRw, "/api/v1/asks/decide", { item: `parked:${issue.id}` })).status).toBe(404);
+      expect(asking(issue)).toBe(true);
+      const done = await api(rw, "/api/v1/asks/decide", { item: `parked:${issue.id}` });
+      expect(done.status).toBe(201);
+      expect(done.body.answer).toBe("set_aside");
+      expect(done.body.context.evidence.title).toBe("api card");
+      expect(asking(issue)).toBe(false);
+      expect((await api(bobRw, `/api/v1/asks/decide/${done.body.id}/undo`)).status).toBe(404);
+      expect((await api(ro, `/api/v1/asks/decide/${done.body.id}/undo`)).status).toBe(403);
+      expect((await api(rw, `/api/v1/asks/decide/${done.body.id}/undo`)).status).toBe(201);
+      expect(asking(issue)).toBe(true);
+    });
+
+    test("a card is handed over once in ten minutes: the second tap is refused and costs no call", async () => {
+      says = 0.5;
+      const issue = parked("tapped twice");
+      const before = seen.length;
+      expect((await api(rw, "/api/v1/asks/decide", { item: `parked:${issue.id}` })).status).toBe(201);
+      const again = await api(rw, "/api/v1/asks/decide", { item: `parked:${issue.id}` });
+      expect(again.status).toBe(429);
+      expect(seen.length).toBe(before + 1);
+      says = 0.9;
+    });
+
+    test("MCP: asks_decide is a write, refused read-only, and undone by asks_undecide", async () => {
+      const issue = parked("mcp card");
+      const item = `parked:${issue.id}`;
+      expect((await mcp(ro, "asks_decide", { item })).error).toBe(true);
+      expect(asking(issue)).toBe(true);
+      expect((await mcp(createToken(app.db, getUserByName(app.db, "bob")!.id, "b", "rw").token, "asks_decide", { item })).error).toBe(true);
+      const done = await mcp(rw, "asks_decide", { item });
+      expect(done.error).toBe(false);
+      expect(asking(issue)).toBe(false);
+      const id = JSON.parse(done.text).id as string;
+      expect((await mcp(ro, "asks_undecide", { id })).error).toBe(true);
+      expect((await mcp(rw, "asks_undecide", { id })).error).toBe(false);
+      expect(asking(issue)).toBe(true);
+    });
+
+    test("the terminal's door: the action takes the row's issue id, and refuses a card that does not ask", async () => {
+      const issue = parked("tui card");
+      const done = await decideAsk(app, alice, `issue:${issue.id}`);
+      expect(done.ok && done.value.setAside).toBe(true);
+      const gone = await decideAsk(app, alice, `issue:${issue.id}`);
+      expect(gone.ok).toBe(false);
+      const stranger = await decideAsk(app, getUserByName(app.db, "bob")!, `issue:${parked("tui two").id}`);
+      expect(stranger.ok).toBe(false);
+    });
   });
 });
