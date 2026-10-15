@@ -12,8 +12,12 @@ import { repoVisible } from "./visibility.ts";
 
 export type IssueKind = "issue" | "pull";
 export type IssueState = "open" | "closed";
-/** Why an issue closed: done frees what waited on it; the others hold it. */
-export type CloseReason = "done" | "dropped" | "split";
+/**
+ * Why an issue closed: done frees what waited on it; the others hold it.
+ * `parked` is the crew's own, on a pull it stopped for a person; it is never
+ * one a request may name, so it is not in `CLOSE_REASONS`.
+ */
+export type CloseReason = "done" | "dropped" | "split" | "parked";
 export const CLOSE_REASONS: readonly CloseReason[] = [
   "done",
   "dropped",
@@ -78,6 +82,7 @@ interface IssueRow {
   updated_at: string;
   closed_at: string | null;
   close_reason: CloseReason | null;
+  parked: number;
   origin_author: string | null;
   origin_html_url: string | null;
   assignee_id: string | null;
@@ -107,7 +112,7 @@ function toIssue(row: IssueRow): Issue {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     closedAt: row.closed_at,
-    closeReason: row.close_reason,
+    closeReason: row.parked === 1 ? "parked" : row.close_reason,
     originAuthor: row.origin_author,
     originUrl: row.origin_html_url,
     assigneeId: row.assignee_id,
@@ -469,12 +474,15 @@ export function setIssueState(
 ): Issue | undefined {
   const now = new Date().toISOString();
   const closedAt = state === "closed" ? now : null;
-  const why = state === "closed" ? reason : null;
+  const why = state === "closed" && reason !== "parked" ? reason : null;
+  const parked = state === "closed" && reason === "parked" ? 1 : 0;
   const changed = db
     .query(
-      "UPDATE issue SET state = ?1, closed_at = ?2, updated_at = ?3, close_reason = ?5 WHERE id = ?4 AND state != ?1",
+      `UPDATE issue SET state = ?1, closed_at = ?2, updated_at = ?3,
+         close_reason = ?5, parked = ?6
+       WHERE id = ?4 AND state != ?1`,
     )
-    .run(state, closedAt, now, issueId, why).changes;
+    .run(state, closedAt, now, issueId, why, parked).changes;
   return changed > 0 ? getIssueById(db, issueId) : undefined;
 }
 

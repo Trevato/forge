@@ -9,6 +9,7 @@
  * bigger.
  */
 
+import { getIssueById } from "../../core/issues.ts";
 import { mayEditIssue } from "../../actions/issues.ts";
 import { marksByName, type Mark } from "../../core/marks.ts";
 import { mayView } from "../../core/sealed.ts";
@@ -185,7 +186,10 @@ export function changeHead(ctx: Ctx, repo: Repo, pull: Pull): Html {
   return html`<div class="issue-head">
     <h1>${pull.title} <span class="number">#${pull.number}</span></h1>
     <div class="issue-meta">
-      ${stateBadge(pullState(pull))}
+      ${stateBadge(
+        pullState(pull),
+        getIssueById(ctx.app.db, pull.id)?.closeReason === "parked",
+      )}
       <span
         >${pull.originAuthor
           ? originTag(pull.originAuthor, originGlyph(repo))

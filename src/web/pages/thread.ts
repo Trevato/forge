@@ -903,7 +903,9 @@ export function dependenciesCard(
             ${icon(i.state === "closed" ? "issueClosed" : "issue")}
             <a href="${tellHref(base, i.number)}">${i.title}</a>
             <span class="muted small">#${i.number}</span>
-            ${i.closeReason === "dropped" || i.closeReason === "split"
+            ${i.closeReason === "dropped" ||
+            i.closeReason === "split" ||
+            i.closeReason === "parked"
               ? html`<span class="muted small">${i.closeReason}</span>`
               : null}
             ${removable &&

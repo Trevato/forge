@@ -411,7 +411,11 @@ export function setIssueState(
   const children: Issue[] = [];
   if (closing.reason !== undefined || closing.into !== undefined) {
     // A reason is how an issue closes; a pull or a reopen has none.
-    if (state !== "closed" || issue.kind !== "issue")
+    if (
+      state !== "closed" ||
+      issue.kind !== (reason === "parked" ? "pull" : "issue") ||
+      (reason === "parked" && closing.into !== undefined)
+    )
       return err("invalid_reason");
     if (reason === "split") {
       for (const number of closing.into ?? []) {
@@ -451,7 +455,9 @@ export function setIssueState(
     actorId: user.value.id,
     payload: {
       number: issue.number,
-      ...(issue.kind === "issue" && reason !== undefined ? { reason } : {}),
+      ...(reason !== undefined && (issue.kind === "issue" || reason === "parked")
+        ? { reason }
+        : {}),
       ...(children.length > 0 ? { into: children.map((c) => c.number) } : {}),
     },
   });

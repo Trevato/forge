@@ -476,6 +476,15 @@ or `x` on the issue in the terminal); the close writes "Closed: already done
 on main in …" on the thread. A claim with no commit, or with one that is not
 on the base, is an ordinary decline and is parked as one.
 
+**A red pull.** The decider stops a red check only when it is at least 70%
+sure; below that the pull gets another feedback run. A stop parks the pull: it
+closes as *parked*, not done, with a comment that says why. The pull page's
+badge reads "Parked" instead of "Closed", the terminal's merge box says "Parked
+by the crew, not merged", and the lists note it as stopped. Reopening it clears
+the mark. Only the crew parks: the API and the page refuse `reason: "parked"`.
+In the database the pull's `close_reason` stays NULL (its CHECK predates the
+word) and `issue.parked = 1` carries it, so raw SQL never reads it as done.
+
 An autonomous app's planner is **held** while nothing is landing or the plate
 is full: no pull has merged in 48 h while one was closed unmerged, or more than
 `slots × 3` ready, unassigned issues are waiting. The tick log says which
@@ -663,6 +672,15 @@ and `FORGE_CHECK_SHARDS=2` turns that down on a small or busy host. Each
 shard's output is written whole as it finishes; the log ends with every
 failing test from every shard, or on green with one line — how many tests,
 across how many files, in how long, then the slowest and fastest shard.
+
+The check's first step is the gate-list audit (`bun scripts/gate.ts`), so a
+test file listed in neither `GATE` nor `EXCLUDED` fails in under a second,
+before install-heavy work. `tsc` then runs `--incremental` with a 2 GB heap,
+its build info in `.forge-cache/`: the forge restores that directory from the
+base's own green check and keeps it only from green checks of the default
+branch (`src/checks/cache.ts`), so a pull's code never fills a cache another
+check reads. The full gate also writes every file's time there, and the next
+split weighs every file by measurement rather than the 41 the table named.
 
 The fast tier picks by measurement. The full gate runs each file in a
 `bun test` of its own under Bun's coverage (`--impact`; coverage is per
@@ -900,6 +918,8 @@ Invariants are proven by faults, not by hope. No dependencies were added.
 `forge.json`'s `check` may declare `fast` beside `run` (the full gate; `full` names it explicitly). `bun scripts/test-shards.ts --tier fast --diff <base>..<head>` runs the tests that touch the diff (changed, named for a changed source file, or importing one within two hops), every test the times table records under 1 s, and any named by `--learned a,b`. `src/checks/tiers.ts` decides; it adds no dependency.
 
 In the forge itself: a pull's check runs `fast` when the manifest has one, in a clone holding the fork point and the head as `FORGE_CHECK_BASE` and `HEAD` (`origin/main` is not a ref there), with `FORGE_CHECK_LEARNED` naming tests earlier land attempts taught the pull (`src/checks/history.ts`, `learned.ts`). Landing (`landIfGreen`) runs `full` once on the merge with its base before merging (`src/checks/landing.ts`); red comments on the pull with the tests named, is remembered per head and base, and the files ride the pull's next fast run. The pull page's checks line shows the tier words.
+
+While the default branch's own last check is red, the forge holds its pulls' checks queued rather than fail each one on the same test (`src/checks/red_main.ts`): the vitals carry one card naming the failing test and how many checks wait, and main going green releases them. A check a person asks for again runs at once, and no check is held more than 20 minutes, so the pull that fixes main can always show green.
 
 ## Limits
 

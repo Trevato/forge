@@ -206,6 +206,46 @@ export function formatTimes(times: ReadonlyMap<string, number>): string {
   return lines.length === 0 ? "{}\n" : `{\n${lines.join(",\n")}\n}\n`;
 }
 
+/**
+ * The order a pool of one-file workers takes files in: heaviest first (LPT
+ * on a work queue: the wall is at most the heaviest file plus an even
+ * share of the rest), ties in the list's own order.
+ */
+export function heaviestFirst(
+  files: readonly string[],
+  weight: (file: string) => number,
+): string[] {
+  return files
+    .map((file, index) => ({ file, index, weight: weight(file) }))
+    .sort((a, b) => b.weight - a.weight || a.index - b.index)
+    .map((item) => item.file);
+}
+
+/** `over`'s times where it has them, `base`'s for every other file. */
+export function overlayTimes(
+  base: ReadonlyMap<string, number>,
+  over: ReadonlyMap<string, number>,
+): Map<string, number> {
+  const merged = new Map(base);
+  for (const [file, seconds] of over) merged.set(file, seconds);
+  return merged;
+}
+
+/**
+ * The table after a green run: every file it ran at the time it took, every
+ * other file it still has at its old time, a file no longer on disk gone.
+ */
+export function refreshTimes(
+  old: ReadonlyMap<string, number>,
+  ran: readonly { file: string; seconds: number }[],
+  exists: (file: string) => boolean,
+): Map<string, number> {
+  const fresh = new Map<string, number>();
+  for (const [file, seconds] of old) if (exists(file)) fresh.set(file, seconds);
+  for (const { file, seconds } of ran) fresh.set(normalise(file), seconds);
+  return fresh;
+}
+
 /** One shard, finished: what it ran, how it exited, everything it printed. */
 export interface ShardResult {
   readonly files: readonly string[];
