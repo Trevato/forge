@@ -204,7 +204,6 @@ const rowHead = (kind: Decision["kind"], n: number): string => {
   return `${line.charAt(0).toUpperCase()}${line.slice(1)}`;
 };
 
-/** One card for one kind in one repository: a line per ask, each with its own actions. */
 /** A row and, under it, the chip that mutes its repository (`asksMute`). */
 function mutableRow(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Html {
   return html`${rowCard(ctx, r, picked)}
@@ -219,6 +218,7 @@ function mutableRow(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>):
     </form>`;
 }
 
+/** One card for one kind in one repository: a line per ask, each with its own actions. */
 function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Html {
   const only = r.items.length === 1 ? r.items[0] : undefined;
   if (only) return decisionCard(ctx, only, picked);
@@ -321,7 +321,7 @@ export function needsYouSection(
   );
   const needs = forgeNeedsFor(ctx, user);
   const rows = askRows(decisions);
-  const silenced = silencedRepos(ctx.app.db, user, listReposVisibleTo(ctx.app.db, user, { limit: 200 }));
+  const silenced = silencedRepos(ctx.app.db, user);
   const silencedNote =
     silenced.length === 0
       ? null

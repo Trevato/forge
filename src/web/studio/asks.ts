@@ -29,6 +29,8 @@ import {
 import { looksForApps } from "../../core/looks.ts";
 import { closesFromBody, getPull, joinMany, type Pull } from "../../core/pulls.ts";
 import {
+  canRead,
+  getReposByIds,
   listReposVisibleTo,
   canWrite,
   listReposWritableTo,
@@ -554,11 +556,12 @@ function scoredFor(
 export function silencedRepos(
   db: Database,
   user: User,
-  repos: readonly Repo[],
 ): Repo[] {
   const muted = mutedRepos(db, user.id);
   if (muted.size === 0) return [];
-  const inMuted = repos.filter((r) => muted.has(r.id));
+  const inMuted = [...getReposByIds(db, [...muted]).values()].filter((r) =>
+    canRead(db, r, user),
+  );
   const held = new Map<string, Repo>();
   for (const a of scoredFor(db, user, inMuted)) held.set(a.repo.id, a.repo);
   return [...held.values()];

@@ -15,6 +15,7 @@ import { assignIssue } from "../src/actions/issues.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getIssueById } from "../src/core/issues.ts";
+import { createApp as createAppRecord } from "../src/core/apps.ts";
 import { mutedRepos } from "../src/core/interactions.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
@@ -156,14 +157,24 @@ describe("muting a repository's asks", () => {
 
   test("the ask still exists and still counts on the repository's own page", async () => {
     expect(repoAsks(app.db, alice, repo)).toEqual({ count: 1, muted: true });
-    const pull = await fetch(`${servers.url}/alice/muted/changes/1`, { headers: headers(cookie) });
-    expect(pull.status).toBe(200);
+    // The repository's page is the app's once it is one.
+    expect(createAppRecord(app.db, { repoId: repo.id, slug: "muted", access: "public" }).ok).toBe(true);
+    const page = await fetch(`${servers.url}/alice/muted`, { headers: headers(cookie) });
+    expect(page.status).toBe(200);
+    const text = await page.text();
+    expect(text).toContain('id="repo-asks"');
+    expect(text).toContain("(muted from your home)");
   });
 
   test("another person's mute is theirs alone, and a repository they cannot read is refused", async () => {
     expect(mutedRepos(app.db, bob.id).has(repo.id)).toBe(false);
     const bad = await post(bobCookie, "/asks/mute", [["repo", "nope"]]);
     expect(bad.status).toBe(404);
+    const secret = await createRepo(app, alice, { name: "secret", visibility: "private" });
+    if (!secret.ok) throw new Error(String(secret.error));
+    const hidden = await post(bobCookie, "/asks/mute", [["repo", secret.value.id]]);
+    expect(hidden.status).toBe(404);
+    expect(mutedRepos(app.db, bob.id).size).toBe(0);
     const odd = await post(cookie, "/asks/mute", [["repo", "../x"]]);
     expect(odd.status).toBe(404);
     // A mutation from another origin is refused.
