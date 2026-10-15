@@ -498,7 +498,10 @@ a session in an HttpOnly cookie; a person signed in this way is a `user`. The
 headers below remain only until a follow-up change retires them: once no app
 reads `x-forge-identity` and `x-forge-signature`, the forge stops sending them
 and `FORGE_APP_IDENTITY_KEY` goes with them (that change also settles where
-`admin` comes from, which an `id_token` does not carry).
+`admin` comes from, which an `id_token` does not carry, and the scaffold's
+sign-out, which still ends at the header-era `/__forge/signout`). Until then a
+valid signed header outranks a session, so an admin who signs in this way stays
+an admin.
 
 An app never writes sign-in. The forge tells it who is there, on every
 request it proxies, in two headers:

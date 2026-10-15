@@ -207,7 +207,7 @@ verifies the signature (\`src/who.ts\`); nothing else is trusted. Three tiers:
 address on first boot and keeps the client id in \`FORGE_APP_DATA\`, checks
 the \`id_token\` itself, and keeps a session in an HttpOnly cookie. A person
 signed in this way is a \`user\`; \`admin\` still comes from the forge's
-signed headers, until those are retired. "Sign out" is a POST to \`/signout\`.
+signed headers (which win over a session), until those are retired. "Sign out" is a POST to \`/signout\`.
 The forge answers \`/__forge/report\`: it sends anyone, with no account, to report a
 problem on this app's repository, if that repository is public.
 
@@ -487,7 +487,7 @@ export function whoAtTty(
 }
 `;
 
-// SQLite with good habits.
+// Sign-in through the forge.
 const SIGNIN_TS = `/**
  * Sign-in through the forge, which is an OpenID provider: the code flow
  * with PKCE against FORGE_URL. The first time it is needed the app
@@ -775,7 +775,7 @@ export const SESSION_MAX_AGE = SESSION_S;
 export const LOGIN_MAX_AGE = LOGIN_S;
 `;
 
-// The database.
+// SQLite with good habits.
 const DB_TS = `/**
  * The database: one SQLite file under FORGE_APP_DATA, so production and
  * every preview each have their own. WAL so readers never wait on the
@@ -2353,8 +2353,11 @@ export function serve(options: ServeOptions) {
     idleTimeout: 60,
     async fetch(request, server) {
       const url = new URL(request.url);
+      // A signed header from the forge says more than a session can (a
+      // session is always a user; the header may say admin), so it wins.
+      const signed = who(request, options.identityKey);
       const me =
-        sessionWho(db, request) ?? who(request, options.identityKey);
+        signed.role !== "anon" ? signed : (sessionWho(db, request) ?? signed);
       const refused = door(
         db,
         request,
@@ -2878,22 +2881,63 @@ test("the terminal trusts its environment", () => {
 });
 `;
 
-const SIGNIN_TEST = `import { expect, test } from "bun:test";
+const SIGNIN_TEST = `import { beforeAll, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "./db.ts";
-import { begin, finish, sessionWho, type Signin } from "./signin.ts";
+import { begin, finish, sessionWho, verify, type Signin } from "./signin.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "app-"));
 const db = openDb(dir);
-// A forge that registers a client and nothing else.
-const forge = (async (url: string | URL | Request) =>
-  String(url).endsWith("/oauth/register")
-    ? Response.json({ client_id: "c1" }, { status: 201 })
-    : new Response("no", { status: 500 })) as unknown as typeof fetch;
+const ISS = "https://forge.test";
+const b64 = (v: unknown): string => Buffer.from(JSON.stringify(v)).toString("base64url");
+const generate = () =>
+  crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+
+let good: CryptoKeyPair;
+let other: CryptoKeyPair;
+let jwk: JsonWebKey;
+beforeAll(async () => {
+  good = await generate();
+  other = await generate();
+  jwk = await crypto.subtle.exportKey("jwk", good.publicKey);
+});
+
+/** An id_token as the forge would sign it, then spoiled one way at a time. */
+async function mint(
+  claims: Record<string, unknown> = {},
+  opts: { alg?: string; kid?: string; key?: CryptoKey } = {},
+): Promise<string> {
+  const head = b64({ alg: opts.alg ?? "ES256", typ: "JWT", kid: opts.kid ?? "k1" });
+  const body = b64({
+    iss: ISS,
+    aud: "c1",
+    nonce: "n1",
+    sub: "u1",
+    preferred_username: "alice",
+    exp: Math.floor(Date.now() / 1000) + 600,
+    ...claims,
+  });
+  const sig = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    opts.key ?? good.privateKey,
+    new TextEncoder().encode(\`\${head}.\${body}\`),
+  );
+  return \`\${head}.\${body}.\${Buffer.from(sig).toString("base64url")}\`;
+}
+
+// A forge that registers a client, publishes one key, and trades any code for \`token\`.
+let token = "";
+const forge = (async (url: string | URL | Request) => {
+  const path = new URL(String(url)).pathname;
+  if (path === "/oauth/register") return Response.json({ client_id: "c1" }, { status: 201 });
+  if (path === "/oauth/jwks") return Response.json({ keys: [{ ...jwk, kid: "k1" }] });
+  if (path === "/oauth/token") return Response.json({ id_token: token });
+  return new Response("no", { status: 404 });
+}) as unknown as typeof fetch;
 const signin: Signin = {
-  forge: "https://forge.test",
+  forge: ISS,
   origin: "https://app.test",
   dataDir: dir,
   name: "app",
@@ -2903,7 +2947,7 @@ const signin: Signin = {
 test("sign-in goes out with PKCE, state and nonce, to the registered redirect", async () => {
   const { location, state } = await begin(db, signin);
   const to = new URL(location);
-  expect(\`\${to.origin}\${to.pathname}\`).toBe("https://forge.test/oauth/authorize");
+  expect(\`\${to.origin}\${to.pathname}\`).toBe(\`\${ISS}/oauth/authorize\`);
   expect(to.searchParams.get("client_id")).toBe("c1");
   expect(to.searchParams.get("redirect_uri")).toBe("https://app.test/signin/callback");
   expect(to.searchParams.get("code_challenge_method")).toBe("S256");
@@ -2911,22 +2955,84 @@ test("sign-in goes out with PKCE, state and nonce, to the registered redirect", 
   expect(to.searchParams.get("nonce")?.length).toBeGreaterThan(16);
 });
 
-test("a return that did not start in this browser is refused", async () => {
-  const { state } = await begin(db, signin);
+test("verify accepts the forge's token, and refuses each way it can be wrong", async () => {
+  expect(await verify(signin, await mint(), "n1")).toEqual({
+    sub: "u1",
+    preferred_username: "alice",
+  });
+  const past = Math.floor(Date.now() / 1000) - 1;
+  const refused: [string, string][] = [
+    ["alg is not ES256", await mint({}, { alg: "HS256" })],
+    ["alg none", await mint({}, { alg: "none" })],
+    ["signed by another key", await mint({}, { key: other.privateKey })],
+    ["unknown kid", await mint({}, { kid: "zz" })],
+    ["wrong issuer", await mint({ iss: "https://evil.test" })],
+    ["wrong audience", await mint({ aud: "c2" })],
+    ["wrong nonce", await mint({ nonce: "n2" })],
+    ["no nonce", await mint({ nonce: undefined })],
+    ["expired", await mint({ exp: past })],
+    ["no expiry", await mint({ exp: undefined })],
+    ["empty sub", await mint({ sub: "" })],
+    ["no sub", await mint({ sub: undefined })],
+    ["not a jwt", "a.b"],
+    ["garbage", "a.b.c"],
+  ];
+  for (const [why, jwt] of refused)
+    expect([why, await verify(signin, jwt, "n1")]).toEqual([why, undefined]);
+  // A payload swapped under a good signature is not the signed one.
+  const [h, , s] = (await mint()).split(".");
+  const swapped = \`\${h}.\${b64({ iss: ISS, aud: "c1", nonce: "n1", sub: "root", exp: past + 900 })}.\${s}\`;
+  expect(await verify(signin, swapped, "n1")).toBeUndefined();
+});
+
+/** Start a sign-in and come back with an id_token; the request carries the cookie of the browser that began it. */
+async function comeBack(spoil?: (nonce: string) => Promise<string>, cookie?: (state: string) => string) {
+  const { location, state } = await begin(db, signin);
+  const nonce = new URL(location).searchParams.get("nonce")!;
+  token = spoil === undefined ? await mint({ nonce }) : await spoil(nonce);
   const url = new URL(\`https://app.test/signin/callback?code=x&state=\${state}\`);
-  const stranger = await finish(db, signin, new Request(url), url);
-  expect(stranger.ok).toBe(false);
-  const mine = new Request(url, { headers: { cookie: "signin=other" } });
-  expect((await finish(db, signin, mine, url)).ok).toBe(false);
+  const request = new Request(url, {
+    headers: { cookie: cookie === undefined ? \`signin=\${state}\` : cookie(state) },
+  });
+  return { state, url, request };
+}
+
+test("a return opens a session once, and the same return again opens nothing", async () => {
+  const { url, request } = await comeBack();
+  const done = await finish(db, signin, request, url);
+  expect(done.ok).toBe(true);
+  if (done.ok)
+    expect(
+      sessionWho(db, new Request("http://x", { headers: { cookie: \`session=\${done.session}\` } })),
+    ).toEqual({ role: "user", id: "u1", name: "alice" });
+  expect((await finish(db, signin, request, url)).ok).toBe(false);
+});
+
+test("a return is refused when the browser, the time or the token is not the sign-in's own", async () => {
+  const stranger = await comeBack(undefined, () => "signin=other");
+  expect((await finish(db, signin, stranger.request, stranger.url)).ok).toBe(false);
+  const bare = await comeBack(undefined, () => "");
+  expect((await finish(db, signin, bare.request, bare.url)).ok).toBe(false);
+
+  const late = await comeBack();
+  db.query("UPDATE login SET expires_at = ?1").run(Date.now() - 1);
+  expect((await finish(db, signin, late.request, late.url)).ok).toBe(false);
+
+  const wrongNonce = await comeBack(() => mint({ nonce: "not-this-sign-in" }));
+  expect((await finish(db, signin, wrongNonce.request, wrongNonce.url)).ok).toBe(false);
+
+  const denied = await comeBack();
+  const url = new URL(\`https://app.test/signin/callback?error=access_denied&state=\${denied.state}\`);
+  expect((await finish(db, signin, denied.request, url)).ok).toBe(false);
 });
 
 test("a session is a cookie that names a person, and only until it expires", () => {
-  db.query("INSERT INTO session VALUES (?1, 'u1', 'alice', ?2)").run(
+  db.query("INSERT INTO session VALUES (?1, 'u2', 'bob', ?2)").run(
     new Bun.CryptoHasher("sha256").update("abc").digest("hex"),
     Date.now() + 1000,
   );
   const req = (cookie: string) => new Request("http://x", { headers: { cookie } });
-  expect(sessionWho(db, req("session=abc"))).toEqual({ role: "user", id: "u1", name: "alice" });
+  expect(sessionWho(db, req("session=abc"))).toEqual({ role: "user", id: "u2", name: "bob" });
   expect(sessionWho(db, req("session=abd"))).toBeUndefined();
   expect(sessionWho(db, req("session=abc"), Date.now() + 5000)).toBeUndefined();
 });
@@ -3140,16 +3246,14 @@ const SERVER_TEST = `import { afterAll, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openDb } from "./db.ts";
 import { env } from "./env.ts";
 import { serve } from "./server.ts";
 import { sign } from "./who.ts";
 
 const KEY = "a-key-only-the-forge-holds";
-const server = serve({
-  port: 0,
-  dataDir: mkdtempSync(join(tmpdir(), "app-")),
-  identityKey: KEY,
-});
+const dataDir = mkdtempSync(join(tmpdir(), "app-"));
+const server = serve({ port: 0, dataDir, identityKey: KEY });
 const base = \`http://\${server.hostname}:\${server.port}\`;
 afterAll(() => server.stop(true));
 
@@ -3185,6 +3289,28 @@ const rpc = (message: unknown, who: Record<string, string> = {}) =>
   api("/mcp", { method: "POST", ...jsonBody(message) }, who).then(
     (r) => r.json() as Promise<any>,
   );
+
+test("a session signs a person in, and a signed header from the forge outranks it", async () => {
+  openDb(dataDir)
+    .query("INSERT INTO session VALUES (?1, 'u1', 'sam', ?2)")
+    .run(
+      new Bun.CryptoHasher("sha256").update("sess").digest("hex"),
+      Date.now() + 60_000,
+    );
+  const session = { cookie: "session=sess" };
+  const alone = await (await api("/", {}, session)).text();
+  expect(alone).toContain("<b>sam</b>");
+  expect(alone).not.toContain("admin");
+  // An admin who signs in this way keeps being an admin while the forge says so.
+  const both = await (await api("/", {}, { ...session, ...root })).text();
+  expect(both).toContain("<b>root</b> · admin");
+  expect(both).not.toContain("<b>sam</b>");
+  // A forged header does not outrank anything.
+  const forged = await (
+    await api("/", {}, { ...session, "x-forge-identity": "u0|root|admin|9999999999999", "x-forge-signature": "nope" })
+  ).text();
+  expect(forged).toContain("<b>sam</b>");
+});
 
 test("the page knows who you are and offers the right door", async () => {
   const guest = await (await fetch(base + "/")).text();
@@ -3913,6 +4039,8 @@ export interface Rate {
 export const WRITES: Rate = { burst: 20, perSecond: 2 };
 /** A stranger's API calls, reads too. Behind the forge every stranger shares one address, so this is all of them together. */
 export const STRANGERS: Rate = { burst: 60, perSecond: 10 };
+/** Each start of a sign-in writes a row; one address may not flush the rest. Behind the forge this is everyone together. */
+export const SIGNINS: Rate = { burst: 20, perSecond: 1 };
 const buckets = new Map<string, { tokens: number; at: number }>();
 export function allow(
   key: string,
@@ -4018,6 +4146,8 @@ export function door(
   const key = stranger ? \`ip:\${from}\` : \`user:\${who.id}\`;
 
   if (writing && !allow(key)) return text("too many requests", 429);
+  if (url.pathname === "/signin" && !allow(\`signin:\${from}\`, SIGNINS))
+    return text("too many requests", 429);
   if (stranger && api && !allow(\`api:\${from}\`, STRANGERS))
     return text("too many requests", 429);
 
@@ -4497,6 +4627,7 @@ import {
   doorOf,
   mayKnock,
   openToStrangers,
+  SIGNINS,
   STRANGERS,
 } from "./security.ts";
 import { serve } from "./server.ts";
@@ -4648,6 +4779,19 @@ test("strangers are rationed at the API, reads too", () => {
       "203.0.113.7",
     ),
   ).toBeUndefined();
+  // Starting a sign-in writes a row, so it is rationed per address, signed in or not.
+  const start = (from: string) =>
+    door(
+      db,
+      new Request("http://app/signin"),
+      new URL("http://app/signin"),
+      { role: "anon" },
+      from,
+    );
+  const starts = Array.from({ length: SIGNINS.burst + 5 }, () => start("198.51.100.9"));
+  expect(starts.slice(0, SIGNINS.burst).every((a) => a === undefined)).toBe(true);
+  expect(starts.at(-1)?.status).toBe(429);
+  expect(start("198.51.100.10")).toBeUndefined();
   // A bucket refills.
   const t = Date.now();
   for (let i = 0; i < 25; i++) allow("k", { burst: 20, perSecond: 2 }, t);
