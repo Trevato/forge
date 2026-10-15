@@ -111,10 +111,7 @@ document.addEventListener('submit', function (e) {
       var t = document.createElement('template');
       t.innerHTML = text;
       var fresh = t.content.getElementById('live-on-you');
-      var link = t.content.getElementById('asks-link');
       if (region && fresh) region.innerHTML = fresh.innerHTML;
-      var mine = document.getElementById('asks-link');
-      if (mine && link) mine.innerHTML = link.innerHTML;
     })
     .catch(function () { f.removeAttribute('data-bulk'); f.submit(); })
     .then(function () { if (region) region.removeAttribute('data-busy'); });

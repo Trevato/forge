@@ -47,7 +47,7 @@ describe("asks that expire, hold and collapse", () => {
   const sentence = (page: string): string =>
     /<h2 id="asks-sentence"[^>]*>([^<]*)<\/h2>/.exec(page)?.[1] ?? "";
   const headerCount = (page: string): number =>
-    Number(/>Asks<span class="pill"[^>]*>(\d+)</.exec(page)?.[1] ?? 0);
+    Number(/<h2 id="asks-sentence"[^>]*>\s*(\d+)\b/.exec(page)?.[1] ?? 0);
 
   /** A run's timestamps are milliseconds: let one tick pass between acts. */
   const tick = () => Bun.sleep(5);
