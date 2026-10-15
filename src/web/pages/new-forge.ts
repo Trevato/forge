@@ -100,7 +100,12 @@ function formView(
   if (full)
     return html`<div class="narrow-wide">
       ${pageHead("New forge")}
-      ${card(html`<p>This forge cannot hold another child: ${full}.</p>`)}
+      ${card(
+        html`<p role="status">This forge cannot hold another child: ${full}.</p>
+          ${ctx.auth.user?.isAdmin
+            ? html`<p><a href="/settings/capacity">Raise the room in settings</a></p>`
+            : null}`,
+      )}
     </div>`;
   // A stranger sees only public repositories, and no crew: nothing private
   // travels to a child they have not claimed.

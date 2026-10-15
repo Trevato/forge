@@ -15,6 +15,14 @@
 
 import type { Database } from "bun:sqlite";
 import { deferredIn, repoGraph, type Graph } from "./dependencies.ts";
+import {
+  limbTree,
+  readPlaces,
+  seated,
+  TOP,
+  type LimbTree,
+  type Places,
+} from "./limb_order.ts";
 import type { Issue } from "./issues.ts";
 import {
   isStructural,
@@ -106,6 +114,8 @@ export interface Milestone extends Limb {
 }
 
 export interface Plan {
+  /** What the plan was read from, for a caller that asks more of the same graph. */
+  readonly read: { readonly graph: Graph; readonly tree: LimbTree; readonly places: Places };
   /** The top-level limbs, in order: the pillars and Later, or the plan's roots. */
   readonly limbs: readonly Limb[];
   /**
@@ -165,39 +175,10 @@ export function readPlan(
   const byId = new Map(graph.issues.map((i) => [i.id, i]));
   const byNumber = new Map(graph.issues.map((i) => [i.number, i]));
 
-  // What each issue waits for directly, furniture left out.
-  const waitsFor = new Map<string, string[]>();
-  const waitedBy = new Map<string, string[]>();
-  const waits = new Set<string>();
-  for (const edge of graph.edges) {
-    waits.add(edge.issueId);
-    if (isStructural(set, edge.blockedById)) continue;
-    waitsFor.set(edge.issueId, [
-      ...(waitsFor.get(edge.issueId) ?? []),
-      edge.blockedById,
-    ]);
-    waitedBy.set(edge.blockedById, [
-      ...(waitedBy.get(edge.blockedById) ?? []),
-      edge.issueId,
-    ]);
-  }
-  // Work behind the gate is Later's whether or not the Later umbrella waits
-  // for it: its milestone counts what the map's Later row counts.
-  const behindGate =
-    set.gate === undefined
-      ? []
-      : graph.edges
-          .filter(
-            (e) =>
-              e.blockedById === set.gate!.id && !isStructural(set, e.issueId),
-          )
-          .map((e) => e.issueId);
-  if (set.later !== undefined && behindGate.length > 0) waits.add(set.later.id);
-  /** What an issue waits for directly, as its milestone shows it. */
-  const childrenOf = (id: string): string[] =>
-    id === set.later?.id
-      ? [...new Set([...(waitsFor.get(id) ?? []), ...behindGate])]
-      : (waitsFor.get(id) ?? []);
+  // What each issue waits for directly, furniture left out (`limb_order.ts`).
+  const tree = limbTree(graph, set);
+  const places = readPlaces(db, repo.id);
+  const { waitsFor, waitedBy, waits, childrenOf } = tree;
   const memo = new Map<string, Set<string>>();
   const walking = new Set<string>();
   const beneath = (id: string): Set<string> => {
@@ -214,6 +195,11 @@ export function readPlan(
     memo.set(id, out);
     return out;
   };
+  /** Sibling limbs as issues, in the order a person set. */
+  const arranged = (group: string, ids: readonly string[]): Issue[] =>
+    seated(places, group, ids)
+      .map((id) => byId.get(id))
+      .filter((i): i is Issue => i !== undefined);
 
   // Where the crew is: the issue a run is on, or the issue its pull closes.
   const proposed = openPullsClosing(db, repo.id);
@@ -354,24 +340,13 @@ export function readPlan(
     };
   };
 
-  const isMilestone = (id: string): boolean => childrenOf(id).length > 0;
-
-  const top: Issue[] =
-    set.pillars.length > 0
-      ? [
-          ...set.pillars.map((p) => p.umbrella),
-          ...(set.later === undefined ? [] : [set.later]),
-        ]
-      : graph.issues.filter(
-          (i) =>
-            i.state === "open" &&
-            isMilestone(i.id) &&
-            !(waitedBy.get(i.id) ?? []).some(
-              (id) => byId.get(id)?.state === "open",
-            ),
-        );
+  const top = arranged(
+    TOP,
+    tree.top.map((i) => i.id),
+  );
 
   return {
+    read: { graph, tree, places },
     limbs: top.map(limbOf),
     limb(number: number): { own: Issue[]; shared: Issue[] } | undefined {
       const issue = byNumber.get(number);
@@ -484,11 +459,7 @@ export function readPlan(
         .map((id) => byId.get(id))
         .filter((i): i is Issue => i !== undefined)
         .sort((a, b) => a.number - b.number);
-      // A child is a limb when it brings a tree of its own; one that only
-      // waits for its siblings is a leaf in an order.
-      const siblings = new Set(children.map((c) => c.id));
-      const isLimb = (child: Issue): boolean =>
-        (waitsFor.get(child.id) ?? []).some((id) => !siblings.has(id));
+      const limbIds = new Set(tree.limbsOf(issue.id));
       const closedThisWeek = under.filter(
         (i) =>
           i.state === "closed" && counted(i) && (i.closedAt ?? "") >= since,
@@ -534,9 +505,9 @@ export function readPlan(
           .filter((pull) => pull.closes.some((n) => numbers.has(n)))
           .map(({ number: n, title, at }) => ({ number: n, title, at })),
         estimate,
-        limbs: children.filter(isLimb).map(limbOf),
+        limbs: arranged(issue.id, [...limbIds]).map(limbOf),
         leaves: children
-          .filter((c) => !isLimb(c))
+          .filter((c) => !limbIds.has(c.id))
           .map((c) => {
             const state = stateOf(c);
             const why =

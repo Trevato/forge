@@ -98,6 +98,8 @@ import {
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
+import { attachLook } from "../actions/attach_look.ts";
+import { lookUrl } from "../core/looks.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
 import { getHold, type Hold } from "../core/holds.ts";
 import { watchMilestone } from "../actions/watches.ts";
@@ -256,6 +258,7 @@ import {
 import { openPlan, parsePlan } from "../actions/plan.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
+import { askToLiveFor } from "../web/ask_to_live.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import {
@@ -373,7 +376,7 @@ function respondFleet(error: FleetError): Response {
   if (error.code === "unauthorized") return unauthorized();
   return apiError(
     error.code,
-    error.code === "forbidden" ? 403 : error.code === "already_undone" ? 409 : 422,
+    error.code === "forbidden" ? 403 : error.code === "already_undone" || error.code === "expired" ? 409 : 422,
     error.message,
   );
 }
@@ -2463,20 +2466,22 @@ export function apiRoutes(router: Router<Handler>): void {
   );
   // Milestones as data: the plan's limbs with their weights, and one
   // milestone opened. The same numbers as the pages.
-  router.add("GET", "/api/v1/repos/:owner/:name/milestones", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/milestones", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(milestonesJson(ctx, repo));
+    return json(await milestonesJson(ctx, repo));
   });
   router.add(
     "GET",
     "/api/v1/repos/:owner/:name/milestones/:number",
-    (ctx) => {
+    async (ctx) => {
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
       const number = positiveInt(ctx.params.number);
       const data =
-        number === undefined ? undefined : milestoneData(ctx, repo, number);
+        number === undefined
+          ? undefined
+          : await milestoneData(ctx, repo, number);
       return data === undefined ? notFound() : json(data);
     },
   );
@@ -2508,7 +2513,7 @@ export function apiRoutes(router: Router<Handler>): void {
       },
     );
   // One action on a whole limb (#733): defer, resume, or close as not
-  // doing. A fleet operation in every respect — a dry run by default with a
+  // doing, or raise or lower it among its siblings (#1064). A fleet operation in every respect — a dry run by default with a
   // read credential, an admin token to apply, the receipt in
   // /api/v1/fleet/ops/:id and its undo at …/undo.
   router.add(
@@ -2523,11 +2528,14 @@ export function apiRoutes(router: Router<Handler>): void {
       const number = positiveInt(ctx.params.number);
       if (!repo || number === undefined) return notFound();
       if (!isLimbAction(input.action))
-        return apiError("bad_action", 422, "action is defer, resume or close");
+        return apiError("bad_action", 422, "action is defer, resume, close, raise or lower");
       const request = {
         action: input.action,
         ...(typeof input.reason === "string" ? { reason: input.reason } : {}),
         ...(typeof input.pillar === "string" ? { pillar: input.pillar } : {}),
+        ...(typeof input.under === "string" || typeof input.under === "number"
+          ? { under: String(input.under) }
+          : {}),
       };
       if (dryRun) {
         const plan = previewLimb(ctx.app, ctx.auth.user, repo, number, request);
@@ -2541,12 +2549,13 @@ export function apiRoutes(router: Router<Handler>): void {
   );
   // The map as data: ready now, blocked on, the critical path, every edge,
   // and where the crew is.
-  router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/map", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const graph = repoGraph(ctx.app.db, repo.id, {
       ...sealedScope(ctx.app.db, repo, ctx.auth.user),
     });
+    const pillars = pillarView(ctx.app.db, repo);
     return json(
       mapJson(
         repo,
@@ -2557,7 +2566,8 @@ export function apiRoutes(router: Router<Handler>): void {
           graph,
           listActiveRuns(ctx.app.db, [repo.id]),
         ),
-        pillarView(ctx.app.db, repo),
+        pillars,
+        await askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
       ),
     );
   });
@@ -2918,6 +2928,50 @@ export function apiRoutes(router: Router<Handler>): void {
       );
       if (!added.ok) return originAware(added.error);
       return json(added.value, 201);
+    },
+  );
+
+  // Attach a look: a picture a person took, at a stated width, with one line
+  // saying what it shows (`actions/attach_look.ts`). The picture is base64
+  // in the JSON body; the crew's own looks keep their path through the
+  // preview.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/looks",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const attached = attachLook(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        { width: str(input.width), note: str(input.says), image: str(input.image) },
+      );
+      if (!attached.ok)
+        return respondAccess(
+          attached.error,
+          attached.error === "too_large"
+            ? 413
+            : attached.error === "not_open" || attached.error === "no_app"
+              ? 409
+              : 422,
+        );
+      const look = attached.value;
+      return json(
+        {
+          id: look.id,
+          width: look.kind,
+          says: look.note,
+          by: look.attachedBy,
+          commit: look.commitOid,
+          url: lookUrl(`/${found.repo.ownerName}/${found.repo.name}`, look),
+        },
+        201,
+      );
     },
   );
 

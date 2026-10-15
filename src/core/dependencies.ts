@@ -14,6 +14,7 @@ import { getIssuesByIds, type CloseReason, type Issue } from "./issues.ts";
 import { pillarsOf, structuralIds } from "./pillars.ts";
 import { getRepoById } from "./repos.ts";
 import { unadoptedAmong } from "../crew/direct.ts";
+import { limbRanks, limbTree, readPlaces } from "./limb_order.ts";
 
 export type DependencyError = "self" | "cross_repo" | "cycle" | "not_an_issue";
 
@@ -215,6 +216,12 @@ export interface Graph {
    * words, as every surface says it (`deferredWhy`).
    */
   readonly deferred: ReadonlyMap<string, string>;
+  /**
+   * Where each issue stands in the order of the limbs (#1064), the first
+   * limb that holds it, lower first. Only when a person has set an order
+   * here; absent, the ready order is the one that never knew limbs.
+   */
+  readonly limbRank?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -318,7 +325,16 @@ export function repoGraph(
   );
   const repo = getRepoById(db, repoId);
   const set = repo === undefined ? undefined : pillarsOf(db, repo);
+  const places = readPlaces(db, repoId);
   return {
+    ...(set === undefined || places.size === 0
+      ? {}
+      : {
+          limbRank: limbRanks(
+            limbTree({ issues, edges: kept }, set),
+            places,
+          ),
+        }),
     issues,
     unadopted:
       repo === undefined ? new Set() : unadoptedAmong(db, repo, issues),
@@ -509,14 +525,22 @@ function clearNow(graph: Graph): Ranked[] {
  * reader's suggestion only once someone who writes here adopted it, and
  * never the plan's own furniture: an umbrella or the Later gate is not
  * work. What a free crew slot takes next.
+ *
+ * Where a person has ordered the limbs (`limb_order.ts`), an issue beneath
+ * a higher limb comes before one beneath a lower limb, and one beneath no
+ * limb after them all; within a limb the order is the one above.
  */
 export function readyNow(graph: Graph): Ranked[] {
-  return clearNow(graph).filter(
+  const ready = clearNow(graph).filter(
     (r) =>
       !graph.unadopted.has(r.issue.id) &&
       !graph.structural.has(r.issue.id) &&
       !graph.deferred.has(r.issue.id),
   );
+  const rank = graph.limbRank;
+  if (rank === undefined) return ready;
+  const of = (r: Ranked) => rank.get(r.issue.id) ?? Number.MAX_SAFE_INTEGER;
+  return ready.sort((a, b) => of(a) - of(b));
 }
 
 /**

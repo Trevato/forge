@@ -12,8 +12,13 @@
  * checks, previews, pictures.
  *
  * A snapshot is named by the moment it began, in UTC, so a listing sorts
- * itself. Nothing is compressed or bundled beyond git's own bundles: a
- * restore is reading files back, and a person can read the manifest.
+ * itself. Nothing is compressed or bundled beyond git's own bundles and
+ * the crew's older run logs, one compressed bundle per day: a bucket costs
+ * a round trip per object, so thousands of tiny logs are one object a day.
+ * A restore is reading files back, and a person can read the manifest.
+ *
+ * Objects go up through a bounded queue, eight in flight; the manifest
+ * lists them in the order they were handed over, not the order they landed.
  */
 
 import type { Database } from "bun:sqlite";
@@ -61,6 +66,86 @@ export interface Manifest {
 export const keyOf = (m: Manifest): "wrapped" | "none" | "raw" =>
   m.key ?? (m.files.some((f) => f.path === "secret.key") ? "raw" : "none");
 
+/** How far a running snapshot is. */
+export interface Progress {
+  readonly objects: number;
+  readonly bytes: number;
+  readonly elapsedMs: number;
+}
+
+/** Puts in flight at once: latency, not bandwidth, was the hour. */
+export const IN_FLIGHT = 8;
+/** Bytes held in memory by puts in flight; past this the next file waits. */
+export const IN_FLIGHT_BYTES = 64 * 1024 * 1024;
+/** A progress line every this many objects or this many ms, whichever first. */
+export const PROGRESS_OBJECTS = 500;
+export const PROGRESS_MS = 60_000;
+/** Run logs touched within this long stay one object each; older go in daily bundles. */
+export const RUN_WINDOW_MS = 24 * 3_600_000;
+/** A bundle is cut before its logs pass this many bytes, so one is never a day's whole history in memory. */
+export const BUNDLE_BYTES = 4 * 1_048_576;
+const BUNDLE_NAME = /^runs\/\d{4}-\d{2}-\d{2}(-\d+)?\.ndjson\.zst$/;
+
+/** Whether a manifest path is a daily bundle of run logs. */
+export const isRunBundle = (path: string): boolean => BUNDLE_NAME.test(path);
+
+/** A bundle's body: one JSON line per log, its body in base64, zstd over all. */
+export function packRuns(
+  logs: readonly { path: string; body: Uint8Array }[],
+): Uint8Array {
+  const text = logs
+    .map((l) =>
+      JSON.stringify({
+        path: l.path,
+        body: Buffer.from(l.body).toString("base64"),
+      }),
+    )
+    .join("\n");
+  return Bun.zstdCompressSync(text);
+}
+
+/** The logs in a bundle; paths that would leave the runs directory are refused. */
+export function unpackRuns(
+  bundle: Uint8Array,
+): { path: string; body: Uint8Array }[] {
+  const text = new TextDecoder().decode(Bun.zstdDecompressSync(bundle));
+  const out: { path: string; body: Uint8Array }[] = [];
+  for (const line of text.split("\n")) {
+    if (line === "") continue;
+    const entry = JSON.parse(line) as { path?: unknown; body?: unknown };
+    if (typeof entry.path !== "string" || typeof entry.body !== "string")
+      throw new Error("a run bundle holds a line that is not a log");
+    if (
+      entry.path === "" ||
+      entry.path.startsWith("/") ||
+      entry.path.split("/").includes("..")
+    )
+      throw new Error(`a run bundle names ${entry.path}`);
+    out.push({
+      path: entry.path,
+      body: new Uint8Array(Buffer.from(entry.body, "base64")),
+    });
+  }
+  return out;
+}
+
+/** Three tries at one put; the last failure names the key. */
+async function withRetries(
+  key: string,
+  put: () => Promise<void>,
+): Promise<void> {
+  let failure: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await put();
+    } catch (error) {
+      failure = error;
+      if (attempt < 2) await Bun.sleep(200 * 4 ** attempt);
+    }
+  }
+  throw new Error(`could not put ${key}: ${String(failure)}`);
+}
+
 export interface Snapshotter {
   readonly db: Database;
   readonly dataDir: string;
@@ -68,6 +153,12 @@ export interface Snapshotter {
   readonly version: string;
   /** The operator's wrapping secret; without it the key stays out. */
   readonly passphrase?: string | undefined;
+  /** Told every so often how far the upload is; the default writes the progress line to the log. */
+  readonly onProgress?: ((p: Progress) => void) | undefined;
+  /** Told each time an object lands, for a page that shows the snapshot live. */
+  readonly onLand?: ((p: Progress) => void) | undefined;
+  /** Overrides of the progress cadence, for tests. */
+  readonly progressEvery?: { objects?: number; ms?: number } | undefined;
 }
 
 /** `2026-09-22T09-00-00Z`: sortable, and a name a bucket allows. */
@@ -122,16 +213,76 @@ export async function takeSnapshot(
   const prefix = `${SNAPSHOT_PREFIX}${name}/`;
   const scratch = mkdtempSync(join(tmpdir(), "forge-snapshot-"));
   const files: SnapshotFile[] = [];
+  const started = Date.now();
+  const everyObjects = forge.progressEvery?.objects ?? PROGRESS_OBJECTS;
+  const everyMs = forge.progressEvery?.ms ?? PROGRESS_MS;
+  const report =
+    forge.onProgress ??
+    ((p: Progress) =>
+      log.info("in progress", {
+        objects: p.objects,
+        bytes: p.bytes,
+        elapsed: `${Math.round(p.elapsedMs / 1000)}s`,
+      }));
+  let landed = 0;
+  let landedBytes = 0;
+  let sinceReport = 0;
+  const say = (): void => {
+    sinceReport = 0;
+    report({
+      objects: landed,
+      bytes: landedBytes,
+      elapsedMs: Date.now() - started,
+    });
+  };
+  const ticker = setInterval(say, everyMs);
+  const pending = new Set<Promise<void>>();
+  let failure: Error | undefined;
+  let held = 0;
+  // Hands an object to the queue: waits for a free slot, then lets the put
+  // run on its own while the caller reads the next file.
   const put = async (
     path: string,
     body: Uint8Array | string,
   ): Promise<void> => {
-    await store.put(prefix + path, body);
-    files.push({
-      path,
-      bytes:
-        typeof body === "string" ? Buffer.byteLength(body) : body.byteLength,
-    });
+    const bytes =
+      typeof body === "string" ? Buffer.byteLength(body) : body.byteLength;
+    while (
+      (pending.size >= IN_FLIGHT ||
+        (pending.size > 0 && held + bytes > IN_FLIGHT_BYTES)) &&
+      failure === undefined
+    )
+      await Promise.race(pending);
+    if (failure !== undefined) throw failure;
+    held += bytes;
+    files.push({ path, bytes });
+    const run: Promise<void> = withRetries(prefix + path, () =>
+      store.put(prefix + path, body),
+    )
+      .then(
+        () => {
+          landed++;
+          landedBytes += bytes;
+          forge.onLand?.({
+            objects: landed,
+            bytes: landedBytes,
+            elapsedMs: Date.now() - started,
+          });
+          if (++sinceReport >= everyObjects) say();
+        },
+        (error) => {
+          failure ??= error as Error;
+        },
+      )
+      .finally(() => {
+        held -= bytes;
+        pending.delete(run);
+      });
+    pending.add(run);
+  };
+  const drain = async (): Promise<void> => {
+    while (pending.size > 0) await Promise.all([...pending]);
+    if (failure !== undefined) throw failure;
   };
   const putFile = async (path: string, file: string): Promise<void> => {
     const f = Bun.file(file);
@@ -214,9 +365,51 @@ export async function takeSnapshot(
       }
     }
 
-    // The crew's run logs: history a person may want back.
-    for (const f of filesUnder(join(forge.dataDir, "runs")))
-      await putFile(`runs/${f}`, join(forge.dataDir, "runs", f));
+    // The crew's run logs: history a person may want back. Recent ones go
+    // up as they are; older ones, a day's worth to an object.
+    const runsDir = join(forge.dataDir, "runs");
+    const days = new Map<string, { path: string; size: number }[]>();
+    for (const f of filesUnder(runsDir)) {
+      const file = join(runsDir, f);
+      const age = statSync(file, { throwIfNoEntry: false });
+      if (age === undefined) continue;
+      if (Date.now() - age.mtimeMs < RUN_WINDOW_MS) {
+        await putFile(`runs/${f}`, file);
+        continue;
+      }
+      const day = age.mtime.toISOString().slice(0, 10);
+      const logs = days.get(day) ?? [];
+      logs.push({ path: f, size: age.size });
+      days.set(day, logs);
+    }
+    // Only one bundle's logs are in memory at a time.
+    for (const day of [...days.keys()].sort()) {
+      const chunks: { path: string; size: number }[][] = [[]];
+      let held = 0;
+      for (const entry of days.get(day)!) {
+        if (held > 0 && held + entry.size > BUNDLE_BYTES) {
+          chunks.push([]);
+          held = 0;
+        }
+        chunks.at(-1)!.push(entry);
+        held += entry.size;
+      }
+      for (const [n, chunk] of chunks.entries()) {
+        const bodies: { path: string; body: Uint8Array }[] = [];
+        for (const l of chunk) {
+          const f = Bun.file(join(runsDir, l.path));
+          if (await f.exists())
+            bodies.push({ path: l.path, body: new Uint8Array(await f.arrayBuffer()) });
+        }
+        if (bodies.length > 0)
+          await put(
+            `runs/${day}${n === 0 ? "" : `-${n + 1}`}.ndjson.zst`,
+            packRuns(bodies),
+          );
+      }
+    }
+
+    await drain();
 
     const manifest: Manifest = {
       name,
@@ -244,6 +437,9 @@ export async function takeSnapshot(
     });
     return manifest;
   } finally {
+    clearInterval(ticker);
+    // Puts still running when one failed must not outlive the scratch.
+    await Promise.allSettled([...pending]);
     rmSync(scratch, { recursive: true, force: true });
   }
 }

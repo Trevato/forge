@@ -244,39 +244,11 @@ export function mergedByPillar(
   served: ReadonlyMap<string, string>,
   since: string,
 ): MergedCount[] {
-  const bodies = db
-    .query<{ body: string }, [string, string]>(
-      `SELECT i.body FROM pull p JOIN issue i ON i.id = p.issue_id
-        WHERE i.repo_id = ?1 AND p.merged_at IS NOT NULL AND p.merged_at >= ?2
-        ORDER BY p.merged_at DESC LIMIT 1000`,
-    )
-    .all(repoId, since);
-  const closes = bodies.map((row) => closesFromBody(row.body));
-  const numbers = [...new Set(closes.flat())];
-  const idOf = new Map<number, string>();
-  const CHUNK = 400;
-  for (let i = 0; i < numbers.length; i += CHUNK) {
-    const chunk = numbers.slice(i, i + CHUNK);
-    const rows = db
-      .query<{ id: string; number: number }, (string | number)[]>(
-        `SELECT id, number FROM issue WHERE repo_id = ?1 AND kind = 'issue'
-           AND number IN (${chunk.map((_, n) => `?${n + 2}`).join(",")})`,
-      )
-      .all(repoId, ...chunk);
-    for (const row of rows) idOf.set(row.number, row.id);
-  }
+  const { pulls, issues } = mergedPulls(db, repoId, since);
   const names = pillarNames(set);
   const counts = new Map<string | null, number>(names.map((n) => [n, 0]));
-  for (const closed of closes) {
-    let pillar: string | null = null;
-    for (const number of closed) {
-      const id = idOf.get(number);
-      const found = id === undefined ? undefined : served.get(id);
-      if (found !== undefined) {
-        pillar = found;
-        break;
-      }
-    }
+  for (const pull of pulls) {
+    const pillar = pillarOf(pull.closes, issues, served)?.pillar ?? null;
     counts.set(pillar, (counts.get(pillar) ?? 0) + 1);
   }
   const none = counts.get(null);
@@ -285,6 +257,177 @@ export function mergedByPillar(
     ...(none === undefined ? [] : [{ pillar: null, merged: none }]),
   ];
 }
+
+interface MergedPull {
+  readonly closes: readonly number[];
+  readonly mergedAt: string;
+  readonly mergedOid: string;
+}
+
+interface ClosedIssue {
+  readonly id: string;
+  readonly createdAt: string;
+}
+
+type SealedScope = { sealed?: true; sealedBy?: string };
+
+/** The rows of table `t` a viewer may see (`sealed.ts`); `?n` is the reporter's id, bound only when `by` is true. */
+function sealedClause(t: string, scope: SealedScope, n: number): string {
+  if (scope.sealed === true) return "1";
+  return scope.sealedBy === undefined
+    ? `${t}.sealed = 0`
+    : `(${t}.sealed = 0 OR ${t}.author_id = ?${n})`;
+}
+
+/** The parameters `sealedClause` binds: the reporter's id, when it asks for one. */
+const sealedParams = (scope: SealedScope): string[] =>
+  scope.sealed !== true && scope.sealedBy !== undefined ? [scope.sealedBy] : [];
+
+/** The pulls merged since an instant, and the issues they close, by number. Two reads. */
+function mergedPulls(
+  db: Database,
+  repoId: string,
+  since: string,
+  scope: SealedScope = {},
+): { pulls: MergedPull[]; issues: Map<number, ClosedIssue> } {
+  const rows = db
+    .query<{ body: string; at: string; oid: string | null }, string[]>(
+      `SELECT i.body, p.merged_at AS at, p.merged_oid AS oid
+         FROM pull p JOIN issue i ON i.id = p.issue_id
+        WHERE i.repo_id = ?1 AND p.merged_at IS NOT NULL AND p.merged_at >= ?2
+          AND ${sealedClause("i", scope, 3)}
+        ORDER BY p.merged_at DESC LIMIT 1000`,
+    )
+    .all(repoId, since, ...sealedParams(scope));
+  const pulls = rows.map((row) => ({
+    closes: closesFromBody(row.body),
+    mergedAt: row.at,
+    mergedOid: row.oid ?? "",
+  }));
+  const numbers = [...new Set(pulls.flatMap((pull) => pull.closes))];
+  const issues = new Map<number, ClosedIssue>();
+  const CHUNK = 400;
+  for (let i = 0; i < numbers.length; i += CHUNK) {
+    const chunk = numbers.slice(i, i + CHUNK);
+    const found = db
+      .query<
+        { id: string; number: number; created_at: string },
+        (string | number)[]
+      >(
+        `SELECT id, number, created_at FROM issue WHERE repo_id = ?1 AND kind = 'issue'
+           AND ${sealedClause("issue", scope, 2)}
+           AND number IN (${chunk.map((_, n) => `?${n + 2 + sealedParams(scope).length}`).join(",")})`,
+      )
+      .all(repoId, ...sealedParams(scope), ...chunk);
+    for (const row of found)
+      issues.set(row.number, { id: row.id, createdAt: row.created_at });
+  }
+  return { pulls, issues };
+}
+
+/** The first issue a pull closes that serves a pillar, and that pillar. */
+function pillarOf(
+  closes: readonly number[],
+  issues: ReadonlyMap<number, ClosedIssue>,
+  served: ReadonlyMap<string, string>,
+): { pillar: string; number: number; createdAt: string } | undefined {
+  for (const number of closes) {
+    const issue = issues.get(number);
+    const pillar = issue === undefined ? undefined : served.get(issue.id);
+    if (issue !== undefined && pillar !== undefined)
+      return { pillar, number, createdAt: issue.createdAt };
+  }
+  return undefined;
+}
+
+// ---- ask-to-live: an issue opening to its change in production (#1185) ----
+
+/** Whether `ancestor` is reachable from `descendant`; false when unsure. The git lives in src/git, handed in. */
+export type Reaches = (ancestor: string, descendant: string) => Promise<boolean>;
+
+/** How long the asking took, for one pillar's merged work. */
+export interface AskToLive {
+  /** Median hours from an issue opening to its change live in production. */
+  readonly medianHours: number;
+  /** The one that took longest. */
+  readonly slowest: { readonly number: number; readonly hours: number };
+}
+
+/** A pillar's ask-to-live; `askToLive` is undefined where nothing merged has gone live. */
+export interface AskToLiveCount {
+  readonly pillar: string;
+  readonly askToLive: AskToLive | undefined;
+}
+
+/** Most ancestry questions one request may put to git; a pull left unanswered counts for nothing. */
+const ASK_GIT_CALLS = 120;
+
+/**
+ * Per pillar, over the pulls merged since an instant: the median and the
+ * slowest ask-to-live, from the creation of the issue that pull closed to
+ * the first production deploy that went live on a commit containing the
+ * pull's merge. A pull not yet live counts for nothing. Every name has a
+ * row, in order; one read of deploys however many pulls merged.
+ */
+export async function askToLiveByPillar(
+  db: Database,
+  repoId: string,
+  set: Pillars,
+  served: ReadonlyMap<string, string>,
+  since: string,
+  reaches: Reaches,
+  scope: SealedScope = {},
+): Promise<AskToLiveCount[]> {
+  const { pulls, issues } = mergedPulls(db, repoId, since, scope);
+  const deploys = db
+    .query<{ oid: string; at: string }, [string, string]>(
+      `SELECT commit_oid AS oid, COALESCE(serving_at, finished_at) AS at FROM run
+        WHERE repo_id = ?1 AND kind = 'deploy' AND env = 'production' AND state = 'ok'
+          AND commit_oid != '' AND COALESCE(serving_at, finished_at) >= ?2
+        ORDER BY COALESCE(serving_at, finished_at), id`,
+    )
+    .all(repoId, since);
+  const asked = new Map<string, { number: number; hours: number }[]>();
+  let budget = ASK_GIT_CALLS;
+  for (const pull of pulls) {
+    const ask = pillarOf(pull.closes, issues, served);
+    if (ask === undefined || pull.mergedOid === "") continue;
+    let live: { oid: string; at: string } | undefined;
+    for (const d of deploys) {
+      if (d.at < pull.mergedAt) continue;
+      if (budget-- <= 0) break;
+      if (await reaches(pull.mergedOid, d.oid)) {
+        live = d;
+        break;
+      }
+    }
+    if (live === undefined) continue;
+    const hours = (Date.parse(live.at) - Date.parse(ask.createdAt)) / 3_600_000;
+    if (!Number.isFinite(hours)) continue;
+    const list = asked.get(ask.pillar) ?? [];
+    list.push({ number: ask.number, hours: Math.max(0, hours) });
+    asked.set(ask.pillar, list);
+  }
+  return pillarNames(set).map((pillar) => {
+    const list = (asked.get(pillar) ?? []).sort((a, b) => a.hours - b.hours);
+    if (list.length === 0) return { pillar, askToLive: undefined };
+    const mid = list.length >> 1;
+    const median =
+      list.length % 2 === 1
+        ? list[mid]!.hours
+        : (list[mid - 1]!.hours + list[mid]!.hours) / 2;
+    const slowest = list[list.length - 1]!;
+    return {
+      pillar,
+      askToLive: {
+        medianHours: round1(median),
+        slowest: { number: slowest.number, hours: round1(slowest.hours) },
+      },
+    };
+  });
+}
+
+const round1 = (n: number): number => Math.round(n * 10) / 10;
 
 /** Of these repositories, the ones with an open issue titled like an umbrella: one read. */
 export function reposWithUmbrellas(
@@ -336,10 +479,31 @@ export function pillarView(
   const set = pillarsOf(db, repo);
   if (set.pillars.length === 0) return undefined;
   const of = servedBy(db, set);
+  const since = pillarWindowStart(now);
   return {
     set,
     names: pillarNames(set),
     of,
-    merged: mergedByPillar(db, repo.id, set, of, pillarWindowStart(now)),
+    merged: mergedByPillar(db, repo.id, set, of, since),
   };
+}
+
+/** A view's ask-to-live over the last `PILLAR_DAYS` days; opt-in, for it reads git. */
+export function askToLiveOf(
+  db: Database,
+  repo: Repo,
+  view: PillarView,
+  reaches: Reaches,
+  scope: SealedScope = {},
+  now = new Date(),
+): Promise<AskToLiveCount[]> {
+  return askToLiveByPillar(
+    db,
+    repo.id,
+    view.set,
+    view.of,
+    pillarWindowStart(now),
+    reaches,
+    scope,
+  );
 }

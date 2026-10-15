@@ -41,6 +41,7 @@ import { settled } from "../src/origins/jobs.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { prefill } from "../src/web/pages/migrate-prefill.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -570,6 +571,36 @@ describe("migrate", () => {
     expect(getRepo(app.db, "alice", "copy")?.autonomy).toBe("autonomous");
   });
 
+  test("a link prefills the form and starts nothing", async () => {
+    const host = new URL(forgejo.url).host;
+    expect(host).toContain(":"); // the fake forge has a port; the label would not
+    const already = getRepo(app.db, "alice", "secret-widgets")?.id;
+    const get = async (qs: string) =>
+      (await browser(aliceCookie, `/migrate?${qs}`)).text();
+
+    const hit = await get(
+      new URLSearchParams({ from: `${host}/octo/secret-widgets`, crew: "porter" }).toString(),
+    );
+    expect(hit).toMatch(/<option\s+value="[^"]+\/octo\/secret-widgets"[^>]*selected/);
+    expect(hit).toMatch(/<option[^>]*value="porter"[^>]*selected|selected[^>]*value="porter"/);
+    expect(hit).not.toContain("prefill-unmatched");
+
+    const miss = await get(
+      new URLSearchParams({
+        from: `other.example/octo/secret-widgets`,
+        crew: `<script>alert(1)</script>`,
+      }).toString(),
+    );
+    expect(miss).toContain("prefill-unmatched");
+    expect(miss).toContain("from=other.example/octo/secret-widgets");
+    expect(miss).not.toContain("<script>alert(1)");
+    expect(miss).toContain("&lt;script&gt;");
+    expect(miss).not.toMatch(/<option[^>]*value="[^"]+"[^>]*selected[^>]*>\s*octo/);
+
+    // A link starts nothing: no repository, no job.
+    expect(getRepo(app.db, "alice", "secret-widgets")?.id).toBe(already);
+  });
+
   test("a pasted address inside the network is an admin's alone, unless the forge says otherwise", async () => {
     for (const h of [
       "127.0.0.1",
@@ -656,5 +687,39 @@ describe("migrate", () => {
       hop.stop(true);
       target.stop(true);
     }
+  });
+});
+
+describe("migrate prefill", () => {
+  const origins = [
+    { id: "o1", host: "git.example.test:3000", repos: [{ fullName: "Octo/Widgets" }] },
+    { id: "o2", host: "git.open-platform.sh", repos: [{ fullName: "trevato/forge" }] },
+  ];
+  const agents = ["porter", "scout"];
+
+  test("a host with a port, and one without", () => {
+    expect(prefill({ from: "git.example.test:3000/octo/widgets" }, origins, agents).repo).toEqual({
+      originId: "o1",
+      fullName: "Octo/Widgets",
+    });
+    const plain = prefill({ from: "GIT.open-platform.sh/trevato/forge", crew: "scout" }, origins, agents);
+    expect(plain.repo?.originId).toBe("o2");
+    expect(plain.agent).toBe("scout");
+    expect(plain.unmatched).toEqual([]);
+  });
+
+  test("a mismatch is named, never guessed (not the display label)", () => {
+    const r = prefill({ from: "git/trevato/forge", crew: "nobody" }, origins, agents);
+    expect(r.repo).toBeUndefined();
+    expect(r.agent).toBeUndefined();
+    expect(r.unmatched).toEqual(["from=git/trevato/forge", "crew=nobody"]);
+    expect(prefill({ from: "git.example.test/octo/widgets" }, origins, agents).repo).toBeUndefined();
+  });
+
+  test("a hostile or oversized value is ignored and capped", () => {
+    const r = prefill({ from: "<img src=x onerror=1>/a/b", crew: "x".repeat(500) }, origins, agents);
+    expect(r.repo).toBeUndefined();
+    expect(r.unmatched).toHaveLength(2);
+    expect(r.unmatched.every((u) => u.length < 100)).toBe(true);
   });
 });

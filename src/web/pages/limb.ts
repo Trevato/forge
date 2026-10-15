@@ -50,6 +50,22 @@ const WORDS: Record<LimbAction, { ask: string; does: string; go: string }> = {
     does: "Every open issue that only this limb needs closes as not doing, with your reason said on each.",
     go: "Close as not doing",
   },
+  raise: {
+    ask: "Raise",
+    does: "It moves up one place among its siblings, and the crew takes ready work from the higher limb first.",
+    go: "Raise this limb",
+  },
+  lower: {
+    ask: "Lower",
+    does: "It moves down one place among its siblings, and the crew takes ready work from the higher limb first.",
+    go: "Lower this limb",
+  },
+};
+
+/** A seat (`top:2`) as a person reads it; anything else as it is. */
+const seatWords = (token: string | number): string => {
+  const place = /^(?:top|[0-9]+):([0-9]+)$/.exec(String(token))?.[1];
+  return place === undefined ? String(token) : `place ${place}`;
 };
 
 const shown = (value: FleetValue): string =>
@@ -58,7 +74,7 @@ const shown = (value: FleetValue): string =>
     : Array.isArray(value)
       ? value.length === 0
         ? "filed nowhere"
-        : value.join(", ")
+        : value.map(seatWords).join(", ")
       : String(value);
 
 /** How many issues a list shows before the rest folds away. */
@@ -134,10 +150,12 @@ function requestOf(
 ): LimbRequest {
   const reason = get("reason").trim();
   const pillar = get("pillar").trim();
+  const under = get("under").trim();
   return {
     action,
     ...(reason === "" ? {} : { reason }),
     ...(pillar === "" ? {} : { pillar }),
+    ...(under === "" ? {} : { under }),
   };
 }
 
@@ -179,6 +197,7 @@ export function limbPreviewPage(ctx: Ctx): Response {
   }
   const p = plan.value;
   const willWrite = p.counts.change > 0;
+  const moving = action === "raise" || action === "lower";
   const pillars =
     action === "resume" ? pillarsOf(ctx.app.db, repo).pillars : [];
   const body = html`${repoHeader(ctx, repo, "map")}
@@ -189,6 +208,41 @@ export function limbPreviewPage(ctx: Ctx): Response {
       <h1>${words.ask} “${p.limb.title}”?</h1>
       <p>${words.does}</p>
     </div>
+    ${when(
+      p.order !== undefined,
+      () =>
+        html`<section class="ms-section" id="limb-order">
+          <h2>The order of the limbs</h2>
+          <ol class="ms-rows">
+            ${(p.order ?? []).map(
+              (i) =>
+                html`<li ${i.number === p.limb.number ? html`aria-current="true"` : null}>
+                  ${i.number === p.limb.number
+                    ? html`<b>${i.title}</b>`
+                    : html`<a href="${base}/issues/${i.number}">${i.title}</a>`}
+                  <span class="muted small">#${i.number}</span>
+                </li>`,
+            )}
+          </ol>
+        </section>`,
+    )}
+    ${when(
+      p.ready !== undefined,
+      () => {
+        const before = (p.ready?.before ?? []).map((i) => i.number);
+        const after = p.ready?.after ?? [];
+        return html`<section class="ms-section" id="limb-ready">
+          <h2>The top of the ready list</h2>
+          ${after.length === 0
+            ? html`<p class="muted small">Nothing is ready.</p>`
+            : before.join() === after.map((i) => i.number).join()
+              ? html`<p class="muted small">Unchanged: the same ${after.length} come first.</p>
+                  ${issueList(base, after)}`
+              : html`<p class="muted small">After the move, the crew takes these first:</p>
+                  ${issueList(base, after)}`}
+        </section>`;
+      },
+    )}
     ${when(
       p.taken.length > 0,
       () =>
@@ -213,12 +267,14 @@ export function limbPreviewPage(ctx: Ctx): Response {
           ${issueList(base, p.kept)}
         </section>`,
     )}
-    <section class="ms-section" id="limb-rows">
-      <h2>What is written</h2>
-      ${p.rows.length === 0
-        ? html`<p class="muted small">Nothing: no open issue is the limb's alone.</p>`
-        : rowList(ctx, base, p.rows)}
-    </section>
+    ${moving
+      ? null
+      : html`<section class="ms-section" id="limb-rows">
+          <h2>What is written</h2>
+          ${p.rows.length === 0
+            ? html`<p class="muted small">Nothing: no open issue is the limb's alone.</p>`
+            : rowList(ctx, base, p.rows)}
+        </section>`}
     ${willWrite
       ? html`<form
           method="post"
@@ -226,6 +282,10 @@ export function limbPreviewPage(ctx: Ctx): Response {
           class="limb-confirm mt"
         >
           <input type="hidden" name="action" value="${action}" />
+          ${when(
+            request.under,
+            (under) => html`<input type="hidden" name="under" value="${under}" />`,
+          )}
           ${when(
             action === "close",
             () =>
@@ -305,7 +365,9 @@ export async function limbSubmit(ctx: Ctx): Promise<Response> {
   if (!op.ok)
     return op.error.code === "not_found"
       ? notFoundPage(ctx)
-      : redirect(`${milestoneHref(base, number)}/limb?action=${action}`);
+      : redirect(
+          `${milestoneHref(base, number)}/limb?action=${action}${(field(form, "under") ?? "") === "" ? "" : `&under=${encodeURIComponent(field(form, "under"))}`}`,
+        );
   return redirect(`${milestoneHref(base, number)}/limb/${op.value.id}`);
 }
 
@@ -313,6 +375,7 @@ export async function limbSubmit(ctx: Ctx): Promise<Response> {
 function done(op: Operation): string {
   if (op.undoOf !== null) return "Undone";
   if (op.verb === "drop") return "Closed as not doing";
+  if (op.verb === "place") return "Moved";
   return op.value === "later" ? "Deferred" : "Resumed";
 }
 
