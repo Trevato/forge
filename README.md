@@ -790,3 +790,16 @@ In the forge itself: a pull's check runs `fast` when the manifest has one, in a 
 ## Limits
 
 Every limit the owner can hit is declared in `src/settings/limits.ts` with its default, bounds and reason, and changed live by a forge admin at `/admin/limits`, `PUT /api/v1/admin/limits/:key` or the `limits` MCP tool (never by an agent). Each change is kept with who made it.
+
+## Choosing among variants
+
+A tell with `variants: n` starts n builders whose pulls share a variant group.
+`/:owner/:name/variants/:group` is the deck: one card per open sibling with its
+look and preview, linked from each sibling's change page. A writer likes or
+dislikes each (plain form posts; on touch a mostly-horizontal swipe, with a
+confirm before a dislike), through `POST /api/v1/repos/:owner/:name/pulls/:number/variant`
+(`{"answer","reason"}`), the `variant` MCP tool, or `+`/`-` on a pull in the
+terminal. Each person has one vote per pull, kept as a `lean` row in the
+decision ledger. A dislike closes the pull and leaves its one-line reason as a
+comment the builder reads; the last open sibling shows Ship. Readers see the
+cards and no buttons.

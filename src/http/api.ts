@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { voteVariant } from "../actions/variants.ts";
 import { readFlow } from "../flow/read.ts";
 import { runQuery } from "../boards/query.ts";
 import { SOURCES } from "../boards/sources.ts";
@@ -3263,6 +3264,37 @@ export function apiRoutes(router: Router<Handler>): void {
         return originAware(submitted.error, 422);
       }
       return json(submitted.value, 201);
+    },
+  );
+
+  // Like or dislike one pull among its variant siblings; a dislike closes it
+  // with a one-line reason.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/variant",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const input = await body(ctx.request);
+      const answer = str(input.answer);
+      if (answer !== "like" && answer !== "dislike")
+        return apiError("invalid_answer", 422, "answer is like or dislike");
+      const voted = voteVariant(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+        answer,
+        str(input.reason),
+      );
+      if (!voted.ok) {
+        if (voted.error === "forbidden" || voted.error === "unauthorized")
+          return respondAccess(voted.error, 422);
+        return apiError(voted.error, 422, "that vote could not be recorded");
+      }
+      return json({ answer, closed: voted.value.closed }, 201);
     },
   );
 

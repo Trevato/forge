@@ -275,6 +275,7 @@ import {
   pullPage,
   pullStateFragment,
 } from "../web/studio/change.ts";
+import { variantsPage, variantVoteSubmit } from "../web/pages/variants.ts";
 import {
   pullCommentSubmit,
   pullFilesPage,
@@ -972,6 +973,17 @@ export function buildRouter(): Router<Handler> {
     "POST",
     "/:owner/:name/pulls/:number/review-state",
     pullReviewStateSubmit,
+  );
+  router.add("GET", "/:owner/:name/variants/:group", variantsPage);
+  router.add(
+    "POST",
+    "/:owner/:name/variants/:group/:number/like",
+    variantVoteSubmit("like"),
+  );
+  router.add(
+    "POST",
+    "/:owner/:name/variants/:group/:number/dislike",
+    variantVoteSubmit("dislike"),
   );
   router.add(
     "POST",

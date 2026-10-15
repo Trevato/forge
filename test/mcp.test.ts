@@ -162,6 +162,7 @@ describe("the forge over MCP", () => {
       "share",
       "say",
       "pull",
+      "variant",
       "edit",
       "asks",
       "asks_act",

@@ -125,6 +125,22 @@ export function variantSiblings(
   );
 }
 
+/** Every pull in one variant group of a repository, in any state, by number. */
+export function variantMembers(
+  db: Database,
+  repoId: string,
+  group: string,
+): Pull[] {
+  const issues = db
+    .query<{ issue_id: string }, [string, string]>(
+      `SELECT p.issue_id FROM pull p JOIN issue i ON i.id = p.issue_id
+        WHERE i.repo_id = ?1 AND p.variant_group = ?2 ORDER BY i.number`,
+    )
+    .all(repoId, group)
+    .flatMap((r) => getIssueById(db, r.issue_id) ?? []);
+  return joinMany(db, issues);
+}
+
 function join(db: Database, issue: Issue): Pull | undefined {
   const row = db
     .query<PullRow, [string]>("SELECT * FROM pull WHERE issue_id = ?1")
