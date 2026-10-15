@@ -14,6 +14,8 @@
  * whole of this screen's design.
  */
 
+import { holdWords, plannerHold } from "../../crew/autonomy.ts";
+import { forgeNeeds } from "../../actions/health.ts";
 import { mayView } from "../../core/sealed.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
 import { listAssignedTo, type Issue } from "../../core/issues.ts";
@@ -88,6 +90,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let pins: Pin[] = [];
   let pinned = new Set<string>();
   let onYou: OnYouItem[] = [];
+  /** Why planning is paused, for the autonomous apps where it is; as on the board. */
+  let holds = new Map<string, string>();
+  let forge: string[] | undefined;
   const filter = new Filter();
   /** One cursor per pane: moving in one must never move another. */
   const cursors: Record<PaneId, ListState> = {
@@ -104,6 +109,15 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
     onYou = assignedToMe();
+    const now = new Date();
+    holds = new Map(
+      all.flatMap((repo) => {
+        const hold =
+          repo.autonomy === "autonomous" ? plannerHold(f.app, repo, now) : null;
+        return hold === null ? [] : [[repo.id, holdWords(hold)] as const];
+      }),
+    );
+    forge = forgeNeeds(f.app, f.user);
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.
     const orgs = f.user
@@ -262,7 +276,24 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     render(area, s) {
       const c = ctx.theme.c;
       const set = ctx.icons;
-      const { main, aside, stacked } = beside(area, ctx.twoPane, {
+      // A site admin's forge strip, as the board's: "All fine" or a line
+      // per cause. Anyone else gets no rows and no reads.
+      let body = area;
+      if (forge !== undefined) {
+        const lines = forge.length === 0 ? ["All fine"] : forge.slice(0, 3);
+        const [strip, rest] = split(area, "v", [len(lines.length), fill(1)]);
+        lines.forEach((line, i) =>
+          s.text(
+            strip!.x,
+            strip!.y + i,
+            truncate(line, strip!.w),
+            style(forge!.length === 0 ? c.mutedFg : c.fg, c.bg),
+            strip!.x + strip!.w,
+          ),
+        );
+        body = rest!;
+      }
+      const { main, aside, stacked } = beside(body, ctx.twoPane, {
         main: fill(3),
         aside: fill(2),
       });
@@ -414,7 +445,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       rows.map(
         (repo): ListRow => ({
           title: `${repoMark(pinned.has(repo.id), set)}${repo.ownerName}/${repo.name}`,
-          secondary: repo.description,
+          secondary: holds.get(repo.id) ?? repo.description,
           meta: metaOf(
             repo.visibility === "private" ? "private" : "",
             counts(repo.counts),

@@ -23,8 +23,9 @@ import { cancelRepoRun, requeueRepoRun } from "../actions/runs.ts";
 import { isCrew } from "../core/agents.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { bringUpToDate } from "../crew/autonomy.ts";
+import { moveLimb, parseSeat, type Seating } from "../core/limb_seats.ts";
 import { getHold } from "../core/holds.ts";
-import { recordInteraction, removeDismissals } from "../core/interactions.ts";
+import { recordInteraction, removeDismissals, removeMutes } from "../core/interactions.ts";
 import { getPull } from "../core/pulls.ts";
 import { askItemsOf } from "../web/studio/asks.ts";
 import type { FleetValue } from "../core/fleet_ops.ts";
@@ -59,6 +60,8 @@ export interface Target {
   readonly viewerId?: string;
   /** For an issue: whether the viewer's dismissal of its ask still holds. */
   readonly askDismissed?: boolean;
+  /** Whether the viewer muted this repository. */
+  readonly muted?: boolean;
   /** For a pull: merged, its latest check green, and whether it merges as it stands. */
   readonly merged?: boolean;
   readonly green?: boolean;
@@ -69,6 +72,8 @@ export interface Target {
   readonly pillars?: Pillars;
   /** For an issue: the numbers of the umbrellas that wait for it directly, ascending. */
   readonly under?: readonly number[];
+  /** For an issue: its repository's limbs in order, read on the first ask. */
+  readonly seating?: () => Seating;
   /** For an issue: the ids of every row this operation is over, itself included. */
   readonly peers?: ReadonlySet<string>;
 }
@@ -328,17 +333,54 @@ export const VERBS: Record<string, Verb> = {
       done(requeueRepoRun(app, actor, t.repo, t.id)),
   },
 
+  // Close: with a reason (one sentence), it is said on each before it
+  // closes; undo opens it again and the reason stays in the conversation.
   close: {
     kind: "issue",
     reversible: true,
-    parse: noValue,
+    parse: (_app, value) =>
+      value === null || value === undefined || value === ""
+        ? ok(null)
+        : typeof value === "string" && value.length <= 300
+          ? ok(value.trim().replace(/\s+/g, " "))
+          : err("a reason is one sentence of at most 300 characters"),
     read: (t) => t.issue?.state ?? null,
     next: () => "closed",
     refuse: (app, t) => (isMirror(app, t.repo) ? words("mirrored") : undefined),
-    async write(app, actor, t, after) {
+    async write(app, actor, t, after, value) {
       if (!t.issue || (after !== "open" && after !== "closed"))
         return words("not_found");
-      return done(setIssueState(app, actor, t.repo, t.issue, after));
+      const closed = done(setIssueState(app, actor, t.repo, t.issue, after));
+      // Said after the close, so a refused close leaves no comment behind.
+      if (closed === undefined && after === "closed" && typeof value === "string" && value !== "") {
+        const said = addComment(app, actor, t.repo, t.issue, `Closed: ${value}`);
+        if (!said.ok) return words(String(said.error));
+      }
+      return closed;
+    },
+  },
+
+  // Mute: the actor's own "not this app, not now": its repository goes
+  // quiet in their feed and their On you card. Undo listens again.
+  mute: {
+    kind: "issue",
+    reversible: true,
+    personal: true,
+    parse: noValue,
+    read: (t) => (t.muted ? "muted" : "listening"),
+    next: () => "muted",
+    refuse: () => undefined,
+    async write(app, actor, t, after) {
+      if (after === "listening") removeMutes(app.db, actor.id, [`repo:${t.repo.id}`]);
+      else
+        recordInteraction(app.db, {
+          viewerId: actor.id,
+          itemId: `repo:${t.repo.id}`,
+          kind: "muted",
+          repoId: t.repo.id,
+          actorId: null,
+        });
+      return undefined;
     },
   },
 
@@ -674,6 +716,60 @@ export const VERBS: Record<string, Verb> = {
           reason: "dropped",
         }),
       );
+    },
+  },
+
+  /**
+   * Seat a limb among its siblings: the value is a seat, `<group>:<place>`
+   * (`top` or an issue number, then the place from 1), and the limb takes
+   * that place with the others moving over. The row holds every seat the
+   * limb has, so undo is the seats from before. The order is kept here and
+   * is not the origin's, so a mirror is no reason to refuse.
+   */
+  place: {
+    kind: "issue",
+    reversible: true,
+    parse: (_app, value) =>
+      parseSeat(value) === undefined
+        ? err("place takes a seat: top:2, or the number of the milestone and the place, 12:1")
+        : ok(String(value)),
+    read: (t) => [...(t.seating?.().of(t.id) ?? [])],
+    next: replace,
+    nextFor(_t, before, value) {
+      const want = parseSeat(value);
+      const held = Array.isArray(before) ? before.map(String) : [];
+      return want === undefined
+        ? held
+        : held.map((seat) => (parseSeat(seat)?.group === want.group ? String(value) : seat));
+    },
+    refuse(_app, t, after) {
+      const seats = t.seating?.();
+      for (const seat of Array.isArray(after) ? after.map(String) : []) {
+        const want = parseSeat(seat);
+        if (want === undefined || seats === undefined) return "not a seat";
+        if (want.place > seats.size(want.group))
+          return `there are only ${seats.size(want.group)} limbs there`;
+      }
+      return undefined;
+    },
+    async write(app, actor, t, after) {
+      const have = t.seating?.().of(t.id) ?? [];
+      for (const seat of Array.isArray(after) ? after.map(String) : []) {
+        const want = parseSeat(seat);
+        if (want === undefined) return "not a seat";
+        if (have.includes(seat)) continue;
+        const why = moveLimb(app.db, t.repo, t.id, want);
+        if (why !== undefined) return why;
+        // The order is not an issue's own change, so no issue event says it
+        // moved: a milestones page open elsewhere hears this one.
+        app.bus.append({
+          kind: "limb.moved",
+          repoId: t.repo.id,
+          actorId: actor.id,
+          payload: { number: t.issue?.number ?? null, seat },
+        });
+      }
+      return undefined;
     },
   },
 };

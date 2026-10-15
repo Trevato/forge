@@ -11,8 +11,14 @@
 import type { Database } from "bun:sqlite";
 import { statfsSync } from "node:fs";
 import { freemem, totalmem } from "node:os";
+import { refusedInternal } from "./internal_refused.ts";
 import { recentErrors, type ErrorLine } from "./log.ts";
-import { leaseLapsed, listRunning, queueDepth } from "../core/runs.ts";
+import {
+  budgetFailures,
+  leaseLapsed,
+  listRunning,
+  queueDepth,
+} from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 
 /** Free disk under this share of the volume is something to say. */
@@ -98,6 +104,13 @@ export function vitals(input: VitalsInput): Vitals {
       `${stuck.length} run${stuck.length === 1 ? " is" : "s are"} stuck.`,
     );
 
+  // A run killed twice for its budget is a card, for a day.
+  for (const run of budgetFailures(
+    input.db,
+    new Date(now - 24 * 3_600_000).toISOString(),
+  ))
+    needs.push(`A run was killed twice: ${run.summary}.`);
+
   const apps = { serving: 0, asleep: 0, previews: 0 };
   for (const e of input.envs ?? []) {
     if (e.env !== "production") apps.previews++;
@@ -109,6 +122,12 @@ export function vitals(input: VitalsInput): Vitals {
   if (seen.lastHour >= ERROR_BURST)
     needs.push(
       `${seen.lastHour} errors in the last hour (${ERROR_BURST} or more is a burst).`,
+    );
+
+  const refused = refusedInternal(now);
+  if (refused.lastHour > 0)
+    needs.push(
+      `${refused.lastHour} internal call${refused.lastHour === 1 ? "" : "s"} without the boot secret refused in the last hour${refused.latest ? ` (latest ${refused.latest.method} ${refused.latest.path})` : ""}.`,
     );
 
   return {

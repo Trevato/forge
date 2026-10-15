@@ -248,7 +248,8 @@ describe("asks that earn their place", () => {
     expect(asks).toContain("<summary>1 more</summary>");
     // The phone's "more" opens in place to every ask: the wide screen's
     // "more" sits inside it, and the stylesheet hides each where it is not.
-    expect(wide!.indexOf('id="asks-more"')).toBeLessThan(wide!.indexOf("</details>"));
+    // (An ask's own "More" closes a details too: look past those, to the last.)
+    expect(wide!.indexOf('id="asks-more"')).toBeLessThan(wide!.lastIndexOf("</details>"));
     const css = await (await fetch(`${servers.url}${home.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
     // Only where the browser can hold a details element open: an older one
     // keeps both summaries, so no ask is out of reach.
@@ -258,7 +259,8 @@ describe("asks that earn their place", () => {
     expect(css.indexOf("#asks-more > summary")).toBeGreaterThan(css.indexOf("@supports selector(::details-content)"));
     // Arriving at #needs-you, the first Tab lands on an ask, not the bulk step.
     const bulk = asks.indexOf('id="asks-bulk"');
-    expect(bulk).toBeGreaterThan(asks.indexOf("</details>"));
+    expect(bulk).toBeGreaterThan(asks.indexOf('id="asks-phone-more"'));
+    expect(asks.slice(asks.indexOf('id="asks-phone-more"'), bulk)).toContain("</details>");
   });
 
   test("an unsigned reader gets no asks from the API", async () => {
@@ -337,6 +339,20 @@ describe("asks that earn their place", () => {
     recordAskLedger(app.db);
     expect((await mcpAsks()).measure.raised).toBe(6);
   });
+  test("a phone's ask is a full-width row: kind and repo on one line, the decider apart, the rest behind More", async () => {
+    const home = await page("/");
+    const asks = home.slice(home.indexOf('<section id="needs-you"'));
+    expect(asks).toContain("ask-card");
+    expect(asks).toContain('<b class="ask-kind">');
+    // No icon column: the row opens with its kind, not a picture.
+    expect(asks.slice(0, asks.indexOf("<h2", asks.indexOf("ask-card")))).not.toContain("<svg");
+    expect(asks).toContain('<details class="ask-more-acts">');
+    expect(asks).toMatch(/class="ask-acts">\s*<button[^>]*data-variant="primary"/);
+    const css = await (await fetch(`${servers.url}${home.match(/href="(\/[^"]*\.css[^"]*)"/)![1]}`)).text();
+    expect(css).toContain(".ask-acts > .btn { min-height: 44px;");
+    expect(css).toContain(".needs-you .ask-card {\n    margin-inline: -16px;");
+  });
+
   test("a collapsed row that ranks for security names which of its asks it is", async () => {
     // The security pull went red above; a new green one joins it in a row of two.
     check(security, "ok");

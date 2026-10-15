@@ -149,6 +149,13 @@ export function webManifest(ctx: Ctx): Response {
         scope: "/",
         id: "/",
         display: "standalone",
+        // Sharing a link or text to the installed forge opens the home's
+        // composer with it filled in (`sharedDraft`, studio/feed.ts).
+        share_target: {
+          action: "/",
+          method: "GET",
+          params: { title: "title", text: "text", url: "url" },
+        },
         background_color: "#fafafa",
         theme_color: "#fafafa",
         icons: [

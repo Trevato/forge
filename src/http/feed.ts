@@ -82,11 +82,11 @@ export function feedRoutes(router: Router<Handler>): void {
     const denied = requireScope(ctx, preview ? "ro" : "rw");
     if (denied) return denied;
     if (preview) {
-      const plan = previewAsksBulk(ctx.app, ctx.auth.user, input.action, input.items);
+      const plan = previewAsksBulk(ctx.app, ctx.auth.user, input.action, input.items, input.reason);
       if (!plan.ok) return bulkError(plan.error);
       return json({ preview: true, ...plan.value });
     }
-    const op = await applyAsksBulk(ctx.app, ctx.auth.user, input.action, input.items);
+    const op = await applyAsksBulk(ctx.app, ctx.auth.user, input.action, input.items, input.reason);
     if (!op.ok) return bulkError(op.error);
     return json({ preview: false, ...op.value }, 201);
   });
@@ -211,7 +211,7 @@ function bulkError(error: FleetError): Response {
   if (error.code === "unauthorized") return unauthorized();
   return apiError(
     error.code,
-    error.code === "forbidden" ? 403 : error.code === "already_undone" ? 409 : 422,
+    error.code === "forbidden" ? 403 : error.code === "already_undone" || error.code === "expired" ? 409 : 422,
     error.message,
   );
 }
