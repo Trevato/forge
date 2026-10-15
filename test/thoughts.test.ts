@@ -84,29 +84,47 @@ describe("thoughts", () => {
     expect(app.db.query<{ n: number }, []>("SELECT count(*) AS n FROM thought").get()!.n).toBe(before);
   });
 
-  test("a token is required, and a read token is not enough", async () => {
+  test("no token is a 401, and a read token is a 403", async () => {
     const anon = await fetch(`${base}/api/v1/thoughts`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: "hi" }),
     });
     expect(anon.status).toBe(401);
+    const ro = await fetch(`${base}/api/v1/tokens`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ adminConfirm: true, username: "mira", password: "thoughts-pass-1", name: "r", scope: "ro" }),
+    })
+      .then((r) => r.json())
+      .then((j) => (j as { token: string }).token);
+    expect(ro).toBeTruthy();
+    const res = await post("read only", { authorization: `Bearer ${ro}` });
+    expect(res.status).toBe(403);
   });
 
-  test("a cross-origin cookie POST is refused", async () => {
-    const login = await fetch(`${base}/api/v1/session`, {
+  test("a cross-origin cookie POST is refused; a same-origin one is kept", async () => {
+    const login = await fetch(`${base}/api/v1/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ username: "mira", password: "thoughts-pass-1" }),
     });
+    expect(login.status).toBe(201);
     const cookie = (login.headers.get("set-cookie") ?? "").split(";")[0]!;
-    if (!cookie) return; // no cookie route here: the scope check above covers tokens
-    const res = await fetch(`${base}/api/v1/thoughts`, {
-      method: "POST",
-      headers: { cookie, origin: "https://evil.example", "content-type": "application/json" },
-      body: JSON.stringify({ text: "forged" }),
-    });
-    expect(res.status).toBe(403);
+    expect(cookie).toContain("=");
+    const send = (origin: string, text: string) =>
+      fetch(`${base}/api/v1/thoughts`, {
+        method: "POST",
+        headers: { cookie, origin, "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+    const before = app.db.query<{ n: number }, []>("SELECT count(*) AS n FROM thought").get()!.n;
+    expect((await send("https://evil.example", "forged")).status).toBe(403);
+    expect(app.db.query<{ n: number }, []>("SELECT count(*) AS n FROM thought").get()!.n).toBe(before);
+    const same = await send(new URL(base).origin, "genuine");
+    expect(same.status).toBe(201);
+    const { id } = (await same.json()) as { id: string };
+    expect(row(id)!.text).toBe("genuine");
   });
 
   test("each thought emits thought.received without its text", async () => {

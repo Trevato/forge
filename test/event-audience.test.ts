@@ -103,6 +103,7 @@ describe("who an event is for", () => {
     expect(kinds).toContain("app.env_set");
     expect(kinds).toContain("repo.pinned");
     expect(kinds).toContain("push");
+    expect(eventAudience("thought.received")).toBe("actor");
     expect(eventAudience("webhook.created")).toBe("admins");
     expect(eventAudience("webhook.deleted")).toBe("admins");
     expect(eventAudience("app.env_set")).toBe("admins");
