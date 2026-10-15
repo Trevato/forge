@@ -642,6 +642,126 @@ describe("web ui", () => {
 
   // ---- keyboard ----
 
+  test("the tell composer is the thread's comment box, on the page and in place", async () => {
+    const as = async (path: string) =>
+      (await fetch(`${base}${path}`, { headers: { cookie: owner } })).text();
+    const keys = /<form[^>]*class="card comment-form"[^>]*data-box="[^"]+"[^>]*data-submit-key/;
+    // Two kinds of page: the issue's comment box, and the tell composer.
+    const issue = await as("/mel/proj/issues/1");
+    const page = await as("/mel/proj/tell?from=/mel/proj/issues/1");
+    for (const html of [issue, page]) {
+      expect(html).toMatch(keys);
+      expect(html).toContain('class="input"');
+    }
+    expect(issue).toContain('data-box="Write a comment"');
+    expect(page).toContain('data-box="Tell the crew"');
+    expect(page).toContain('action="/mel/proj/tell"');
+    expect(page).toContain('name="text"');
+    expect(page).toContain('<input type="hidden" name="from" value="/mel/proj/issues/1"');
+    // In place it is the form alone, one line.
+    const bit = await as("/mel/proj/tell?from=/mel/proj/issues/1&in=place");
+    expect(bit.trim().startsWith("<form")).toBe(true);
+    expect(bit).toContain('rows="1"');
+    expect(bit).not.toContain("<html");
+    // A `from` that is not a path on this forge is dropped, not echoed.
+    const bad = await as("/mel/proj/tell?from=https://evil.example/");
+    expect(bad).not.toContain('name="from"');
+    expect(bad).not.toContain("evil.example");
+    // Signed out it goes to sign in; a reader who may not direct finds nothing.
+    const out = await fetch(`${base}/mel/proj/tell`, { redirect: "manual" });
+    expect(out.status).toBe(303);
+    // Signed in but not a writer, outsiders not let in: nothing there, in
+    // place or not, and no palette row to it.
+    for (const q of ["", "&in=place"]) {
+      const res = await fetch(`${base}/mel/proj/tell?from=/mel/proj/issues/1${q}`, {
+        headers: { cookie: stranger },
+      });
+      expect(res.status).toBe(404);
+    }
+    const rowsFor = async (cookie: string) => {
+      const html = await (await fetch(`${base}/mel/proj`, { headers: { cookie } })).text();
+      const block = html.match(
+        /<script type="application\/json" id="palette-index">([\s\S]*?)<\/script>/,
+      )?.[1];
+      return (JSON.parse(block ?? '{"items":[]}') as { items: { t: string }[] }).items.map((i) => i.t);
+    };
+    expect((await rowsFor(stranger)).some((t) => t.endsWith("Tell the crew"))).toBe(false);
+  });
+
+  test("tellInPlace opens the server's box, Enter sends it with `from`, Escape closes it, a failure falls back to the link", async () => {
+    const src = shellJs.match(/function tellInPlace[\s\S]*?\n  var closePalette/)?.[0] ?? "";
+    expect(src).not.toBe("");
+    // The click intercept matches the href the palette's row carries.
+    const href = "/mel/proj/tell?from=" + encodeURIComponent("/mel/proj/files");
+    const intercept = shellJs.match(/if \((\/\^[^\n]*?tell[^\n]*?\/)\.test\(h\)/)?.[1];
+    expect(intercept).toBeDefined();
+    expect(new RegExp((intercept as string).slice(1, -1)).test(href)).toBe(true);
+
+    type Listener = (e: Record<string, unknown>) => void;
+    const make = () => {
+      const listeners: Record<string, Listener> = {};
+      const ta = { value: "", focused: false, focus() { this.focused = true; } };
+      const note = { textContent: "" };
+      const form = { action: "/mel/proj/tell", addEventListener: (n: string, f: Listener) => (listeners["form" + n] = f) };
+      const box: Record<string, unknown> = {
+        id: "", className: "", innerHTML: "", removed: false,
+        querySelector: (q: string) => (q === "form" ? form : q === "textarea" ? ta : note),
+        addEventListener: (n: string, f: Listener) => (listeners[n] = f),
+        remove() { this.removed = true; },
+      };
+      return { listeners, ta, note, box };
+    };
+    const run = async (answers: (url: string, init?: RequestInit) => Promise<unknown>) => {
+      const m = make();
+      const calls: { url: string; init: RequestInit | undefined }[] = [];
+      const loc = { href: "" };
+      const doc = {
+        getElementById: () => null,
+        createElement: () => m.box,
+        body: { appendChild() {} },
+      };
+      const fetcher = async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return answers(url, init);
+      };
+      class FD { constructor(_f: unknown) {} *[Symbol.iterator]() { yield ["text", m.ta.value]; yield ["from", "/mel/proj/files"]; } }
+      const fn = new Function("doc", "fetch", "window", "location", "FormData", `${src.replace(/\n  var closePalette$/, "")}; return tellInPlace;`)(
+        doc, fetcher, { setTimeout: () => 0 }, loc, FD,
+      ) as (h: string) => void;
+      fn(href);
+      await new Promise((r) => setTimeout(r, 5));
+      return { m, calls, loc };
+    };
+    const reply = (body: unknown, ok = true) => ({ ok, text: async () => "<form></form>", json: async () => body });
+
+    const good = await run(async (url) =>
+      url.endsWith("&in=place") ? reply(null) : reply({ ok: true, flash: "kai is on it." }),
+    );
+    expect(good.calls[0]?.url).toBe(href + "&in=place");
+    expect(good.m.ta.focused).toBe(true);
+    // Enter on an empty box sends nothing; with text it POSTs the form.
+    const enter = { key: "Enter", shiftKey: false, isComposing: false, target: good.m.ta, preventDefault() {} };
+    good.m.listeners["keydown"]?.(enter);
+    expect(good.calls).toHaveLength(1);
+    good.m.ta.value = "fix the footer";
+    good.m.listeners["keydown"]?.(enter);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(good.calls).toHaveLength(2);
+    expect(good.calls[1]?.url).toBe("/mel/proj/tell");
+    expect(good.calls[1]?.init?.method).toBe("POST");
+    expect(String(good.calls[1]?.init?.body)).toContain("from=%2Fmel%2Fproj%2Ffiles");
+    expect(good.m.note.textContent).toBe("kai is on it.");
+    // Shift+Enter is a new line, Escape closes.
+    good.m.listeners["keydown"]?.({ ...enter, shiftKey: true });
+    expect(good.calls).toHaveLength(2);
+    good.m.listeners["keydown"]?.({ key: "Escape", stopPropagation() {} });
+    expect(good.m.box.removed).toBe(true);
+
+    // The box not coming (a 404, say) is the plain link.
+    const bad = await run(async () => reply(null, false));
+    expect(bad.loc.href).toBe(href);
+  });
+
   test("the composer, the verdicts and the settings sections carry their keys", async () => {
     const as = async (path: string, cookie = "") =>
       (
@@ -710,7 +830,11 @@ describe("web ui", () => {
       .split("\n")
       .filter((l) => /requestSubmit|\.submit\(/.test(l));
     expect(sends).toHaveLength(1);
-    expect(shellJs).not.toMatch(/'Enter' && !e\.(shift|meta|ctrl)Key/);
+    // The one plain Enter is the palette's in-place tell: one line, in a box
+    // the script itself laid over the page (`tellInPlace`, client.ts).
+    const inPlace = shellJs.match(/function tellInPlace[\s\S]*?\n  var closePalette/)?.[0] ?? "";
+    expect(inPlace).toContain("e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.target === ta");
+    expect(shellJs.replace(inPlace, "")).not.toMatch(/'Enter' && !e\.(shift|meta|ctrl)Key/);
   });
 
   // ---- CSRF ----

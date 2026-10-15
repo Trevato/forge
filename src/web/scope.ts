@@ -22,6 +22,9 @@
  * looking at a clone or at somebody else's server.
  */
 
+import { parseFrom } from "../actions/tell.ts";
+import { getAppByRepo } from "../core/apps.ts";
+import { mayDirectCrew } from "../crew/direct.ts";
 import { isPinned } from "../core/pins.ts";
 import {
   getOriginRepo,
@@ -169,7 +172,10 @@ export function localScope(ctx: Ctx, repo: Repo): RepoScope {
       { label: repo.ownerName, href: `/${repo.ownerName}` },
       { label: repo.name, href: base },
     ],
-    palette: repoPalette(base, `${repo.ownerName}/${repo.name}`, true),
+    palette: [
+      ...repoPalette(base, `${repo.ownerName}/${repo.name}`, true),
+      ...(getAppByRepo(ctx.app.db, repo.id) ? tellRow(ctx, repo, "This repository") : []),
+    ],
   };
 }
 
@@ -261,6 +267,24 @@ export async function originScope(
     ],
     palette: repoPalette(base, fullName, false),
   };
+}
+
+/**
+ * "Tell the crew" for the palette, on an app, for who may direct its crew
+ * (`mayDirectCrew`: nobody else is offered a door that leads nowhere).
+ * Where it goes depends on the page: the app's own box on the app's page,
+ * else the composer carrying this page's path as `from`
+ * (`studio/tell_here.ts`), which the palette's script opens in place.
+ */
+export function tellRow(ctx: Ctx, repo: Repo, group: string): PaletteItem[] {
+  if (!mayDirectCrew(ctx.app.db, repo, ctx.auth.user)) return [];
+  const base = `/${repo.ownerName}/${repo.name}`;
+  const path = ctx.url.pathname;
+  const h =
+    path === base || path === `${base}/tell` || parseFrom(path) !== path
+      ? `${base}#tell`
+      : `${base}/tell?from=${encodeURIComponent(path)}`;
+  return [{ t: `${base.slice(1)} — Tell the crew`, h, c: group }];
 }
 
 function repoPalette(

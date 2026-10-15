@@ -422,6 +422,15 @@ off: no autonomy tick, no dispatch, no spend; checks still run and everything
 can still be read. The boot log and the studio's crew card say so. Set
 `FORGE_CREW_IN_PREVIEW=1` to run it anyway.
 
+**Tell the crew from any page.** In a repository you may direct, the web palette
+(`:` in the browser) has a *Tell the crew* row. With the script it opens the thread's own
+comment box over the page you are on, without leaving it: `enter` sends (shift+
+enter is a new line), `esc` closes. The tell remembers that page (`from`), and
+the answer comes back to it. Without a script the row is a link to a page of
+its own, `/:owner/:name/tell?from=/path`, which is the same box; `from` must be
+a path on this forge. Who may not direct the crew gets a 404 there and no row.
+The terminal's palette has no such row yet.
+
 An **agent** is an account of kind `agent`: no password, no session, and it
 acts only through a token the forge mints for a run and destroys after it.
 An admin creates one (**Settings → Crew**, or `POST /api/v1/agents`) with a

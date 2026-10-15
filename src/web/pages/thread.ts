@@ -414,6 +414,11 @@ export interface ComposerOptions {
   closeLabel: string;
   /** Who directs the crew here, on a thread an agent holds (`crew/direct.ts`). */
   crewNote?: string | undefined;
+  /** The same box, saying a tell instead of a comment: the field is `text`,
+   * the button tells the crew, and `from` (a path on this forge, or null)
+   * rides along as a hidden field so the tell remembers the page it was
+   * said on (`actions/tell.ts`). `rows` sizes it; one is a single line. */
+  tell?: { from: string | null; rows?: number };
 }
 
 /** The comment box. Close and reopen are their own form, not an `intent`
@@ -474,35 +479,48 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
           form: "thread-state",
         })
       : null;
+  const tell = o.tell;
   return html`${stateForm}
     <form
       class="card comment-form"
       method="post"
       action="${o.action}"
-      data-box="Write a comment"
+      data-box="${tell ? "Tell the crew" : "Write a comment"}"
       data-submit-key
     >
-      <label class="sr-only" for="comment-body">Comment</label>
+      <label class="sr-only" for="comment-body"
+        >${tell ? "Tell the crew" : "Comment"}</label
+      >
       <textarea
         class="input"
         id="comment-body"
-        name="body"
-        rows="4"
-        data-grow
-        placeholder="Leave a comment"
+        name="${tell ? "text" : "body"}"
+        rows="${String(tell ? (tell.rows ?? 4) : 4)}"
+        ${tell ? raw('maxlength="2000"') : raw("data-grow")}
+        placeholder="${tell ? "Tell the crew what should change" : "Leave a comment"}"
         required
       ></textarea>
+      ${tell?.from
+        ? html`<input type="hidden" name="from" value="${tell.from}" />`
+        : null}
       ${o.crewNote === undefined
         ? null
         : html`<p class="muted small crew-note">${o.crewNote}</p>`}
       <div class="form-actions">
         <span class="muted small"
-          >${icon("file")} Markdown is supported — <code>**bold**</code>,
-          <code>[link](url)</code>, <code>&gt; quote</code>.</span
+          >${tell
+            ? html`${tell.from
+                ? html`From <code>${tell.from}</code>. `
+                : null}Enter sends.`
+            : html`${icon("file")} Markdown is supported —
+                <code>**bold**</code>, <code>[link](url)</code>,
+                <code>&gt; quote</code>.`}</span
         >
         <span class="spacer"></span>
         ${reasons} ${closeButton}
-        ${btn("Comment", { variant: "primary", icon: "comment" })}
+        ${tell
+          ? btn("Tell the crew", { variant: "primary", icon: "bot" })
+          : btn("Comment", { variant: "primary", icon: "comment" })}
       </div>
     </form>`;
 }
