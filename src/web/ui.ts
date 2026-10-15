@@ -239,14 +239,17 @@ export function badge(
 
 /** The one badge whose value is a state machine, so it renders identically
  * on issues, pulls and lists. */
-export function stateBadge(state: "open" | "closed" | "merged"): Html {
+export function stateBadge(
+  state: "open" | "closed" | "merged",
+  parked = false,
+): Html {
   if (state === "merged")
     return html`<span class="badge" data-pr="merged"
       >${icon("merge")}Merged</span
     >`;
   if (state === "closed")
     return html`<span class="badge" data-state="closed"
-      >${icon("issueClosed")}Closed</span
+      >${icon("issueClosed")}${parked ? "Parked" : "Closed"}</span
     >`;
   return html`<span class="badge" data-state="open"
     >${icon("issue")}Open</span

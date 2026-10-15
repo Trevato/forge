@@ -22,6 +22,7 @@ import {
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { BUDGETS } from "./budgets.ts";
 import { failedSentence, lastVerdict } from "../snapshot/verdict.ts";
+import { heldChecks, redSentence } from "../checks/red_main.ts";
 
 /** Free disk under this share of the volume is something to say. */
 export const DISK_FREE_MIN = 0.1;
@@ -40,7 +41,7 @@ export interface EnvCount {
 /**
  * One cause of the forge being off: the `needs` sentence, a `cause` key that
  * holds for as long as its condition does (`disk`, `errors`, `internal`,
- * `queue:<kind>`, `stuck:<runId>`), when it began by the forge's own evidence
+ * `queue:<kind>`, `stuck:<runId>`, `red:<repoId>`), when it began by the forge's own evidence
  * (the oldest evidence the forge holds, else the first time this process saw
  * it, held until the cause clears; `at` is never the answer to a repeat
  * call), and where to look.
@@ -300,6 +301,15 @@ export function vitals(input: VitalsInput): Vitals {
       `A run was killed twice: ${run.summary}.`,
       run.finishedAt ?? undefined,
       "/settings/capacity",
+    );
+
+  // A red main holding its pulls' checks is one card, naming the test.
+  for (const { red, held } of heldChecks(input.db))
+    need(
+      `red:${red.repoId}`,
+      redSentence(red, held),
+      red.since,
+      `/${red.repo}/runs/${red.runId}`,
     );
 
   // A failed restore drill is a card until a drill passes.

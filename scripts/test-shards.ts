@@ -24,18 +24,28 @@
  * the rest (fail-fast) so a known fail does not burn the remaining wall
  * clock. Exits non-zero if any shard does.
  *
+ * The whole gate, unsliced (`--gate` on the full tier, as `check.run`),
+ * runs one file per `bun test`, heaviest first into whichever worker is
+ * free, so every file is timed alone; when it is green it writes those
+ * times to `.forge-cache/test-times.json`, which the forge keeps for the
+ * next check (`src/checks/cache.ts`).
+ *
  * Files are weighed by how long they took, from `scripts/test-times.json`
- * (a file it does not name, or a table it refuses, falls back to bytes).
+ * overlaid by `.forge-cache/test-times.json` (a file neither names, or a
+ * table it refuses, falls back to bytes).
  * `--record` refreshes that table: the same number of workers, but each
  * file is its own `bun test`, timed alone from spawn to exit, and the
  * table is rewritten from those times when every file is green.
  */
 
 import { availableParallelism, tmpdir } from "node:os";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   formatTimes,
+  heaviestFirst,
+  overlayTimes,
+  refreshTimes,
   parseShardSpec,
   parseTimes,
   shardCount,
@@ -46,9 +56,10 @@ import {
   weigher,
   type ShardResult,
 } from "./shards.ts";
-import { auditGate, EXCLUDED, GATE } from "./gate.ts";
+import { GATE, gateRefusal, presentTests } from "./gate.ts";
 import { executedFiles, formatImpact, handedImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
 import { fastSet, importsOf, duration } from "../src/checks/tiers.ts";
+import { CHECK_CACHE } from "../src/checks/cache.ts";
 
 const TIMES = new URL("./test-times.json", import.meta.url).pathname;
 // The forge hands the map over in the checkout (`src/checks/impact-store.ts`):
@@ -57,11 +68,40 @@ const TIMES = new URL("./test-times.json", import.meta.url).pathname;
 const handed = handedImpact(process.env["FORGE_CHECK_IMPACT"]);
 const IMPACT = handed ?? new URL("./test-impact.json", import.meta.url).pathname;
 const IMPACT_NAME = handed ?? "scripts/test-impact.json";
+// What the forge keeps between checks (`src/checks/cache.ts`): the full
+// gate's own per-file times, fresher than the committed table.
+const CACHED_TIMES = `${CHECK_CACHE}/test-times.json`;
 
 const argv = process.argv.slice(2);
 const record = argv.includes("--record");
 const gate = argv.includes("--gate");
 const measure = argv.includes("--impact");
+
+/**
+ * Measured seconds where a table has them, bytes scaled to seconds where
+ * it does not: the committed table, overlaid by the times the last green
+ * full gate left in the forge's cache. A missing or refused table is said
+ * out loud and the gate still runs, on what is left.
+ */
+function loadTimes(): Map<string, number> {
+  const read = (path: string, name: string, quiet: boolean): Map<string, number> => {
+    let text: string;
+    try {
+      text = readFileSync(path, "utf8");
+    } catch {
+      if (!quiet) console.log(`test-shards: no ${name}; weighing by bytes`);
+      return new Map();
+    }
+    const parsed = parseTimes(text);
+    if (parsed.ok) return parsed.value;
+    console.log(`test-shards: ${name} refused (${parsed.error}); weighing by bytes`);
+    return new Map();
+  };
+  return overlayTimes(
+    read(TIMES, "scripts/test-times.json", false),
+    read(CACHED_TIMES, CACHED_TIMES, true),
+  );
+}
 
 /** Pull `--shard N/M` or `--shard=N/M` out of argv so it never reaches bun test. */
 function takeShardArg(raw: string[]): {
@@ -182,22 +222,9 @@ const flags = split.flags;
 // A test file in neither GATE nor EXCLUDED costs a whole gate run to find
 // out; say so before anything spawns. Explicit files alone are not audited.
 if (gate || tier === "fast") {
-  let present: string[] = [];
-  try {
-    present = readdirSync("test")
-      .filter((name) => name.endsWith(".test.ts"))
-      .map((name) => `test/${name}`)
-      .sort();
-  } catch {}
-  const problems = auditGate(present, GATE, EXCLUDED);
-  if (problems.length > 0) {
-    for (const problem of problems) console.error(`test-shards: ${problem}`);
-    const named = [
-      ...new Set(problems.map((p) => p.match(/^(test\/\S+\.test\.ts) /)?.[1])),
-    ].filter((f): f is string => f !== undefined);
-    console.error(
-      `test-shards: ${named.join(", ")}: list it in GATE or EXCLUDED in scripts/gate.ts`,
-    );
+  const refusal = gateRefusal(presentTests());
+  if (refusal.length > 0) {
+    for (const line of refusal) console.error(`test-shards: ${line}`);
     process.exit(2);
   }
 }
@@ -212,15 +239,6 @@ if (tier === "fast") {
     process.exit(2);
   }
   const changed = diff.stdout.toString().split("\n").filter((f) => f !== "");
-  const timesTable = parseTimes(
-    (() => {
-      try {
-        return readFileSync(TIMES, "utf8");
-      } catch {
-        return "";
-      }
-    })(),
-  );
   const cache = new Map<string, string[]>();
   const imports = (file: string): string[] => {
     let found = cache.get(file);
@@ -249,7 +267,7 @@ if (tier === "fast") {
     changed,
     tests: files,
     imports,
-    times: timesTable.ok ? timesTable.value : new Map(),
+    times: loadTimes(),
     learned: (learnedArg.value ?? "").split(",").filter((f) => f !== ""),
   });
   console.log(
@@ -314,24 +332,7 @@ if (!count.ok) {
 delete process.env["FORGE_CHECK_SHARDS"];
 delete process.env["FORGE_CHECK_SHARD_INDEX"];
 delete process.env["FORGE_CHECK_SHARD_TOTAL"];
-// Measured seconds where the table has them, bytes scaled to seconds
-// where it does not. A missing or refused table is said out loud and the
-// gate still runs, on bytes alone.
-let times = new Map<string, number>();
-let table = "";
-try {
-  table = readFileSync(TIMES, "utf8");
-} catch {
-  console.log("test-shards: no scripts/test-times.json; weighing by bytes");
-}
-if (table !== "") {
-  const parsed = parseTimes(table);
-  if (parsed.ok) times = parsed.value;
-  else
-    console.log(
-      `test-shards: scripts/test-times.json refused (${parsed.error}); weighing by bytes`,
-    );
-}
+const times = loadTimes();
 const weight = weigher(files, size, times);
 // Recording and measuring run one file per process, so every file is its
 // own slice: Bun's coverage is per process, and a shard of many files would
@@ -340,11 +341,17 @@ const weight = weigher(files, size, times);
 // bun test held the whole gate (#386/#388, exit 137 ~15–17m). Same count
 // with one-file-per-process, serial, keeps peak RSS to a single suite.
 const serialFiles = !record && count.value === 1;
-const perFile = record || measure || serialFiles;
+// The whole gate, unsliced, runs one file per process too, heaviest first
+// into whichever worker frees: no shard waits on a slow neighbour it was
+// statically paired with, and every file is timed alone, so a green gate
+// refreshes the time of every file it ran (#1797).
+const timed = !record && !serialFiles && gate && tier === "full" && "none" in shardSpec;
+const perFile = record || measure || serialFiles || timed;
 const slices =
   perFile
-    ? files.map((file) => [file])
+    ? heaviestFirst(files, weight).map((file) => [file])
     : splitFiles(files, count.value, weight);
+const work = files.reduce((sum, file) => sum + weight(file), 0);
 
 const banner = record
   ? `test-shards: recording ${files.length} files, ${count.value} at a time`
@@ -352,9 +359,12 @@ const banner = record
     ? `test-shards: measuring ${files.length} files under coverage, one bun test each, ${count.value} at a time`
   : serialFiles
     ? `test-shards: ${files.length} files serial (one bun test each; FORGE_CHECK_SHARDS=1), ` +
-      `expected ${files.reduce((sum, file) => sum + weight(file), 0).toFixed(0)}s`
-    : `test-shards: ${files.length} files in ${slices.length} shard${slices.length === 1 ? "" : "s"}, ` +
-      `expected ${slices.map((slice) => slice.reduce((sum, file) => sum + weight(file), 0).toFixed(0) + "s").join(" ")}`;
+      `expected ${work.toFixed(0)}s`
+    : timed
+      ? `test-shards: ${files.length} files, one bun test each, ${count.value} at a time, ` +
+        `expected ${(work / count.value).toFixed(0)}s (${work.toFixed(0)}s of work)`
+      : `test-shards: ${files.length} files in ${slices.length} shard${slices.length === 1 ? "" : "s"}, ` +
+        `expected ${slices.map((slice) => slice.reduce((sum, file) => sum + weight(file), 0).toFixed(0) + "s").join(" ")}`;
 console.log(banner);
 process.stderr.write(banner + "\n");
 
@@ -496,7 +506,7 @@ const started = performance.now();
 // Serial one-file processes when SHARDS=1; record keeps its worker width;
 // multi-shard still runs every slice side by side.
 const results = await pool(
-  serialFiles ? 1 : record || measure ? count.value : slices.length,
+  serialFiles ? 1 : record || measure || timed ? count.value : slices.length,
 );
 if (results.length < slices.length) {
   const skipped = slices.length - results.length;
@@ -507,23 +517,31 @@ if (results.length < slices.length) {
 const ending = tally(results, (performance.now() - started) / 1000);
 const spread = results.map((result) => result.seconds);
 console.log(`\n${ending.lines.join("\n")}`);
-if (!record && results.length > 1)
+if (!record && !timed && results.length > 1)
   console.log(
     `Slowest shard ${Math.max(...spread).toFixed(1)}s, fastest ${Math.min(...spread).toFixed(1)}s.`,
   );
-if (record) {
+if (record || timed) {
   if (ending.code !== 0) {
     console.log(
       "test-shards: not recording: a file is red, so its time is not its time",
     );
   } else {
     // Files this run did not name keep their old times: a partial run
-    // refreshes what it ran and forgets nothing else.
-    const fresh = new Map(times);
-    for (const result of results) fresh.set(result.files[0]!, result.seconds);
-    writeFileSync(TIMES, formatTimes(fresh));
+    // refreshes what it ran and forgets nothing else. A file gone from
+    // the tree is forgotten.
+    const fresh = refreshTimes(
+      times,
+      results.map((result) => ({ file: result.files[0]!, seconds: result.seconds })),
+      (file) => existsSync(file),
+    );
+    // `--record` rewrites the committed table; the check's full gate
+    // writes the cache the forge keeps for the next check.
+    const target = record ? TIMES : CACHED_TIMES;
+    if (!record) mkdirSync(CHECK_CACHE, { recursive: true });
+    writeFileSync(target, formatTimes(fresh));
     console.log(
-      `test-shards: wrote ${results.length} times to scripts/test-times.json`,
+      `test-shards: wrote ${results.length} times to ${record ? "scripts/test-times.json" : CACHED_TIMES}`,
     );
   }
 }

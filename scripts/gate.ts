@@ -15,6 +15,8 @@
  * issue the nightly hunt filed (`.forgejo/workflows/flake-hunt.yml`).
  */
 
+import { readdirSync } from "node:fs";
+
 export type Exclusion = {
   /** Repository-relative path, `test/….test.ts`. */
   file: string;
@@ -122,6 +124,7 @@ export const GATE: readonly string[] = [
   "test/checks.test.ts",
   "test/dependencies.test.ts",
   "test/map-closing.test.ts",
+  "test/parked-close.test.ts",
   "test/autonomy.test.ts",
   "test/studio.test.ts",
   "test/studio-words.test.ts",
@@ -164,6 +167,7 @@ export const GATE: readonly string[] = [
   "test/schema-migrations.test.ts",
   "test/vitals.test.ts",
   "test/vitals-degraded.test.ts",
+  "test/red-main.test.ts",
   "test/sentinel.test.ts",
   "test/tui-sentinel.test.ts",
   "test/version.test.ts",
@@ -449,4 +453,40 @@ export function auditGate(
     if (!gated.has(file) && !out.has(file))
       problems.push(`${file} is in neither GATE nor EXCLUDED`);
   return problems;
+}
+
+/** The `test/*.test.ts` files under `root`, as the gate names them. */
+export function presentTests(root = "."): string[] {
+  try {
+    return readdirSync(`${root}/test`)
+      .filter((name) => name.endsWith(".test.ts"))
+      .map((name) => `test/${name}`)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * What the check prints when the list is wrong: every problem, then one
+ * last line naming the files to list. Empty when the list is right.
+ */
+export function gateRefusal(present: readonly string[]): string[] {
+  const problems = auditGate(present, GATE, EXCLUDED);
+  if (problems.length === 0) return [];
+  const named = [
+    ...new Set(problems.map((p) => p.match(/^(test\/\S+\.test\.ts) /)?.[1])),
+  ].filter((f): f is string => f !== undefined);
+  return [
+    ...problems,
+    `${named.join(", ")}: list it in GATE or EXCLUDED in scripts/gate.ts`,
+  ];
+}
+
+// `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so
+// an unlisted file fails in under a second — not after install and tsc.
+if (import.meta.main) {
+  const refusal = gateRefusal(presentTests());
+  for (const line of refusal) console.error(`gate: ${line}`);
+  process.exit(refusal.length === 0 ? 0 : 2);
 }

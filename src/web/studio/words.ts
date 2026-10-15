@@ -210,7 +210,13 @@ export async function pullWord(
     return mergedPullWord(production, commitOid);
   }
   if (pull.state === "closed")
-    return { word: "stopped", note: "closed without shipping" };
+    return {
+      word: "stopped",
+      note:
+        getIssueById(ctx.db, pull.id)?.closeReason === "parked"
+          ? "parked by the crew"
+          : "closed without shipping",
+    };
   const check = checkSummary(ctx.db, pull.id, pull.headOid);
   // A repository that is not an app never deploys a head, so it never gets
   // a look: an open change there waits on a person, and says so.

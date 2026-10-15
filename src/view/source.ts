@@ -137,6 +137,8 @@ export interface IssueSummary {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly closedAt: string | null;
+  /** A pull the crew stopped for a person: closed, but not as done. */
+  readonly parked?: boolean;
   readonly labels: readonly Label[];
   readonly commentCount: number;
 }

@@ -3020,6 +3020,9 @@ export function apiRoutes(router: Router<Handler>): void {
       const wanted = input.state === undefined ? undefined : str(input.state);
       if (wanted !== undefined && wanted !== "open" && wanted !== "closed")
         return json({ error: "invalid_state" }, 422);
+      // A pull has no reason to give: "parked" is the crew's word alone.
+      if (input.reason !== undefined || input.into !== undefined)
+        return json({ error: "invalid_reason" }, 422);
       if (
         wanted === undefined &&
         text.title === undefined &&
