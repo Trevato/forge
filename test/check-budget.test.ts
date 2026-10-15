@@ -88,7 +88,7 @@ test("a check past its budget is re-queued once; the second overrun fails it and
   expect(second.state).toBe("failed");
   expect(second.summary).toMatch(/^budget: a full gate took \d+ min, limit \d+$/);
 
-  const seen = vitals({ db: app.db, dataDir });
+  const seen = vitals({ db: app.db, signals: app.signals, dataDir });
   expect(seen.ok).toBe(false);
   expect(seen.needs.some((n) => n.includes("budget: a full gate"))).toBe(true);
 }, 60_000);

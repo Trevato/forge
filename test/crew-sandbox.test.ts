@@ -71,6 +71,17 @@ describe("the shell sandbox", () => {
     expect(sandboxPolicy({ ...input, enforced: false }).enforced).toBe(false);
   });
 
+  test("allows loopback as the forge's host:port alone", () => {
+    const hosts = sandboxPolicy({
+      ...input,
+      urls: ["http://localhost:3000", "https://forge.example.org"],
+    }).allowHosts;
+    expect(hosts).toContain("localhost:3000");
+    expect(hosts).toContain("forge.example.org");
+    expect(hosts).not.toContain("localhost");
+    expect(hosts).not.toContain("127.0.0.1");
+  });
+
   test("is switched off in Claude Code's settings where it cannot be held", () => {
     const on = claudeSettings(sandboxPolicy(input)).sandbox as {
       enabled: boolean;

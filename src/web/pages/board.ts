@@ -332,6 +332,7 @@ function forgeStrip(ctx: Ctx): Html | null {
   const v = vitals({
     db: app.db,
     dataDir: app.config.dataDir,
+    signals: app.signals,
     envs: runtime
       ? listApps(app.db).flatMap((record) => runtime.status(record))
       : [],

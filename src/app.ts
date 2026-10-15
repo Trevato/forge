@@ -17,7 +17,14 @@ import { follow } from "./core/following.ts";
 import { enqueueForEvent } from "./core/webhooks.ts";
 import { openDb } from "./kernel/db.ts";
 import { id } from "./kernel/id.ts";
-import { createLog, type Log } from "./kernel/log.ts";
+import {
+  createLog,
+  forgeErrorLedger,
+  releaseErrorLedger,
+  type ErrorLedger,
+  type Log,
+} from "./kernel/log.ts";
+import { RefusedLedger } from "./kernel/internal_refused.ts";
 import { closeReadersUnder } from "./git/read.ts";
 
 export interface ForgeConfig {
@@ -138,6 +145,8 @@ export interface App {
   readonly hookAddress: { current: string };
   /** Per-boot secret every internal request must carry (`FORGE_HOOK_SECRET` in a hook's env). */
   readonly hookSecret: string;
+  /** What `vitals` turns into needs: this forge's own, not the process's. */
+  readonly signals: { errors: ErrorLedger; refused: RefusedLedger };
   close(): void;
 }
 
@@ -166,11 +175,14 @@ export function createApp(config: ForgeConfig): App {
   // and the forks whose default branch is still a copy of this one's.
   follow({ db, reposRoot, bus });
 
+  const owner = id();
+  const errors = forgeErrorLedger(owner);
   return {
     config: { ...config, dataDir },
     db,
     bus,
-    log: createLog("forge"),
+    log: createLog("forge", owner),
+    signals: { errors, refused: new RefusedLedger() },
     reposRoot,
     // This process's own: two forges share a data directory for the length
     // of a release, and each spawns git with its own socket in the env.
@@ -182,6 +194,7 @@ export function createApp(config: ForgeConfig): App {
       // and processes outlive a closed database unless somebody says
       // otherwise. One data dir is one forge, so closing the forge is where
       // that is said.
+      releaseErrorLedger(errors);
       closeReadersUnder(reposRoot);
       db.close();
     },
