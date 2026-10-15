@@ -289,6 +289,6 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
   // Home: where the crew's work shows (its first-login screen is #600).
   return redirect(
     "/",
-    sessionCookie(session.token, session.expiresAt, ctx.url),
+    sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
   );
 }

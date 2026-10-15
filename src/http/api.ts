@@ -1146,7 +1146,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!verified.ok) return unauthorized();
     const session = createSession(ctx.app.db, verified.value.id);
     return json(publicUser(verified.value), 201, {
-      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url),
+      "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
     });
   });
 
@@ -1156,7 +1156,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     signOutHere(ctx.app, cookieValue(ctx.request, "forge_session"));
     return json({}, 200, {
-      "set-cookie": sessionCookie("", new Date(0), ctx.url),
+      "set-cookie": sessionCookie("", new Date(0), ctx.url, ctx.app.config.url),
     });
   });
 
