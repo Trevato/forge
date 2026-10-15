@@ -37,6 +37,7 @@ const KIND_LABEL: Record<FeedItem["kind"], string> = {
   map: "Map",
   cost: "Cost",
   milestone: "Watching",
+  choose: "Choose",
   tell: "Told",
   reply: "Reply",
   look: "Look",
@@ -88,7 +89,7 @@ export function feedCard(
       </form>
       <span class="fcard-acts">
         <button type="button" class="btn btn-sm btn-ghost" data-feed="dismissed" title="Dismiss (x)">Dismiss</button>
-        ${item.kind === "ask" || item.kind === "milestone" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
+        ${item.kind === "ask" || item.kind === "milestone" || item.kind === "choose" ? null : html`<button type="button" class="btn btn-sm btn-ghost" data-feed="muted" title="Mute ${item.app}">Mute app</button>`}
       </span>
     </details>
   </article>`;

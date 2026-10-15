@@ -200,6 +200,7 @@ export const GATE: readonly string[] = [
   "test/plan-route.test.ts",
   "test/planner-declined.test.ts",
   "test/feed.test.ts",
+  "test/feed-choose.test.ts",
   "test/feed-page.test.ts",
   "test/offline.test.ts",
   "test/share.test.ts",

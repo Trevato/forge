@@ -54,7 +54,10 @@ export function readFeed(
     c.id.startsWith("ask:")
       ? true
       : !dismissed.has(c.id) &&
-        (c.kind === "ask" || c.kind === "milestone" || !muted.has(c.repoId)),
+        (c.kind === "ask" ||
+          c.kind === "milestone" ||
+          c.kind === "choose" ||
+          !muted.has(c.repoId)),
   );
   let ranked = rank(candidates, affinityFor(db, viewer, now), now);
   const cursor = options.cursor;

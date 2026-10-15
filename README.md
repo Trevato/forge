@@ -938,3 +938,10 @@ terminal. Each person has one vote per pull, kept as a `lean` row in the
 decision ledger. A dislike closes the pull and leaves its one-line reason as a
 comment the builder reads; the last open sibling shows Ship. Readers see the
 cards and no buttons.
+
+While two or more siblings are open and none has shipped, a writer's feed holds
+one **Choose** item for the group ("choose among N open variants of …") that
+links to the deck, whatever the number of siblings; it is never muted away.
+Once a sibling ships or all but one close, the item leaves the feed. The
+terminal has no feed; the item is in `GET /api/v1/feed` and the MCP feed tool
+as kind `choose`.
