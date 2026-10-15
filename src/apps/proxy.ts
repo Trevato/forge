@@ -34,6 +34,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
+import { rewritable, withToolbar } from "./toolbar.ts";
 
 export interface AppTarget {
   readonly app: AppRecord;
@@ -599,6 +600,33 @@ export async function proxyApp(
     ? held(runtime, target, response.body!)
     : response.body;
   answered();
+  // The forge's pill goes into an HTML page the app sent whole and plain;
+  // anything the proxy cannot rewrite safely goes through as it came.
+  if (
+    request.method !== "HEAD" &&
+    !target.nested &&
+    status.toolbar !== false &&
+    response.body !== null &&
+    rewritable(out, response.status)
+  ) {
+    let page: Uint8Array | undefined;
+    try {
+      page = withToolbar(
+        new Uint8Array(await response.arrayBuffer()),
+        runtime.options.forgeUrl,
+      );
+    } catch {
+      return unavailable(runtime, target, status, "the app stopped answering");
+    }
+    out.set("content-length", String(page.length));
+    out.delete("etag");
+    out.delete("content-md5");
+    return new Response(page, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: out,
+    });
+  }
   return new Response(
     body,
     {
