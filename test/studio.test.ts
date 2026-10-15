@@ -36,6 +36,7 @@ import {
 } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
 import { recordDecision } from "../src/core/decisions.ts";
+import { KIND_CHIPS, setChip } from "../src/core/feed_chips.ts";
 import { getIssue, listIssues, type Issue } from "../src/core/issues.ts";
 import { looksForEnv, recordLook } from "../src/core/looks.ts";
 import { getPull, mergedPullCount, type Pull } from "../src/core/pulls.ts";
@@ -2915,6 +2916,13 @@ describe("the studio home keeps itself current", () => {
     expect(home).toMatch(/id="live-on-you"\s*\n?\s*data-live="/);
     expect(home).toContain("new EventSource('/events')");
     expect(home).toContain("Write the README");
+  });
+
+  test("chips do not touch Your apps: it lists apps, not feed items", async () => {
+    for (const kind of KIND_CHIPS) setChip(app.db, alice.id, { kind: "kind", value: kind }, true);
+    const res = await fetch(`${base}/live/apps`, { headers: { cookie: `${cookie}; forge_mode=studio` } });
+    expect(await res.text()).toContain(`${repo.name}`);
+    for (const kind of KIND_CHIPS) setChip(app.db, alice.id, { kind: "kind", value: kind }, false);
   });
 
   test("each region on the home has an address of its own, answering with that region alone and 304 when it has not changed", async () => {
