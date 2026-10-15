@@ -427,6 +427,16 @@ describe("what the tokens bought", () => {
     const page = await (await get("/board/returns", { cookie: aliceCookie })).text();
     expect(page).toContain("By pillar");
     expect(page).toContain("P1 Ship");
+    const apiRead = (await (
+      await get("/api/v1/returns", { token: aliceRw })
+    ).json()) as { byPillar: PillarReturn[] };
+    expect(apiRead.byPillar).toEqual(JSON.parse(JSON.stringify(r.byPillar)));
+    const toolRead = JSON.parse((await mcp(aliceRw, "returns", {})).content[0]!.text) as {
+      byPillar: PillarReturn[];
+    };
+    expect(toolRead.byPillar).toEqual(apiRead.byPillar);
+    const bobTool = await mcp(bobRw, "returns", {});
+    expect(bobTool.isError ? "" : bobTool.content[0]!.text).not.toContain("P1 Ship");
     const bobs = (await (await get("/api/v1/returns", { token: bobRw })).json()) as {
       byPillar: unknown[];
     };

@@ -15,7 +15,7 @@
 import type { App } from "../app.ts";
 import { addComment } from "../actions/issues.ts";
 import { openPlan } from "../actions/plan.ts";
-import { addDependency } from "../core/dependencies.ts";
+import { addDependency, repoGraph } from "../core/dependencies.ts";
 import { getIssue, MAX_TITLE, type Issue } from "../core/issues.ts";
 import {
   authorsWithUnplaced,
@@ -33,6 +33,7 @@ import { getUserById, type User } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
 import { autonomyStatus, ensureDirectionIssue } from "./autonomy.ts";
 import { certain, decideOr, type Answers, type Questions } from "./decide.ts";
+import { linkThoughts, raiseIssue } from "../core/thought_links.ts";
 import { crewOffInPreview } from "./preview.ts";
 
 const log = createLog("triage");
@@ -106,6 +107,74 @@ const clip = (text: string, max: number): string => {
 };
 const quote = (text: string): string => text.split("\n").map((l) => `> ${l}`).join("\n");
 
+/** Under this share of shared words two thoughts are not the same ask. */
+const REPEAT_SHARE = 0.8;
+const EARLIER = 100;
+
+/** Words that turn a sentence around: a text that has one the other lacks says something else. */
+const NEGATION = /\b(not|no|never|without|cancel|remove|stop)\b|n't\b/g;
+const OPPOSITES: readonly (readonly [string, string])[] = [
+  ["visible", "hidden"], ["show", "hide"], ["add", "remove"], ["enable", "disable"], ["on", "off"],
+  ["more", "less"], ["increase", "decrease"], ["open", "close"], ["allow", "block"], ["include", "exclude"],
+];
+
+/** True when one text takes back, negates or flips a word of the other. */
+function opposed(a: string, b: string): boolean {
+  const la = a.toLowerCase();
+  const lb = b.toLowerCase();
+  if ((la.match(NEGATION)?.length ?? 0) !== (lb.match(NEGATION)?.length ?? 0)) return true;
+  const wa = new Set(la.match(/[a-z']+/g));
+  const wb = new Set(lb.match(/[a-z']+/g));
+  return OPPOSITES.some(([x, y]) => (wa.has(x) && wb.has(y) && !wa.has(y) && !wb.has(x)) || (wa.has(y) && wb.has(x) && !wa.has(x) && !wb.has(y)));
+}
+
+/**
+ * A thought the author already sent that placed an issue of `repo`, and says
+ * the same. The same words always repeat; a close restatement only does when
+ * the planner reads this one as a plain ask (`work`/`amendment`) and nothing
+ * in it turns the earlier one around: the later thought wins, so a reversal
+ * must never raise what it takes back.
+ */
+function repeatOf(app: App, repo: Repo, thought: Thought, kind: Kind): { before: Earlier; issue: Issue | undefined; number: number } | undefined {
+  const mine = words(thought.text);
+  const slug = `${repo.ownerName}/${repo.name}`;
+  for (const before of earlierPlaced(app, thought)) {
+    const theirs = words(before.text);
+    const same =
+      before.text === thought.text ||
+      ((kind === "work" || kind === "amendment") &&
+        mine.size >= 3 &&
+        overlap(mine, theirs) / Math.max(mine.size, theirs.size) >= REPEAT_SHARE &&
+        !opposed(thought.text, before.text));
+    if (!same) continue;
+    const at = before.placed.find((p) => p.repo === slug && (p.action === "opened" || p.action === "linked" || p.action === "amended"));
+    if (!at) continue;
+    return { before, issue: getIssue(app.db, repo.id, at.number), number: at.number };
+  }
+  return undefined;
+}
+
+interface Earlier {
+  readonly id: string;
+  readonly text: string;
+  readonly receivedAt: string;
+  readonly kind: Kind;
+  readonly placed: Placed[];
+}
+
+/** The author's placed thoughts received before this one, newest first. */
+function earlierPlaced(app: App, thought: Thought): Earlier[] {
+  return app.db
+    .query<{ id: string; text: string; received_at: string; kind: string; placed: string }, [string, number]>(
+      `SELECT t.id, t.text, t.received_at, p.kind, p.placed FROM thought t JOIN placement p ON p.thought_id = t.id
+        WHERE t.id != ?1 AND t.author = (SELECT author FROM thought WHERE id = ?1)
+          AND t.received_at <= (SELECT received_at FROM thought WHERE id = ?1)
+        ORDER BY t.received_at DESC, t.id DESC LIMIT ?2`,
+    )
+    .all(thought.id, EARLIER)
+    .map((r) => ({ id: r.id, text: r.text, receivedAt: r.received_at, kind: r.kind as Kind, placed: JSON.parse(r.placed) as Placed[] }));
+}
+
 function openIssues(app: App, repo: Repo, set: Pillars, direction: Issue | undefined): Open[] {
   return app.db
     .query<{ id: string; number: number; title: string }, [string, number]>(
@@ -143,19 +212,6 @@ export async function placeThought(
   const open = openIssues(app, repo, set, direction);
   const text = thought.text;
   const ref = `From thought \`${thought.id}\`:`;
-
-  // The same words again are the same thought: link, never duplicate.
-  const before = app.db
-    .query<{ thought_id: string; kind: string; placed: string }, [string, string]>(
-      `SELECT p.thought_id, p.kind, p.placed FROM placement p JOIN thought t ON t.id = p.thought_id
-        WHERE t.text = ?1 AND t.id != ?2 AND t.author = (SELECT author FROM thought WHERE id = ?2)
-        ORDER BY p.placed_at DESC LIMIT 1`,
-    )
-    .get(text, thought.id);
-  const earlier = before ? (JSON.parse(before.placed) as Placed[])[0] : undefined;
-  if (before && earlier)
-    return finish(app, thought, before.kind as Kind, "rule", false, [{ ...earlier, action: "linked" }],
-      `Same as an earlier thought; it is already at #${earlier.number}.`);
 
   const ruled = ruleKind(text, open.length > 0);
   const ruledTarget = targetOf(text, open);
@@ -204,6 +260,25 @@ export async function placeThought(
   const pickedTarget = decided.answers["target"]?.choice;
   const target = open.find((o) => `#${o.number}` === pickedTarget);
   const pillar = decided.answers["pillar"]?.choice;
+
+  // The same thing said again is the same thought: link and raise, never duplicate.
+  const again = repeatOf(app, repo, thought, kind);
+  if (again) {
+    const { before, issue, number } = again;
+    const said = before.receivedAt.slice(0, 10);
+    linkThoughts(app.db, thought.id, before.id, "repeats");
+    let reply = `You asked this on ${said}; #${number} is ${issue ? (issue.state === "open" ? "still open" : "closed") : "gone"}.`;
+    if (issue?.state === "open" && repoGraph(app.db, repo.id).deferred.has(issue.id)) {
+      reply = `You asked this on ${said}; #${number} is open but deferred behind the Later gate, so it is not raised.`;
+    } else if (issue?.state === "open") {
+      raiseIssue(app.db, issue.id, now);
+      const done = addComment(app, by, repo, issue, `Asked again; raised in the ready order.\n\n${ref}\n\n${quote(text)}`);
+      if (!done.ok) log.warn("could not comment", { issue: issue.number, error: String(done.error) });
+      reply = `You asked this on ${said}; #${number} is open${issue.assigneeId ? " and being built" : ""}. Raised it.`;
+    }
+    return finish(app, thought, before.kind, "rule", false, [{ action: "linked", repo: slug, number }], reply, now);
+  }
+
 
   const placed: Placed[] = [];
   const say: string[] = [];
@@ -256,7 +331,13 @@ export async function placeThought(
       if (deferred && gate)
         app.bus.append({ kind: "issue.blocked", repoId: repo.id, actorId: by.id, payload: { number: issue.number, blockedBy: gate.number } });
       placed.push({ action: deferred ? "deferred" : "superseded", repo: slug, number: issue.number });
-      say.push(deferred ? `Superseded #${issue.number} and put it behind the Later gate.` : `Marked #${issue.number} superseded.`);
+      // The earlier thoughts that placed this issue are the ones taken back.
+      const taken = earlierPlaced(app, thought).filter((e) =>
+        e.placed.some((p) => p.repo === slug && p.number === issue.number && p.action !== "superseded" && p.action !== "deferred"),
+      );
+      for (const e of taken) linkThoughts(app.db, thought.id, e.id, "supersedes");
+      const when = taken[0] ? ` (you said it on ${taken[0].receivedAt.slice(0, 10)})` : "";
+      say.push(deferred ? `Superseded #${issue.number}${when} and put it behind the Later gate.` : `Marked #${issue.number}${when} superseded.`);
     }
   } else if (direction) {
     comment(direction, kind === "vision" ? "The direction changes:" : "A decision:");

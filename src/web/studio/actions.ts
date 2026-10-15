@@ -11,7 +11,7 @@
 import { mayView } from "../../core/sealed.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment } from "../../actions/issues.ts";
-import { tell } from "../../actions/tell.ts";
+import { parseFrom, tell } from "../../actions/tell.ts";
 import { keepThought } from "../../actions/thought.ts";
 import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
@@ -49,14 +49,18 @@ async function tellFrom(
   back: string,
 ): Promise<Response> {
   const text = field(form, "text").trim();
+  // The page the tell was said on; a path that is not ours is no `from`,
+  // and so is never somewhere to send the person back to.
+  const from = parseFrom(field(form, "from") || undefined) ?? null;
+  if (from !== null) back = from;
   if (text === "")
-    return flashTo(ctx, back, {
+    return flashOrJson(ctx, back, {
       tone: "danger",
       message: "Say something first.",
     });
-  const told = await tell(ctx.app, ctx.auth.user, repo, text);
+  const told = await tell(ctx.app, ctx.auth.user, repo, text, 1, from);
   if (!told.ok)
-    return flashTo(ctx, back, {
+    return flashOrJson(ctx, back, {
       tone: "danger",
       message:
         told.error === "forbidden"
@@ -67,12 +71,12 @@ async function tellFrom(
     });
   const { routed } = told.value;
   if (routed === undefined)
-    return flashTo(ctx, back, {
+    return flashOrJson(ctx, back, {
       message: `Told. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
     });
   const builder = routed.builder;
-  return flashTo(ctx, back, {
-    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}. Watch it work below.`,
+  return flashOrJson(ctx, back, {
+    message: `${builder.user.username} is on it — ${routed.size} ${routed.kind}${routed.by === "rule" ? "" : `, ${routed.by} decided in ${routed.ms} ms`}.${from === null ? " Watch it work below." : ""}`,
   });
 }
 

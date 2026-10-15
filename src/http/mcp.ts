@@ -127,6 +127,7 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import { linksFrom, linksTo } from "../core/thought_links.ts";
 import { streamJson, thoughtStream } from "../core/thought_stream.ts";
 import {
   readAppMembers,
@@ -1007,6 +1008,11 @@ const TOOLS: readonly Tool[] = [
           description:
             "What the child is for, in your words (at most 2000 characters): its apps' direction, opened as the planner's first issue when the child first boots.",
         },
+        fresh: {
+          type: "string",
+          description:
+            "One line (at most 200 characters) on a fresh app to start in the child beside the copied ones: it gets a README and a small app that runs.",
+        },
         keepAccess: {
           type: "boolean",
           description:
@@ -1166,7 +1172,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "thought",
     description:
-      "Where one of your thoughts went: its id (from `tell` without a repo) answers with the planner's placement — the kind (work, amendment, vision, decision, reversal), the issues it opened, amended, deferred or marked superseded, and the one-or-two-line reply, with a question when it was unsure. `placement` is null while the planner has not reached it (within a few minutes).",
+      "Where one of your thoughts went: its id (from `tell` without a repo) answers with the planner's placement — the kind (work, amendment, vision, decision, reversal), the issues it opened, amended, deferred or marked superseded, and the one-or-two-line reply, with a question when it was unsure. `placement` is null while the planner has not reached it (within a few minutes). `repeats` and `supersedes` list the earlier thought ids this one says again or takes back; `repeatedBy` and `supersededBy` the later ones that did the same to it.",
     inputSchema: {
       type: "object",
       properties: { id: { type: "string", maxLength: 64 } },
@@ -1180,7 +1186,17 @@ const TOOLS: readonly Tool[] = [
       // Not yours and not there answer alike (a thought belongs to its author).
       if (thoughtAuthor(ctx.app.db, thoughtId) !== user.id)
         return bad("not_found", "no such thought");
-      return good({ id: thoughtId, placement: placementJson(placementOf(ctx.app.db, thoughtId)) });
+      const links = linksFrom(ctx.app.db, thoughtId);
+      const back = linksTo(ctx.app.db, thoughtId);
+      return good({
+        id: thoughtId,
+        placement: placementJson(placementOf(ctx.app.db, thoughtId)),
+        // The earlier thoughts this one repeats or takes back, and the later one that took it back.
+        repeats: links.repeats,
+        supersedes: links.supersedes,
+        supersededBy: back.supersededBy,
+        repeatedBy: back.repeatedBy,
+      });
     },
   },
   {
@@ -1415,7 +1431,7 @@ const TOOLS: readonly Tool[] = [
             listActiveRuns(ctx.app.db, [repo.id]),
           ),
           pillars,
-          await askToLiveFor(ctx.app, repo, pillars, user),
+          askToLiveFor(ctx.app, repo, pillars, user),
         ),
       );
     },
@@ -1577,7 +1593,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "returns",
     description:
-      "What the crew's tokens bought over the last days (1–90, default 7), so you can ask before you plan: dollars and runs by state; changes landed; dollars on work that landed and the median per landed change; dollars that landed nothing (closed without a merge, or still open), with failed and cancelled runs and the costliest failure reasons; what a good run costs and takes; and the costliest issues with what came of each. Over every app whose owner facts you hold, or `repo` (owner/name). Read-only; an app you cannot write is not found.",
+      "What the crew's tokens bought over the last days (1–90, default 7), so you can ask before you plan: dollars and runs by state; changes landed; dollars on work that landed and the median per landed change; dollars that landed nothing (closed without a merge, or still open), with failed and cancelled runs and the costliest failure reasons; what a good run costs and takes; and the costliest issues with what came of each; and the same dollars `byPillar`, by the pillar each run's issue serves. Over every app whose owner facts you hold, or `repo` (owner/name). Read-only; an app you cannot write is not found.",
     inputSchema: {
       type: "object",
       properties: {

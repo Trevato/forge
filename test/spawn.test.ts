@@ -79,6 +79,7 @@ describe("spawnForge", () => {
     expect(db.query("SELECT brief FROM agent").all()).toEqual([{ brief: "ship small" }]);
     db.close();
     expect(JSON.parse(await Bun.file(join(child, "parent.json")).text())).toEqual({
+      apps: [{ repo: "kids/notes", upstream: "alice/notes" }],
       upstream: "https://forge.test",
       name: "kid",
       org: "kids",

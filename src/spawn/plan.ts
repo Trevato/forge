@@ -29,6 +29,8 @@ export const KEY_BUDGET_NOTE =
   "The budget holds while this forge hosts the child: its admin cannot raise it. On a machine the child's owner controls, only a spend limit set at the provider binds the key, so use a key from a workspace with its own spend limit.";
 export const MAX_BUDGET_USD = 1000;
 
+/** One line saying what a fresh app is. */
+export const MAX_FRESH_CHARS = 200;
 const NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 const APP_REF = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
 
@@ -62,6 +64,8 @@ export interface SpawnInput {
    * The key itself never enters the plan: only that there is one, capped.
    */
   readonly budgetUsd?: unknown;
+  /** One line describing a fresh app to start in the child, beside the forked ones; optional. */
+  readonly fresh?: unknown;
 }
 
 /** What the parent has to offer. Extra fields are ignored, never copied. */
@@ -78,6 +82,12 @@ export interface PlannedApp {
   readonly bytes: number;
 }
 
+/** An app begun from a sentence, not forked from anything. */
+export interface PlannedFresh {
+  readonly name: string;
+  readonly description: string;
+}
+
 export interface SpawnPlan {
   readonly name: string;
   readonly org: string;
@@ -92,6 +102,8 @@ export interface SpawnPlan {
   readonly budgetUsd: number | null;
   /** Whom the child is for, for the parent's client list; absent when unsaid. */
   readonly forWhom?: string;
+  /** A fresh app, present only when asked for. */
+  readonly fresh?: PlannedFresh;
 }
 
 export interface DryRun {
@@ -115,6 +127,20 @@ export const LEFT_BEHIND: readonly string[] = [
 
 const refuse = (field: string, reason: string) => err<Refusal>({ field, reason });
 const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+/** The repository name a sentence earns: its first words as a slug, never one of `taken`. */
+export function freshName(description: string, taken: ReadonlySet<string>): string {
+  let slug = description
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 30)
+    .replace(/-+$/, "");
+  if (slug === "") slug = "app";
+  let name = slug;
+  for (let i = 2; taken.has(name); i++) name = `${slug}-${i}`;
+  return name;
+}
 
 export function planSpawn(
   input: SpawnInput,
@@ -197,6 +223,20 @@ export function planSpawn(
     if (forWhom.length > MAX_FOR_CHARS) return refuse("for", `at most ${MAX_FOR_CHARS} characters`);
   }
 
+  let fresh: PlannedFresh | undefined;
+  if (input.fresh !== undefined && input.fresh !== null && input.fresh !== "") {
+    if (typeof input.fresh !== "string") return refuse("fresh", "must be text");
+    const description = input.fresh.trim();
+    if (description === "") return refuse("fresh", "say in one line what the app is");
+    if (description.length > MAX_FRESH_CHARS) return refuse("fresh", `at most ${MAX_FRESH_CHARS} characters`);
+    if (/[\u0000-\u001f\u007f]/.test(description)) return refuse("fresh", "must be one line");
+    // `forge` is the fixed name of the forge-code fork, so a fresh app never takes it.
+    fresh = {
+      name: freshName(description, new Set(["forge", ...apps.map((a) => a.ref.split("/")[1]!.toLowerCase())])),
+      description,
+    };
+  }
+
   // `forWhom` only when said, so a plan without it hashes as it always did.
   return ok({
     name,
@@ -208,6 +248,7 @@ export function planSpawn(
     keepAccess,
     budgetUsd,
     ...(forWhom === "" ? {} : { forWhom }),
+    ...(fresh === undefined ? {} : { fresh }),
   });
 }
 
@@ -217,6 +258,9 @@ const enc = new TextEncoder();
 export function dryRun(plan: SpawnPlan, source: SpawnSource): DryRun {
   const copied = [
     ...plan.apps.map((a) => `app ${a.ref} (full history, forge.json)`),
+    ...(plan.fresh === undefined
+      ? []
+      : [`a fresh app ${plan.fresh.name}: ${plan.fresh.description}`]),
     ...plan.briefs.map((b) => `crew brief for ${b.agent}`),
     ...plan.subscriptions.map((s) => `subscription ${s} (name only)`),
     ...(plan.direction === "" ? [] : ["your words, as the child's direction"]),

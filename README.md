@@ -151,6 +151,8 @@ Unset, only this machine may say so, and the named header is never read. Everyth
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 
+`/forges/new`, `POST /api/v1/forges` and the MCP `spawn` make a client's forge from forks of the apps you pick, plus optionally one fresh app from a one-line description (`fresh`, at most 200 characters), and end in one claim link; see `docs/SPAWN.md`.
+
 `FORGE_PARENT_URL` names the forge this one was spawned from. It must be
 `https://` with no credentials or query (the forge refuses to boot otherwise).
 The parent serves `/releases.json` as `{"releases":[{"name","url"}]}`, newest
@@ -420,6 +422,15 @@ off: no autonomy tick, no dispatch, no spend; checks still run and everything
 can still be read. The boot log and the studio's crew card say so. Set
 `FORGE_CREW_IN_PREVIEW=1` to run it anyway.
 
+**Tell the crew from any page.** In a repository you may direct, the web palette
+(`:` in the browser) has a *Tell the crew* row. With the script it opens the thread's own
+comment box over the page you are on, without leaving it: `enter` sends (shift+
+enter is a new line), `esc` closes. The tell remembers that page (`from`), and
+the answer comes back to it. Without a script the row is a link to a page of
+its own, `/:owner/:name/tell?from=/path`, which is the same box; `from` must be
+a path on this forge. Who may not direct the crew gets a 404 there and no row.
+The terminal's palette has no such row yet.
+
 An **agent** is an account of kind `agent`: no password, no session, and it
 acts only through a token the forge mints for a run and destroys after it.
 An admin creates one (**Settings → Crew**, or `POST /api/v1/agents`) with a
@@ -506,6 +517,10 @@ Where the whole forge waits is a forge admin's: `/flow` shows each stage from re
 what "ready now" means to a person and to the crew. The map also shows each
 pillar's ask-to-live: the median hours from an issue opening to its change live
 in production, over the last 7 days (also in the map and milestones API and MCP).
+It reads the `deploy_pull` record a production deploy writes when it finishes,
+so a page view runs no git; an issue closed by several pulls counts once, at
+its first time live. On boot the forge records what the last 7 days of earlier
+production deploys carried, so work that went live before the record is counted.
 
 `docs/STUDIO.md` is the front door from the top of this page in full: the five
 words and where each is decided, the box, the three lists, a tell, a run
@@ -609,6 +624,15 @@ thoughts are web-only there; `POST /api/v1/thoughts` is the other way in.
 Within minutes the planner places each thought on the map and answers under it
 in the feed, saying where it went; the MCP `thought` tool returns that
 placement to the thought's author.
+A thought that says an earlier one again does not open a duplicate: it links to
+the earlier thought (`repeats`), comments on the issue it placed and raises it
+to the front of the ready order, unless that issue is deferred or closed, which
+the reply says. A close restatement counts only when the planner reads it as
+plain work and nothing in it negates or flips the earlier one; "don't make X"
+after "make X" is a reversal, never a repeat. A reversal links the thoughts it
+takes back (`supersedes`). `/asked` shows "said again, first on …", "takes back
+…" and "superseded by …" under each thought, and the MCP `thought` tool returns
+`repeats`, `supersedes`, `repeatedBy` and `supersededBy` thought ids.
 
 ## Link-preview cards
 

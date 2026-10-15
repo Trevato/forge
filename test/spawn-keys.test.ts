@@ -357,6 +357,7 @@ describe("a spawned child's own keys and domain", () => {
         await Bun.file(join(childDir, "parent.json")).text(),
       ) as Record<string, unknown>;
       expect(Object.keys(record).sort()).toEqual([
+        "apps",
         "keepAccess",
         "name",
         "org",

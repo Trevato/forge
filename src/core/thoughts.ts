@@ -25,3 +25,13 @@ export function recentThoughts(db: Database, authorId: string, limit: number, si
     .all(authorId, since, limit)
     .map((r) => ({ id: r.id, text: r.text, source: r.source, receivedAt: r.received_at }));
 }
+
+/** One of the author's thoughts by id, or nothing (a thought is its author's alone). */
+export function thoughtOf(db: Database, authorId: string, id: string): Thought | undefined {
+  const r = db
+    .query<{ id: string; text: string; source: string; received_at: string }, [string, string]>(
+      "SELECT id, text, source, received_at FROM thought WHERE author = ?1 AND id = ?2",
+    )
+    .get(authorId, id);
+  return r ? { id: r.id, text: r.text, source: r.source, receivedAt: r.received_at } : undefined;
+}

@@ -274,7 +274,7 @@ describe("the forge over MCP", () => {
   test("thought returns its placement to its author only (#652)", async () => {
     const kept = await tool(rw, "tell", { text: "build a thing" });
     const id = kept.value.thought;
-    expect((await tool(rw, "thought", { id })).value).toEqual({ id, placement: null });
+    expect((await tool(rw, "thought", { id })).value).toEqual({ id, placement: null, repeats: [], supersedes: [], supersededBy: null, repeatedBy: [] });
     savePlacement(app.db, {
       thoughtId: id, kind: "work", placed: [{ action: "opened", repo: "alice/game", number: 3 }],
       reply: "Opened #3.", asked: false, decidedBy: "rule", placedAt: new Date().toISOString(),
