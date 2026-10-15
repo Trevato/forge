@@ -57,6 +57,8 @@ export interface Pull extends Issue {
   readonly originHeadRepo: string | null;
   /** The pull this one reverts, when it was opened by "Take it back". */
   readonly revertsPullId: string | null;
+  /** The variant group this pull belongs to; null for an ordinary pull. */
+  readonly variantGroup: string | null;
 }
 
 interface PullRow {
@@ -69,6 +71,7 @@ interface PullRow {
   head_repo_id: string | null;
   origin_head_repo: string | null;
   reverts_issue_id: string | null;
+  variant_group: string | null;
 }
 
 function fromRow(issue: Issue, row: PullRow): Pull {
@@ -85,7 +88,41 @@ function fromRow(issue: Issue, row: PullRow): Pull {
     crossRepo: headRepoId !== issue.repoId,
     originHeadRepo: row.origin_head_repo,
     revertsPullId: row.reverts_issue_id,
+    variantGroup: row.variant_group,
   };
+}
+
+/**
+ * The numbers of the other pulls in each given pull's variant group, in the
+ * same repository, ascending. An ordinary pull (no group) has none.
+ */
+export function variantSiblings(
+  db: Database,
+  pulls: readonly Pull[],
+): number[][] {
+  const groups = [
+    ...new Set(pulls.flatMap((p) => (p.variantGroup === null ? [] : [p.variantGroup]))),
+  ];
+  const members = new Map<string, number[]>();
+  for (const group of groups) {
+    const rows = db
+      .query<{ repo_id: string; number: number }, [string]>(
+        `SELECT i.repo_id, i.number FROM pull p JOIN issue i ON i.id = p.issue_id
+          WHERE p.variant_group = ?1 ORDER BY i.number`,
+      )
+      .all(group);
+    for (const r of rows) {
+      const key = `${r.repo_id}\0${group}`;
+      members.set(key, [...(members.get(key) ?? []), r.number]);
+    }
+  }
+  return pulls.map((p) =>
+    p.variantGroup === null
+      ? []
+      : (members.get(`${p.repoId}\0${p.variantGroup}`) ?? []).filter(
+          (n) => n !== p.number,
+        ),
+  );
 }
 
 function join(db: Database, issue: Issue): Pull | undefined {
