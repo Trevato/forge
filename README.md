@@ -35,6 +35,7 @@ feeling on a foundation sized for one person.
 ```sh
 bun install          # dev-only: types + tsc, no runtime deps
 bun run src/main.ts  # web on :3000, ssh on :2222 (FORGE_SSH_PORT=0 turns it off; a taken port turns it off with one warning)
+bun src/main.ts --preflight  # can this tree boot? config parses, migrations run on a copy of the database; one line, exit 0 or 1, no socket opened. Run it before the swap, not under load: the copy is not atomic against a live writer, and a `preflight-*` directory a killed run left behind is swept by the next run once an hour old, and a missing data directory is created, as boot would
 ```
 
 If your shell already has `FORGE_URL` set — a crew workspace sets it to the
@@ -233,6 +234,18 @@ muted"). On the On you card: `space` marks a row, `x` closes the marked rows
 again to every muted repository. Each goes through `applyAsksBulk`, so the
 per-row access checks and refusals are the web's, shown in the toast.
 
+**Let the decider** answers a hand-over card (an issue the crew parked) when
+you would rather not: the third tap on the card, `POST /api/v1/asks/decide`
+(`{"item": "parked:<id>"}`), the MCP tool `asks_decide`, or `D` on the On you
+card in the terminal. It sees only the direction text, whether you pinned or
+muted the app, the day's spend against the ceiling, your last ten decisions
+there and the card's own evidence; the decision ledger row carries exactly
+that, with a reason and a confidence. A sure answer (70% or more) to set it
+aside takes the card off your board; an unsure one, a failure, or no decider
+configured leaves it with you. Undo for a day (`/api/v1/asks/decide/<id>/undo`,
+`asks_undecide`, `U`). Each tap is a paid call, so one card is handed over
+once in ten minutes.
+
 ## On your machine
 
 The forge holds the truth; `forge` keeps a copy of the parts you work on, the
@@ -410,6 +423,8 @@ from before this record say nothing).
 `docs/APPS.md` is the contract: the vocabulary, and the rules that are
 mechanical rather than advisory.
 
+`docs/FLOW.md` is where every issue stands: `GET /api/v1/repos/:owner/:name/flow` returns each open issue's stage, since, stalled and unblock, plus what went live in the last 24 h.
+
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
 what "ready now" means to a person and to the crew. The map also shows each
 pillar's ask-to-live: the median hours from an issue opening to its change live
@@ -441,6 +456,11 @@ bundled per day (cut at 4 MB, so a long history is several objects, never one
 huge one); restore unpacks them. While one runs, progress shows on
 **Settings → Backups** and as a line in the log every 500 objects or minute.
 The terminal has no backups view, so it has no readout.
+
+**Run a drill** on the same page (admins only) restores the newest snapshot
+into scratch, opens it, counts what is there and unseals a value; the page
+waits for it, up to 10 minutes, and the last drill shows there as one line.
+Only one runs at a time. See `docs/SNAPSHOT.md`.
 
 `docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
 grew up in switched off: what a host owes it, the moves in order, and what is

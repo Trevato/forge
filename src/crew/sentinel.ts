@@ -30,6 +30,7 @@ import { migrations } from "../core/schema.ts";
 import { getUserByName, type User } from "../core/users.ts";
 import { migrate } from "../kernel/migrate.ts";
 import { createLog, recentErrors, redactSecrets } from "../kernel/log.ts";
+import { spans } from "../kernel/degraded_history.ts";
 import { QUEUE_WAIT_MAX_MS } from "../kernel/vitals.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 
@@ -42,6 +43,8 @@ export const HUNT_EVERY_MS = HOUR_MS;
 export const SIGNAL_GAP_MS = 10 * 60_000;
 /** A setting away from its default this long is a finding. */
 export const SETTING_AWAY_MS = DAY_MS;
+/** A cause degraded longer than this in its day is a finding. */
+export const DEGRADED_DAY_MS = 10 * 60_000;
 /** How many alike make a streak. */
 export const STREAK = 3;
 /** The run summaries read per repository. */
@@ -342,6 +345,46 @@ export function repeatedErrors(now: number): Finding[] {
   return out;
 }
 
+/**
+ * Each cause whose spans total more than ten minutes in the day ending at
+ * `now`, quoting its sentence. Shorter totals stay in the history.
+ */
+export function degradedCauses(db: Database, now: number): Finding[] {
+  const from = now - DAY_MS;
+  const byCause = new Map<string, { sentence: string; href: string; first: number; ms: number }>();
+  for (const s of spans(db, from, now)) {
+    const start = Math.max(s.openedAt, from);
+    const held = Math.min(s.closedAt ?? now, now) - start;
+    const seen = byCause.get(s.cause);
+    // Spans run oldest first: the first sets the open time, the last the sentence.
+    byCause.set(s.cause, {
+      sentence: s.sentence,
+      href: s.href,
+      first: seen?.first ?? start,
+      ms: (seen?.ms ?? 0) + Math.max(0, held),
+    });
+  }
+  const out: Finding[] = [];
+  for (const [cause, d] of byCause) {
+    if (d.ms <= DEGRADED_DAY_MS) continue;
+    const minutes = Math.round(d.ms / 60_000);
+    out.push({
+      key: `degraded:${keyPart(cause)}`,
+      title: `${cause} was degraded ${minutes} minutes today: ${clip(oneLine(d.sentence), 120)}`,
+      evidence: [
+        `cause: ${cause}`,
+        `sentence: ${oneLine(d.sentence)}`,
+        `first open: ${new Date(d.first).toISOString()}`,
+        `total: ${minutes} minutes in the day`,
+        `href: ${d.href}`,
+      ],
+      pillar: "P0 Trust: the forge says when it is not well, and is well again",
+      lookFor: `\`${cause}\` stays out of the degraded list for a day, or holds under ${DEGRADED_DAY_MS / 60_000} minutes.`,
+    });
+  }
+  return out;
+}
+
 /** Everything the sentinel reads, in one pass. */
 export function findFaults(db: Database, now = Date.now()): Finding[] {
   const found = [
@@ -351,6 +394,7 @@ export function findFaults(db: Database, now = Date.now()): Finding[] {
     ...ledgerStreaks(db, now),
     ...runStreaks(db),
     ...repeatedErrors(now),
+    ...degradedCauses(db, now),
   ];
   return found.map((f) => ({
     ...f,

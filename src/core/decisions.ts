@@ -15,8 +15,17 @@ import { id as newId } from "../kernel/id.ts";
  *
  * `lean` was which option on a studio ask card a careful owner would pick.
  * Nothing records one any more; older ledgers still hold rows of it, and the
- * summaries that read them keep the word. */
-export type DecisionKind = "next" | "land" | "retry" | "lean" | "guard";
+ * summaries that read them keep the word.
+ *
+ * `hand` is a person's tap on "Let the decider" on a hand-over card
+ * (`crew/handover.ts`): its state is the curated context the decider saw. */
+export type DecisionKind =
+  | "next"
+  | "land"
+  | "retry"
+  | "lean"
+  | "guard"
+  | "hand";
 
 export interface Decision {
   readonly id: string;
@@ -149,6 +158,13 @@ export function stopStands(
   if (!aboutACheck) return true;
   if (decision.outcome === "green") return false;
   return greenAt === undefined || greenAt <= decision.createdAt;
+}
+
+/** Say what came of one decision, by id. */
+export function setOutcome(db: Database, id: string, outcome: string): void {
+  db.query(
+    `UPDATE decision SET outcome = ?2, outcome_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1`,
+  ).run(id, outcome);
 }
 
 /** What came of the newest unresolved decision of this kind about an issue. */
