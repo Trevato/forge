@@ -98,11 +98,23 @@ export interface VitalsInput {
 }
 
 /**
- * cause → when this process first saw it; a cause that clears is dropped.
+ * Per forge (keyed by its error ledger, one per `App.signals`): cause → when
+ * it was first seen; a cause that clears is dropped.
  * Stamped from the real clock, never from `input.now`: a caller asking about
  * another instant must not move when a cause began.
  */
-const firstSeen = new Map<string, string>();
+const firstSeenByForge = new WeakMap<ErrorLedger, Map<string, string>>();
+
+/** When a cause began as a person says it: "just now", "12 min ago", "3 h ago", else the day. */
+export function sinceWords(iso: string, now: number = Date.now()): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return iso;
+  const minutes = Math.max(0, Math.floor((now - t) / 60_000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)} h ago`;
+  return iso.slice(0, 10);
+}
 
 /** The lane as one line (no label; callers add their own), or null when nothing is queued. */
 export function laneLine(lane: Lane, now = Date.now()): string | null {
@@ -177,6 +189,8 @@ export function vitals(input: VitalsInput): Vitals {
   const at = new Date(now).toISOString();
   const needs: string[] = [];
   const degraded: Degraded[] = [];
+  let firstSeen = firstSeenByForge.get(input.signals.errors);
+  if (!firstSeen) firstSeenByForge.set(input.signals.errors, (firstSeen = new Map()));
   const need = (
     cause: string,
     sentence: string,
@@ -241,7 +255,7 @@ export function vitals(input: VitalsInput): Vitals {
   for (const s of stuck)
     need(
       `stuck:${s.runId}`,
-      `Run ${s.runId} is stuck: it has not moved since ${s.since}.`,
+      `Run ${s.runId} is stuck: it has not moved ${sinceWords(s.since, now)}.`,
       s.since,
       `/${s.repo}/runs/${s.runId}`,
     );

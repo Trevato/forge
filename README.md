@@ -136,7 +136,7 @@ repos, and the SSH host key, in plain layout. Tar it up and it moves.
 `GET /api/v1/health` (and the MCP `health` tool) answer a site admin with
 `degraded`: one entry per thing that needs a person, `{cause, sentence,
 since, href}`. `cause` is a stable key (`disk`, `errors`, `internal`,
-`queue:<kind>`, `stuck:<runId>`); `since` is when it began, by the oldest
+`queue:<kind>`, `stuck:<runId>`, `budget:<runId>`); `since` is when it began, by the oldest
 evidence (oldest queued run, last heartbeat, oldest error or refused call in
 the hour) or else the first time the forge saw it, and holds until the cause
 clears; `href` is the page to look at. The board's forge strip links each

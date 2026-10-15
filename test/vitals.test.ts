@@ -387,3 +387,25 @@ test("since is said as a person would", async () => {
   expect(line).toBe("S. Since 2020-01-01.");
   expect(line).not.toContain("T00:00");
 });
+
+test("since is kept per forge: one forge's cause neither lends nor loses its start to another", async () => {
+  const dirB = await mkdtemp(join(tmpdir(), "forge-vitals-since-"));
+  const other = createApp({ dataDir: dirB, port: 0 });
+  try {
+    const disk = (a: App, diskFreeMin: number) =>
+      vitals({ db: a.db, dataDir: a.config.dataDir, signals: a.signals, diskFreeMin })
+        .degraded.find((d) => d.cause === "disk");
+    const first = disk(app, 2)!;
+    expect(first).toBeDefined();
+    await Bun.sleep(5);
+    // The other forge has no disk cause: asking must not clear this one's start.
+    expect(disk(other, 0)).toBeUndefined();
+    expect(disk(app, 2)!.since).toBe(first.since);
+    // And when it has the cause later, it starts then, not at the first forge's time.
+    const later = disk(other, 2)!;
+    expect(later.since > first.since).toBe(true);
+  } finally {
+    other.close();
+    await rm(dirB, { recursive: true, force: true });
+  }
+});

@@ -13,7 +13,7 @@ import { appsRuntime } from "../apps/runtime.ts";
 import { listApps } from "../core/apps.ts";
 import type { User } from "../core/users.ts";
 import { forgeHealth, rolloutLine, type ForgeHealth } from "../kernel/guard.ts";
-import { laneLine, vitals, type Degraded, type Vitals } from "../kernel/vitals.ts";
+import { laneLine, sinceWords, vitals, type Degraded, type Vitals } from "../kernel/vitals.ts";
 
 export function readHealth(
   app: App,
@@ -53,22 +53,13 @@ export function forgeNeeds(app: App, actor: User | undefined): string[] | undefi
   ];
 }
 
+export { sinceWords };
+
 /** A cause as one line: its sentence and when it began (a stuck run's says so already). */
 export function needLine(d: Degraded, now: number = Date.now()): string {
   return d.cause.startsWith("stuck:")
     ? d.sentence
     : `${d.sentence} Since ${sinceWords(d.since, now)}.`;
-}
-
-/** When a cause began as a person says it: "just now", "12 min ago", "3 h ago", else the day. */
-export function sinceWords(iso: string, now: number = Date.now()): string {
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return iso;
-  const minutes = Math.max(0, Math.floor((now - t) / 60_000));
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)} h ago`;
-  return iso.slice(0, 10);
 }
 
 /**
