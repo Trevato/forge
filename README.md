@@ -365,6 +365,12 @@ it answers by default: `.well-known`, feeds, cards, the manifest.
 `docs/SNAPSHOT.md` is a forge back from a copy: what a nightly snapshot
 holds, where it goes, and the one command that restores it.
 
+A snapshot uploads eight objects at a time. Run logs older than a day go up
+bundled per day (cut at 4 MB, so a long history is several objects, never one
+huge one); restore unpacks them. While one runs, progress shows on
+**Settings → Backups** and as a line in the log every 500 objects or minute.
+The terminal has no backups view, so it has no readout.
+
 `docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.
