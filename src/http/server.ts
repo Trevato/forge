@@ -1734,6 +1734,8 @@ export async function serve(app: App): Promise<Servers> {
 
   const web = Bun.serve({
     port: app.config.port ?? 3000,
+    // A release swaps in beside this process on the same port (#1663).
+    ...(app.config.selfSwap === true ? { reusePort: true } : {}),
     idleTimeout: 120,
     // The largest thing anyone may send — a git push. Every reader below it
     // keeps its own, smaller cap (\`http/limits.ts\`); the runtime enforces

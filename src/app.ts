@@ -161,6 +161,14 @@ export interface ForgeConfig {
   parentLoopback?: boolean;
   /** How many `releases/<sha>/` checkouts to keep (`FORGE_RELEASES_KEEP`). @default 5 */
   releasesKeep?: number;
+  /**
+   * A green release of the forge's own code takes over the port instead of
+   * waiting for a restart (`FORGE_SELF_SWAP=1`; `release/swap.ts`, #1663).
+   * The listener is bound with SO_REUSEPORT so the new process can share it.
+   */
+  selfSwap?: boolean;
+  /** How long a swapped-in release has to read healthy (`FORGE_SWAP_BUDGET_S`). @default 60000 */
+  swapBudgetMs?: number;
 }
 
 export interface App {

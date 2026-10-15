@@ -116,6 +116,15 @@ Wants: accounts, spam, resources, or a way to exhaust the forge.
 
 ## Internal calls
 
+`FORGE_SELF_SWAP=1` binds the web port with SO_REUSEPORT so a release can share
+it, which also lets any process running as the forge's user join the listener
+and take a share of its connections, login posts included. It assumes nothing
+else runs as that user on the host network (agents and apps are sandboxed or in
+cells). Only one swap is made per process, so two landings never leave two
+releases serving. The swap is refused unless `net.ipv4.tcp_migrate_req=1`, for
+without it the old listener closing resets queued connections.
+Test: `test/release-swap.test.ts`
+
 How each part proves itself to the next, today.
 
 | Call | Authenticated by | Test |

@@ -19,6 +19,8 @@ import {
   type Verdict,
   pruneReleases,
 } from "../release/checkout.ts";
+import { beginSwap, endSwap, handover, startRelease } from "../release/swap.ts";
+import { running } from "../kernel/version.ts";
 import { recordRelease, type Release } from "../release/record.ts";
 import type { Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
@@ -144,5 +146,60 @@ async function cut(
       `The landed tree ${sha.slice(0, 12)} failed its preflight, so it will not be released: ${verdict.line}`,
     );
   }
+  if (verdict.ok && out.ok) await swapIn(app, by, repo, pull, sha, out.value);
   return release;
+}
+
+/**
+ * Hand the port to a green release and drain this process, once the new one
+ * has read healthy. Off unless `FORGE_SELF_SWAP=1`. A release that does not
+ * come up is stopped, the old keeps serving, and the lane and the landed pull
+ * are told.
+ */
+async function swapIn(
+  app: App,
+  by: User,
+  repo: Repo,
+  pull: Pull,
+  sha: string,
+  dir: string,
+): Promise<void> {
+  const drain = handover.drain;
+  const port = app.config.port ?? 0;
+  if (app.config.selfSwap !== true || drain === undefined || port <= 0) return;
+  if (running().commit === sha) return;
+  const turn = beginSwap();
+  if (!turn.ok) {
+    app.log.warn("release not swapped in", { sha: sha.slice(0, 12), line: turn.line });
+    if (turn.tell)
+      addComment(
+        app,
+        by,
+        repo,
+        getIssueById(app.db, pull.id) ?? pull,
+        `The landed tree ${sha.slice(0, 12)} did not swap in: ${turn.line}. The running process keeps serving.`,
+      );
+    return;
+  }
+  const swapped = await startRelease({ dir, sha, port, env: process.env,
+    ...(app.config.swapBudgetMs === undefined ? {} : { budgetMs: app.config.swapBudgetMs }),
+  });
+  endSwap(swapped.ok);
+  if (swapped.ok) {
+    app.log.info("release swapped in; draining this process", { sha: sha.slice(0, 12), pid: swapped.pid });
+    drain();
+    return;
+  }
+  app.log.error("release swap failed; the old process keeps serving", {
+    sha: sha.slice(0, 12),
+    pull: pull.number,
+    line: swapped.line,
+  });
+  addComment(
+    app,
+    by,
+    repo,
+    getIssueById(app.db, pull.id) ?? pull,
+    `The landed tree ${sha.slice(0, 12)} did not swap in: ${swapped.line}. The running process keeps serving.`,
+  );
 }

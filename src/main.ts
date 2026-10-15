@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { handover } from "./release/swap.ts";
 import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
@@ -433,6 +434,9 @@ const leaseTimer = setInterval(() => {
   releaseOrphans(app.db);
 }, 30_000);
 
+// A release that read healthy beside this process takes over (#1663).
+handover.drain = () => shutdown("SIGTERM");
+handover.ssh = ssh !== undefined;
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
