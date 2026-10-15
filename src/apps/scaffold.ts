@@ -49,6 +49,7 @@ export function scaffoldFiles(input: ScaffoldInput): FileWrite[] {
     { path: "design/tokens.json", content: TOKENS_JSON },
     { path: "src/env.ts", content: ENV_TS },
     { path: "src/who.ts", content: WHO_TS },
+    { path: "src/signin.ts", content: SIGNIN_TS },
     { path: "src/can.ts", content: CAN_TS },
     { path: "src/contract.ts", content: CONTRACT_TS },
     { path: "src/security.ts", content: SECURITY_TS },
@@ -69,6 +70,7 @@ export function scaffoldFiles(input: ScaffoldInput): FileWrite[] {
     { path: "static/app.css", content: APP_CSS },
     { path: "static/live.js", content: LIVE_JS },
     { path: "src/who.test.ts", content: WHO_TEST },
+    { path: "src/signin.test.ts", content: SIGNIN_TEST },
     { path: "src/db.test.ts", content: DB_TEST },
     { path: "src/actions.test.ts", content: ACTIONS_TEST },
     { path: "src/contract.test.ts", content: CONTRACT_TEST },
@@ -152,6 +154,7 @@ decide nothing themselves. \`AGENTS.md\` says how to add to it.
 | \`src/security.ts\`                  | the door: rationing, same origin, the table before the body    |
 | \`src/audit.ts\`                     | every change and every refused one, as a row                   |
 | \`src/who.ts\`                       | who is asking, from the forge's signed headers                 |
+| \`src/signin.ts\`                    | sign-in through the forge: OpenID Connect, code flow with PKCE |
 | \`src/db.ts\`                        | SQLite under \`FORGE_APP_DATA\`, WAL, forward-only migrations    |
 | \`src/live.ts\`                      | the in-process bus and \`GET /events\`                           |
 | \`src/mcp.ts\`                       | the actions as MCP tools at \`POST /mcp\`                        |
@@ -199,9 +202,13 @@ verifies the signature (\`src/who.ts\`); nothing else is trusted. Three tiers:
   themselves, and removes their own.
 - **admin** — able to write this repository. Removes any note.
 
-"Sign in" is \`/__forge/signin?to=<path>\` and "Sign out" is
-\`/__forge/signout\`; the forge answers both on the app's own host, and
-\`/__forge/report\` too: it sends anyone, with no account, to report a
+"Sign in" is \`/signin\`: the OpenID Connect code flow with PKCE against
+\`FORGE_URL\` (\`src/signin.ts\`). The app registers its own redirect
+address on first boot and keeps the client id in \`FORGE_APP_DATA\`, checks
+the \`id_token\` itself, and keeps a session in an HttpOnly cookie. A person
+signed in this way is a \`user\`; \`admin\` still comes from the forge's
+signed headers, until those are retired. "Sign out" is a POST to \`/signout\`.
+The forge answers \`/__forge/report\`: it sends anyone, with no account, to report a
 problem on this app's repository, if that repository is public.
 
 ## Any interface
@@ -481,6 +488,294 @@ export function whoAtTty(
 `;
 
 // SQLite with good habits.
+const SIGNIN_TS = `/**
+ * Sign-in through the forge, which is an OpenID provider: the code flow
+ * with PKCE against FORGE_URL. The first time it is needed the app
+ * registers its own redirect address (production and each preview have
+ * their own) and keeps the client id in FORGE_APP_DATA. A person is sent
+ * to the forge, comes back with a one-time code, and the app trades it for
+ * an id_token whose signature, issuer, audience, expiry and nonce it
+ * checks itself against the forge's published keys. What it keeps is a
+ * session: a random id in an HttpOnly cookie, the hash of it in the
+ * database. Plain data in, plain data out; \`fetch\` is a parameter so a
+ * test can be anywhere.
+ */
+
+import type { Database } from "bun:sqlite";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import type { Who } from "./who.ts";
+
+export interface Signin {
+  /** The forge's address, as the app was told it (FORGE_URL). */
+  readonly forge: string;
+  /** This app's own public origin (FORGE_APP_URL). */
+  readonly origin: string;
+  readonly dataDir: string;
+  /** What the forge is told this client is called. */
+  readonly name: string;
+  readonly fetch?: typeof fetch;
+}
+
+export const SESSION_COOKIE = "session";
+export const LOGIN_COOKIE = "signin";
+const SESSION_S = 12 * 3600;
+const LOGIN_S = 600;
+const LOGIN_MAX = 1000;
+const SCOPE = "openid profile";
+
+const rand = (bytes: number): string => randomBytes(bytes).toString("base64url");
+const hash = (s: string): string => createHash("sha256").update(s).digest("hex");
+const fetcher = (s: Signin): typeof fetch => s.fetch ?? fetch;
+const issuer = (s: Signin): string => new URL(s.forge).origin;
+export const redirectUri = (s: Signin): string => \`\${s.origin}/signin/callback\`;
+
+/** The cookie a request carries by that name, if any. */
+export function cookieOf(request: Request, name: string): string | undefined {
+  const found = new RegExp(\`(?:^|;\\\\s*)\${name}=([^;]*)\`).exec(
+    request.headers.get("cookie") ?? "",
+  );
+  return found?.[1];
+}
+
+// The client id, per redirect address, in one small file. Registering again
+// for an address already known would make a second client; this makes one.
+const registered = new Map<string, Promise<string>>();
+
+export function ensureClient(s: Signin): Promise<string> {
+  const uri = redirectUri(s);
+  const key = \`\${s.dataDir}\\0\${uri}\`;
+  const pending = registered.get(key);
+  if (pending !== undefined) return pending;
+  const attempt = register(s, uri);
+  registered.set(key, attempt);
+  // A failed attempt is forgotten, so the next sign-in tries again.
+  attempt.catch(() => registered.delete(key));
+  return attempt;
+}
+
+async function register(s: Signin, uri: string): Promise<string> {
+  const file = join(s.dataDir, "oidc-client.json");
+  let known: Record<string, string> = {};
+  try {
+    known = JSON.parse(readFileSync(file, "utf8")) as Record<string, string>;
+  } catch {
+    // First boot: nothing registered yet.
+  }
+  const had = known[uri];
+  if (typeof had === "string" && had !== "") return had;
+  const res = await fetcher(s)(\`\${issuer(s)}/oauth/register\`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ client_name: s.name, redirect_uris: [uri] }),
+    redirect: "error",
+    signal: AbortSignal.timeout(5000),
+  });
+  const body = (await res.json()) as { client_id?: unknown };
+  if (res.status !== 201 || typeof body.client_id !== "string")
+    throw new Error(\`the forge refused to register \${uri} (\${res.status})\`);
+  mkdirSync(s.dataDir, { recursive: true });
+  const next = \`\${file}.\${process.pid}\`;
+  writeFileSync(next, JSON.stringify({ ...known, [uri]: body.client_id }));
+  renameSync(next, file);
+  return body.client_id;
+}
+
+/** Start: the address at the forge to send the person to, and the cookie that binds this browser to it. */
+export async function begin(
+  db: Database,
+  s: Signin,
+  now = Date.now(),
+): Promise<{ location: string; state: string }> {
+  const clientId = await ensureClient(s);
+  const state = rand(24);
+  const verifier = rand(48);
+  const nonce = rand(24);
+  db.query("DELETE FROM login WHERE expires_at <= ?1").run(now);
+  db.query(
+    "DELETE FROM login WHERE state IN (SELECT state FROM login ORDER BY expires_at LIMIT max(0, (SELECT count(*) FROM login) - ?1))",
+  ).run(LOGIN_MAX - 1);
+  db.query(
+    "INSERT INTO login (state, verifier, nonce, expires_at) VALUES (?1, ?2, ?3, ?4)",
+  ).run(hash(state), verifier, nonce, now + LOGIN_S * 1000);
+  const query = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: redirectUri(s),
+    scope: SCOPE,
+    state,
+    nonce,
+    code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+    code_challenge_method: "S256",
+  });
+  return { location: \`\${issuer(s)}/oauth/authorize?\${query}\`, state };
+}
+
+export type Finished =
+  | { ok: true; session: string; who: Who }
+  | { ok: false; message: string };
+
+const refuse = (message: string): Finished => ({ ok: false, message });
+
+/** The return: check the state twice, trade the code, verify the id_token, open a session. */
+export async function finish(
+  db: Database,
+  s: Signin,
+  request: Request,
+  url: URL,
+  now = Date.now(),
+): Promise<Finished> {
+  if (url.searchParams.has("error"))
+    return refuse("The forge did not sign you in.");
+  const state = url.searchParams.get("state") ?? "";
+  const code = url.searchParams.get("code") ?? "";
+  if (state === "" || code === "" || state !== cookieOf(request, LOGIN_COOKIE))
+    return refuse("This sign-in did not start in this browser.");
+  const row = db
+    .query<{ verifier: string; nonce: string; expires_at: number }, [string]>(
+      "DELETE FROM login WHERE state = ?1 RETURNING verifier, nonce, expires_at",
+    )
+    .get(hash(state));
+  if (row === null || row.expires_at <= now)
+    return refuse("This sign-in took too long or was already used.");
+  try {
+    const res = await fetcher(s)(\`\${issuer(s)}/oauth/token\`, {
+      method: "POST",
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        client_id: await ensureClient(s),
+        redirect_uri: redirectUri(s),
+        code_verifier: row.verifier,
+      }),
+      redirect: "error",
+      signal: AbortSignal.timeout(5000),
+    });
+    const body = (await res.json()) as { id_token?: unknown };
+    if (!res.ok || typeof body.id_token !== "string")
+      return refuse("The forge did not accept the sign-in.");
+    const claims = await verify(s, body.id_token, row.nonce, now);
+    if (claims === undefined) return refuse("The forge's answer did not verify.");
+    const who: Who = {
+      role: "user",
+      id: claims.sub,
+      name: claims.preferred_username ?? claims.sub,
+    };
+    const session = rand(32);
+    db.query(
+      "INSERT INTO session (hash, user_id, user_name, expires_at) VALUES (?1, ?2, ?3, ?4)",
+    ).run(hash(session), who.id, who.name, now + SESSION_S * 1000);
+    db.query("DELETE FROM session WHERE expires_at <= ?1").run(now);
+    return { ok: true, session, who };
+  } catch {
+    return refuse("The forge could not be reached.");
+  }
+}
+
+interface Claims {
+  readonly sub: string;
+  readonly preferred_username?: string;
+}
+
+type Key = Record<string, unknown>;
+const keys = new Map<string, { at: number; list: Key[] }>();
+
+async function jwks(s: Signin, kid: unknown, now: number): Promise<Key | undefined> {
+  const cached = keys.get(issuer(s));
+  const fresh = cached !== undefined && now - cached.at < 600_000;
+  const hit = fresh ? cached.list.find((k) => k["kid"] === kid) : undefined;
+  if (hit !== undefined) return hit;
+  // An unknown kid may be a rotation; look again, but not more than once a minute.
+  if (cached !== undefined && now - cached.at < 60_000) return undefined;
+  const res = await fetcher(s)(\`\${issuer(s)}/oauth/jwks\`, {
+    redirect: "error",
+    signal: AbortSignal.timeout(5000),
+  });
+  const list = ((await res.json()) as { keys?: Key[] }).keys ?? [];
+  keys.set(issuer(s), { at: now, list });
+  return list.find((k) => k["kid"] === kid);
+}
+
+/** The claims of an id_token that is the forge's, for this app, for this sign-in and not yet expired. */
+export async function verify(
+  s: Signin,
+  jwt: string,
+  nonce: string,
+  now = Date.now(),
+): Promise<Claims | undefined> {
+  const parts = jwt.split(".");
+  if (parts.length !== 3) return undefined;
+  try {
+    const head = JSON.parse(Buffer.from(parts[0]!, "base64url").toString());
+    if (head.alg !== "ES256") return undefined;
+    const jwk = await jwks(s, head.kid, now);
+    if (jwk === undefined) return undefined;
+    const pub = await crypto.subtle.importKey(
+      "jwk",
+      jwk as JsonWebKey,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    const good = await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      pub,
+      Buffer.from(parts[2]!, "base64url"),
+      new TextEncoder().encode(\`\${parts[0]}.\${parts[1]}\`),
+    );
+    if (!good) return undefined;
+    const claims = JSON.parse(Buffer.from(parts[1]!, "base64url").toString());
+    if (
+      claims.iss !== issuer(s) ||
+      claims.aud !== (await ensureClient(s)) ||
+      claims.nonce !== nonce ||
+      typeof claims.exp !== "number" ||
+      claims.exp * 1000 <= now ||
+      typeof claims.sub !== "string" ||
+      claims.sub === ""
+    )
+      return undefined;
+    return {
+      sub: claims.sub,
+      ...(typeof claims.preferred_username === "string" &&
+      claims.preferred_username !== ""
+        ? { preferred_username: claims.preferred_username }
+        : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** The person a session cookie names, or undefined. */
+export function sessionWho(
+  db: Database,
+  request: Request,
+  now = Date.now(),
+): Who | undefined {
+  const id = cookieOf(request, SESSION_COOKIE);
+  if (id === undefined || id === "") return undefined;
+  const row = db
+    .query<{ user_id: string; user_name: string }, [string, number]>(
+      "SELECT user_id, user_name FROM session WHERE hash = ?1 AND expires_at > ?2",
+    )
+    .get(hash(id), now);
+  return row === null
+    ? undefined
+    : { role: "user", id: row.user_id, name: row.user_name };
+}
+
+export function endSession(db: Database, request: Request): void {
+  const id = cookieOf(request, SESSION_COOKIE);
+  if (id !== undefined) db.query("DELETE FROM session WHERE hash = ?1").run(hash(id));
+}
+
+export const SESSION_MAX_AGE = SESSION_S;
+export const LOGIN_MAX_AGE = LOGIN_S;
+`;
+
+// The database.
 const DB_TS = `/**
  * The database: one SQLite file under FORGE_APP_DATA, so production and
  * every preview each have their own. WAL so readers never wait on the
@@ -520,6 +815,20 @@ export const migrations: string[] = [
     target TEXT,
     allowed INTEGER NOT NULL CHECK (allowed IN (0, 1)),
     outcome TEXT NOT NULL
+  )\`,
+  // Sign-in through the forge (src/signin.ts): a login in flight, and a
+  // session once it lands. Only hashes of the ids are kept.
+  \`CREATE TABLE login (
+    state TEXT PRIMARY KEY,
+    verifier TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  )\`,
+  \`CREATE TABLE session (
+    hash TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    user_name TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
   )\`,
 ];
 
@@ -1089,6 +1398,13 @@ export const back = (notice?: string): Response =>
     },
   });
 
+/** Go to \`location\` (one the app built, never the client's), setting these cookies on the way. */
+export function redirectTo(location: string, ...cookies: string[]): Response {
+  const headers = new Headers({ location, ...SECURITY });
+  for (const value of cookies) headers.append("set-cookie", value);
+  return new Response(null, { status: 303, headers });
+}
+
 /** The notice a redirect left, and the header that clears it. */
 export function readNotice(request: Request): {
   notice?: string;
@@ -1106,7 +1422,7 @@ export function readNotice(request: Request): {
 
 // Every cookie the app sets itself is HttpOnly and SameSite=Lax, and Secure
 // wherever the public address is https.
-const cookie = (name: string, value: string, maxAge: number): string =>
+export const cookie = (name: string, value: string, maxAge: number): string =>
   \`\${name}=\${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=\${maxAge}\${publicOrigin.startsWith("https:") ? "; Secure" : ""}\`;
 
 // A request body is read up to a cap and no further, counting the bytes as
@@ -1363,9 +1679,9 @@ import type { Who } from "./who.ts";
 export function layout(body: string, who: Who, path = "/"): string {
   const door =
     who.role === "anon"
-      ? \`<a class="button button-quiet" href="/__forge/signin?to=/">Sign in</a>\`
+      ? \`<a class="button button-quiet" href="/signin">Sign in</a>\`
       : \`<span class="you"><b>\${escape(who.name)}</b>\${who.role === "admin" ? " · admin" : ""}</span>
-        <a class="button button-quiet" href="/__forge/signout">Sign out</a>\`;
+        <form class="signout" method="post" action="/signout"><button class="button button-quiet">Sign out</button></form>\`;
   return \`<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
@@ -1419,7 +1735,7 @@ export function home(input: {
   const { who, notes, notice } = input;
   const composer =
     who.role === "anon"
-      ? \`<p class="muted">Reading as a guest. <a href="/__forge/signin?to=/">Sign in</a> to add a note.</p>\`
+      ? \`<p class="muted">Reading as a guest. <a href="/signin">Sign in</a> to add a note.</p>\`
       : \`<form class="row" method="post" action="/notes">
         <input class="input" name="body" placeholder="Write a note" aria-label="New note" required maxlength="500" autocomplete="off" autofocus>
         <button class="button">Add</button>
@@ -1491,12 +1807,14 @@ import {
 import { commit, env, forgeUrl, startedAt, version } from "./env.ts";
 import {
   back,
+  cookie,
   fields,
   html,
   json,
   readForm,
   readJson,
   readNotice,
+  redirectTo,
   SECURITY,
   staticFile,
   text,
@@ -1504,6 +1822,16 @@ import {
 import { events } from "./live.ts";
 import { rpc } from "./mcp.ts";
 import { home } from "./page.ts";
+import {
+  begin,
+  endSession,
+  finish,
+  LOGIN_COOKIE,
+  LOGIN_MAX_AGE,
+  SESSION_COOKIE,
+  SESSION_MAX_AGE,
+  type Signin,
+} from "./signin.ts";
 import { tokensCss } from "./tokens.ts";
 import type { Who } from "./who.ts";
 
@@ -1513,6 +1841,8 @@ export interface Context {
   readonly db: Database;
   readonly who: Who;
   readonly params: Record<string, string>;
+  /** Sign-in through the forge; undefined when the app does not know where the forge is. */
+  readonly signin?: Signin | undefined;
 }
 
 /** A JSON Schema, as plain data. */
@@ -1620,6 +1950,54 @@ const OPENAPI = new URL("../contract/openapi.json", import.meta.url);
 const openapi = existsSync(OPENAPI) ? readFileSync(OPENAPI, "utf8") : undefined;
 
 export const routes: readonly Route[] = [
+  // Sign in through the forge (OpenID Connect, code flow with PKCE): out to
+  // the forge, back with a code, a session in an HttpOnly cookie.
+  {
+    method: "GET",
+    path: "/signin",
+    handle: async (c) => {
+      if (c.signin === undefined)
+        return text("sign-in is off: FORGE_URL is not set", 503);
+      try {
+        const { location, state } = await begin(c.db, c.signin);
+        return redirectTo(location, cookie(LOGIN_COOKIE, state, LOGIN_MAX_AGE));
+      } catch (error) {
+        console.error(error);
+        return text("the forge could not be reached to sign you in", 502);
+      }
+    },
+  },
+  {
+    method: "GET",
+    path: "/signin/callback",
+    handle: async (c) => {
+      if (c.signin === undefined) return text("sign-in is off", 503);
+      const done = await finish(c.db, c.signin, c.request, c.url);
+      if (!done.ok)
+        return redirectTo(
+          "/",
+          cookie(LOGIN_COOKIE, "", 0),
+          cookie("notice", encodeURIComponent(done.message), 30),
+        );
+      return redirectTo(
+        "/",
+        cookie(LOGIN_COOKIE, "", 0),
+        cookie(SESSION_COOKIE, done.session, SESSION_MAX_AGE),
+      );
+    },
+  },
+  {
+    method: "POST",
+    path: "/signout",
+    handle: (c) => {
+      endSession(c.db, c.request);
+      return redirectTo(
+        env === "local" ? "/" : "/__forge/signout?to=/",
+        cookie(SESSION_COOKIE, "", 0),
+      );
+    },
+  },
+
   // The page. Forms post and come back; the list stays live over /events.
   {
     method: "GET",
@@ -1938,10 +2316,18 @@ const SERVER_TS = `/**
  */
 
 import { openDb } from "./db.ts";
-import { dataDir, identityKey, title, where } from "./env.ts";
+import {
+  dataDir,
+  forgeUrl,
+  identityKey,
+  publicOrigin,
+  title,
+  where,
+} from "./env.ts";
 import { html, text } from "./http.ts";
 import { match } from "./routes.ts";
 import { door } from "./security.ts";
+import { ensureClient, sessionWho, type Signin } from "./signin.ts";
 import { who } from "./who.ts";
 
 export interface ServeOptions {
@@ -1949,10 +2335,16 @@ export interface ServeOptions {
   readonly hostname?: string | undefined;
   readonly dataDir: string;
   readonly identityKey: string;
+  /** Where people sign in; undefined turns sign-in off. */
+  readonly signin?: Signin | undefined;
 }
 
 export function serve(options: ServeOptions) {
   const db = openDb(options.dataDir);
+  // Register with the forge on first boot; a forge that is not up yet is
+  // tried again at the first sign-in.
+  options.signin !== undefined &&
+    ensureClient(options.signin).catch((error) => console.error(error));
   return Bun.serve({
     port: options.port,
     hostname: options.hostname ?? "127.0.0.1",
@@ -1961,7 +2353,8 @@ export function serve(options: ServeOptions) {
     idleTimeout: 60,
     async fetch(request, server) {
       const url = new URL(request.url);
-      const me = who(request, options.identityKey);
+      const me =
+        sessionWho(db, request) ?? who(request, options.identityKey);
       const refused = door(
         db,
         request,
@@ -1981,6 +2374,7 @@ export function serve(options: ServeOptions) {
         db,
         who: me,
         params: found.params,
+        signin: options.signin,
       });
       return head(request, response);
     },
@@ -2007,6 +2401,10 @@ if (import.meta.main) {
     hostname: process.env.HOST,
     dataDir,
     identityKey,
+    signin:
+      forgeUrl === undefined
+        ? undefined
+        : { forge: forgeUrl, origin: publicOrigin, dataDir, name: \`\${title} (\${where})\` },
   });
   console.log(
     \`\${title} listening on http://\${server.hostname}:\${server.port} (\${where})\`,
@@ -2192,6 +2590,9 @@ code,
 .you {
   color: var(--color-muted);
   white-space: nowrap;
+}
+.signout {
+  display: inline;
 }
 
 /* Blocks. */
@@ -2477,6 +2878,60 @@ test("the terminal trusts its environment", () => {
 });
 `;
 
+const SIGNIN_TEST = `import { expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openDb } from "./db.ts";
+import { begin, finish, sessionWho, type Signin } from "./signin.ts";
+
+const dir = mkdtempSync(join(tmpdir(), "app-"));
+const db = openDb(dir);
+// A forge that registers a client and nothing else.
+const forge = (async (url: string | URL | Request) =>
+  String(url).endsWith("/oauth/register")
+    ? Response.json({ client_id: "c1" }, { status: 201 })
+    : new Response("no", { status: 500 })) as unknown as typeof fetch;
+const signin: Signin = {
+  forge: "https://forge.test",
+  origin: "https://app.test",
+  dataDir: dir,
+  name: "app",
+  fetch: forge,
+};
+
+test("sign-in goes out with PKCE, state and nonce, to the registered redirect", async () => {
+  const { location, state } = await begin(db, signin);
+  const to = new URL(location);
+  expect(\`\${to.origin}\${to.pathname}\`).toBe("https://forge.test/oauth/authorize");
+  expect(to.searchParams.get("client_id")).toBe("c1");
+  expect(to.searchParams.get("redirect_uri")).toBe("https://app.test/signin/callback");
+  expect(to.searchParams.get("code_challenge_method")).toBe("S256");
+  expect(to.searchParams.get("state")).toBe(state);
+  expect(to.searchParams.get("nonce")?.length).toBeGreaterThan(16);
+});
+
+test("a return that did not start in this browser is refused", async () => {
+  const { state } = await begin(db, signin);
+  const url = new URL(\`https://app.test/signin/callback?code=x&state=\${state}\`);
+  const stranger = await finish(db, signin, new Request(url), url);
+  expect(stranger.ok).toBe(false);
+  const mine = new Request(url, { headers: { cookie: "signin=other" } });
+  expect((await finish(db, signin, mine, url)).ok).toBe(false);
+});
+
+test("a session is a cookie that names a person, and only until it expires", () => {
+  db.query("INSERT INTO session VALUES (?1, 'u1', 'alice', ?2)").run(
+    new Bun.CryptoHasher("sha256").update("abc").digest("hex"),
+    Date.now() + 1000,
+  );
+  const req = (cookie: string) => new Request("http://x", { headers: { cookie } });
+  expect(sessionWho(db, req("session=abc"))).toEqual({ role: "user", id: "u1", name: "alice" });
+  expect(sessionWho(db, req("session=abd"))).toBeUndefined();
+  expect(sessionWho(db, req("session=abc"), Date.now() + 5000)).toBeUndefined();
+});
+`;
+
 const DB_TEST = `import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -2734,12 +3189,12 @@ const rpc = (message: unknown, who: Record<string, string> = {}) =>
 test("the page knows who you are and offers the right door", async () => {
   const guest = await (await fetch(base + "/")).text();
   expect(guest).toContain("<h1>");
-  expect(guest).toContain("/__forge/signin?to=/");
+  expect(guest).toContain('href="/signin"');
   expect(guest).toContain('href="/__forge/report"');
   expect(guest).not.toContain('action="/notes"');
   const signed = await (await api("/", {}, alice)).text();
   expect(signed).toContain("<b>alice</b>");
-  expect(signed).toContain("/__forge/signout");
+  expect(signed).toContain('action="/signout"');
   expect(signed).toContain('action="/notes"');
 });
 

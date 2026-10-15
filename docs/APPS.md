@@ -489,6 +489,17 @@ signing one (see [CONTRACT.md](CONTRACT.md)).
 
 ## Who is there: identity from the forge
 
+**Sign-in is OpenID Connect.** The scaffold's "Sign in" (`/signin`) is the
+code flow with PKCE against `FORGE_URL` (see the last section). On first boot
+it registers its own redirect address, `<FORGE_APP_URL>/signin/callback`, and
+keeps the client id in `FORGE_APP_DATA/oidc-client.json`, so production and
+each preview are separate clients. It verifies the `id_token` itself and keeps
+a session in an HttpOnly cookie; a person signed in this way is a `user`. The
+headers below remain only until a follow-up change retires them: once no app
+reads `x-forge-identity` and `x-forge-signature`, the forge stops sending them
+and `FORGE_APP_IDENTITY_KEY` goes with them (that change also settles where
+`admin` comes from, which an `id_token` does not carry).
+
 An app never writes sign-in. The forge tells it who is there, on every
 request it proxies, in two headers:
 
