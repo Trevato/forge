@@ -8,6 +8,9 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { runQuery } from "../boards/query.ts";
+import { SOURCES } from "../boards/sources.ts";
+import { bodyCapFor, readBounded } from "./limits.ts";
 import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
@@ -1245,6 +1248,43 @@ export function apiRoutes(router: Router<Handler>): void {
         : apiError(error, 500, "the account could not be removed");
   const accountAdmin = (ctx: Ctx, scope: "ro" | "admin"): Response | undefined =>
     ctx.auth.user?.isAdmin === true ? requireScope(ctx, scope) : notFound();
+
+  // Boards (`boards/query.ts`): a site admin who is a person, never an agent.
+  const boardsAdmin = (ctx: Ctx): Response | undefined => {
+    if (!ctx.auth.user) return unauthorized();
+    return ctx.auth.user.isAdmin && ctx.auth.user.kind !== "agent"
+      ? undefined
+      : forbidden();
+  };
+
+  router.add("GET", "/api/v1/boards/sources", (ctx) => {
+    const denied = boardsAdmin(ctx);
+    if (denied) return denied;
+    return json({
+      sources: Object.entries(SOURCES).map(([name, s]) => ({
+        name,
+        time: s.time,
+        columns: s.columns,
+      })),
+    });
+  });
+
+  router.add("POST", "/api/v1/boards/query", async (ctx) => {
+    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const bytes = await readBounded(ctx.request, bodyCapFor(ctx.request));
+    let query: unknown;
+    try {
+      if (bytes === "too_large") throw new Error("too large");
+      query = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      return apiError("bad_json", 400, "the body must be a JSON query object");
+    }
+    const answer = runQuery(ctx.app.db, query, { repoIds: "all" });
+    return answer.ok
+      ? json({ rows: answer.rows })
+      : apiError("bad_query", 400, answer.error);
+  });
 
   // The forge's capacity (`core/capacity.ts`): read and changed live by an
   // admin, never by an agent; anyone else is told the door is not there.

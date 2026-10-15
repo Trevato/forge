@@ -8,6 +8,15 @@ import { migrations } from "../src/core/schema.ts";
 import { openDb } from "../src/kernel/db.ts";
 import { runQuery as run, type Scope } from "../src/boards/query.ts";
 import { SOURCES } from "../src/boards/sources.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll } from "bun:test";
+import { createApp } from "../src/app.ts";
+import { createAgent } from "../src/actions/crew.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { createUser } from "../src/core/users.ts";
+import { serve } from "../src/http/server.ts";
 
 let db: Database;
 const ALL: Scope = { repoIds: "all" };
@@ -215,5 +224,86 @@ describe("sources", () => {
     for (const [name, s] of Object.entries(SOURCES)) {
       for (const c of Object.keys(s.columns)) expect(secret.test(c), `${name}.${c}`).toBe(false);
     }
+  });
+});
+
+describe("boards API", () => {
+  let dir: string;
+  let app: ReturnType<typeof createApp>;
+  let servers: Awaited<ReturnType<typeof serve>>;
+  const tok: Record<string, string> = {};
+  const call = (path: string, who: string | null, body?: string) =>
+    fetch(servers.url + path, {
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        ...(who ? { authorization: `Bearer ${tok[who]}` } : {}),
+        "content-type": "application/json",
+      },
+      ...(body === undefined ? {} : { body }),
+    });
+  const q = (who: string | null, query: unknown) => call("/api/v1/boards/query", who, JSON.stringify(query));
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-boards-"));
+    app = createApp({ dataDir: dir, port: 0 });
+    servers = await serve(app);
+    const mk = async (username: string, adminIfFirst?: boolean) => {
+      const r = await createUser(app.db, {
+        trusted: true, username, email: `${username}@forge.local`,
+        password: "a-good-passphrase", ...(adminIfFirst ? { adminIfFirst } : {}),
+      });
+      if (!r.ok) throw new Error(r.error);
+      return r.value;
+    };
+    const alice = await mk("alice", true);
+    const bob = await mk("bob");
+    const made = await createAgent(app, alice, { username: "scout" });
+    if (!made.ok) throw new Error(String(made.error));
+    tok.admin = createToken(app.db, alice.id, "t", "admin").token;
+    tok.bob = createToken(app.db, bob.id, "t", "admin").token;
+    tok.agent = createToken(app.db, made.value.user.id, "t", "rw").token;
+    app.db.run("INSERT INTO repo (id, owner_id, name) VALUES ('rb', ?, 'n')", [alice.id]);
+    app.db.run("INSERT INTO run (id, repo_id, kind, state) VALUES ('ra','rb','agent','ok'), ('rc','rb','agent','failed')");
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("an admin lists the sources", async () => {
+    const res = await call("/api/v1/boards/sources", "admin");
+    expect(res.status).toBe(200);
+    const j = (await res.json()) as { sources: { name: string }[] };
+    expect(j.sources.map((s) => s.name)).toContain("runs");
+  });
+
+  test("an admin gets counts", async () => {
+    const res = await q("admin", { source: "runs", aggregate: "count", groupBy: "state" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      rows: [{ group: "failed", value: 1 }, { group: "ok", value: 1 }],
+    });
+  });
+
+  test("an agent token and a non-admin get 403", async () => {
+    for (const who of ["agent", "bob"]) {
+      expect((await call("/api/v1/boards/sources", who)).status).toBe(403);
+      expect((await q(who, { source: "runs", aggregate: "count" })).status).toBe(403);
+    }
+  });
+
+  test("signed out is 401", async () => {
+    expect((await call("/api/v1/boards/sources", null)).status).toBe(401);
+    expect((await q(null, { source: "runs", aggregate: "count" })).status).toBe(401);
+  });
+
+  test("a refusal is a 400 with its message; non-JSON is a 400", async () => {
+    const bad = await q("admin", { source: "runs", aggregate: "count", groupBy: "nope" });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { message: string }).message).toContain("unknown column");
+    const raw = await call("/api/v1/boards/query", "admin", "not json");
+    expect(raw.status).toBe(400);
   });
 });
