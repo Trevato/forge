@@ -11,7 +11,6 @@
 import type { App as Forge } from "../app.ts";
 import { search } from "../actions/search.ts";
 import { sentinelSummary } from "../crew/sentinel.ts";
-import { readPipeline, verdict } from "../flow/pipeline.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import { sourceFor } from "../view/source.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
@@ -32,6 +31,7 @@ import { issueScreen } from "./screens/issue.ts";
 import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
+import { flowLines, flowScreen } from "./screens/flow.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
 import { newPullScreen } from "./screens/newpull.ts";
@@ -184,13 +184,13 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
             "default",
           ),
       });
-    // The pipeline's bottleneck, as /flow's sentence says it: a site admin's (#1554).
+    // The pipeline's bottleneck and throughput, as /flow says them: a site admin's (#1554, #1786).
     if (session.user?.isAdmin === true)
       commands.push({
         id: "flow",
         title: "Flow",
-        hint: "the pipeline's bottleneck",
-        run: () => ctx.toast(verdict(readPipeline(session.db)), "default"),
+        hint: "the pipeline's bottleneck and throughput",
+        run: () => ctx.push(flowScreen(ctx, flowLines(session.db))),
       });
     commands.push({
       id: "quit",
