@@ -480,6 +480,8 @@ describe("accounts: the owner sees, suspends and removes", () => {
     const made = await createRepo(app, org.value, { name: "ledger" });
     if (!made.ok) throw new Error(made.error);
     const bare = repoDir(app.reposRoot, "rexco", "ledger");
+    const mine = await createRepo(app, boss, { name: "diary" });
+    if (!mine.ok) throw new Error(mine.error);
     expect(existsSync(bare)).toBe(true);
     const del = (payload: object, token = ownerToken) =>
       api("/api/v1/admin/accounts/rex", {
@@ -495,10 +497,11 @@ describe("accounts: the owner sees, suspends and removes", () => {
     // Without confirm: the list, and nothing changes.
     const preview = await del({ retireOrgs: true });
     expect(preview.status).toBe(200);
-    const plan = (await preview.json()) as { retire: { org: string; repos: { name: string }[]; teams: string[] }[] };
+    const plan = (await preview.json()) as { own: { name: string; app: string | null }[]; retire: { org: string; repos: { name: string }[]; teams: string[] }[] };
     expect(plan.retire[0]!.org).toBe("rexco");
     expect(plan.retire[0]!.repos.map((r) => r.name)).toEqual(["rexco/ledger"]);
     expect(plan.retire[0]!.teams).toEqual(["Owners"]);
+    expect(plan.own).toEqual([{ name: "rex/diary", app: null }]);
     expect(existsSync(bare)).toBe(true);
     expect(getUserByName(app.db, "rex")?.removedAt).toBeNull();
     expect(getUserByName(app.db, "rexco")?.removedAt).toBeNull();

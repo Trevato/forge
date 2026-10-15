@@ -1455,7 +1455,7 @@ export function apiRoutes(router: Router<Handler>): void {
       const name = ctx.params.username!;
       if (input.confirm !== true) {
         const plan = retirementPlan(ctx.app, ctx.auth.user, name);
-        return plan.ok ? json({ confirm_required: true, retire: plan.value }) : accountError(plan.error);
+        return plan.ok ? json({ confirm_required: true, retire: plan.value.orgs, own: plan.value.own }) : accountError(plan.error);
       }
       const retired = await retireAndRemoveAccount(ctx.app, ctx.auth.user, name, {
         confirmed: true,

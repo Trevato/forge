@@ -177,4 +177,16 @@ describe("accounts: the confirm page for removing an organization too", () => {
     expect(body).toContain("removes only the account");
     expect(body).not.toContain("alone own, with");
   });
+
+  test("a person's own repository is named, and the lead no longer says only the account", async () => {
+    await mkUser("rh");
+    proveAll(app);
+    const made = await createRepo(app, getUserByName(app.db, "rh")!, { name: "notes" });
+    if (!made.ok) throw new Error(made.error);
+    const res = await fetch(`${base}/settings/accounts/rh/retire`, { headers: admin });
+    const body = await res.text();
+    expect(body).toContain("rh/notes");
+    expect(body).not.toContain("removes only the account");
+    expect(body).toContain("they own");
+  });
 });

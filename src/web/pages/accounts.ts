@@ -392,41 +392,56 @@ export function retirePage(ctx: Ctx): Response {
   if (!plan.ok)
     return plan.error === "not_allowed" ? cannotDo(ctx) : notFoundPage(ctx);
   const at = `/settings/accounts/${encodeURIComponent(username)}`;
+  const { orgs, own } = plan.value;
+  const repoList = (repos: { name: string; app: string | null }[]) =>
+    repos.map(
+      (r, i) =>
+        html`${i > 0 ? ", " : ""}${r.name}${r.app === null ? null : html` (app ${r.app})`}`,
+    );
   return shell(
     ctx,
     card(
       html`<p>
-          ${plan.value.length === 0
+          ${orgs.length === 0 && own.length === 0
             ? html`Removing <strong>${username}</strong> removes only the account.`
-            : html`Removing <strong>${username}</strong> also removes the
-                ${plan.value.length === 1 ? "organization" : "organizations"} they
-                alone own, with everything below.`}
+            : html`Removing <strong>${username}</strong> also removes
+              ${own.length === 0
+                ? null
+                : html`${own.length === 1 ? "the repository" : "the repositories"} they own`}${own.length >
+                0 && orgs.length > 0
+                  ? " and "
+                  : null}${orgs.length === 0
+                  ? null
+                  : html`the ${orgs.length === 1 ? "organization" : "organizations"} they
+                    alone own`}, with everything below.`}
           This cannot be undone.
         </p>
-        ${plan.value.length === 0
+        ${orgs.length === 0 && own.length === 0
           ? html`<p class="muted">They own no organization alone.</p>`
-          : html`<ul class="rows">
-              ${plan.value.map(
-                (o) => html`<li class="row">
-                  <div class="row-main">
-                    <strong>${o.org}</strong>
-                    <div class="row-meta">
-                      ${o.repos.length === 0
-                        ? "no repositories"
-                        : o.repos.map(
-                            (r, i) =>
-                              html`${i > 0 ? ", " : ""}${r.name}${r.app === null
-                                ? null
-                                : html` (app ${r.app})`}`,
-                          )}
-                    </div>
-                    <div class="row-meta">
-                      teams: ${o.teams.length === 0 ? "none" : o.teams.join(", ")}
-                    </div>
-                  </div>
-                </li>`,
-              )}
-            </ul>`}
+          : null}
+        <ul class="rows">
+          ${own.length === 0
+            ? null
+            : html`<li class="row">
+                <div class="row-main">
+                  <strong>${username}</strong>
+                  <div class="row-meta">${repoList(own)}</div>
+                </div>
+              </li>`}
+          ${orgs.map(
+            (o) => html`<li class="row">
+              <div class="row-main">
+                <strong>${o.org}</strong>
+                <div class="row-meta">
+                  ${o.repos.length === 0 ? "no repositories" : repoList(o.repos)}
+                </div>
+                <div class="row-meta">
+                  teams: ${o.teams.length === 0 ? "none" : o.teams.join(", ")}
+                </div>
+              </div>
+            </li>`,
+          )}
+        </ul>
         <form method="post" action="${at}/retire" class="form-actions">
           <input type="hidden" name="confirm" value="1" />
           ${btn("Remove everything", { type: "submit", size: "sm", variant: "danger" })}
