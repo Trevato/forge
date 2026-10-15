@@ -94,14 +94,14 @@ function schemaTriggers(): Set<string> {
 
 /** A trigger in the database that the schema does not know: someone's hand. */
 export function strayTriggers(db: Database): Finding[] {
-  const known = schemaTriggers();
+  const declared = schemaTriggers();
   return db
     .query<
       { name: string; tbl_name: string; sql: string | null },
       []
     >("SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
     .all()
-    .filter((t) => !known.has(t.name))
+    .filter((t) => !declared.has(t.name))
     .map((t) => ({
       key: `trigger:${keyPart(t.name)}`,
       title: `Trigger ${t.name} on ${t.tbl_name} is not in the schema`,
