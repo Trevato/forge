@@ -57,7 +57,7 @@ import {
   type ShardResult,
 } from "./shards.ts";
 import { GATE, gateRefusal, presentTests } from "./gate.ts";
-import { executedFiles, formatImpact, handedImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
+import { GATE_FILE, executedFiles, formatImpact, gateListAdds, handedImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
 import { fastSet, importsOf, duration } from "../src/checks/tiers.ts";
 import { CHECK_CACHE } from "../src/checks/cache.ts";
 
@@ -239,6 +239,14 @@ if (tier === "fast") {
     process.exit(2);
   }
   const changed = diff.stdout.toString().split("\n").filter((f) => f !== "");
+  let gateAdds: string[] | undefined;
+  if (changed.includes(GATE_FILE)) {
+    const gateDiff = Bun.spawnSync(
+      ["git", "diff", "-U0", "--no-renames", diffArg.value!, "--", GATE_FILE],
+      { stderr: "pipe" },
+    );
+    if (gateDiff.exitCode === 0) gateAdds = gateListAdds(gateDiff.stdout.toString());
+  }
   const cache = new Map<string, string[]>();
   const imports = (file: string): string[] => {
     let found = cache.get(file);
@@ -265,6 +273,7 @@ if (tier === "fast") {
   const plan = fastSet({
     ...(impact === undefined ? {} : { impact }),
     changed,
+    ...(gateAdds === undefined ? {} : { gateAdds }),
     tests: files,
     imports,
     times: loadTimes(),
