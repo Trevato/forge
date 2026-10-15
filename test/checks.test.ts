@@ -46,7 +46,7 @@ const checkJson = (run: string, extra = ""): string =>
   `{"check": {"run": ${JSON.stringify(run)}, "install": ""${extra}}}\n`;
 
 describe("cancelRunsForPull: a landed or closed pull leaves nothing in the lane", () => {
-  test("queued and running checks and deploys of that pull are cancelled, others kept", async () => {
+  test("queued and running checks and queued deploys of that pull are cancelled, building deploys and other pulls kept", async () => {
     const dir = await mkdtemp(join(tmpdir(), "forge-cancel-"));
     const db = createApp({ dataDir: dir, port: 0 });
     try {
@@ -89,11 +89,15 @@ describe("cancelRunsForPull: a landed or closed pull leaves nothing in the lane"
       const running = mk("check", p1);
       claimRun(db.db, running.id);
       const deploy = mk("deploy", p1);
+      const building = mk("deploy", p1);
+      claimRun(db.db, building.id);
       const other = mk("check", p2);
       const stopped = cancelRunsForPull(db.db, p1, "pull landed");
       expect(stopped.map((r) => r.id).sort()).toEqual(
         [queued.id, running.id, deploy.id].sort(),
       );
+      // A building deploy is the runtime's to stop; the row must not say otherwise.
+      expect(getRun(db.db, building.id)?.state).toBe("running");
       for (const r of [queued, running, deploy]) {
         expect(getRun(db.db, r.id)?.state).toBe("cancelled");
         expect(getRun(db.db, r.id)?.summary).toBe("pull landed");

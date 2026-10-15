@@ -295,9 +295,12 @@ export function cancelRun(
 }
 
 /**
- * Every queued or running check and deploy of one pull, cancelled with the
- * same summary: a pull that landed or closed has nothing left to check, and
- * a queued run would hold the lane for nobody. Answers the runs it stopped.
+ * Every queued or running check, and every queued deploy, of one pull,
+ * cancelled with the same summary: a pull that landed or closed has nothing
+ * left to check, and a queued run would hold the lane for nobody. A running
+ * deploy is left alone: nothing here stops the build in the runtime, and a
+ * row marked cancelled under a build that goes live would lie. Answers the
+ * runs it stopped.
  */
 export function cancelRunsForPull(
   db: Database,
@@ -306,8 +309,9 @@ export function cancelRunsForPull(
 ): Run[] {
   const ids = db
     .query<{ id: string }, [string]>(
-      `SELECT id FROM run WHERE issue_id = ?1 AND kind IN ('check','deploy')
-         AND state IN ('queued','running') ORDER BY id`,
+      `SELECT id FROM run WHERE issue_id = ?1 AND 
+         ((kind = 'check' AND state IN ('queued','running'))
+          OR (kind = 'deploy' AND state = 'queued')) ORDER BY id`,
     )
     .all(issueId);
   const out: Run[] = [];

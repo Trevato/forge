@@ -399,9 +399,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     const issue =
       run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
     const pull =
-      issue?.kind === "pull"
-        ? getPull(app.db, repo.id, issue.number)
-        : undefined;
+      issue?.kind === "pull" ? getPull(app.db, repo.id, issue.number) : undefined;
     const outcome = await runTier({
       bare,
       repo,
