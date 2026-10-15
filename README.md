@@ -511,7 +511,7 @@ from before this record say nothing).
 mechanical rather than advisory.
 
 `docs/FLOW.md` is where every issue stands: `GET /api/v1/repos/:owner/:name/flow` returns each open issue's stage, since, stalled and unblock, plus what went live in the last 24 h.
-Where the whole forge waits is a forge admin's: `/flow` shows each stage from ready to live with what waits, the oldest wait and its capacity, under one sentence naming the bottleneck; the terminal's Flow command and the MCP `flow` tool say the same sentence.
+Where the whole forge waits is a forge admin's: `/flow` shows each stage from ready to live with what waits, the oldest wait and its capacity, under one sentence naming the bottleneck, and beside each what it let out in the last hour with a 24-hour sparkline, under a line of landings and the median ask→live — every count links to the items it counts. The terminal's Flow command and the MCP `flow` tool read the same: the sentence, the landings line, and each stage's count out in the last hour and in 24 h.
 
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
 what "ready now" means to a person and to the crew. The map also shows each
@@ -773,6 +773,13 @@ work here.
 
 ## What works today
 
+- **Cut a wave** — Settings → *Cut a wave* (repository admins, same-origin
+  POST; web-only, the terminal's settings hand over to the web) opens a pull
+  adding `waves/<next>.md`, listing the pulls merged since the last wave and
+  not already in an earlier wave. The headline and highlights are `TODO`
+  placeholders; no model is called. It refuses, writing nothing, when an
+  earlier wave does not parse (naming the file) or nothing new has merged.
+
 - **Accounts & access** — register/sign in, personal access tokens with coarse
   scopes (ro/rw/admin), public and private repositories.
 - **Git** — push and pull over HTTPS **and SSH**, browse code (tree, blob with line anchors,
@@ -781,15 +788,20 @@ work here.
   allowed).
 - **Boards** — `/boards/data`, for a forge admin who is a person (anyone else
   gets a 404): the query is the URL (`?source=runs&aggregate=count&by=day&fcolumn=state&fvalue=failed`),
-  drawn as a server-rendered line chart with its points in a table; a point opens the rows
-  behind it, keeping your filter.
+  drawn server-side as the chart chosen beside it (`chart=line|bar|area|number|table|heat`)
+  with its points in a table; a point opens the rows behind it, keeping your filter.
+  `series=<column>` splits each group by a second column: stacked area draws one band per
+  value (eight at most, the rest folded into "other"), the heat strip one row per value
+  (twelve at most) with time across, the table a series column; line, bar and number set
+  it aside. Number is the latest group's value over a sparkline of all of them.
   `/boards` holds the boards themselves: a board is one JSON file
   (`{title, range, refresh: off|10s|1m, panels: [{title, chart, query, w, h}]}`) in
   `forge/boards`, a repo the forge owns and makes on the first board; every save is a commit
   by the admin who made it, and a file that does not validate is not shown. Make, rename,
   duplicate, delete, add/edit/remove/reorder panels, or pin the query on `/boards/data`.
   A board with a refresh redraws its grid on that beat through the live-region swap
-  (`/boards/:slug/live`, etag'd). No dependency was added.
+  (`/boards/:slug/live`, etag'd). The same doors are in the API: `GET /api/v1/boards`, `GET|PUT|DELETE /api/v1/boards/:slug`
+  (an agent is 403, anyone but an admin 404; a panel whose query cannot run is refused with 422). No dependency was added.
 - **Issues** — labels, threaded comments, close/reopen, markdown.
 - **Pull requests** — open from a branch, a **beautiful diff viewer** (syntax
   highlighting composed with intra-line word highlighting, mobile-first,

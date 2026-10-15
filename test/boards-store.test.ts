@@ -216,6 +216,22 @@ describe("/boards", () => {
     expect((await readBoard(app.reposRoot, "fleet-health"))!.panels.at(-1)!.title).toBe("pinned");
   });
 
+  test("a panel keeps its chart and series: chosen in the form, saved in the file, drawn on the board", async () => {
+    await post("/boards/new", { title: "Charts" });
+    const q = { source: "runs", aggregate: "count", column: "", by: "day", series: "kind", from: "", to: "", fcolumn: "", fop: "eq", fvalue: "" };
+    expect((await post("/boards/charts/add", { ...q, chart: "heat", title: "heat", w: "1", h: "1" })).status).toBe(303);
+    expect((await post("/boards/charts/add", { ...q, chart: "bar", title: "bar", w: "1", h: "1" })).status).toBe(303);
+    const board = (await readBoard(app.reposRoot, "charts"))!;
+    expect(board.panels.map((p) => [p.chart, p.query.series])).toEqual([["heat", "kind"], ["bar", "kind"]]);
+    const page = await (await asAdmin("/boards/charts")).text();
+    // runs in range: three days × three kinds for the heat strip; three days of bars, the series set aside
+    expect(page.match(/<rect class="cell"/g)?.length).toBe(9);
+    expect(page.match(/<rect class="bar"/g)?.length).toBe(3);
+    expect(page).toContain('<option value="heat" selected>heat strip</option>');
+    expect(parseBoard({ ...board, panels: [{ ...board.panels[0], chart: "pie" }] }).ok).toBe(false);
+    await deleteBoard(app, alice, "charts");
+  });
+
   test("a cross-origin post changes nothing, and duplicates are refused as unnamed", async () => {
     const before = await readBoard(app.reposRoot, "fleet-health");
     for (const path of ["/boards/fleet-health/rename", "/boards/fleet-health/delete", "/boards/new", "/boards/pin"]) {
@@ -234,5 +250,74 @@ describe("/boards", () => {
     expect((await post("/boards/fleet-health/delete", {}, "bob")).status).toBe(404);
     expect((await post("/boards/new", { title: "x" }, "bob")).status).toBe(404);
     expect(await readBoard(app.reposRoot, "fleet-health")).toBeDefined();
+  });
+});
+
+describe("/api/v1/boards", () => {
+  const api = (path: string, who: string | undefined, init: RequestInit = {}) =>
+    fetch(servers.url + path, { ...init, headers: who ? { authorization: `Bearer ${who}` } : {} });
+  const mine = { title: "Api board", range: "24h", refresh: "1m", panels: PANELS };
+
+  test("an admin writes, lists and reads a board; each write is a commit", async () => {
+    const put = await api("/api/v1/boards/api-board", tok.admin, { method: "PUT", body: JSON.stringify(mine) });
+    expect(put.status).toBe(200);
+    expect((await readBoard(app.reposRoot, "api-board"))?.panels.length).toBe(3);
+    const list = (await (await api("/api/v1/boards", tok.admin)).json()) as { boards: { slug: string }[] };
+    expect(list.boards.map((b) => b.slug)).toContain("api-board");
+    const one = (await (await api("/api/v1/boards/api-board", tok.admin)).json()) as { title: string; refresh: string };
+    expect([one.title, one.refresh]).toEqual(["Api board", "1m"]);
+    const again = await api("/api/v1/boards/api-board", tok.admin, { method: "PUT", body: JSON.stringify({ ...mine, title: "Renamed" }) });
+    expect(again.status).toBe(200);
+    expect((await readBoard(app.reposRoot, "api-board"))?.title).toBe("Renamed");
+  });
+
+  test("a board failing parseQuery is refused on write and drawn as an error panel on read", async () => {
+    const bad = { ...mine, panels: [panel("Broken", { source: "runs", aggregate: "median" })] };
+    const res = await api("/api/v1/boards/broken", tok.admin, { method: "PUT", body: JSON.stringify(bad) });
+    expect(res.status).toBe(422);
+    expect(await readBoard(app.reposRoot, "broken")).toBeUndefined();
+    expect((await api("/api/v1/boards/api-board", tok.admin, { method: "PUT", body: "{" })).status).toBe(400);
+    expect((await api("/api/v1/boards/sources", tok.admin, { method: "PUT", body: JSON.stringify(mine) })).status).toBe(422);
+    const hand = await commitFiles(repoDir(app.reposRoot, "forge", "boards"), {
+      branch: "main", message: "pushed by hand", author: { name: "x", email: "x@x.invalid" },
+      files: [{ path: "pushed.json", content: JSON.stringify(bad) }],
+    });
+    expect(hand.ok).toBe(true);
+    const page = await (await asAdmin("/boards/pushed")).text();
+    expect(page).toContain("Broken");
+    expect(page).not.toMatch(LINE);
+    expect(page).toMatch(/class="muted small">[^<]*(median|aggregate)/);
+  });
+
+  test("a malformed or oversized board is 422 with no commit and no query run", async () => {
+    const head = async () => (await listBoards(app.reposRoot)).length;
+    const before = await head();
+    const many = Array.from({ length: 25 }, (_, i) => panel(`P${i}`, { source: "runs" }));
+    for (const body of [{ panels: {} }, { ...mine, panels: [null] }, { ...mine, panels: many }, []]) {
+      const res = await api("/api/v1/boards/malformed", tok.admin, { method: "PUT", body: JSON.stringify(body) });
+      expect(res.status).toBe(422);
+    }
+    expect(await readBoard(app.reposRoot, "malformed")).toBeUndefined();
+    expect(await head()).toBe(before);
+  });
+
+  test("an agent is 403, a non-admin 403, a stranger 401, a read-only token cannot write", async () => {
+    const agent = await createUser(app.db, { trusted: true, username: "bot", email: "bot@forge.local", password: "a-good-passphrase", agent: true } as never);
+    if (!agent.ok) throw new Error(agent.error);
+    const bot = createToken(app.db, agent.value.id, "t", "admin").token;
+    const ro = createToken(app.db, alice.id, "t", "ro").token;
+    const put = (who: string | undefined) => api("/api/v1/boards/api-board", who, { method: "PUT", body: JSON.stringify(mine) });
+    expect((await api("/api/v1/boards", bot)).status).toBe(403);
+    expect((await api("/api/v1/boards", tok.bob)).status).toBe(403);
+    expect((await put(tok.bob)).status).toBe(403);
+    expect((await api("/api/v1/boards", undefined)).status).toBe(401);
+    expect((await put(ro)).status).toBe(403);
+    expect((await api("/api/v1/boards/api-board", tok.bob, { method: "DELETE" })).status).toBe(403);
+  });
+
+  test("delete removes the file", async () => {
+    expect((await api("/api/v1/boards/api-board", tok.admin, { method: "DELETE" })).status).toBe(200);
+    expect(await readBoard(app.reposRoot, "api-board")).toBeUndefined();
+    expect((await api("/api/v1/boards/api-board", tok.admin)).status).toBe(404);
   });
 });

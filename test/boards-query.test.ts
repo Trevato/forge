@@ -126,6 +126,29 @@ describe("runQuery", () => {
   });
 });
 
+describe("series", () => {
+  test("splits each group by a second column, ordered by group then series", () => {
+    const a = runQuery(db, { source: "runs", aggregate: "count", groupBy: { bucket: "hour" }, series: "kind" });
+    expect(a).toEqual({
+      ok: true,
+      rows: [
+        { group: "2026-10-01T10:00:00Z", value: 2, series: "agent" },
+        { group: "2026-10-01T11:00:00Z", value: 1, series: "deploy" },
+      ],
+    });
+  });
+  test("without a group it is the series alone", () => {
+    const a = runQuery(db, { source: "runs", aggregate: "sum", column: "cost_usd", series: "state" });
+    expect(a).toEqual({ ok: true, rows: [{ group: null, value: 2, series: "failed" }, { group: null, value: 5, series: "ok" }] });
+  });
+  test("an unknown or injected series is refused by name", () => {
+    expect(runQuery(db, { source: "runs", aggregate: "count", series: "kind\" FROM run; --" })).toEqual({
+      ok: false, error: 'unknown column: "kind\\" FROM run; --"',
+    });
+    expect(runQuery(db, { source: "runs", aggregate: "count", series: 3 }).ok).toBe(false);
+  });
+});
+
 describe("scope", () => {
   const count = { source: "runs", aggregate: "count" };
   test("a guest scope sees none of a private repo's runs", () => {

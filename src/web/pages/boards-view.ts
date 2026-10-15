@@ -8,8 +8,7 @@
  * `boards-edit.ts`. Anyone but a person who is an admin gets the not-found page.
  */
 import { listAllBoards, showBoard } from "../../actions/boards.ts";
-import { lineChart } from "../../boards/chart.ts";
-import { runQuery } from "../../boards/query.ts";
+import { CHART_NAMES } from "../../boards/chart.ts";
 import { MAX_H, MAX_PANELS, MAX_TITLE, MAX_W, RANGES, REFRESHES, type Board, type Panel } from "../../boards/store.ts";
 import type { App } from "../../app.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -18,7 +17,7 @@ import { notFoundPage } from "../chrome.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
 import { btn, card, empty } from "../ui.ts";
-import { paramsOf, queryFields, readParams } from "./boards.ts";
+import { cellsOf, chartBox, paramsOf, queryFields, readParams, runFor } from "./boards.ts";
 
 const RANGE_MS = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 } as const;
 const EVERY = { "10s": 10, "1m": 60 } as const;
@@ -33,16 +32,11 @@ function ranged(query: Record<string, unknown>, range: Board["range"]): Record<s
 }
 
 function drawPanel(app: App, board: Board, panel: Panel): Html {
-  const answer = runQuery(app.db, ranged(panel.query, board.range), { repoIds: "all" });
-  const q = paramsOf(panel.query);
+  const answer = runFor(app.db, panel.chart, ranged(panel.query, board.range));
+  const q = paramsOf(panel.query, panel.chart);
   const body = !answer.ok
     ? html`<p class="muted small">${answer.error}</p>`
-    : html`<div class="chart-box">${raw(
-        lineChart(
-          answer.rows.map((r) => ({ label: String(r.group ?? "all"), value: r.value ?? 0 })),
-          panel.title,
-        ),
-      )}</div>`;
+    : chartBox(panel.chart, cellsOf(answer.rows), panel.title);
   const explore = new URLSearchParams(Object.entries(q).filter(([k, v]) => v !== "" && k !== "rows"));
   return html`<div class="card bp-w${String(panel.w)} bp-h${String(panel.h)}">
     <div class="card-head"><h2>${panel.title}</h2>
@@ -121,8 +115,8 @@ function panelForm(slug: string, op: string, p: Panel | undefined, index: number
 function manage(slug: string, board: Board, adding: Html): Html {
   const one = (p: Panel, i: number) => html`<li class="row bmanage">
     <details>
-      <summary><strong>${p.title}</strong> <span class="muted small">${p.chart} · ${String(p.w)}×${String(p.h)}</span></summary>
-      ${panelForm(slug, "edit", p, i, queryFields(paramsOf(p.query)))}
+      <summary><strong>${p.title}</strong> <span class="muted small">${CHART_NAMES[p.chart]} · ${String(p.w)}×${String(p.h)}</span></summary>
+      ${panelForm(slug, "edit", p, i, queryFields(paramsOf(p.query, p.chart)))}
     </details>
     <form method="post" action="/boards/${slug}/move" class="row-actions">
       <input type="hidden" name="index" value="${String(i)}" />

@@ -24,8 +24,9 @@ import { createUser, type User } from "../src/core/users.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { bottleneck, readPipeline, span, verdict } from "../src/flow/pipeline.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import type { Ctx } from "../src/tui/app/app.ts";
+import type { Ctx, Screen } from "../src/tui/app/app.ts";
 import { forgeCommands, Session } from "../src/tui/forge.ts";
+import { flowLines } from "../src/tui/screens/flow.ts";
 
 const HOUR = 3_600_000;
 const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
@@ -255,23 +256,25 @@ describe("/flow: the forge shows its own bottleneck", () => {
   });
 
   const flowCommand = (user?: User) => {
-    const toasts: string[] = [];
-    const ctx = { toast: (m: string) => toasts.push(m) } as unknown as Ctx;
+    const pushed: Screen[] = [];
+    const ctx = { push: (s: Screen) => pushed.push(s) } as unknown as Ctx;
     const session = new Session(app, {
       sshUsername: user?.username ?? "git",
       remoteAddress: "127.0.0.1",
       fingerprint: "SHA256:test",
       user,
     });
-    return { found: forgeCommands(session)(ctx).find((c) => c.id === "flow"), toasts };
+    return { found: forgeCommands(session)(ctx).find((c) => c.id === "flow"), pushed };
   };
 
   test("in the terminal, an admin's Flow command says the same sentence; nobody else is offered it", () => {
-    const { found, toasts } = flowCommand(alice);
+    const { found, pushed } = flowCommand(alice);
     expect(found?.title).toBe("Flow");
     found!.run();
-    expect(toasts).toEqual([verdict(readPipeline(app.db))]);
-    expect(toasts[0]).toStartWith("Check queue is the bottleneck");
+    expect(pushed.map((s) => s.title)).toEqual(["Flow"]);
+    const lines = flowLines(app.db);
+    expect(lines.join(" ").replace(/\s+/g, " ")).toContain(verdict(readPipeline(app.db)));
+    expect(lines[0]).toStartWith("Check queue is the bottleneck");
     expect(flowCommand(bob).found).toBeUndefined();
     expect(flowCommand(undefined).found).toBeUndefined();
   });

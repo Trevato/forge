@@ -1,14 +1,15 @@
 /**
  * /boards/data: seeded runs draw a path with one point per bucket, a query
- * is a link, points link to their rows, and anyone but a person who is an
- * admin gets the not-found page.
+ * is a link, points link to their rows, every chart type draws the same
+ * seeded query with the elements it should, and anyone but a person who is
+ * an admin gets the not-found page.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/app.ts";
-import { lineChart } from "../src/boards/chart.ts";
+import { barChart, drawChart, CHARTS, gridOf, heatStrip, lineChart, numberChart, stackedArea, tableChart } from "../src/boards/chart.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve } from "../src/http/server.ts";
@@ -55,6 +56,12 @@ afterAll(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+/** The seeded `m` runs a rows link lists. */
+const listed = async (url: string) => {
+  const t = await (await get(url, "admin")).text();
+  return [...t.matchAll(/<td class="mono">([a-z0-9]+)<\/td>/g)].map((m) => m[1]!).filter((x) => /^m\d$/.test(x)).sort();
+};
+
 describe("/boards/data", () => {
   test("seeded runs per day draw one path with one point per day", async () => {
     const res = await get("/boards/data?source=runs&by=day", "admin");
@@ -76,10 +83,6 @@ describe("/boards/data", () => {
 
   const pointLinks = (body: string) =>
     [...body.matchAll(/<a href="(\/boards\/data\?[^"]*rows=1[^"]*)"><circle/g)].map((m) => m[1]!.replaceAll("&amp;", "&"));
-  const listed = async (url: string) => {
-    const t = await (await get(url, "admin")).text();
-    return [...t.matchAll(/<td class="mono">([a-z0-9]+)<\/td>/g)].map((m) => m[1]!).filter((x) => /^m\d$/.test(x)).sort();
-  };
 
   test("a column point keeps the user's filter and adds its group", async () => {
     const body = await (await get("/boards/data?source=runs&by=kind&fcolumn=state&fvalue=failed&from=2026-10-04T12:00:00Z", "admin")).text();
@@ -133,6 +136,111 @@ describe("/boards/data", () => {
     expect(body).toContain(">forge</a></td>");
     expect(body).toContain(">0.25</td>");
     expect(await (await get("/boards/data?source=runs", "admin")).text()).not.toContain("What this machine measures");
+  });
+});
+
+describe("every chart type from one seeded query", () => {
+  // runs per day split by kind: 10-01 agent 1; 10-02 agent 2; 10-04 agent 1, check 2, deploy 2.
+  // Three days, three kinds, five non-empty cells.
+  const q = "/boards/data?source=runs&by=day&series=kind";
+  const drawn = async (chart: string) => {
+    const res = await get(`${q}&chart=${chart}`, "admin");
+    expect(res.status).toBe(200);
+    return res.text();
+  };
+  const count = (body: string, re: RegExp) => body.match(re)?.length ?? 0;
+
+  test("line draws one point per day, the series set aside", async () => {
+    expect(count(await drawn("line"), /<circle cx="[^"]*" cy="[^"]*" r="4">/g)).toBe(3);
+  });
+  test("bar draws one bar per day", async () => {
+    expect(count(await drawn("bar"), /<rect class="bar"/g)).toBe(3);
+  });
+  test("stacked area draws one band per kind, with a legend", async () => {
+    const body = await drawn("area");
+    expect(count(body, /<path class="area"/g)).toBe(3);
+    expect(count(body, /<rect class="key"/g)).toBe(3);
+  });
+  test("number draws the latest day's count and a three-point sparkline", async () => {
+    const body = await drawn("number");
+    expect(body).toMatch(/<text class="big"[^>]*>5<\/text>/);
+    expect(body).toContain("latest of 3: 2026-10-04T00:00:00Z");
+    const spark = body.match(/<path class="spark" d="([^"]*)"/)![1]!;
+    expect(spark.split(" L").length).toBe(3);
+  });
+  test("table draws one row per day and kind, and no second table under it", async () => {
+    const body = await drawn("table");
+    const table = body.match(/<table class="table chart-table">[\s\S]*?<\/table>/)![0];
+    expect(count(table, /<tr>/g)).toBe(1 + 5);
+    expect(count(body, /<table/g)).toBe(1);
+  });
+  test("heat strip draws days × kinds cells; each filled cell links to its rows", async () => {
+    const body = await drawn("heat");
+    expect(count(body, /<rect class="cell"/g)).toBe(9);
+    const links = [...body.matchAll(/<a href="([^"]*)"><rect class="cell"/g)].map((m) => m[1]!.replaceAll("&amp;", "&"));
+    expect(links.length).toBe(5);
+    const check = links.find((l) => l.includes("gvalue=check"))!;
+    expect(await listed(check)).toEqual(["m3", "m4"]);
+  });
+  test("an unknown chart falls back to line", async () => {
+    expect(count(await drawn("pie"), /<circle cx="[^"]*" cy="[^"]*" r="4">/g)).toBe(3);
+  });
+  test("the chart is chosen beside the query", async () => {
+    const body = await drawn("heat");
+    expect(body).toMatch(/<select class="input" name="chart"[^>]*>/);
+    expect(body).toContain('<option value="heat" selected>heat strip</option>');
+    expect(body).toContain('<option value="kind" selected>split by kind</option>');
+  });
+});
+
+describe("chart geometry", () => {
+  // The plot is 648 × 204 (720 − 56 − 16 by 260 − 16 − 40), its top-left at (56, 16).
+  test("bars: two slots of 324, bars 70% wide, heights in proportion", () => {
+    const svg = barChart([{ label: "a", value: 1 }, { label: "b", value: 3 }], "t");
+    // scale 204/3 = 68 per unit; slot centres 218 and 542; bar 226.8 wide.
+    expect(svg).toContain('<rect class="bar" x="104.6" y="152" width="226.8" height="68">');
+    expect(svg).toContain('<rect class="bar" x="428.6" y="16" width="226.8" height="204">');
+  });
+  test("stacked area: bands sit on the ones before them", () => {
+    const cells = [
+      { label: "t1", series: "a", value: 1 }, { label: "t1", series: "b", value: 2 },
+      { label: "t2", series: "a", value: 3 }, { label: "t2", series: "b", value: 1 },
+    ];
+    const svg = stackedArea(cells, "t");
+    // tallest stack 4 → y(v) = 220 − 51v; x is 56 and 704.
+    expect(svg).toContain('d="M56 169 L704 67 L704 220 L56 220 Z"');
+    expect(svg).toContain('d="M56 67 L704 16 L704 67 L56 169 Z"');
+  });
+  test("heat: opacity is 0.06 + 0.94 × value / largest", () => {
+    const svg = heatStrip([
+      { label: "t1", series: "a", value: 1 }, { label: "t1", series: "b", value: 2 },
+      { label: "t2", series: "a", value: 3 },
+    ], "t");
+    const ops = [...svg.matchAll(/fill-opacity="([^"]*)"/g)].map((m) => m[1]);
+    // a: 1/3 → 0.37, 3/3 → 1; b: 2/3 → 0.69, missing → 0.06
+    expect(ops).toEqual(["0.37", "1", "0.69", "0.06"]);
+  });
+  test("past the cap the smallest series fold into other", () => {
+    const g = gridOf([
+      { label: "t", series: "big", value: 9 }, { label: "t", series: "mid", value: 5 }, { label: "t", series: "low", value: 1 },
+    ], 2);
+    expect(g.names).toEqual(["big", "other"]);
+    expect(g.values).toEqual([[9], [6]]);
+  });
+  test("number with one point, and every type with none, still draws", () => {
+    expect(numberChart([{ label: "x", value: 12345 }], "t")).toContain(">12.35k</text>");
+    for (const c of CHARTS) expect(drawChart(c, [], "t")).toContain("No points");
+  });
+  test("every type escapes its labels and series", () => {
+    const cells = [{ label: "<b>&", series: "<i>", value: 1, href: "/x?<z>" }];
+    for (const c of CHARTS) {
+      const out = drawChart(c, cells, "<t>");
+      expect(out, c).not.toContain("<b>");
+      expect(out, c).not.toContain("<i>");
+      expect(out, c).not.toContain("<t>");
+      expect(out, c).not.toContain("<z>");
+    }
+    expect(tableChart(cells, "t")).toContain("&lt;b&gt;&amp;");
   });
 });
 

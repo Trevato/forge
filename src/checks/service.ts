@@ -225,17 +225,22 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     // is still waiting, and the same commit is not checked twice. Looked for
     // and written in one write transaction, so a second forge process over
     // this database (a roll) cannot queue the same check beside it.
+    const superseded: Run[] = [];
     const { run, fresh } = transact(app.db, () => {
       for (const active of listActive(app.db, "check")) {
         if (active.repoId !== repo.id || active.env !== env) continue;
         if (active.commitOid === commitOid)
           return { run: active, fresh: false };
-        if (active.state === "queued")
-          cancelRun(
+        // A pull's running check is for a head nobody will land either:
+        // it is stopped too, below, once the row says so.
+        if (active.state === "queued" || issueId !== undefined) {
+          const gone = cancelRun(
             app.db,
             active.id,
             `superseded by ${commitOid.slice(0, 7)}`,
           );
+          if (gone && active.state === "running") superseded.push(gone);
+        }
       }
       const created = createRun(app.db, {
         repoId: repo.id,
@@ -248,6 +253,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       });
       return { run: created, fresh: true };
     });
+    // The row is cancelled, so the check's own end finishes nothing and
+    // announces nothing; the abort is what frees its slot and its checkout.
+    for (const old of superseded) inFlight.get(old.id)?.abort.abort();
     if (!fresh) return run;
     announceRun(app, run, actorId);
     schedule();

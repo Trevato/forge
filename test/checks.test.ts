@@ -537,6 +537,53 @@ describe("checks", () => {
     expect(middle?.summary).toContain("superseded by");
   }, 60_000);
 
+  test("a new head on a pull stops its running check for the old head, superseded not failed", async () => {
+    const slow = await commitToBranch(app, alice, repo, {
+      branch: "supersede",
+      message: "A very slow check",
+      files: [
+        { path: "forge.json", content: checkJson("sleep 30") },
+        { path: "S.md", content: "s\n" },
+      ],
+    });
+    if (!slow.ok) throw new Error(JSON.stringify(slow.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "supersede",
+      baseBranch: "main",
+      headBranch: "supersede",
+    });
+    if (!opened.ok) throw new Error(JSON.stringify(opened.error));
+    const env = `pull-${opened.value.number}`;
+    const old = await checks.request(
+      repo,
+      env,
+      slow.value.commitOid,
+      "push",
+      opened.value.id,
+    );
+    if (!old) throw new Error("no run");
+    const began = Date.now();
+    while (getRun(app.db, old.id)?.state !== "running") {
+      if (Date.now() - began > 20_000) throw new Error("never started");
+      await Bun.sleep(50);
+    }
+    const next = await commitToBranch(app, alice, repo, {
+      branch: "supersede",
+      message: "Fast",
+      files: [
+        { path: "forge.json", content: checkJson("test -f S.md") },
+      ],
+    });
+    if (!next.ok) throw new Error(JSON.stringify(next.error));
+    const fresh = await settled((r) => r.commitOid === next.value.commitOid);
+    expect(fresh.state).toBe("ok");
+    const stopped = getRun(app.db, old.id);
+    expect(stopped?.state).toBe("cancelled");
+    expect(stopped?.summary).toContain("superseded by");
+    // Well short of the 30 s the old check would have taken.
+    expect(Date.now() - began).toBeLessThan(25_000);
+  }, 60_000);
+
   for (const ending of ["merge", "close"] as const)
     test(`${ending === "merge" ? "merging" : "closing"} a pull leaves no queued or running run for it`, async () => {
       const blocker = await commitToBranch(app, alice, repo, {

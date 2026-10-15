@@ -324,6 +324,7 @@ import {
   repoDelete,
   settingsPage,
   settingsUpdate,
+  waveCut,
   webhookCreate,
   webhookDelete,
 } from "../web/pages/settings.ts";
@@ -1135,6 +1136,7 @@ export function buildRouter(): Router<Handler> {
   // Settings (owner-gated inside the handlers).
   router.add("GET", "/:owner/:name/settings", settingsPage);
   router.add("POST", "/:owner/:name/settings", settingsUpdate);
+  router.add("POST", "/:owner/:name/settings/wave", waveCut);
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);

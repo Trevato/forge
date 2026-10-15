@@ -967,3 +967,29 @@ export function landingTrailers(
     line("Co-authored-by", lander),
   ].join("\n");
 }
+
+/**
+ * Every pull of a repository merged at or after an instant, oldest merge
+ * first — what a wave lists. Sealed reports' pulls are left out: a wave
+ * is public text. `since` null means from the beginning.
+ */
+export function mergedPullsSince(
+  db: Database,
+  repoId: string,
+  since: string | null,
+): Pull[] {
+  const ids = db
+    .query<{ issue_id: string }, [string, string]>(
+      `SELECT pull.issue_id FROM pull JOIN issue ON issue.id = pull.issue_id
+       WHERE issue.repo_id = ?1 AND issue.sealed = 0
+         AND pull.merged_at IS NOT NULL AND pull.merged_at >= ?2
+       ORDER BY pull.merged_at ASC, issue.number ASC`,
+    )
+    .all(repoId, since ?? "")
+    .map((r) => r.issue_id);
+  const issues = getIssuesByIds(db, ids);
+  return joinMany(
+    db,
+    ids.map((id) => issues.get(id)).filter((i): i is Issue => i !== undefined),
+  );
+}

@@ -11,7 +11,7 @@ import type { App } from "../app.ts";
 import { applyEdit, type Edit } from "../boards/edit.ts";
 import { runQuery } from "../boards/query.ts";
 import {
-  BOARDS_OWNER, BOARDS_REPO, emptyBoard, isSlug, listBoards, readBoard, removeBoard, saveBoard, slugOf,
+  BOARDS_OWNER, BOARDS_REPO, emptyBoard, isSlug, listBoards, parseBoard, readBoard, removeBoard, saveBoard, slugOf,
   type Board, type Stored, type StoreError,
 } from "../boards/store.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
@@ -61,11 +61,12 @@ export async function showBoard(app: App, actor: User | undefined, slug: string)
 async function save(
   app: App, who: User, slug: string, board: unknown, message: string, mode: "create" | "update",
 ): Promise<Result<Board, BoardError>> {
-  // A panel that cannot run is refused on the way in, not drawn as an error later.
-  const parsed = (board ?? {}) as { panels?: { title?: string; query?: unknown }[] };
-  for (const p of parsed.panels ?? []) {
+  // Judge the board before any query runs; a panel that cannot run is refused on the way in.
+  const parsed = parseBoard(board);
+  if (!parsed.ok) return err({ refused: parsed.error });
+  for (const p of parsed.value.panels) {
     const ran = runQuery(app.db, p.query, { repoIds: "all" });
-    if (!ran.ok) return err({ refused: `${p.title ?? "panel"}: ${ran.error}` });
+    if (!ran.ok) return err({ refused: `${p.title}: ${ran.error}` });
   }
   const done = await saveBoard(app.reposRoot, slug, board, commitIdentity(app.config, who), message, mode);
   if (!done.ok) return done;
@@ -88,6 +89,18 @@ export async function makeBoard(app: App, actor: User | undefined, title: string
     if (done.error !== "exists") return done;
   }
   return err("exists");
+}
+
+/** Write a whole board under a slug (the API's door): made if new, replaced if there. */
+export async function writeBoard(
+  app: App, actor: User | undefined, slug: string, board: unknown,
+): Promise<Result<Board, BoardError>> {
+  const who = admin(actor);
+  if (!who.ok) return who;
+  if (!isSlug(slug)) return err("invalid");
+  if (!(await ensureRepo(app, who.value))) return err("repo");
+  const there = (await readBoard(app.reposRoot, slug)) !== undefined;
+  return save(app, who.value, slug, board, `${there ? "Write" : "Make"} board ${slug}`, there ? "update" : "create");
 }
 
 /** Apply one edit to a board and commit it. */
