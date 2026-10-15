@@ -86,6 +86,16 @@ username and password — which links that key to your account, so the next
 connection is instant. `j`/`k` to move, `enter` to open, `esc` to go back, `/`
 to filter, `?` for the keys, `:` for the command palette, `t` for the theme.
 
+**Milestones.** `:` → *Milestones in a repository* → `owner/name` lists a
+repository's limbs in the order the crew takes ready work (`enter` opens a
+limb's own limbs). A person who administers the repository presses `r` to
+Raise or `l` to Lower the limb under the cursor: a preview of the new order
+and of the top of the ready list first, then `enter` to apply (`esc` backs
+out), then `u` to undo the last move. It is the same fleet operation the web
+milestones page uses, and a move is heard by that page when it is open.
+Anyone else sees the order and no keys to change it; a guest sees only what
+the web shows them.
+
 Working on the UI itself? `bun run src/tui/main.ts --user alice` runs it over
 stdio against your local data directory. That `--user` flag is a development
 convenience and exists only there: over SSH, the key decides who you are and
@@ -256,6 +266,12 @@ file), and if you named an agent, the sentence became issue #1, assigned.
   redeployed on each push and gone when the pull closes. Its data starts as
   a copy of production's — copy-on-write where the filesystem can — and
   never writes back. Merging moves code and touches no data.
+- **A run has a budget** (`src/kernel/budgets.ts`): a check past `gate`
+  (60 min) or a reviewer's run past `review` (10 min) is killed with
+  `budget: <what> took <n> min, limit <m>`, queued again once, and failed
+  the second time, which the vitals carry as a need for a day. `gate` is 60
+  min because this repository's own gate takes 18–25 min alone and 45 beside
+  another check; it comes down when the gate does.
 - **Every deploy is a run**, and the run is the check on the pull. Turn on
   **require checks** and a pull cannot merge until its head is green.
 - A **private** app answers only to someone the forge has vouched for
@@ -314,6 +330,13 @@ changes, a line comment — and the agent picks it up in the background,
 resuming its session. A failed check re-engages it too, a bounded number of
 times before a person must speak.
 
+An autonomous app's planner is **held** while nothing is landing or the plate
+is full: no pull has merged in 48 h while one was closed unmerged, or more than
+`slots × 3` ready, unassigned issues are waiting. The tick log says which
+(`planner: held`), and the board and the terminal's repository list say it in
+words. A comment on the direction issue from someone who may write there lifts
+the hold; an issue handed to the planner is still owed its pass.
+
 The forge asks the host for one more binary: `claude`, on `PATH` or at
 `FORGE_CLAUDE`, authenticated as the operator (an `ANTHROPIC_API_KEY` in the
 forge's environment is handed to runs; the machine's own Claude Code login
@@ -347,7 +370,9 @@ from before this record say nothing).
 mechanical rather than advisory.
 
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
-what "ready now" means to a person and to the crew.
+what "ready now" means to a person and to the crew. The map also shows each
+pillar's ask-to-live: the median hours from an issue opening to its change live
+in production, over the last 7 days (also in the map and milestones API and MCP).
 
 `docs/STUDIO.md` is the front door from the top of this page in full: the five
 words and where each is decided, the box, the three lists, a tell, a run
@@ -400,6 +425,14 @@ monthly saving estimate, skipping findings already open. It runs in the forge,
 not as a crew run; AWS audits look at us-east-1 only; over-provisioned
 droplets and forgotten DNS records need metrics or resolution and are not
 attempted; Backblaze audits find nothing yet. No dependency was added.
+
+## Share to the forge
+
+Install the forge to your home screen, then Share a link or text to it from
+any app: the home composer opens with it as a draft, and it is only sent when
+you tap Post. Signed out, you sign in (or up) first and land on the same
+draft. The share target is the web manifest's `share_target`, which only an
+**installed PWA on Android and Chrome** offers; iOS Safari does not.
 
 ## Develop
 
