@@ -183,6 +183,7 @@ describe("the forge over MCP", () => {
       "claim_link",
       "take_updates",
       "converge",
+      "family",
       "next_steps",
       "thought",
       "asked",

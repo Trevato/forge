@@ -26,7 +26,10 @@ import {
   errorText,
   promptScreen,
   openOnWeb,
+  runAsync,
 } from "./screens/common.ts";
+import { familyScreen } from "./screens/family.ts";
+import { familyLines, familyView } from "../spawn/family.ts";
 import { issueScreen } from "./screens/issue.ts";
 import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
@@ -192,6 +195,16 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "the pipeline's bottleneck and throughput",
         run: () => ctx.push(flowScreen(ctx, flowLines(session.db))),
       });
+    commands.push({
+      id: "family",
+      title: "Family",
+      hint: "the forge that sent this one, and the forges it sent",
+      run: () =>
+        runAsync(ctx, async () => {
+          const view = await familyView(session.app, session.user?.isAdmin === true);
+          ctx.push(familyScreen(ctx, familyLines(view)));
+        }),
+    });
     commands.push({
       id: "quit",
       title: "Quit",

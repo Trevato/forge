@@ -86,6 +86,11 @@ sees `Reduced protection: …` in one line, under the filter on the terminal's
 first screen and in the web footer; nobody else does, and a fully protected
 forge shows nothing.
 
+The family across forges: `:` → Family in the terminal, `/family` on the web,
+`GET /api/v1/family` and the MCP `family` tool all give the same view. The
+forge that sent this one is shown to anyone; the forges it sent, only to a
+site admin (docs/SPAWN.md, "The family across forges").
+
 Passkeys: Settings → Passkeys lists, adds and removes them (several per
 account; `src/auth/webauthn.ts` verifies, no dependency, `none` attestation).
 The sign-in page's "Sign in with a passkey" gives the same HttpOnly session a

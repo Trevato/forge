@@ -109,6 +109,11 @@ interface Ledger {
    * last happened); the child keeps only its hash. Never in an answer.
    */
   statusToken?: string;
+  /**
+   * The key a child signs its heartbeats with (`spawn/heartbeat.ts`); the
+   * child holds the same one in its `parent.json`. Never in an answer.
+   */
+  beatKey?: string;
 }
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
@@ -220,8 +225,9 @@ async function make(
     }
     if (ledger.done)
       return ok({ name: plan.name, org: plan.org, url: liveChildUrl(app, plan.name), bodyId: ledger.bodyId, existed: true });
-    if (ledger.statusToken === undefined) {
-      ledger.statusToken = secret();
+    if (ledger.statusToken === undefined || ledger.beatKey === undefined) {
+      ledger.statusToken ??= secret();
+      ledger.beatKey ??= secret();
       await writeLedger(app, ledger);
     }
   } else {
@@ -241,6 +247,7 @@ async function make(
       apps: plan.apps.map((a) => a.ref),
       createdAt: new Date().toISOString(),
       statusToken: secret(),
+      beatKey: secret(),
     };
     await writeLedger(app, ledger);
   }
@@ -437,6 +444,8 @@ async function copyInto(
           : { forgeCode: { repo: `${plan.org}/forge`, upstream: forgeCode.value } }),
         // Only the hash: the parent alone holds what it answers to.
         ...(ledger.statusToken === undefined ? {} : { statusHash: sha256(ledger.statusToken) }),
+        // The key the child signs its heartbeats with; the parent holds the same.
+        ...(ledger.beatKey === undefined ? {} : { beatKey: ledger.beatKey }),
       }),
     );
     return ok(mintClaim(child.db, org.id));
@@ -611,6 +620,11 @@ export async function reissueClaim(
 /** What this forge shows a child it made to learn its private facts; undefined for an older child. */
 export async function statusTokenOf(app: App, name: string): Promise<string | undefined> {
   return (await readLedger(app, name))?.statusToken;
+}
+
+/** The key a child of this forge signs heartbeats with; undefined for a name this forge did not make. */
+export async function beatKeyOf(app: App, name: string): Promise<string | undefined> {
+  return (await readLedger(app, name))?.beatKey;
 }
 
 /** One child, as the ledger keeps it. */

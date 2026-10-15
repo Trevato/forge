@@ -14,6 +14,7 @@ import { backfillCarried } from "./core/carried.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
+import { startHeartbeat } from "./spawn/heartbeat.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
@@ -331,6 +332,8 @@ const crew = appsOn && !crewHeldOff
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);
+// A spawned child reports its standing to its parent (spawn/heartbeat.ts).
+const heartbeatTimer = startHeartbeat(app);
 // Prompts from Instagram (docs/APPS.md): once a day, for each repository
 // that connected an account, the top comment on its latest Reel is told to
 // the crew. A minute's clock; nothing leaves the box until a source exists.
@@ -476,6 +479,7 @@ function shutdown(signal: NodeJS.Signals): void {
   // process that replaced this one, not to this one while it finishes.
   drainStreams();
   clearInterval(deliveryTimer);
+  clearInterval(heartbeatTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);
   clearInterval(leaseTimer);
