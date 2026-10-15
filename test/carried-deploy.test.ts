@@ -1,6 +1,6 @@
 /**
  * A production deploy that finishes records the merged pulls it carries,
- * and says so: the run's page, the API's run, and the terminal's run list.
+ * and says so: the run's page and the API's run.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
