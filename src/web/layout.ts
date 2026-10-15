@@ -170,9 +170,15 @@ const NEW_FORGE: MenuItem = {
   icon: "fork",
 };
 
-/** The door shows only to an admin, and only while a child still fits here. */
+/** The door shows to every person; with no room left it is disabled and says why. */
+const isPerson = (ctx: Ctx): boolean => ctx.auth.user?.kind === "user";
 const sendsForges = (ctx: Ctx): boolean =>
-  ctx.auth.user?.kind === "user" && noRoom(ctx.app) === undefined;
+  isPerson(ctx) && noRoom(ctx.app) === undefined;
+const forgeDoor = (ctx: Ctx): MenuItem[] => {
+  if (!isPerson(ctx)) return [];
+  const why = noRoom(ctx.app);
+  return [why === undefined ? NEW_FORGE : { ...NEW_FORGE, disabled: why }];
+};
 
 function newMenu(ctx: Ctx): Html {
   const items: MenuItem[] = [
@@ -180,7 +186,7 @@ function newMenu(ctx: Ctx): Html {
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
     { label: "New organization", href: "/organizations/new", icon: "users" },
-    ...(sendsForges(ctx) ? [NEW_FORGE] : []),
+    ...forgeDoor(ctx),
   ];
   return menu({
     trigger: icon("plus"),
@@ -204,7 +210,7 @@ function userMenu(ctx: Ctx, user: User, signOut: MenuItem): Html {
     { label: "New app", href: "/apps/new", icon: "rocket" },
     { label: "New repository", href: "/new", icon: "repo" },
     { label: "Migrate", href: "/migrate", icon: "download" },
-    ...(sendsForges(ctx) ? [NEW_FORGE] : []),
+    ...forgeDoor(ctx),
     { separator: true, label: "" },
     { label: "Settings", href: "/settings", icon: "settings" },
     { label: "Access tokens", href: "/settings/tokens", icon: "key" },
