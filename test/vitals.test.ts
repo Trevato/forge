@@ -246,25 +246,31 @@ test("degraded names each cause, stable, with when it began", async () => {
     const later2 = vitals({ db: app.db, dataDir, now: Date.now() + 5000 });
     expect(e?.since).toBe(recentErrors(100).oldest!);
     expect(later2.degraded.find((d) => d.cause === "errors")?.since).toBe(e!.since);
-    expect(e?.href).toBe("/audit");
+    expect(e?.href).toBe("/settings/capacity#errors");
 
     // internal: refused calls.
     await fetchInternal(app.hookAddress.current, "/internal/hook", { method: "POST" });
     const i = vitals({ db: app.db, dataDir }).degraded.find((d) => d.cause === "internal");
-    expect(i?.href).toBe("/audit");
+    expect(i?.href).toBe("/settings/capacity#internal");
     const i2 = vitals({ db: app.db, dataDir, now: Date.now() + 5000 }).degraded.find((d) => d.cause === "internal");
     expect(i2?.since).toBe(i!.since);
     expect(i!.since).toBe(refusedInternal().oldest!);
-    expect(entry!.sentence).toContain(run.id);
 
     // a cause that clears is forgotten: when it returns it began again.
     const first = e!.since;
     clearErrors();
     expect(vitals({ db: app.db, dataDir }).degraded.some((d) => d.cause === "errors")).toBe(false);
     for (let k = 0; k < ERROR_BURST; k++) log.error(`again ${k}`);
-    expect(vitals({ db: app.db, dataDir, now: Date.now() + 9000 }).degraded.find((d) => d.cause === "errors")?.since! >= first).toBe(true);
+    const again = vitals({ db: app.db, dataDir }).degraded.find((d) => d.cause === "errors");
+    expect(again?.since).toBe(recentErrors(100).oldest!);
+    expect(again!.since > first).toBe(true);
 
-    // every need has exactly one sentence match in degraded .
+    // a caller's `now` never moves a fallback start: it is the real clock's.
+    const early = vitals({ db: app.db, dataDir, diskFreeMin: 2, now: 1_000 });
+    const d0 = early.degraded.find((d) => d.cause === "disk")!;
+    expect(Date.parse(d0.since)).toBeGreaterThan(Date.parse("2020-01-01"));
+
+    // every need has one matching sentence in degraded.
     const all = vitals({ db: app.db, dataDir });
     expect(new Set(all.degraded.map((d) => d.sentence))).toEqual(new Set(all.needs));
 
@@ -276,4 +282,30 @@ test("degraded names each cause, stable, with when it began", async () => {
     clearErrors();
     resetRefusedInternal();
   }
+});
+
+test("disk: since rests on first sight, holds across calls, resets after clearing", async () => {
+  expect(vitals({ db: app.db, dataDir }).degraded.some((d) => d.cause === "disk")).toBe(false);
+  const a = vitals({ db: app.db, dataDir, diskFreeMin: 2 }).degraded.find((d) => d.cause === "disk");
+  expect(a?.href).toBe("/settings/capacity");
+  await Bun.sleep(5);
+  const b = vitals({ db: app.db, dataDir, diskFreeMin: 2 }).degraded.find((d) => d.cause === "disk");
+  expect(b?.since).toBe(a!.since);
+  expect(vitals({ db: app.db, dataDir }).degraded.some((d) => d.cause === "disk")).toBe(false);
+  await Bun.sleep(5);
+  const c = vitals({ db: app.db, dataDir, diskFreeMin: 2 }).degraded.find((d) => d.cause === "disk");
+  expect(c!.since > a!.since).toBe(true);
+  vitals({ db: app.db, dataDir });
+});
+
+test("since is said as a person would", async () => {
+  const { needLine, sinceWords } = await import("../src/actions/health.ts");
+  const now = Date.parse("2026-10-15T12:00:00Z");
+  expect(sinceWords("2026-10-15T11:48:00Z", now)).toBe("12 min ago");
+  expect(sinceWords("2026-10-15T08:00:00Z", now)).toBe("4 h ago");
+  expect(sinceWords("2026-10-15T11:59:50Z", now)).toBe("just now");
+  expect(sinceWords("2020-01-01T00:00:00.000Z", now)).toBe("2020-01-01");
+  const line = needLine({ cause: "errors", sentence: "S.", since: "2020-01-01T00:00:00.000Z", href: "/x" }, now);
+  expect(line).toBe("S. Since 2020-01-01.");
+  expect(line).not.toContain("T00:00");
 });

@@ -8,6 +8,8 @@
 
 import { changeCapacity, listCapacity } from "../../actions/capacity.ts";
 import { CAPACITY, type CapacityKey } from "../../core/capacity.ts";
+import { refusedInternal } from "../../kernel/internal_refused.ts";
+import { recentErrors } from "../../kernel/log.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -101,7 +103,34 @@ export function capacityPage(ctx: Ctx): Response {
   const reported = settings.some(
     (s) => s.key === "cells.egress" && s.value === "report",
   );
-  const body = html`${when(
+  const errs = recentErrors(10);
+  const refused = refusedInternal();
+  const happened = card(
+    html`<div class="card-body">
+      <p class="muted small" id="errors">
+        ${errs.lastHour} error${errs.lastHour === 1 ? "" : "s"} in the last
+        hour; the latest ${errs.latest.length}, newest first.
+      </p>
+      <ul class="list small mono">
+        ${errs.latest.map(
+          (e) => html`<li>${e.at} [${e.scope}] ${e.message}</li>`,
+        )}
+      </ul>
+      <p class="muted small" id="internal">
+        ${refused.lastHour} internal call${refused.lastHour === 1 ? "" : "s"}
+        without the boot secret refused in the last hour${refused.latest
+          ? html`; the latest was
+              <span class="mono">${refused.latest.method} ${refused.latest.path}</span>`
+          : ""}.
+      </p>
+    </div>`,
+    {
+      head: html`${icon("activity")}
+        <h2>Errors and refused calls</h2>`,
+      pad: false,
+    },
+  );
+  const body = html`${happened}${when(
       reported,
       () => html`<p class="muted small mb" id="egress-reported">
         ${icon("activity")} Egress is reported, not enforced: every new app,

@@ -214,6 +214,9 @@ describe("capacity: only a forge admin reads or changes it", () => {
       "cells.egress",
     ])
       expect(page).toContain(key);
+    // the board strip's errors and internal links land on these anchors
+    expect(page).toContain('id="errors"');
+    expect(page).toContain('id="internal"');
 
     const posted = await fetch(`${servers.url}/settings/capacity`, {
       method: "POST",

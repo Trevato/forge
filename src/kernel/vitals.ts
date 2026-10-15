@@ -74,9 +74,15 @@ export interface VitalsInput {
   /** Every environment the runtime holds, when one is up. */
   readonly envs?: readonly EnvCount[];
   readonly now?: number;
+  /** The free-disk share below which the disk is a need; `DISK_FREE_MIN` unless a test says. */
+  readonly diskFreeMin?: number;
 }
 
-/** cause → when this process first saw it; a cause that clears is dropped. */
+/**
+ * cause → when this process first saw it; a cause that clears is dropped.
+ * Stamped from the real clock, never from `input.now`: a caller asking about
+ * another instant must not move when a cause began.
+ */
 const firstSeen = new Map<string, string>();
 
 export function vitals(input: VitalsInput): Vitals {
@@ -92,7 +98,7 @@ export function vitals(input: VitalsInput): Vitals {
   ) => {
     let since = firstSeen.get(cause);
     if (since === undefined || (evidence !== undefined && evidence < since)) {
-      since = evidence ?? at;
+      since = evidence ?? new Date().toISOString();
       firstSeen.set(cause, since);
     }
     needs.push(sentence);
@@ -104,7 +110,7 @@ export function vitals(input: VitalsInput): Vitals {
     freeBytes: Number(fs.bavail) * Number(fs.bsize),
     totalBytes: Number(fs.blocks) * Number(fs.bsize),
   };
-  if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < DISK_FREE_MIN)
+  if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < (input.diskFreeMin ?? DISK_FREE_MIN))
     need(
       "disk",
       `Disk is nearly full: ${Math.round((disk.freeBytes / disk.totalBytes) * 100)}% free.`,
@@ -156,7 +162,7 @@ export function vitals(input: VitalsInput): Vitals {
       "errors",
       `${seen.lastHour} errors in the last hour (${ERROR_BURST} or more is a burst).`,
       seen.oldest,
-      "/audit",
+      "/settings/capacity#errors",
     );
 
   const refused = refusedInternal(now);
@@ -165,7 +171,7 @@ export function vitals(input: VitalsInput): Vitals {
       "internal",
       `${refused.lastHour} internal call${refused.lastHour === 1 ? "" : "s"} without the boot secret refused in the last hour${refused.latest ? ` (latest ${refused.latest.method} ${refused.latest.path})` : ""}.`,
       refused.oldest,
-      "/audit",
+      "/settings/capacity#internal",
     );
 
   for (const cause of firstSeen.keys())
