@@ -2,6 +2,42 @@
   "note": "The migration count each release shipped with, newest first. The release agent adds the new release here when it cuts one. Every migration past the older of the two newest counts must be additive (test/schema-additive.test.ts, notAdditive in src/kernel/migrate.ts): the old process keeps serving on the same database while the new one rolls in.",
   "releases": [
     {
+      "version": "0.7.94",
+      "migrations": 75
+    },
+    {
+      "version": "0.7.93",
+      "migrations": 75
+    },
+    {
+      "version": "0.7.92",
+      "migrations": 75
+    },
+    {
+      "version": "0.7.91",
+      "migrations": 75
+    },
+    {
+      "version": "0.7.90",
+      "migrations": 75
+    },
+    {
+      "version": "0.7.89",
+      "migrations": 75
+    },
+    {
+      "version": "0.7.88",
+      "migrations": 75
+    },
+    {
+      "version": "0.7.87",
+      "migrations": 75
+    },
+    {
+      "version": "0.7.86",
+      "migrations": 75
+    },
+    {
       "version": "0.7.85",
       "migrations": 75
     },

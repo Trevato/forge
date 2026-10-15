@@ -73,6 +73,8 @@ import {
 import { studioRecord, tellHref } from "../studio/nouns.ts";
 import { milestoneHref } from "./milestones.ts";
 import {
+  type AskToLive,
+  type AskToLiveCount,
   isStructural,
   LATER,
   NO_PILLAR,
@@ -81,6 +83,7 @@ import {
   pillarView,
   type PillarView,
 } from "../../core/pillars.ts";
+import { askToLiveFor } from "../ask_to_live.ts";
 
 /** Where a card's own link goes: dev's issue page, by default. */
 const devIssueHref = (base: string, number: number): string =>
@@ -921,6 +924,9 @@ export interface PillarRow {
   readonly open: number;
   readonly ready: number;
   readonly blocked: number;
+  /** For a pillar: the week's merged pulls, and how long asking took. */
+  readonly merged?: number;
+  readonly askToLive?: AskToLive | undefined;
   /** For no pillar: the issues themselves, to be filed. */
   readonly issues?: readonly Issue[];
 }
@@ -936,6 +942,7 @@ export function pillarRows(
   ready: Set<string>,
   marks: Marks,
   view: PillarView,
+  ask: readonly AskToLiveCount[] = [],
 ): PillarRow[] {
   const tally = new Map<
     string | null,
@@ -963,11 +970,18 @@ export function pillarRows(
       name,
       ...(umbrella.has(name) ? { umbrella: umbrella.get(name)! } : {}),
       ...tally.get(name)!,
+      merged: view.merged.find((m) => m.pillar === name)?.merged ?? 0,
+      askToLive: ask.find((a) => a.pillar === name)?.askToLive,
     })),
     ...(loose.length === 0
       ? []
       : [{ name: null, ...tally.get(null)!, issues: loose }]),
   ];
+}
+
+/** Hours as a person reads them: `3.5h`, or `2.1d` past two days. */
+export function hours(h: number): string {
+  return h >= 48 ? `${(h / 24).toFixed(1)}d` : `${h}h`;
 }
 
 /** Where a pillar's issues are: the list, narrowed to its label. */
@@ -1011,6 +1025,16 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
                 >${r.name}</a
               >
               <span class="muted small">${counts(r)}</span>
+              <span class="muted small map-ask" title="Median and slowest hours from an issue opening to its change live in production, over ${PILLAR_DAYS} days"
+                >${r.merged ?? 0} merged · ask to live
+                ${r.askToLive === undefined
+                  ? "—"
+                  : html`${hours(r.askToLive.medianHours)} median, slowest
+                      <a href="${base}/issues/${r.askToLive.slowest.number}"
+                        >#${r.askToLive.slowest.number}</a
+                      >
+                      ${hours(r.askToLive.slowest.hours)}`}</span
+              >
             </li>`,
       )}
     </ul>
@@ -1152,6 +1176,7 @@ export const mapCss = /* css */ `
 .map-list ol li::marker { color: var(--faint); font-variant-numeric: tabular-nums; }
 .map-list li span { display: block; }
 .map-list + .map-list { margin-top: 18px; }
+.map-ask { display: block; }
 .map-pillars ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13.5px; }
 .map-chart { width: 100%; height: auto; display: block; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
 .map-level { fill: none; stroke: var(--accent); stroke-width: 1.5; }
@@ -1373,7 +1398,7 @@ const studioEmpty = (base: string): Html =>
   html`<p>No tells to map yet. <a href="${base}#tell">Say one</a>, then link what it waits for.</p>`;
 
 /** GET /:owner/:name/map */
-export function mapPage(ctx: Ctx): Response {
+export async function mapPage(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const db = ctx.app.db;
@@ -1394,6 +1419,7 @@ export function mapPage(ctx: Ctx): Response {
     graph.issues.map((i) => wordFor(i, readySet, marks)),
   );
   const pillars = pillarView(db, repo);
+  const ask = await askToLiveFor(ctx.app, repo, pillars, ctx.auth.user);
   const body = html`${repoHeader(ctx, repo, "map")}
     <div class="page-head mt">
       <h1>Map</h1>
@@ -1422,7 +1448,10 @@ export function mapPage(ctx: Ctx): Response {
       <aside>
         ${pillars === undefined
           ? null
-          : pillarList(repo, pillarRows(repo, graph, readySet, marks, pillars))}
+          : pillarList(
+              repo,
+              pillarRows(repo, graph, readySet, marks, pillars, ask),
+            )}
         ${graph.issues.length === 0
           ? null
           : rankedList(
@@ -1483,6 +1512,7 @@ export function mapJson(
   graph: Graph,
   marks: Marks = NO_MARKS,
   pillars?: PillarView,
+  ask: readonly AskToLiveCount[] = [],
 ): Record<string, unknown> {
   const ready = readyNow(graph);
   const readySet = new Set(ready.map((r) => r.issue.id));
@@ -1537,7 +1567,7 @@ export function mapJson(
     ...(pillars === undefined
       ? {}
       : {
-          pillars: pillarRows(repo, graph, readySet, marks, pillars).map(
+          pillars: pillarRows(repo, graph, readySet, marks, pillars, ask).map(
             (r) => ({
               pillar: r.name,
               ...(r.umbrella === undefined ? {} : { umbrella: r.umbrella }),
@@ -1546,7 +1576,15 @@ export function mapJson(
               blocked: r.blocked,
             }),
           ),
-          mergedByPillar: { days: PILLAR_DAYS, counts: pillars.merged },
+          mergedByPillar: {
+            days: PILLAR_DAYS,
+            counts: pillars.merged.map((count) => {
+              const asked = ask.find((a) => a.pillar === count.pillar);
+              return asked === undefined
+                ? count
+                : { ...count, askToLive: asked.askToLive ?? null };
+            }),
+          },
         }),
   };
 }

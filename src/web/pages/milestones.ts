@@ -24,11 +24,18 @@ import { parseSeat, seating } from "../../core/limb_seats.ts";
 import type { Issue } from "../../core/issues.ts";
 import type { User } from "../../core/users.ts";
 import type { LimbAction } from "../../actions/limbs.ts";
-import { isStructural, PILLAR_DAYS, pillarsOf } from "../../core/pillars.ts";
+import {
+  type AskToLive,
+  isStructural,
+  PILLAR_DAYS,
+  pillarsOf,
+  pillarView,
+} from "../../core/pillars.ts";
 import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { isWatching } from "../../core/watches.ts";
 import { watchMilestone } from "../../actions/watches.ts";
 import type { Ctx } from "../../http/context.ts";
+import { askToLiveFor } from "../ask_to_live.ts";
 import {
   crumbsFor,
   loadRepo,
@@ -41,6 +48,7 @@ import {
 import { html, when, type Html } from "../html.ts";
 import { field, readForm } from "../form.ts";
 import { page, redirect } from "../layout.ts";
+import { liveClientJs, liveMount } from "../live.ts";
 import { btn, time } from "../ui.ts";
 
 /** Where a milestone is: its own page. */
@@ -201,7 +209,8 @@ export function milestonesPage(ctx: Ctx): Response {
         </p>`
       : html`<ul class="ms-limbs" id="ms-limbs">
           ${plan.limbs.map((limb) => limbLine(base, limb, move?.(limb.issue, "top") ?? null))}
-        </ul>`}`;
+        </ul>`}
+    ${liveMount({ repo: base })}`;
   return page({
     ctx,
     title: `Milestones · ${repo.name}`,
@@ -209,6 +218,7 @@ export function milestonesPage(ctx: Ctx): Response {
     palette: repoPalette(ctx, repo),
     body,
     styleCss: milestonesCss,
+    scriptJs: liveClientJs,
   });
 }
 
@@ -472,8 +482,10 @@ export function milestonePage(ctx: Ctx): Response {
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body: html`${repoHeader(ctx, repo, "map")}
-    ${milestoneBody(repo, milestone, owner, actions, move)}`,
+    ${milestoneBody(repo, milestone, owner, actions, move)}
+    ${liveMount({ repo: repoBase(repo) })}`,
     styleCss: milestonesCss,
+    scriptJs: liveClientJs,
   });
 }
 
@@ -500,25 +512,53 @@ export async function milestoneWatch(ctx: Ctx): Promise<Response> {
 }
 
 /** The plan's limbs as data: `GET /api/v1/repos/:owner/:name/milestones`, and the MCP's `milestones`. */
-export function milestonesJson(
+export async function milestonesJson(
   ctx: Ctx,
   repo: Repo,
-): Record<string, unknown> {
+): Promise<Record<string, unknown>> {
   const plan = readPlan(ctx.app.db, repo, {
     spend: canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user),
   });
+  const ask = await askByUmbrella(ctx, repo);
   return {
     repo: { owner: repo.ownerName, name: repo.name },
-    limbs: plan.limbs.map(limbJson),
+    limbs: plan.limbs.map((limb) => ({
+      ...limbJson(limb),
+      ...askOf(ask, limb.issue.number),
+    })),
   };
 }
 
+/** Each pillar's ask-to-live, by its umbrella's number: what its limb shows too. */
+async function askByUmbrella(
+  ctx: Ctx,
+  repo: Repo,
+  only?: number,
+): Promise<Map<number, AskToLive | null>> {
+  const out = new Map<number, AskToLive | null>();
+  const view = pillarView(ctx.app.db, repo);
+  if (view === undefined) return out;
+  // A milestone that is no pillar's umbrella has none: ask git for nothing.
+  if (only !== undefined && !view.set.pillars.some((p) => p.umbrella.number === only))
+    return out;
+  const ask = await askToLiveFor(ctx.app, repo, view, ctx.auth.user);
+  for (const pillar of view.set.pillars)
+    out.set(
+      pillar.umbrella.number,
+      ask.find((a) => a.pillar === pillar.name)?.askToLive ?? null,
+    );
+  return out;
+}
+
+const askOf = (ask: Map<number, AskToLive | null>, number: number) =>
+  ask.has(number) ? { askToLive: ask.get(number) } : {};
+
 /** One milestone as data, or nothing for an issue that waits for nothing. */
-export function milestoneData(
+export async function milestoneData(
   ctx: Ctx,
   repo: Repo,
   number: number,
-): Record<string, unknown> | undefined {
+): Promise<Record<string, unknown> | undefined> {
   const owner = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
   const milestone = readPlan(ctx.app.db, repo, { spend: owner }).milestone(
     number,
@@ -529,6 +569,7 @@ export function milestoneData(
     : {
         repo: { owner: repo.ownerName, name: repo.name },
         ...milestoneJson(milestone, owner),
+        ...askOf(await askByUmbrella(ctx, repo, number), number),
         // Whether the caller watches it; a caller who cannot has no answer.
         ...(viewer?.kind === "user"
           ? {

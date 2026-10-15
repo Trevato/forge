@@ -160,6 +160,7 @@ import {
   listPulls,
   pullDiff,
   pullDir,
+  pullMergeStates,
   type Pull,
 } from "../core/pulls.ts";
 import {
@@ -258,6 +259,7 @@ import {
 import { openPlan, parsePlan } from "../actions/plan.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
+import { askToLiveFor } from "../web/ask_to_live.ts";
 import { decisionStats, listDecisions } from "../core/decisions.ts";
 import { globalMapJson, mapJson, marksFor } from "../web/pages/map.ts";
 import {
@@ -2465,20 +2467,22 @@ export function apiRoutes(router: Router<Handler>): void {
   );
   // Milestones as data: the plan's limbs with their weights, and one
   // milestone opened. The same numbers as the pages.
-  router.add("GET", "/api/v1/repos/:owner/:name/milestones", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/milestones", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    return json(milestonesJson(ctx, repo));
+    return json(await milestonesJson(ctx, repo));
   });
   router.add(
     "GET",
     "/api/v1/repos/:owner/:name/milestones/:number",
-    (ctx) => {
+    async (ctx) => {
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
       const number = positiveInt(ctx.params.number);
       const data =
-        number === undefined ? undefined : milestoneData(ctx, repo, number);
+        number === undefined
+          ? undefined
+          : await milestoneData(ctx, repo, number);
       return data === undefined ? notFound() : json(data);
     },
   );
@@ -2546,12 +2550,13 @@ export function apiRoutes(router: Router<Handler>): void {
   );
   // The map as data: ready now, blocked on, the critical path, every edge,
   // and where the crew is.
-  router.add("GET", "/api/v1/repos/:owner/:name/map", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/map", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const graph = repoGraph(ctx.app.db, repo.id, {
       ...sealedScope(ctx.app.db, repo, ctx.auth.user),
     });
+    const pillars = pillarView(ctx.app.db, repo);
     return json(
       mapJson(
         repo,
@@ -2562,7 +2567,8 @@ export function apiRoutes(router: Router<Handler>): void {
           graph,
           listActiveRuns(ctx.app.db, [repo.id]),
         ),
-        pillarView(ctx.app.db, repo),
+        pillars,
+        await askToLiveFor(ctx.app, repo, pillars, ctx.auth.user),
       ),
     );
   });
@@ -2708,17 +2714,23 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // ── pull requests — so automation drives the review/merge loop ───────
 
-  router.add("GET", "/api/v1/repos/:owner/:name/pulls", (ctx) => {
+  router.add("GET", "/api/v1/repos/:owner/:name/pulls", async (ctx) => {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const query = listQuery(ctx);
-    const items = withLabelsMany(
-      ctx,
-      listPulls(ctx.app.db, repo.id, {
-        ...query,
-        ...sealedScope(ctx.app.db, repo, ctx.auth.user),
-      }),
+    const pulls = listPulls(ctx.app.db, repo.id, {
+      ...query,
+      ...sealedScope(ctx.app.db, repo, ctx.auth.user),
+    });
+    const states = await pullMergeStates(
+      await Promise.all(
+        pulls.map(async (p) => ({ dir: await pullDirOf(ctx, repo, p), pull: p })),
+      ),
     );
+    const items = withLabelsMany(ctx, pulls).map((item, i) => ({
+      ...item,
+      ...(states[i] ?? {}),
+    }));
     return json(paged(items, query.limit, (p) => p.number));
   });
 
@@ -2780,6 +2792,9 @@ export function apiRoutes(router: Router<Handler>): void {
     const hold = getHold(ctx.app.db, found.pull.id);
     return json({
       ...withLabels(ctx, found.pull),
+      ...(found.pull.state === "open" && found.pull.mergedAt === null
+        ? { mergeable: status.mergeable, conflicts: status.conflicts }
+        : {}),
       status,
       diff,
       hold: hold === undefined ? null : holdJson(hold),

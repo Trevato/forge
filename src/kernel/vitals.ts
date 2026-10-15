@@ -13,7 +13,12 @@ import { statfsSync } from "node:fs";
 import { freemem, totalmem } from "node:os";
 import { refusedInternal } from "./internal_refused.ts";
 import { recentErrors, type ErrorLine } from "./log.ts";
-import { leaseLapsed, listRunning, queueDepth } from "../core/runs.ts";
+import {
+  budgetFailures,
+  leaseLapsed,
+  listRunning,
+  queueDepth,
+} from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 
 /** Free disk under this share of the volume is something to say. */
@@ -98,6 +103,13 @@ export function vitals(input: VitalsInput): Vitals {
     needs.push(
       `${stuck.length} run${stuck.length === 1 ? " is" : "s are"} stuck.`,
     );
+
+  // A run killed twice for its budget is a card, for a day.
+  for (const run of budgetFailures(
+    input.db,
+    new Date(now - 24 * 3_600_000).toISOString(),
+  ))
+    needs.push(`A run was killed twice: ${run.summary}.`);
 
   const apps = { serving: 0, asleep: 0, previews: 0 };
   for (const e of input.envs ?? []) {

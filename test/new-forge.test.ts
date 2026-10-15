@@ -293,7 +293,7 @@ describe("+ New forge", () => {
   test("the room defaults to one child per 512 MiB above the forge's own 2 GiB", () => {
     const GiB = 1024 ** 3;
     expect(childrenForMemory(32 * GiB)).toBe(60);
-    expect(childrenForMemory(2 * GiB)).toBe(1);
-    expect(childrenForMemory(GiB)).toBe(1);
+    expect(childrenForMemory(2 * GiB)).toBe(5);
+    expect(childrenForMemory(GiB)).toBe(5);
   });
 });

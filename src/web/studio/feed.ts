@@ -92,6 +92,25 @@ export function feedCard(
   </article>`;
 }
 
+/** The longest tell the composer takes (its textarea's `maxlength`). */
+const TELL_MAX = 2000;
+
+/**
+ * What a phone's share sheet handed the composer (`share_target` in the web
+ * manifest, standards.ts): the title, text and link it sent as query
+ * parameters, as one draft. A page's title often repeats in the text, and
+ * some apps put the link in the text as well, so nothing is said twice. It
+ * is only ever a draft — nothing is sent until the person taps Post.
+ */
+export function sharedDraft(params: URLSearchParams): string {
+  const parts: string[] = [];
+  for (const key of ["title", "text", "url"]) {
+    const part = (params.get(key) ?? "").trim();
+    if (part !== "" && !parts.some((p) => p.includes(part))) parts.push(part);
+  }
+  return parts.join("\n").slice(0, TELL_MAX);
+}
+
 /**
  * The composer: say something to an app's crew, which opens a tell — the
  * home's one primary action. Without a script it posts to the chosen app's
@@ -112,7 +131,7 @@ export function composer(ctx: Ctx, user: User): Html {
   const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
   const first = slug(repos[0]!);
   return html`<form id="composer" class="composer" method="post" action="/tell">
-    <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew"></textarea>
+    <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew">${sharedDraft(ctx.url.searchParams)}</textarea>
     <div class="composer-bar">
       ${repos.length === 1
         ? html`<input type="hidden" name="app" value="${first}" /><span class="muted small">${first}</span>`

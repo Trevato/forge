@@ -179,6 +179,46 @@ describe("home is the feed", () => {
     expect(owners.map((i) => i.kind).sort()).toEqual(["look", "run"]);
   });
 
+  test("a phone's share sheet opens the composer with the shared words, escaped, and sends nothing", async () => {
+    const manifest = (await fetch(`${servers.url}/manifest.webmanifest`).then((r) =>
+      r.json(),
+    )) as { share_target: { action: string; method: string; params: Record<string, string> } };
+    expect(manifest.share_target).toEqual({
+      action: "/",
+      method: "GET",
+      params: { title: "title", text: "text", url: "url" },
+    });
+    const before = listIssues(app.db, garden.id, { state: "open" }).length;
+    const q = new URLSearchParams({
+      title: "Rain gauges",
+      text: 'Look at this </textarea><script>alert(1)</script>',
+      url: "https://example.com/gauge",
+    });
+    const res = await get(`/?${q}`, aliceCookie);
+    const text = await res.text();
+    const box = /<textarea[^>]*name="text"[^>]*>([\s\S]*?)<\/textarea>/.exec(text);
+    expect(box?.[1]).toContain("Rain gauges\nLook at this &lt;/textarea&gt;&lt;script&gt;");
+    expect(box?.[1]).toContain("https://example.com/gauge");
+    expect(text).not.toContain("<script>alert(1)");
+    expect(listIssues(app.db, garden.id, { state: "open" }).length).toBe(before);
+    // A link the app put in the text as well is said once.
+    const twice = await get(
+      `/?${new URLSearchParams({ text: "see https://e.com/x", url: "https://e.com/x" })}`,
+      aliceCookie,
+    ).then((r) => r.text());
+    expect(twice.match(/https:\/\/e\.com\/x/g)?.length).toBe(1);
+  });
+
+  test("a signed-out share keeps its words through sign-in and sign-up", async () => {
+    const q = `?${new URLSearchParams({ text: "see this", url: "https://e.com/x" })}`;
+    const page = await get(`/${q}`).then((r) => r.text());
+    const next = encodeURIComponent(`/${q}`).replaceAll("&", "&amp;");
+    expect(page).toContain(`/signin?next=${next}`);
+    expect(page).toContain(`/signup?next=${next}`);
+    const bare = await get("/").then((r) => r.text());
+    expect(bare).toContain('href="/signin"');
+  });
+
   test("the composer posts a tell without a script, to an app the person may read, and only then", async () => {
     const before = listIssues(app.db, garden.id, { state: "open" }).length;
     const posted = await fetch(`${servers.url}/tell`, {

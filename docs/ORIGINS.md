@@ -584,6 +584,9 @@ whole review with `bad_anchor`, and the message says how an anchor is written.
 This is the one way the crew's reviewer brief posts a review.
 `GET …/pulls/:number` gains `status.reviews:
 { approved, changesRequested, required, mergeable }`.
+`GET …/pulls` and `GET …/pulls/:number` carry `mergeable` (does the head merge
+into the base's current head) and `conflicts` (the paths that stop it) on open
+pulls only; a merged or closed pull leaves both out.
 
 Repo JSON gains `origin: { originId, kind, fullName, htmlUrl, host, lastFetchAt,
 fetchError, detached, frozenSince, detachedAt } | null` — a detached mirror

@@ -412,6 +412,10 @@ function frontControls(ctx: Ctx, front: FrontPage): Html {
 export function studioDoor(ctx: Ctx): Response {
   const front = frontPage(ctx.app);
   const admin = ctx.auth.user?.isAdmin === true && ctx.url.pathname === "/front";
+  // A share sheet lands here with the shared words in the query; signing in
+  // comes back to them rather than to a bare home, so they are not lost.
+  const back = ctx.url.pathname === "/" ? "/" + ctx.url.search : "/";
+  const nextQuery = back === "/" ? "" : `?next=${encodeURIComponent(back)}`;
   const tiles = front.shelf.map(tile);
   const body = html`<section class="hero">
       <h1>Apps, live.</h1>
@@ -421,13 +425,13 @@ export function studioDoor(ctx: Ctx): Response {
           ? null
           : ctx.app.config.edgeToken === undefined
             ? html`${btn("Create an account", {
-                href: "/signup",
+                href: `/signup${nextQuery}`,
                 variant: "primary",
                 size: "lg",
               })}
-              ${btn("Sign in", { href: "/signin", size: "lg" })}`
+              ${btn("Sign in", { href: `/signin${nextQuery}`, size: "lg" })}`
             : btn("Sign in", {
-                href: edgeLoginUrl("/"),
+                href: edgeLoginUrl(back),
                 variant: "primary",
                 size: "lg",
               })}

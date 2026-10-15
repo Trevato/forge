@@ -234,7 +234,12 @@ this; three surfaces show what it reads.
   every issue carries `pillar` (null for none), `pillars` is the same
   rows, and `mergedByPillar` is `{ days: 7, counts: [{ pillar, merged }] }`:
   the pulls merged in the last 7 days, each counted under the pillar of the
-  first issue it closes that serves one.
+  first issue it closes that serves one. Each pillar's count also carries
+  `askToLive: {medianHours, slowest: {number, hours}}` (null, a dash on the
+  page, when none merged has gone live): hours from that issue opening to the
+  first production deploy whose commit contains the pull's merge, by
+  `git merge-base --is-ancestor`, cached. The MCP's `map` and `milestones`
+  answers carry it too, on each pillar's limb.
 - **The board by pillar.** _Landed_ leads with the same seven days for
   each app that has pillars: every pillar and its count, zero or not, each
   a link to its issues.

@@ -2,17 +2,39 @@
  * The small chaos in the gate: every fault once, on a side instance in a
  * temporary directory, with every invariant asserted after each.
  */
-import { describe, expect, test } from "bun:test";
-import { FAULTS, slowProxy } from "../src/chaos/faults.ts";
-import { INVARIANTS } from "../src/chaos/invariants.ts";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { FAULTS, slowProxy, type Fault } from "../src/chaos/faults.ts";
+import { INVARIANTS, type Invariant } from "../src/chaos/invariants.ts";
 import { issueFor, quietLine } from "../src/chaos/report.ts";
 import { chaos, rng } from "../src/chaos/run.ts";
-import { bootWorld, SEALED_VALUE } from "../src/chaos/world.ts";
+import { bootWorld, SEALED_VALUE, type World } from "../src/chaos/world.ts";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const SEED = Number(process.env["CHAOS_SEED"] ?? 1244);
+
+let root: string;
+let world: World;
+
+// The per-fault invariants; the snapshot one is costly and runs once per night.
+const quick = INVARIANTS.filter((i) => i.final !== true);
+
+// One world for the file. Faults share it, so after every test the cheap
+// invariants are asserted: a test that leaves damage behind fails itself,
+// not whichever test runs next.
+afterEach(async () => {
+  const broken = (await Promise.all(quick.map((i) => i.check(world)))).flat();
+  expect(broken).toEqual([]);
+});
+beforeAll(async () => {
+  root = mkdtempSync(join(tmpdir(), "forge-chaos-"));
+  world = await bootWorld(join(root, "data"));
+});
+afterAll(() => {
+  world.app.close();
+  rmSync(root, { recursive: true, force: true });
+});
 
 describe("chaos", () => {
   test("the rng repeats from a seed", () => {
@@ -21,18 +43,58 @@ describe("chaos", () => {
     expect([a(), a(), a()]).toEqual([b(), b(), b()]);
   });
 
+  const stub = (name: string): Fault => ({ name, inject: async () => {} });
+  const stubs = [stub("a"), stub("b"), stub("c")];
+
+  test("the same seed picks the same fault order", async () => {
+    const a = await chaos(SEED, 5, stubs, { world, invariants: [] });
+    const b = await chaos(SEED, 5, stubs, { world, invariants: [] });
+    expect(a.faults).toHaveLength(5);
+    expect(a.faults).toEqual(b.faults);
+  });
+
+  test("a final invariant is checked once after the last fault, the others every round", async () => {
+    const events: string[] = [];
+    const spy = (name: string, final: boolean): Invariant => ({
+      name,
+      ...(final ? { final: true as const } : {}),
+      check: async () => {
+        events.push(name);
+        return [];
+      },
+    });
+    const faults = stubs.map((f) => ({
+      name: f.name,
+      inject: async () => {
+        events.push(`fault ${f.name}`);
+      },
+    }));
+    const night = await chaos(SEED, 3, faults, { world, invariants: [spy("each", false), spy("last", true)] });
+    expect(events.filter((e) => e === "last")).toHaveLength(1);
+    expect(events.filter((e) => e === "each")).toHaveLength(3);
+    expect(events.at(-1)).toBe("last");
+    expect(events.lastIndexOf("each")).toBeLessThan(events.indexOf("last"));
+    expect(night.findings).toEqual([]);
+  });
+
+  test("a broken final invariant is attributed to the last fault of the night", async () => {
+    const broken: Invariant = { name: "snap", final: true, check: async () => ["gone"] };
+    const night = await chaos(SEED, 4, stubs, { world, invariants: [broken] });
+    expect(night.findings).toEqual([{ fault: night.faults[3]!, broken: ["snap: gone"] }]);
+  });
+
   for (const fault of FAULTS) {
     test(`after "${fault.name}" every invariant holds (seed ${SEED})`, async () => {
-      const night = await chaos(SEED, 1, [fault]);
+      const night = await chaos(SEED, 1, [fault], { world, invariants: quick });
       expect(night.findings, `reproduce: CHAOS_SEED=${SEED}\n${night.log.join("\n")}`).toEqual([]);
-    }, 60_000);
+    });
   }
 
   test("all faults in a seeded order, one after another", async () => {
-    const night = await chaos(SEED, 6);
-    expect(night.findings, night.log.join("\n")).toEqual([]);
-    expect(night.faults).toEqual((await chaos(SEED, 6)).faults);
-  }, 120_000);
+    const night = await chaos(SEED, FAULTS.length, FAULTS, { world });
+    expect(night.faults).toHaveLength(FAULTS.length);
+    expect(night.findings, `reproduce: CHAOS_SEED=${SEED}\n${night.log.join("\n")}`).toEqual([]);
+  });
 
   test("the slow proxy delays but delivers", async () => {
     const backend = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
@@ -49,19 +111,19 @@ describe("chaos", () => {
   });
 
   test("an invariant catches what it guards", async () => {
-    const root = mkdtempSync(join(tmpdir(), "forge-chaos-neg-"));
+    const dir = mkdtempSync(join(tmpdir(), "forge-chaos-neg-"));
+    const side = await bootWorld(join(dir, "data"));
     try {
-      const world = await bootWorld(join(root, "data"));
-      world.app.db.query("DELETE FROM run WHERE id = ?1").run([...world.runIds][1]!);
-      writeFileSync(join(world.dataDir, "leak.txt"), SEALED_VALUE);
-      const broken = (await Promise.all(INVARIANTS.map((i) => i.check(world)))).flat();
+      side.app.db.query("DELETE FROM run WHERE id = ?1").run([...side.runIds][1]!);
+      writeFileSync(join(side.dataDir, "leak.txt"), SEALED_VALUE);
+      const broken = (await Promise.all(INVARIANTS.map((i) => i.check(side)))).flat();
       expect(broken.some((b) => b.includes("vanished"))).toBe(true);
       expect(broken.some((b) => b.includes("sealed value is readable"))).toBe(true);
-      world.app.close();
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      side.app.close();
+      rmSync(dir, { recursive: true, force: true });
     }
-  }, 60_000);
+  });
 
   test("a broken night makes an issue with fault, seed and log; a quiet one a line", () => {
     const night = {

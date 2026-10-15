@@ -932,7 +932,9 @@ function resumeLater(app: App, run: Run, pause: Pause): void {
     {
       notBefore: pause.resumeAt,
       attempt: pause.attempt,
-      summary: `paused on the provider's limit; resumes ${whenText(new Date(pause.resumeAt))}`,
+      summary:
+        pause.summary ??
+        `paused on the provider's limit; resumes ${whenText(new Date(pause.resumeAt))}`,
     },
   );
   log.info("run paused", {
