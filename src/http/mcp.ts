@@ -1582,7 +1582,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "returns",
     description:
-      "What the crew's tokens bought over the last days (1–90, default 7), so you can ask before you plan: dollars and runs by state; changes landed; dollars on work that landed and the median per landed change; dollars that landed nothing (closed without a merge, or still open), with failed and cancelled runs and the costliest failure reasons; what a good run costs and takes; and the costliest issues with what came of each. Over every app whose owner facts you hold, or `repo` (owner/name). Read-only; an app you cannot write is not found.",
+      "What the crew's tokens bought over the last days (1–90, default 7), so you can ask before you plan: dollars and runs by state; changes landed; dollars on work that landed and the median per landed change; dollars that landed nothing (closed without a merge, or still open), with failed and cancelled runs and the costliest failure reasons; what a good run costs and takes; and the costliest issues with what came of each; and the same dollars `byPillar`, by the pillar each run's issue serves. Over every app whose owner facts you hold, or `repo` (owner/name). Read-only; an app you cannot write is not found.",
     inputSchema: {
       type: "object",
       properties: {
