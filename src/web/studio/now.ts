@@ -20,7 +20,7 @@ import { getUsersByIds } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { readRunLogTail } from "../../runs/log.ts";
-import { mayReadRuns } from "../../actions/runs.ts";
+import { mayReadRunLog } from "../../actions/runs.ts";
 import { loadRepo, repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { fragment } from "../layout.ts";
@@ -169,7 +169,7 @@ export async function nowCard(
     (r) => r.kind === "agent" && r.state === "running",
   );
   const activeTail =
-    activeRun && mayReadRuns(ctx.app, ctx.auth.user, repo)
+    activeRun && mayReadRunLog(ctx.app, ctx.auth.user, repo)
     ? logBox({
         id: "app-run-tail",
         who: voiceFor(runActor(activeRun), ownerFacts),

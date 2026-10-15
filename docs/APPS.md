@@ -124,6 +124,12 @@ started`; a deploy no push asked for — a redeploy someone pressed, a
    follows the same rule: its environments' state and errors (`envsFor`),
    its runs and their logs (`mayReadRuns`) and its run and serving events
    reach only those who may enter it.
+   On any repository, public too, a run's **log** (the agent's
+   transcript, a deploy's output) is read only by its writers and crew
+   (`mayReadRunLog`); a stranger reads the run and its summary, not the
+   log, on the page, the API and the live tails (#1075). Check runs share
+   the rule: on a public repository the author of a pull from outside it
+   reads a failed check's summary, not its output.
 6. **A run's credential dies with the run.** An agent run gets a token
    scoped `rw` (no settings, no tokens, no administration) with an expiry,
    and the token is deleted when the run ends however it ends. It never

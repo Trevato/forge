@@ -6106,7 +6106,9 @@ describe("a stranger sees the app, not the owner's books", () => {
       expect(page).not.toContain("$42.50");
       expect(page).not.toContain("7 turns");
       expect(page).not.toContain("keeper");
-      expect(page).toContain('data-who="the crew"');
+      // The log box, which carried data-who, is not drawn for them (#1075).
+      expect(page).toContain("<title>the crew on #");
+      expect(page).not.toContain('id="run-log"');
     }
     const ownerPage = await (
       await get(`/alice/beacon/runs/${run.id}`, ownerCookie)
@@ -6131,17 +6133,14 @@ describe("a stranger sees the app, not the owner's books", () => {
     ).json()) as { items: { costUsd: number }[] };
     expect(listAsStranger.items.every((r) => r.costUsd === 0)).toBe(true);
 
-    const tailAsStranger = await (
-      await get(
-        `/api/v1/repos/alice/beacon/runs/${run.id}/log?follow=1`,
-        strangerCookie,
-      )
-    ).text();
-    expect(tailAsStranger).toContain("event: done");
-    // The cost by its key, not its digits: a timestamp's seconds can read
-    // "42.5" too, and once did.
-    expect(tailAsStranger).not.toContain('"costUsd":42.5');
-    expect(tailAsStranger).toContain('"costUsd":0');
+    // The log is the writers' and crew's (#1075): a stranger's tail is
+    // refused, and carries neither the cost nor the transcript.
+    const tailAsStranger = await get(
+      `/api/v1/repos/alice/beacon/runs/${run.id}/log?follow=1`,
+      strangerCookie,
+    );
+    expect(tailAsStranger.status).toBe(404);
+    expect(await tailAsStranger.text()).not.toContain("42.5");
     const tailAsOwner = await (
       await get(
         `/api/v1/repos/alice/beacon/runs/${run.id}/log?follow=1`,

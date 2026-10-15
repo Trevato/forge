@@ -298,8 +298,8 @@ export async function runPage(ctx: Ctx): Promise<Response> {
   if (!repo) return notFoundPage(ctx);
   const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
   if (!found.ok) return notFoundPage(ctx);
-  const { run, lines, truncated } = found.value;
-  return await runView(ctx, repo, run, lines, truncated);
+  const { run, lines, truncated, logHidden } = found.value;
+  return await runView(ctx, repo, run, lines, truncated, logHidden);
 }
 
 // POST /:owner/:name/runs/:id/steer  { text }

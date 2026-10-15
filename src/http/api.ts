@@ -4597,7 +4597,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const found = runLog(ctx.app, ctx.auth.user, repo, ctx.params.id ?? "");
-    if (!found.ok) return notFound();
+    if (!found.ok || found.value.logHidden) return notFound();
     const follow =
       ctx.url.searchParams.get("follow") === "1" ||
       (ctx.request.headers.get("accept") ?? "").includes("text/event-stream");
