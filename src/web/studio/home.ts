@@ -46,6 +46,7 @@ import {
 } from "../pages/site.ts";
 import { writableAppsOf } from "./asks.ts";
 import { needsYouSection, type AsksTop } from "./asks_page.ts";
+import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
 import { homeTabs } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
@@ -224,6 +225,7 @@ export async function studioHome(
           <span class="spacer"></span>
           <a class="small muted" href="/asked">What you asked for</a>
         </div>
+        ${flowCards(ctx, user)}
         ${feedNote()}
         ${feedRegion(user, ctx)}
       </div>

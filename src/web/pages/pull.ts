@@ -1155,7 +1155,9 @@ export async function pullChecksSubmit(ctx: Ctx): Promise<Response> {
     return new Response("forbidden", { status: 403 });
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
-  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  // The home's card asks to come back to the home (only "/" is honoured).
+  const dest =
+    field(form, "next") === "/" ? "/" : `${repoBase(found.repo)}/pulls/${found.pull.number}`;
   const asked = await askCheck(ctx.app, ctx.auth.user, found.repo, found.pull);
   return flashTo(
     ctx,

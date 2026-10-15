@@ -36,10 +36,16 @@ export interface Flow {
 }
 
 function foldChecks(db: Database, pull: Pull): FlowChecks {
-  const runs = verdictForHead(db, pull.id, pull.headOid);
+  return foldRuns(verdictForHead(db, pull.id, pull.headOid));
+}
+
+/** The newest run of each kind at one head, folded to one state. */
+export function foldRuns(
+  runs: readonly { state: string; createdAt: string; finishedAt: string | null }[],
+): FlowChecks {
   if (runs.length === 0) return { state: "none", at: null };
   const stamp = (r: (typeof runs)[number]) => r.finishedAt ?? r.createdAt;
-  const newest = (pick: typeof runs) =>
+  const newest = (pick: readonly (typeof runs)[number][]) =>
     pick.map(stamp).reduce((a, b) => (b > a ? b : a));
   const bad = runs.filter((r) => r.state === "failed" || r.state === "cancelled");
   if (bad.length > 0) return { state: "failed", at: newest(bad) };
