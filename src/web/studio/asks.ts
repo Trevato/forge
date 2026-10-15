@@ -16,6 +16,8 @@ import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos, getAppByRepo, listApps } from "../../core/apps.ts";
 import { latestDecision, stopStands } from "../../core/decisions.ts";
 import { getHold, holdsFor } from "../../core/holds.ts";
+import { chipsOf } from "../../core/feed_chips.ts";
+import { chipHides } from "../../feed/chips.ts";
 import { askDismissals, mutedRepos } from "../../core/interactions.ts";
 import { askMeasure, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
 import {
@@ -520,6 +522,14 @@ function notDismissed<T extends AskCandidate>(
 ): T[] {
   const muted = mutedRepos(db, user.id);
   const dismissed = askDismissals(db, user.id);
+  const chips = chipsOf(db, user.id);
+  // A change waiting on review is a `pull`; anything else is a decision.
+  // The author is the actor the person chip names.
+  const chipped = (a: T): boolean =>
+    chipHides(chips, {
+      kind: a.pull !== undefined ? "pull" : "decision",
+      actorId: a.pull?.authorId ?? a.issue?.authorId ?? null,
+    });
   const holds = (id: string, since: string): boolean =>
     (dismissed.get(`ask:${id}`) ?? "") > since;
   // A hand-over the decider or the standing rule set aside is closed for
@@ -532,6 +542,7 @@ function notDismissed<T extends AskCandidate>(
   return asks.filter(
     (a) =>
       !muted.has(a.repo.id) &&
+      !chipped(a) &&
       !holds(a.id, a.since) &&
       !holds(groupId(a), a.since) &&
       !setAside(a),

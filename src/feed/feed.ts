@@ -7,6 +7,8 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { chipsOf } from "../core/feed_chips.ts";
+import { chipHides } from "./chips.ts";
 import { dismissedItems, mutedRepos } from "../core/interactions.ts";
 import { affinityFor } from "./affinity.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
@@ -39,6 +41,7 @@ export function readFeed(
   const limit = Math.min(options.limit ?? FEED_LIMIT_DEFAULT, FEED_LIMIT_MAX);
   const muted = mutedRepos(db, viewer.id);
   const dismissed = dismissedItems(db, viewer.id);
+  const chips = chipsOf(db, viewer.id);
   drainQueue(db, viewer.id, now);
   const shared = sharedCandidates(db, viewer, now).filter(
     (c) => !dismissed.has(c.itemId),
@@ -47,7 +50,10 @@ export function readFeed(
   const candidates = [
     ...candidatesFor(db, viewer, now).filter((c) => !boosted.has(c.id)),
     ...shared,
-  ].filter((c) =>
+  ]
+    // The chips: the one filter. An ask was filtered by it in `askLinesFor`.
+    .filter((c) => c.kind === "ask" || !chipHides(chips, c))
+    .filter((c) =>
     // An ask is never muted away. Its own dismissal was already read by
     // `askLinesFor`, cause-aware: it comes back when something new happens.
     // A milestone the viewer chose to watch is not muted with its app.

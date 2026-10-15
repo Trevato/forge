@@ -42,7 +42,9 @@ export type FeedKind =
   | "look"
   | "milestone"
   // A variant group: one choice among open siblings, or that it was made.
-  | "choose";
+  | "choose"
+  // A new version serving: what shipped, as the app's own news (#1811).
+  | "release";
 
 /** What a candidate is, before it is ranked and worded. */
 export interface Candidate {
@@ -337,7 +339,7 @@ function fromEvent(
     case "look.taken":
       return { ...common, kind: "look", link: base(repo), what: "a new picture of it is ready" };
     case "app.serving":
-      return { ...common, kind: "pull", link: base(repo), what: "a new version is serving" };
+      return { ...common, kind: "release", link: base(repo), what: "a new version is serving" };
     // A tell is a post; a comment is a reply under it, in its own words.
     case "issue.opened": {
       if (number === undefined) return undefined;

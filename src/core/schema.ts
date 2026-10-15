@@ -1804,6 +1804,16 @@ export const migrations: readonly string[] = [
     at        TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   ) WITHOUT ROWID;
   `,
+  // 91 — the chips a viewer switched off (#1811): a kind of post or one
+  // person, saved per viewer, beside their mutes.
+  `
+  CREATE TABLE feed_chip (
+    viewer_id TEXT NOT NULL REFERENCES user(id) ON DELETE CASCADE,
+    kind      TEXT NOT NULL CHECK (kind IN ('kind','person')),
+    value     TEXT NOT NULL,
+    PRIMARY KEY (viewer_id, kind, value)
+  ) WITHOUT ROWID;
+  `,
 ];
 
 /**
