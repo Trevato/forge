@@ -492,7 +492,7 @@ function footer(ctx: Ctx): Html {
     >
     ${reduced === undefined
       ? null
-      : html`<span class="error-note" id="reduced-protection"
+      : html`<span class="reduced" id="reduced-protection"
           >${reduced}</span
         >`}
     <span class="spacer"></span>

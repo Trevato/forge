@@ -62,6 +62,7 @@ test("AppsRuntime.start and startCrew each note what they lack", async () => {
     const run = Bun.spawnSync([process.execPath, "-e", script], {
       env: { FORGE_CELLS: "off", PATH: "", HOME: dir, TMPDIR: dir },
       cwd: join(import.meta.dir, ".."),
+      timeout: 30_000,
     });
     const out = run.stdout.toString().trim().split("\n").pop() ?? "";
     const seen = JSON.parse(out) as { afterApps: string; afterCrew: string };
