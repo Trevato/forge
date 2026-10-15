@@ -27,6 +27,8 @@ import {
 import {
   listAccounts,
   removeAccount,
+  retireAndRemoveAccount,
+  retirementPlan,
   suspendAccount,
   unsuspendAccount,
   verifyAccount,
@@ -1311,6 +1313,24 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("DELETE", "/api/v1/admin/accounts/:username", async (ctx) => {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
+    const input = await body(ctx.request);
+    if (input.retireOrgs === true) {
+      const name = ctx.params.username!;
+      if (input.confirm !== true) {
+        const plan = retirementPlan(ctx.app, ctx.auth.user, name);
+        return plan.ok ? json({ confirm_required: true, retire: plan.value }) : accountError(plan.error);
+      }
+      const retired = await retireAndRemoveAccount(ctx.app, ctx.auth.user, name, {
+        confirmed: true,
+      });
+      if (!retired.ok) return accountError(retired.error);
+      if (retired.value.failed !== null)
+        return json(
+          { error: "delete_failed", failed: retired.value.failed, removed: retired.value.removed },
+          500,
+        );
+      return json({ removed: name, retired: retired.value.removed });
+    }
     const done = await removeAccount(ctx.app, ctx.auth.user, ctx.params.username!);
     if (!done.ok && done.error === "last_owner") {
       const user = getUserByName(ctx.app.db, ctx.params.username!);

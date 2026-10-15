@@ -14,6 +14,7 @@ import { fetchInternal } from "../src/git/hook-address.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
+import { createOrg } from "../src/core/orgs.ts";
 import { getAgent } from "../src/core/agents.ts";
 import { listEvents } from "../src/core/events.ts";
 import { addKey, fingerprint, parseAuthorizedKey } from "../src/core/keys.ts";
@@ -469,6 +470,48 @@ describe("accounts: the owner sees, suspends and removes", () => {
       { token: ownerToken },
     );
     expect(JSON.stringify(await thread.json())).toContain("hi from oscar");
+  });
+
+  test("retiring a last owner's organizations needs retireOrgs and an explicit confirm", async () => {
+    const { user: boss, token: bossToken } = await outsider("rex");
+    const org = createOrg(app.db, "rexco", boss.id);
+    if (!org.ok) throw new Error(org.error);
+    const made = await createRepo(app, org.value, { name: "ledger" });
+    if (!made.ok) throw new Error(made.error);
+    const bare = repoDir(app.reposRoot, "rexco", "ledger");
+    expect(existsSync(bare)).toBe(true);
+    const del = (payload: object, token = ownerToken) =>
+      api("/api/v1/admin/accounts/rex", {
+        method: "DELETE",
+        token,
+        body: JSON.stringify(payload),
+      });
+
+    // The plain path is as it was.
+    expect((await del({})).status).toBe(409);
+    // A non-admin is refused.
+    expect((await del({ retireOrgs: true, confirm: true }, bossToken)).status).toBe(404);
+    // Without confirm: the list, and nothing changes.
+    const preview = await del({ retireOrgs: true });
+    expect(preview.status).toBe(200);
+    const plan = (await preview.json()) as { retire: { org: string; repos: { name: string }[]; teams: string[] }[] };
+    expect(plan.retire[0]!.org).toBe("rexco");
+    expect(plan.retire[0]!.repos.map((r) => r.name)).toEqual(["rexco/ledger"]);
+    expect(plan.retire[0]!.teams).toEqual(["Owners"]);
+    expect(existsSync(bare)).toBe(true);
+    expect(getUserByName(app.db, "rex")?.removedAt).toBeNull();
+    expect(getUserByName(app.db, "rexco")?.removedAt).toBeNull();
+
+    // Confirmed: everything goes, and the bus remembers.
+    const done = await del({ retireOrgs: true, confirm: true });
+    expect(done.status).toBe(200);
+    expect(existsSync(bare)).toBe(false);
+    expect(getUserByName(app.db, "rexco")?.removedAt).not.toBeNull();
+    expect(getUserByName(app.db, "rex")?.removedAt).not.toBeNull();
+    const kinds = listEvents(app.db, {}).map((e) => e.kind);
+    expect(kinds).toContain("org.retired");
+    expect(kinds).toContain("account.removed");
+    expect(kinds).toContain("repo.deleted");
   });
 
   test("an account with nothing in it can be removed too", async () => {
