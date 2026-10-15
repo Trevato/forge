@@ -11,6 +11,7 @@
 import type { App as Forge } from "../app.ts";
 import { search } from "../actions/search.ts";
 import { sentinelSummary } from "../crew/sentinel.ts";
+import { readPipeline, verdict } from "../flow/pipeline.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import { sourceFor } from "../view/source.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
@@ -182,6 +183,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
             sentinelSummary(session.db) ?? "The sentinel has not hunted yet",
             "default",
           ),
+      });
+    // The pipeline's bottleneck, as /flow's sentence says it: a site admin's (#1554).
+    if (session.user?.isAdmin === true)
+      commands.push({
+        id: "flow",
+        title: "Flow",
+        hint: "the pipeline's bottleneck",
+        run: () => ctx.toast(verdict(readPipeline(session.db)), "default"),
       });
     commands.push({
       id: "quit",

@@ -451,6 +451,7 @@ from before this record say nothing).
 mechanical rather than advisory.
 
 `docs/FLOW.md` is where every issue stands: `GET /api/v1/repos/:owner/:name/flow` returns each open issue's stage, since, stalled and unblock, plus what went live in the last 24 h.
+Where the whole forge waits is a forge admin's: `/flow` shows each stage from ready to live with what waits, the oldest wait and its capacity, under one sentence naming the bottleneck; the terminal's Flow command and the MCP `flow` tool say the same sentence.
 
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
 what "ready now" means to a person and to the crew. The map also shows each

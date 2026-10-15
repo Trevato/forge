@@ -20,6 +20,7 @@
 import { voteVariant } from "../actions/variants.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
+import { readPipeline, verdict } from "../flow/pipeline.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
 import { LIMIT_KEYS } from "../settings/limits.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
@@ -1873,6 +1874,19 @@ const TOOLS: readonly Tool[] = [
         says: `${key}: ${changed.value.from || "auto"} → ${changed.value.to || "auto"}, from the next pick on.`,
         ...changed.value,
       });
+    },
+  },
+  {
+    name: "flow",
+    description:
+      "The forge's pipeline, for a forge admin: ready, building, check queue, checking, review, approved, landed and live, each with how many wait, how many are being worked, when the oldest waiting one entered (oldestWaiting) and what limits it (capacity), and one sentence (says) naming the stage whose oldest has waited longest — the bottleneck. Read-only; the knobs are the `capacity` tool. The same as /flow.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run(ctx, user) {
+      if (!user.isAdmin)
+        return bad("forbidden", "only an admin of this forge reads its pipeline");
+      const stages = readPipeline(ctx.app.db);
+      return good({ says: verdict(stages), stages });
     },
   },
   {

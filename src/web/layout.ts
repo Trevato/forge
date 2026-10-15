@@ -316,7 +316,10 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
       ? [{ t: "New forge", h: "/forges/new", c: "Create" }]
       : []),
     ...(ctx.auth.user?.isAdmin
-      ? [{ t: "Forges you sent", h: "/forges", c: "Go to" }]
+      ? [
+          { t: "Flow", h: "/flow", c: "Go to" },
+          { t: "Forges you sent", h: "/forges", c: "Go to" },
+        ]
       : []),
   ];
   // `studio` rides along so the palette's *remote* rows — what the search
@@ -437,7 +440,18 @@ function topbar(
       )}
       <span class="spacer"></span>
       <span class="topbar-tools">
-        ${searchBar()}<span class="hide-sm">${helpButton()}</span>${themeMenu(theme)}
+        ${when(
+          user?.isAdmin === true,
+          () =>
+            html`<a
+              id="flow-link"
+              class="btn"
+              data-size="sm"
+              href="/flow"
+              title="The pipeline and its bottleneck"
+              >${icon("activity")}<span class="hide-sm">Flow</span></a
+            >`,
+        )}${searchBar()}<span class="hide-sm">${helpButton()}</span>${themeMenu(theme)}
         ${user
           ? html`<span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
                 ctx,

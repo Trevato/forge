@@ -201,6 +201,7 @@ describe("the forge over MCP", () => {
       "hold",
       "plan",
       "capacity",
+      "flow",
       "limits",
       "report",
     ]);

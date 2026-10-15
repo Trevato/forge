@@ -66,6 +66,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "events",
   "explore",
   "fleet",
+  "flow",
   "front",
   "go",
   "icons",

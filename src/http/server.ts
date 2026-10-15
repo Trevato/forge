@@ -8,6 +8,7 @@
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
+import { flowPage } from "../web/pages/flow.ts";
 import { limitsPage, limitsSet } from "../web/pages/admin-limits.ts";
 import {
   closeStreamsOf,
@@ -625,6 +626,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/migrate/jobs/:job", migrationJobPage);
   // Every app on one canvas; a literal route, so it must sit above /:owner.
   router.add("GET", "/map", globalMapPage);
+  // The pipeline's stages and its bottleneck, for a forge admin (#1554); literal, above /:owner.
+  router.add("GET", "/flow", flowPage);
   // A selection's spend and runs over time; literal, above /:owner.
   router.add("GET", "/fleet/graph", fleetGraphPage);
   router.add("GET", "/fleet/graph/live", fleetGraphLive);
