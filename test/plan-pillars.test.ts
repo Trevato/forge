@@ -516,20 +516,18 @@ describe("the planner's brief", () => {
       role,
     } as unknown as Parameters<typeof systemPrompt>[0]);
 
-  test("tells the planner to link each issue under its pillar, or behind the Later gate with why", () => {
+  test("tells the planner to plan through one route, naming the pillar or deferring with why", () => {
     const planner = brief("planner");
-    expect(planner).toContain(
-      "Link every issue you open under the pillar it serves",
-    );
-    expect(planner).toContain(
-      'link it behind the Later gate, the open issue whose title starts "Later gate:", opened by the owner or a writer',
-    );
+    expect(planner).toContain("POST …/plan");
+    expect(planner).toContain('"pillar":"P0"');
+    expect(planner).toContain('"later":true,"why":');
+    expect(planner).toContain("refused with no_pillar");
     expect(planner).toContain(
       "opened by the owner or a writer of the repository; an issue so titled by anyone else is not a pillar",
     );
-    expect(planner).toContain(
-      "open its body with one sentence that says why it waits",
-    );
+    expect(planner).not.toContain("Link every issue you open");
+    expect(planner).not.toContain("POST …/issues/N/dependencies");
+    expect(brief("builder")).toContain("serves its parent's pillar");
     expect(brief("builder")).not.toContain("Later gate");
   });
 });
