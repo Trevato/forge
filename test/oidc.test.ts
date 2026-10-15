@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { migrations } from "../src/core/schema.ts";
 import { openDb } from "../src/kernel/db.ts";
-import { jwks, rotateKeys, signIdToken, verifyIdToken, ID_TOKEN_TTL_S, ROTATE_MS } from "../src/core/oidc.ts";
+import { jwks, rotateKeys, signIdToken, signingKey, verifyIdToken, ID_TOKEN_TTL_S, ROTATE_MS } from "../src/core/oidc.ts";
 import { createUser } from "../src/core/users.ts";
 
 const setup = async () => {
@@ -54,6 +54,22 @@ describe("oidc keys", () => {
     const before = (await jwks(db, dir)).keys[0]!["kid"];
     await signIdToken(db, dir, { ...expectFor, user, scopes: ["openid"], nonce: "" }, t0 + ROTATE_MS + 10);
     expect((await jwks(db, dir)).keys[0]!["kid"]).not.toBe(before);
+  });
+
+  test("two requests racing past the rotation mark share one new key", async () => {
+    const { db, dir } = await setup();
+    const t0 = Date.now();
+    const first = await signingKey(db, dir, t0);
+    const [a, b] = await Promise.all([
+      signingKey(db, dir, t0 + ROTATE_MS + 1),
+      signingKey(db, dir, t0 + ROTATE_MS + 1),
+    ]);
+    expect(a.kid).toBe(b.kid);
+    expect(a.kid).not.toBe(first.kid);
+    // The keep-two prune did not drop the key that was still signing.
+    const kids = (await jwks(db, dir)).keys.map((k) => k["kid"]);
+    expect(kids).toContain(first.kid);
+    expect(kids).toContain(a.kid);
   });
 
   test("a forged, mis-addressed or malformed token is refused", async () => {

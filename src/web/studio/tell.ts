@@ -27,6 +27,7 @@ import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
+import { threadLine } from "../describe.ts";
 import { page } from "../layout.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
@@ -419,6 +420,12 @@ async function studioTell(
   return page({
     ctx,
     title: `${issue.title} · ${repo.name}`,
+    description: threadLine({
+      private: repo.visibility === "private" || issue.sealed,
+      word: wordInfo?.word ?? (issue.state === "open" ? "open" : "closed"),
+      title: issue.title,
+      body: issue.body,
+    }),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,

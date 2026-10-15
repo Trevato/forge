@@ -84,10 +84,23 @@ ssh -p 2222 localhost                        # the terminal UI
 git clone ssh://localhost:2222/you/hello.git # git, same port
 ```
 
+On a forge made for a client (one that was spawned, signed in by its claim
+link), the home is their apps, one plain sentence each and one more saying
+whether its agents are working, about to start, or waiting: no map, board or
+settings until asked. `/?all=1` is the whole home, and its "Just my apps" link
+comes back. The terminal's first screen opens with the same lines, from the
+same query (`src/core/client-apps.ts`).
+
 On a host that cannot hold cells or the crew's shell sandbox, a site admin
 sees `Reduced protection: …` in one line, under the filter on the terminal's
 first screen and in the web footer; nobody else does, and a fully protected
 forge shows nothing.
+
+What you asked for: `Ctrl+K`, then **Asked**, is `/asked` in the terminal — your
+thoughts, then the issues you can write to that are not shipped, oldest first
+(`j`/`k` move, `enter` gives the issue's web address, `r` refreshes). It is read
+only, shows a guest nothing, and names nothing of a placement in a repository
+you cannot read.
 
 The family across forges: `:` → Family in the terminal, `/family` on the web,
 `GET /api/v1/family` and the MCP `family` tool all give the same view. The
@@ -269,6 +282,8 @@ header (`p` on a row in the terminal, `P` on a repo's home) says "keep this on
 my machine", and the dashboard grows an **On your machine** card listing them.
 The server remembers only the choice — nothing about the state of a laptop —
 and `forge sync` below is what acts on it.
+
+**What an ask row waits for.** Every ask row carries one word, `waitingFor` (`src/core/waiting_for.ts`, computed once), and who it waits on, e.g. "ready to land · on you". The first that applies wins: `conflicts with main` (the last sweep found files stopping the pull, on its author), `ready to land` (a green change to look at and ship), `a review` (a review or a hand-over), `assigned to you` (the pull or issue is assigned to the viewer), otherwise `a decision`. It shows as a chip on each row of the home, as `waitingFor: {word, on}` in `GET /api/v1/asks` and the MCP `asks` tool, and in the terminal's On you card. A grouped row shares one word (the weightiest of its items), and the terminal's card shows its row's word.
 
 **Muting a repository from the home**: each ask row on the home carries a "Mute owner/name" chip. A muted repository's asks leave the home, `/api/v1/asks`, the header count and the phone's pushes (the same per-user mute the On you card uses, no new table); the home says "N muted repositories still ask" with a "Listen again" button, and an app's own page still counts them.
 

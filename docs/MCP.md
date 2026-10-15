@@ -172,7 +172,12 @@ answers
   tool result carries, with `textContent` only. The model is built in
   `src/web/studio/cards.ts`. A card's
   buttons ask the host to call a tool (`asks_act`, `say`, `stop`, `tell`); the
-  host decides, and every call is checked as any other.
+  host decides, and every call is checked as any other. A card with a
+  words action shows one text field: **Tell <app>** (app card) sends the
+  words to `tell` as `text` with `repo` and `context.said`; **Redirect**
+  (decision card) sends them to `say` with the first ask's `repo`, `number`
+  and `text`. Empty words send nothing. `asks` rows carry `repo`
+  (`owner/name`) beside `number` for this.
 - **Contract.** `GET /contract/openapi.json` is OpenAPI 3.1 for the routes
   the manifest (`here`) names, plus `POST /mcp`. `test/openapi.test.ts` fails
   when the manifest names a route it lacks.

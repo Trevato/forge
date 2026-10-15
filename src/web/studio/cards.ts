@@ -20,6 +20,8 @@ export interface CardAction {
   /** The tool the host calls when it is pressed, and with what. */
   readonly tool: string;
   readonly args: Record<string, unknown>;
+  /** Set when the press sends the person's typed words as `text` (and into `context.said`, if the args carry a `context`). */
+  readonly words?: true;
 }
 export interface Card {
   readonly kind: CardKind;
@@ -73,6 +75,9 @@ export function cardFor(tool: string, value: unknown): Card | undefined {
           Number(a["working"]) > 0 ? ` · ${text(a["working"])} working` : ""
         }`,
       });
+    for (const a of apps.slice(0, 3))
+      if (text(a["app"]) !== "")
+        actions.push({ label: `Tell ${text(a["app"])}`, tool: "tell", args: { repo: text(a["app"]), context: {} }, words: true });
   } else if (kind === "run") {
     const runs = list(value).map(obj);
     status = runs.length === 0 ? "nothing running" : `${runs.length} going`;
@@ -100,11 +105,15 @@ export function cardFor(tool: string, value: unknown): Card | undefined {
       const items = list(first["items"]).map(text);
       const kindOf = text(first["kind"]);
       // No `dryRun`: the press is the dry run `asks_act` defaults to, and the
-      // host shows what would change before anything ships or closes. Tell and
-      // Redirect are absent: the card has no field for the person's words.
+      // host shows what would change before anything ships or closes. Redirect
+      // sends the typed words to `say` on the row's own pull or issue.
       if (kindOf === "look" || kindOf === "review")
         actions.push({ label: "Approve", tool: "asks_act", args: { action: "ship", items } });
       actions.push({ label: "Decline", tool: "asks_act", args: { action: "close", items } });
+      const repo = text(first["repo"]);
+      const number = Number(first["number"]);
+      if (repo !== "" && Number.isInteger(number) && number > 0)
+        actions.push({ label: "Redirect", tool: "say", args: { repo, number }, words: true });
     }
   } else {
     const limbs = list(obj(value)["limbs"]).map(obj);
@@ -125,7 +134,7 @@ export function cardFor(tool: string, value: unknown): Card | undefined {
  * structured content and draws it with `textContent`. A button asks the
  * host to call the tool; the host decides whether to.
  */
-const SHELL_JS = `
+export const SHELL_JS = `
 const root = document.getElementById("card");
 const el = (tag, text, cls) => { const e = document.createElement(tag); e.textContent = text; if (cls) e.className = cls; return e; };
 let n = 0;
@@ -134,9 +143,20 @@ function draw(card) {
   const dl = document.createElement("dl");
   for (const r of card.rows) dl.append(el("dt", r.label), el("dd", r.value));
   root.append(dl);
+  const field = card.actions.some((a) => a.words) ? document.createElement("input") : null;
+  if (field) { field.type = "text"; field.maxLength = 2000; field.placeholder = "Your words"; field.setAttribute("aria-label", "Your words"); root.append(field); }
   for (const a of card.actions) {
     const b = el("button", a.label);
-    b.onclick = () => parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "tools/call", params: { name: a.tool, arguments: a.args } }, "*");
+    b.onclick = () => {
+      let args = a.args;
+      if (a.words) {
+        const said = field.value.trim();
+        if (said === "") { field.focus(); return; }
+        args = { ...a.args, text: said };
+        if (a.args.context && typeof a.args.context === "object") args.context = { ...a.args.context, said };
+      }
+      parent.postMessage({ jsonrpc: "2.0", id: ++n, method: "tools/call", params: { name: a.tool, arguments: args } }, "*");
+    };
     root.append(b);
   }
 }
