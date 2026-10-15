@@ -23,6 +23,7 @@ import { cancelRepoRun, requeueRepoRun } from "../actions/runs.ts";
 import { isCrew } from "../core/agents.ts";
 import { mergePull } from "../actions/pulls.ts";
 import { bringUpToDate } from "../crew/autonomy.ts";
+import { moveLimb, parseSeat, type Seating } from "../core/limb_seats.ts";
 import { getHold } from "../core/holds.ts";
 import { recordInteraction, removeDismissals, removeMutes } from "../core/interactions.ts";
 import { getPull } from "../core/pulls.ts";
@@ -71,6 +72,8 @@ export interface Target {
   readonly pillars?: Pillars;
   /** For an issue: the numbers of the umbrellas that wait for it directly, ascending. */
   readonly under?: readonly number[];
+  /** For an issue: its repository's limbs in order, read on the first ask. */
+  readonly seating?: () => Seating;
   /** For an issue: the ids of every row this operation is over, itself included. */
   readonly peers?: ReadonlySet<string>;
 }
@@ -713,6 +716,52 @@ export const VERBS: Record<string, Verb> = {
           reason: "dropped",
         }),
       );
+    },
+  },
+
+  /**
+   * Seat a limb among its siblings: the value is a seat, `<group>:<place>`
+   * (`top` or an issue number, then the place from 1), and the limb takes
+   * that place with the others moving over. The row holds every seat the
+   * limb has, so undo is the seats from before. The order is kept here and
+   * is not the origin's, so a mirror is no reason to refuse.
+   */
+  place: {
+    kind: "issue",
+    reversible: true,
+    parse: (_app, value) =>
+      parseSeat(value) === undefined
+        ? err("place takes a seat: top:2, or the number of the milestone and the place, 12:1")
+        : ok(String(value)),
+    read: (t) => [...(t.seating?.().of(t.id) ?? [])],
+    next: replace,
+    nextFor(_t, before, value) {
+      const want = parseSeat(value);
+      const held = Array.isArray(before) ? before.map(String) : [];
+      return want === undefined
+        ? held
+        : held.map((seat) => (parseSeat(seat)?.group === want.group ? String(value) : seat));
+    },
+    refuse(_app, t, after) {
+      const seats = t.seating?.();
+      for (const seat of Array.isArray(after) ? after.map(String) : []) {
+        const want = parseSeat(seat);
+        if (want === undefined || seats === undefined) return "not a seat";
+        if (want.place > seats.size(want.group))
+          return `there are only ${seats.size(want.group)} limbs there`;
+      }
+      return undefined;
+    },
+    async write(app, _actor, t, after) {
+      const have = t.seating?.().of(t.id) ?? [];
+      for (const seat of Array.isArray(after) ? after.map(String) : []) {
+        const want = parseSeat(seat);
+        if (want === undefined) return "not a seat";
+        if (have.includes(seat)) continue;
+        const why = moveLimb(app.db, t.repo, t.id, want);
+        if (why !== undefined) return why;
+      }
+      return undefined;
     },
   },
 };

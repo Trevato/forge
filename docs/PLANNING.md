@@ -307,14 +307,26 @@ one undo.
 - **Close as not doing** closes every open issue that is the limb's own,
   the limb included, as `dropped`, with the reason said on each. What other
   work outside the limb also waits for is not the limb's to close.
+- **Raise** and **Lower** (#1064) move the limb one place among its
+  siblings — the pillars and Later at the top, a milestone's limbs under
+  it. The place is stored per group of siblings (`limb_place`), kept across
+  a restart, and is the order the limbs are listed in; a limb never placed
+  follows the placed ones, by number. The preview shows the new order and
+  how the top of the ready list changes. Once a person has set an order in
+  a repository, the crew's ready order follows it: an issue beneath a
+  higher limb comes before one beneath a lower limb (beneath two limbs, the
+  higher), after them come issues beneath no limb, and within a limb the
+  order is the old one — what it frees, then age. Until then nothing about
+  the ready order changes. It is one fleet row, the verb `place`; undo puts
+  the place back. Through the API and the MCP `limb` tool (`action` raise or
+  lower, `under` when the limb sits in several places), dry-run by default.
 
 An umbrella or the gate is the plan's own and is not filed. A leaf beneath
 a limb that is not deferred cannot be deferred alone: defer the limb. A
-candidate to trim offers Defer first. Raising and lowering a limb against
-its siblings is #760; handing one to the planner is #761.
+candidate to trim offers Defer first. Handing one to the planner is #761.
 
 The same is `POST /api/v1/repos/:owner/:name/milestones/:number/limb`
-`{ "action": "defer" | "resume" | "close", "reason"?, "pillar"?, "dryRun"? }`
+`{ "action": "defer" | "resume" | "close" | "raise" | "lower", "reason"?, "pillar"?, "under"?, "dryRun"? }`
 and the MCP's `limb`, both a dry run unless `dryRun` is false. Applying and
 undoing take an admin token of a person who administers the repository; an
 agent may look and never apply.
