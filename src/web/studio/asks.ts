@@ -11,6 +11,7 @@ import type { Database } from "bun:sqlite";
 import { needLine } from "../../actions/health.ts";
 import type { Degraded } from "../../kernel/vitals.ts";
 import { previewEnv } from "../../apps/data.ts";
+import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { crewForRepos } from "../../core/agents.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos, getAppByRepo, listApps } from "../../core/apps.ts";
@@ -55,7 +56,7 @@ import {
 import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { handoverLines, handoverOf, type Handover } from "../../crew/guard.ts";
-import { isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
+import { conflictsOf, isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
 import { waitsForPerson, waitsForReviewer, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { vitals } from "../../kernel/vitals.ts";
@@ -128,6 +129,8 @@ export interface Decision {
   /** The preview pictured on a phone, when the forge has taken one. */
   readonly picture?: string | undefined;
   readonly consequence: Consequence;
+  /** What it waits for, and on whom (`core/waiting_for.ts`). */
+  readonly waiting: WaitingFor;
 }
 
 /** What an ask asks, the answers it takes, and what happens if nobody gives one. */
@@ -588,7 +591,21 @@ export function askRows<
   }));
 }
 
-type Scored = AskCandidate & { readonly consequence: Consequence };
+type Scored = AskCandidate & {
+  readonly consequence: Consequence;
+  readonly waiting: WaitingFor;
+};
+
+/** What a candidate waits for, from facts already on it plus the sweep's conflicts. */
+function waitingOf(db: Database, user: User | undefined, a: AskCandidate): WaitingFor {
+  const about = a.pull ?? a.issue;
+  return waitingFor({
+    kind: a.kind,
+    conflicts: a.pull ? conflictsOf(db, a.pull.id, a.pull.headOid) : 0,
+    assignedToViewer: user !== undefined && about?.assigneeId === user.id,
+    who: a.who,
+  });
+}
 
 /** Every candidate for the viewer, scored, dismissed or not. */
 function scoredFor(
@@ -599,7 +616,11 @@ function scoredFor(
 ): Scored[] {
   const asks = askCandidatesFor(db, user, repos);
   const scores = consequencesOf(db, asks, now);
-  return asks.map((a) => ({ ...a, consequence: scores.get(a.id)! }));
+  return asks.map((a) => ({
+    ...a,
+    consequence: scores.get(a.id)!,
+    waiting: waitingOf(db, user, a),
+  }));
 }
 
 /**
@@ -793,6 +814,8 @@ export function askLinesFor(
   words: AskWords;
   /** Why it ranks where it does; rows come most consequential first. */
   consequence: Consequence;
+  /** What the row waits for (the weightiest ask's), and on whom. */
+  waitingFor: WaitingFor;
 }[] {
   const repos = listReposVisibleTo(db, user, { limit: 200 });
   return askRows(waitingOn(db, user, repos)).map((row) => {
@@ -804,6 +827,7 @@ export function askLinesFor(
       items: row.items.map((c) => c.id),
       words: ASK_WORDS[row.kind],
       consequence: row.consequence,
+      waitingFor: row.items[0]!.waiting,
     };
     const only = row.items.length === 1 ? row.items[0]! : undefined;
     if (only === undefined)
@@ -866,7 +890,7 @@ export function decisionsFor(
       look && lookUrl(repoBase(repo), look)
     );
   };
-  const worded = (c: Scored): Omit<Decision, "consequence"> => {
+  const worded = (c: Scored): Omit<Decision, "consequence" | "waiting"> => {
     if (c.kind === "parked" && c.issue)
       return {
         kind: "parked",
@@ -954,7 +978,11 @@ export function decisionsFor(
       short: `at its $${dollars(c.repo.autonomyCeilingUsd)} ceiling until 00:00 UTC`,
     };
   };
-  return candidates.map((c) => ({ ...worded(c), consequence: c.consequence }));
+  return candidates.map((c) => ({
+    ...worded(c),
+    consequence: c.consequence,
+    waiting: c.waiting,
+  }));
 }
 /** The id of the form a row's own button submits (see `decisionForm`). */
 const askFormId = (d: Decision): string => `ask-${d.id}`;

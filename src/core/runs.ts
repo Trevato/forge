@@ -76,6 +76,10 @@ export interface Run {
   readonly sandboxEnforced: boolean | null;
   /** Why it was not, when it was not. */
   readonly sandboxNote: string;
+  /** Where a check ran: `process`, `job`, or empty when unrecorded. */
+  readonly placement: string;
+  /** The node a `job` check's pod ran on; empty otherwise. */
+  readonly node: string;
   /** A failed check's own detail, when its output was recognised; null otherwise. */
   readonly checkDetail: CheckDetail | null;
   /** The variant group this run belongs to; null for an ordinary run. */
@@ -108,6 +112,8 @@ interface RunRow {
   sandbox_enforced: number | null;
   sandbox_note: string;
   check_detail: string;
+  placement: string;
+  node: string;
   variant_group: string | null;
   created_at: string;
   started_at: string | null;
@@ -136,6 +142,8 @@ const toRun = (r: RunRow): Run => ({
   sandboxEnforced:
     r.sandbox_enforced === null ? null : r.sandbox_enforced !== 0,
   sandboxNote: r.sandbox_note,
+  placement: r.placement,
+  node: r.node,
   checkDetail: r.check_detail ? (JSON.parse(r.check_detail) as CheckDetail) : null,
   variantGroup: r.variant_group,
   createdAt: r.created_at,
@@ -348,13 +356,18 @@ export function noteRunProgress(
     subscriptionId?: string | undefined;
     /** Whether the shell is held to the sandbox, and why not when it is not. */
     sandbox?: { enforced: boolean; note: string } | undefined;
+    /** Where a check ran, and the node when a cluster Job did. */
+    placement?: string | undefined;
+    node?: string | undefined;
   },
 ): void {
   db.query(
     `UPDATE run SET session_id = COALESCE(?2, session_id), cost_usd = COALESCE(?3, cost_usd),
        branch = COALESCE(?4, branch), subscription_id = COALESCE(?5, subscription_id),
        sandbox_enforced = COALESCE(?6, sandbox_enforced),
-       sandbox_note = COALESCE(?7, sandbox_note)
+       sandbox_note = COALESCE(?7, sandbox_note),
+       placement = COALESCE(?8, placement),
+       node = COALESCE(?9, node)
      WHERE id = ?1`,
   ).run(
     runId,
@@ -364,6 +377,8 @@ export function noteRunProgress(
     progress.subscriptionId ?? null,
     progress.sandbox === undefined ? null : progress.sandbox.enforced ? 1 : 0,
     progress.sandbox?.note.slice(0, 300) ?? null,
+    progress.placement?.slice(0, 20) ?? null,
+    progress.node?.slice(0, 253) ?? null,
   );
 }
 

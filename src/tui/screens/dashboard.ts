@@ -21,6 +21,7 @@ import { mayView } from "../../core/sealed.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
 import { getIssueById, listAssignedTo, type Issue } from "../../core/issues.ts";
 import { askLinesFor } from "../../web/studio/asks.ts";
+import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import {
   applyAsksBulk,
@@ -97,6 +98,8 @@ interface OnYouItem {
   readonly hand?: true;
   /** A pull the crew handed to a person: closed, marked and opened like any row. */
   readonly over?: true;
+  /** What it waits for, and on whom: the word the web's asks row shows. */
+  readonly waiting: WaitingFor;
 }
 
 /** The `tab` order, whichever of these the frame had room for. */
@@ -169,6 +172,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    */
   const assignedToMe = (): OnYouItem[] => {
     if (f.user === undefined) return [];
+    const rows = askLinesFor(f.db, f.user);
+    /** The ask row's word for an issue or pull, by its id; a plain assignment says so. */
+    const waitingOf = (id: string): WaitingFor =>
+      rows.find((row) => row.items.some((item) => item.slice(item.indexOf(":") + 1) === id))
+        ?.waitingFor ??
+      waitingFor({ kind: "stopped", conflicts: 0, assignedToViewer: true, who: "you" });
     const issues = listAssignedTo(f.db, f.user.id, 50);
     const muted = mutedRepos(f.db, f.user.id);
     const byId = getReposByIds(f.db, [...new Set([...issues.map((i) => i.repoId), ...muted])]);
@@ -188,9 +197,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       )
         return [];
       if (muted.has(repo.id)) return [];
-      return [{ issue, repo }];
+      return [{ issue, repo, waiting: waitingOf(issue.id) }];
     });
-    return [...assigned, ...handOvers(assigned)];
+    return [...assigned, ...handOvers(assigned, rows, waitingOf)];
   };
 
   /**
@@ -199,9 +208,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
    * decider can take them), and pulls the crew handed over after three
    * reviews. Listed after their own work.
    */
-  const handOvers = (have: readonly OnYouItem[]): OnYouItem[] => {
+  const handOvers = (
+    have: readonly OnYouItem[],
+    rows: ReturnType<typeof askLinesFor>,
+    waitingOf: (id: string) => WaitingFor,
+  ): OnYouItem[] => {
     if (f.user === undefined) return [];
-    const rows = askLinesFor(f.db, f.user);
     const idsOf = (kind: string, prefix: string): string[] =>
       rows
         .filter((row) => row.kind === kind)
@@ -222,7 +234,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       const issue = getIssueById(f.db, id);
       const repo = issue === undefined ? undefined : getRepoById(f.db, issue.repoId);
       if (issue !== undefined && repo !== undefined)
-        out.push({ issue, repo, ...(flag === "hand" ? { hand: true as const } : { over: true as const }) });
+        out.push({ issue, repo, waiting: waitingOf(id), ...(flag === "hand" ? { hand: true as const } : { over: true as const }) });
     }
     return out;
   };
@@ -680,8 +692,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               ? PULL_MARK
               : ISSUE_MARK;
         return {
-          title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : ""}${mark} #${item.issue.number} ${item.issue.title}`,
-          meta: `${item.repo.ownerName}/${item.repo.name}`,
+          title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : ""}${mark} #${item.issue.number} ${item.issue.title} · ${item.repo.ownerName}/${item.repo.name}`,
+          meta: `${item.waiting.word} · on ${item.waiting.on}`,
         };
       }),
       on,

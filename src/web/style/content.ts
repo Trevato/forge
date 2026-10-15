@@ -1231,6 +1231,7 @@ textarea.editor:focus { outline: none; }
 .ask-more-acts > summary { list-style: none; }
 .ask-more-acts > summary::-webkit-details-marker { display: none; }
 .ask-kind { display: none; }
+.ask-waiting { display: inline-block; margin-left: 8px; padding: 0 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--fg); white-space: nowrap; max-width: 100%; }
 .row .ask-acts { margin-top: 0; }
 @supports selector(::details-content) {
   @media (min-width: 481px) {
@@ -1254,6 +1255,7 @@ textarea.editor:focus { outline: none; }
   .ask-card .ask-kind { display: inline; margin-right: 6px; color: var(--fg); }
   .ask-card .ask-kind::after { content: " ·"; font-weight: 400; }
   .ask-card .ask-short { display: none; }
+  .ask-card .ask-waiting { order: 3; flex: 0 1 auto; margin-left: 0; min-width: 0; max-width: 100%; white-space: normal; }
   .ask-card .ask-pick { order: 0; min-width: 24px; min-height: 24px; }
   .ask-card .ask-group > summary { padding: 10px 16px; min-height: 44px; }
   .ask-card .ask-group .row { flex-wrap: wrap; padding-inline: 16px; }

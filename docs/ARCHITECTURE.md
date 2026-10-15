@@ -45,8 +45,10 @@ that feeling onto a foundation sized for one human.
   covers every system need without a single package.
 - **Language**: TypeScript, strict, `noUncheckedIndexedAccess`,
   `exactOptionalPropertyTypes`. Types are the documentation.
-- **Deploy**: `bun run src/main.ts` in dev; `bun build --compile` produces a
-  single native binary for release. The only system requirement is `git`.
+- **Deploy**: the server runs from source, `bun run src/main.ts`, in dev and
+  in release: it reads its migrations from `src/core/migrations/` at boot, so
+  it is never compiled. `bun build --compile` produces the CLI binary only.
+  The only system requirement is `git`.
 
 Why not Go: Go's advantages (static binary, subprocess plumbing prior art) are
 real, but Forgejo already exists as the Go forge. The differentiators here —
@@ -146,9 +148,11 @@ curate, never implement.
 
 ## Data & state model
 
-SQLite (`bun:sqlite`), WAL mode, foreign keys on, migrations tracked by a
-hash of their text in `schema_migration` (`kernel/migrate.ts`), so a preview
-that keeps its data across a rebase never runs one twice; `user_version`
+SQLite (`bun:sqlite`), WAL mode, foreign keys on, one file per migration
+under `core/migrations/` applied in the order their names sort (a new one is
+named by a UTC timestamp, so parallel pulls never share a line), tracked by
+a hash of their text in `schema_migration` (`kernel/migrate.ts`), so a
+preview that keeps its data across a rebase never runs one twice; `user_version`
 still counts them. The schema is deliberately small — tables earn their place:
 
 - `user` (humans and bots; bots are just users with narrower tokens)
@@ -169,8 +173,9 @@ row — and removing or renaming waits for the release after the last one
 that read it (add now, remove next release; a rename is two releases).
 `notAdditive` (`kernel/migrate.ts`) names a drop, a rename, a rebuild or a
 NOT NULL column without a default, and `test/schema-additive.test.ts`
-refuses one in any migration newer than the two newest releases recorded in
-`src/core/releases.json`, which the release agent bumps when it cuts one.
+refuses one in any migration not shipped by both of the two newest releases
+recorded in `src/core/releases.json` (by id: a count, and the stamped ids),
+which the release agent bumps when it cuts one.
 An old process that restarts mid-roll refuses a database ahead of it
 (`user_version`), as it always has.
 

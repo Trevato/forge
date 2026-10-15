@@ -248,10 +248,16 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   machine code to branch on, `message` a human hint. Reuse the helpers
   (`notFound`, `noRoute`, `unauthorized`, `forbidden`) or a specific 422 code;
   don't invent a new shape.
-- **Add a schema change:** append a migration to `core/schema.ts` (they run in
-  order, once each, recognised by a hash of their text in `schema_migration`
-  — see `kernel/migrate.ts`). Never edit an existing migration — an edited
-  one is a new one and runs again. Add a new one.
+- **Add a schema change:** add one file to `core/migrations/`, named by the
+  UTC second you wrote it — `$(date -u +%Y%m%d%H%M%S)-what-it-adds.ts`,
+  whose default export is the SQL — never the next number: `0001`–`0091`
+  are the numbered history, and a shared next number is what parallel pulls
+  collided on (#1837). Files run in name order, once each, recognised by a
+  hash of their text in `schema_migration` (`kernel/migrate.ts`), so two
+  pulls' migrations land in either order. Never edit an existing migration
+  — an edited one is a new one and runs again. It must only add
+  (`test/schema-additive.test.ts`); the release agent lists its id in
+  `core/releases.json`.
 - **New git read:** put it in `git/read.ts`; reuse the long-lived `cat-file`
   batch reader rather than spawning per object. Run every rev/path through
   `assertBatchSafe`.
