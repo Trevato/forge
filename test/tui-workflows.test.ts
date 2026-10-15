@@ -17,6 +17,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { addComment, openIssue } from "../src/actions/issues.ts";
 import { addTeamMember, createOrg, createTeam } from "../src/actions/orgs.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import {
@@ -27,13 +28,16 @@ import {
 import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { getIssue, listComments } from "../src/core/issues.ts";
+import { issueScreen } from "../src/tui/screens/issue.ts";
+import { local } from "../src/tui/screens/where.ts";
 import { listReviews } from "../src/core/reviews.ts";
 import { getPull } from "../src/core/pulls.ts";
 import type { User } from "../src/core/users.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import type { App } from "../src/tui/app/app.ts";
+import type { App, Screen } from "../src/tui/app/app.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
-import type { TuiIdentity } from "../src/tui/session.ts";
+import type { Session, TuiIdentity } from "../src/tui/session.ts";
 import {
   headlessTerminal,
   type HeadlessTerminal,
@@ -44,6 +48,7 @@ quietLogs();
 
 interface Harness {
   app: App;
+  push(screen: (session: Session, ctx: App["ctx"]) => Screen): Promise<void>;
   terminal: HeadlessTerminal;
   text(): string;
   rows(): string[];
@@ -73,7 +78,7 @@ function boot(
   rows = 44,
 ): Harness {
   const terminal = headlessTerminal(cols, rows);
-  const { app } = createForgeApp(forge, identity, {
+  const { app, session } = createForgeApp(forge, identity, {
     terminal,
     exitHooks: false,
   });
@@ -100,6 +105,10 @@ function boot(
   };
   const harness: Harness = {
     app,
+    async push(make) {
+      app.ctx.push(make(session, app.ctx));
+      await settle();
+    },
     terminal,
     text: () => app.screen.toText(),
     rows: grid,
@@ -467,4 +476,46 @@ describe("reviews, threads and the merge gate", () => {
       h.stop();
     }
   }, 60_000);
+
+  test("an issue the crew found done on main says so, and x closes it with the note", async () => {
+    // The crew's word is the one from whoever set autonomy going.
+    forge.db.run("UPDATE repo SET autonomy_by = ?1 WHERE id = ?2", [
+      alice.id,
+      repo.id,
+    ]);
+    const opened = openIssue(forge, alice, repo, {
+      title: "Already built",
+      body: "It exists.",
+    });
+    if (!opened.ok) throw new Error(opened.error);
+    const note = addComment(
+      forge,
+      alice,
+      repo,
+      opened.value,
+      `Done on main already, waiting for you to close it: [\`${"a".repeat(40)}\`]`,
+    );
+    expect(note.ok).toBe(true);
+    const h = boot(forge, identityFor(alice));
+    try {
+      await h.settle();
+      await h.push((s, ctx) =>
+        issueScreen(s, ctx, local(s, repo), opened.value.number),
+      );
+      await h.until("done on main in aaaaaaa, x to close");
+      await h.press("x");
+      await h.until("closed");
+      expect(getIssue(forge.db, repo.id, opened.value.number)?.state).toBe(
+        "closed",
+      );
+      expect(
+        listComments(forge.db, opened.value.id).some((c) =>
+          c.body.startsWith("Closed: already done on main in "),
+        ),
+      ).toBe(true);
+      expect(h.text()).not.toContain("x to close");
+    } finally {
+      h.stop();
+    }
+  });
 });
