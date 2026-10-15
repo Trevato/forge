@@ -13,27 +13,49 @@ export type Impact = ReadonlyMap<string, readonly string[]>;
 const TEST = /^test\/[A-Za-z0-9_.-]+\.test\.[cm]?[jt]sx?$/;
 const SOURCE = /^src\/[A-Za-z0-9_./-]+$/;
 
-/** The `src/**` files an lcov report shows executed (a line hit at least once). */
+/**
+ * The `src/**` files an lcov report shows executed: a function of theirs
+ * was called (`FNH` > 0), or, for a file with no functions at all (`FNF`
+ * 0: constants, tables), a line was hit. A line hit alone is not enough
+ * where there are functions: loading a module runs its top level, so by
+ * lines every file a test imports, however deep, would count — the import
+ * graph again, which is what the map is for beating (#1794).
+ */
 export function executedFiles(lcov: string): string[] {
   const found = new Set<string>();
   let file: string | undefined;
-  let hit = false;
+  let lineHit = false;
+  let functions: number | undefined;
+  let called = 0;
   const end = (): void => {
-    if (file !== undefined && hit && SOURCE.test(file)) found.add(file);
+    const executed = functions === undefined || functions === 0 ? lineHit : called > 0;
+    if (file !== undefined && executed && SOURCE.test(file)) found.add(file);
     file = undefined;
-    hit = false;
+    lineHit = false;
+    functions = undefined;
+    called = 0;
   };
   for (const line of lcov.split("\n")) {
     if (line.startsWith("SF:")) {
       end();
       file = line.slice(3).trim().replace(/^\.\//, "");
     } else if (line.startsWith("DA:")) {
-      const count = Number(line.slice(3).split(",")[1]);
-      if (count > 0) hit = true;
-    } else if (line.startsWith("end_of_record")) end();
+      if (Number(line.slice(3).split(",")[1]) > 0) lineHit = true;
+    } else if (line.startsWith("FNF:")) functions = Number(line.slice(4)) || 0;
+    else if (line.startsWith("FNH:")) called = Number(line.slice(4)) || 0;
+    else if (line.startsWith("end_of_record")) end();
   }
   end();
   return [...found].sort();
+}
+
+/**
+ * The map's file as `FORGE_CHECK_IMPACT` names it: a plain file name in the
+ * checkout the forge seeds and takes back (`impact-store.ts`). Anything
+ * else — a path, a climb — is not the forge's and is ignored.
+ */
+export function handedImpact(name: string | undefined): string | undefined {
+  return name !== undefined && /^(?!\.\.?$)[A-Za-z0-9_.][A-Za-z0-9_.-]{0,99}$/.test(name) ? name : undefined;
 }
 
 export function parseImpact(

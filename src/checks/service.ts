@@ -41,6 +41,7 @@ import { resolveOid } from "../git/merge.ts";
 import { mergeForCheck } from "./merged.ts";
 import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
+import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { getIssueById } from "../core/issues.ts";
 import { repoDir } from "../git/repos.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
@@ -450,6 +451,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       commitOid: run.commitOid,
       pull,
       tier: pull === undefined ? "run" : "fast",
+      keepImpact: pull === undefined && run.env === repo.defaultBranch,
       write,
       signal,
     });
@@ -466,6 +468,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     readonly pull?: Pull | undefined;
     /** `run`: a push to a branch; `fast`: a pull's push; `full`: on land. */
     readonly tier: "run" | "fast" | "full";
+    /** A green run keeps the impact map it measured; `full` always does. */
+    readonly keepImpact?: boolean;
     readonly write: (line: string) => void;
     readonly signal: AbortSignal;
   }
@@ -566,6 +570,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         return { ok: false, error: given.error };
       }
     }
+    // Every check starts from the impact map the last green default-branch
+    // run measured; the fast tier selects by it.
+    try {
+      const seeded = seedImpact(app.config.dataDir, repo.id, dir);
+      if (seeded > 0) write(`impact map: ${seeded} tests, from the last green ${repo.defaultBranch}`);
+    } catch (error) {
+      write(`impact map not seeded: ${String(error)}`);
+    }
     // The check is repository code: it runs in a cell of its own
     // (`apps/contain.ts`), its checkout and a home its only places to write,
     // the forge, the registry and what it declared its only way out.
@@ -599,6 +611,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         FORGE_URL: options.forgeUrl,
         FORGE_CHECK: run.id,
         FORGE_COMMIT: x.commitOid,
+        FORGE_CHECK_IMPACT: IMPACT_FILE,
         ...(base === undefined
           ? {}
           : {
@@ -650,6 +663,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
           ran.error,
         );
         return { ok: false, error: summary, detail };
+      }
+      if (x.tier === "full" || x.keepImpact === true) {
+        try {
+          const kept = keepImpact(app.config.dataDir, repo.id, dir);
+          if (kept !== undefined) write(kept);
+        } catch (error) {
+          write(`impact map not kept: ${String(error)}`);
+        }
       }
       return { ok: true };
     } finally {
