@@ -18,6 +18,7 @@ import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import {
+  degradedCauses,
   findFaults,
   hunt,
   sentinelLine,
@@ -344,5 +345,82 @@ describe("the signals inside the hour", () => {
     const r = withRepo(() => sentinelTick(app, l + 20 * 60_000));
     expect(r?.filed).toBe(1);
     expect(withRepo(() => sentinelTick(app, lastHunt() + 20 * 60_000))).toBeNull();
+  });
+});
+
+// ---- degraded causes (#1297) ----
+
+let dapp: App;
+let drepo: Repo;
+const D_MIN = 60_000;
+const D_NIGHT = Date.parse("2026-10-13T03:00:00.000Z");
+const D_DAY = 24 * 60 * D_MIN;
+
+function plantSpan(cause: string, openedAt: number, minutes: number): void {
+  dapp.db
+    .query(
+      "INSERT INTO degraded_span (cause, sentence, href, opened_at, closed_at) VALUES (?1, ?2, '/admin/queue', ?3, ?4)",
+    )
+    .run(cause, `The ${cause} is backed up.`, openedAt, openedAt + minutes * D_MIN);
+}
+const openIssues = () => listIssues(dapp.db, drepo.id, { state: "open" } as never);
+
+
+describe("degraded causes", () => {
+  let ddir: string;
+  beforeAll(async () => {
+    ddir = await mkdtemp(join(tmpdir(), "forge-sentinel-degraded-"));
+    dapp = createApp({ dataDir: ddir, port: 0 });
+    const a = await createUser(dapp.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    const made = await createRepo(dapp, a.value, { name: "forge", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    drepo = made.value;
+  });
+  afterAll(async () => {
+    dapp.db.close();
+    await rm(ddir, { recursive: true, force: true });
+  });
+
+  test("a 4-minute span files nothing", () => {
+    plantSpan("short", D_NIGHT - 2 * 3_600_000, 4);
+    expect(degradedCauses(dapp.db, D_NIGHT)).toEqual([]);
+    expect(hunt(dapp, "alice/forge", D_NIGHT).filed).toBe(0);
+  });
+
+  test("a 25-minute span files one issue; the next night comments on it", () => {
+    plantSpan("queue", D_NIGHT - 2 * 3_600_000, 25);
+    const found = degradedCauses(dapp.db, D_NIGHT);
+    expect(found.map((f) => f.key)).toEqual(["degraded:queue"]);
+    const text = found[0]!.evidence.join("\n");
+    expect(text).toContain("The queue is backed up.");
+    expect(text).toContain("25 minutes");
+    expect(text).toContain("/admin/queue");
+    expect(found[0]!.pillar).toStartWith("P0 Trust");
+
+    expect(hunt(dapp, "alice/forge", D_NIGHT).filed).toBe(1);
+    expect(hunt(dapp, "alice/forge", D_NIGHT + 30 * D_MIN).filed).toBe(0);
+    expect(openIssues().length).toBe(1);
+
+    plantSpan("queue", D_NIGHT + D_DAY - 2 * 3_600_000, 25);
+    const next = hunt(dapp, "alice/forge", D_NIGHT + D_DAY);
+    expect(next.filed).toBe(0);
+    expect(next.commented).toBe(1);
+    const open = openIssues();
+    expect(open.length).toBe(1);
+    expect(listComments(dapp.db, open[0]!.id).length).toBe(1);
+  });
+
+  test("spans that add up past ten minutes are one finding", () => {
+    const day = D_NIGHT + 3 * D_DAY;
+    plantSpan("disk", day - 5 * 3_600_000, 6);
+    plantSpan("disk", day - 3 * 3_600_000, 6);
+    expect(degradedCauses(dapp.db, day).map((f) => f.key)).toEqual(["degraded:disk"]);
   });
 });
