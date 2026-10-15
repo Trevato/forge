@@ -11,6 +11,7 @@
 import { marksByName, type Mark } from "../../core/marks.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
+import { recentThoughts, type Thought } from "../../core/thoughts.ts";
 import { readFeed } from "../../feed/feed.ts";
 import type { FeedItem } from "../../feed/rank.ts";
 import { html, type Html } from "../html.ts";
@@ -21,7 +22,7 @@ import { writableAppsOf } from "./asks.ts";
 
 /** Events that can change what the feed says. */
 export const FEED_LIVE =
-  "run.finished,issue.opened,issue.commented,pull.commented,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,issue.closed,decision.*";
+  "run.finished,issue.opened,issue.commented,pull.commented,pull.opened,pull.merged,pull.reviewed,pull.closed,look.taken,app.serving,issue.blocked,issue.unblocked,issue.closed,decision.*,thought.received";
 
 export const FEED_FIRST_PAGE = 20;
 
@@ -92,6 +93,29 @@ export function feedCard(
   </article>`;
 }
 
+/** The composer's app value for "the forge": no app, so no slash to collide with one. */
+export const FORGE_TARGET = "forge";
+
+/** How many thoughts stand at the top of the feed. */
+const THOUGHTS_SHOWN = 3;
+
+/**
+ * A thought as the owner's post: their own words, verbatim (escaped here,
+ * once; line breaks kept by CSS), marked "received". It has no controls.
+ */
+export function thoughtCard(thought: Thought, who: string): Html {
+  return html`<article class="fcard fcard-thought" data-kind="thought" data-thought="${thought.id}">
+    <div class="fcard-head">
+      ${avatar(who)}
+      <strong class="fcard-who">${who}</strong>
+      <span class="fcard-app muted small">${timeAgo(thought.receivedAt)}</span>
+      <span class="spacer"></span>
+      <span class="badge">Received</span>
+    </div>
+    <p class="fcard-reason fcard-text">${thought.text}</p>
+  </article>`;
+}
+
 /** The longest tell the composer takes (its textarea's `maxlength`). */
 const TELL_MAX = 2000;
 
@@ -129,15 +153,13 @@ export function composer(ctx: Ctx, user: User): Html {
         ${btn("Repositories", { href: `/${user.username}` })}`,
     });
   const slug = (r: { ownerName: string; name: string }) => `${r.ownerName}/${r.name}`;
-  const first = slug(repos[0]!);
   return html`<form id="composer" class="composer" method="post" action="/tell">
     <textarea class="input" name="text" rows="2" maxlength="2000" required placeholder="Tell the crew what should change" aria-label="Tell the crew">${sharedDraft(ctx.url.searchParams)}</textarea>
     <div class="composer-bar">
-      ${repos.length === 1
-        ? html`<input type="hidden" name="app" value="${first}" /><span class="muted small">${first}</span>`
-        : html`<select name="app" class="input" aria-label="Which app">
-            ${repos.map((r) => html`<option value="${slug(r)}">${slug(r)}</option>`)}
-          </select>`}
+      <select name="app" class="input" aria-label="Send to">
+        ${repos.map((r) => html`<option value="${slug(r)}">${slug(r)}</option>`)}
+        <option value="${FORGE_TARGET}">the forge</option>
+      </select>
       <span class="spacer"></span>
       ${btn("Post", { variant: "primary" })}
     </div>
@@ -167,6 +189,7 @@ export function feedRegion(user: User, ctx: Ctx): Html {
   const items = readFeed(ctx.app.db, user, { limit: FEED_FIRST_PAGE }).items.filter(
     (item) => item.kind !== "ask",
   );
+  const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN);
   // Who each poster is, asked once for the page (`core/marks.ts`).
   const marks = marksByName(
     ctx.app.db,
@@ -179,7 +202,8 @@ export function feedRegion(user: User, ctx: Ctx): Html {
     data-live="${FEED_LIVE}"
     data-live-src="/live/feed"
   >
-    ${items.length === 0
+    ${thoughts.map((t) => thoughtCard(t, user.username))}
+    ${items.length === 0 && thoughts.length === 0
       ? empty({
           icon: "activity",
           title: "Nothing new",
@@ -277,7 +301,7 @@ ${outboxJs}
     var box = composer.elements.text;
     var app = composer.elements.app;
     var text = box ? box.value.trim() : '';
-    if (!text || !app) return;
+    if (!text || !app || app.value === 'forge') return;
     if (!queue('/api/v1/feed/tells', { app: app.value, text: text })) return;
     e.preventDefault();
     box.value = '';
