@@ -781,8 +781,12 @@ work here.
   allowed).
 - **Boards** — `/boards/data`, for a forge admin who is a person (anyone else
   gets a 404): the query is the URL (`?source=runs&aggregate=count&by=day&fcolumn=state&fvalue=failed`),
-  drawn as a server-rendered line chart with its points in a table; a point opens the rows
-  behind it, keeping your filter.
+  drawn server-side as the chart chosen beside it (`chart=line|bar|area|number|table|heat`)
+  with its points in a table; a point opens the rows behind it, keeping your filter.
+  `series=<column>` splits each group by a second column: stacked area draws one band per
+  value (eight at most, the rest folded into "other"), the heat strip one row per value
+  (twelve at most) with time across, the table a series column; line, bar and number set
+  it aside. Number is the latest group's value over a sparkline of all of them.
   `/boards` holds the boards themselves: a board is one JSON file
   (`{title, range, refresh: off|10s|1m, panels: [{title, chart, query, w, h}]}`) in
   `forge/boards`, a repo the forge owns and makes on the first board; every save is a commit

@@ -14,7 +14,7 @@ import type { Ctx } from "../../http/context.ts";
 import { notFoundPage } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { flashTo } from "../layout.ts";
-import { readParams, toQuery } from "./boards.ts";
+import { PANEL_FIELDS, readParams, toQuery } from "./boards.ts";
 
 const num = (v: string) => (/^-?\d{1,4}$/.test(v) ? Number(v) : NaN);
 
@@ -31,13 +31,12 @@ function sentence(e: BoardError): string {
   return words[e] ?? "That could not be saved.";
 }
 
-/** A panel as the form says it: title, size, and the query the shared fields build. */
+/** A panel as the form says it: title, size, chart, and the query the shared fields build. */
 function panelOf(form: Form): Record<string, unknown> {
   const search = new URLSearchParams();
-  for (const k of ["source", "aggregate", "column", "by", "from", "to", "fcolumn", "fop", "fvalue"]) {
-    search.set(k, field(form, k));
-  }
-  return { title: field(form, "title"), chart: "line", query: toQuery(readParams(search)), w: num(field(form, "w")), h: num(field(form, "h")) };
+  for (const k of PANEL_FIELDS) search.set(k, field(form, k));
+  const p = readParams(search);
+  return { title: field(form, "title"), chart: p.chart, query: toQuery(p), w: num(field(form, "w")), h: num(field(form, "h")) };
 }
 
 function editOf(op: string, form: Form): Edit | undefined {

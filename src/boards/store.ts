@@ -9,6 +9,7 @@ import { repoDir } from "../git/repos.ts";
 import { listTree, readerFor } from "../git/read.ts";
 import { commitFiles, type CommitFilesError } from "../git/write.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { CHARTS, type Chart } from "./chart.ts";
 import { SOURCES } from "./sources.ts";
 
 export const BOARDS_OWNER = "forge";
@@ -17,13 +18,12 @@ const BRANCH = "main";
 
 export const RANGES = ["1h", "24h", "7d", "30d", "all"] as const;
 export const REFRESHES = ["off", "10s", "1m"] as const;
-export const CHARTS = ["line"] as const;
 export type Range = (typeof RANGES)[number];
 export type Refresh = (typeof REFRESHES)[number];
 
 export type Panel = {
   title: string;
-  chart: (typeof CHARTS)[number];
+  chart: Chart;
   query: Record<string, unknown>;
   w: number;
   h: number;

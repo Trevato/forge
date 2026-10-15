@@ -1,18 +1,20 @@
 /**
  * Boards, for a forge admin who is a person: `GET /boards/data` lists the
- * sources and their columns, and draws one query as a line chart with the
- * table of its points under it. The query is the URL (GET params), so a
+ * sources and their columns, and draws one query as the chart chosen beside
+ * it (line, bar, stacked area, number, table, heat strip) with the table of
+ * its points under it. The query is the URL (GET params), so a
  * query is a link. Each point links to the rows behind it: the same query
  * narrowed to that point's window and listed by the source's first column.
  * Anyone else gets the not-found page.
  */
-import { lineChart } from "../../boards/chart.ts";
-import { runQuery, type Query } from "../../boards/query.ts";
+import type { Database } from "bun:sqlite";
+import { CHART_NAMES, CHARTS, drawChart, usesSeries, type Cell, type Chart } from "../../boards/chart.ts";
+import { runQuery, type Answer, type Query, type Row } from "../../boards/query.ts";
 import { SOURCES } from "../../boards/sources.ts";
 import { listAllBoards } from "../../actions/boards.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage } from "../chrome.ts";
-import { html, raw } from "../html.ts";
+import { html, raw, when } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, card, empty } from "../ui.ts";
 
@@ -20,18 +22,24 @@ const BUCKET_MS = { minute: 60_000, hour: 3_600_000, day: 86_400_000 } as const;
 const AGGREGATES = ["count", "sum", "avg", "max"] as const;
 const OPS = ["eq", "ne", "lt", "lte", "gt", "gte"] as const;
 const MAX_PARAM = 256;
+/** The fields a panel is made from: its chart and its query. */
+export const PANEL_FIELDS = ["chart", "source", "aggregate", "column", "by", "series", "from", "to", "fcolumn", "fop", "fvalue"] as const;
 
 type Bucket = keyof typeof BUCKET_MS;
 const isBucket = (s: string): s is Bucket => Object.hasOwn(BUCKET_MS, s);
+const isChart = (s: string): s is Chart => (CHARTS as readonly string[]).includes(s);
 
 /** What the URL asks for: plain strings, bounded; `runQuery` judges them. */
 export function readParams(search: URLSearchParams) {
   const get = (k: string, d = "") => (search.get(k) ?? d).slice(0, MAX_PARAM);
+  const chart = get("chart", "line");
   return {
+    chart: isChart(chart) ? chart : "line",
     source: get("source", "runs"),
     aggregate: get("aggregate", "count"),
     column: get("column"),
     by: get("by", "day"),
+    series: get("series"),
     from: get("from"),
     to: get("to"),
     fcolumn: get("fcolumn"),
@@ -51,6 +59,7 @@ export function toQuery(p: Params): Query {
   if (p.from !== "") q.from = p.from;
   if (p.to !== "") q.to = p.to;
   q.groupBy = isBucket(p.by) ? { bucket: p.by } : p.by;
+  if (p.series !== "") q.series = p.series;
   const filter: NonNullable<Query["filter"]> = [];
   const add = (column: string, op: string, value: string) => {
     const numeric = src?.columns[column] === "number";
@@ -61,6 +70,30 @@ export function toQuery(p: Params): Query {
   if (filter.length > 0) q.filter = filter;
   return q;
 }
+
+/**
+ * Run `query` for `chart`: a chart that draws one value per group is asked
+ * without the query's series, so its groups are not split. The run is
+ * scoped to every repo — only an admin reaches a board.
+ */
+export function runFor(db: Database, chart: Chart, query: Record<string, unknown>): Answer {
+  if (usesSeries(chart) || query.series === undefined) return runQuery(db, query, { repoIds: "all" });
+  const { series: _, ...rest } = query;
+  return runQuery(db, rest, { repoIds: "all" });
+}
+
+/** Rows as the cells a chart draws: a null group or series reads "all"/"none". */
+export const cellsOf = (rows: readonly Row[], hrefs: readonly (string | null)[] = []): Cell[] =>
+  rows.map((r, i) => ({
+    label: String(r.group ?? "all"),
+    value: r.value ?? 0,
+    ...(r.series !== undefined ? { series: String(r.series ?? "none") } : {}),
+    ...(hrefs[i] ? { href: hrefs[i]! } : {}),
+  }));
+
+/** A drawn chart in the box that holds its space. */
+export const chartBox = (chart: Chart, cells: readonly Cell[], title: string) =>
+  html`<div class="chart-box${chart === "table" ? " is-table" : ""}">${raw(drawChart(chart, cells, title))}</div>`;
 
 const link = (p: Params) => {
   const s = new URLSearchParams();
@@ -75,18 +108,22 @@ const link = (p: Params) => {
  * rows view counts rows by the source's first column, so it lists that
  * column's values, not whole rows.
  */
-function behind(p: Params, group: string | number | null): string | null {
+function behind(p: Params, row: Row): string | null {
+  const { group } = row;
   const first = Object.keys(SOURCES[p.source]!.columns)[0]!;
-  const rows = { ...p, rows: "1", by: first, aggregate: "count", column: "" };
+  const rows = { ...p, rows: "1", by: first, aggregate: "count", column: "", series: "" };
   if (!isBucket(p.by)) {
-    if (group === null) return null;
+    // A column group and a series would be two filters beside the user's; the rows view says one.
+    if (group === null || row.series !== undefined) return null;
     return link({ ...rows, gcolumn: p.by, gvalue: String(group) });
   }
   if (typeof group !== "string") return null;
+  if (row.series === null) return null;
   const start = new Date(group);
   return link({
     ...rows,
     from: start.toISOString(), to: new Date(start.getTime() + BUCKET_MS[p.by]).toISOString(),
+    ...(row.series === undefined ? {} : { gcolumn: p.series, gvalue: String(row.series) }),
   });
 }
 
@@ -98,7 +135,10 @@ export function queryFields(p: Params) {
   const src = Object.hasOwn(SOURCES, p.source) ? SOURCES[p.source]! : undefined;
   const cols = src ? Object.keys(src.columns) : [];
   return html`
-      <select class="input" name="source" aria-label="Source">
+      <select class="input" name="chart" aria-label="Chart">
+      ${CHARTS.map((c) => option(c, CHART_NAMES[c], c === p.chart))}
+    </select>
+    <select class="input" name="source" aria-label="Source">
       ${Object.keys(SOURCES).map((n) => option(n, n, n === p.source))}
     </select>
     <select class="input" name="aggregate" aria-label="Aggregate">
@@ -111,6 +151,10 @@ export function queryFields(p: Params) {
     <select class="input" name="by" aria-label="Group by">
       ${(Object.keys(BUCKET_MS) as Bucket[]).map((b) => option(b, `per ${b}`, b === p.by))}
       ${cols.map((c) => option(c, `by ${c}`, c === p.by))}
+    </select>
+    <select class="input" name="series" aria-label="Series (stacked area, heat strip, table)">
+      ${option("", "(one series)", p.series === "")}
+      ${cols.map((c) => option(c, `split by ${c}`, c === p.series))}
     </select>
     <input class="input mono" name="from" value="${p.from}" placeholder="from 2026-10-01" aria-label="From" maxlength="${MAX_PARAM}" />
     <input class="input mono" name="to" value="${p.to}" placeholder="to 2026-10-08" aria-label="To" maxlength="${MAX_PARAM}" />
@@ -125,18 +169,20 @@ export function queryFields(p: Params) {
 `;
 }
 
-/** The form's fields back from a stored query; what a form cannot say is dropped. */
-export function paramsOf(q: Record<string, unknown>): Params {
+/** The form's fields back from a stored query and its chart; what a form cannot say is dropped. */
+export function paramsOf(q: Record<string, unknown>, chart: Chart = "line"): Params {
   const text = (v: unknown) => (typeof v === "string" || typeof v === "number" ? String(v) : "");
   const g = q.groupBy;
   const f = Array.isArray(q.filter) ? (q.filter[0] as Record<string, unknown> | undefined) : undefined;
   const base = readParams(new URLSearchParams());
   return {
     ...base,
+    chart,
     source: text(q.source) || base.source,
     aggregate: text(q.aggregate) || base.aggregate,
     column: text(q.column),
     by: typeof g === "string" ? g : typeof g === "object" && g !== null ? text((g as { bucket?: unknown }).bucket) : base.by,
+    series: text(q.series),
     from: text(q.from),
     to: text(q.to),
     ...(f ? { fcolumn: text(f.column), fop: text(f.op) || "eq", fvalue: text(f.value) } : {}),
@@ -149,14 +195,14 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
   if (user?.isAdmin !== true || user.kind === "agent") return notFoundPage(ctx);
   const p = readParams(ctx.url.searchParams);
   const src = Object.hasOwn(SOURCES, p.source) ? SOURCES[p.source]! : undefined;
-  const answer = runQuery(ctx.app.db, toQuery(p), { repoIds: "all" });
+  const answer = p.rows === "" ? runFor(ctx.app.db, p.chart, toQuery(p)) : runQuery(ctx.app.db, toQuery(p), { repoIds: "all" });
   const cols = src ? Object.keys(src.columns) : [];
 
   const sources = card(
     html`<ul class="list">
       ${Object.entries(SOURCES).map(
         ([name, s]) => html`<li class="row">
-          <a href="${link({ ...p, source: name, by: "day", column: "", fcolumn: "", fvalue: "", gcolumn: "", gvalue: "", rows: "" })}"><strong>${name}</strong></a>
+          <a href="${link({ ...p, source: name, by: "day", column: "", series: "", fcolumn: "", fvalue: "", gcolumn: "", gvalue: "", rows: "" })}"><strong>${name}</strong></a>
           <span class="muted small mono">${Object.entries(s.columns).map(([c, t]) => `${c}:${t}`).join(" ")}</span>
         </li>`,
       )}
@@ -178,28 +224,26 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
   } else if (answer.rows.length === 0) {
     result = empty({ icon: "activity", title: "No rows", note: "Nothing matches this query." });
   } else {
-    const hrefs = answer.rows.map((r) => (p.rows === "" ? behind(p, r.group) : null));
-    const points = answer.rows.map((r, i) => ({
-      label: String(r.group ?? "all"),
-      value: r.value ?? 0,
-      ...(hrefs[i] ? { href: hrefs[i]! } : {}),
-    }));
+    const hrefs = answer.rows.map((r) => (p.rows === "" ? behind(p, r) : null));
+    const points = cellsOf(answer.rows, hrefs);
+    const split = answer.rows[0]?.series !== undefined;
     const chart =
       p.rows === ""
-        ? html`<div class="chart-box">${raw(lineChart(points, `${p.aggregate} of ${p.source}`))}</div>`
+        ? chartBox(p.chart, points, `${p.aggregate} of ${p.source}`)
         : html`<p class="muted small">The rows behind a point, as the values of ${cols[0] ?? ""} with how many rows have each. <a href="${link({ ...p, rows: "" })}">Back to the chart</a>.</p>`;
     result = html`${chart}
-      <table class="table">
-        <thead><tr><th scope="col">${p.by}</th><th scope="col" class="num">${p.aggregate}</th></tr></thead>
+      ${when(p.rows !== "" || p.chart !== "table", () => html`<table class="table">
+        <thead><tr><th scope="col">${p.by}</th>${split ? html`<th scope="col">${p.series}</th>` : null}<th scope="col" class="num">${p.aggregate}</th></tr></thead>
         <tbody>
           ${answer.rows.map(
             (r, i) => html`<tr>
               <td class="mono">${hrefs[i] ? html`<a href="${hrefs[i]!}">${points[i]!.label}</a>` : points[i]!.label}</td>
+              ${split ? html`<td class="mono">${points[i]!.series ?? ""}</td>` : null}
               <td class="num mono">${String(r.value ?? "")}</td>
             </tr>`,
           )}
         </tbody>
-      </table>`;
+      </table>`)}`;
   }
 
   const listed = await listAllBoards(ctx.app, user);
@@ -209,7 +253,7 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
       ? null
       : card(
           html`<form method="post" action="/boards/pin" class="row-actions">
-            ${["source", "aggregate", "column", "by", "from", "to", "fcolumn", "fop", "fvalue"].map(
+            ${PANEL_FIELDS.map(
               (k) => html`<input type="hidden" name="${k}" value="${p[k as keyof Params]}" />`,
             )}
             <input type="hidden" name="w" value="1" /><input type="hidden" name="h" value="1" />
