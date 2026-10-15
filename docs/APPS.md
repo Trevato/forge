@@ -225,6 +225,16 @@ that before the deploy fails; `tty` is the app's terminal interface (below);
 file is read from the commit being deployed, never from the database — a
 pull that changes how the app runs is previewed the way it will run.
 
+`toolbar`, at the top level, is `true` unless you set it to `false`. The
+forge adds one `<script>` tag to the HTML pages your app serves (before
+`</body>`, or at the end): a small pill in the bottom-right corner, collapsed
+until pressed, drawn in a shadow root so it never touches your styles. The
+script comes from the forge's own origin, immutable-cached, with no inline
+code; a `Content-Security-Policy` that forbids it just leaves the pill out.
+Only `text/html` responses the app sends uncompressed with a `Content-Length`
+(up to 4 MiB) are rewritten; JSON, images, compressed or chunked HTML and
+`HEAD` requests pass through byte for byte. `"toolbar": false` keeps it out.
+
 Two more fields say what the app's code may use (rule 9):
 
 ```json
@@ -244,6 +254,11 @@ reach `registry.npmjs.org`. `limits` (MiB, cores, MiB) default to 512 MiB,
 are capped by the machine (`FORGE_CELL_MEMORY_MAX_MIB`, default 4096; the
 number of cores; `FORGE_CELL_DISK_MAX_MIB`, default 16384). A cell's `/tmp`
 holds at most 256 MiB.
+
+Where the host cannot hold cells (or the crew's shell sandbox), the forge
+runs uncontained and says so in one line: a boot warning, and, in the foot of
+every page a site admin reads, `Reduced protection: apps (<reason>) runs
+uncontained.` (`kernel/protection.ts`). A fully protected forge shows nothing.
 
 A release that turns egress on must not break an app whose writers have
 not declared what it uses yet, so the operator can start it reported:

@@ -51,6 +51,11 @@ export interface AppManifest {
   readonly egress?: readonly string[] | undefined;
   /** `app.limits`: the app process's memory, CPU and disk, within the machine's maximum. */
   readonly limits?: DeclaredLimits | undefined;
+  /**
+   * `toolbar` (top level of `forge.json`): `false` keeps the forge's pill
+   * out of the app's HTML pages. Unset is on.
+   */
+  readonly toolbar?: boolean | undefined;
 }
 
 export type ManifestError =
@@ -138,6 +143,9 @@ export function parseManifest(
   if (!egress.ok) return egress;
   const limits = limitsField(app, "app");
   if (!limits.ok) return limits;
+  const toolbar = parsed.value["toolbar"];
+  if (toolbar !== undefined && typeof toolbar !== "boolean")
+    return invalid("forge.json: toolbar must be true or false");
   const kind = app["kind"];
   if (kind !== undefined && kind !== "web" && kind !== "service")
     return invalid('forge.json: app.kind must be "web" or "service"');
@@ -166,6 +174,7 @@ export function parseManifest(
     service,
     egress: egress.value,
     limits: limits.value,
+    toolbar: toolbar ?? true,
   });
 }
 

@@ -141,6 +141,7 @@ body { overflow-x: clip; }
   background: linear-gradient(135deg, var(--accent), var(--merged));
 }
 .foot a:hover { color: var(--accent); }
+.foot .reduced { color: var(--muted-fg); }
 }
 `;
 

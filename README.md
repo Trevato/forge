@@ -75,6 +75,11 @@ ssh -p 2222 localhost                        # the terminal UI
 git clone ssh://localhost:2222/you/hello.git # git, same port
 ```
 
+On a host that cannot hold cells or the crew's shell sandbox, a site admin
+sees `Reduced protection: …` in one line, under the filter on the terminal's
+first screen and in the web footer; nobody else does, and a fully protected
+forge shows nothing.
+
 Your SSH key is your identity. A key the forge knows signs you straight in; any
 other key browses public repos as a guest and can press `s` to sign in with a
 username and password — which links that key to your account, so the next
@@ -216,6 +221,14 @@ header (`p` on a row in the terminal, `P` on a repo's home) says "keep this on
 my machine", and the dashboard grows an **On your machine** card listing them.
 The server remembers only the choice — nothing about the state of a laptop —
 and `forge sync` below is what acts on it.
+
+**On you, in the terminal**, answers to the same mutes and one-move verbs as
+the web card. Repositories you muted are hidden and counted ("2 repositories
+muted"). On the On you card: `space` marks a row, `x` closes the marked rows
+(or the row under the cursor) with one reason, `m` mutes their repositories,
+`S` ships them, `u` undoes the latest set within its day, and `L` listens
+again to every muted repository. Each goes through `applyAsksBulk`, so the
+per-row access checks and refusals are the web's, shown in the toast.
 
 ## On your machine
 
@@ -429,6 +442,20 @@ The terminal has no backups view, so it has no readout.
 `docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.
+
+### The sentinel
+
+The forge hunts its own faults (`docs/CREW.md`): a hunt an hour on the
+autonomy clock, sooner when a held slot or a setting left away from its
+default is new. Each finding is one issue with its evidence, filed in
+`FORGE_SENTINEL_REPO` (default `trevato/forge`) as the `sentinel` agent, else
+the first admin. Evidence is scrubbed of anything credential-shaped before it
+is filed.
+
+- **Board:** a site admin's forge strip shows the open findings and the last
+  hunt; a guest or member sees nothing.
+- **Terminal:** press `ctrl+k`, run **Sentinel** — the same line as a toast.
+  Offered to site admins only.
 
 ### Passports
 

@@ -5,6 +5,7 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import {
@@ -538,6 +539,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/assets/:name.js", async (ctx) => {
     const shell = shellAsset();
     if (ctx.params.name === shell.name) return assetResponse(shell);
+    if (ctx.params.name === TOOLBAR_NAME) return toolbarResponse();
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();
     return assetResponse(asset);

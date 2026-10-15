@@ -18,6 +18,8 @@ import { openIssue } from "../src/actions/issues.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { getAppByRepo } from "../src/core/apps.ts";
+import { hunt } from "../src/crew/sentinel.ts";
+import { setCapacity } from "../src/core/capacity.ts";
 import { recordDecision } from "../src/core/decisions.ts";
 import { recordLook } from "../src/core/looks.ts";
 import { getPull } from "../src/core/pulls.ts";
@@ -508,6 +510,28 @@ describe("the board's forge strip", () => {
     } finally {
       delete process.env["FORGE_GUARD_DIR"];
       rmSync(guard, { recursive: true, force: true });
+    }
+  });
+
+  test("the sentinel's line is the admin's alone, and absent before the first hunt", async () => {
+    expect(await board("root")).not.toContain("sentinel");
+
+    setCapacity(app.db, "checks.concurrency", "4", admin.id);
+    app.db
+      .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'")
+      .run("2020-01-01T00:00:00.000Z");
+    process.env["FORGE_SENTINEL_REPO"] = "root/stuck";
+    try {
+      expect(hunt(app, "root/stuck").filed).toBeGreaterThan(0);
+      const seen = await board("root");
+      expect(seen).toMatch(/<a class="board-forge-need" id="sentinel" href="\/root\/stuck\/issues">The sentinel has \d+ open findings?<\/a>/);
+      expect(seen).not.toContain('class="board-forge-ok" id="sentinel"');
+      expect(await board("bob")).not.toMatch(/sentinel/i);
+      const guest = await (await fetch(`${servers.url}/board`)).text();
+      expect(guest).not.toMatch(/sentinel/i);
+    } finally {
+      delete process.env["FORGE_SENTINEL_REPO"];
+      setCapacity(app.db, "checks.concurrency", "1", admin.id);
     }
   });
 });

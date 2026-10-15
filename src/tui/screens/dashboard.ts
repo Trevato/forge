@@ -14,11 +14,19 @@
  * whole of this screen's design.
  */
 
+import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { forgeLane, forgeNeeds } from "../../actions/health.ts";
 import { mayView } from "../../core/sealed.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
 import { listAssignedTo, type Issue } from "../../core/issues.ts";
+import {
+  applyAsksBulk,
+  latestUndoable,
+  undoAsksBulk,
+} from "../../actions/asks_bulk.ts";
+import { mutedRepos, removeMutes } from "../../core/interactions.ts";
+import type { Operation } from "../../core/fleet_ops.ts";
 import { listPins, pinnedRepoIds, type Pin } from "../../core/pins.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
 import {
@@ -54,6 +62,8 @@ import {
   runAsync,
   type ListRow,
   openOnWeb,
+  promptScreen,
+  plural,
 } from "./common.ts";
 import { issueScreen } from "./issue.ts";
 import { newRepoScreen } from "./newrepo.ts";
@@ -90,6 +100,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let pins: Pin[] = [];
   let pinned = new Set<string>();
   let onYou: OnYouItem[] = [];
+  /** Repositories the viewer muted that hold work assigned to them: said, never silent. */
+  let silenced = new Map<string, Repo>();
+  /** The rows marked for one verb, by issue id. */
+  const marked = new Set<string>();
+  let lastSet: Operation | undefined;
   /** Why planning is paused, for the autonomous apps where it is; as on the board. */
   let holds = new Map<string, string>();
   let forge: string[] | undefined;
@@ -111,6 +126,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
     onYou = assignedToMe();
+    for (const id of [...marked])
+      if (!onYou.some((item) => item.issue.id === id)) marked.delete(id);
+    lastSet = f.user ? latestUndoable(f.app, f.user) : undefined;
     const now = new Date();
     holds = new Map(
       all.flatMap((repo) => {
@@ -144,18 +162,122 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   const assignedToMe = (): OnYouItem[] => {
     if (f.user === undefined) return [];
     const issues = listAssignedTo(f.db, f.user.id, 50);
-    const byId = getReposByIds(
-      f.db,
-      issues.map((issue) => issue.repoId),
-    );
+    const muted = mutedRepos(f.db, f.user.id);
+    const byId = getReposByIds(f.db, [...new Set([...issues.map((i) => i.repoId), ...muted])]);
+    // Every repository this account muted, with work on it or not: the web's
+    // card counts the same set, and `L` takes back all of it.
+    silenced = new Map();
+    for (const id of muted) {
+      const repo = byId.get(id);
+      if (repo !== undefined && canRead(f.db, repo, f.user)) silenced.set(id, repo);
+    }
     return issues.flatMap((issue) => {
       const repo = byId.get(issue.repoId);
-      return repo !== undefined &&
-        canRead(f.db, repo, f.user) &&
-        mayView(f.db, repo, issue, f.user)
-        ? [{ issue, repo }]
-        : [];
+      if (
+        repo === undefined ||
+        !canRead(f.db, repo, f.user) ||
+        !mayView(f.db, repo, issue, f.user)
+      )
+        return [];
+      if (muted.has(repo.id)) return [];
+      return [{ issue, repo }];
     });
+  };
+
+  /** The marked rows, or the one under the cursor when none is marked. */
+  const targets = (): OnYouItem[] => {
+    const picked = onYou.filter((item) => marked.has(item.issue.id));
+    const here = onYou[at("onyou").index];
+    return picked.length > 0 ? picked : here === undefined ? [] : [here];
+  };
+
+  /** One verb for the set, through the same action the web and API use. */
+  const clear = (action: "close" | "mute" | "ship", reason?: string): void => {
+    const items = targets().map((t) => `issue:${t.issue.id}`);
+    if (items.length === 0) return;
+    runAsync(ctx, async () => {
+      const done = await applyAsksBulk(f.app, f.user, action, items, reason);
+      if (!done.ok) {
+        ctx.toast(done.error.message, "danger");
+        return;
+      }
+      const ok = done.value.rows.filter((r) => r.outcome === "ok").length;
+      const refused = [
+        ...done.value.rows
+          .filter((r) => r.outcome !== "ok")
+          .map((r) => `${r.label}: ${r.reason}`),
+        ...done.value.skipped.map((s) => `${s.item}: ${s.reason}`),
+      ];
+      marked.clear();
+      reload();
+      ctx.toast(
+        `${action}: ${ok} done` +
+          (refused.length > 0 ? `, ${refused.length} refused (${refused[0]})` : "") +
+          (ok > 0 ? " · u undoes" : ""),
+        refused.length > 0 ? "attn" : "success",
+      );
+    });
+  };
+
+  const closeSet = (): void => {
+    if (targets().length === 0) return;
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: `Close ${plural(targets().length, "item")}`,
+        label: "Reason",
+        hint: "One reason, written on each. Empty is fine.",
+        onSubmit: (value) => {
+          clear("close", value.trim());
+          return undefined;
+        },
+      }),
+    );
+  };
+
+  const shipSet = (): void => {
+    const n = targets().length;
+    if (n === 0) return;
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: "Ship",
+        body: [`Ship ${plural(n, "item")}? Each is checked for your access.`],
+        actions: [
+          { label: "Cancel", variant: "ghost" },
+          { label: "Ship", variant: "danger" },
+        ],
+        selected: 0,
+        onChoose: (index) => {
+          if (index === 1) clear("ship");
+        },
+      }),
+    );
+  };
+
+  const undoSet = (): void => {
+    const op = lastSet;
+    if (op === undefined) {
+      ctx.toast("nothing to undo", "attn");
+      return;
+    }
+    runAsync(ctx, async () => {
+      const done = await undoAsksBulk(f.app, f.user, op.id);
+      reload();
+      ctx.toast(
+        done.ok ? "undone" : done.error.message,
+        done.ok ? "success" : "danger",
+      );
+    });
+  };
+
+  const listenAgain = (): void => {
+    if (f.user === undefined || silenced.size === 0) return;
+    removeMutes(
+      f.db,
+      f.user.id,
+      [...silenced.keys()].map((id) => `repo:${id}`),
+    );
+    reload();
+    ctx.toast("listening again", "success");
   };
 
   /** Yours with an empty filter; anything you can see once you type —
@@ -260,6 +382,17 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         binding(["enter"], "open"),
         binding(["/"], "find"),
         binding(["p"], "pin", { disabled: !f.signedIn }),
+        // The On you verbs show only where they act, so the bar stays short.
+        ...(focus === "onyou" && onYou.length > 0
+          ? [
+              binding(["space"], "mark"),
+              binding(["x"], "close"),
+              binding(["m"], "mute"),
+              binding(["S"], "ship"),
+            ]
+          : []),
+        ...(lastSet !== undefined ? [binding(["u"], "undo")] : []),
+        ...(silenced.size > 0 ? [binding(["L"], "listen again")] : []),
         binding(["d"], "unpin", {
           disabled: focus !== "machine" || pins.length === 0,
         }),
@@ -311,8 +444,25 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       drawn = here;
       if (!here.has(focus)) focus = "repos";
 
-      const [box, list] = split(main, "v", [len(1), fill(1)]);
+      // A site admin is told once, under the filter, when the forge runs
+      // with less than its default protection — the web footer's line.
+      const reduced = f.user?.isAdmin === true ? protectionNotice() : undefined;
+      const [box, warn, list] = split(
+        main,
+        "v",
+        reduced === undefined
+          ? [len(1), len(0), fill(1)]
+          : [len(1), len(1), fill(1)],
+      );
       ctx.setCursor(filter.render(s, box!, c, "find a repository"));
+      if (reduced !== undefined)
+        s.text(
+          warn!.x,
+          warn!.y,
+          truncate(reduced, warn!.w),
+          style(c.attn, c.bg),
+          warn!.x + warn!.w,
+        );
       drawRepos(s, list!, c, set);
       if (aside === undefined) return;
       if (!f.signedIn) {
@@ -342,6 +492,18 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         openHere();
         return true;
       }
+      if (focus === "onyou" && f.user !== undefined) {
+        const item = onYou[at("onyou").index];
+        if (e.key === "space" && item !== undefined) {
+          if (!marked.delete(item.issue.id)) marked.add(item.issue.id);
+          return true;
+        }
+        if (e.key === "x") return closeSet(), true;
+        if (e.key === "m") return clear("mute"), true;
+        if (e.key === "S") return shipSet(), true;
+      }
+      if (e.key === "u" && f.user) return undoSet(), true;
+      if (e.key === "L" && f.user) return listenAgain(), true;
       if (e.key === "d" && focus === "machine") {
         unpin(pins[at("machine").index]);
         return true;
@@ -385,12 +547,18 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** The inbox: what is assigned to this account, across every repository. */
   function drawOnYou(s: Surface, r: Rect, c: Tokens, set: IconSet): void {
     const on = focus === "onyou";
+    const footer = onYouFooter();
     const inner = card(s, r, c, {
       title: `${icon("person", set)} ${TITLES.onyou}`,
       focused: on,
+      ...(footer === undefined ? {} : { footer }),
     });
     if (onYou.length === 0) {
-      note(s, inner, c, ["Nothing is assigned to you."]);
+      note(s, inner, c, [
+        silenced.size > 0
+          ? "Nothing is on you outside muted repositories."
+          : "Nothing is assigned to you.",
+      ]);
       return;
     }
     drawList(
@@ -406,7 +574,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               ? PULL_MARK
               : ISSUE_MARK;
         return {
-          title: `${mark} #${item.issue.number} ${item.issue.title}`,
+          title: `${marked.has(item.issue.id) ? "[x] " : ""}${mark} #${item.issue.number} ${item.issue.title}`,
           meta: `${item.repo.ownerName}/${item.repo.name}`,
         };
       }),
@@ -421,6 +589,18 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         openAssigned(onYou[index]);
       },
     });
+  }
+
+  /** What the card says about mutes, marks and the day's undo. */
+  function onYouFooter(): string | undefined {
+    const parts: string[] = [];
+    if (marked.size > 0) parts.push(`${marked.size} marked`);
+    if (silenced.size > 0)
+      parts.push(
+        `${silenced.size} ${silenced.size === 1 ? "repository" : "repositories"} muted · L listen again`,
+      );
+    if (lastSet !== undefined) parts.push(`u undo ${lastSet.verb}`);
+    return parts.length > 0 ? parts.join(" · ") : undefined;
   }
 
   function drawRepos(s: Surface, r: Rect, c: Tokens, set: IconSet): void {

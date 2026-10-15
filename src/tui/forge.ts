@@ -10,6 +10,7 @@
 
 import type { App as Forge } from "../app.ts";
 import { search } from "../actions/search.ts";
+import { sentinelSummary } from "../crew/sentinel.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import { sourceFor } from "../view/source.ts";
 import { App, type Ctx, type Screen } from "./app/app.ts";
@@ -170,6 +171,18 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
           run: () => openOnWeb(session, ctx, "/settings", "Account settings"),
         },
       );
+    // The forge's own faults, as the board's strip shows them: a site admin's.
+    if (session.user?.isAdmin === true)
+      commands.push({
+        id: "sentinel",
+        title: "Sentinel",
+        hint: "the forge's open faults",
+        run: () =>
+          ctx.toast(
+            sentinelSummary(session.db) ?? "The sentinel has not hunted yet",
+            "default",
+          ),
+      });
     commands.push({
       id: "quit",
       title: "Quit",
