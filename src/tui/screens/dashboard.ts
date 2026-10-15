@@ -14,6 +14,7 @@
  * whole of this screen's design.
  */
 
+import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { forgeNeeds } from "../../actions/health.ts";
 import { mayView } from "../../core/sealed.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
@@ -89,6 +90,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let pins: Pin[] = [];
   let pinned = new Set<string>();
   let onYou: OnYouItem[] = [];
+  /** Why planning is paused, for the autonomous apps where it is; as on the board. */
+  let holds = new Map<string, string>();
   let forge: string[] | undefined;
   const filter = new Filter();
   /** One cursor per pane: moving in one must never move another. */
@@ -106,6 +109,14 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
     onYou = assignedToMe();
+    const now = new Date();
+    holds = new Map(
+      all.flatMap((repo) => {
+        const hold =
+          repo.autonomy === "autonomous" ? plannerHold(f.app, repo, now) : null;
+        return hold === null ? [] : [[repo.id, holdWords(hold)] as const];
+      }),
+    );
     forge = forgeNeeds(f.app, f.user);
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.
@@ -434,7 +445,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       rows.map(
         (repo): ListRow => ({
           title: `${repoMark(pinned.has(repo.id), set)}${repo.ownerName}/${repo.name}`,
-          secondary: repo.description,
+          secondary: holds.get(repo.id) ?? repo.description,
           meta: metaOf(
             repo.visibility === "private" ? "private" : "",
             counts(repo.counts),

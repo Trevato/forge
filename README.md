@@ -319,6 +319,13 @@ changes, a line comment — and the agent picks it up in the background,
 resuming its session. A failed check re-engages it too, a bounded number of
 times before a person must speak.
 
+An autonomous app's planner is **held** while nothing is landing or the plate
+is full: no pull has merged in 48 h while one was closed unmerged, or more than
+`slots × 3` ready, unassigned issues are waiting. The tick log says which
+(`planner: held`), and the board and the terminal's repository list say it in
+words. A comment on the direction issue from someone who may write there lifts
+the hold; an issue handed to the planner is still owed its pass.
+
 The forge asks the host for one more binary: `claude`, on `PATH` or at
 `FORGE_CLAUDE`, authenticated as the operator (an `ANTHROPIC_API_KEY` in the
 forge's environment is handed to runs; the machine's own Claude Code login
