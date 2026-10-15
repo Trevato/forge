@@ -35,6 +35,7 @@ import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
+import { stalledScreen } from "./screens/stalled.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
 import { newPullScreen } from "./screens/newpull.ts";
@@ -194,6 +195,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Flow",
         hint: "the pipeline's bottleneck and throughput",
         run: () => ctx.push(flowScreen(ctx, flowLines(session.db))),
+      });
+    // Stalled flow steps the viewer can unblock, as the home's cards show them (#1807).
+    if (session.signedIn)
+      commands.push({
+        id: "stalled",
+        title: "Stalled steps",
+        hint: "pulls whose check is red or was never asked for; enter re-runs",
+        run: () => ctx.push(stalledScreen(session, ctx)),
       });
     commands.push({
       id: "family",

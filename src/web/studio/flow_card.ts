@@ -3,7 +3,8 @@
  * been asked for, or is red, for longer than its stage allows — the pull,
  * its stage, how long it has been stuck, and the one button that unblocks
  * it. The button is a plain form post to the pull's own checks route, which
- * checks the origin and write access. A step that moves on is gone on the
+ * checks the origin and write access and, told `next=/`, comes back to the
+ * home with a flash rather than leaving it. A step that moves on is gone on the
  * next render; nothing is stored.
  */
 
@@ -24,6 +25,7 @@ function stalledCard(s: StalledStep): Html {
     </div>
     <p class="fcard-reason"><a href="${base}">${s.title}</a>${s.issue === null ? null : html` <span class="muted small">for #${String(s.issue)}</span>`}</p>
     <form method="post" action="${base}/checks" class="inline-form">
+      <input type="hidden" name="next" value="/">
       ${btn(BUTTON[s.action], { size: "sm", icon: "loader" })}
       <span class="muted small">${s.unblock}</span>
     </form>

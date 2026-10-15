@@ -329,7 +329,7 @@ ${outboxJs}
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'x' || e.metaKey || e.ctrlKey || e.altKey) return;
     var a = document.activeElement;
-    if (!a || !a.matches || !a.matches('.fcard')) return;
+    if (!a || !a.matches || !a.matches('.fcard') || !feed.contains(a)) return;
     e.preventDefault();
     act(a, 'dismissed');
   });

@@ -17,6 +17,9 @@ import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { readStalled } from "../src/flow/stalled.ts";
+import { unblock } from "../src/flow/unblock.ts";
+import { stalledRows } from "../src/tui/screens/stalled.ts";
+import { feedJs } from "../src/web/studio/feed.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -170,5 +173,50 @@ describe("stalled steps on the home", () => {
     const many = counted();
     expect(many.steps).toBeGreaterThanOrEqual(few.steps + 6);
     expect(many.queries).toBe(few.queries);
+  });
+
+  test("the re-run returns to the home, and only to the home", async () => {
+    const pull = await pullOn();
+    run(pull, "failed");
+    expect(await home()).toContain('name="next" value="/"');
+    const post = (next: string) =>
+      fetch(`${servers.url}/alice/garden/pulls/${pull.number}/checks`, {
+        method: "POST",
+        headers: { cookie, origin: servers.url, "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ next }),
+        redirect: "manual",
+      });
+    expect((await post("/")).headers.get("location")).toBe("/");
+    // Anything else, an off-site address included, goes to the pull as before.
+    for (const bad of ["https://evil.example/", "//evil.example", "/settings"])
+      expect((await post(bad)).headers.get("location")).toBe(`/alice/garden/pulls/${pull.number}`);
+  });
+
+  test("the cards sit outside the feed the feed's script acts on", async () => {
+    const pull = await pullOn();
+    run(pull, "failed", 90);
+    app.db.query("UPDATE issue SET created_at = ?2 WHERE id = ?1").run(pull.id, hoursAgo(100));
+    const page = await home();
+    const card = page.indexOf(`data-flow-card="${repo.id}#${pull.number}"`);
+    const feedAt = page.indexOf('id="live-feed"');
+    expect(card).toBeGreaterThan(-1);
+    expect(card).toBeLessThan(feedAt);
+    expect(feedJs).toContain("document.getElementById('live-feed')");
+    expect(feedJs).toContain("feed.contains(a)");
+  });
+
+  test("the terminal lists the same steps and re-runs them, for writers only", async () => {
+    const pull = await pullOn();
+    run(pull, "failed");
+    const step = stalled().find((s) => s.pull === pull.number)!;
+    const rows = stalledRows([step]);
+    expect(rows[0]!.title).toContain(`alice/garden #${pull.number}`);
+    expect(rows[0]!.meta).toContain("re-run");
+    const refused = await unblock(app, bob, step);
+    expect(refused.ok).toBe(false);
+    const asked = await unblock(app, alice, step);
+    // Whatever the checks worker says, the answer is a plain verdict, not a throw.
+    expect(typeof asked.ok).toBe("boolean");
+    expect(stalled(bob)).toEqual([]);
   });
 });
