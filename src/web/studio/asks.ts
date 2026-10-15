@@ -52,7 +52,7 @@ import {
 import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
-import { waitsForPerson, type ReviewWait } from "../../crew/review.ts";
+import { waitsForPerson, waitsForReviewer, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { vitals } from "../../kernel/vitals.ts";
 import { repoBase } from "../chrome.ts";
@@ -306,6 +306,9 @@ function askCandidatesFor(
       // bringing it up to date is work, not a person's decision.
       !isStalePull(db, pull.id, pull.headOid)
     ) {
+      // An agent's green pull waits for its reviewer first: it is the
+      // crew's to wait on, and reaches the owner with the verdict (#1602).
+      if (waitsForReviewer(db, repo.id, pull) !== undefined) continue;
       // Autonomous repositories look at their own green pulls: the decider,
       // then the crew's reviewer. Everything else waits for a person —
       // whoever opened it, since a green change asks to be looked at

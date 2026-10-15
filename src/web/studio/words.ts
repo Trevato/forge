@@ -17,6 +17,7 @@ import type { User } from "../../core/users.ts";
 import type { Efficiency } from "../../core/efficiency.ts";
 import type { WindowStanding } from "../../core/standing.ts";
 import { whenText } from "../../crew/limits.ts";
+import { waitsForReviewer } from "../../crew/review.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { getPull, pullForBranch, type Pull } from "../../core/pulls.ts";
 import {
@@ -215,6 +216,11 @@ export async function pullWord(
   // a look: an open change there waits on a person, and says so.
   if (ctx.record === undefined && check.state === "none")
     return { word: "waiting", note: "open — waiting on a person" };
+  if (check.state === "ok") {
+    const reviewer = waitsForReviewer(ctx.db, pull.repoId, pull);
+    if (reviewer !== undefined)
+      return { word: "waiting", note: `waiting for ${reviewer}'s review` };
+  }
   return checkRunWord(check);
 }
 

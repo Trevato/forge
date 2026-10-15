@@ -287,6 +287,32 @@ export function waitsForPerson(
 }
 
 /**
+ * The reviewer an agent's green pull is waiting for, by name: a reviewer is
+ * on the crew, no verdict is on the head, and the review is neither lapsed
+ * nor handed over (`waitsForPerson` is exactly the rest). Undefined once a
+ * verdict lands, while a person holds it, or for a person's own pull — so
+ * the pull is the crew's to wait on, and becomes the owner's the moment
+ * this goes undefined.
+ */
+export function waitsForReviewer(
+  db: Database,
+  repoId: string,
+  pull: Pull,
+  now = new Date(),
+): string | undefined {
+  if (!pull.authorIsAgent || getHold(db, pull.id) !== undefined) return undefined;
+  const seen = reviewSummary(db, pull.id, pull.headOid);
+  if (seen.approvals > 0 || seen.changesRequested > 0) return undefined;
+  const reviewers = reviewersOf(db, repoId);
+  if (reviewers.length === 0 || handedToPerson(db, repoId, pull)) return undefined;
+  const history = reviewAttempts(db, pull);
+  if (history === undefined || stageOf(history, now) === "lapsed") return undefined;
+  const sent = history.attempts.at(-1)?.reviewerId;
+  const who = reviewers.find((r) => r.user.id === sent) ?? reviewers[0]!;
+  return who.user.username;
+}
+
+/**
  * Move review along on this green head: send it to the right reviewer
  * when it is due (`reviewStage`), and say where it stands. `none` when
  * there is nothing to wait for — no reviewer on the crew — and `done`
