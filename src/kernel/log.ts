@@ -113,52 +113,111 @@ export interface ErrorLine {
   readonly message: string;
 }
 
-const ring: ErrorLine[] = [];
-/** scope → minute bucket → count: an hour of counts in at most 61 buckets per scope. */
-const buckets = new Map<string, Map<number, number>>();
+/**
+ * Where error lines are kept and counted. The default ledger takes every
+ * line the process logs. A forge's own ledger (`createApp`) takes the lines
+ * from loggers that belong to no forge, and those from its own `app.log`,
+ * and starts empty: a second forge in one process does not inherit, or
+ * answer for, the first one's errors. With one forge a process, the two
+ * ledgers read the same.
+ */
+export class ErrorLedger {
+  private readonly ring: ErrorLine[] = [];
+  /** scope → minute bucket → count: an hour of counts in at most 61 buckets per scope. */
+  private readonly buckets = new Map<string, Map<number, number>>();
 
-function prune(now: number): void {
-  const floor = Math.floor((now - HOUR_MS) / MINUTE_MS);
-  for (const [scope, minutes] of buckets) {
-    for (const minute of minutes.keys()) if (minute <= floor) minutes.delete(minute);
-    if (minutes.size === 0) buckets.delete(scope);
+  /** `owner` set: only lines from unowned loggers and from that owner. */
+  constructor(readonly owner?: string) {}
+
+  accepts(owner: string | undefined): boolean {
+    return this.owner === undefined || owner === undefined || owner === this.owner;
+  }
+
+  private prune(now: number): void {
+    const floor = Math.floor((now - HOUR_MS) / MINUTE_MS);
+    for (const [scope, minutes] of this.buckets) {
+      for (const minute of minutes.keys()) if (minute <= floor) minutes.delete(minute);
+      if (minutes.size === 0) this.buckets.delete(scope);
+    }
+  }
+
+  record(scope: string, message: string, now: number): void {
+    this.ring.push({ at: new Date(now).toISOString(), scope, message });
+    if (this.ring.length > ERROR_RING)
+      this.ring.splice(0, this.ring.length - ERROR_RING);
+    this.prune(now);
+    const minutes = this.buckets.get(scope) ?? new Map<number, number>();
+    const minute = Math.floor(now / MINUTE_MS);
+    minutes.set(minute, (minutes.get(minute) ?? 0) + 1);
+    this.buckets.set(scope, minutes);
+  }
+
+  /** Errors in the last hour, in total and per scope, and the newest lines first. */
+  recent(
+    limit = 5,
+    now = Date.now(),
+  ): { lastHour: number; byScope: Record<string, number>; latest: ErrorLine[] } {
+    this.prune(now);
+    const byScope: Record<string, number> = {};
+    let lastHour = 0;
+    for (const [scope, minutes] of this.buckets) {
+      let n = 0;
+      for (const c of minutes.values()) n += c;
+      byScope[scope] = n;
+      lastHour += n;
+    }
+    return { lastHour, byScope, latest: this.ring.slice(-limit).reverse() };
+  }
+
+  clear(): void {
+    this.ring.length = 0;
+    this.buckets.clear();
   }
 }
 
-function record(scope: string, message: string, now: number): void {
-  ring.push({ at: new Date(now).toISOString(), scope, message });
-  if (ring.length > ERROR_RING) ring.splice(0, ring.length - ERROR_RING);
-  prune(now);
-  const minutes = buckets.get(scope) ?? new Map<number, number>();
-  const minute = Math.floor(now / MINUTE_MS);
-  minutes.set(minute, (minutes.get(minute) ?? 0) + 1);
-  buckets.set(scope, minutes);
+const processLedger = new ErrorLedger();
+/** Every live forge's ledger, besides the process's own. */
+const forgeLedgers = new Set<ErrorLedger>();
+
+/** A ledger for one forge; `release` it when the forge closes. */
+export function forgeErrorLedger(owner: string): ErrorLedger {
+  const ledger = new ErrorLedger(owner);
+  forgeLedgers.add(ledger);
+  return ledger;
 }
 
-/** Errors in the last hour, in total and per scope, and the newest lines first. */
+export function releaseErrorLedger(ledger: ErrorLedger): void {
+  forgeLedgers.delete(ledger);
+}
+
+function record(
+  scope: string,
+  message: string,
+  now: number,
+  owner: string | undefined,
+): void {
+  processLedger.record(scope, message, now);
+  for (const ledger of forgeLedgers)
+    if (ledger.accepts(owner)) ledger.record(scope, message, now);
+}
+
+/** Errors in the last hour (the whole process's, or `ledger`'s) and the newest lines first. */
 export function recentErrors(
   limit = 5,
   now = Date.now(),
+  ledger: ErrorLedger = processLedger,
 ): { lastHour: number; byScope: Record<string, number>; latest: ErrorLine[] } {
-  prune(now);
-  const byScope: Record<string, number> = {};
-  let lastHour = 0;
-  for (const [scope, minutes] of buckets) {
-    let n = 0;
-    for (const c of minutes.values()) n += c;
-    byScope[scope] = n;
-    lastHour += n;
-  }
-  return { lastHour, byScope, latest: ring.slice(-limit).reverse() };
+  return ledger.recent(limit, now);
 }
 
-/** Forget everything kept. For tests. */
+/** Forget everything kept, in the process's ledger and every forge's. For tests. */
 export function clearErrors(): void {
-  ring.length = 0;
-  buckets.clear();
+  processLedger.clear();
+  for (const ledger of forgeLedgers) ledger.clear();
 }
 
-export function createLog(scope: string): Log {
+/** `owner`: the forge whose own logger this is; module loggers have none. */
+export function createLog(scope: string, owner?: string): Log {
   const emit = (level: LogLevel, message: string, fields?: LogFields) => {
     if (order[level] < order[threshold]) return;
     let line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} [${scope}] ${message}`;
@@ -172,7 +231,7 @@ export function createLog(scope: string): Log {
     line = redactHeld(line);
     if (level === "error") {
       const body = line.slice(line.indexOf(`[${scope}] `) + scope.length + 3);
-      record(scope, body, Date.now());
+      record(scope, body, Date.now(), owner);
     }
     console[level === "debug" ? "log" : level](line);
   };

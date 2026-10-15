@@ -25,7 +25,12 @@ export function readHealth(
   const envs = runtime
     ? listApps(app.db).flatMap((record) => runtime.status(record))
     : [];
-  const v = vitals({ db: app.db, dataDir: app.config.dataDir, envs });
+  const v = vitals({
+    db: app.db,
+    dataDir: app.config.dataDir,
+    envs,
+    signals: app.signals,
+  });
   return { ...v, ...forge, ok: forge.ok && v.ok };
 }
 
