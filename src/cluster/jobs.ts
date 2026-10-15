@@ -26,6 +26,12 @@ export type JobSpec = {
   env?: Record<string, string>;
   nodeSelector?: Record<string, string>;
   tolerations?: Toleration[];
+  /** A claim mounted at `mountPath`, which is also the container's working directory. */
+  volume?: { claim: string; mountPath: string; subPath: string };
+  /** Resource ceilings for the container. */
+  limits?: { memoryMiB: number; cpus: number; diskMiB: number };
+  /** Labels on the pod, for a NetworkPolicy to select it by. */
+  labels?: Record<string, string>;
 };
 
 export type JobResult = {
@@ -33,6 +39,8 @@ export type JobResult = {
   exitCode: number | null;
   lines: string[];
   timedOut: boolean;
+  /** The node the Job's pod ran on; absent when it never reached one. */
+  node?: string;
 };
 
 export type Credentials = { server: string; token: string; ca?: string; namespace: string };
@@ -47,6 +55,8 @@ export type JobOptions = {
   sleep?: (ms: number) => Promise<void>;
   /** The most log bytes read; the rest of the log is left unread. */
   maxLogBytes?: number;
+  /** Aborted: the Job is deleted and the call throws. */
+  signal?: AbortSignal;
 };
 
 /** The service account the pod runs as; throws when there is none. */
@@ -73,6 +83,23 @@ export function manifest(spec: JobSpec): object {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || typeof value !== "string") throw new Error(`bad env ${name}`);
     return { name, value };
   });
+  const vol = spec.volume;
+  if (
+    vol &&
+    (!NAME.test(vol.claim) ||
+      !/^\/[\w./-]+$/.test(vol.mountPath) ||
+      vol.mountPath.includes("..") ||
+      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(vol.subPath))
+  )
+    throw new Error("bad volume");
+  const lim = spec.limits;
+  if (lim && ![lim.memoryMiB, lim.cpus, lim.diskMiB].every((n) => Number.isFinite(n) && n > 0))
+    throw new Error("bad limits");
+  const labels: Record<string, string> = {};
+  for (const [k, v] of Object.entries(spec.labels ?? {})) {
+    if (!/^[A-Za-z0-9][-A-Za-z0-9_.\/]{0,62}$/.test(k) || !/^[A-Za-z0-9]?[-A-Za-z0-9_.]{0,62}$/.test(v)) throw new Error(`bad label ${k}`);
+    labels[k] = v;
+  }
   return {
     apiVersion: "batch/v1",
     kind: "Job",
@@ -81,12 +108,38 @@ export function manifest(spec: JobSpec): object {
       backoffLimit: 0,
       ttlSecondsAfterFinished: 600,
       template: {
-        metadata: { labels: { "job-name": spec.name } },
+        metadata: { labels: { ...labels, "job-name": spec.name } },
         spec: {
           restartPolicy: "Never",
+          // Repository code gets no kube credential and no privilege.
+          automountServiceAccountToken: false,
+          securityContext: { runAsNonRoot: true },
           nodeSelector: spec.nodeSelector ?? {},
           tolerations: spec.tolerations ?? [],
-          containers: [{ name: "job", image: spec.image, command: spec.command, env }],
+          containers: [
+            {
+              name: "job",
+              image: spec.image,
+              command: spec.command,
+              env,
+              securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: ["ALL"] } },
+              ...(lim
+                ? {
+                    resources: {
+                      limits: {
+                        memory: `${Math.ceil(lim.memoryMiB)}Mi`,
+                        cpu: String(lim.cpus),
+                        "ephemeral-storage": `${Math.ceil(lim.diskMiB)}Mi`,
+                      },
+                    },
+                  }
+                : {}),
+              ...(vol
+                ? { workingDir: vol.mountPath, volumeMounts: [{ name: "work", mountPath: vol.mountPath, subPath: vol.subPath }] }
+                : {}),
+            },
+          ],
+          ...(vol ? { volumes: [{ name: "work", persistentVolumeClaim: { claimName: vol.claim } }] } : {}),
         },
       },
     },
@@ -97,6 +150,7 @@ export function manifest(spec: JobSpec): object {
 type Job = { status?: { succeeded?: number; failed?: number } };
 type Pod = {
   metadata?: { name?: string };
+  spec?: { nodeName?: string };
   status?: { containerStatuses?: { state?: { terminated?: { exitCode?: number } } }[] };
 };
 type PodList = { items?: Pod[] };
@@ -152,16 +206,20 @@ export async function runJob(spec: JobSpec, opts: JobOptions = {}): Promise<JobR
     const deadline = now() + timeoutMs;
     let done: "succeeded" | "failed" | null = null;
     while (!done) {
+      if (opts.signal?.aborted) throw new Error("job cancelled");
       const job = await json<Job>("GET", jobPath);
       if ((job.status?.succeeded ?? 0) > 0) done = "succeeded";
       else if ((job.status?.failed ?? 0) > 0) done = "failed";
-      else if (now() >= deadline) return { exitCode: null, lines: await logLines(), timedOut: true };
+      else if (now() >= deadline) {
+        const pod = await findPod().catch(() => undefined);
+        return { exitCode: null, lines: await logLines(pod?.metadata?.name), timedOut: true, ...nodeOf(pod) };
+      }
       else await sleep(pollMs);
     }
     const pod = await findPod();
     const code: unknown = pod?.status?.containerStatuses?.[0]?.state?.terminated?.exitCode;
     const exitCode = typeof code === "number" ? code : done === "succeeded" ? 0 : null;
-    return { exitCode, lines: await logLines(pod?.metadata?.name), timedOut: false };
+    return { exitCode, lines: await logLines(pod?.metadata?.name), timedOut: false, ...nodeOf(pod) };
   } finally {
     if (created) {
       try {
@@ -190,6 +248,9 @@ export async function runJob(spec: JobSpec, opts: JobOptions = {}): Promise<JobR
     }
   }
 }
+
+const nodeOf = (pod?: Pod): { node?: string } =>
+  typeof pod?.spec?.nodeName === "string" && pod.spec.nodeName ? { node: pod.spec.nodeName } : {};
 
 /** Read a body chunk by chunk, stopping at `max` bytes; the rest is never held. */
 async function readCapped(body: ReadableStream<Uint8Array>, max: number): Promise<string> {

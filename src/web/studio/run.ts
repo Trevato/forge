@@ -27,7 +27,7 @@ import { page } from "../layout.ts";
 import { btn, sha } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
 import { costText, durationText, runTitle, runTokens } from "../pages/runs.ts";
-import { sandboxLine } from "./sandbox.ts";
+import { placementLine, sandboxLine } from "./sandbox.ts";
 import { logBox, runVoice, RUN_TRANSCRIPT_CAP } from "./log.ts";
 import { changeHref, tellHref } from "./nouns.ts";
 import { unnamedRun, voiceFor, type Actor } from "./voice.ts";
@@ -176,6 +176,7 @@ export async function runView(
         </p>`,
     )}
     ${sandboxLine(run)}
+    ${placementLine(run)}
     ${when(
       held.length > 0,
       () =>

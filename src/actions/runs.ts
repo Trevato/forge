@@ -42,6 +42,7 @@ export function runPayload(run: Run): Record<string, unknown> {
     summary: run.summary,
     costUsd: run.costUsd,
     turns: run.turns,
+    ...(run.placement === "job" ? { placement: run.placement, node: run.node } : {}),
     ...(run.issueId === null ? {} : { issueId: run.issueId }),
   };
 }
