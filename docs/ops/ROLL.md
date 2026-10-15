@@ -79,7 +79,7 @@ carries this case.
 Release checklist, in order:
 
 1. Run step 1 with `--version <the version> --yes-file docs/ops/dark-rolls.log`.
-2. Exit 0 and "zero-downtime": roll.
+2. Exit 0 and "zero-downtime": rehearse it (step 3), then roll.
 3. Exit 3: **do not roll.** Tell the owner the seconds dark and the headroom
    short, and wait for an explicit yes to **that version**. Free the headroom
    instead if you can, and run step 1 again.
@@ -93,7 +93,45 @@ Release checklist, in order:
 Without the line, no dark roll. The agent writes the line only after the
 owner's yes is in the conversation, and quotes it in the release notes.
 
-## 3. Roll
+## 3. Rehearse the roll on a copy
+
+A surge pod that fits is half of zero-downtime. The other half is the two
+forges themselves: the new one migrating and serving beside the old one on
+one data directory, and the old one draining without refusing anyone. The
+rehearsal rolls a copy exactly that way, with requests running the whole
+time, and counts every request a person would have seen refused.
+
+```sh
+git worktree add "$TMPDIR/forge-old" v<the running version>
+bun scripts/rehearse-roll.ts --old "$TMPDIR/forge-old" --new . \
+  --from <a restored snapshot's data directory>
+```
+
+It starts the old forge on a copy of `--from` (never the live data
+directory: restore a snapshot first, `docs/RESTORE.md`), sends requests to
+`/`, `/healthz` and `/explore`, starts the new forge beside it on the same
+copy, and moves rotation the way the Service does: a forge joins when its
+`/readyz` says 200 and leaves when it does not, probed every 5 s as the
+chart probes. Once the new forge is in, the old one is sent SIGTERM. A minute
+later it prints its verdict and exits:
+
+| exit | means                                                          |
+| ---- | -------------------------------------------------------------- |
+| 0    | zero refused: roll                                             |
+| 1    | a request got a 5xx or no answer, or nothing rolled: do not roll |
+| 2    | an argument is wrong, or a forge would not start               |
+
+Exit 1 is a bug in the release, not a reason to ask for a dark roll: the
+logs it names say which forge refused and when. Release checklist: step 1
+exits 0, then this exits 0, then roll. Quote the `zero refused` line in the
+release notes.
+
+The old forge keeps its listener open for `FORGE_DRAIN_LINGER_S` (10 s)
+after SIGTERM, because routers learn it left rotation a probe period after
+it did. With `--linger 0` the rehearsal shows what that costs: every
+request routed to it in that beat is refused.
+
+## 4. Roll
 
 Release as the release workflow does. Nothing in this recipe changes the
 workflow or the chart.

@@ -24,7 +24,7 @@ import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
 import { releaseOrphans } from "./core/run_secret.ts";
 import { failAbandonedRuns } from "./core/runs.ts";
-import { startDraining } from "./http/health.ts";
+import { DRAIN_LINGER_MAX_S, drainLingerMs, startDraining } from "./http/health.ts";
 import { STALE_AFTER_MS } from "./runs/lease.ts";
 import { startCrew } from "./crew/dispatch.ts";
 import { CREW_OFF_IN_PREVIEW, crewOffInPreview } from "./crew/preview.ts";
@@ -95,6 +95,17 @@ if (problem !== null) {
   console.error(problem);
   process.exit(1);
 }
+
+// FORGE_DRAIN_LINGER_S: seconds a SIGTERM'd forge keeps answering while
+// routers learn it is going (`http/health.ts`).
+const lingerMs = drainLingerMs(process.env.FORGE_DRAIN_LINGER_S);
+if (lingerMs === null) {
+  console.error(
+    `FORGE_DRAIN_LINGER_S: whole seconds from 0 to ${DRAIN_LINGER_MAX_S}, not "${(process.env.FORGE_DRAIN_LINGER_S ?? "").slice(0, 20)}"`,
+  );
+  process.exit(1);
+}
+
 const trustedProxies = (process.env.FORGE_TRUSTED_PROXIES ?? "")
   .split(",")
   .map((s) => s.trim())
@@ -420,7 +431,11 @@ function shutdown(signal: NodeJS.Signals): void {
   clearInterval(syncTimer);
   clearInterval(staleTimer);
   clearInterval(leaseTimer);
+  // The platform's SIGTERM: the listener stays open while routers learn
+  // this process is going. A person's Ctrl-C does not wait for routers.
+  const linger = signal === "SIGTERM" ? Bun.sleep(lingerMs ?? 0) : undefined;
   Promise.all([
+    linger,
     prompts.stop(),
     notifier.stop(),
     crew?.stop({ drain: true }),

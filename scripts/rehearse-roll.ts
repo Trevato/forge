@@ -1,0 +1,217 @@
+/**
+ * The roll rehearsal (#873, `docs/ops/ROLL.md` step 3): roll a copy of the
+ * forge the way the chart rolls the real one, with requests running the
+ * whole time, and count every request a person would have seen refused.
+ *
+ *   bun scripts/rehearse-roll.ts [--from <data dir>] [--old <checkout>]
+ *     [--new <checkout>] [--seconds 60] [--probe-ms 5000] [--linger 10]
+ *     [--concurrency 4] [--paths /,/healthz,/explore] [--json]
+ *
+ *   0  zero refused: the roll stays up
+ *   1  a request was refused, or nothing rolled
+ *   2  an argument is wrong, or a forge would not start
+ *
+ * `--from` is copied, never served: point it at a restored snapshot
+ * (`docs/RESTORE.md`), not at the live data directory. Without it the
+ * forges share a fresh, empty one. `--old` and `--new` are forge checkouts
+ * (the release rolled from, the release rolled to); both default to this
+ * one. The forges run with SSH, apps and checks off and a child's short
+ * environment, never this shell's.
+ */
+
+import { cpSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import {
+  count,
+  emptyTally,
+  judge,
+  parseArgs,
+  report,
+  Rotation,
+  type Outcome,
+  type RehearsalArgs,
+  type Timeline,
+  type Verdict,
+} from "./rehearsal.ts";
+
+interface Forge {
+  readonly name: "old" | "new";
+  readonly url: string;
+  readonly proc: Bun.Subprocess;
+  readonly log: string;
+}
+
+/** A loopback port nobody holds right now. */
+function freePort(): number {
+  const probe = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+  const port = probe.port ?? 0;
+  probe.stop(true);
+  return port;
+}
+
+function start(
+  name: Forge["name"],
+  checkout: string,
+  dataDir: string,
+  lingerS: number,
+  logDir: string,
+): Forge {
+  const port = freePort();
+  const log = join(logDir, `${name}.log`);
+  const env: Record<string, string> = {
+    PATH: process.env["PATH"] ?? "",
+    HOME: process.env["HOME"] ?? "",
+    FORGE_DATA: dataDir,
+    PORT: String(port),
+    FORGE_SSH_PORT: "0",
+    FORGE_APPS: "0",
+    FORGE_CHECKS: "0",
+    FORGE_DRAIN_LINGER_S: String(lingerS),
+  };
+  for (const pass of ["TMPDIR", "FORGE_TEST_SOCKET"]) {
+    const v = process.env[pass];
+    if (v !== undefined) env[pass] = v;
+  }
+  const proc = Bun.spawn([process.execPath, join(checkout, "src", "main.ts")], {
+    cwd: checkout,
+    env,
+    stdin: "ignore",
+    stdout: Bun.file(log),
+    stderr: Bun.file(`${log}.err`),
+  });
+  return { name, url: `http://127.0.0.1:${port}`, proc, log };
+}
+
+async function ready(forge: Forge, timeoutMs: number): Promise<boolean> {
+  try {
+    const res = await fetch(`${forge.url}/readyz`, { signal: AbortSignal.timeout(timeoutMs) });
+    await res.arrayBuffer();
+    return res.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+async function ask(url: string): Promise<Outcome> {
+  try {
+    const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
+    await res.arrayBuffer();
+    return res.status;
+  } catch {
+    return "refused";
+  }
+}
+
+/** Run one rehearsal and judge it. Throws only when a forge will not start. */
+export async function rehearse(
+  args: RehearsalArgs,
+  say: (line: string) => void = () => {},
+): Promise<Verdict & { logs: string }> {
+  const work = mkdtempSync(join(tmpdir(), "forge-rehearsal-"));
+  const dataDir = join(work, "data");
+  const logs = join(work, "logs");
+  mkdirSync(logs);
+  if (args.from === null) mkdirSync(dataDir);
+  else cpSync(resolve(args.from), dataDir, { recursive: true });
+
+  const rotation = new Rotation<Forge>();
+  const tally = emptyTally();
+  const timeline: Timeline = { newInRotationMs: null, oldOutOfRotationMs: null, oldExitMs: null };
+  const forges: Forge[] = [];
+  try {
+    const old = start("old", resolve(args.old), dataDir, args.lingerS, logs);
+    forges.push(old);
+    say(`old forge starting at ${old.url}`);
+    const bootBy = Date.now() + 60_000;
+    while (!(await ready(old, 1000))) {
+      if (old.proc.exitCode !== null || Date.now() > bootBy)
+        throw new Error(`the old forge did not come up; see ${old.log}.err`);
+      await Bun.sleep(100);
+    }
+    rotation.saw(old, true);
+    say("old forge in rotation; requests start");
+
+    const began = Date.now();
+    const until = began + args.seconds * 1000;
+    let termAt: number | null = null;
+
+    const load = async (lane: number): Promise<void> => {
+      for (let i = lane; Date.now() < until; i += args.concurrency) {
+        const forge = rotation.next();
+        if (forge === null) {
+          count(tally, null, "nobody");
+          await Bun.sleep(10);
+          continue;
+        }
+        const path = args.paths[i % args.paths.length] ?? "/";
+        count(tally, forge.name, await ask(forge.url + path));
+      }
+    };
+
+    // The platform's side: probe every forge each period, start the new
+    // one beside the old, and signal the old one once the new is ready.
+    const roll = async (): Promise<void> => {
+      await Bun.sleep(Math.min(2000, (args.seconds * 1000) / 4));
+      const next = start("new", resolve(args.next), dataDir, args.lingerS, logs);
+      forges.push(next);
+      say(`new forge starting at ${next.url}`);
+      old.proc.exited.then(() => {
+        if (termAt !== null) timeline.oldExitMs = Date.now() - termAt;
+      });
+      while (Date.now() < until) {
+        for (const forge of forges) {
+          const up = await ready(forge, Math.min(1000, args.probeMs));
+          const was = rotation.has(forge);
+          rotation.saw(forge, up);
+          if (forge === next && up && !was) {
+            timeline.newInRotationMs = Date.now() - began;
+            say("new forge in rotation; the old one is sent SIGTERM");
+            termAt = Date.now();
+            old.proc.kill("SIGTERM");
+          }
+          if (forge === old && !up && was && termAt !== null) {
+            timeline.oldOutOfRotationMs = Date.now() - termAt;
+            say("old forge out of rotation");
+          }
+        }
+        if (next.proc.exitCode !== null)
+          throw new Error(`the new forge exited; see ${next.log}.err`);
+        await Bun.sleep(args.probeMs);
+      }
+    };
+
+    await Promise.all([
+      roll(),
+      ...Array.from({ length: args.concurrency }, (_, lane) => load(lane)),
+    ]);
+    // A drain that outlives the requests still counts as an exit.
+    if (termAt !== null && timeline.oldExitMs === null) {
+      await Promise.race([old.proc.exited, Bun.sleep(args.lingerS * 1000 + 30_000)]);
+      if (old.proc.exitCode !== null) timeline.oldExitMs = Date.now() - termAt;
+    }
+    return { ...judge(tally, timeline), logs };
+  } finally {
+    for (const f of forges) if (f.proc.exitCode === null) f.proc.kill("SIGKILL");
+    await Promise.all(forges.map((f) => f.proc.exited));
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
+if (import.meta.main) {
+  let args: RehearsalArgs;
+  try {
+    args = parseArgs(process.argv.slice(2), resolve(import.meta.dir, ".."));
+  } catch (error) {
+    console.error(`rehearse-roll: ${(error as Error).message}`);
+    process.exit(2);
+  }
+  try {
+    const v = await rehearse(args, args.json ? undefined : (l) => console.log(`· ${l}`));
+    console.log(args.json ? JSON.stringify(v) : `${report(v)}\nlogs       ${v.logs}`);
+    process.exit(v.ok ? 0 : 1);
+  } catch (error) {
+    console.error(`rehearse-roll: ${(error as Error).message}`);
+    process.exit(2);
+  }
+}
