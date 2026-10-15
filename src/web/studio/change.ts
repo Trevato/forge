@@ -41,6 +41,7 @@ import {
 } from "../chrome.ts";
 import { html, when, type Html } from "../html.ts";
 import type { IconName as Glyph } from "../icons.ts";
+import { threadLine } from "../describe.ts";
 import { fragment, page, redirect } from "../layout.ts";
 import { renderMarkdown } from "../markdown.ts";
 import { liveClientJs, liveMount } from "../live.ts";
@@ -598,6 +599,12 @@ async function changeConversation(
   return page({
     ctx,
     title: `${pull.title} · ${repo.name}`,
+    description: threadLine({
+      private: repo.visibility === "private",
+      word,
+      title: pull.title,
+      body: pull.body,
+    }),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,

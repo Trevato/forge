@@ -80,6 +80,7 @@ export const GATE: readonly string[] = [
   "test/enterable-apps.test.ts",
   "test/event-order.test.ts",
   "test/refresh-meta.test.ts",
+  "test/unfurl.test.ts",
   "test/restore-card.test.ts",
   "test/recovery-doc.test.ts",
   "test/release-checkout.test.ts",
