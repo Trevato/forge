@@ -27,7 +27,7 @@ import { repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { liveRegionsJs } from "../client.ts";
 import { html, when, type Html } from "../html.ts";
-import { fragment, page, redirect } from "../layout.ts";
+import { asksLink, fragment, page, redirect } from "../layout.ts";
 import { liveClientJs } from "../live.ts";
 import {
   btn,
@@ -55,7 +55,7 @@ import { spawnedOrg } from "../../spawn/claim.ts";
 
 /** The events that can change what is on you. */
 const ON_YOU_LIVE =
-  "issue.assigned,pull.assigned,issue.closed,pull.closed,issue.reopened,pull.reopened,pull.merged";
+  "issue.assigned,pull.assigned,issue.closed,pull.closed,issue.reopened,pull.reopened,pull.merged,fleet.operated";
 /** The events that can change how an app on the rail is. */
 const APPS_LIVE = "app.serving,app.stopped,run.finished";
 /** How many of your apps the rail names before "All apps". */
@@ -125,12 +125,13 @@ const appsRegion = (ctx: Ctx, user: User): Html =>
     ${yourApps(ctx, user)}
   </div>`;
 
-const onYouRegion = (ctx: Ctx, user: User): Html =>
+const onYouRegion = (ctx: Ctx, user: User, note?: string): Html =>
   html`<div
     id="live-on-you"
     data-live="${ON_YOU_LIVE}"
     data-live-src="/live/on-you"
   >
+    ${note === undefined ? null : html`<p class="small" role="status">${note}</p>`}
     ${onYouCard(ctx, user) ?? null}
   </div>`;
 
@@ -139,6 +140,14 @@ export function liveAppsFragment(ctx: Ctx): Response {
   const user = ctx.auth.user;
   if (!user) return fragment(html``, { status: 404 });
   return fragment(appsRegion(ctx, user), { request: ctx.request });
+}
+
+/**
+ * What a bulk step on the On you card answers its own script with: the
+ * region as it is now and the top bar's Asks link with its new count.
+ */
+export function onYouAnswer(ctx: Ctx, user: User, note?: string): Response {
+  return fragment(html`<div>${onYouRegion(ctx, user, note)}${asksLink(ctx)}</div>`);
 }
 
 // GET /live/on-you — what is on the viewer, alone.

@@ -45,6 +45,7 @@ import {
 import { latestRunsForIssues } from "../core/runs.ts";
 import { isStalePull } from "../crew/stale_asks.ts";
 import { askDismissedBy } from "../web/studio/asks.ts";
+import { mutedRepos } from "../core/interactions.ts";
 import { getRunsByIds } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -63,6 +64,7 @@ export interface FleetError {
     | "not_found"
     | "bad_query"
     | "too_many"
+    | "expired"
     | "bad_action"
     | "not_reversible"
     | "already_undone";
@@ -179,6 +181,7 @@ function loadTargets(
   for (const [repoId, repo] of repos) pillars.set(repoId, pillarsOf(app.db, repo));
   const under = umbrellasOver(app, ids, [...pillars.values()]);
   const peers: ReadonlySet<string> = new Set(ids);
+  const muted = viewer === undefined ? new Set<string>() : mutedRepos(app.db, viewer.id);
   const pull = (id: string) => {
     const p = pulls.get(id);
     return p === undefined
@@ -213,6 +216,7 @@ function loadTargets(
           : {
               viewerId: viewer.id,
               askDismissed: askDismissedBy(app.db, viewer.id, issue),
+              muted: muted.has(repo.id),
             }),
         ...(pull(id) ?? {}),
       },
@@ -538,6 +542,18 @@ export async function applyFleetOp(
   return ok(await carryOutAndRecord(app, person.value, plan.value));
 }
 
+/** How long a bulk action on asks can be undone: a day. */
+export const UNDO_WINDOW_MS = 86_400_000;
+
+const ASK_VERBS: readonly string[] = ["dismiss", "mute", "ship", "close", "replan"];
+
+/** Whether a receipt is a bulk action on asks: named one by one, "asks: n selected". */
+export function isAsksOperation(op: Operation): boolean {
+  return (
+    op.kind === "issue" && op.query.startsWith("asks: ") && ASK_VERBS.includes(op.verb)
+  );
+}
+
 /**
  * Undo: every row this operation changed goes back to its value from
  * before, if it still holds the value this operation left. Once per
@@ -565,6 +581,9 @@ export async function undoFleetOp(
     (verb.personal || !parseQuery(op.query).ok)
   )
     return fail("not_found", "no such operation here");
+  // The asks' day is the same on every door: the card, the API, MCP.
+  if (isAsksOperation(op) && Date.now() - Date.parse(op.createdAt) > UNDO_WINDOW_MS)
+    return fail("expired", "an undo is kept for a day, and this one's day is over");
   if (!claimUndo(app.db, op.id))
     return fail("already_undone", "this operation was undone already");
   let undone: Operation | undefined;

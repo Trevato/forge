@@ -186,3 +186,19 @@ export function removeDismissals(
        AND item_id IN (SELECT value FROM json_each(?2))`,
   ).run(viewerId, JSON.stringify(itemIds));
 }
+
+/**
+ * Take back this viewer's bulk mutes of these `repo:<id>` items: the undo of
+ * a bulk mute. A mute made elsewhere, under another item, stays.
+ */
+export function removeMutes(
+  db: Database,
+  viewerId: string,
+  itemIds: readonly string[],
+): void {
+  if (itemIds.length === 0) return;
+  db.query<unknown, [string, string]>(
+    `DELETE FROM interaction WHERE viewer_id = ?1 AND kind = 'muted'
+       AND item_id IN (SELECT value FROM json_each(?2))`,
+  ).run(viewerId, JSON.stringify(itemIds));
+}

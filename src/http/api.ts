@@ -375,7 +375,7 @@ function respondFleet(error: FleetError): Response {
   if (error.code === "unauthorized") return unauthorized();
   return apiError(
     error.code,
-    error.code === "forbidden" ? 403 : error.code === "already_undone" ? 409 : 422,
+    error.code === "forbidden" ? 403 : error.code === "already_undone" || error.code === "expired" ? 409 : 422,
     error.message,
   );
 }

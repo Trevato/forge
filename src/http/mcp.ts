@@ -428,12 +428,13 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks_act",
     description:
-      "Act on many asks at once: dismiss, ship, close, or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`). A dry run (the default, and all a read-only token may do) changes nothing: the answer is each row's before and after and the rows refused with why. With dryRun false it acts and returns a receipt; dismiss, close and replan can be undone once (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Dismiss needs only that the ask is yours; the others are checked against your admin of each app.",
+      "Decide many asks at once (the set and the verb): dismiss or decline, ship, close (with one `reason`, written on each), mute (silence the app's repository in your own On you), or replan (hand an issue back to its app's planner). `items` are ask ids from `asks` (a row's `items`), or `issue:<id>` for something assigned to you. A dry run (the default, and all a read-only token may do) changes nothing: the answer is each row's before and after and the rows refused with why. With dryRun false it acts and returns a receipt; dismiss, decline, mute, close and replan can be undone once, for a day (POST /api/v1/asks/bulk/<id>/undo). Ship is never undone. Dismiss needs only that the ask is yours; the others are checked against your admin of each app.",
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["dismiss", "ship", "close", "replan"] },
+        action: { type: "string", enum: ["dismiss", "decline", "mute", "ship", "close", "replan"] },
         items: { type: "array", items: { type: "string" }, maxItems: 100 },
+        reason: { type: "string", maxLength: 300 },
         dryRun: { type: "boolean" },
       },
       required: ["action", "items"],
@@ -443,8 +444,8 @@ const TOOLS: readonly Tool[] = [
     async run(ctx, user, args) {
       const answer =
         args["dryRun"] === false
-          ? await applyAsksBulk(ctx.app, user, args["action"], args["items"])
-          : previewAsksBulk(ctx.app, user, args["action"], args["items"]);
+          ? await applyAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"])
+          : previewAsksBulk(ctx.app, user, args["action"], args["items"], args["reason"]);
       return answer.ok ? good(answer.value) : bad(answer.error.code, answer.error.message);
     },
   },
