@@ -408,6 +408,21 @@ The terminal has no backups view, so it has no readout.
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.
 
+### Passports
+
+A crew run's environment carries `FORGE_PASSPORT`, a 15-minute credential
+scoped to `health:read` for the forge alone (`src/kernel/passport.ts`, no
+dependency: Node crypto's HMAC and HKDF). It opens one route and nothing else:
+
+    curl -H "authorization: Passport $FORGE_PASSPORT" "$FORGE_URL/api/v1/passport/health"
+
+Missing, expired, wrong-audience, wrong-scope or forged passports get a 401. A
+passport has exactly one valid encoding (padded or altered variants are refused).
+
+This route proves the mechanism and is not a privilege: it returns what the
+anonymous `GET /api/v1/health` already returns. The next edge should guard
+something only a passport may reach.
+
 ## Cloud accounts
 
 **Settings → Cloud accounts** (admins) holds provider keys — Cloudflare,
@@ -490,8 +505,35 @@ Every `test/*.test.ts` is either in `GATE` or in `EXCLUDED` with a one-line
 reason and the issue that owns admitting it; `test/check-list.test.ts` goes
 red on a file in neither, in both, or named without existing, so a new test
 file never sits outside the gate silently. A file joins the gate by moving
-from `EXCLUDED` to `GATE` in a pull whose check is green — that pull is the
-proof it passes.
+from `EXCLUDED` to `GATE` in a pull whose check is green and whose description
+carries ten green runs in random order under load:
+`bun scripts/flake-hunt.ts admit test/x.test.ts` runs the file ten times, each
+its own `bun test --randomize` with a fresh seed beside busy loops, prints the
+record and exits non-zero unless all ten are green.
+
+**No flaky tests.** Nightly, `.forgejo/workflows/flake-hunt.yml` runs every
+gate file five times on a loaded box, each run a fresh seed that orders both
+the files and (through `--randomize`) the tests inside them, nothing stopped
+early. A file red in some runs and green in others is flaky: the hunt files
+a `Flaky: test/x.test.ts` issue carrying the failure text, the seed and the
+run, with the usual root causes to tick (a shared port, a real clock, order
+dependence, a leaked server, a timeout set near the real duration, a tight
+wall-clock bound); then
+`bun scripts/flake-hunt.ts quarantine` moves every file an open `Flaky:`
+issue the hunt itself filed (its author is the token's user and the forge
+has not marked it untrusted) names from `GATE` to `EXCLUDED` under that issue and proposes the move
+as a pull. Nobody hand-edits the list. A file red in every run is broken,
+not flaky, and the check already says so. The fix is the test's shape, never
+a retry: `test/flake.test.ts` fails on `--retry`, `--rerun-each`, a bunfig
+`retry` or a `{ retry: N }` anywhere the gate runs, and on any test that
+bounds a measured time under 200 ms (a loopback fetch on a loaded runner
+takes tens of ms): assert relative to a baseline from the same run, or bound
+only the failure the test names. The workflow needs a
+`FORGE_TOKEN` secret and a `FORGE_URL` variable on the mirror.
+
+Bun's own `--randomize --seed=N` drives every hunt and admission run. Not
+used: `--rerun-each` (one seed for every rerun, so ten reruns explore one
+order) and `--parallel` (it changes the load the gate is judged under).
 
 The gate also refuses hollow work. `test/hollow.test.ts` runs
 `scripts/hollow.ts`, which names an exported function in `src/actions/` that
