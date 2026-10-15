@@ -388,7 +388,8 @@ file), and if you named an agent, the sentence became issue #1, assigned.
 - **A production deploy records the merged pulls it carries**: one `git
   rev-list` of the deployed commit when the run finishes. The run page says
   "Carries #3, #5" and `GET /api/v1/repos/:owner/:name/runs/:id` has `carries`.
-  The terminal has no list of deploys yet, so it does not show this.
+  In the terminal, open a repository and press `d` for its production deploys
+  (each with what it carries), `enter` for the log, `r` to refresh.
 - A **private** app answers only to someone the forge has vouched for
   (`canRead` on the repository, then a signed grant); a public one to anyone.
 - **Every app has a terminal.** `ssh -p 2222 <name>@<forge>` runs the app's
