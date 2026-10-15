@@ -7,6 +7,7 @@
 
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
+import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { flowPage } from "../web/pages/flow.ts";
 import { limitsPage, limitsSet } from "../web/pages/admin-limits.ts";
@@ -390,6 +391,7 @@ import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { oauthRoutes } from "./oauth.ts";
+import { flushAccess, recordAccess } from "./access_log.ts";
 import { carryPeer, clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
 import { parseCidrs } from "../kernel/cidr.ts";
 import {
@@ -430,6 +432,7 @@ import { getUserById } from "../core/users.ts";
 import { appsRuntime } from "../apps/runtime.ts";
 import {
   appWebSocket,
+  type AppSocket,
   proxyApp,
   resolveAppHost,
 } from "../apps/proxy.ts";
@@ -696,6 +699,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/cloud/write", cloudWrite);
   router.add("POST", "/settings/cloud/audit", cloudAudit);
   router.add("POST", "/settings/cloud/remove", cloudRemove);
+  router.add("GET", "/settings/access", accessPage);
   router.add("GET", "/settings/capacity", capacityPage);
   router.add("POST", "/settings/capacity", capacitySet);
   router.add("GET", "/boards/data", boardsPage);
@@ -1732,19 +1736,28 @@ export async function serve(app: App): Promise<Servers> {
       : { header: app.config.clientIpHeader }),
   };
 
-  const web = Bun.serve({
-    port: app.config.port ?? 3000,
-    // A release swaps in beside this process on the same port (#1663).
-    ...(app.config.selfSwap === true ? { reusePort: true } : {}),
-    idleTimeout: 120,
-    // The largest thing anyone may send — a git push. Every reader below it
-    // keeps its own, smaller cap (\`http/limits.ts\`); the runtime enforces
-    // this one only on a declared length.
-    maxRequestBodySize: REQUEST_MAX,
-    // The only sockets the forge holds are an app's, carried through the
-    // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
-    websocket: appWebSocket,
-    async fetch(request, server) {
+  // What the forge itself answered, for the owner's access log. Called only
+  // after `notePeer`, so the caller is known; an app's own traffic (the
+  // `proxyApp` branch) is the app's and never comes through here. `ms` is the
+  // time to headers: a streamed body is still being sent.
+  const logged = (
+    dataDir: string,
+    request: Request,
+    response: Response,
+    started: number,
+  ) =>
+    recordAccess(dataDir, {
+      request,
+      status: response.status,
+      ms: performance.now() - started,
+      client: clientAddress(request),
+    });
+
+  const handle = async (
+    request: Request,
+    server: Bun.Server<AppSocket>,
+  ): Promise<Response | undefined> => {
+      const started = performance.now();
       // An app's hostname is answered before any route: `hello.<domain>` is
       // the app, whatever its path, and the forge's own routes never apply.
       const runtime = appsRuntime(app);
@@ -1775,6 +1788,7 @@ export async function serve(app: App): Promise<Servers> {
           notePeer(request, server.requestIP(request)?.address, trust);
           armClose(request, () => server.timeout(request, 1));
           const response = securityFloor(await http.handle(request));
+          logged(key, request, response, started);
           await settleBody(request);
           if (!mustClose(request)) return response;
           server.timeout(request, 1);
@@ -1790,12 +1804,27 @@ export async function serve(app: App): Promise<Servers> {
       const response = securityFloor(
         await answer(app, router, apiRouter, limiter, request),
       );
+      logged(app.config.dataDir, request, response, started);
       await settleBody(request);
       if (!mustClose(request)) return response;
       // Said, so no client or proxy reuses it; then done, so none can.
       server.timeout(request, 1);
       return withHeader(response, "connection", "close");
-    },
+  };
+
+  const web = Bun.serve({
+    port: app.config.port ?? 3000,
+    // A release swaps in beside this process on the same port (#1663).
+    ...(app.config.selfSwap === true ? { reusePort: true } : {}),
+    idleTimeout: 120,
+    // The largest thing anyone may send — a git push. Every reader below it
+    // keeps its own, smaller cap (\`http/limits.ts\`); the runtime enforces
+    // this one only on a declared length.
+    maxRequestBodySize: REQUEST_MAX,
+    // The only sockets the forge holds are an app's, carried through the
+    // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
+    websocket: appWebSocket,
+    fetch: handle,
     error(error) {
       const refused = refusedByDatabase(error);
       if (refused !== undefined) {
@@ -1841,6 +1870,7 @@ export async function serve(app: App): Promise<Servers> {
       for (const http of childHttps.values()) http.close();
       childHttps.clear();
       closeHostedChildren(app);
+      flushAccess();
       web.stop(true);
       internal.stop(true);
       // Our socket goes with us; a corpse is only ever an unclean exit's.

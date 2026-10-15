@@ -1147,6 +1147,19 @@ sync cadence in seconds, 10–86400). `src/apps/service.ts` validates it; the
 manifest carries it as `service`, `null` for a web app. Running it, exposing
 the ports and syncing volumes are not built yet (issue #391).
 
+## The access log
+
+The forge keeps one compact JSON line per request that is not a static asset
+(or `/healthz`) under `<data>/access/access-YYYY-MM-DD.log`: time, host,
+method, path without its query string (secret-looking segments blanked),
+status, duration, user agent (200 characters), whether a credential came with
+it, and a hash of the client address keyed with the data directory's secret
+and the day. Lines are queued in memory and appended in one write a second (or per 200 lines), so a request pays for no disk write. No token, cookie or query string is ever written. Files go after
+14 days, a day's file stops at 4 MB and the directory at 32 MB, oldest first.
+Nothing serves the files. A forge admin reads the last day's non-browser
+requests to public paths at Settings → Access, or with the `access` MCP tool
+(`since`, `ua`, `path`; write-scope token).
+
 ## The forge as an OpenID Connect provider
 
 Discovery is at `/.well-known/openid-configuration`. Register a client at

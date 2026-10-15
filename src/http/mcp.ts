@@ -19,6 +19,7 @@
 
 import { voteVariant } from "../actions/variants.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
+import { listAccess } from "../actions/access_log.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { readPipeline, verdict } from "../flow/pipeline.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
@@ -1918,6 +1919,34 @@ const TOOLS: readonly Tool[] = [
         ready,
         later,
       });
+    },
+  },
+  {
+    name: "access",
+    description:
+      "What outside agents tried: the forge's own request log, redacted, for a forge admin. Non-browser requests to public paths (/issues, /api/, /mcp, /.well-known/, /llms.txt, sign-in, sign-up), newest first, at most 500: time, host, method, path without query, status, duration in ms, user agent, whether a credential came with it, and a daily hash of the caller (never an address). `since` is an ISO time (the last day when absent; at most 14 days back), `ua` a part of the user agent, `path` the start of the path. Needs a write-scope token. The same as Settings → Access.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        since: { type: "string", maxLength: 40 },
+        ua: { type: "string", maxLength: 100 },
+        path: { type: "string", maxLength: 200 },
+      },
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const text = (k: string): string | undefined =>
+        typeof args[k] === "string" && args[k] !== "" ? (args[k] as string) : undefined;
+      const since = text("since");
+      const ua = text("ua");
+      const path = text("path");
+      const listed = listAccess(ctx.app, user, {
+        ...(since === undefined ? {} : { since: since.slice(0, 40) }),
+        ...(ua === undefined ? {} : { ua: ua.slice(0, 100) }),
+        ...(path === undefined ? {} : { path: path.slice(0, 200) }),
+      });
+      if (!listed.ok) return bad("not_found", "no such tool here");
+      return good({ requests: listed.value });
     },
   },
   {

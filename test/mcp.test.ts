@@ -203,6 +203,7 @@ describe("the forge over MCP", () => {
       "attach_look",
       "hold",
       "plan",
+      "access",
       "capacity",
       "flow",
       "limits",
