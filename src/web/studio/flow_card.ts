@@ -8,7 +8,7 @@
  * next render; nothing is stored.
  */
 
-import { readStalled, STALLED_SHOWN, type StalledStep } from "../../flow/stalled.ts";
+import { readStalled, type StalledStep } from "../../flow/stalled.ts";
 import type { User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import { html, type Html } from "../html.ts";
@@ -24,7 +24,7 @@ function stalledCard(s: StalledStep): Html {
       <span class="fcard-app muted small">${s.ownerName}/${s.repoName} · stuck since ${timeAgo(s.since)}</span>
     </div>
     <p class="fcard-reason"><a href="${base}">${s.title}</a>${s.issue === null ? null : html` <span class="muted small">for #${String(s.issue)}</span>`}</p>
-    <form method="post" action="${base}/checks" class="inline-form">
+    <form method="post" action="${base}/checks" class="fcard-unblock">
       <input type="hidden" name="next" value="/">
       ${btn(BUTTON[s.action], { size: "sm", icon: "loader" })}
       <span class="muted small">${s.unblock}</span>
@@ -32,11 +32,12 @@ function stalledCard(s: StalledStep): Html {
   </article>`;
 }
 
-/** The cards, oldest stall first; nothing at all when nothing is stalled. */
+/** The cards, oldest stall first; nothing at all when nothing is stalled. Every one is shown: the
+ * flow page is an admin's, so a writer has nowhere else to find a cut-off one. */
 export function flowCards(ctx: Ctx, user: User): Html | null {
   const steps = readStalled(ctx.app.db, user, new Date());
   if (steps.length === 0) return null;
   return html`<section class="feed" aria-label="Stalled">
-    ${steps.slice(0, STALLED_SHOWN).map(stalledCard)}
+    ${steps.map(stalledCard)}
   </section>`;
 }

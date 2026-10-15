@@ -17,6 +17,13 @@ import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { readStalled } from "../src/flow/stalled.ts";
+import { askCheck } from "../src/checks/again.ts";
+import { getPull } from "../src/core/pulls.ts";
+import { createForgeApp } from "../src/tui/forge.ts";
+import { stalledScreen } from "../src/tui/screens/stalled.ts";
+import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { feedCss } from "../src/web/studio/feed_style.ts";
+import { settleApp } from "./helpers/tui.ts";
 import { unblock } from "../src/flow/unblock.ts";
 import { stalledRows } from "../src/tui/screens/stalled.ts";
 import { feedJs } from "../src/web/studio/feed.ts";
@@ -212,11 +219,56 @@ describe("stalled steps on the home", () => {
     const rows = stalledRows([step]);
     expect(rows[0]!.title).toContain(`alice/garden #${pull.number}`);
     expect(rows[0]!.meta).toContain("re-run");
+    const checkRuns = () =>
+      app.db
+        .query<{ n: number }, [string]>("SELECT count(*) AS n FROM run WHERE issue_id = ?1 AND kind = 'check'")
+        .get(pull.id)!.n;
+    const before = checkRuns();
     const refused = await unblock(app, bob, step);
-    expect(refused.ok).toBe(false);
+    expect(refused).toEqual({ ok: false, message: "only someone who can write here can ask for a check" });
+    expect(checkRuns()).toBe(before);
+    // A writer's ask is exactly what askCheck answers for the pull's head.
+    const expected = await askCheck(app, alice, repo, getPull(app.db, repo.id, pull.number)!);
     const asked = await unblock(app, alice, step);
-    // Whatever the checks worker says, the answer is a plain verdict, not a throw.
-    expect(typeof asked.ok).toBe("boolean");
+    expect(asked.ok).toBe(expected.ok);
+    if (!asked.ok && !expected.ok) expect(asked.message).toBe(expected.message);
     expect(stalled(bob)).toEqual([]);
+  });
+
+  const screenFor = async (user: User) => {
+    const terminal = headlessTerminal(100, 30);
+    const { app: tui, session } = createForgeApp(
+      app,
+      { sshUsername: user.username, remoteAddress: "127.0.0.1", user },
+      { terminal, exitHooks: false },
+    );
+    tui.start();
+    await settleApp(tui);
+    tui.push(stalledScreen(session, tui.ctx));
+    await settleApp(tui);
+    const text = tui.screen.toText();
+    return { tui, text };
+  };
+
+  test("the stalled screen shows a step to a writer and the empty state to a guest", async () => {
+    const pull = await pullOn();
+    run(pull, "failed");
+    const writer = await screenFor(alice);
+    expect(writer.text).toContain(`alice/garden #${pull.number}`);
+    expect(writer.text).not.toContain("Nothing is stalled");
+    writer.tui.stop();
+    const guest = await screenFor(bob);
+    expect(guest.text).toContain("Nothing is stalled");
+    expect(guest.text).not.toContain(`alice/garden #${pull.number}`);
+    guest.tui.stop();
+  });
+
+  test("every stalled step is a card, past any cap; the button wraps on its own", async () => {
+    for (let i = 0; i < 8; i++) run(await pullOn(), "failed");
+    const page = await home();
+    expect(page.split("data-flow-card=").length - 1).toBe(stalled().length);
+    expect(stalled().length).toBeGreaterThan(6);
+    expect(feedCss).toContain(".fcard-unblock { display: flex;");
+    expect(feedCss).toContain("flex-wrap: wrap");
   });
 });

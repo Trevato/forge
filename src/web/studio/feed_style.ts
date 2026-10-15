@@ -11,6 +11,8 @@ export const feedCss = /* css */ `
 .fcard-text { white-space: pre-wrap; }
 /* The planner's reply sits under the thought, indented, one or two lines. */
 .fcard-reply { margin: 4px 0 0 12px; padding-left: 10px; border-left: 2px solid var(--border); overflow-wrap: anywhere; }
+.fcard-unblock { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; margin: 0; }
+.fcard-unblock span { flex: 1 1 16ch; min-width: 0; overflow-wrap: anywhere; }
 .fcard-who { font-weight: 600; }
 /* One quiet control under the post: say something, dismiss, mute. */
 .fcard-more summary { cursor: pointer; list-style: none; padding: 2px 0; }

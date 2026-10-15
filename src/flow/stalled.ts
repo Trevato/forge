@@ -13,8 +13,6 @@ import type { User } from "../core/users.ts";
 import { foldRuns } from "./read.ts";
 import { flowStage, type Stage } from "./stage.ts";
 
-/** Cards the home shows; the rest are on the flow page. */
-export const STALLED_SHOWN = 6;
 const REPOS_MAX = 100;
 
 export interface StalledStep {
