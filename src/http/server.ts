@@ -1675,6 +1675,19 @@ export async function serve(app: App): Promise<Servers> {
       // An app's hostname is answered before any route: `hello.<domain>` is
       // the app, whatever its path, and the forge's own routes never apply.
       const runtime = appsRuntime(app);
+      // The parent's lookup reads every `--<its host>` label as its own app
+      // slug, so a miss is not yet a 404: a hosted child may own the label.
+      let ownUnknown = false;
+      // A hosted child's app (`<app>--<child>--<parentHost>`) is the child's
+      // own runtime's, as the parent's apps are the parent's. It goes first:
+      // the parent's own app host would read `<app>--<child>` as one of its slugs and 404.
+      {
+        const hit = await resolveHostedChildApp(app, request);
+        if (hit === "unknown")
+          return securityFloor(new Response("not found", { status: 404 }));
+        if (hit !== undefined)
+          return proxyApp(hit.runtime, request, hit.target, server);
+      }
       if (runtime !== undefined) {
         const target = resolveAppHost(app, runtime.options.domain, request);
         // A preview's headers are the app's business: what `proxyApp`
@@ -1682,17 +1695,7 @@ export async function serve(app: App): Promise<Servers> {
         // floor below sits after this return and not around it.
         if (target !== undefined && target !== "unknown")
           return proxyApp(runtime, request, target, server);
-        if (target === "unknown")
-          return securityFloor(new Response("not found", { status: 404 }));
-      }
-      // A hosted child's app (`<app>--<child>--<parentHost>`) is the child's
-      // own runtime's, as the parent's apps are the parent's.
-      {
-        const hit = await resolveHostedChildApp(app, request);
-        if (hit === "unknown")
-          return securityFloor(new Response("not found", { status: 404 }));
-        if (hit !== undefined)
-          return proxyApp(hit.runtime, request, hit.target, server);
+        if (target === "unknown") ownUnknown = true;
       }
       // A hosted child's Host (`<name>--<parentHost>`) is answered by that
       // child's own App before the parent's pages. Ingress routes the label
@@ -1717,6 +1720,8 @@ export async function serve(app: App): Promise<Servers> {
           return withHeader(response, "connection", "close");
         }
       }
+      if (ownUnknown)
+        return securityFloor(new Response("not found", { status: 404 }));
       notePeer(request, server.requestIP(request)?.address, trust);
       // A body refused part-way, or one left unread with no declared length,
       // ends its connection once answered (`http/limits.ts`).

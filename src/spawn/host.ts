@@ -12,7 +12,7 @@ import { resolveAppHost, type AppTarget } from "../apps/proxy.ts";
 import { childAppsSummary, startChildApps, stopChildApps, type ChildAppsSummary } from "./child-apps.ts";
 import { childHost } from "./door.ts";
 import { firstBoot } from "./first-boot.ts";
-import { childHostSuffix, childPublicUrl, parseHostedChildName } from "./placement.ts";
+import { childHostSuffix, childPublicUrl, CHILD_NAME, parseHostedChildAppLabel, parseHostedChildName } from "./placement.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -166,14 +166,14 @@ export async function resolveHostedChildApp(
 ): Promise<ChildAppHit | "unknown" | undefined> {
   const host = request.headers.get("host");
   if (host === null) return undefined;
-  const label = parseHostedChildName(host, childHost(parent));
+  const label = parseHostedChildAppLabel(host, childHost(parent));
   if (label === undefined) return undefined;
   // A child that is named exactly so is the child itself, not an app of one.
   const own = readLedgerSync(parent, label);
   if (own !== undefined && own.done) return undefined;
   for (let i = label.indexOf("--"); i > 0; i = label.indexOf("--", i + 2)) {
     const name = label.slice(i + 2);
-    if (!CHILD_NAME_OK.test(name)) continue;
+    if (!CHILD_NAME.test(name)) continue;
     const ledger = readLedgerSync(parent, name);
     if (ledger === undefined || !ledger.done) continue;
     const child = await openOnce(parent, ledger);
@@ -185,8 +185,6 @@ export async function resolveHostedChildApp(
   }
   return undefined;
 }
-
-const CHILD_NAME_OK = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 
 /** What a child's apps are doing, for `/forges`; undefined when none run here. */
 export const hostedChildApps = childAppsSummary;

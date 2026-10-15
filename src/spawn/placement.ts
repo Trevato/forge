@@ -71,7 +71,7 @@ export function childPublicUrl(name: string, parentHost: string): string {
   return `https://${name}${childHostSuffix(parentHost)}`;
 }
 
-const CHILD_NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
+export const CHILD_NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
 
 /**
  * The child name a `Host` names under this parent's suffix, or undefined
@@ -87,6 +87,25 @@ export function parseHostedChildName(
   if (!host.endsWith(suffix)) return undefined;
   const name = host.slice(0, -suffix.length);
   return CHILD_NAME.test(name) ? name : undefined;
+}
+
+/** One DNS label: `<app>--<child>` may be as long as a label allows. */
+const CHILD_APP_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * The `<app>--<child>` label a `Host` carries under this parent's suffix,
+ * bounded by the DNS label and not by a child's name alone.
+ */
+export function parseHostedChildAppLabel(
+  hostHeader: string,
+  parentHost: string,
+): string | undefined {
+  const host = hostHeader.toLowerCase().replace(/:\d+$/, "");
+  if (!/^[a-z0-9](?:[a-z0-9.-]{0,252})?$/i.test(host)) return undefined;
+  const suffix = childHostSuffix(parentHost);
+  if (!host.endsWith(suffix)) return undefined;
+  const label = host.slice(0, -suffix.length);
+  return CHILD_APP_LABEL.test(label) ? label : undefined;
 }
 
 export interface HostedOptions {

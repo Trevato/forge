@@ -60,3 +60,13 @@ describe("hosted child hostnames", () => {
     expect(parseHostedChildName("Homie--Forge.open-platform.sh:443", "forge.open-platform.sh")).toBe("homie");
   });
 });
+
+describe("a hosted child's app label", () => {
+  test("is bounded by one DNS label, not by the child's name", async () => {
+    const { parseHostedChildAppLabel, parseHostedChildName } = await import("../src/spawn/placement.ts");
+    const label = `${"a".repeat(20)}--${"b".repeat(20)}`;
+    expect(parseHostedChildName(`${label}--forge.test`, "forge.test")).toBeUndefined();
+    expect(parseHostedChildAppLabel(`${label}--forge.test`, "forge.test")).toBe(label);
+    expect(parseHostedChildAppLabel(`${"a".repeat(64)}--forge.test`, "forge.test")).toBeUndefined();
+  });
+});

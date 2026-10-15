@@ -278,7 +278,8 @@ const crew = appsOn && !crewHeldOff
     })
   : undefined;
 // Hosted children come back with their apps, awake before the first visit.
-await bootHostedChildren(app);
+// The listener is up; the children open behind it, not in front of /healthz.
+void bootHostedChildren(app);
 // A spawned child's first boot: its direction, opened once for its planner
 // (spawn/first-boot.ts). A forge that was not spawned is untouched.
 await firstBoot(app);

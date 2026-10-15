@@ -94,9 +94,7 @@ describe("a hosted child's apps run in the parent", () => {
     if (!spawned.ok) throw new Error(JSON.stringify(spawned.error));
     childDir = childDirOf(parent, spawned.value.bodyId);
     await bootHostedChild(parent, "maria");
-    // The listener is the last mile; where a sandbox forbids its socket, the
-    // dispatch above is still proved and only the wiring test below waits.
-    servers = await serve(parent).catch(() => undefined);
+    servers = await serve(parent);
   }, 120_000);
 
   afterAll(async () => {
@@ -140,7 +138,7 @@ describe("a hosted child's apps run in the parent", () => {
   });
 
   test("through the parent's listener the same host answers", async () => {
-    if (servers === undefined) return console.warn("no listener here; wiring not exercised");
+    if (servers === undefined) throw new Error("the parent's listener did not start");
     const res = await fetch(servers.url + "/", { headers: { host: "bakery--maria--forge.test" } });
     expect(res.status).toBe(200);
     expect((await res.text()).startsWith(join(childDir, "apps"))).toBe(true);

@@ -18,6 +18,10 @@ green changes, and nothing waits on a person. [`docs/STUDIO.md`](docs/STUDIO.md)
 git underneath is one click away — the switch in the top bar, or `?mode=dev` on
 any URL — and it is the rest of this page.
 
+A forge this one spawned (hosted) runs the apps it was given too: its `bakery`
+answers at `bakery--<child>--<this forge's host>`, in this forge's lanes, on the
+child's own data, and `/forges` says how many are running and why any is not.
+
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
 stays that way. Everything worth having is written here: the Result type, the
