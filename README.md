@@ -151,6 +151,8 @@ Unset, only this machine may say so, and the named header is never read. Everyth
 instance _is_ lives under the data directory — the SQLite index, the bare
 repos, and the SSH host key, in plain layout. Tar it up and it moves.
 
+`/forges/new`, `POST /api/v1/forges` and the MCP `spawn` make a client's forge from forks of the apps you pick, plus optionally one fresh app from a one-line description (`fresh`, at most 200 characters), and end in one claim link; see `docs/SPAWN.md`.
+
 `FORGE_PARENT_URL` names the forge this one was spawned from. It must be
 `https://` with no credentials or query (the forge refuses to boot otherwise).
 The parent serves `/releases.json` as `{"releases":[{"name","url"}]}`, newest

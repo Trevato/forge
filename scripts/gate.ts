@@ -201,6 +201,7 @@ export const GATE: readonly string[] = [
   "test/spawn-api.test.ts",
   "test/spawn-child-apps.test.ts",
   "test/spawn-first-boot.test.ts",
+  "test/spawn-fresh-forks.test.ts",
   "test/spawn-keys.test.ts",
   "test/web-apps.test.ts",
   "test/web-ui.test.ts",

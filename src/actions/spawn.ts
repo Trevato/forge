@@ -35,6 +35,7 @@ import {
 import { createUser, getUserByName, type User } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
+import { commitFiles } from "../git/write.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -344,6 +345,13 @@ async function copyInto(
       copiedRepos.push({ parent, child: repo });
     }
 
+    // A fresh app, begun from the spawner's sentence: a README and the
+    // smallest app that answers, committed once.
+    if (plan.fresh !== undefined) {
+      const made = await startFresh(child, org, plan.fresh, plan.direction);
+      if (!made.ok) return err(made.error);
+    }
+
     // The forge's own code, forked into the child with its full history,
     // so every child starts from the forge and can follow its parent.
     // A cross-forge fork: the history is copied by git, and the upstream
@@ -419,6 +427,9 @@ async function copyInto(
         // The child's own address: <name>--<parent's host>.
         url: liveChildUrl(app, plan.name),
         keepAccess: plan.keepAccess,
+        // Each app is a fork: where it came from, so the child can follow it.
+        apps: plan.apps.map((a) => ({ repo: `${plan.org}/${a.ref.split("/")[1]}`, upstream: a.ref })),
+        ...(plan.fresh === undefined ? {} : { fresh: `${plan.org}/${plan.fresh.name}` }),
         // The forge's code, forked into the child: where it came from, so
         // the child can follow its parent's updates.
         ...(forgeCode.value === undefined
@@ -432,6 +443,64 @@ async function copyInto(
   } finally {
     child.close();
   }
+}
+
+/** The smallest app that runs: answers `/` with the sentence, escaped. */
+function freshFiles(description: string): { path: string; content: string }[] {
+  const text = JSON.stringify(description);
+  const html = JSON.stringify(`<!doctype html><meta charset=utf-8><title>app</title><p>`);
+  return [
+    { path: "README.md", content: `# A fresh app\n\n${description.replace(/[\r\n]+/g, " ").replace(/[\\`*_{}\[\]<>()#+\-.!|~]/g, "\\$&")}\n` },
+    { path: "forge.json", content: JSON.stringify({ app: { run: "bun run index.ts", health: "/" } }, null, 2) + "\n" },
+    {
+      path: "index.ts",
+      content: `const text = ${text};
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";");
+Bun.serve({
+  port: Number(process.env["PORT"] ?? 3000),
+  fetch: () =>
+    new Response(${html} + esc(text) + "</p>", {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    }),
+});
+`,
+    },
+  ];
+}
+
+/** A repository in the child's organisation holding a fresh app; a retry finds it and leaves it. */
+async function startFresh(
+  child: App,
+  org: { readonly id: string; readonly username: string },
+  fresh: { readonly name: string; readonly description: string },
+  direction: string,
+): Promise<Result<true, string>> {
+  let repo = getRepo(child.db, org.username, fresh.name);
+  if (!repo) {
+    const made = await createRepo(child.db, child.reposRoot, {
+      ownerId: org.id,
+      name: fresh.name,
+      visibility: "private",
+      description: fresh.description,
+      defaultBranch: "main",
+    });
+    if (!made.ok) return err(`could not make ${fresh.name}: ${made.error}`);
+    repo = made.value;
+  }
+  const dir = repoDir(child.reposRoot, org.username, fresh.name);
+  const has = await runGit(["rev-parse", "--verify", "-q", `refs/heads/${repo.defaultBranch}`], { cwd: dir });
+  if (!has.ok) {
+    const c = await commitFiles(dir, {
+      branch: repo.defaultBranch,
+      message: "A fresh app",
+      files: freshFiles(fresh.description),
+      author: { name: "forge", email: "forge@spawn.forge.invalid" },
+    });
+    if (!c.ok) return err(`could not start ${fresh.name}`);
+  }
+  if (direction !== "" && repo.autonomyDirection !== direction)
+    updateRepoSettings(child.db, repo, { autonomyDirection: direction });
+  return ok(true);
 }
 
 /**

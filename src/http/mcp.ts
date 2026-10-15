@@ -1007,6 +1007,11 @@ const TOOLS: readonly Tool[] = [
           description:
             "What the child is for, in your words (at most 2000 characters): its apps' direction, opened as the planner's first issue when the child first boots.",
         },
+        fresh: {
+          type: "string",
+          description:
+            "One line (at most 200 characters) on a fresh app to start in the child beside the copied ones: it gets a README and a small app that runs.",
+        },
         keepAccess: {
           type: "boolean",
           description:
