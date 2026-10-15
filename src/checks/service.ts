@@ -12,7 +12,7 @@
  */
 
 import { pullDir, runDir } from "../core/pulls.ts";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
@@ -24,6 +24,7 @@ import { getRepoById, type Repo } from "../core/repos.ts";
 import {
   cancelRun,
   getRun,
+  leaseLapsed,
   cancelRunsForPull,
   checksForHead,
   claimRun,
@@ -51,7 +52,7 @@ import { repoDir } from "../git/repos.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
 import { transact } from "../kernel/db.ts";
 import { createLog } from "../kernel/log.ts";
-import { holdLease } from "../runs/lease.ts";
+import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
@@ -196,6 +197,25 @@ export function requeueAbandonedChecks(app: App, staleMs: number): number {
 /** Where a check's checkout lives while it runs. */
 const checksRoot = (dataDir: string): string => join(dataDir, "checks");
 
+/**
+ * Remove the checkouts nobody is using: one whose run is not running with a
+ * live lease, or has no run at all. A forge booting during a roll shares this
+ * directory and database with the old one, whose checks are still running in
+ * theirs; those are left alone.
+ */
+export function sweepCheckouts(app: App, now: number = Date.now()): void {
+  const root = checksRoot(app.config.dataDir);
+  if (!existsSync(root)) return;
+  for (const name of readdirSync(root)) {
+    const run = getRun(app.db, name);
+    const live =
+      run !== undefined &&
+      run.state === "running" &&
+      !leaseLapsed(run, STALE_AFTER_MS, now);
+    if (!live) rmSync(join(root, name), { recursive: true, force: true });
+  }
+}
+
 const handles = new WeakMap<App, ChecksHandle>();
 
 /** The checks service of this forge, if one was started. */
@@ -218,8 +238,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   >();
   let stopped = false;
 
-  // A checkout left by a forge that died mid-check is nobody's.
-  rmSync(checksRoot(app.config.dataDir), { recursive: true, force: true });
+  sweepCheckouts(app);
 
   async function request(
     repo: Repo,

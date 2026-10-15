@@ -5,6 +5,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1039,5 +1040,45 @@ describe("a check its forge died under", () => {
     expect(cut.state).toBe("cancelled");
     expect(cut.summary).toContain("no longer heads an open pull");
     expect(queuedFor(stale)).toHaveLength(0);
+  });
+});
+
+describe("startChecks: a booting forge removes only checkouts nobody is running (#1884)", () => {
+  test("a live run's checkout survives, a lapsed run's and a stranger's go", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-sweep-"));
+    const db = createApp({ dataDir: dir, port: 0 });
+    try {
+      const u = await createUser(db.db, {
+        trusted: true,
+        username: "alice",
+        email: "alice@forge.local",
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      if (!u.ok) throw new Error(u.error);
+      const made = await createRepo(db, u.value, { name: "lib" });
+      if (!made.ok) throw new Error(String(made.error));
+      const mk = (): Run => {
+        const run = createRun(db.db, { repoId: made.value.id, kind: "check", env: "x" });
+        claimRun(db.db, run.id);
+        return run;
+      };
+      const live = mk();
+      const lapsed = mk();
+      db.db
+        .query("UPDATE run SET heartbeat_at = ?2 WHERE id = ?1")
+        .run(lapsed.id, new Date(Date.now() - STALE_AFTER_MS - 5_000).toISOString());
+      const where = (id: string): string => join(dir, "checks", id);
+      for (const id of [live.id, lapsed.id, "no-such-run"])
+        mkdirSync(where(id), { recursive: true });
+      const handle = startChecks(db, { forgeUrl: "http://localhost" });
+      await handle.stop();
+      expect(existsSync(where(live.id))).toBe(true);
+      expect(existsSync(where(lapsed.id))).toBe(false);
+      expect(existsSync(where("no-such-run"))).toBe(false);
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
