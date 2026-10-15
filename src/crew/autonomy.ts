@@ -21,7 +21,7 @@ import {
   setIssueState,
 } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
-import { gateOnLand } from "../checks/landing.ts";
+import { gateOnLand, releaseOnLand } from "../checks/landing.ts";
 import { mergeable, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { mergePull } from "../actions/pulls.ts";
@@ -1420,6 +1420,14 @@ export async function landIfGreen(
   }
   conflicted.delete(pull.id);
   resolveOpen(app.db, pull.id, "land", "shipped");
+  // On the forge's own code, the landed tree is checked out and preflighted
+  // off to the side; the landing does not wait on it (#1662).
+  void releaseOnLand(app, by, repo, pull, merged.value.mergeOid).catch((error) =>
+    log.warn("release checkout failed", {
+      pull: pull.number,
+      why: error instanceof Error ? error.message : String(error),
+    }),
+  );
   // Said once it has landed, so the note wakes no builder: the review was
   // asked for and never came.
   if (review === "lapsed") {

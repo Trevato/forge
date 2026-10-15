@@ -148,8 +148,12 @@ export interface ForgeConfig {
    * (`FORGE_REPO`, e.g. `trevato-apps/forge`). A spawned child forks it,
    * so every child starts from the forge's code and can follow its
    * parent's updates. Unset, children are spawned without the fork.
+   * It also marks the repository whose landings are checked out into
+   * `releases/<sha>/` and preflighted (`release/`, #1662).
    */
   forgeRepo?: string;
+  /** How many `releases/<sha>/` checkouts to keep (`FORGE_RELEASES_KEEP`). @default 5 */
+  releasesKeep?: number;
 }
 
 export interface App {

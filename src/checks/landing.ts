@@ -8,6 +8,18 @@
 import type { App } from "../app.ts";
 import { parseCheck } from "../apps/manifest.ts";
 import { readFileAt } from "../apps/checkout.ts";
+import { addComment } from "../actions/issues.ts";
+import type { User } from "../core/users.ts";
+import { getIssueById } from "../core/issues.ts";
+import { repoDir } from "../git/repos.ts";
+import {
+  checkoutRelease,
+  DEFAULT_KEEP,
+  preflightRelease,
+  type Verdict,
+  pruneReleases,
+} from "../release/checkout.ts";
+import { recordRelease, type Release } from "../release/record.ts";
 import type { Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { runGit } from "../git/env.ts";
@@ -57,4 +69,80 @@ export async function gateOnLand(
   const verdict = landVerdict(done.ok, failed.tests, failed.files);
   if (!verdict.lands) addLearned(app.config.dataDir, pull.id, verdict.learn);
   return verdict;
+}
+
+/**
+ * A pull landed on the forge's own repository (`FORGE_REPO`): write the
+ * landed tree to `releases/<sha>/`, preflight it, record the verdict. A red
+ * preflight is one line in the log and a comment on the landed pull. Any
+ * other repository is untouched (`undefined`). Nothing is swapped.
+ */
+export function releaseOnLand(
+  app: App,
+  by: User,
+  repo: Repo,
+  pull: Pull,
+  sha: string,
+): Promise<Release | undefined> {
+  const run = turn.then(() => cut(app, by, repo, pull, sha));
+  turn = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/**
+ * The preflight copies the live database while the crew writes, so a torn copy
+ * can read red. A red is asked again once; only a second red is believed.
+ */
+async function preflightTrusted(dir: string, dataDir: string): Promise<Verdict> {
+  const first = await preflightRelease(dir, dataDir);
+  return first.ok ? first : preflightRelease(dir, dataDir);
+}
+
+/** Landings queue behind one another: two checkouts never share releases/. */
+let turn: Promise<void> = Promise.resolve();
+
+async function cut(
+  app: App,
+  by: User,
+  repo: Repo,
+  pull: Pull,
+  sha: string,
+): Promise<Release | undefined> {
+  if (app.config.forgeRepo !== `${repo.ownerName}/${repo.name}`) return undefined;
+  const dataDir = app.config.dataDir;
+  const out = await checkoutRelease(
+    dataDir,
+    repoDir(app.reposRoot, repo.ownerName, repo.name),
+    sha,
+  );
+  const verdict = out.ok
+    ? await preflightTrusted(out.value, dataDir)
+    : { ok: false, line: `checkout failed: ${out.error}` };
+  const release = recordRelease(app.db, {
+    sha,
+    repoId: repo.id,
+    pullNumber: pull.number,
+    ok: verdict.ok,
+    line: verdict.line,
+  });
+  pruneReleases(dataDir, app.config.releasesKeep ?? DEFAULT_KEEP, sha);
+  if (!verdict.ok) {
+    app.log.warn("release preflight failed", {
+      sha: sha.slice(0, 12),
+      pull: pull.number,
+      line: verdict.line,
+    });
+    const landed = getIssueById(app.db, pull.id) ?? pull;
+    addComment(
+      app,
+      by,
+      repo,
+      landed,
+      `The landed tree ${sha.slice(0, 12)} failed its preflight, so it will not be released: ${verdict.line}`,
+    );
+  }
+  return release;
 }

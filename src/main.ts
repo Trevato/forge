@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
@@ -133,6 +134,9 @@ const app = createApp({
   ...(hosted && (process.env.FORGE_APP_SSH ?? "").trim() !== ""
     ? { appSsh: (process.env.FORGE_APP_SSH ?? "").trim() }
     : {}),
+  // The repository holding this forge's own code: a landing there is
+  // checked out under releases/ and preflighted (#1662).
+  ...releaseEnv(process.env),
   // The one knob on the crew's bill: FORGE_CREW_CEILING_USD, dollars a day
   // across every repository. Unset is no forge-wide ceiling.
   ...(process.env.FORGE_MIGRATE_PRIVATE_HOSTS === "1"
