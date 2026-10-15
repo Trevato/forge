@@ -337,6 +337,8 @@ from before this record say nothing).
 `docs/APPS.md` is the contract: the vocabulary, and the rules that are
 mechanical rather than advisory.
 
+`docs/FLOW.md` is where every issue stands: `GET /api/v1/repos/:owner/:name/flow` returns each open issue's stage, since, stalled and unblock, plus what went live in the last 24 h.
+
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
 what "ready now" means to a person and to the crew.
 

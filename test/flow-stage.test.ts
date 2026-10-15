@@ -299,9 +299,9 @@ describe("readFlow over real records", () => {
       // Merged: the issue closes with it, and is `land` until production serves it.
       const mergedAt = new Date(Date.now() - 1000).toISOString();
       app.db.query("UPDATE pull SET merged_at = ?2 WHERE issue_id = ?1").run(pr.id, mergedAt);
-      app.db
-        .query("UPDATE issue SET state = 'closed', closed_at = ?2 WHERE id = ?1")
-        .run(issue.value.id, mergedAt);
+      // landPull also closes the pull's own row, so it reaches the flow through closedSince.
+      for (const id of [issue.value.id, pr.id])
+        app.db.query("UPDATE issue SET state = 'closed', closed_at = ?2 WHERE id = ?1").run(id, mergedAt);
       const flow = () => readFlow(app.db, repo, { now: new Date(), scope: { sealed: true } });
       expect(flow().live).toEqual([]);
       const landing = flow().open.find((s) => s.number === issue.value.number);
