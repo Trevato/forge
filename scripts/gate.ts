@@ -59,6 +59,7 @@ export const GATE: readonly string[] = [
   "test/protection.test.ts",
   "test/tui-limbs.test.ts",
   "test/tui-onyou.test.ts",
+  "test/tui-deploys.test.ts",
   "test/tui-access.test.ts",
   "test/claim-link.test.ts",
   "test/og-card.test.ts",
