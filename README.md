@@ -35,6 +35,7 @@ feeling on a foundation sized for one person.
 ```sh
 bun install          # dev-only: types + tsc, no runtime deps
 bun run src/main.ts  # web on :3000, ssh on :2222 (FORGE_SSH_PORT=0 turns it off; a taken port turns it off with one warning)
+bun src/main.ts --preflight  # can this tree boot? config parses, migrations run on a copy of the database; one line, exit 0 or 1, no socket opened. Run it before the swap, not under load: the copy is not atomic against a live writer, and a `preflight-*` directory a killed run left behind is swept by the next run once an hour old, and a missing data directory is created, as boot would
 ```
 
 If your shell already has `FORGE_URL` set — a crew workspace sets it to the
