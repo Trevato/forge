@@ -5,7 +5,7 @@ import { stylesheetAsset } from "../src/web/asset.ts";
  * `?wall` is its wall mode, where every old `/big` address lands;
  * anonymous is sent to sign in.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -68,6 +68,12 @@ describe("the board", () => {
     if (!enabled.ok) throw new Error(String(enabled.error));
     return made.value;
   }
+
+  // Module loggers reach every forge in the process: each test starts from a quiet ledger.
+  beforeEach(() => {
+    app.signals.errors.clear();
+    app.signals.refused.clear();
+  });
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-board-"));
@@ -405,6 +411,12 @@ describe("the board's forge strip", () => {
         headers: { cookie: cookies[who]! },
       })
     ).text();
+
+  // Module loggers reach every forge in the process: each test starts from a quiet ledger.
+  beforeEach(() => {
+    app.signals.errors.clear();
+    app.signals.refused.clear();
+  });
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-board-strip-"));
