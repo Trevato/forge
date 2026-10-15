@@ -14,6 +14,7 @@
  * pointer. The old big view (`/big`, every address it had) lands here.
  */
 
+import { sentinelNotice } from "../../crew/sentinel.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { askMeasure } from "../../core/ask_ledger.ts";
 import { reviewersOf, waitsForPerson } from "../../crew/review.ts";
@@ -312,6 +313,13 @@ function needHref(need: string, v: Vitals): string | undefined {
   return undefined;
 }
 
+/** The sentinel's open findings, a link to them; nothing when there are none. */
+function sentinelSpan(app: Ctx["app"]): Html {
+  const n = sentinelNotice(app.db);
+  if (n === null) return html``;
+  return html`<a class="board-forge-need" id="sentinel" href="${n.href}">${n.text}</a>`;
+}
+
 /**
  * The forge's health as one line, for a site admin only: *All fine*, or
  * each thing that needs them. A live region of its own; nobody else gets
@@ -343,6 +351,7 @@ function forgeStrip(ctx: Ctx): Html | null {
     data-rollout="${fh.rollout.state}"
     role="status"
   >
+    ${sentinelSpan(app)}
     ${rollout === null ? "" : html`<span class="board-forge-need">${rollout}</span>`}
     ${others.map((i) => html`<span class="board-forge-need">${i.key}: ${i.message}</span>`)}
     ${lane === null ? "" : html`<span class="board-forge-lane">Lane: ${lane}</span>`}

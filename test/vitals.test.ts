@@ -100,7 +100,10 @@ test("a site admin with a read-only token gets the shape; others get the short o
   expect((await fetch(servers.url + "/healthz")).status).toBe(200);
 });
 
-test("a full queue shows in queue, and an old one in needs", () => {
+test("a full queue shows in queue, and an old one in needs", async () => {
+  // Errors and refused calls are process-wide: another file in the shard may have left some.
+  (await import("../src/kernel/log.ts")).clearErrors();
+  (await import("../src/kernel/internal_refused.ts")).resetRefusedInternal();
   const old = Date.now() - 3_600_000;
   for (let i = 0; i < 3; i++) createRun(app.db, { repoId, kind: "agent" });
   const v = vitals({ db: app.db, dataDir });

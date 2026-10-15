@@ -432,6 +432,20 @@ The terminal has no backups view, so it has no readout.
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.
 
+### The sentinel
+
+The forge hunts its own faults (`docs/CREW.md`): a hunt an hour on the
+autonomy clock, sooner when a held slot or a setting left away from its
+default is new. Each finding is one issue with its evidence, filed in
+`FORGE_SENTINEL_REPO` (default `trevato/forge`) as the `sentinel` agent, else
+the first admin. Evidence is scrubbed of anything credential-shaped before it
+is filed.
+
+- **Board:** a site admin's forge strip shows the open findings and the last
+  hunt; a guest or member sees nothing.
+- **Terminal:** press `ctrl+k`, run **Sentinel** — the same line as a toast.
+  Offered to site admins only.
+
 ### Passports
 
 A crew run's environment carries `FORGE_PASSPORT`, a 15-minute credential
