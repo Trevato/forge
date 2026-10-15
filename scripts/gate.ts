@@ -101,6 +101,7 @@ export const GATE: readonly string[] = [
   "test/front.test.ts",
   "test/fork-counts.test.ts",
   "test/fork-flow.test.ts",
+  "test/approve-here.test.ts",
   "test/fork-pull-approval.test.ts",
   "test/cross-repo-pull.test.ts",
   "test/pull-mergeable.test.ts",

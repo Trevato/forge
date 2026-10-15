@@ -32,6 +32,7 @@ import {
 } from "../../actions/issues.ts";
 import {
   addReview,
+  approveHere,
   mergePull,
   pullThreads,
   resolveReviewThread,
@@ -46,6 +47,7 @@ import {
   type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
+import { pullMayRun } from "../../core/pull_trust.ts";
 import { getPull, type Pull } from "../../core/pulls.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
@@ -588,6 +590,41 @@ export function pullScreen(
     });
   };
 
+  /**
+   * Whether `A` is on offer: an open origin-fork pull whose current head
+   * nobody here has approved to run. The same condition as the page's card.
+   */
+  const mayApproveHere = (): boolean => {
+    if (repo === undefined || f.user === undefined || !mayWrite()) return false;
+    const row = getPull(f.db, repo.id, number);
+    return (
+      f.user.kind === "user" &&
+      row !== undefined &&
+      row.originHeadRepo !== null &&
+      row.state === "open" &&
+      row.mergedAt === null &&
+      (facts?.headOid ?? "") !== "" &&
+      !pullMayRun(f.db, repo, row, facts?.headOid ?? "")
+    );
+  };
+
+  /** `A` — let this origin fork's head run here; `approveHere` decides. */
+  const approveToRun = (): void => {
+    if (repo === undefined) return;
+    const target = repo;
+    const row = getPull(f.db, target.id, number);
+    if (row === undefined) return;
+    runAsync(ctx, async () => {
+      const done = await approveHere(f.app, f.user, target, row);
+      if (!done.ok) {
+        ctx.toast(errorText(String(done.error)), "danger");
+        return;
+      }
+      await reload();
+      ctx.toast("approved to run here: its check and preview start", "success");
+    });
+  };
+
   const mirrored = (): boolean => repo === undefined || repo.origin !== null;
   const state = (): MergeState =>
     mergeState(detail?.issue, facts, mirrored(), gated(), checksGated());
@@ -613,6 +650,9 @@ export function pullScreen(
           ? [
               binding(["c"], tab === 1 ? "review line" : "comment"),
               binding(["R"], "review"),
+              ...(mayApproveHere()
+                ? [binding(["A"], "approve to run here")]
+                : []),
               binding(["a"], "assign"),
               binding(["m"], "merge", { disabled: state() !== "ready" }),
               ...(tab === 1 && view.threadHere() !== null
@@ -774,6 +814,10 @@ export function pullScreen(
       }
       if (e.key === "R" && mayWrite()) {
         review();
+        return true;
+      }
+      if (e.key === "A" && mayApproveHere()) {
+        approveToRun();
         return true;
       }
       if (e.key === "O" && isApp && preview !== undefined) {

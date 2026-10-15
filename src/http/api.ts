@@ -97,6 +97,7 @@ import {
   refreshPullHead,
   resolveReviewThread,
   submitReview,
+  approveHere,
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
@@ -3146,6 +3147,43 @@ export function apiRoutes(router: Router<Handler>): void {
         return originAware(submitted.error, 422);
       }
       return json(submitted.value, 201);
+    },
+  );
+
+  // Let an origin fork's pull run here: a person who can write approves its
+  // current head, and its check and preview start.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/pulls/:number/approve-here",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const found = loadPull(ctx);
+      if ("error" in found) return found.error;
+      const done = await approveHere(
+        ctx.app,
+        ctx.auth.user,
+        found.repo,
+        found.pull,
+      );
+      if (!done.ok) {
+        if (done.error === "self_review")
+          return apiError(
+            "self_review",
+            422,
+            "you cannot approve your own pull request",
+          );
+        if (done.error === "not_foreign")
+          return apiError(
+            "not_foreign",
+            422,
+            "this pull needs no approval to run",
+          );
+        if (done.error === "not_open")
+          return apiError("not_open", 422, "this pull is closed");
+        return respondAccess(done.error, 422);
+      }
+      return json(done.value, 201);
     },
   );
 

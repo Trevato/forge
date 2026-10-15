@@ -17,6 +17,7 @@ import {
   pullThreads,
   resolveReviewThread,
   submitReview,
+  approveHere,
 } from "../../actions/pulls.ts";
 import { readFileAt } from "../../apps/checkout.ts";
 import { parseCheck } from "../../apps/manifest.ts";
@@ -815,7 +816,10 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     ${holdCard(ctx, repo, pull, { act: false })}
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier)}
     <div class="split">
-      <div>${reviewCard(ctx, repo, pull, `${thread}/review-state`)}</div>
+      <div>
+        ${approveHereCard(ctx, repo, pull, status.headOid, `${thread}/approve-here`)}
+        ${reviewCard(ctx, repo, pull, `${thread}/review-state`)}
+      </div>
       <aside>
         ${assigneeCard(ctx, repo, pull, `${thread}/assignee`)}
         ${labelsCard(ctx, repo, pull, applied, allLabels, `${thread}/labels`)}
@@ -963,6 +967,79 @@ function mergeFailure(error: AccessError | MergePullError): string {
 }
 
 // ---- verdicts and threads ----
+
+/**
+ * The control for an origin fork's pull: it runs nothing here until a person
+ * who can write this repository approves this head. Shown only while that
+ * is the state of things.
+ */
+export function approveHereCard(
+  ctx: Ctx,
+  repo: Repo,
+  pull: Pull,
+  headOid: string,
+  action: string,
+): Html {
+  const user = ctx.auth.user;
+  if (
+    user === undefined ||
+    user.kind !== "user" ||
+    pull.originHeadRepo === null ||
+    pull.state !== "open" ||
+    pull.mergedAt !== null ||
+    !canWrite(ctx.app.db, repo, user) ||
+    pullMayRun(ctx.app.db, repo, pull, headOid)
+  )
+    return html``;
+  return card(
+    html`<form method="post" action="${action}">
+      <p>
+        This head is from a fork on the origin, so its check and preview wait
+        for you. Approving lets them run this exact code here, holding the
+        repository owner's app token. A new push waits again.
+      </p>
+      ${btn("Approve to run here", { size: "sm", icon: "check" })}
+    </form>`,
+    {
+      extra: "mb",
+      head: html`${icon("eye")}
+        <h2>Run this code?</h2>`,
+    },
+  );
+}
+
+/** POST /:owner/:name/pulls/:number/approve-here — let a fork's head run. */
+export async function pullApproveHereSubmit(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
+  const done = await approveHere(
+    ctx.app,
+    ctx.auth.user,
+    found.repo,
+    found.pull,
+  );
+  if (!done.ok)
+    return flashTo(ctx, dest, {
+      tone: "danger",
+      message:
+        done.error === "forbidden" || done.error === "unauthorized"
+          ? "Only a person with write access can approve code to run here."
+          : done.error === "self_review"
+            ? "You cannot approve your own pull request."
+            : done.error === "not_open"
+              ? "That pull request is closed."
+              : done.error === "not_foreign"
+                ? "That pull request needs no approval to run."
+                : "That pull request is no longer here.",
+    });
+  return flashTo(ctx, dest, {
+    message: "Approved to run here: its check and preview are starting.",
+  });
+}
 
 /**
  * POST /:owner/:name/pulls/:number/review-state — pass a verdict.
