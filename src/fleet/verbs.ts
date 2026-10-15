@@ -752,7 +752,7 @@ export const VERBS: Record<string, Verb> = {
       }
       return undefined;
     },
-    async write(app, _actor, t, after) {
+    async write(app, actor, t, after) {
       const have = t.seating?.().of(t.id) ?? [];
       for (const seat of Array.isArray(after) ? after.map(String) : []) {
         const want = parseSeat(seat);
@@ -760,6 +760,14 @@ export const VERBS: Record<string, Verb> = {
         if (have.includes(seat)) continue;
         const why = moveLimb(app.db, t.repo, t.id, want);
         if (why !== undefined) return why;
+        // The order is not an issue's own change, so no issue event says it
+        // moved: a milestones page open elsewhere hears this one.
+        app.bus.append({
+          kind: "limb.moved",
+          repoId: t.repo.id,
+          actorId: actor.id,
+          payload: { number: t.issue?.number ?? null, seat },
+        });
       }
       return undefined;
     },
