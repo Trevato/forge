@@ -17,6 +17,8 @@ import {
 } from "./caller.ts";
 import {
   accountAct,
+  retireAct,
+  retirePage,
   accountsPage,
   personSignInsPage,
   signInAct,
@@ -697,6 +699,8 @@ export function buildRouter(): Router<Handler> {
     accountAct("unsuspend"),
   );
   router.add("POST", "/settings/accounts/:username/remove", accountAct("remove"));
+  router.add("GET", "/settings/accounts/:username/retire", retirePage);
+  router.add("POST", "/settings/accounts/:username/retire", retireAct);
   router.add("POST", "/settings/accounts/:username/verify", accountAct("verify"));
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew", agentCreate);
