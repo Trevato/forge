@@ -48,6 +48,18 @@ describe("the shell sandbox", () => {
     urls: ["http://localhost:3000"],
   };
 
+  test("allows loopback by the forge's port, never whole", () => {
+    const hosts = sandboxPolicy({
+      ...input,
+      urls: ["http://127.0.0.1:3000", "https://forge.example.com"],
+    }).allowHosts;
+    expect(hosts).toContain("127.0.0.1:3000");
+    expect(hosts).toContain("forge.example.com");
+    expect(hosts).not.toContain("127.0.0.1");
+    expect(hosts).not.toContain("localhost");
+    expect(sandboxPolicy(input).allowHosts).toContain("localhost:3000");
+  });
+
   test("is enforced unless the host says it cannot", () => {
     expect(sandboxPolicy(input).enforced).toBe(true);
     expect(sandboxPolicy({ ...input, enforced: false }).enforced).toBe(false);

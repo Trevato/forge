@@ -245,10 +245,9 @@ describe("a spawned child's first boot", () => {
         times.push(performance.now() - t0);
         expect(res.status).toBeLessThan(400);
       }
-      // A boot per request takes seconds; that is what this guards. A
-      // loopback fetch on a loaded runner can take tens of ms, so the
-      // bound sits well above it (see WALL_CLOCK_FLOOR_MS).
       times.sort((a, b) => a - b);
+      // What this guards against is a boot per request, which is seconds; a
+      // loaded runner's loopback round trip is tens of milliseconds.
       expect(times[2]!).toBeLessThan(500);
     }
   });

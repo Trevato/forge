@@ -84,7 +84,15 @@ const REVIEW_TRIES = 2;
 export interface ReviewAttempt {
   readonly createdAt: string;
   readonly active: boolean;
+  /** The reviewer the run was sent to. */
+  readonly reviewerId?: string | null;
 }
+
+/**
+ * A head that went green this long after the lapse, with no review yet,
+ * is still sent once, late; past it, nothing was ever going to send.
+ */
+const LATE_SEND_MS = REVIEW_LAPSE_MS;
 
 /**
  * Where review stands on a green head that has no verdict: `send` a
@@ -119,27 +127,74 @@ export function reviewStage(
 export function reviewAttempts(
   db: Database,
   pull: Pull,
-): { greenAt: string; attempts: ReviewAttempt[] } | undefined {
-  const green = db
-    .query<{ at: string | null }, [string, string]>(
-      `SELECT MIN(finished_at) AS at FROM run WHERE issue_id = ?1 AND commit_oid = ?2
-         AND kind IN ('check','deploy') AND state = 'ok'`,
+): ReviewHistory | undefined {
+  // Review is owed from the check's green: a preview deploy finishes in
+  // seconds, a check may queue for an hour. A deploy counts only where the
+  // head has no check at all.
+  const hasCheck =
+    db
+      .query<{ n: number }, [string, string]>(
+        `SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1 AND commit_oid = ?2 AND kind = 'check'`,
+      )
+      .get(pull.id, pull.headOid)!.n > 0;
+  const greenRun = db
+    .query<{ at: string | null; created: string | null }, [string, string, string]>(
+      `SELECT MIN(finished_at) AS at, created_at AS created FROM run
+         WHERE issue_id = ?1 AND commit_oid = ?2 AND kind = ?3 AND state = 'ok'`,
     )
-    .get(pull.id, pull.headOid)?.at;
+    .get(pull.id, pull.headOid, hasCheck ? "check" : "deploy");
+  const green = greenRun?.at;
   if (green === null || green === undefined) return undefined;
+  const checkMs = hasCheck
+    ? Date.parse(green) - Date.parse(greenRun?.created ?? green)
+    : 0;
   const released = lastRelease(db, pull.id);
   const since = released !== undefined && released > green ? released : green;
   const attempts = db
-    .query<{ created_at: string; state: string }, [string, string]>(
-      `SELECT created_at, state FROM run WHERE issue_id = ?1 AND kind = 'agent'
+    .query<
+      { created_at: string; state: string; actor_id: string | null },
+      [string, string]
+    >(
+      `SELECT created_at, state, actor_id FROM run WHERE issue_id = ?1 AND kind = 'agent'
          AND reason = 'review' AND created_at >= ?2 ORDER BY created_at, id`,
     )
     .all(pull.id, since)
     .map((r) => ({
       createdAt: r.created_at,
       active: r.state === "queued" || r.state === "running",
+      reviewerId: r.actor_id,
     }));
-  return { greenAt: since, attempts };
+  const first = attempts[0];
+  const lateAt =
+    first !== undefined && Date.parse(first.createdAt) - Date.parse(since) >= REVIEW_LAPSE_MS
+      ? first.createdAt
+      : undefined;
+  return { greenAt: since, attempts, lateAt, checkMinutes: Math.round(checkMs / 60_000) };
+}
+
+/** What the run table says about review on a head. */
+export interface ReviewHistory {
+  readonly greenAt: string;
+  readonly attempts: ReviewAttempt[];
+  /** When the first review was sent, if it was sent past the lapse: the lapse clock restarts there. */
+  readonly lateAt: string | undefined;
+  /** How long the check took, from queued to green. */
+  readonly checkMinutes: number;
+}
+
+/**
+ * `reviewStage` for a history: a head that went green and was never sent
+ * is sent once, late, before it lapses to a person; a review sent late
+ * has the lapse counted from its sending.
+ */
+export function stageOf(
+  history: ReviewHistory,
+  now: Date,
+): "send" | "wait" | "lapsed" | "late" {
+  const age = now.getTime() - Date.parse(history.greenAt);
+  if (history.attempts.length === 0 && age >= REVIEW_LAPSE_MS)
+    return age < REVIEW_LAPSE_MS + LATE_SEND_MS ? "late" : "lapsed";
+  return reviewStage(history.lateAt ?? history.greenAt, history.attempts, now);
 }
 
 /** Rounds of changes the crew's reviewer asks on one pull before it is handed to a person. */
@@ -193,6 +248,8 @@ export interface ReviewWait {
   readonly why: "no reviewer" | "lapsed" | "rounds";
   /** When review became owed: the head went green, or the pull was let go. */
   readonly since: string;
+  /** Minutes the check took, when the review was sent late because of it. */
+  readonly lateCheckMinutes?: number;
 }
 
 /**
@@ -218,8 +275,14 @@ export function waitsForPerson(
   if (history === undefined) return undefined;
   if (reviewersOf(db, repoId).length === 0)
     return { why: "no reviewer", since: history.greenAt };
-  return reviewStage(history.greenAt, history.attempts, now) === "lapsed"
-    ? { why: "lapsed", since: history.greenAt }
+  return stageOf(history, now) === "lapsed"
+    ? {
+        why: "lapsed",
+        since: history.greenAt,
+        ...(history.lateAt === undefined
+          ? {}
+          : { lateCheckMinutes: history.checkMinutes }),
+      }
     : undefined;
 }
 
@@ -245,16 +308,21 @@ export async function sendToReview(
   if (handedToPerson(app.db, repo.id, pull)) return "held";
   const history = reviewAttempts(app.db, pull);
   if (history === undefined) return "wait";
-  const stage = reviewStage(history.greenAt, history.attempts, now);
-  if (stage !== "send") return stage;
+  const stage = stageOf(history, now);
+  if (stage === "wait" || stage === "lapsed") return stage;
+  const late = stage === "late";
   const issue = getIssueById(app.db, pull.id);
   if (!issue) return "wait";
   const { diff } = await pullDiff(
     await pullDir(app.db, app.reposRoot, repo, pull),
     pull,
   );
+  // A review that came back with no verdict is sent to the other reviewer
+  // when the crew has one; with only one, the same reviewer tries again.
+  const failed = history.attempts.at(-1)?.reviewerId;
+  const others = reviewers.filter((r) => r.user.id !== failed);
   const reviewer = pickReviewer(
-    reviewers,
+    others.length > 0 ? others : reviewers,
     diff.files.map((f) => f.path),
   );
   if (reviewer === undefined) return "wait";
@@ -265,6 +333,7 @@ export async function sendToReview(
     pull: pull.number,
     reviewer: reviewer.user.username,
     attempt: history.attempts.length + 1,
+    ...(late ? { late: true, checkMinutes: history.checkMinutes } : {}),
   });
   return "sent";
 }
