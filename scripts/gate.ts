@@ -131,6 +131,7 @@ export const GATE: readonly string[] = [
   "test/git-trust.test.ts",
   "test/helpers.test.ts",
   "test/shards.test.ts",
+  "test/snapshot-drill.test.ts",
   "test/snapshot-store.test.ts",
   "test/migrate.test.ts",
   "test/schema-additive.test.ts",
