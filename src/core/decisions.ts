@@ -13,9 +13,10 @@ import { id as newId } from "../kernel/id.ts";
  * a follow-up with nothing new (`skipped`), an issue at its run cap
  * (`capped`) — counted by `guardCounts` (`crew/guard.ts`).
  *
- * `lean` was which option on a studio ask card a careful owner would pick.
- * Nothing records one any more; older ledgers still hold rows of it, and the
- * summaries that read them keep the word.
+ * `lean` was which option on a studio ask card a careful owner would pick;
+ * it is now a person's like or dislike of one sibling among a deck's
+ * variants (`recordVariantVote`). Older ledgers hold the earlier rows, and
+ * the summaries that read them keep the word.
  *
  * `hand` is a person's tap on "Let the decider" on a hand-over card
  * (`crew/handover.ts`): its state is the curated context the decider saw. */
@@ -115,6 +116,35 @@ export function recordDecision(
     input.ms,
   );
   return getDecision(db, id)!;
+}
+
+/** A person's like or dislike of one pull among its variant siblings. */
+export function recordVariantVote(
+  db: Database,
+  input: {
+    readonly repoId: string;
+    readonly issueId: string;
+    readonly group: string;
+    readonly number: number;
+    readonly answer: "like" | "dislike";
+    readonly by: string;
+    readonly reason?: string | undefined;
+  },
+): Decision {
+  return recordDecision(db, {
+    kind: "lean",
+    repoId: input.repoId,
+    issueId: input.issueId,
+    state: {
+      group: input.group,
+      number: input.number,
+      ...(input.reason === undefined ? {} : { reason: input.reason }),
+    },
+    answer: input.answer,
+    p: 1,
+    by: input.by,
+    ms: 0,
+  });
 }
 
 export function getDecision(db: Database, id: string): Decision | undefined {
