@@ -25,11 +25,42 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { defect } from "./error.ts";
 import { sha256 } from "./hash.ts";
 
 /** The longest slice of a failing statement a failure message quotes. */
 const QUOTE_MAX = 80;
+
+/**
+ * A migration file's name: a sortable id — four digits for the ones that
+ * were numbered in a list, a UTC `YYYYMMDDHHMMSS` for every one since —
+ * then a slug. Both kinds sort as text: every numbered id starts `0`, every
+ * stamped one `2`.
+ */
+export const MIGRATION_FILE = /^(\d{4}|\d{14})-[a-z0-9]+(?:-[a-z0-9]+)*\.ts$/;
+
+/**
+ * The migrations in `dir`, one file each, in the order their names sort.
+ * Each file's default export is its SQL. Read once, at boot, synchronously:
+ * the list is the schema, so a name that does not fit or a file that
+ * exports no SQL is a defect, never a migration quietly skipped.
+ */
+export function readMigrations(dir: string): string[] {
+  const names = readdirSync(dir).sort();
+  return names.map((name) => {
+    if (!MIGRATION_FILE.test(name))
+      defect(
+        "db.migration_name",
+        `${name} in ${dir} is not <id>-<slug>.ts (id: four digits or YYYYMMDDHHMMSS)`,
+      );
+    const sql: unknown = require(join(dir, name)).default;
+    if (typeof sql !== "string")
+      defect("db.migration_missing", `${name} has no default export of SQL`);
+    return sql;
+  });
+}
 
 /**
  * A migration's identity: its text with runs of whitespace collapsed, so
