@@ -162,6 +162,7 @@ import {
 import {
   getPull,
   listPulls,
+  variantSiblings,
   pullDiff,
   pullDir,
   pullMergeStates,
@@ -2781,8 +2782,10 @@ export function apiRoutes(router: Router<Handler>): void {
         pulls.map(async (p) => ({ dir: await pullDirOf(ctx, repo, p), pull: p })),
       ),
     );
+    const siblings = variantSiblings(ctx.app.db, pulls);
     const items = withLabelsMany(ctx, pulls).map((item, i) => ({
       ...item,
+      variantSiblings: siblings[i] ?? [],
       ...(states[i] ?? {}),
     }));
     return json(paged(items, query.limit, (p) => p.number));
@@ -2826,7 +2829,13 @@ export function apiRoutes(router: Router<Handler>): void {
         created.error === "origin_unreachable"
         ? originAware(created.error)
         : respondAccess(created.error, 422);
-    return json(withLabels(ctx, created.value), 201);
+    return json(
+      {
+        ...withLabels(ctx, created.value),
+        variantSiblings: variantSiblings(ctx.app.db, [created.value])[0] ?? [],
+      },
+      201,
+    );
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/pulls/:number", async (ctx) => {
@@ -2846,6 +2855,7 @@ export function apiRoutes(router: Router<Handler>): void {
     const hold = getHold(ctx.app.db, found.pull.id);
     return json({
       ...withLabels(ctx, found.pull),
+      variantSiblings: variantSiblings(ctx.app.db, [found.pull])[0] ?? [],
       ...(found.pull.state === "open" && found.pull.mergedAt === null
         ? { mergeable: status.mergeable, conflicts: status.conflicts }
         : {}),

@@ -109,6 +109,7 @@ export const GATE: readonly string[] = [
   "test/fork-pull-approval.test.ts",
   "test/cross-repo-pull.test.ts",
   "test/pull-mergeable.test.ts",
+  "test/pull-variants.test.ts",
   "test/pull-checks-line.test.ts",
   "test/pulls.test.ts",
   "test/api-reader-marks.test.ts",
@@ -266,6 +267,7 @@ export const GATE: readonly string[] = [
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
+  { file: "test/crew-sandbox-real.test.ts", reason: "landed unlisted and red locally; the builder admits it", issue: 1238 },
   { file: "test/api-errors.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
   {
