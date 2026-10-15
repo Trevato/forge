@@ -429,16 +429,18 @@ export function metaThemeColor(name: ThemeName): string {
  * while Safari often keeps the prior paint. Matching `html`/`body` to the
  * theme before the external stylesheet arrives kills that flash. Kept tiny
  * and nonce'd — CSP forbids unnonce'd inline style.
+ *
+ * The same for every page, whatever theme it was rendered with: the theme
+ * menu flips `data-theme` on the root without a reload, so the ground must
+ * follow the attribute, not the theme the server saw. With no attribute the
+ * system pair follows the OS; each `html[data-theme]` rule outranks it.
  */
-export function bootCss(theme: ThemeName | undefined): string {
-  if (theme !== undefined) {
-    const t = THEMES[theme];
-    return `html,body{background-color:${t.tokens.bg};color-scheme:${t.appearance}}`;
-  }
-  const light = THEMES.light;
-  const dark = THEMES.dark;
-  return (
-    `html,body{background-color:${light.tokens.bg};color-scheme:light}` +
-    `@media (prefers-color-scheme: dark){html,body{background-color:${dark.tokens.bg};color-scheme:dark}}`
-  );
-}
+export const bootCss = [
+  `html,body{background-color:${THEMES.light.tokens.bg};color-scheme:light}`,
+  `@media (prefers-color-scheme: dark){html,body{background-color:${THEMES.dark.tokens.bg};color-scheme:dark}}`,
+  ...THEME_NAMES.map((name) => {
+    const t = THEMES[name];
+    const root = `html[data-theme="${name}"]`;
+    return `${root},${root} body{background-color:${t.tokens.bg};color-scheme:${t.appearance}}`;
+  }),
+].join("");
