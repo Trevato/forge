@@ -5,8 +5,8 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { listIssues, type Issue } from "../core/issues.ts";
-import { closesFromBody, listPulls, type Pull } from "../core/pulls.ts";
+import { getIssuesByIds, LIST_LIMIT_MAX, listIssues, type Issue } from "../core/issues.ts";
+import { closesFromBody, joinMany, listPulls, type Pull } from "../core/pulls.ts";
 import { listReviews, reviewSummary } from "../core/reviews.ts";
 import type { Repo } from "../core/repos.ts";
 import { verdictForHead } from "../core/runs.ts";
@@ -77,6 +77,49 @@ function productionDeploys(db: Database, repoId: string, since: string) {
     .all(repoId, since);
 }
 
+type Scope = FlowOptions["scope"];
+
+/** Every open issue or pull, newest first: the list's pages followed to the end, not its cap. */
+function allOpen(db: Database, repoId: string, scope: Scope, kind: "issue" | "pull"): Issue[] | Pull[] {
+  const out: (Issue | Pull)[] = [];
+  let cursor: number | undefined;
+  for (;;) {
+    const options = { ...scope, state: "open" as const, limit: LIST_LIMIT_MAX, ...(cursor === undefined ? {} : { cursor }) };
+    const page: (Issue | Pull)[] =
+      kind === "issue" ? listIssues(db, repoId, options) : listPulls(db, repoId, options);
+    out.push(...page);
+    if (page.length < LIST_LIMIT_MAX) return out as Issue[] | Pull[];
+    cursor = page[page.length - 1]!.number;
+  }
+}
+
+/** The SQL that keeps sealed rows from a viewer who may not see them; `at` is the next parameter's number. */
+function sealedClause(scope: Scope, alias: string, at: number): { sql: string; params: string[] } {
+  if (scope.sealed === true) return { sql: "", params: [] };
+  if (scope.sealedBy === undefined) return { sql: ` AND ${alias}.sealed = 0`, params: [] };
+  return {
+    sql: ` AND (${alias}.sealed = 0 OR ${alias}.author_id = ?${at})`,
+    params: [scope.sealedBy],
+  };
+}
+
+/**
+ * Closed issues or pulls of `kind` that closed at or after `since` — chosen by
+ * the time window, not by a newest-N cap — under the viewer's sealed scope.
+ */
+function closedSince(db: Database, repoId: string, scope: Scope, kind: "issue" | "pull", since: string): Issue[] {
+  const seal = sealedClause(scope, "issue", 4);
+  const params = [repoId, kind, since, ...seal.params];
+  const ids = db
+    .query<{ id: string }, string[]>(
+      `SELECT issue.id FROM issue
+        WHERE issue.repo_id = ?1 AND issue.kind = ?2 AND issue.state = 'closed' AND issue.closed_at >= ?3${seal.sql}`,
+    )
+    .all(...params)
+    .map((r) => r.id);
+  return [...getIssuesByIds(db, ids).values()].sort((a, b) => b.number - a.number);
+}
+
 export function readFlow(
   db: Database,
   repo: Repo,
@@ -86,8 +129,12 @@ export function readFlow(
   const repoId = repo.id;
   const { requireReview } = repo;
   const reopened = reopenedAt(db, repoId);
-  const pulls = listPulls(db, repoId, { ...scope, state: "all", limit: 200 });
   const windowStart = new Date(now.getTime() - MERGE_WINDOW).toISOString();
+  // Every open pull, plus those closed or merged inside the window.
+  const pulls = [
+    ...(allOpen(db, repoId, scope, "pull") as Pull[]),
+    ...joinMany(db, closedSince(db, repoId, scope, "pull", windowStart)),
+  ];
   const deploys = productionDeploys(db, repoId, windowStart);
 
   const toFlowPull = (pull: Pull): FlowPull => {
@@ -128,13 +175,13 @@ export function readFlow(
     }
   }
 
-  const open = listIssues(db, repoId, { ...scope, state: "open", limit: 200 });
+  const open = allOpen(db, repoId, scope, "issue") as Issue[];
   const cutoff = new Date(now.getTime() - DAY).toISOString();
   const candidates = new Map<string, Issue>(open.map((i) => [i.id, i]));
-  for (const closed of listIssues(db, repoId, { ...scope, state: "closed", limit: 200 }))
-    if (closed.closedAt !== null && closed.closedAt >= windowStart) candidates.set(closed.id, closed);
+  for (const closed of closedSince(db, repoId, scope, "issue", windowStart))
+    candidates.set(closed.id, closed);
 
-  const blockers = openBlockers(db, [...candidates.keys()]);
+  const blockers = openBlockers(db, scope, [...candidates.keys()]);
   const build = (issue: Issue): FlowIssue => ({
     number: issue.number,
     title: issue.title,
@@ -156,19 +203,25 @@ export function readFlow(
   return out;
 }
 
-/** The numbers of the open issues each of these waits for. */
-function openBlockers(db: Database, ids: readonly string[]): Map<string, number[]> {
+/** The numbers of the open issues each of these waits for, that the viewer may see. */
+function openBlockers(
+  db: Database,
+  scope: Scope,
+  ids: readonly string[],
+): Map<string, number[]> {
   const out = new Map<string, number[]>();
+  const seal = sealedClause(scope, "b", 1);
   for (let i = 0; i < ids.length; i += 400) {
     const chunk = ids.slice(i, i + 400);
+    const at = seal.params.length;
     const rows = db
       .query<{ issue_id: string; number: number }, string[]>(
         `SELECT d.issue_id, b.number FROM issue_dependency d
          JOIN issue b ON b.id = d.blocked_by_id
-         WHERE b.state = 'open' AND d.issue_id IN (${chunk.map((_, n) => `?${n + 1}`).join(",")})
+         WHERE b.state = 'open'${seal.sql} AND d.issue_id IN (${chunk.map((_, n) => `?${at + n + 1}`).join(",")})
          ORDER BY b.number`,
       )
-      .all(...chunk);
+      .all(...seal.params, ...chunk);
     for (const row of rows) out.set(row.issue_id, [...(out.get(row.issue_id) ?? []), row.number]);
   }
   return out;
