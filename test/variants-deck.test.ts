@@ -104,7 +104,7 @@ describe("a deck chooses among sibling pulls", () => {
     await gitOk(["add", "."]);
     await gitOk(["commit", "-m", "base"]);
     await gitOk(["push", "origin", "main"]);
-    for (const name of ["a", "b"]) {
+    for (const name of ["a", "b", "c"]) {
       await gitOk(["checkout", "-B", name, "main"]);
       await Bun.write(join(dir, "code.txt"), `alpha\n${name}\n`);
       await gitOk(["commit", "-am", name]);
@@ -115,7 +115,12 @@ describe("a deck chooses among sibling pulls", () => {
         body: JSON.stringify({ base: "main", head: name, title: `Try ${name}` }),
       });
     }
-    app.db.run("UPDATE pull SET variant_group = 'deck1'");
+    app.db.run(
+      "UPDATE pull SET variant_group = 'deck1' WHERE issue_id IN (SELECT id FROM issue WHERE number IN (1, 2))",
+    );
+    app.db.run(
+      "UPDATE pull SET variant_group = 'deck2' WHERE issue_id IN (SELECT id FROM issue WHERE number = 3)",
+    );
   });
 
   afterAll(async () => {
@@ -168,6 +173,44 @@ describe("a deck chooses among sibling pulls", () => {
     expect(pull(1).state).toBe("open");
   });
 
+  test("liking twice keeps one vote per person", async () => {
+    await post("/dev/app/variants/deck1/1/like", ownerCookie);
+    const mine = ledger().filter((r) => r.issueId === pull(1).id);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.answer).toBe("like");
+  });
+
+  test("a close that fails leaves no row and no comment", async () => {
+    app.db.run(
+      "CREATE TRIGGER no_close BEFORE UPDATE ON issue BEGIN SELECT RAISE(ABORT, 'no'); END",
+    );
+    const before = listComments(app.db, pull(3).id).length;
+    await post("/dev/app/variants/deck2/3/dislike", ownerCookie, { reason: "x" });
+    app.db.run("DROP TRIGGER no_close");
+    expect(ledger().filter((r) => r.issueId === pull(3).id)).toHaveLength(0);
+    expect(listComments(app.db, pull(3).id)).toHaveLength(before);
+    expect(pull(3).state).toBe("open");
+  });
+
+  test("the API refuses a bad answer and a reader, and takes a writer's like", async () => {
+    const tok = (cookie: string) => ({ cookie, origin: base, "content-type": "application/json" });
+    const url = `${base}/api/v1/repos/dev/app/pulls/3/variant`;
+    const bad = await fetch(url, { method: "POST", headers: tok(ownerCookie), body: JSON.stringify({ answer: "meh" }) });
+    expect(bad.status).toBe(422);
+    const reader = await fetch(url, { method: "POST", headers: tok(readerCookie), body: JSON.stringify({ answer: "like" }) });
+    expect(reader.ok).toBe(false);
+    const good = await fetch(url, { method: "POST", headers: tok(ownerCookie), body: JSON.stringify({ answer: "like" }) });
+    expect(good.status).toBe(201);
+    expect(ledger().filter((r) => r.issueId === pull(3).id)).toHaveLength(1);
+  });
+
+  test("the change page links to the deck", async () => {
+    const html = await (
+      await fetch(`${base}/dev/app/pulls/1`, { headers: { cookie: ownerCookie } })
+    ).text();
+    expect(html).toContain("/dev/app/variants/deck1");
+  });
+
   test("a dislike writes one row, closes the pull, and leaves the reason as a comment", async () => {
     await post("/dev/app/variants/deck1/2/dislike", ownerCookie, {
       reason: "too   loud\nand garish",
@@ -179,7 +222,7 @@ describe("a deck chooses among sibling pulls", () => {
     expect(comments.some((c) => c.body.includes("too loud and garish"))).toBe(true);
     // A decided variant takes no second vote.
     await post("/dev/app/variants/deck1/2/dislike", ownerCookie);
-    expect(ledger()).toHaveLength(2);
+    expect(ledger().filter((r) => r.issueId !== pull(3).id)).toHaveLength(2);
   });
 
   test("the last open sibling shows Ship", async () => {

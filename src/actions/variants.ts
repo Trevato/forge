@@ -42,23 +42,38 @@ export function voteVariant(
     return err("not_variant");
   if (pull.state !== "open" || pull.mergedAt !== null) return err("not_open");
   const reason = answer === "dislike" ? cleanReason(reasonText) : undefined;
-  recordVariantVote(app.db, {
-    repoId: repo.id,
-    issueId: pull.id,
-    group: pull.variantGroup,
-    number: pull.number,
-    answer,
-    by: actor.username,
-    reason,
-  });
-  if (reason === undefined) return ok({ closed: false });
-  const said = addComment(
-    app,
-    actor,
-    repo,
-    pull,
-    `Closed: not chosen among its variants. ${reason}`,
-  );
-  const closed = setIssueState(app, actor, repo, pull, "closed");
-  return said.ok && closed.ok ? ok({ closed: true }) : err("failed");
+  const vote = () =>
+    recordVariantVote(app.db, {
+      repoId: repo.id,
+      issueId: pull.id,
+      group: pull.variantGroup!,
+      number: pull.number,
+      answer,
+      by: actor.username,
+      reason,
+    });
+  if (reason === undefined) {
+    vote();
+    return ok({ closed: false });
+  }
+  // Close first, then say why, then record: one transaction, so a close that
+  // is refused leaves no comment and no ledger row behind.
+  try {
+    app.db.transaction(() => {
+      const closed = setIssueState(app, actor, repo, pull, "closed");
+      if (!closed.ok) throw new Error(closed.error);
+      const said = addComment(
+        app,
+        actor,
+        repo,
+        pull,
+        `Closed: not chosen among its variants. ${reason}`,
+      );
+      if (!said.ok) throw new Error(said.error);
+      vote();
+    })();
+  } catch {
+    return err("failed");
+  }
+  return ok({ closed: true });
 }

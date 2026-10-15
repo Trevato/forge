@@ -20,6 +20,7 @@ import {
   pullStatus,
   revertOf,
   toldBy,
+  variantSiblings,
   type Pull,
   pullDir,
 } from "../../core/pulls.ts";
@@ -549,6 +550,15 @@ async function changeConversation(
       ownTitle: true,
     })}
     ${changeHead(ctx, repo, pull)} ${changeTabs(repo, pull, "change")}
+    ${when(
+      pull.variantGroup !== null && variantSiblings(db, [pull])[0]!.length > 0,
+      () =>
+        html`<p class="muted small variant-link">
+          <a href="${base}/variants/${pull.variantGroup ?? ""}"
+            >Choose among ${variantSiblings(db, [pull])[0]!.length + 1} variants</a
+          >
+        </p>`,
+    )}
     <div id="pull-check">${checkLine}</div> ${holdCard(ctx, repo, pull, { act: true })}
     ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
     ${when(wall, (w) => wallCard(w))} ${decisionSection}

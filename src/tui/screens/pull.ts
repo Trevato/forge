@@ -48,7 +48,8 @@ import {
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { pullMayRun } from "../../core/pull_trust.ts";
-import { getPull, type Pull } from "../../core/pulls.ts";
+import { getPull, variantSiblings, type Pull } from "../../core/pulls.ts";
+import { voteVariant } from "../../actions/variants.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import { err, ok } from "../../kernel/result.ts";
@@ -650,6 +651,7 @@ export function pullScreen(
           ? [
               binding(["c"], tab === 1 ? "review line" : "comment"),
               binding(["R"], "review"),
+              binding(["+", "-"], "like/dislike a variant"),
               ...(mayApproveHere()
                 ? [binding(["A"], "approve to run here")]
                 : []),
@@ -810,6 +812,26 @@ export function pullScreen(
       }
       if (e.key === "tab") {
         tab = ((tab + 1) % tabCount()) as Tab;
+        return true;
+      }
+      if ((e.key === "+" || e.key === "-") && mayWrite() && repo !== undefined) {
+        const row = getPull(f.db, repo.id, number);
+        if (row === undefined || row.variantGroup === null) return true;
+        const voted = voteVariant(
+          f.app,
+          f.user,
+          repo,
+          row,
+          e.key === "+" ? "like" : "dislike",
+        );
+        if (!voted.ok) ctx.toast(errorText(voted.error), "danger");
+        else {
+          const others = variantSiblings(f.db, [row])[0] ?? [];
+          ctx.toast(
+            `${e.key === "+" ? "Liked" : "Closed"}. Variants: ${others.map((n) => `#${n}`).join(" ") || "none"}`,
+          );
+          runAsync(ctx, reload);
+        }
         return true;
       }
       if (e.key === "R" && mayWrite()) {

@@ -118,7 +118,7 @@ export function recordDecision(
   return getDecision(db, id)!;
 }
 
-/** A person's like or dislike of one pull among its variant siblings. */
+/** A person's like or dislike of one pull among its variant siblings; the newest replaces their earlier one. */
 export function recordVariantVote(
   db: Database,
   input: {
@@ -131,6 +131,10 @@ export function recordVariantVote(
     readonly reason?: string | undefined;
   },
 ): Decision {
+  // One vote per person per pull: a later one replaces the earlier.
+  db.query(
+    "DELETE FROM decision WHERE kind = 'lean' AND issue_id = ?1 AND by = ?2",
+  ).run(input.issueId, input.by);
   return recordDecision(db, {
     kind: "lean",
     repoId: input.repoId,

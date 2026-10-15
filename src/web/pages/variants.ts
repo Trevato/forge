@@ -38,10 +38,14 @@ function deck(ctx: Ctx, repo: Repo, group: string): Pull[] {
 }
 
 // Swipe right likes, left dislikes: it submits the card's own forms.
-const SWIPE_JS = `for(const c of document.querySelectorAll("[data-swipe]")){let x=null;
-c.addEventListener("touchstart",e=>{x=e.touches[0].clientX},{passive:true});
-c.addEventListener("touchend",e=>{if(x===null)return;const d=e.changedTouches[0].clientX-x;x=null;
-if(Math.abs(d)<90)return;const f=c.querySelector(d>0?"form.like":"form.dislike");if(f)f.requestSubmit()},{passive:true})}`;
+// Swipe right likes, left asks before disliking; only a mostly horizontal
+// move counts, so a diagonal scroll closes nothing.
+const SWIPE_JS = `for(const c of document.querySelectorAll("[data-swipe]")){let x=null,y=0;
+c.addEventListener("touchstart",e=>{x=e.touches[0].clientX;y=e.touches[0].clientY},{passive:true});
+c.addEventListener("touchend",e=>{if(x===null)return;const dx=e.changedTouches[0].clientX-x,dy=e.changedTouches[0].clientY-y;x=null;
+if(Math.abs(dx)<90||Math.abs(dy)*3>Math.abs(dx))return;
+if(dx<0&&!confirm("Dislike and close this variant?"))return;
+const f=c.querySelector(dx>0?"form.like":"form.dislike");if(f)f.requestSubmit()},{passive:true})}`;
 
 function deckCard(
   ctx: Ctx,
