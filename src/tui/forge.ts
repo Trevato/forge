@@ -47,6 +47,7 @@ import { accessScreen } from "./screens/access.ts";
 import { flagsScreen } from "./screens/flags.ts";
 import { cloudScreen } from "./screens/cloud.ts";
 import { usageScreen } from "./screens/usage.ts";
+import { peopleScreen } from "./screens/people.ts";
 import { modelCeilingPrompt, modelGrantPrompt, modelScreen } from "./screens/model.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { quotasScreen } from "./screens/quotas.ts";
@@ -393,6 +394,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Model ceiling",
         hint: "set an account's dollars a day and a run",
         run: () => ctx.push(modelCeilingPrompt(session, ctx, blank("Model ceiling"))),
+      });
+    // Guests, members and admins, as /settings/people has them (#2301).
+    if (session.user?.isAdmin === true && session.user.kind === "user")
+      commands.push({
+        id: "people",
+        title: "People",
+        hint: "who is a guest, a member or an admin; promote or demote",
+        run: () => ctx.push(peopleScreen(session, ctx)),
       });
     // Account quotas, as /admin/limits has them: an admin who is not an agent (#2191).
     if (session.user?.isAdmin === true && session.user.kind !== "agent")

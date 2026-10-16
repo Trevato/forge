@@ -8,6 +8,8 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { setRole } from "../actions/roles.ts";
+import { listPeople } from "../core/roles.ts";
 import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
 import { storageLimitMessage } from "../core/storage.ts";
 import { voteVariant } from "../actions/variants.ts";
@@ -1606,6 +1608,30 @@ export function apiRoutes(router: Router<Handler>): void {
       ? apiError("invalid", 422, "usdPerMonth is from 0.01 to 10000 dollars")
       : done.error === "not_allowed"
         ? apiError("not_allowed", 422, "a grant is for a person who is not an admin")
+        : notFound();
+  });
+
+  // Every person and their role.
+  router.add("GET", "/api/v1/admin/people", (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    return json({ people: listPeople(ctx.app.db) });
+  });
+
+  // Make a person a member (with an optional starter allowance, dollars a month) or a guest again.
+  router.add("POST", "/api/v1/admin/accounts/:username/role", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const { role, usdPerMonth } = input;
+    if ((role !== "member" && role !== "guest") || (usdPerMonth !== undefined && usdPerMonth !== null && (typeof usdPerMonth !== "number" || !Number.isFinite(usdPerMonth))))
+      return apiError("invalid", 422, 'role is "member" or "guest"; usdPerMonth is dollars a month, or null');
+    const done = setRole(ctx.app, ctx.auth.user, ctx.params.username!, role, typeof usdPerMonth === "number" ? usdPerMonth : null);
+    if (done.ok) return json(done.value);
+    return done.error === "invalid_amount"
+      ? apiError("invalid", 422, "usdPerMonth is from 0.01 to 10000 dollars")
+      : done.error === "not_allowed"
+        ? apiError("not_allowed", 422, "a role is for a person who is not an admin")
         : notFound();
   });
 

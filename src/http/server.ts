@@ -157,6 +157,7 @@ import {
   subscriptionHeadroom,
   subscriptionWake,
 } from "../web/pages/subscriptions.ts";
+import { peoplePage, roleAct } from "../web/pages/people.ts";
 import { ceilingAct, grantAct, modelAdd, modelPage } from "../web/pages/model.ts";
 import {
   changePassword,
@@ -805,6 +806,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/backups/mirror/clear", backupsMirrorClear);
   router.add("POST", "/settings/backups/mirror/now", backupsMirrorNow);
   router.add("GET", "/settings/accounts", accountsPage);
+  router.add("GET", "/settings/people", peoplePage);
+  router.add("POST", "/settings/people/:username/role", roleAct);
   router.add("GET", "/settings/model", modelPage);
   router.add("POST", "/settings/model", modelAdd);
   router.add("POST", "/settings/accounts/:username/model", grantAct);

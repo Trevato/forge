@@ -62,6 +62,7 @@ import {
   cardFor,
 } from "../web/studio/cards.ts";
 import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
+import { setRole } from "../actions/roles.ts";
 import { keepThought } from "../actions/thought.ts";
 import {
   FROM_WORDS,
@@ -998,6 +999,52 @@ const TOOLS: readonly Tool[] = [
           set.error === "invalid_amount"
             ? "usdPerMonth is from 0.01 to 10000 dollars"
             : "no such person, or not one a grant is for",
+        );
+      return good(set.value);
+    },
+  },
+  {
+    name: "account_role",
+    description:
+      "Make a person a member, or a guest again, with an optional starter model allowance (`usdPerMonth`, dollars a month, only when promoting; none by default). Roles are recorded and shown on /settings/people; nothing is refused because of one yet. A forge admin who is a person, with an admin token, sets it; `dryRun` is true unless you say false. Each change, and any allowance, is recorded in the audit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        username: { type: "string" },
+        role: { type: "string", enum: ["member", "guest"] },
+        usdPerMonth: { type: ["number", "null"], description: "0.01 to 10000; omit or null for none." },
+        dryRun: { type: "boolean", description: "Plan only (the default). Send false to set it." },
+      },
+      required: ["username", "role"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const { username, role, usdPerMonth } = args;
+      if (
+        typeof username !== "string" ||
+        (role !== "member" && role !== "guest") ||
+        !(usdPerMonth === undefined || usdPerMonth === null || (typeof usdPerMonth === "number" && Number.isFinite(usdPerMonth)))
+      )
+        return bad("invalid", 'send a username and a role, "member" or "guest"');
+      if (!mayBoards(user)) return bad("forbidden", "a role is a forge admin's to set");
+      const usd = typeof usdPerMonth === "number" ? usdPerMonth : null;
+      if (args["dryRun"] !== false)
+        return good({
+          username,
+          role,
+          usdPerMonth: usd,
+          says: "This is the plan; nothing changed. Send dryRun: false to set it.",
+        });
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "a role needs an admin token");
+      const set = setRole(ctx.app, user, username, role, usd);
+      if (!set.ok)
+        return bad(
+          set.error === "invalid_amount" ? "invalid" : "forbidden",
+          set.error === "invalid_amount"
+            ? "usdPerMonth is from 0.01 to 10000 dollars"
+            : "no such person, or not one a role is for",
         );
       return good(set.value);
     },

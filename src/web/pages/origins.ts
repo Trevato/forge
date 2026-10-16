@@ -79,6 +79,7 @@ export type AccountSection =
   | "usage"
   | "crew"
   | "accounts"
+  | "people"
   | "subscriptions"
   | "backups"
   | "secrets"
@@ -108,6 +109,12 @@ export function accountSections(
             href: "/settings/accounts",
             icon: "users" as const,
             current: current === "accounts",
+          },
+          {
+            label: "People",
+            href: "/settings/people",
+            icon: "users" as const,
+            current: current === "people",
           },
           {
             label: "Crew",

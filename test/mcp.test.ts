@@ -181,6 +181,7 @@ describe("the forge over MCP", () => {
       "health",
       "audit",
       "model_grant",
+      "account_role",
       "model_ceiling",
       "outsiders",
       "decisions_by",
