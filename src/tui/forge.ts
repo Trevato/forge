@@ -30,6 +30,7 @@ import {
 } from "./screens/common.ts";
 import { boardsScreen } from "./screens/boards.ts";
 import { askedScreen } from "./screens/asked.ts";
+import { deciderScreen } from "./screens/decider.ts";
 import { familyScreen } from "./screens/family.ts";
 import { familyLines, familyView } from "../spawn/family.ts";
 import { issueScreen } from "./screens/issue.ts";
@@ -178,6 +179,13 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Asked",
         hint: "your thoughts and what became of them",
         run: () => ctx.push(askedScreen(session, ctx)),
+      });
+    if (session.signedIn)
+      commands.push({
+        id: "decider",
+        title: "Decider",
+        hint: "what it closed, deferred and asked you about today",
+        run: () => ctx.push(deciderScreen(session, ctx)),
       });
     if (session.signedIn)
       commands.push(

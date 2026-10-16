@@ -22,7 +22,12 @@ import { tokenReturns } from "../../core/returns.ts";
 import { needLine } from "../../actions/health.ts";
 import { returnsRepos } from "../../actions/returns.ts";
 import {
+  deciderCounts,
+  PILE_EMPTY,
+  isDeciderPile,
   listDecisionsForRepos,
+  listDeciderPile,
+  type DeciderPile,
   type Decision,
   type DecisionKind,
 } from "../../core/decisions.ts";
@@ -848,6 +853,15 @@ function handContextLine(d: Decision): Html {
   </p>`;
 }
 
+/** The most rows a ledger view lists; past it the view says how many it left out. */
+const LEDGER_ROWS = 200;
+
+const PILE_LEAD: Record<DeciderPile, string> = {
+  closed: "What the decider closed today.",
+  deferred: "What the decider held back today.",
+  asked: "What the decider asked you about today.",
+};
+
 function decided(ctx: Ctx, scope: BoardScope): Html {
   const db = ctx.app.db;
   // The decision ledger is the owner's own record of what the crew chose —
@@ -855,7 +869,15 @@ function decided(ctx: Ctx, scope: BoardScope): Html {
   const ids = scope.repos
     .filter((r) => scope.ownerFacts.has(r.id))
     .map((r) => r.id);
-  const decisions = listDecisionsForRepos(db, ids, 12);
+  // `?ledger=closed|deferred|asked` is the rows behind a count on Today's line.
+  const asked = ctx.url.searchParams.get("ledger");
+  const pile = isDeciderPile(asked) ? asked : null;
+  const since = startOfTodayUtc(new Date()).toISOString();
+  const decisions =
+    pile === null
+      ? listDecisionsForRepos(db, ids, 12)
+      : listDeciderPile(db, ids, pile, since, LEDGER_ROWS);
+  const total = pile === null ? 0 : deciderCounts(db, ids, since)[pile];
   const about = getIssuesByIds(
     db,
     decisions.map((d) => d.issueId).filter((id): id is string => id !== null),
@@ -910,11 +932,41 @@ function decided(ctx: Ctx, scope: BoardScope): Html {
     "Decided",
     "run.*,pull.*",
     rows,
-    "Nothing decided yet.",
+    pile === null ? "Nothing decided yet." : PILE_EMPTY[pile],
+    pile === null
+      ? null
+      : html`<p class="muted small board-context">
+          ${PILE_LEAD[pile]}${total > decisions.length
+            ? ` Showing the newest ${decisions.length} of ${total}.`
+            : ""}
+          <a href="${boardHref(ctx, null)}#decided">All decisions</a>
+        </p>`,
   );
 }
 
 // ---- today ----
+
+/** The board's own address, keeping `?apps=`, with a ledger pile (or none) in `?ledger=`. */
+function boardHref(ctx: Ctx, pile: DeciderPile | null): string {
+  const q = new URLSearchParams();
+  const apps = ctx.url.searchParams.get("apps");
+  if (apps) q.set("apps", apps);
+  if (pile !== null) q.set("ledger", pile);
+  const s = q.toString();
+  return s === "" ? "/board" : `/board?${s}`;
+}
+
+/** "The decider closed 4, deferred 2, asked you about 1", each count a link to its ledger rows; null on a quiet day. */
+function deciderLine(ctx: Ctx, scope: BoardScope, since: string): Html | null {
+  const n = deciderCounts(ctx.app.db, [...scope.ownerFacts], since);
+  if (n.closed + n.deferred + n.asked === 0) return null;
+  const link = (pile: DeciderPile) =>
+    html`<a href="${boardHref(ctx, pile)}#decided">${n[pile]}</a>`;
+  return html`<p class="board-context muted small" id="decider-day">
+    The decider closed ${link("closed")}, deferred ${link("deferred")}, asked
+    you about ${link("asked")}.
+  </p>`;
+}
 
 function today(ctx: Ctx, scope: BoardScope): Html {
   const db = ctx.app.db;
@@ -1003,6 +1055,7 @@ function today(ctx: Ctx, scope: BoardScope): Html {
     scope.repos.length === 0
       ? "No apps to watch."
       : "No app runs on its own yet.",
+    deciderLine(ctx, scope, since),
   );
 }
 

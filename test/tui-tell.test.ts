@@ -31,7 +31,7 @@ let bob: User;
 let repo: Repo;
 
 async function palette(user: User, keys: string[]): Promise<string> {
-  const terminal = headlessTerminal(120, 30);
+  const terminal = headlessTerminal(120, 40);
   const { app: tui, session } = createForgeApp(
     app,
     { sshUsername: user.username, remoteAddress: "127.0.0.1", fingerprint: "SHA256:test", user },

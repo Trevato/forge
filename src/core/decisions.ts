@@ -357,3 +357,90 @@ export function decisionsSince(
     .all(kind, since, Math.min(500, Math.max(1, limit)))
     .map(toDecision);
 }
+
+/**
+ * What the decider did with a person's cards, in three piles: `closed`
+ * (a hand-over set aside), `deferred` (a pull the decider held back with a
+ * `stop`, until its check passes) and `asked` (a hand-over it left with the
+ * owner). A rule's `stop` is the crew's own, not the decider's.
+ */
+export const DECIDER_PILES = ["closed", "deferred", "asked"] as const;
+export type DeciderPile = (typeof DECIDER_PILES)[number];
+
+const PILE_WHERE: Record<DeciderPile, string> = {
+  closed: "kind = 'hand' AND answer = 'set_aside' AND outcome = 'set_aside'",
+  deferred: "kind = 'retry' AND answer = 'stop' AND by != 'rule'",
+  asked: "kind = 'hand' AND answer = 'ask_owner'",
+};
+
+export function isDeciderPile(s: unknown): s is DeciderPile {
+  return DECIDER_PILES.includes(s as DeciderPile);
+}
+
+const inRepos = (n: number, from: number) =>
+  Array.from({ length: n }, (_, i) => `?${i + from}`).join(",");
+
+/** Repository ids, once each, in batches small enough for one query — no owner's count is cut short. */
+function repoBatches(repoIds: readonly string[], size = 400): string[][] {
+  const ids = [...new Set(repoIds)];
+  const out: string[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
+
+/** How many decisions fall in each pile since a moment, across these repositories. */
+export function deciderCounts(
+  db: Database,
+  repoIds: readonly string[],
+  since: string,
+): Record<DeciderPile, number> {
+  const out = { closed: 0, deferred: 0, asked: 0 };
+  for (const ids of repoBatches(repoIds))
+    for (const pile of DECIDER_PILES)
+      out[pile] +=
+        db
+          .query<{ n: number }, string[]>(
+            `SELECT COUNT(*) AS n FROM decision
+             WHERE created_at >= ?1 AND (${PILE_WHERE[pile]}) AND repo_id IN (${inRepos(ids.length, 2)})`,
+          )
+          .get(since, ...ids)?.n ?? 0;
+  return out;
+}
+
+/** The sentence for the counts, in plain words: "closed 4, deferred 2, asked you about 1". */
+export function deciderWords(n: Record<DeciderPile, number>): string {
+  return `closed ${n.closed}, deferred ${n.deferred}, asked you about ${n.asked}`;
+}
+
+/** What an empty pile says, for a person. */
+export const PILE_EMPTY: Record<DeciderPile, string> = {
+  closed: "The decider has closed nothing today.",
+  deferred: "The decider has held nothing back today.",
+  asked: "The decider has not asked you about anything today.",
+};
+
+/** The ledger rows behind one pile's count, newest first. */
+export function listDeciderPile(
+  db: Database,
+  repoIds: readonly string[],
+  pile: DeciderPile,
+  since: string,
+  limit = 200,
+): Decision[] {
+  const cap = Math.min(500, Math.max(1, limit));
+  const rows: Decision[] = [];
+  for (const ids of repoBatches(repoIds))
+    rows.push(
+      ...db
+        .query<Row, (string | number)[]>(
+          `SELECT * FROM decision
+           WHERE created_at >= ?1 AND (${PILE_WHERE[pile]}) AND repo_id IN (${inRepos(ids.length, 3)})
+           ORDER BY created_at DESC, id DESC LIMIT ?2`,
+        )
+        .all(since, cap, ...ids)
+        .map(toDecision),
+    );
+  return rows
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : a.id < b.id ? 1 : -1))
+    .slice(0, cap);
+}

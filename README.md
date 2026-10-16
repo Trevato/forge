@@ -308,6 +308,15 @@ muted"). On the On you card: `space` marks a row, `x` closes the marked rows
 again to every muted repository. Each goes through `applyAsksBulk`, so the
 per-row access checks and refusals are the web's, shown in the toast.
 
+**What the decider did today.** Today's card on the board carries one line,
+"The decider closed N, deferred N, asked you about N": each count links to
+its ledger rows (`/board?ledger=closed|deferred|asked`; any other value is
+ignored, `?apps=` is kept). A deferral is the decider's own `stop`, never the
+rule's. The ledger view lists up to 200 rows and says when it left some out.
+In the terminal the same line sits above the dashboard, `C` (or the palette's
+Decider) opens the rows, and `1`, `2`, `3` switch pile. Both are for the
+repositories you own only: a reader sees nothing.
+
 **Let the decider** answers a hand-over card (an issue the crew parked) when
 you would rather not: the third tap on the card, `POST /api/v1/asks/decide`
 (`{"item": "parked:<id>"}`), the MCP tool `asks_decide`, or `D` on the On you

@@ -73,6 +73,7 @@ import {
   promptScreen,
   plural,
 } from "./common.ts";
+import { deciderLine, deciderScreen } from "./decider.ts";
 import { issueScreen } from "./issue.ts";
 import { newRepoScreen } from "./newrepo.ts";
 import { pullScreen } from "./pull.ts";
@@ -126,6 +127,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let clientLines: string[] = [];
   /** The check lane, as the board's strip says it; null when nothing is queued. */
   let lane: string | null = null;
+  /** What the decider did today, the board's Today line; null on a quiet day or for a reader. */
+  let decider: string | null = null;
   const filter = new Filter();
   /** One cursor per pane: moving in one must never move another. */
   const cursors: Record<PaneId, ListState> = {
@@ -168,6 +171,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     );
     forge = forgeNeeds(f.app, f.user);
     lane = forgeLane(f.app, f.user);
+    decider = deciderLine(f.app, f.user);
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.
     const orgs = f.user
@@ -541,6 +545,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         binding(["d"], "unpin", {
           disabled: focus !== "machine" || pins.length === 0,
         }),
+        binding(["C"], "decider", { disabled: !f.user }),
         binding(["n"], "new repo", { disabled: !f.signedIn }),
         binding(["A"], "account", { disabled: !f.signedIn }),
         binding(["s"], "sign in", { disabled: f.signedIn }),
@@ -571,6 +576,17 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             style(c.fg, c.bg),
             strip!.x + strip!.w,
           ),
+        );
+        body = rest!;
+      }
+      if (decider !== null) {
+        const [strip, rest] = split(body, "v", [len(1), fill(1)]);
+        s.text(
+          strip!.x,
+          strip!.y,
+          truncate(`${decider}  C lists`, strip!.w),
+          style(c.mutedFg, c.bg),
+          strip!.x + strip!.w,
         );
         body = rest!;
       }
@@ -666,6 +682,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       if (e.key === "u" && f.user) return undoSet(), true;
       if (e.key === "U" && f.user) return undoHand(), true;
       if (e.key === "L" && f.user) return listenAgain(), true;
+      if (e.key === "C" && f.user) return ctx.push(deciderScreen(f, ctx)), true;
       if (e.key === "P" && f.user) return showPeople(), true;
       if (f.user && e.key >= "1" && e.key <= String(KIND_CHIPS.length))
         return toggleChip(Number(e.key) - 1), true;
