@@ -10,6 +10,7 @@ import type { User } from "../src/core/users.ts";
 import { writeWave, type Wave } from "../src/story/wave.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { wavesScreen } from "../src/tui/screens/waves.ts";
+import type { RepoSource } from "../src/view/source.ts";
 import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -23,6 +24,29 @@ const wave = (version: string, date: string, headline: string): Wave => ({
   headline,
   highlights: [1, 2, 3].map((n) => ({ title: `Thing ${n}`, why: "because" })),
   pulls: [{ title: "#1 A pull", url: "https://forge.example/o/r/pulls/1" }],
+});
+/** The same source, read live from another forge. */
+const remoteOf = (src: RepoSource): RepoSource => ({
+  ...src,
+  where: {
+    kind: "origin",
+    origin: {
+      id: "o1",
+      userId: "u1",
+      kind: "github",
+      apiUrl: "https://api.github.test",
+      webUrl: "https://github.test",
+      login: "someone",
+      createdAt: "2026-01-01T00:00:00Z",
+      lastSyncAt: null,
+      lastError: "",
+      authKind: "pat",
+      expiresAt: null,
+      needsReauth: false,
+    },
+    fullName: "someone/else",
+    htmlUrl: "https://github.test/someone/else",
+  },
 });
 const text = (w: Wave): string => {
   const r = writeWave(w);
@@ -68,7 +92,11 @@ describe("waves in the terminal", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  const open = async (user: User, repo: Repo): Promise<{ text: string; stop(): void }> => {
+  const open = async (
+    user: User,
+    repo: Repo,
+    remote = false,
+  ): Promise<{ text: string; stop(): void; app: ReturnType<typeof createForgeApp>["app"] }> => {
     const terminal = headlessTerminal(120, 40);
     const { app, session } = createForgeApp(
       forge,
@@ -77,9 +105,11 @@ describe("waves in the terminal", () => {
     );
     app.start();
     await settleApp(app);
-    app.push(wavesScreen(session, app.ctx, local(session, repo)));
+    const here = local(session, repo);
+    const src = remote ? remoteOf(here) : here;
+    app.push(wavesScreen(session, app.ctx, src));
     await settleApp(app);
-    return { text: app.screen.toText(), stop: () => app.stop() };
+    return { text: app.screen.toText(), stop: () => app.stop(), app };
   };
 
   test("lists the web page's rows in the same order, bad files last", async () => {
@@ -97,5 +127,21 @@ describe("waves in the terminal", () => {
     h.stop();
     expect(h.text).not.toContain("Secret launch");
     expect(h.text).toContain("No waves yet");
+  });
+
+  test("Enter on a wave row opens its file in the viewer", async () => {
+    const h = await open(alice, pub);
+    h.app.dispatch({ type: "key", key: "enter", ctrl: false, alt: false, shift: false });
+    await settleApp(h.app);
+    const after = h.app.screen.toText();
+    h.stop();
+    expect(after).toContain("0.10.0.md");
+  });
+
+  test("a live browse says waves are only read on this forge", async () => {
+    const h = await open(alice, pub, true);
+    h.stop();
+    expect(h.text).toContain("only read on this forge");
+    expect(h.text).not.toContain("no waves/ directory");
   });
 });

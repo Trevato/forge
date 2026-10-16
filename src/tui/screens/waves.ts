@@ -1,7 +1,8 @@
 /**
  * A repository's waves: the same rows, in the same order, as the web page,
  * read through `story/waves.ts`. Local repositories only — a live browse of
- * another forge has no `waves/` we can read here, and says so.
+ * another forge has no `waves/` we can read here, and says so. Enter on a row
+ * opens its file in the workspace viewer on the default branch.
  */
 
 import { canRead } from "../../core/repos.ts";
@@ -14,7 +15,8 @@ import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { ListState, drawList, plural, runAsync } from "./common.ts";
+import { ListState, drawList, hitList, plural, runAsync } from "./common.ts";
+import { blobScreen } from "./workspace.ts";
 import { localRepo, sourceName, whereRows, whereStrip } from "./where.ts";
 
 /** One line per wave, as the screen draws it. */
@@ -36,6 +38,14 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
   let loaded = false;
   const state = new ListState();
 
+  const openAt = (i: number): void => {
+    const entry = entries[i];
+    if (entry === undefined || repo === undefined) return;
+    ctx.push(
+      blobScreen(f, ctx, src, repo.defaultBranch, `waves/${entry.file}`),
+    );
+  };
+
   const reload = async (): Promise<void> => {
     // The web's gate, not a weaker one: whoever reaches this screen, a
     // repository they cannot read has no waves to show.
@@ -49,7 +59,11 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
 
   return {
     title: "Waves",
-    keys: [binding(["j", "k"], "move"), binding(["r"], "refresh")],
+    keys: [
+      binding(["j", "k"], "move"),
+      binding(["enter"], "open"),
+      binding(["r"], "refresh"),
+    ],
     load: reload,
     render(area, s) {
       const c = ctx.theme.c;
@@ -72,14 +86,24 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
       if (entries.length === 0) {
         emptyState(s, body!, c, {
           title: loaded ? "No waves yet" : "Reading…",
-          body: loaded ? "This repository has no waves/ directory." : "",
+          body: !loaded
+            ? ""
+            : repo === undefined
+              ? "Waves are only read on this forge."
+              : "This repository has no waves/ directory.",
         });
         return;
       }
-      drawList(s, body!, c, state, waveRows(entries));
+      const rows = waveRows(entries);
+      drawList(s, body!, c, state, rows);
+      hitList(ctx, body!, state, rows.length, { open: openAt });
     },
     key(e) {
       if (state.key(e, entries.length)) return true;
+      if (e.key === "enter") {
+        openAt(state.index);
+        return true;
+      }
       if (e.key === "r") {
         runAsync(ctx, reload);
         return true;

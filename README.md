@@ -981,7 +981,9 @@ work here.
   earlier wave does not parse (naming the file) or nothing new has merged.
   `/:owner/:name/waves` lists the waves on the default branch, newest version
   first, each linking to its file (linked from that settings card); in the
-  terminal, `V` in a repository opens the same list.
+  terminal, `V` in a repository opens the same list, and Enter on a row opens
+  its `waves/<file>` in the file viewer (a live browse of another forge says
+  waves are only read on this forge).
 
 - **Accounts & access** — register/sign in, personal access tokens with coarse
   scopes (ro/rw/admin), public and private repositories.
