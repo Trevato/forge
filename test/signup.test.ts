@@ -13,7 +13,7 @@ import { configProblem } from "../src/kernel/preflight.ts";
 import { BOOT_ACTOR, getSignup, setSignup, signupChanges, signupFromEnv } from "../src/settings/signup.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { createUser, type User } from "../src/core/users.ts";
+import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 describe("signup setting", () => {
@@ -155,5 +155,130 @@ describe("signup setting", () => {
     setSignup(app.db, "open", BOOT_ACTOR);
     expect(getSignup(app.db)).toBe("open");
     expect(signupChanges(app.db)[0]).toMatchObject({ to: "open", actorName: "FORGE_SIGNUP at boot" });
+  });
+});
+
+describe("signup closed (#2166)", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  const EDGE = "edge-secret-0123456789";
+  const post = (body: unknown) =>
+    fetch(`${servers.url}/api/v1/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const edge = (user: string) =>
+    fetch(`${servers.url}/api/v1/user`, {
+      headers: { "x-plat-user": user, "x-plat-edge-token": EDGE },
+    });
+  let n = 0;
+  const newcomer = () => {
+    n += 1;
+    return { username: `new${n}`, email: `new${n}@example.com`, password: "a-good-passphrase" };
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-signup-closed-"));
+    app = createApp({ dataDir, port: 0, edgeToken: EDGE });
+    servers = await serve(app);
+  });
+  afterAll(async () => {
+    await servers.stop();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the first account is made whatever the setting, by every door", async () => {
+    setSignup(app.db, "closed", "boot");
+    const res = await post({ ...newcomer(), username: "founder", email: "founder@example.com" });
+    expect(res.status).toBe(201);
+    expect(getUserByName(app.db, "founder")?.isAdmin).toBe(true);
+  });
+
+  test("a fresh forge's first edge sign-in is made even when closed", async () => {
+    const fresh = await mkdtemp(join(tmpdir(), "forge-signup-edge-"));
+    const a = createApp({ dataDir: fresh, port: 0, edgeToken: EDGE });
+    const s = await serve(a);
+    try {
+      setSignup(a.db, "closed", "boot");
+      const res = await fetch(`${s.url}/api/v1/user`, {
+        headers: { "x-plat-user": "ada", "x-plat-edge-token": EDGE },
+      });
+      expect(res.status).toBe(200);
+    } finally {
+      await s.stop();
+      await rm(fresh, { recursive: true, force: true });
+    }
+  });
+
+  for (const mode of ["closed", "invite"] as const) {
+    test(`${mode}: page is one sentence, API is 403, edge makes no account`, async () => {
+      setSignup(app.db, mode, "boot");
+      const page = await fetch(`${servers.url}/signup`);
+      const text = await page.text();
+      expect(page.status).toBe(403);
+      expect(text).toContain("Signup is closed on this forge.");
+      const main = text.slice(text.indexOf("<main"), text.indexOf("</main>"));
+      expect(main).not.toContain("<form");
+      expect(main).not.toContain("<input");
+
+      const body = newcomer();
+      const res = await post(body);
+      expect(res.status).toBe(403);
+      const err = (await res.json()) as { error: string; message: string };
+      expect(err.error).toBe("signup_closed");
+      expect(err.message.length).toBeGreaterThan(0);
+      expect(getUserByName(app.db, body.username)).toBeUndefined();
+
+      const form = await fetch(`${servers.url}/signup`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ ...newcomer() }),
+      });
+      expect(form.status).toBe(403);
+
+      const opts = await fetch(`${servers.url}/signup/passkey/options`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: servers.url },
+        body: JSON.stringify({ username: `pk${mode}`, email: `pk${mode}@forge.local` }),
+      });
+      expect(opts.status).toBe(403);
+      expect(await opts.text()).toContain("closed");
+      const pk = await fetch(`${servers.url}/signup/passkey`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: servers.url },
+        body: JSON.stringify({ username: `pk${mode}`, email: `pk${mode}@forge.local` }),
+      });
+      expect(pk.status).toBe(403);
+      expect(getUserByName(app.db, `pk${mode}`)).toBeUndefined();
+
+      const stranger = `edge${mode}`;
+      expect((await edge(stranger)).status).toBe(401);
+      expect(getUserByName(app.db, stranger)).toBeUndefined();
+    });
+  }
+
+  test("existing accounts still sign in by the edge while closed", async () => {
+    setSignup(app.db, "open", "boot");
+    expect((await edge("returning")).status).toBe(200);
+    setSignup(app.db, "closed", "boot");
+    expect((await edge("returning")).status).toBe(200);
+    expect((await edge("founder")).status).toBe(200);
+  });
+
+  test("open: page has the form and the API makes the account", async () => {
+    setSignup(app.db, "open", "boot");
+    const text = await fetch(`${servers.url}/signup`).then((r) => r.text());
+    expect(text).toContain('name="password"');
+    expect((await post(newcomer())).status).toBe(201);
+  });
+
+  test("switching back to open takes effect on the next request", async () => {
+    setSignup(app.db, "closed", "boot");
+    expect((await post(newcomer())).status).toBe(403);
+    setSignup(app.db, "open", "boot");
+    expect((await post(newcomer())).status).toBe(201);
+    expect((await edge("latecomer")).status).toBe(200);
   });
 });

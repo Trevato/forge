@@ -2,7 +2,8 @@
  * Who may make an account: `open`, `invite` or `closed`. Stored in
  * `forge_setting` under `signup`, and every change is kept in
  * `forge_setting_change` (who, when, from what to what). Default `open`.
- * Nothing reads it yet: no sign-in or signup path asks it.
+ * `/signup`, `POST /api/v1/users`, passkey signup and a first edge sign-in ask
+ * it (`signupClosed` in `actions/users.ts`); `invite` acts as closed until #1143.
  */
 
 import type { Database } from "bun:sqlite";

@@ -154,6 +154,7 @@ import {
   HUMAN_CHECK_MESSAGE,
   PASSKEY_REQUIRED_MESSAGE,
   signUp,
+  SIGNUP_CLOSED_MESSAGE,
   updateProfile,
 } from "../actions/users.ts";
 import { listEvents } from "../core/events.ts";
@@ -1203,6 +1204,8 @@ export function apiRoutes(router: Router<Handler>): void {
       },
       { address: clientAddress(ctx.request) },
     );
+    if (!created.ok && created.error === "signup_closed")
+      return apiError("signup_closed", 403, SIGNUP_CLOSED_MESSAGE);
     if (!created.ok && created.error === "passkey_required")
       return apiError("passkey_required", 422, PASSKEY_REQUIRED_MESSAGE);
     if (!created.ok && created.error === "human_check")

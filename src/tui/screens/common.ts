@@ -11,6 +11,7 @@ import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
 import type { RepoCounts } from "../../core/repos.ts";
+import { SIGNUP_CLOSED_MESSAGE } from "../../actions/users.ts";
 import type { Session } from "../session.ts";
 import { G, Screen as Surface, type Rect } from "../term/screen.ts";
 import { style } from "../term/style.ts";
@@ -814,6 +815,7 @@ export function slug(path: string): string {
 
 const MESSAGES: Record<string, string> = {
   not_found: "not found",
+  signup_closed: SIGNUP_CLOSED_MESSAGE,
   human_check: "we could not tell you are a person; sign up on the web page",
   passkey_required: "new accounts sign up with a passkey and an email address: open the sign-up page in a browser",
   unauthorized: "sign in first",

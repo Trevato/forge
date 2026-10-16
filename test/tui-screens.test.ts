@@ -31,6 +31,7 @@ import { listEvents } from "../src/core/events.ts";
 import { getIssue, listComments } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
+import { setSignup } from "../src/settings/signup.ts";
 import { getUserSetting } from "../src/core/settings.ts";
 import { noteProtection, resetProtection } from "../src/kernel/protection.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
@@ -441,6 +442,26 @@ describe("the terminal UI, against a real forge", () => {
     await h.press("enter");
     expect(h.text()).toContain("not found");
     h.stop();
+  });
+
+  test("a closed forge's terminal offers no Create account and makes none", async () => {
+    setSignup(forge.db, "closed", alice.id);
+    const h = boot(forge, asGuest());
+    try {
+      await h.settle();
+      await h.press("s");
+      expect(h.text()).toContain("Sign in");
+      expect(h.text()).not.toContain("Create account");
+      await h.press("ctrl+t");
+      expect(h.text()).not.toContain("Create account");
+      expect(h.text()).toContain("Username");
+      const refused = await signUp(forge, { username: "carol", email: "carol@forge.test", password: "a-long-passphrase" }, { address: "127.0.0.1" });
+      expect(refused).toMatchObject({ ok: false, error: "signup_closed" });
+    } finally {
+      h.stop();
+      setSignup(forge.db, "open", alice.id);
+    }
+    expect(getUserByName(forge.db, "carol")).toBeFalsy();
   });
 
   test("signing in links the presenting key and unlocks the private repo", async () => {

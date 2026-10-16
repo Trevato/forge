@@ -7,7 +7,7 @@
  */
 
 import { newChallenge, verifyRegistration } from "../../auth/webauthn.ts";
-import { plausibleEmail, signUpWithPasskey, HUMAN_CHECK_MESSAGE } from "../../actions/users.ts";
+import { plausibleEmail, signUpWithPasskey, signupClosed, HUMAN_CHECK_MESSAGE, SIGNUP_CLOSED_MESSAGE } from "../../actions/users.ts";
 import { createSession } from "../../core/sessions.ts";
 import { getUserByName } from "../../core/users.ts";
 import { isSafeName } from "../../git/guard.ts";
@@ -30,6 +30,7 @@ const WORDS: Record<string, string> = {
   invalid_email: "That does not look like an email address.",
   human_check: HUMAN_CHECK_MESSAGE,
   passkey_taken: "That passkey is already registered.",
+  signup_closed: SIGNUP_CLOSED_MESSAGE,
 };
 
 /** Whether the name and address are fit to sign up with; else the words. */
@@ -52,6 +53,7 @@ function guard(ctx: Ctx): Response | undefined {
 export async function signupOptions(ctx: Ctx): Promise<Response> {
   const denied = guard(ctx);
   if (denied) return denied;
+  if (signupClosed(ctx.app)) return refuse(403, SIGNUP_CLOSED_MESSAGE);
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const username = str(data.username).trim();
@@ -71,6 +73,7 @@ export async function signupOptions(ctx: Ctx): Promise<Response> {
 export async function signupPasskey(ctx: Ctx): Promise<Response> {
   const denied = guard(ctx);
   if (denied) return denied;
+  if (signupClosed(ctx.app)) return refuse(403, SIGNUP_CLOSED_MESSAGE);
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const username = str(data.username).trim();
@@ -91,7 +94,7 @@ export async function signupPasskey(ctx: Ctx): Promise<Response> {
     { address: clientAddress(ctx.request) },
   );
   if (!created.ok)
-    return refuse(created.error === "human_check" ? 422 : 409, WORDS[created.error] ?? "Sign-up did not work. Try again.");
+    return refuse(created.error === "human_check" ? 422 : created.error === "signup_closed" ? 403 : 409, WORDS[created.error] ?? "Sign-up did not work. Try again.");
   const session = createSession(ctx.app.db, created.value.id);
   return json(
     { ok: true, next: safeNext(ctx.url.searchParams.get("next")) ?? "/" },

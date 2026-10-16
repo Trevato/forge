@@ -8,7 +8,7 @@
  * which is the admin — the terminal equivalent of the web's first-run signup.
  */
 
-import { signUp } from "../../actions/users.ts";
+import { SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
 import { hasAnyUser } from "../../core/users.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -40,6 +40,8 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
   // "Is this forge empty?" is a existence question, not a count: `COUNT(*)`
   // walks the whole user table on the one screen every session paints.
   const first = !hasAnyUser(f.db);
+  // Closed signup offers no create mode at all, as the page offers no form.
+  const closed = signupClosed(f.app);
   let mode: "signin" | "create" = first ? "create" : "signin";
   let values = ["", "", ""];
   let focus = 0;
@@ -50,6 +52,10 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
 
   const submit = (): void => {
     if (busy) return;
+    if (closed && mode === "create") {
+      error = SIGNUP_CLOSED_MESSAGE;
+      return;
+    }
     busy = true;
     error = undefined;
     runAsync(ctx, async () => {
@@ -100,21 +106,23 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
     keys: [
       binding(["tab"], "next field"),
       binding(["enter"], mode === "create" ? "create" : "sign in"),
-      binding(["ctrl+t"], first ? "sign in instead" : "create account"),
+      ...(closed ? [] : [binding(["ctrl+t"], first ? "sign in instead" : "create account")]),
       binding(["esc"], "back"),
     ],
     render(area, s) {
       const c = ctx.theme.c;
       const [head, body] = split(area, "v", [len(2), fill(1)]);
       segmented(s, head!, c, {
-        items: ["Sign in", "Create account"],
+        items: closed ? ["Sign in"] : ["Sign in", "Create account"],
         active: mode === "create" ? 1 : 0,
       });
       s.text(
         head!.x,
         head!.y + 1,
         truncate(
-          first
+          closed
+            ? SIGNUP_CLOSED_MESSAGE
+            : first
             ? "This forge has no accounts yet — the first one is the admin."
             : `Connected from ${f.identity.remoteAddress} with ${f.identity.fingerprint ?? "no key"}`,
           head!.w,
@@ -151,7 +159,7 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
       ctx.setCursor(cursor);
     },
     key(e) {
-      if (e.ctrl && e.key === "t") {
+      if (e.ctrl && e.key === "t" && !closed) {
         mode = mode === "create" ? "signin" : "create";
         values = ["", "", ""];
         focus = 0;

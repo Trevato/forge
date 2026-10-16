@@ -61,6 +61,7 @@ import {
   verifyPassword,
 } from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
+import { signupClosed } from "../actions/users.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
 import { noteRefusedInternal } from "../kernel/internal_refused.ts";
@@ -491,7 +492,11 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
   const login = edgeIdentity(request, app.config.edgeToken);
   if (login !== undefined) {
     const existed = getUserByName(app.db, login) !== undefined;
-    const user = await ensureEdgeUser(app.db, login, forgeHost(app.config));
+    // Existing accounts sign in; a new one is made only while signup allows.
+    const user =
+      !existed && signupClosed(app)
+        ? undefined
+        : await ensureEdgeUser(app.db, login, forgeHost(app.config));
     if (user) {
       // An account the edge made is audited like one made at /signup.
       if (!existed) {

@@ -35,6 +35,7 @@ import {
   type User,
 } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { getSignup } from "../settings/signup.ts";
 import { requireUser } from "./access.ts";
 
 export interface SignUpInput {
@@ -45,7 +46,24 @@ export interface SignUpInput {
   humanToken?: string;
 }
 
-export type SignUpError = CreateUserError | "human_check" | "passkey_required";
+export type SignUpError =
+  | CreateUserError
+  | "human_check"
+  | "passkey_required"
+  | "signup_closed";
+
+/** What anyone is told when the forge makes no new accounts. */
+export const SIGNUP_CLOSED_MESSAGE = "Signup is closed on this forge.";
+
+/**
+ * Whether no new account may be made now. Read from the store on every call,
+ * so a change takes effect on the next request. `invite` acts as closed until
+ * invitations exist (#1143). The forge's first account is never refused: the
+ * owner cannot be locked out of a fresh forge by a setting.
+ */
+export function signupClosed(app: App): boolean {
+  return getSignup(app.db) !== "open" && hasAnyUser(app.db);
+}
 
 /** What anyone is told at a door that still offers a password-only sign-up. */
 export const PASSKEY_REQUIRED_MESSAGE =
@@ -84,6 +102,7 @@ export async function signUp(
   // when every such account has a passkey (Settings → Passkeys shows who is
   // left) and recovery without a password exists (#1618): then delete this
   // action's password path, `verifyPassword`'s doors and the password column.
+  if (signupClosed(app)) return err("signup_closed");
   if (app.config.passkeyOnlySignup === true) return err("passkey_required");
   const secret = app.config.turnstileSecret;
   const bootstrap = from.door === "terminal" && !hasAnyUser(app.db);
@@ -131,6 +150,7 @@ export async function signUpWithPasskey(
   input: PasskeySignUpInput,
   from: { address?: string | undefined } = {},
 ): Promise<Result<User, SignUpError | "passkey_taken">> {
+  if (signupClosed(app)) return err("signup_closed");
   const secret = app.config.turnstileSecret;
   if (secret !== undefined) {
     const verify = app.config.verifyHuman ?? turnstileVerifier(secret);
