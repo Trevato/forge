@@ -108,6 +108,9 @@ Minting, listing and revoking go through one action
 (`src/actions/proposal_tokens.ts`) at every door, and only a writer of the
 repository may; anyone else is told "no such resource here, or it is not
 visible to you", as the API says it. The secret is shown once, on minting.
+The repository's settings page is one more door: a writer sees their proposal
+tokens one to a line (child, origin, expires, last used) with Revoke, and a
+form that mints one and shows its secret once; others see no section.
 
 - **MCP**: the `proposal_tokens` tool with `repo` and a `verb`: `mint`
   (`child`, `origin`, optionally `childRepo`), `list` (the ones you minted for

@@ -102,6 +102,7 @@ import {
   timeAgo,
 } from "../ui.ts";
 import { cutWaveFor } from "../../actions/cut_wave.ts";
+import { proposalTokensSection } from "./proposal-tokens.ts";
 import { secretsSection } from "./secrets.ts";
 import { saveGrants } from "./subscriptions.ts";
 
@@ -212,15 +213,17 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
   if (!readable) return repoNotFound(ctx);
   const lead = settingsLead(ctx, readable);
   const repo = loadAdminRepo(ctx);
-  if (!repo)
+  if (!repo) {
+    const proposals = proposalTokensSection(ctx, readable);
     return page({
       ctx,
       title: pageTitle("settings", readable, true),
       crumbs: crumbsFor(readable),
       palette: repoPalette(ctx, readable),
       body: html`${repoHeader(ctx, readable, "settings", { compact: true })}
-      ${lead}`,
+      ${lead}${proposals ? html`<div class="mt">${proposals}</div>` : null}`,
     });
+  }
   const base = repoBase(repo);
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
   const refs = await listRefs(dir, "refs/heads/");
@@ -322,6 +325,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     </form>`,
     { head: html`${icon("rocket")}<h2>Cut a wave</h2>` },
   );
+  const proposals = proposalTokensSection(ctx, repo);
   const archive = card(
     html`<form method="post" action="${base}/settings/archive">
       <input type="hidden" name="archived" value="${repo.archivedAt === null ? "1" : "0"}" />
@@ -343,7 +347,9 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     repo,
     "general",
     "Settings",
-    html`${lead}<div class="mt">${body}</div><div class="mt">${wave}</div><div class="mt">${archive}</div>${secrets
+    html`${lead}<div class="mt">${body}</div><div class="mt">${wave}</div><div class="mt">${archive}</div>${proposals
+      ? html`<div class="mt">${proposals}</div>`
+      : null}${secrets
       ? html`<div class="mt">${secrets}</div>`
       : null}`,
   );

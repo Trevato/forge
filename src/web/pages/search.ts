@@ -481,6 +481,15 @@ const DESTRUCTIVE: {
     }),
   },
   {
+    pattern: /^\/([^/]+)\/([^/]+)\/settings\/proposal-tokens\/([^/]+)\/delete$/,
+    describe: (m) => ({
+      verb: "Revoke",
+      title: "Revoke this proposal token?",
+      detail: `The child can no longer push child/<name>/… branches or open pulls on ${m[1]}/${m[2]}. Pulls it already opened stay. A new token has to be minted to let it propose again.`,
+      phrase: "",
+    }),
+  },
+  {
     pattern: /^\/([^/]+)\/([^/]+)\/settings\/prompts\/([^/]+)\/delete$/,
     describe: (m) => ({
       verb: "Disconnect",

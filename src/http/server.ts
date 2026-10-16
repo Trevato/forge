@@ -421,6 +421,7 @@ import { notFoundPage } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { inNamespace } from "../core/proposal_token.ts";
+import { proposalTokenMint, proposalTokenRevoke } from "../web/pages/proposal-tokens.ts";
 import { proposalGate } from "./proposal_gate.ts";
 import { feedRoutes } from "./feed.ts";
 import type { Database } from "bun:sqlite";
@@ -1230,6 +1231,12 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/settings", settingsUpdate);
   router.add("POST", "/:owner/:name/settings/wave", waveCut);
   router.add("POST", "/:owner/:name/settings/archive", archiveSubmit);
+  router.add("POST", "/:owner/:name/settings/proposal-tokens", proposalTokenMint);
+  router.add(
+    "POST",
+    "/:owner/:name/settings/proposal-tokens/:id/delete",
+    proposalTokenRevoke,
+  );
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);
