@@ -1016,7 +1016,7 @@ function unavailable(
     reason ??
     (deploying
       ? "A new version is starting."
-      : state === "failed"
+      : state === "failed" || (state === "asleep" && status?.error !== undefined)
         ? (status?.error ?? "The last deploy failed.")
         : gone
           ? "This preview is gone: its pull was closed, and its data with it."

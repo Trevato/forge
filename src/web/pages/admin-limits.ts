@@ -86,8 +86,10 @@ export function limitsPage(ctx: Ctx): Response {
   const quotaCard = card(
     html`<div class="card-body">
       <p class="muted small">
-        What one account may own. Empty is no limit. Storage is in
-        megabytes: repositories plus app data. Admins are not held to these.
+        What one account may own (repositories, apps), have running at
+        once (previews, runs, checks) and store (storage, in megabytes:
+        repositories plus app data). Empty is no limit; a forge admin is
+        never held to any of them.
       </p>
       <form class="row-actions" method="post" action="/admin/quotas">
         ${QUOTA_KEYS.map(

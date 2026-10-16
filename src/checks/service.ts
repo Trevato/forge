@@ -57,6 +57,7 @@ import { transact } from "../kernel/db.ts";
 import { createLog } from "../kernel/log.ts";
 import { holdLease, STALE_AFTER_MS } from "../runs/lease.ts";
 import { appendRunLog } from "../runs/log.ts";
+import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
 import { accountActive } from "../core/accounts.ts";
@@ -250,6 +251,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     string,
     { promise: Promise<void>; abort: AbortController }
   >();
+  /** Checks already told why they wait, so the log says it once. */
+  const waiting = new Set<string>();
   let stopped = false;
 
   sweepCheckouts(app);
@@ -331,6 +334,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   /** Run a queued check here, whichever forge queued it. */
   function start(run: Run, repo: Repo): void {
     if (inFlight.has(run.id)) return;
+    waiting.delete(run.id);
     const abort = new AbortController();
     const promise = execute(run, repo, abort.signal)
       .catch((error) =>
@@ -346,6 +350,24 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         schedule();
       });
     inFlight.set(run.id, { promise, abort });
+  }
+
+  /**
+   * An account at its concurrent-checks limit (`settings/quotas.ts`) keeps
+   * the check queued, the count in its log once, until one of its own ends.
+   */
+  function atLimit(run: Run): boolean {
+    const owner = getRepoById(app.db, run.repoId)?.ownerId;
+    if (owner === undefined) return false;
+    const full = runningLimitSentence(app.db, "checks", "concurrent checks", owner, () =>
+      runningRuns(app.db, "check", owner, inFlight.keys()),
+    );
+    if (full === undefined) return false;
+    if (!waiting.has(run.id)) {
+      waiting.add(run.id);
+      appendRunLog(app.config.dataDir, run.id, `queued, not started: ${full}`);
+    }
+    return true;
   }
 
   /**
@@ -368,7 +390,16 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         (repoId) => redMain(app.db, repoId),
         options.redHoldMs ?? 0,
       );
-      const next = pickNext(queued);
+      // The limit is asked at the point of starting, one pick at a time:
+      // a started check is in flight before the next is asked about, so a
+      // burst of one account's checks cannot pass together.
+      let rest = queued;
+      let next = pickNext(rest);
+      while (next !== undefined && atLimit(next)) {
+        const held = next;
+        rest = rest.filter((run) => run !== held);
+        next = pickNext(rest);
+      }
       if (!next) return;
       const repo = getRepoById(app.db, next.repoId);
       if (!repo) return;

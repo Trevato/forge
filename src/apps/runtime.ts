@@ -31,6 +31,7 @@ import { requeueAbandonedChecks } from "../checks/service.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { pullMayRun } from "../core/pull_trust.ts";
 import { canEnterApp, getRepoById, type Repo } from "../core/repos.ts";
+import { runningLimitSentence } from "../settings/quotas.ts";
 import type { User } from "../core/users.ts";
 import {
   cancelRun,
@@ -321,6 +322,8 @@ interface Environment {
   dormant?:
     | { since: string; idleSince: string; commitOid: string }
     | undefined;
+  /** Why the last wake did not happen (the owner's preview limit), for the page a visitor sees. */
+  wakeRefused?: string | undefined;
   /** One wake at a time; every request that arrives meanwhile waits on it. */
   waking?: Promise<void> | undefined;
   /** When something last came through the proxy for this environment. */
@@ -583,6 +586,7 @@ export class AppsRuntime {
         url,
         runId: state.asleep.runId,
         since: state.asleep.since,
+        error: state.wakeRefused,
       };
     }
     return {
@@ -988,6 +992,30 @@ export class AppsRuntime {
     return state;
   }
 
+  /**
+   * Previews of the account's apps that are up, `except` aside, and those
+   * coming up whose run is older than `before`: of two deploying together
+   * the older counts against the younger, never both against each other.
+   * With no `before`, every one coming up counts (a wake has no run).
+   */
+  private livePreviews(
+    ownerId: string,
+    except: Environment,
+    before?: string,
+  ): number {
+    let n = 0;
+    for (const other of this.envs.values()) {
+      if (other === except || other.env === "production") continue;
+      const up =
+        other.live !== undefined ||
+        (other.deploying !== undefined &&
+          (before === undefined || other.deploying.run.id < before));
+      if (!up) continue;
+      if (getRepoById(this.app.db, other.app.repoId)?.ownerId === ownerId) n++;
+    }
+    return n;
+  }
+
   private async execute(
     state: Environment,
     repo: Repo,
@@ -1002,6 +1030,28 @@ export class AppsRuntime {
     const write = (line: string): void =>
       appendRunLog(this.app.config.dataDir, run.id, line);
     announceRun(this.app, claimed);
+    // An account's live previews are bounded (`settings/quotas.ts`): a
+    // preview past the limit does not start, and its run — the check the
+    // pull shows — fails saying why, so the pull never waits for it.
+    const refusal =
+      state.env === "production" || state.live !== undefined
+        ? undefined
+        : runningLimitSentence(
+            this.app.db,
+            "previews",
+            "live previews",
+            repo.ownerId,
+            () => this.livePreviews(repo.ownerId, state, run.id),
+          );
+    if (refusal !== undefined) {
+      state.deploying = undefined;
+      lease();
+      const message = `not started: ${refusal}. Close a pull or stop a preview to make room.`;
+      write(message);
+      const done = finishRun(this.app.db, run.id, { state: "failed", summary: message });
+      if (done) announceRun(this.app, done);
+      return;
+    }
     write(
       `deploy ${state.env} of ${repo.ownerName}/${repo.name} at ${run.commitOid.slice(0, 7)} (${run.reason})`,
     );
@@ -1519,6 +1569,20 @@ export class AppsRuntime {
       await this.teardown(record, env);
       return undefined;
     }
+    // A wake starts a process too: past the account's preview limit it stays asleep.
+    const full = runningLimitSentence(
+      this.app.db,
+      "previews",
+      "live previews",
+      repo.ownerId,
+      () => this.livePreviews(repo.ownerId, state),
+    );
+    if (full !== undefined) {
+      log.info("preview stays asleep", { app: record.slug, env, limit: full });
+      state.wakeRefused = `This preview stays asleep: its owner is at ${full}. Close a pull or stop a preview to make room.`;
+      return undefined;
+    }
+    state.wakeRefused = undefined;
     state.waking = (async () => {
       const write = (line: string): void => {
         if (asleep.runId !== "")

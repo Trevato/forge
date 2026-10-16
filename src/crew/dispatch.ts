@@ -30,6 +30,8 @@ import {
 import { getPull, type Pull } from "../core/pulls.ts";
 import { resolveOpen } from "../core/decisions.ts";
 import { accountActive } from "../core/accounts.ts";
+import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
+import { appendRunLog } from "../runs/log.ts";
 import { decideAndRecord } from "./ledger.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
@@ -1085,6 +1087,9 @@ function sweep(app: App): void {
   }
 }
 
+/** Per app, the runs already told why they wait, so the log says it once. */
+const notedBy = new WeakMap<App, Set<string>>();
+
 /** Take queued runs, oldest first, up to the limit — one per issue at a time. */
 function pump(
   app: App,
@@ -1100,11 +1105,32 @@ function pump(
   let slots =
     capacityCount(app.db, "crew.concurrency", options.concurrency) -
     runningIssues.size;
+  const started: string[] = [];
+  const noted = notedBy.get(app) ?? new Set<string>();
+  notedBy.set(app, noted);
   for (const queued of listQueued(app.db, "agent", 50)) {
     if (slots <= 0) break;
     if (queued.issueId !== null && runningIssues.has(queued.issueId)) continue;
     const fresh = getRun(app.db, queued.id);
     if (!fresh || fresh.state !== "queued") continue;
+    // An account at its concurrent-runs limit keeps this run queued, with
+    // the count in its log once, until one of its runs ends.
+    const owner = getRepoById(app.db, fresh.repoId)?.ownerId;
+    const full =
+      owner === undefined
+        ? undefined
+        : runningLimitSentence(app.db, "runs", "concurrent runs", owner, () =>
+            runningRuns(app.db, "agent", owner, [...inFlight.keys(), ...started]),
+          );
+    if (full !== undefined) {
+      if (!noted.has(fresh.id)) {
+        noted.add(fresh.id);
+        appendRunLog(app.config.dataDir, fresh.id, `queued, not started: ${full}`);
+      }
+      continue;
+    }
+    started.push(fresh.id);
+    noted.delete(fresh.id);
     slots--;
     if (queued.issueId !== null) runningIssues.add(queued.issueId);
     const running = executeAgentRun(app, fresh, options)

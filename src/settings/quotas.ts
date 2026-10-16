@@ -6,14 +6,18 @@
  * (`actions/app_limit.ts`); creating, forking and copying a repository ask the
  * repositories limit first (`actions/repos.ts`). `storage` is megabytes
  * of repositories plus app data (`core/storage.ts`), asked on a push, create
- * and fork. Room for more keys is the `QUOTA_KEYS` list.
+ * and fork. The running limits — live `previews`, concurrent agent `runs` and
+ * concurrent `checks` — bound what an account has going at once; each is asked
+ * before the thing starts (`apps/runtime.ts`, `crew/dispatch.ts`,
+ * `checks/service.ts`) and never of a forge admin. Room for more keys is the
+ * `QUOTA_KEYS` list.
  */
 
 import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { writeSetting } from "./limits.ts";
 
-export const QUOTA_KEYS = ["repositories", "apps", "storage"] as const;
+export const QUOTA_KEYS = ["repositories", "apps", "storage", "previews", "runs", "checks"] as const;
 export type QuotaKey = (typeof QUOTA_KEYS)[number];
 export type Quotas = Record<QuotaKey, number | null>;
 
@@ -52,6 +56,9 @@ export function getQuotas(db: Database): Quotas {
     repositories: getQuota(db, "repositories"),
     apps: getQuota(db, "apps"),
     storage: getQuota(db, "storage"),
+    previews: getQuota(db, "previews"),
+    runs: getQuota(db, "runs"),
+    checks: getQuota(db, "checks"),
   };
 }
 
@@ -72,6 +79,64 @@ export function repositoryLimitSentence(db: Database, ownerId: string): string |
   if (limit === null) return undefined;
   const owned = repositoriesOwned(db, ownerId);
   return owned >= limit ? `${owned} of ${limit} repositories` : undefined;
+}
+
+/** Whether `ownerId` is a forge admin: the forge's own account is never limited. */
+function exempt(db: Database, ownerId: string): boolean {
+  return (
+    db
+      .query<{ is_admin: number }, [string]>("SELECT is_admin FROM user WHERE id = ?1")
+      .get(ownerId)?.is_admin === 1
+  );
+}
+
+/**
+ * The sentence a refused start says, or nothing when there is room: `held`
+ * is how many of `noun` ("live previews", "runs", "checks") the account
+ * has going now, asked against the `key` limit.
+ */
+export function runningLimitSentence(
+  db: Database,
+  key: "previews" | "runs" | "checks",
+  noun: string,
+  ownerId: string,
+  held: () => number,
+): string | undefined {
+  const limit = getQuota(db, key);
+  if (limit === null || exempt(db, ownerId)) return undefined;
+  const n = held();
+  return n >= limit ? `${n} of ${limit} ${noun}` : undefined;
+}
+
+/**
+ * Runs of `kind` running now for repositories `ownerId` owns, plus the
+ * `also` ids (started a moment ago, not yet claimed in the database).
+ */
+export function runningRuns(
+  db: Database,
+  kind: "agent" | "check",
+  ownerId: string,
+  also: Iterable<string> = [],
+): number {
+  const ids = new Set(
+    db
+      .query<{ id: string }, [string, string]>(
+        `SELECT run.id FROM run JOIN repo ON repo.id = run.repo_id
+          WHERE run.kind = ?1 AND run.state = 'running' AND repo.owner_id = ?2`,
+      )
+      .all(kind, ownerId)
+      .map((r) => r.id),
+  );
+  for (const id of also) {
+    const row = db
+      .query<{ owner_id: string }, [string, string]>(
+        `SELECT repo.owner_id FROM run JOIN repo ON repo.id = run.repo_id
+          WHERE run.id = ?1 AND run.kind = ?2`,
+      )
+      .get(id, kind);
+    if (row?.owner_id === ownerId) ids.add(id);
+  }
+  return ids.size;
 }
 
 /** Set `key` (`null` clears it) and keep the change. */
