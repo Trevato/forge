@@ -309,85 +309,81 @@ describe("merge correctness (clean results, recorded for regression)", () => {
     await rm(work, { recursive: true, force: true });
   });
 
-  test("squash merge produces exactly one parent; regular merge produces exactly two", async () => {
+  // Each test builds its own branches and pull requests from the current
+  // main, and reads the pull number the forge hands back, so no test depends
+  // on what another left behind or on the order they run in.
+  async function branchFromMain(
+    name: string,
+    file: string,
+    content: string,
+  ): Promise<void> {
     const dir = join(work, "app");
+    await gitOk(["fetch", "origin"], dir);
+    await gitOk(["checkout", "-B", "main", "origin/main"], dir);
+    await gitOk(["checkout", "-b", name], dir);
+    await Bun.write(join(dir, file), content);
+    await gitOk(["add", "."], dir);
+    await gitOk(["commit", "-m", `change on ${name}`], dir);
+    await gitOk(["push", "origin", name], dir);
+  }
+
+  async function openPull(head: string): Promise<number> {
+    const res = await fetch(`${base}/bob/app/pulls/new`, {
+      method: "POST",
+      headers: { cookie },
+      body: form({ base: "main", head, title: `PR ${head}`, body: "" }),
+      redirect: "manual",
+    });
+    const m = /\/pulls\/(\d+)$/.exec(res.headers.get("location") ?? "");
+    if (!m) throw new Error(`pull for ${head} not opened: ${res.status}`);
+    return Number(m[1]);
+  }
+
+  async function mergePull(n: number, strategy: string): Promise<void> {
+    await fetch(`${base}/bob/app/pulls/${n}/merge`, {
+      method: "POST",
+      headers: { cookie },
+      body: form({ strategy }),
+    });
+  }
+
+  async function parentCount(sha: string, gitDir: string): Promise<number> {
+    return (await gitCapture(["cat-file", "-p", sha], gitDir))
+      .split("\n")
+      .filter((l) => l.startsWith("parent ")).length;
+  }
+
+  test("squash merge produces exactly one parent; regular merge produces exactly two", async () => {
     const repoGitDir = join(dataDir, "repos/bob/app.git");
 
-    await gitOk(["checkout", "-b", "squash-feature"], dir);
-    await Bun.write(join(dir, "code.txt"), "alpha\nBETA\ngamma\n");
-    await gitOk(["commit", "-am", "squash change"], dir);
-    await gitOk(["push", "origin", "squash-feature"], dir);
-    await fetch(`${base}/bob/app/pulls/new`, {
-      method: "POST",
-      headers: { cookie },
-      body: form({
-        base: "main",
-        head: "squash-feature",
-        title: "Squash PR",
-        body: "",
-      }),
-    });
-    await fetch(`${base}/bob/app/pulls/1/merge`, {
-      method: "POST",
-      headers: { cookie },
-      body: form({ strategy: "squash" }),
-    });
+    await branchFromMain("squash-feature", "code.txt", "alpha\nBETA\ngamma\n");
+    const squashPr = await openPull("squash-feature");
+    await mergePull(squashPr, "squash");
     const squashSha = await gitCapture(
-      ["rev-parse", "refs/pull/1/merged"],
+      ["rev-parse", `refs/pull/${squashPr}/merged`],
       repoGitDir,
     );
-    const squashParents = (
-      await gitCapture(["cat-file", "-p", squashSha], repoGitDir)
-    )
-      .split("\n")
-      .filter((l) => l.startsWith("parent ")).length;
-    expect(squashParents).toBe(1);
+    expect(await parentCount(squashSha, repoGitDir)).toBe(1);
 
-    await gitOk(["checkout", "main"], dir);
-    await gitOk(["pull", "origin", "main"], dir);
-    await gitOk(["checkout", "-b", "merge-feature"], dir);
-    await Bun.write(join(dir, "other.txt"), "new file\n");
-    await gitOk(["add", "."], dir);
-    await gitOk(["commit", "-m", "merge change"], dir);
-    await gitOk(["push", "origin", "merge-feature"], dir);
-    await fetch(`${base}/bob/app/pulls/new`, {
-      method: "POST",
-      headers: { cookie },
-      body: form({
-        base: "main",
-        head: "merge-feature",
-        title: "Merge PR",
-        body: "",
-      }),
-    });
-    await fetch(`${base}/bob/app/pulls/2/merge`, {
-      method: "POST",
-      headers: { cookie },
-      body: form({ strategy: "merge" }),
-    });
+    await branchFromMain("merge-feature", "other.txt", "new file\n");
+    const mergePr = await openPull("merge-feature");
+    await mergePull(mergePr, "merge");
     const mergeSha = await gitCapture(
-      ["rev-parse", "refs/pull/2/merged"],
+      ["rev-parse", `refs/pull/${mergePr}/merged`],
       repoGitDir,
     );
-    const mergeParents = (
-      await gitCapture(["cat-file", "-p", mergeSha], repoGitDir)
-    )
-      .split("\n")
-      .filter((l) => l.startsWith("parent ")).length;
-    expect(mergeParents).toBe(2);
+    expect(await parentCount(mergeSha, repoGitDir)).toBe(2);
   });
 
   test("refs/pull/N/merged survives `git gc --prune=now`", async () => {
     const repoGitDir = join(dataDir, "repos/bob/app.git");
-    const before = await gitCapture(
-      ["rev-parse", "refs/pull/1/merged"],
-      repoGitDir,
-    );
+    await branchFromMain("gc-feature", "gc.txt", "gc me\n");
+    const pr = await openPull("gc-feature");
+    await mergePull(pr, "squash");
+    const ref = `refs/pull/${pr}/merged`;
+    const before = await gitCapture(["rev-parse", ref], repoGitDir);
     await gitOk(["gc", "--prune=now"], repoGitDir);
-    const after = await gitCapture(
-      ["rev-parse", "refs/pull/1/merged"],
-      repoGitDir,
-    );
+    const after = await gitCapture(["rev-parse", ref], repoGitDir);
     expect(after).toBe(before);
     // The object itself must still resolve, not just the ref.
     const catOut = await gitCapture(["cat-file", "-t", after], repoGitDir);
@@ -395,66 +391,28 @@ describe("merge correctness (clean results, recorded for regression)", () => {
   });
 
   test("a conflicting merge attempt leaves the base ref completely unchanged", async () => {
-    const dir = join(work, "app");
     const repoGitDir = join(dataDir, "repos/bob/app.git");
 
-    await gitOk(["checkout", "main"], dir);
-    await gitOk(["pull", "origin", "main"], dir);
-    await gitOk(["checkout", "-b", "conflict-a"], dir);
-    await Bun.write(join(dir, "code.txt"), "ALPHA-A\nbeta\ngamma\n");
-    await gitOk(["commit", "-am", "conflict a"], dir);
-    await gitOk(["push", "origin", "conflict-a"], dir);
-
-    await gitOk(["checkout", "main"], dir);
-    await gitOk(["checkout", "-b", "conflict-b"], dir);
-    await Bun.write(join(dir, "code.txt"), "ALPHA-B\nbeta\ngamma\n");
-    await gitOk(["commit", "-am", "conflict b"], dir);
-    await gitOk(["push", "origin", "conflict-b"], dir);
-
-    await fetch(`${base}/bob/app/pulls/new`, {
-      method: "POST",
-      headers: { cookie },
-      body: form({
-        base: "main",
-        head: "conflict-a",
-        title: "Conflict A",
-        body: "",
-      }),
-    });
-    await fetch(`${base}/bob/app/pulls/new`, {
-      method: "POST",
-      headers: { cookie },
-      body: form({
-        base: "main",
-        head: "conflict-b",
-        title: "Conflict B",
-        body: "",
-      }),
-    });
-    // Merge conflict-a first, so conflict-b's merge attempt against the new
-    // main will genuinely conflict.
-    await fetch(`${base}/bob/app/pulls/3/merge`, {
-      method: "POST",
-      headers: { cookie },
-      body: form({ strategy: "merge" }),
-    });
+    // Both branches rewrite the same file from the same base, so whichever
+    // merges second genuinely conflicts.
+    await branchFromMain("conflict-a", "conflict.txt", "A\n");
+    await branchFromMain("conflict-b", "conflict.txt", "B\n");
+    const a = await openPull("conflict-a");
+    const b = await openPull("conflict-b");
+    await mergePull(a, "merge");
 
     const before = await gitCapture(
       ["rev-parse", "refs/heads/main"],
       repoGitDir,
     );
-    await fetch(`${base}/bob/app/pulls/4/merge`, {
-      method: "POST",
-      headers: { cookie },
-      body: form({ strategy: "merge" }),
-    });
+    await mergePull(b, "merge");
     const after = await gitCapture(
       ["rev-parse", "refs/heads/main"],
       repoGitDir,
     );
     expect(after).toBe(before);
 
-    const page = await (await fetch(`${base}/bob/app/pulls/4/files`)).text();
+    const page = await (await fetch(`${base}/bob/app/pulls/${b}/files`)).text();
     expect(page).toContain("Can't merge.");
   });
 });
