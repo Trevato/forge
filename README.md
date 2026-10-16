@@ -109,7 +109,9 @@ you cannot read.
 The family across forges: `:` → Family in the terminal, `/family` on the web,
 `GET /api/v1/family` and the MCP `family` tool all give the same view. The
 forge that sent this one is shown to anyone; the forges it sent, only to a
-site admin (docs/SPAWN.md, "The family across forges").
+site admin (docs/SPAWN.md, "The family across forges"). Each sent forge also
+says how many of its apps run and names those that do not ("1 of 2 apps
+running — bakery asleep").
 
 Passkeys: Settings → Passkeys lists, adds and removes them (several per
 account; `src/auth/webauthn.ts` verifies, no dependency, `none` attestation).

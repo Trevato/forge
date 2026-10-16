@@ -219,6 +219,7 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .handoff-links { flex: 1 1 16rem; min-width: 0; }
 .handoff-links .mono { user-select: all; overflow-wrap: anywhere; }
 .break { overflow-wrap: anywhere; }
+[data-apps] { overflow-wrap: anywhere; }
 
 .bar > .device-code { flex: 1 1 auto; }
 
