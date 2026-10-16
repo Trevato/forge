@@ -32,6 +32,7 @@ import {
   crewRole,
 } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
+import { coveredByRedFix } from "./red_fix.ts";
 import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
 import {
   latestDecision,
@@ -365,7 +366,8 @@ export async function driveRepo(
       (r.issue.assigneeId === null || !planners.has(r.issue.assigneeId)) &&
       !stalled(app, repo, r.issue) &&
       !atRunCap(app, repo, r.issue) &&
-      parkedCount(app, repo, r.issue.id) < PARK_STRIKES,
+      parkedCount(app, repo, r.issue.id) < PARK_STRIKES &&
+      !coveredByRedFix(app.db, repo.id, r.issue),
   );
   if (slotted.length >= paced.slots) {
     // The builders are busy; the planner can still refill the map, when

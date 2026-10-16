@@ -75,7 +75,7 @@ const clip = (text: string, n = 200): string =>
 export const scrub = (text: string): string =>
   redactSecrets(text).replace(/[A-Za-z0-9_+/=-]{32,}/g, "[redacted]");
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
-const keyPart = (text: string): string =>
+export const keyPart = (text: string): string =>
   text.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 60);
 
 // ---- detectors ----
@@ -396,8 +396,12 @@ export function degradedCauses(db: Database, now: number): Finding[] {
   return out;
 }
 
-/** The causes that are a budget breached: the lane, a silent run, a run killed twice. */
-const BREACH_CAUSE = /^(queue:check|stuck:|budget:)/;
+/**
+ * The causes that are a budget breached: the lane, a silent run, a run
+ * killed twice, a red main holding its pulls' checks. The last gets one fix
+ * issue (#1971), and `crew/red_fix.ts` keeps other builders off its test.
+ */
+const BREACH_CAUSE = /^(queue:check|stuck:|budget:|red:)/;
 
 /**
  * Each budget breach that holds right now, however briefly: the crew hears
@@ -420,7 +424,9 @@ export function budgetBreaches(db: Database, now: number): Finding[] {
       ],
       pillar: "P0 Trust: the forge says when it is not well, and is well again",
       lookFor: `\`${s.cause}\` is gone from the degraded list and the cause is fixed, not waited out.`,
-      fix: "Diagnose the cause from the evidence and hand the mechanical fix to a builder as its own issue.",
+      fix: s.cause.startsWith("red:")
+        ? "Fix the failing test on main in one pull. This is the only issue for it: pulls red on the same test wait for main, and no other builder is handed it while this is open."
+        : "Diagnose the cause from the evidence and hand the mechanical fix to a builder as its own issue.",
       urgent: true,
     });
   }

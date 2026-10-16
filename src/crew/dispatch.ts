@@ -81,6 +81,7 @@ import {
   spentToday,
 } from "./autonomy.ts";
 import { checksFor } from "../checks/service.ts";
+import { redMain, sharedWithMain } from "../checks/red_main.ts";
 import { certain } from "./decide.ts";
 import { readRunLog } from "../runs/log.ts";
 import { whenText } from "./limits.ts";
@@ -542,7 +543,11 @@ function route(app: App, event: ForgeEvent): void {
       )
         return;
       const issueId = event.payload["issueId"];
-      if (typeof issueId !== "string") return;
+      if (typeof issueId !== "string") {
+        if (event.payload["kind"] === "check")
+          recheckWaiting(app, repo, event.payload["state"]);
+        return;
+      }
       const issue = getIssueById(app.db, issueId);
       if (!issue || issue.kind !== "pull" || issue.state !== "open") return;
       // A check's result is the outcome of the last "try again" decision.
@@ -580,6 +585,9 @@ function route(app: App, event: ForgeEvent): void {
       // is the agent's to look at.
       const agent = agentFor(app, issue);
       if (!agent) return;
+      // A red that main shares is not the pull's: no rework, no park, no
+      // strike; it waits and is checked again when main is green (#1971).
+      if (waitOnMain(app, repo, issue, event.payload)) return;
       // Bounded: after a few failed checks in a row the agent stops and a
       // person must speak (docs/APPS.md, rule 7).
       const since = lastHumanWord(app, issue, agent);
@@ -659,6 +667,53 @@ function route(app: App, event: ForgeEvent): void {
     }
     default:
       return;
+  }
+}
+
+/**
+ * Pulls whose check failed only on what main fails, per repository, with
+ * the head that was checked. Memory only: a restart forgets them, and the
+ * pull's next push or a person's ask checks it again.
+ */
+const waitingOnMain = new Map<string, Map<string, { env: string; commitOid: string }>>();
+
+/** Whether a failed check is main's red, shared: if so, the pull is noted as waiting. */
+function waitOnMain(
+  app: App,
+  repo: Repo,
+  issue: Issue,
+  payload: Record<string, unknown>,
+): boolean {
+  const { runId, commitOid, env } = payload;
+  if (payload["kind"] !== "check" || typeof runId !== "string") return false;
+  if (!sharedWithMain(redMain(app.db, repo.id), getRun(app.db, runId))) return false;
+  if (typeof commitOid === "string" && typeof env === "string") {
+    const waiting = waitingOnMain.get(repo.id) ?? new Map();
+    waiting.set(issue.id, { env, commitOid });
+    waitingOnMain.set(repo.id, waiting);
+  }
+  log.info("check failed only what main fails; waiting for main to be green", {
+    issue: issue.number,
+  });
+  return true;
+}
+
+/** Main's check finished: when it passed, the pulls that waited are checked again. */
+function recheckWaiting(app: App, repo: Repo, state: unknown): void {
+  const waiting = waitingOnMain.get(repo.id);
+  if (state !== "ok" || waiting === undefined) return;
+  waitingOnMain.delete(repo.id);
+  const checks = checksFor(app);
+  if (checks === undefined) return;
+  for (const [issueId, head] of waiting) {
+    const issue = getIssueById(app.db, issueId);
+    const pull = issue ? getPull(app.db, repo.id, issue.number) : undefined;
+    if (!pull || pull.state !== "open" || pull.headOid !== head.commitOid) continue;
+    void checks
+      .request(repo, head.env, head.commitOid, "retry", issueId)
+      .catch((error) =>
+        log.warn("a waiting pull could not be checked again", { issue: issue?.number, error: String(error) }),
+      );
   }
 }
 

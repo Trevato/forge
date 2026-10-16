@@ -173,3 +173,15 @@ export function redSentence(red: RedMain, held: number): string {
         : `"${first}" and ${red.failing.length - 1} more fail`;
   return `${red.repo}: main is red at ${red.commitOid.slice(0, 7)} — ${what}; ${held} pull check${held === 1 ? "" : "s"} wait for it to pass.`;
 }
+
+/**
+ * Whether a failed check fails only what main's last check already fails
+ * (#1971): it named at least one test, and every one is red on main too.
+ * Such a failure is not the pull's, so the crew neither reworks nor parks
+ * it; it waits for main to be green. A check that named nothing (a build
+ * error, a timeout) or one test main does not fail is the pull's own.
+ */
+export function sharedWithMain(red: RedMain | undefined, run: Pick<Run, "checkDetail"> | undefined): boolean {
+  const names = run?.checkDetail?.names ?? [];
+  return red !== undefined && names.length > 0 && names.every((n) => red.failing.includes(n));
+}

@@ -9,7 +9,9 @@ import { tmpdir } from "node:os";
 import { migrations } from "../src/core/schema.ts";
 import { openDb } from "../src/kernel/db.ts";
 import { claimRun, createRun, finishRun, listActive, type Run } from "../src/core/runs.ts";
-import { RED_HOLD_MS, heldChecks, redMain, redSentence, unheld } from "../src/checks/red_main.ts";
+import { RED_HOLD_MS, heldChecks, redMain, redSentence, sharedWithMain, unheld } from "../src/checks/red_main.ts";
+import { coveredByRedFix } from "../src/crew/red_fix.ts";
+import { budgetBreaches } from "../src/crew/sentinel.ts";
 import { vitals } from "../src/kernel/vitals.ts";
 import { ErrorLedger } from "../src/kernel/log.ts";
 import { RefusedLedger } from "../src/kernel/internal_refused.ts";
@@ -118,5 +120,62 @@ describe("red main", () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]!.sentence).toContain('"acting on many asks at once" fails; 2 pull checks wait');
     expect(cards[0]!.href).toBe(`/trevato/forge/runs/${failed.id}`);
+  });
+});
+
+describe("a red main shares (#1971)", () => {
+  const failed = (names: string[]): Run => {
+    const run = createRun(db, { repoId: "r1", kind: "check", env: "pull-7", issueId: pull, commitOid: OID("a"), reason: "push" });
+    claimRun(db, run.id);
+    return finishRun(db, run.id, { state: "failed", summary: "check failed", checkDetail: { passed: 1, failed: names.length, names } })!;
+  };
+
+  test("a pull red on main's test only is main's; one more test is its own", () => {
+    main("b", "failed", ["X"]);
+    expect(sharedWithMain(redMain(db, "r1"), failed(["X"]))).toBe(true);
+    expect(sharedWithMain(redMain(db, "r1"), failed(["X", "Y"]))).toBe(false);
+    expect(sharedWithMain(redMain(db, "r1"), failed(["Y"]))).toBe(false);
+  });
+
+  test("nothing named, or a green main, shares nothing", () => {
+    main("b", "failed", ["X"]);
+    expect(sharedWithMain(redMain(db, "r1"), failed([]))).toBe(false);
+    main("c", "ok");
+    expect(sharedWithMain(redMain(db, "r1"), failed(["X"]))).toBe(false);
+  });
+});
+
+describe("one fix issue for a red main (#1971)", () => {
+  const dup = { id: "i9", title: 'Fix "a panel keeps its chart" on main', body: "" };
+  const fixRow = () =>
+    db.run(
+      "INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES ('degraded:red-r1', 'i1', '', 'x', 'x')",
+    );
+
+  test("a red main's held checks are a breach: one finding, urgent, keyed by the repository", () => {
+    db.run(
+      "INSERT INTO degraded_span (cause, sentence, href, opened_at) VALUES ('red:r1', 'trevato/forge: main is red — \"a panel keeps its chart\" fails', '/x', 1000)",
+    );
+    const found = budgetBreaches(db, 2000);
+    expect(found.map((f) => f.key)).toEqual(["degraded:red-r1"]);
+    expect(found[0]!.urgent).toBe(true);
+    expect(found[0]!.fix).toContain("only issue");
+  });
+
+  test("while the fix issue is open, an issue quoting main's failing test is covered; not otherwise", () => {
+    main("b", "failed", ["a panel keeps its chart"]);
+    // No fix issue filed yet: nothing is covered.
+    expect(coveredByRedFix(db, "r1", dup)).toBe(false);
+    fixRow();
+    expect(coveredByRedFix(db, "r1", dup)).toBe(true);
+    // The fix issue itself, and an issue about another test, are handed out.
+    expect(coveredByRedFix(db, "r1", { ...dup, id: "i1" })).toBe(false);
+    expect(coveredByRedFix(db, "r1", { id: "i8", title: "Something else", body: "" })).toBe(false);
+    // Once the fix issue closes, or main is green, nothing is held back.
+    db.run("UPDATE issue SET state = 'closed' WHERE id = 'i1'");
+    expect(coveredByRedFix(db, "r1", dup)).toBe(false);
+    db.run("UPDATE issue SET state = 'open' WHERE id = 'i1'");
+    main("c", "ok");
+    expect(coveredByRedFix(db, "r1", dup)).toBe(false);
   });
 });
