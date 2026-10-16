@@ -128,7 +128,7 @@ export async function makeItYoursSubmit(ctx: Ctx): Promise<Response> {
     const message = !made.ok
       ? made.error.kind === "invalid"
         ? made.error.message
-        : made.error.kind === "repository_limit"
+        : made.error.kind === "repository_limit" || made.error.kind === "storage_limit"
           ? `Not made: ${made.error.message}.`
         : made.error.kind === "own"
           ? "This app is already yours."

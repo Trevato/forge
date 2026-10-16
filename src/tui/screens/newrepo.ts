@@ -3,7 +3,8 @@
  * because the next thing anyone does is look at it.
  */
 
-import { createRepo, forkRepo, repositoryLimitMessage } from "../../actions/repos.ts";
+import { storageLimitMessage } from "../../core/storage.ts";
+import { createRepo, forkRepo, repositoryLimitMessage, resolveOwner } from "../../actions/repos.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -35,15 +36,18 @@ export function newRepoScreen(f: Session, ctx: Ctx, owner?: string): Screen {
 
   const submit = (): void => {
     runAsync(ctx, async () => {
+      const ownerName = owners[ownerIndex] ?? "";
       const created = await createRepo(f.app, f.user, {
-        owner: owners[ownerIndex] ?? "",
+        owner: ownerName,
         name,
         description,
         visibility,
       });
       if (!created.ok) {
         error =
-          created.error === "repository_limit"
+          created.error === "storage_limit"
+            ? `not made: ${storageLimitMessage(f.app, resolveOwner(f.app, f.user!, ownerName) ?? f.user!.id)}`
+            : created.error === "repository_limit"
             ? `not made: ${repositoryLimitMessage(f.app, f.user!)}`
             : errorText(created.error);
         ctx.toast(error, "danger");
@@ -158,7 +162,9 @@ export function forkScreen(f: Session, ctx: Ctx, parent: Repo): Screen {
       const forked = await forkRepo(f.app, f.user, parent, name);
       if (!forked.ok) {
         error =
-          forked.error === "repository_limit"
+          forked.error === "storage_limit"
+            ? `not made: ${storageLimitMessage(f.app, f.user!.id)}`
+            : forked.error === "repository_limit"
             ? `not made: ${repositoryLimitMessage(f.app, f.user!)}`
             : errorText(forked.error);
         ctx.toast(error, "danger");

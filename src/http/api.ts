@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { storageLimitMessage } from "../core/storage.ts";
 import { voteVariant } from "../actions/variants.ts";
 import { parentForgeFor } from "../core/parent_releases.ts";
 import { readFlow } from "../flow/read.ts";
@@ -139,6 +140,7 @@ import {
   FORKS_PER_DAY,
   forkRepo,
   repositoryLimitMessage,
+  resolveOwner,
   privateRepoForSealed,
   updateRepoSettings,
 } from "../actions/repos.ts";
@@ -1922,6 +1924,12 @@ export function apiRoutes(router: Router<Handler>): void {
         return json({ error: "forbidden_owner" }, 403);
       if (created.error === "repository_limit")
         return apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!));
+      if (created.error === "storage_limit")
+        return apiError(
+          "storage_limit",
+          403,
+          storageLimitMessage(ctx.app, resolveOwner(ctx.app, ctx.auth.user!, str(input.owner)) ?? ctx.auth.user!.id),
+        );
       return respondAccess(created.error, 422);
     }
     return json(created.value, 201);
@@ -2034,6 +2042,8 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!forked.ok)
       return forked.error === "repository_limit"
         ? apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!))
+        : forked.error === "storage_limit"
+        ? apiError("storage_limit", 403, storageLimitMessage(ctx.app, ctx.auth.user!.id))
         : forked.error === "limit"
         ? apiError("limit", 429, `at most ${FORKS_PER_DAY} forks a day: try again tomorrow`)
         : respondAccess(forked.error, 422);
@@ -4363,6 +4373,8 @@ export function apiRoutes(router: Router<Handler>): void {
           )
         : made.error.kind === "repository_limit"
         ? apiError("repository_limit", 403, made.error.message)
+        : made.error.kind === "storage_limit"
+        ? apiError("storage_limit", 403, made.error.message)
         : made.error.kind === "invalid"
         ? apiError("invalid", 422, made.error.message)
         : made.error.kind === "own"
@@ -4494,6 +4506,8 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!made.ok) {
       if (made.error === "repository_limit")
         return apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!));
+      if (made.error === "storage_limit")
+        return apiError("storage_limit", 403, storageLimitMessage(ctx.app, ctx.auth.user!.id));
       if (made.error === "app_limit")
         return appLimitResponse(
           ctx,
@@ -4570,6 +4584,8 @@ export function apiRoutes(router: Router<Handler>): void {
         ? respondAccess(started.error, 401)
         : started.error === "repository_limit"
         ? apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!))
+        : started.error === "storage_limit"
+        ? apiError("storage_limit", 403, storageLimitMessage(ctx.app, ctx.auth.user!.id))
         : apiError(started.error, 422, migrateMessage(started.error));
     return json(
       {

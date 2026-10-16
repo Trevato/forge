@@ -18,7 +18,7 @@ import {
   rememberOriginRepo,
   type Origin,
 } from "../core/origins.ts";
-import { storageChanged, storageRefusal } from "../core/storage.ts";
+import { storageLimitMessage, storageRefusal } from "../core/storage.ts";
 import { createRepo, getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { isSafeName, isSafeRef } from "../git/guard.ts";
@@ -40,7 +40,8 @@ export type MirrorError =
   | "already_mirrored"
   | "git_init_failed"
   | "unreachable"
-  | "repository_limit";
+  | "repository_limit"
+  | "storage_limit";
 
 export interface MirrorResult {
   readonly repo: Repo;
@@ -125,7 +126,7 @@ export async function mirrorRepo(
   // A mirror is a repository the account owns: the repositories limit asks
   // here as it does at create and fork (#2093).
   if (repositoryLimitRefusal(app, actor) !== undefined) return err("repository_limit");
-  if ((await storageRefusal(app, actor, actor.id)) !== undefined) return err("repository_limit");
+  if ((await storageRefusal(app, actor, actor.id)) !== undefined) return err("storage_limit");
 
   const created = await createRepo(app.db, app.reposRoot, {
     ownerId: actor.id,
@@ -135,7 +136,6 @@ export async function mirrorRepo(
     defaultBranch,
   });
   if (!created.ok) return err(created.error);
-  storageChanged(app, actor.id);
 
   linkRepoToOrigin(app.db, created.value.id, {
     originId: origin.id,
@@ -240,7 +240,9 @@ export function startMirror(
           error:
             result.error === "repository_limit"
               ? `Not mirrored: ${repositoryLimitMessage(app, actor)}.`
-              : mirrorMessage(result.error),
+              : result.error === "storage_limit"
+                ? `Not mirrored: ${storageLimitMessage(app, actor.id)}.`
+                : mirrorMessage(result.error),
         });
         return;
       }
@@ -298,6 +300,8 @@ export function mirrorMessage(error: MirrorError): string {
       return "the origin could not be reached";
     case "repository_limit":
       return "this account is at the forge's repositories limit";
+    case "storage_limit":
+      return "this account is at the forge's storage limit";
   }
 }
 

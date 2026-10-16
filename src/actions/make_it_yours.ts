@@ -23,6 +23,7 @@
  *   already made does not count.
  */
 
+import { storageLimitMessage } from "../core/storage.ts";
 import type { App } from "../app.ts";
 import {
   getAppByRepo,
@@ -71,7 +72,9 @@ export type MakeItYoursError =
   | { readonly kind: "limit"; readonly resetsAt: string }
   | { readonly kind: "invalid"; readonly message: string }
   /** The owner's repositories limit is reached: `message` says "10 of 10 repositories". */
-  | { readonly kind: "repository_limit"; readonly message: string };
+  | { readonly kind: "repository_limit"; readonly message: string }
+  /** The account's storage limit is reached: `message` says "1.9 GB of 2 GB". */
+  | { readonly kind: "storage_limit"; readonly message: string };
 
 export const COPIED = ["the code", "its history"] as const;
 export const NOT_COPIED = [
@@ -232,6 +235,8 @@ export async function makeItYours(
         return err({ kind: "limit", resetsAt: resetsAt(app, actor.id, now) });
       case "repository_limit":
         return err({ kind: "repository_limit", message: repositoryLimitMessage(app, actor) });
+      case "storage_limit":
+        return err({ kind: "storage_limit", message: storageLimitMessage(app, actor.id) });
       default:
         return err({
           kind: "invalid",

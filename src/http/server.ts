@@ -63,7 +63,7 @@ import { edgeIdentity } from "./edge.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
 import { noteRefusedInternal } from "../kernel/internal_refused.ts";
-import { pushCap, storageChanged, storageRefusal, storageRefusedText } from "../core/storage.ts";
+import { pushCap, storageChanged, storageRefusal, storageRefusedText, storageSentence } from "../core/storage.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import {
@@ -1349,6 +1349,10 @@ async function withGitAccess(
       visibility: "private",
     });
     if (created.ok) repo = created.value;
+    else if (created.error === "storage_limit") {
+      const ownerId = resolveOwner(ctx.app, ctx.auth.user, ctx.params.owner!) ?? ctx.auth.user.id;
+      return gitRefused(ctx, storageRefusedText(storageSentence(ctx.app, ownerId) ?? "at the limit"));
+    }
     else if (created.error === "repository_limit")
       return gitRefused(
         ctx,

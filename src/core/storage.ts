@@ -25,6 +25,8 @@ export const BYTES_PER_MB = 1_000_000;
 interface Entry {
   bytes: number;
   stale: boolean;
+  /** Bumped by every stale mark, so a walk can tell one arrived while it ran. */
+  marks: number;
   /** When the last walk finished, in ms. */
   walkedAt?: number;
   walking?: Promise<number>;
@@ -58,10 +60,12 @@ export async function measureAccount(app: App, ownerId: string): Promise<number>
 }
 
 function walk(app: App, ownerId: string, entry: Entry): Promise<number> {
+  const marked = entry.marks;
   entry.walking ??= measureAccount(app, ownerId)
     .then((bytes) => {
       entry.bytes = bytes;
-      entry.stale = false;
+      // A mark that arrived mid-walk is not answered by this walk.
+      entry.stale = entry.marks !== marked;
       entry.walkedAt = Date.now();
       return bytes;
     })
@@ -76,7 +80,7 @@ export async function accountBytes(app: App, ownerId: string): Promise<number> {
   const cache = cacheOf(app);
   let entry = cache.get(ownerId);
   if (entry === undefined) {
-    entry = { bytes: 0, stale: true };
+    entry = { bytes: 0, stale: true, marks: 0 };
     cache.set(ownerId, entry);
   }
   // A figure marked stale is never judged on: the walk a change began in the
@@ -98,6 +102,7 @@ async function freshBytes(app: App, ownerId: string): Promise<number> {
     if (entry.walkedAt !== undefined && Date.now() - entry.walkedAt < REWALK_MS)
       return entry.bytes;
     entry.stale = true;
+    entry.marks++;
   }
   return accountBytes(app, ownerId);
 }
@@ -107,12 +112,25 @@ export function cachedBytes(app: App, ownerId: string): number | undefined {
   return cacheOf(app).get(ownerId)?.bytes;
 }
 
+/**
+ * Fetched objects arrived without a push (a mirror's sync, a migrate import):
+ * the figure is stale. Only marked: the walk is left to the next check, so a
+ * sync never pays for walking the repository.
+ */
+export function storageStale(app: App, ownerId: string): void {
+  const entry = cacheOf(app).get(ownerId);
+  if (entry === undefined) return;
+  entry.stale = true;
+  entry.marks++;
+}
+
 /** A push, create, fork, mirror or delete changed the disk: measure again, off the request path. */
 export function storageChanged(app: App, ownerId: string): void {
   const cache = cacheOf(app);
   const entry = cache.get(ownerId);
   if (entry === undefined) return;
   entry.stale = true;
+  entry.marks++;
   void walk(app, ownerId, entry).catch(() => {});
 }
 
@@ -153,6 +171,14 @@ export async function storageRefusal(
   // figure was taken must not keep an account locked out.
   if (used >= limit) used = await freshBytes(app, ownerId);
   return used >= limit ? sentence(used, limit) : undefined;
+}
+
+/** What a refused create, fork or mirror says, from the figure it was refused on. */
+export function storageLimitMessage(app: App, ownerId: string): string {
+  const sentence = storageSentence(app, ownerId);
+  return sentence === undefined
+    ? "this account is at the forge's storage limit"
+    : `this account is at the forge's storage limit: ${sentence}`;
 }
 
 /** What a refused push says, over HTTP and SSH alike. */

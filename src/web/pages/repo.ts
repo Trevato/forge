@@ -8,6 +8,7 @@
  * path segment and can never smuggle a path of its own.
  */
 
+import { storageLimitMessage } from "../../core/storage.ts";
 import { canRead, listForks, type Repo } from "../../core/repos.ts";
 import { FORKS_PER_DAY, forkRepo, repositoryLimitMessage } from "../../actions/repos.ts";
 import { forkDrift, takeUpdates, type ForkDrift } from "../../actions/forks.ts";
@@ -197,6 +198,8 @@ export async function forkSubmit(ctx: Ctx): Promise<Response> {
         ? "You already have a repository by that name."
         : forked.error === "repository_limit"
         ? `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user)}.`
+        : forked.error === "storage_limit"
+        ? `Not made: ${storageLimitMessage(ctx.app, ctx.auth.user.id)}.`
         : forked.error === "limit"
           ? `That is today's forks made (${FORKS_PER_DAY} a day). Try again tomorrow.`
           : "That fork could not be created.";

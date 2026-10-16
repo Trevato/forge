@@ -72,7 +72,8 @@ export type CreateRepoActionError =
   | "unauthorized"
   | "forbidden_owner"
   | "refused"
-  | "repository_limit";
+  | "repository_limit"
+  | "storage_limit";
 
 /**
  * The repositories limit (#2093): when the owner has set one, an account at
@@ -145,7 +146,7 @@ export async function createRepo(
   if (ownerId === undefined) return err("forbidden_owner");
   if (ownerId === user.value.id && repositoryLimitRefusal(app, user.value) !== undefined)
     return err("repository_limit");
-  if ((await storageRefusal(app, user.value, ownerId)) !== undefined) return err("repository_limit");
+  if ((await storageRefusal(app, user.value, ownerId)) !== undefined) return err("storage_limit");
   const created = await initRepo(app.db, app.reposRoot, {
     ownerId,
     name: input.name,
@@ -178,7 +179,7 @@ export async function forkRepo(
   parent: Repo,
   name?: string,
   options: { visibility?: "public" | "private"; now?: number } = {},
-): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified" | "refused" | "repository_limit">> {
+): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified" | "refused" | "repository_limit" | "storage_limit">> {
   const user = requireParticipant(app, actor, parent);
   if (!user.ok) return user;
   const proven = requireVerified(app, user.value);
@@ -187,7 +188,7 @@ export async function forkRepo(
   if (!guarded.ok) return guarded;
   if (repositoryLimitRefusal(app, user.value) !== undefined) return err("repository_limit");
   if ((await storageRefusal(app, user.value, user.value.id)) !== undefined)
-    return err("repository_limit");
+    return err("storage_limit");
   const forked = await cloneRepo(
     app.db,
     app.reposRoot,

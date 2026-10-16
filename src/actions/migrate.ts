@@ -20,6 +20,7 @@
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { getAgentByName } from "../core/agents.ts";
+import { storageStale } from "../core/storage.ts";
 import { getOriginFor } from "../core/origins.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
@@ -198,6 +199,8 @@ export function migrateMessage(error: MigrateError, limit = "at the repositories
       return "New accounts cannot create repositories yet.";
     case "repository_limit":
       return `Not made: ${limit}.`;
+    case "storage_limit":
+      return "Not made: this account is at the forge's storage limit. Delete a repository or app data first.";
   }
 }
 
@@ -399,6 +402,7 @@ async function runMigration(
     advance(jobId, { stage: "fetching", detail: "every branch and tag" });
     const cloned = await cloneInto(app, repo, source);
     if (!cloned.ok) return await fail(cloned.error);
+    storageStale(app, repo.ownerId);
     let current = getRepoById(app.db, repo.id) ?? repo;
 
     // The source's default branch is kept; a source that never said which

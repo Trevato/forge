@@ -36,6 +36,7 @@ import {
   setCursor,
   type Origin,
 } from "../core/origins.ts";
+import { storageStale } from "../core/storage.ts";
 import { getRepoById } from "../core/repos.ts";
 import { pullDiff, type Pull, getPull } from "../core/pulls.ts";
 import { repoDir } from "../git/repos.ts";
@@ -353,6 +354,8 @@ async function syncMirrorUnguarded(
       recordFetch(app.db, repo.id, { at: runStarted });
       out.refsMoved = fetched.value.changes.length;
       if (fetched.value.changes.length > 0) {
+        // Objects were written without a push: measure again at the next check.
+        storageStale(app, repo.ownerId);
         // Shaped exactly like a native push event, plus the flag that says
         // where it came from — so webhooks, SSE and the activity feed see
         // upstream work without learning a new event kind.

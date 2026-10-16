@@ -4,21 +4,25 @@
  * held to it, and no limit set means no refusal.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { commitToBranch, createRepo, deleteRepo, forkRepo } from "../src/actions/repos.ts";
+import { makeItYours } from "../src/actions/make_it_yours.ts";
+import { newApp } from "../src/actions/apps.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { accountBytes, formatBytes, storageRefusal } from "../src/core/storage.ts";
+import { REWALK_MS, accountBytes, formatBytes, storageRefusal } from "../src/core/storage.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createAgent } from "../src/actions/crew.ts";
 import { mirrorAndWait, newFakeState, serveFakeForge } from "./fake-origin.ts";
 import { serveGitCommand } from "../src/tui/ssh.ts";
 import type { SshSession } from "../src/ssh/channels.ts";
 import { getUserById } from "../src/core/users.ts";
+import { createOrg } from "../src/core/orgs.ts";
+import { createSession } from "../src/core/sessions.ts";
 import { setQuota } from "../src/settings/quotas.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
@@ -119,7 +123,7 @@ describe("storage quota", () => {
 
     const made = await createRepo(app, getUserById(app.db, bobId)!, { name: "more", visibility: "private" });
     expect(made.ok).toBe(false);
-    if (!made.ok) expect(made.error).toBe("repository_limit");
+    if (!made.ok) expect(made.error).toBe("storage_limit");
   });
 
   test("push-to-create over the limit is a git error naming the use, not a not-found", async () => {
@@ -169,7 +173,7 @@ describe("storage quota", () => {
       else refused = forked.error;
     }
     expect(made).toBeGreaterThan(0);
-    expect(refused).toBe("repository_limit");
+    expect(refused).toBe("storage_limit");
   });
 
   test("an agent is not held to the limit, the account beside it is", async () => {
@@ -227,6 +231,162 @@ describe("storage quota", () => {
     const pushed = await push("ada", adaToken, "huge", 3_000_000);
     expect(pushed.code).toBe(0);
     expect(refs("ada", "huge")).not.toBe("");
+  });
+
+  test("a mirror bigger than the limit is allowed in, and the next create is refused as storage_limit", async () => {
+    // The origin: a public repository of 1.5 MB on this same forge.
+    expect((await push("ada", adaToken, "bigorigin", 1_500_000)).code).toBe(0);
+    app.db.query("UPDATE repo SET visibility = 'public' WHERE name = 'bigorigin'").run();
+    const dave = await signUp(app, { username: "dave", email: "dave@f.dev", password: "dave-passphrase" });
+    if (!dave.ok) throw new Error("signup");
+    proveAll(app);
+    const daveToken = createToken(app.db, dave.value.id, "t", "admin").token;
+    const state = newFakeState("forgejo", "someone", "tok");
+    state.repos.push({
+      id: 2,
+      fullName: "ada/bigorigin",
+      cloneUrl: `${servers.url}/ada/bigorigin.git`,
+      defaultBranch: "main",
+    });
+    const fake = serveFakeForge(state);
+    try {
+      const post = (path: string, body: unknown) =>
+        fetch(`${servers.url}${path}`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${daveToken}`, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      const connected = await post("/api/v1/user/origins", { host: fake.url, token: "tok" });
+      const originId = ((await connected.json()) as { id: string }).id;
+      // Empty at the start, so the mirror is let in; the figure is read once.
+      expect(await accountBytes(app, dave.value.id)).toBe(0);
+      const job = await mirrorAndWait(
+        await post(`/api/v1/user/origins/${originId}/mirror`, { fullName: "ada/bigorigin" }),
+      );
+      expect(job?.stage).toBe("done");
+      // The fetch marked the figure stale, so this check walks it and refuses.
+      const made = await createRepo(app, getUserById(app.db, dave.value.id)!, {
+        name: "more",
+        visibility: "private",
+      });
+      expect(made).toEqual({ ok: false, error: "storage_limit" });
+      const api = await post("/api/v1/repos", { name: "more" });
+      expect(api.status).toBe(403);
+      expect(await api.json()).toMatchObject({ error: "storage_limit" });
+    } finally {
+      fake.stop();
+    }
+  });
+
+  test("a migrate import bigger than the limit is allowed in, and the next create is refused as storage_limit", async () => {
+    const gina = await signUp(app, { username: "gina", email: "gina@f.dev", password: "gina-passphrase" });
+    if (!gina.ok) throw new Error("signup");
+    proveAll(app);
+    const token = createToken(app.db, gina.value.id, "t", "admin").token;
+    const state = newFakeState("forgejo", "someone", "tok");
+    state.repos.push({
+      id: 3,
+      fullName: "ada/bigorigin",
+      cloneUrl: `${servers.url}/ada/bigorigin.git`,
+      defaultBranch: "main",
+    });
+    const fake = serveFakeForge(state);
+    try {
+      const post = (path: string, body: unknown) =>
+        fetch(`${servers.url}${path}`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      const connected = await post("/api/v1/user/origins", { host: fake.url, token: "tok" });
+      const originId = ((await connected.json()) as { id: string }).id;
+      expect(await accountBytes(app, gina.value.id)).toBe(0);
+      const job = await mirrorAndWait(
+        await post("/api/v1/migrate", { source: { originId, fullName: "ada/bigorigin" }, name: "moved" }),
+      );
+      expect(job?.stage).toBe("done");
+      const made = await createRepo(app, getUserById(app.db, gina.value.id)!, {
+        name: "more",
+        visibility: "private",
+      });
+      expect(made).toEqual({ ok: false, error: "storage_limit" });
+    } finally {
+      fake.stop();
+    }
+  });
+
+  /** A fresh account holding 1.5 MB, its figure measured, against the 1 MB limit. */
+  async function fullAccount(username: string) {
+    const made = await signUp(app, { username, email: `${username}@f.dev`, password: `${username}-passphrase` });
+    if (!made.ok) throw new Error("signup");
+    proveAll(app);
+    setQuota(app.db, "storage", 2, adaId);
+    const token = createToken(app.db, made.value.id, "t", "admin").token;
+    expect((await push(username, token, "data", 1_500_000)).code).toBe(0);
+    for (let i = 0; i < 100 && (await accountBytes(app, made.value.id)) < 1_500_000; i++)
+      await Bun.sleep(20);
+    setQuota(app.db, "storage", 1, adaId);
+    return getUserById(app.db, made.value.id)!;
+  }
+
+  test("an account at the limit is measured again at most every REWALK_MS", async () => {
+    expect(REWALK_MS).toBe(5_000);
+    const erin = await fullAccount("erin");
+    expect(await storageRefusal(app, erin, erin.id)).toContain("MB of 1 MB");
+    // The disk is emptied behind the cache's back.
+    await rm(join(dataDir, "repos", "erin"), { recursive: true, force: true });
+    const now = Date.now();
+    const clock = spyOn(Date, "now");
+    try {
+      clock.mockReturnValue(now + REWALK_MS - 1_000);
+      expect(await storageRefusal(app, erin, erin.id)).toContain("MB of 1 MB");
+      clock.mockReturnValue(now + REWALK_MS + 1_000);
+      expect(await storageRefusal(app, erin, erin.id)).toBeUndefined();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("a copy over the storage limit is a storage_limit, not a raw code", async () => {
+    const source = await newApp(app, getUserById(app.db, adaId)!, { name: "garden", visibility: "public" });
+    if (!source.ok) throw new Error(String(source.error));
+    const frank = await fullAccount("frank");
+    const copy = await makeItYours(app, frank, source.value.repo, { dryRun: false });
+    expect(copy.ok).toBe(false);
+    if (!copy.ok) {
+      expect(copy.error.kind).toBe("storage_limit");
+      if (copy.error.kind === "storage_limit") expect(copy.error.message).toContain("MB of 1 MB");
+    }
+  });
+
+  test("a create under a full organisation names the organisation's figure on the page", async () => {
+    const gwen = await signUp(app, { username: "gwen", email: "gwen@f.dev", password: "gwen-passphrase" });
+    if (!gwen.ok) throw new Error("signup");
+    proveAll(app);
+    const org = createOrg(app.db, "guild", gwen.value.id);
+    if (!org.ok) throw new Error("org");
+    setQuota(app.db, "storage", 2, adaId);
+    const token = createToken(app.db, gwen.value.id, "t", "admin").token;
+    const made = await createRepo(app, gwen.value, { owner: "guild", name: "big", visibility: "private", description: "" });
+    expect(made.ok).toBe(true);
+    expect((await push("guild", token, "big", 1_500_000)).code).toBe(0);
+    for (let i = 0; i < 100 && (await accountBytes(app, org.value.id)) < 1_500_000; i++)
+      await Bun.sleep(20);
+    setQuota(app.db, "storage", 1, adaId);
+    // Gwen herself holds nothing: only the organisation is over.
+    expect(await accountBytes(app, gwen.value.id)).toBe(0);
+    const res = await fetch(`${servers.url}/new`, {
+      method: "POST",
+      headers: {
+        cookie: `forge_session=${createSession(app.db, gwen.value.id).token}`,
+        origin: servers.url,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ owner: "guild", name: "more", visibility: "private" }),
+      redirect: "manual",
+    });
+    expect(res.status).toBe(422);
+    expect(await res.text()).toContain("MB of 1 MB");
   });
 
   test("with no limit set nothing is refused", async () => {

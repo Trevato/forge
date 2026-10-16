@@ -19,7 +19,7 @@ import { getUserById, isActive, type User } from "../core/users.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../actions/repos.ts";
 import { hookEnv } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
-import { pushCap, storageChanged, storageRefusal, storageRefusedText } from "../core/storage.ts";
+import { pushCap, storageChanged, storageRefusal, storageRefusedText, storageSentence } from "../core/storage.ts";
 import { parseGitCommand, runGitService } from "../git/smart-ssh.ts";
 import { serveSsh, type SshServer, type SshSession } from "../ssh/server.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -257,7 +257,14 @@ export async function serveGitCommand(
       visibility: "private",
     });
     if (created.ok) repo = created.value;
-    else if (created.error === "repository_limit") {
+    else if (created.error === "storage_limit") {
+      const ownerId = resolveOwner(forge, user, parsed.owner) ?? user.id;
+      session.writeStderr(
+        `forge: ${storageRefusedText(storageSentence(forge, ownerId) ?? "at the limit")}${CRLF}`,
+      );
+      session.exit(1);
+      return;
+    } else if (created.error === "repository_limit") {
       session.writeStderr(
         `forge: Not made: ${repositoryLimitMessage(forge, user, resolveOwner(forge, user, parsed.owner) ?? user.id)}${CRLF}`,
       );
