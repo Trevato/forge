@@ -354,3 +354,31 @@ describe("boards API", () => {
     expect(((await res.json()) as { error: string }).error).toBe("too_large");
   });
 });
+
+describe("wakes and sleeps", () => {
+  const wakes = { source: "wakes", aggregate: "count", groupBy: "repo_id" };
+  const sleeps = { source: "sleeps", aggregate: "count", groupBy: "repo_id" };
+  beforeAll(() => {
+    db.run(
+      `INSERT INTO meter (repo_id, env, placement, started_at, beat_at, ended_at) VALUES
+       ('r1','production','owned','2026-10-05T10:00:00.000Z','2026-10-05T11:00:00.000Z','2026-10-05T11:00:00.000Z'),
+       ('r1','pull-1','owned','2026-10-06T10:00:00.000Z','2026-10-06T10:30:00.000Z',NULL),
+       ('r2','production','cloud','2026-10-05T12:00:00.000Z','2026-10-05T13:00:00.000Z','2026-10-05T13:00:00.000Z')`,
+    );
+  });
+  test("a wake counts every interval, open or ended, by when it began", () => {
+    expect(runQuery(db, wakes, ALL)).toEqual({ ok: true, rows: [{ group: "r1", value: 2 }, { group: "r2", value: 1 }] });
+    expect(runQuery(db, { ...wakes, from: "2026-10-06T00:00:00Z" }, ALL)).toEqual({ ok: true, rows: [{ group: "r1", value: 1 }] });
+  });
+  test("a sleep counts only the ended interval, by when it ended", () => {
+    expect(runQuery(db, sleeps, ALL)).toEqual({ ok: true, rows: [{ group: "r1", value: 1 }, { group: "r2", value: 1 }] });
+    expect(runQuery(db, { ...sleeps, from: "2026-10-05T12:00:00Z" }, ALL)).toEqual({ ok: true, rows: [{ group: "r2", value: 1 }] });
+  });
+  test("the repo scope narrows both", () => {
+    expect(runQuery(db, wakes, R1)).toEqual({ ok: true, rows: [{ group: "r1", value: 2 }] });
+    expect(runQuery(db, sleeps, R1)).toEqual({ ok: true, rows: [{ group: "r1", value: 1 }] });
+  });
+  test("the environment slug is not a column", () => {
+    expect(runQuery(db, { ...wakes, series: "env" }, ALL).ok).toBe(false);
+  });
+});

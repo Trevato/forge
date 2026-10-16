@@ -82,6 +82,22 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       preview_data: "text", created_at: "time",
     },
   },
+  // One row per awake interval of an app environment (`core/meter.ts`): it
+  // wakes when the row begins and sleeps when it ends, so the two are two
+  // sources over one table, each timed by its own edge.
+  wakes: {
+    table: "meter",
+    owner: "repo_id",
+    time: "started_at",
+    columns: { repo_id: "text", placement: "text", started_at: "time", ended_at: "time" },
+  },
+  sleeps: {
+    table: "meter",
+    owner: "repo_id",
+    where: "ended_at IS NOT NULL",
+    time: "ended_at",
+    columns: { repo_id: "text", placement: "text", started_at: "time", ended_at: "time" },
+  },
   decisions: {
     table: "decision",
     owner: "repo_id",

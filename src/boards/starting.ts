@@ -1,5 +1,5 @@
 /**
- * The boards the forge offers a new install: Usage, Crew, Security and Throughput. They are plain
+ * The boards the forge offers a new install: Usage, Crew, Releases, Apps, Security and Throughput. They are plain
  * boards in `forge/boards` once written, so a person edits or deletes them
  * like any other; `.offered` (a JSON list of slugs, committed with the
  * boards) records what was offered so a deletion sticks and an edit is
@@ -41,6 +41,33 @@ export const STARTING_BOARDS: Readonly<Record<string, Board>> = {
       panel("Node CPU (cores)", "line", machine("eq", "node", "cpu_cores")),
       panel("Node load", "line", machine("eq", "node", "load")),
       panel("Requests per hour", "bar", { source: "usage", aggregate: "sum", column: "n", groupBy: "hour", series: "status" }, 2),
+    ],
+  },
+  releases: {
+    title: "Releases",
+    range: "30d",
+    refresh: "1m",
+    panels: [
+      panel("Deploys per day", "bar", { source: "deploys", aggregate: "count", groupBy: { bucket: "day" }, series: "state" }, 2),
+      panel("Deploys by state", "bar", { source: "deploys", aggregate: "count", groupBy: "state" }),
+      panel("Deploys gone live per day", "line", {
+        source: "deploys", aggregate: "count", groupBy: { bucket: "day" }, filter: [{ column: "serving_at", op: "gt", value: "" }],
+      }),
+      panel("Slowest decision per day (ms)", "line", { source: "decisions", aggregate: "max", column: "ms", groupBy: { bucket: "day" } }, 2),
+      panel("Decider time per hour (ms)", "line", { source: "decisions", aggregate: "avg", column: "ms", groupBy: HOUR, series: "kind" }, 2),
+    ],
+  },
+  apps: {
+    title: "Apps",
+    range: "7d",
+    refresh: "1m",
+    panels: [
+      panel("Apps made per day", "bar", { source: "apps", aggregate: "count", groupBy: { bucket: "day" }, series: "access" }),
+      panel("Apps by access", "bar", { source: "apps", aggregate: "count", groupBy: "access" }),
+      panel("Wakes per app (by repo id)", "bar", { source: "wakes", aggregate: "count", groupBy: "repo_id", series: "placement" }, 2),
+      panel("Sleeps per app (by repo id)", "bar", { source: "sleeps", aggregate: "count", groupBy: "repo_id", series: "placement" }, 2),
+      panel("Wakes per hour", "line", { source: "wakes", aggregate: "count", groupBy: HOUR }, 2),
+      panel("Requests per hour by surface", "bar", { source: "usage", aggregate: "sum", column: "n", groupBy: "hour", series: "surface" }, 2),
     ],
   },
   crew: {
