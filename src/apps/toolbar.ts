@@ -52,12 +52,35 @@ export const toolbarJs = `(function () {
   var link = document.createElement("a");
   link.textContent = "Home";
   link.rel = "noopener";
-  link.style.cssText = "color:#8ab4ff;text-decoration:none;margin-top:4px";
+  link.style.cssText = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
   try {
     var target = new URL(home);
     if (target.origin === new URL(me.src).origin) link.href = target.href;
   } catch (e) {}
+  // The crew line arrives late, so it lands in a polite live region.
+  var crew = document.createElement("div");
+  crew.setAttribute("aria-live", "polite");
+  panel.appendChild(crew);
   panel.appendChild(link);
+  // Who of the crew is working here, asked once as the pill loads, of the
+  // app's own origin (same-origin, so its grant cookie goes along); nothing
+  // is shown idle.
+  try {
+    fetch("/__forge/crew", { credentials: "same-origin", cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .then(function (c) {
+        if (!c || typeof c.who !== "string" || typeof c.url !== "string") return;
+        var u = new URL(c.url);
+        if (u.origin !== new URL(me.src).origin) return;
+        var a = document.createElement("a");
+        a.textContent = c.who + " is working on this";
+        a.rel = "noopener";
+        a.href = u.href;
+        a.style.cssText = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+        crew.appendChild(a);
+      })
+      .catch(function () {});
+  } catch (e) {}
   function set(open) {
     panel.hidden = !open;
     pill.setAttribute("aria-expanded", open ? "true" : "false");

@@ -697,6 +697,21 @@ export function listActive(db: Database, kind: RunKind): Run[] {
     .map(toRun);
 }
 
+/** The agent runs working now on a repository, or on one of its issues, newest first. */
+export function workingAgentRuns(
+  db: Database,
+  repoId: string,
+  issueId?: string,
+): Run[] {
+  return db
+    .query<
+      RunRow,
+      [string, string | null]
+    >("SELECT * FROM run WHERE state = 'running' AND kind = 'agent' AND repo_id = ?1 AND (?2 IS NULL OR issue_id = ?2) ORDER BY id DESC")
+    .all(repoId, issueId ?? null)
+    .map(toRun);
+}
+
 /** The unfinished run about one issue, if any: the reason a second is not queued. */
 export function activeRunFor(
   db: Database,

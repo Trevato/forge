@@ -34,6 +34,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
+import { crewNow } from "./crew.ts";
 import { rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
 
 export interface AppTarget {
@@ -532,6 +533,28 @@ export async function proxyApp(
         location: safePath(url.searchParams.get("to")),
         "set-cookie": `${grantCookieName(target)}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`,
         "cache-control": "no-store",
+      },
+    });
+  }
+  // The pill's fourth door: who of the crew is working on this app now,
+  // for the person the app's own grant names, read once as the pill opens.
+  if (url.pathname === "/__forge/crew" && !target.nested) {
+    const cookie = cookieValue(request, grantCookieName(target));
+    const signed =
+      cookie === undefined
+        ? undefined
+        : readGrant(runtime.app.config.dataDir, cookie, target);
+    const crew = crewNow(
+      runtime.app.db,
+      runtime.options.forgeUrl,
+      target.app,
+      target.env,
+      signed?.who?.id,
+    );
+    return Response.json(crew ?? {}, {
+      headers: {
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
       },
     });
   }

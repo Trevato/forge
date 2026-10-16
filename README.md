@@ -537,7 +537,11 @@ The forge pill on an app's pages says where you are: its accessible name reads
 `notes, production` or `notes, preview of pull #7`, and pressing it opens a
 panel with the app, the environment, and a link home. The pull's title is shown
 only to people who may read the pull. A tap outside the open panel, or Escape,
-closes it.
+closes it. When a crew run is working on the app (production) or on the preview's
+pull, the panel also says `scout is working on this` and links the run; it asks
+`/__forge/crew` once as the pill loads, answers only a signed-in person who may
+read the repository (and, for a run on a sealed issue, that issue), and shows
+nothing when the crew is idle.
 
 With a sentence and **Pick for me**, the sentence becomes a plan before the
 page comes back: `src/crew/plan.ts` makes one non-interactive call to
