@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { BOOT_ACTOR, setSignup, signupFromEnv } from "./settings/signup.ts";
 import { startMemorySampler } from "./boards/memory.ts";
 import { startSampler } from "./boards/sampler.ts";
 import { sweepStanding } from "./crew/standing.ts";
@@ -242,6 +243,10 @@ const app = createApp({
 });
 
 loadFlags(app.db);
+// FORGE_SIGNUP (checked in configProblem) sets who may sign up; kept like any change.
+const bootSignup = signupFromEnv(process.env.FORGE_SIGNUP);
+if (bootSignup.ok && bootSignup.value !== null)
+  setSignup(app.db, bootSignup.value, BOOT_ACTOR);
 const flagTimer = setInterval(() => flushFlagUses(app.db), 10_000);
 await reconcile(app);
 // Issues linked under a pillar's umbrella before pillars had labels.

@@ -9,6 +9,7 @@
  * `finally`, whatever happened.
  */
 
+import { signupFromEnv } from "../settings/signup.ts";
 import { Database } from "bun:sqlite";
 import {
   copyFileSync,
@@ -72,6 +73,8 @@ export function configProblem(
       return `${hosted !== "" ? "FORGE_APP_URL" : "FORGE_URL"}: "${url}" is not a URL`;
     }
   }
+  const signup = signupFromEnv(env.FORGE_SIGNUP);
+  if (!signup.ok) return signup.error;
   return null;
 }
 

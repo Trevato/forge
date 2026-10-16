@@ -17,7 +17,7 @@ import { contributePage } from "../web/pages/contribute.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
 import { domainsPage } from "../web/pages/domains.ts";
 import { resiliencePage } from "../web/pages/resilience.ts";
-import { limitsPage, limitsSet, quotasSet } from "../web/pages/admin-limits.ts";
+import { limitsPage, limitsSet, quotasSet, signupSet } from "../web/pages/admin-limits.ts";
 import { boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost } from "../web/pages/boards-edit.ts";
 import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
@@ -766,6 +766,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/admin/limits", limitsPage);
   router.add("POST", "/admin/limits", limitsSet);
   router.add("POST", "/admin/quotas", quotasSet);
+  router.add("POST", "/admin/signup", signupSet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
   router.add("POST", "/settings/backups/drill", backupsDrill);

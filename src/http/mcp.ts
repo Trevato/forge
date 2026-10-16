@@ -23,6 +23,8 @@ import { listAccess } from "../actions/access_log.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
 import { changeQuotas, readQuotas } from "../actions/quotas.ts";
+import { changeSignup, readSignup } from "../actions/signup.ts";
+import { SIGNUP_MODES } from "../settings/signup.ts";
 import { QUOTA_KEYS } from "../settings/quotas.ts";
 import { LIMIT_KEYS } from "../settings/limits.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
@@ -2177,6 +2179,39 @@ const TOOLS: readonly Tool[] = [
       return good({
         says: `${key}: ${now ?? "no limit"} → ${changed.value[key as (typeof QUOTA_KEYS)[number]] ?? "no limit"}.`,
         quotas: changed.value,
+      });
+    },
+  },
+  {
+    name: "signup",
+    description:
+      "Who may sign up: open, invite or closed (default open). Nothing reads it yet. Without `mode`, the setting and the recent changes. With `mode`, the change it would make; with dryRun false, made, by a forge admin with an admin-scope token, never an agent. The same as /admin/limits (Signup) and PATCH /api/v1/admin/settings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: [...SIGNUP_MODES] },
+        dryRun: { type: "boolean", description: "Plan only (the default). Send false to change it." },
+      },
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const read = readSignup(ctx.app, user);
+      if (!read.ok) return bad("not_found", "no such tool here");
+      if (args["mode"] === undefined) return good(read.value);
+      if (!(SIGNUP_MODES as readonly unknown[]).includes(args["mode"]))
+        return bad("invalid_signup", "signup is open, invite or closed");
+      if (args["dryRun"] !== false)
+        return good({
+          says: `Would set signup from ${read.value.signup} to ${String(args["mode"])}. Send dryRun: false to change it.`,
+        });
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing the forge's signup needs an admin-scope token");
+      const changed = changeSignup(ctx.app, user, args["mode"]);
+      if (!changed.ok) return bad(changed.error, "signup is open, invite or closed");
+      return good({
+        says: `signup: ${read.value.signup} → ${changed.value}.`,
+        signup: changed.value,
       });
     },
   },

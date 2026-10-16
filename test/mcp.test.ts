@@ -213,6 +213,7 @@ describe("the forge over MCP", () => {
       "contribute",
       "limits",
       "quotas",
+      "signup",
       "boards",
       "board_write",
       "board_delete",

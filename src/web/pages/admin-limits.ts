@@ -7,6 +7,8 @@
 
 import { changeLimit, listLimits } from "../../actions/limits.ts";
 import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
+import { changeSignup, readSignup } from "../../actions/signup.ts";
+import { SIGNUP_MODES } from "../../settings/signup.ts";
 import { QUOTA_KEYS } from "../../settings/quotas.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout } from "../chrome.ts";
@@ -112,7 +114,41 @@ export function limitsPage(ctx: Ctx): Response {
       pad: false,
     },
   );
-  const body = html`${quotaCard}${card(
+  const signup = readSignup(ctx.app, ctx.auth.user);
+  const signupHistory = (signup.ok ? signup.value.changes : []).map((c) =>
+    row({
+      lead: icon("history"),
+      title: html`<span class="mono">${c.from}</span> →
+        <span class="mono">${c.to}</span>`,
+      meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}`,
+    }),
+  );
+  const signupCard = card(
+    html`<div class="card-body">
+      <p class="muted small">
+        Who may sign up: open, invite or closed. Nothing reads this yet.
+      </p>
+      <form class="row-actions" method="post" action="/admin/signup">
+        <label class="small">signup
+          <select class="input mono" name="signup">
+            ${SIGNUP_MODES.map(
+              (m) => html`<option value="${m}" ${signup.ok && signup.value.signup === m ? "selected" : ""}>${m}</option>`,
+            )}
+          </select></label>
+        ${btn("Save", { size: "sm", variant: "primary", label: "Save signup" })}
+      </form>
+    </div>
+    ${when(
+      signupHistory.length > 0,
+      () => html`<ul class="list">${signupHistory}</ul>`,
+    )}`,
+    {
+      head: html`${icon("activity")}
+        <h2>Signup</h2>`,
+      pad: false,
+    },
+  );
+  const body = html`${signupCard}${quotaCard}${card(
       html`<div class="card-body">
           <p class="muted small">
             Every limit you can hit, and why it is there. A change governs
@@ -209,5 +245,22 @@ export async function quotasSet(ctx: Ctx): Promise<Response> {
     changed.ok
       ? { message: "Quotas saved." }
       : { tone: "danger", message: "A quota is a positive whole number, or empty for no limit." },
+  );
+}
+
+// POST /admin/signup
+export async function signupSet(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent")
+    return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const changed = changeSignup(ctx.app, ctx.auth.user, field(form, "signup"));
+  if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
+  return flashTo(
+    ctx,
+    "/admin/limits",
+    changed.ok
+      ? { message: "Signup saved." }
+      : { tone: "danger", message: "Signup is open, invite or closed." },
   );
 }

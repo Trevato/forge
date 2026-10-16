@@ -23,6 +23,7 @@ import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
 import { changeQuotas, readQuotas } from "../actions/quotas.ts";
+import { changeSignup, readSignup } from "../actions/signup.ts";
 import {
   accountSignIns,
   endAccountSession,
@@ -1512,16 +1513,25 @@ export function apiRoutes(router: Router<Handler>): void {
     const denied = accountAdmin(ctx, "ro");
     if (denied) return denied;
     const read = readQuotas(ctx.app, ctx.auth.user);
-    return read.ok ? json(read.value) : notFound();
+    const signup = readSignup(ctx.app, ctx.auth.user);
+    return read.ok && signup.ok ? json({ ...read.value, ...signup.value, signupChanges: signup.value.changes, changes: read.value.changes }) : notFound();
   });
 
   router.add("PATCH", "/api/v1/admin/settings", async (ctx) => {
     const denied = accountAdmin(ctx, "admin");
     if (denied) return denied;
     const input = await body(ctx.request);
+    if (input.signup !== undefined) {
+      if (input.quotas !== undefined)
+        return apiError("invalid_body", 422, "send signup or quotas, not both");
+      const set = changeSignup(ctx.app, ctx.auth.user, input.signup);
+      if (set.ok) return json({ signup: set.value });
+      if (set.error === "not_found") return notFound();
+      return apiError(set.error, 422, "signup is open, invite or closed");
+    }
     const quotas = input.quotas;
     if (typeof quotas !== "object" || quotas === null || Array.isArray(quotas))
-      return apiError("invalid_body", 422, "send {\"quotas\": {\"repositories\": 5, \"apps\": null}}");
+      return apiError("invalid_body", 422, "send {\"signup\": \"closed\"} or {\"quotas\": {\"repositories\": 5, \"apps\": null}}");
     const changed = changeQuotas(ctx.app, ctx.auth.user, quotas as Record<string, unknown>);
     if (changed.ok) return json({ quotas: changed.value });
     if (changed.error === "not_found") return notFound();
