@@ -317,6 +317,21 @@ describe("boards API", () => {
     }
   });
 
+  test("the security sources are admin only: a non-admin gets 403, a repo scope gets nothing", async () => {
+    for (const source of ["signins", "tokens", "adminActions"]) {
+      expect((await q("bob", { source, aggregate: "count" })).status).toBe(403);
+      expect((await q("agent", { source, aggregate: "count" })).status).toBe(403);
+      expect((await q("admin", { source, aggregate: "count" })).status).toBe(200);
+      expect(run(app.db, { source, aggregate: "count" }, { repoIds: ["r1"] })).toEqual({ ok: true, rows: [] });
+    }
+  });
+
+  test("the security sources list no secret column", () => {
+    for (const source of ["signins", "tokens", "adminActions"]) {
+      for (const c of Object.keys(SOURCES[source]!.columns)) expect(c).not.toMatch(/hash|token|secret|payload|name/);
+    }
+  });
+
   test("signed out is 401", async () => {
     expect((await call("/api/v1/boards/sources", null)).status).toBe(401);
     expect((await q(null, { source: "runs", aggregate: "count" })).status).toBe(401);

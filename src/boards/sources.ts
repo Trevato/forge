@@ -118,6 +118,31 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       n: "requests in that hour with that pattern, method, status class, role and surface",
     },
   },
+  // Browser sign-ins: one row per session. The token hash and the session
+  // id are not listed. Failed sign-ins are not a row anywhere; they are the
+  // `usage` rows for POST /signin with a 4xx status.
+  signins: {
+    table: "session",
+    owner: "admin",
+    time: "created_at",
+    columns: { user_id: "text", created_at: "time", expires_at: "time", last_seen_at: "time" },
+  },
+  // API tokens: scope, owner and age. The token text and its hash and name are not listed.
+  tokens: {
+    table: "token",
+    owner: "admin",
+    time: "created_at",
+    columns: { id: "text", user_id: "text", scope: "text", created_at: "time", last_used_at: "time", expires_at: "time" },
+    docs: { scope: "ro, rw or admin" },
+  },
+  // What admins did: the events an admin account appended. The payload is not listed.
+  adminActions: {
+    table: "event",
+    owner: "admin",
+    where: "actor_id IN (SELECT id FROM user WHERE is_admin = 1)",
+    time: "created_at",
+    columns: { id: "text", kind: "text", repo_id: "text", actor_id: "text", created_at: "time" },
+  },
   // What the machine used (`boards/sampler.ts`, kept by `boards/ring.ts`):
   // 15-s points for the last day, 5-min points before that, never both
   // for one moment.

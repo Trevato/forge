@@ -1,5 +1,5 @@
 /**
- * The boards the forge offers a new install: Usage and Crew. They are plain
+ * The boards the forge offers a new install: Usage, Crew and Security. They are plain
  * boards in `forge/boards` once written, so a person edits or deletes them
  * like any other; `.offered` (a JSON list of slugs, committed with the
  * boards) records what was offered so a deletion sticks and an edit is
@@ -20,6 +20,12 @@ const HOUR = { bucket: "hour" };
 const machine = (op: "eq" | "starts", value: string, column: string) => ({
   source: "machine", aggregate: "avg", column, groupBy: MINUTE, filter: [{ column: "target", op, value }],
 });
+
+// A failed sign-in answers 422 (wrong password) or 429 (rate-limited); the usage count keeps no more.
+const failed = {
+  source: "usage", aggregate: "sum", column: "n",
+  filter: [{ column: "pattern", op: "eq", value: "/signin" }, { column: "method", op: "eq", value: "POST" }, { column: "status", op: "eq", value: "4xx" }],
+};
 
 export const STARTING_BOARDS: Readonly<Record<string, Board>> = {
   usage: {
@@ -45,6 +51,20 @@ export const STARTING_BOARDS: Readonly<Record<string, Board>> = {
       panel("Runs by state", "bar", { source: "runs", aggregate: "count", groupBy: "state" }),
       panel("Review verdicts", "bar", { source: "reviews", aggregate: "count", groupBy: "state" }),
       panel("Spend per hour (USD)", "line", { source: "spend", aggregate: "sum", column: "cost_usd", groupBy: HOUR }, 2),
+    ],
+  },
+  security: {
+    title: "Security",
+    range: "7d",
+    refresh: "1m",
+    panels: [
+      panel("Sign-ins per hour", "bar", { source: "signins", aggregate: "count", groupBy: HOUR }, 2),
+      panel("Failed sign-ins per hour", "bar", { ...failed, groupBy: HOUR, series: "status" }, 2),
+      panel("Failed sign-ins (total)", "number", failed),
+      panel("Tokens by scope", "bar", { source: "tokens", aggregate: "count", groupBy: "scope" }),
+      panel("Tokens made per day", "bar", { source: "tokens", aggregate: "count", groupBy: { bucket: "day" } }),
+      panel("Admin actions per hour", "bar", { source: "adminActions", aggregate: "count", groupBy: HOUR }, 2),
+      panel("Admin actions by kind", "bar", { source: "adminActions", aggregate: "count", groupBy: "kind" }, 2),
     ],
   },
 };

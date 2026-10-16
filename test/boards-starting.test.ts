@@ -1,5 +1,5 @@
 /**
- * The forge offers the Usage and Crew boards on boot: every panel runs, an
+ * The forge offers the Usage, Crew and Security boards on boot: every panel runs, an
  * edit survives the next boot, and a deletion is not undone.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -33,10 +33,10 @@ test("a forge with no person to found the repo writes nothing", async () => {
   expect(await offerStartingBoards(bare)).toEqual([]);
 });
 
-test("a fresh boot writes Usage and Crew, and every panel runs", async () => {
-  expect((await offerStartingBoards(app)).sort()).toEqual(["crew", "usage"]);
+test("a fresh boot writes Usage, Crew and Security, and every panel runs", async () => {
+  expect((await offerStartingBoards(app)).sort()).toEqual(["crew", "security", "usage"]);
   const boards = await listBoards(app.reposRoot);
-  expect(boards.map((b) => b.slug)).toEqual(["crew", "usage"]);
+  expect(boards.map((b) => b.slug)).toEqual(["crew", "security", "usage"]);
   let panels = 0;
   for (const { board } of boards) {
     for (const p of board.panels) {
@@ -45,7 +45,7 @@ test("a fresh boot writes Usage and Crew, and every panel runs", async () => {
       panels++;
     }
   }
-  expect(panels).toBe(STARTING_BOARDS.usage!.panels.length + STARTING_BOARDS.crew!.panels.length);
+  expect(panels).toBe(STARTING_BOARDS.usage!.panels.length + STARTING_BOARDS.crew!.panels.length + STARTING_BOARDS.security!.panels.length);
 });
 
 test("a second boot leaves an edit in place", async () => {
