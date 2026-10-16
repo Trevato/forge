@@ -18,3 +18,18 @@ keeps a drill's verdict for any domain here (see the README).
 | Identity | Sign-in fails; sessions and tokens already issued may still work. | nothing yet | 15 | Restore the sign-in provider's settings; sign in with the admin password. | none: Breaking sign-in locks the owner out of the forge that would fix it. |
 | The model credential | Agents cannot start work; everything else runs. | nothing yet | 5 | Set a fresh credential in the settings. | expire-token |
 | The runner | Checks and runs queue behind a lane that is not moving. | "wait behind one lane; the oldest since"; "is stuck: no heartbeat for" | 10 | Cancel the stuck run; restart the runner if the lane stays empty. | lose-runner |
+
+## Running a drill
+
+`scripts/drills/run.ts` walks you through one. It refuses a domain whose drill
+is none, prints the fault to cause, and waits for Enter. It then polls
+`/api/v1/health` and `/` once a second, keeping each distinct line the forge
+says while unhealthy; when the forge is healthy again it posts what it saw and
+the seconds it took to `POST /api/v1/drills` and prints the verdict. If the
+forge is still down after an hour it posts nothing, says so, and exits 0. A
+refused post exits non-zero with the forge's message. `FORGE_TOKEN` must be a
+site admin's token.
+
+```
+FORGE_TOKEN=… bun scripts/drills/run.ts runner --forge https://forge.open-platform.sh
+```
