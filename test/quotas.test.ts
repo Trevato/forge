@@ -13,7 +13,7 @@ import { newApp } from "../src/actions/apps.ts";
 import { createAgent } from "../src/actions/crew.ts";
 import { makeItYours } from "../src/actions/make_it_yours.ts";
 import { createRepo, forkRepo } from "../src/actions/repos.ts";
-import { getRepo } from "../src/core/repos.ts";
+import { getRepo, listReposOwnedBy } from "../src/core/repos.ts";
 import { mirrorAndWait, newFakeState, serveFakeForge } from "./fake-origin.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { getQuotas, quotaChanges } from "../src/settings/quotas.ts";
@@ -22,7 +22,7 @@ import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
-import { newRepoScreen } from "../src/tui/screens/newrepo.ts";
+import { forkScreen, newRepoScreen } from "../src/tui/screens/newrepo.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { settleApp } from "./helpers/tui.ts";
 
@@ -490,6 +490,108 @@ describe("the repositories limit", () => {
       tui.stop();
     }
     expect(getRepo(app.db, "exact", "x3")).toBeUndefined();
+    expect((await setLimit(null)).status).toBe(200);
+  });
+  test("every door refuses at exactly the limit with its words, and makes nothing", async () => {
+    const made = await createUser(app.db, {
+      trusted: true,
+      username: "doors",
+      email: "doors@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!made.ok) throw new Error(made.error);
+    const doors = made.value;
+    const source = await newApp(app, boss, { name: "doorsrc", visibility: "public" });
+    if (!source.ok) throw new Error(String(source.error));
+    expect((await setLimit(2)).status).toBe(200);
+    for (const name of ["d1", "d2"]) expect((await createRepo(app, doors, { name })).ok).toBe(true);
+    const owned = () => listReposOwnedBy(app.db, doors.id).length;
+    const sentence = "2 of 2 repositories";
+    const token = createToken(app.db, doors.id, "t", "rw").token;
+    const cookie = `forge_session=${createSession(app.db, doors.id).token}`;
+    const form = (path: string, fields: Record<string, string>) =>
+      fetch(`${servers.url}${path}`, {
+        method: "POST",
+        headers: { cookie, origin: servers.url },
+        body: new URLSearchParams(fields),
+        redirect: "manual",
+      });
+    /** The sentence a redirecting form flashed on its way back. */
+    const flashed = (res: Response): string => {
+      const raw = /forge_flash=([^;]*)/.exec(res.headers.get("set-cookie") ?? "")?.[1] ?? "";
+      return raw === "" ? "" : (JSON.parse(decodeURIComponent(raw)) as { message: string }).message;
+    };
+    const before = owned();
+    expect(before).toBe(2);
+
+    // The fork page: a flash on the repository.
+    const fork = await form("/boss/doorsrc/fork", { name: "forked" });
+    expect(fork.status).toBe(303);
+    expect(flashed(fork)).toBe(`Not made: ${sentence}.`);
+
+    // The new-app page and the API.
+    const appPage = await form("/apps/new", { owner: "doors", name: "door-app", description: "x" });
+    expect(appPage.status).toBe(422);
+    expect(await appPage.text()).toContain(`Not made: ${sentence}.`);
+    const appApi = await post(token, "/api/v1/apps", { name: "door-app" });
+    expect(appApi.status).toBe(403);
+    expect(await appApi.json()).toMatchObject({ error: "repository_limit", message: sentence });
+
+    // The migrate page and the API (a literal address: no lookup).
+    const url = "https://93.184.216.34/someone/gears.git";
+    const migratePage = await form("/migrate", { url, owner: "doors", name: "gears" });
+    expect(migratePage.status).toBe(422);
+    expect(await migratePage.text()).toContain(`Not made: ${sentence}.`);
+    const migrateApi = await post(token, "/api/v1/migrate", { source: { url }, name: "gears" });
+    expect(migrateApi.status).toBe(403);
+    expect(await migrateApi.json()).toMatchObject({ error: "repository_limit", message: sentence });
+    // Any other migrate refusal keeps its 422.
+    const badUrl = await post(token, "/api/v1/migrate", { source: { url: "file:///etc" } });
+    expect(badUrl.status).toBe(422);
+
+    // The studio's make-it-yours form.
+    const mine = await form("/boss/doorsrc/make-it-yours", { name: "mine" });
+    expect(mine.status).toBe(303);
+    expect(flashed(mine)).toBe(`Not made: ${sentence}.`);
+
+    // The MCP make-it-yours tool.
+    const rpc = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "make_it_yours", arguments: { repo: "boss/doorsrc", dryRun: false } },
+      }),
+    });
+    const answer = ((await rpc.json()) as any).result;
+    expect(answer.isError).toBe(true);
+    expect(answer.content[0].text).toContain(sentence);
+
+    // The terminal's fork screen.
+    const terminal = headlessTerminal(120, 30);
+    const { app: tui, session } = createForgeApp(
+      app,
+      { sshUsername: "doors", remoteAddress: "127.0.0.1", fingerprint: "SHA256:doors", user: doors },
+      { terminal, exitHooks: false },
+    );
+    tui.start();
+    try {
+      tui.ctx.push(forkScreen(session, tui.ctx, source.value.repo));
+      await settleApp(tui);
+      tui.dispatch({ type: "key", key: "enter", ctrl: false, alt: false, shift: false });
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain(`not made: ${sentence}`);
+    } finally {
+      tui.stop();
+    }
+
+    expect(owned()).toBe(before);
     expect((await setLimit(null)).status).toBe(200);
   });
 });

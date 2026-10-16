@@ -4486,7 +4486,9 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!started.ok)
       return started.error === "unauthorized"
         ? respondAccess(started.error, 401)
-        : apiError(started.error, 422, migrateMessage(started.error, repositoryLimitMessage(ctx.app, ctx.auth.user!)));
+        : started.error === "repository_limit"
+        ? apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!))
+        : apiError(started.error, 422, migrateMessage(started.error));
     return json(
       {
         repo: repoJson(ctx, started.value.repo),
