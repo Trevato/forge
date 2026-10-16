@@ -12,7 +12,7 @@ import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { limitValue } from "../../settings/limits.ts";
 import { signOutHere } from "../../actions/signins.ts";
-import { clientAddress } from "../../http/peer.ts";
+import { bucketOf, clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../../actions/repos.ts";
@@ -438,6 +438,8 @@ export function signupPage(ctx: Ctx): Response {
  * limiter per forge, so a test's forge never throttles another's.
  */
 const signinLimits = new WeakMap<Ctx["app"], RateLimiter>();
+// The third window, by the socket's peer: a source trying many accounts.
+const signinSources = new WeakMap<Ctx["app"], RateLimiter>();
 
 export function signinAllowed(ctx: Ctx, username: string): number | undefined {
   let limiter = signinLimits.get(ctx.app);
@@ -454,6 +456,14 @@ export function signinAllowed(ctx: Ctx, username: string): number | undefined {
   // The one key first: a key already refused must not spend the forge's budget.
   const one = limiter.take(`account:${username.toLowerCase()}`, "ro");
   if (!one.allowed) return one.retryAfter;
+  let sources = signinSources.get(ctx.app);
+  if (sources === undefined) {
+    sources = new RateLimiter({ perMinute: 0, adminPerMinute: 0, enabled: true });
+    signinSources.set(ctx.app, sources);
+  }
+  sources.setLimits({ perMinute: limitValue(ctx.app.db, "signin.per_source"), adminPerMinute: 0, enabled: true });
+  const source = sources.take(`source:${bucketOf(clientAddress(ctx.request))}`, "ro");
+  if (!source.allowed) return source.retryAfter;
   const whole = limiter.take("forge", "admin");
   return whole.allowed ? undefined : whole.retryAfter;
 }

@@ -32,6 +32,7 @@ export type LimitKey =
   | "front.hidden_max"
   | "share.daily_max"
   | "signin.per_account"
+  | "signin.per_source"
   | "signin.per_forge"
   | "signup.per_source"
   | "signup.per_forge";
@@ -125,6 +126,14 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 1,
     max: 1_000,
     reason: "Every attempt costs a password hash, and a guesser gets only so many tries at one account.",
+  },
+  "signin.per_source": {
+    label: "Sign-in attempts per source a minute",
+    unit: "attempts",
+    default: 60,
+    min: 1,
+    max: 10_000,
+    reason: "One source trying account after account is guessing, and each try costs a hash, so a source has a ceiling of its own.",
   },
   "signin.per_forge": {
     label: "Sign-in attempts per forge a minute",

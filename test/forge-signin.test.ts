@@ -17,6 +17,8 @@ import { addKey, findKeyByFingerprint, fingerprint, parseAuthorizedKey } from ".
 import { KeySet } from "../src/http/jwks.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { verifyJwt } from "../src/kernel/jwt.ts";
+import { LIMITS, setLimit } from "../src/settings/limits.ts";
+import { notePeer } from "../src/http/peer.ts";
 import { signinAllowed } from "../src/web/pages/site.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -298,10 +300,14 @@ describe("the sign-in throttle", () => {
   test("a key that is refused does not spend the forge-wide budget", async () => {
     const dir = await mkdtemp(join(tmpdir(), "forge-signin-"));
     const app = createApp({ dataDir: dir, port: 0 });
-    const ctx = { app } as unknown as Ctx;
-    for (let i = 0; i < 60; i++) signinAllowed(ctx, "parent:one");
+    const from = (address: string): Ctx => {
+      const request = new Request("http://forge.test/");
+      notePeer(request, address);
+      return { app, request } as unknown as Ctx;
+    };
+    for (let i = 0; i < 60; i++) signinAllowed(from("10.0.0.1"), "parent:one");
     // The forge's whole budget (200) is still there for 180 other keys.
-    for (let i = 0; i < 180; i++) expect(signinAllowed(ctx, `k${i}`)).toBeUndefined();
+    for (let i = 0; i < 180; i++) expect(signinAllowed(from(`10.1.${i}.1`), `k${i}`)).toBeUndefined();
     await rm(dir, { recursive: true, force: true });
   });
 });
@@ -493,5 +499,26 @@ describe("a parent's oversized register and token answers", () => {
     expect(res.headers.getSetCookie().some((c) => c.startsWith("forge_session=") && !c.includes("Max-Age=0"))).toBe(false);
     expect(pulled.n).toBeGreaterThan(0);
     expect(pulled.n).toBeLessThan(100);
+  });
+});
+
+describe("the per-source sign-in window", () => {
+  test("one source trying many accounts is throttled while another is not, and the limit is listed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-signin-source-"));
+    const app = createApp({ dataDir: dir, port: 0 });
+    const from = (address: string, headers: Record<string, string> = {}): Ctx => {
+      const request = new Request("http://forge.test/", { headers });
+      notePeer(request, address);
+      return { app, request } as unknown as Ctx;
+    };
+    expect(LIMITS["signin.per_source"].default).toBe(60);
+    setLimit(app.db, "signin.per_source", 5, "setup");
+    for (let i = 0; i < 5; i++) expect(signinAllowed(from("192.0.2.1"), `acct${i}`)).toBeUndefined();
+    // A sixth account from the same source is refused, even with a spoofed header.
+    const wait = signinAllowed(from("192.0.2.1", { "x-forwarded-for": "198.51.100.9" }), "acct5");
+    expect(wait).toBeGreaterThan(0);
+    // A different source is not throttled at the same moment.
+    expect(signinAllowed(from("192.0.2.2"), "acct6")).toBeUndefined();
+    await rm(dir, { recursive: true, force: true });
   });
 });
