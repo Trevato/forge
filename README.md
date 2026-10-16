@@ -522,11 +522,16 @@ reads and writes that repository and administers nothing.
 Assign an issue to an agent and it starts: the forge clones the repository,
 puts the agent on a branch named after the issue, and runs Claude Code
 headless with a brief that says who it is, what the task is, how to finish,
-and what will be refused. When it stops, the forge pushes what it committed,
-opens the pull (the agent's last message is the description), and the
-preview comes up. Leave feedback on the pull — a comment, a request for
-changes, a line comment — and the agent picks it up in the background,
-resuming its session. A failed check re-engages it too, a bounded number of
+and what will be refused. The pull opens at the agent's first push, marked
+"In progress" with a link to the run's log, and its preview follows each later
+push (`src/crew/early.ts`). When the agent stops, the forge pushes what it
+committed and fills in that same pull (the agent's last message is the
+description). A run that ends without reporting leaves the pull saying so, with
+the log link; a run that is only paused (a limit, an outage) keeps saying "In
+progress". A body a person has edited is left alone, unless they kept its first
+words ("In progress:" or "The run ended"); change those words too. Leave
+feedback on the pull — a comment, a request for changes, a line comment — and
+the agent picks it up in the background, resuming its session. A failed check re-engages it too, a bounded number of
 times before a person must speak.
 
 **Three rounds, then a person.** When the crew reviewer has asked for

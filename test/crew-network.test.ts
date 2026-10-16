@@ -10,6 +10,7 @@ import type { App } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
+import { listPulls } from "../src/core/pulls.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { MAX_PAUSES } from "../src/crew/limits.ts";
 import { isNetworkError, NETWORK_PAUSE_MS } from "../src/crew/network.ts";
@@ -118,6 +119,30 @@ describe("the crew, with a stand-in Claude Code: network errors", () => {
     }
     expect(found?.summary).toStartWith("paused: network error");
     rmSync(join(standIn.dataDir, "wrapdown"));
+  }, 60_000);
+
+  test("a run paused after its first push keeps its pull saying it is in progress", async () => {
+    const issue = openIssue(app, alice, repo, {
+      title: "Pause after push",
+      body: "PUSH-THEN-DOWN",
+    });
+    if (!issue.ok) throw new Error(String(issue.error));
+    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+    const until = Date.now() + 40_000;
+    let paused: Run | undefined;
+    while (paused === undefined && Date.now() < until) {
+      paused = listRuns(app.db, repo.id, { kind: "agent" }).find(
+        (r) => r.issueId === issue.value.id && r.state === "cancelled",
+      );
+      if (paused === undefined) await Bun.sleep(50);
+    }
+    expect(paused?.summary).toStartWith("paused: network error");
+    const pull = listPulls(app.db, repo.id, { state: "open", limit: 200 }).find(
+      (p) => p.headBranch === paused!.branch,
+    );
+    expect(pull).toBeDefined();
+    expect(pull!.body).toStartWith("In progress:");
+    rmSync(join(standIn.dataDir, "down"), { force: true });
   }, 60_000);
 
   test("an outage that outlasts the retries pauses the run; after MAX_PAUSES it ends", async () => {

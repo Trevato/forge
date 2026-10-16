@@ -18,6 +18,14 @@ import type { App } from "../app.ts";
 import { addComment } from "../actions/issues.ts";
 import { resolutionBrief } from "./proposal.ts";
 import { openPull } from "../actions/pulls.ts";
+import {
+  fillPull,
+  isEarlyBody,
+  pullOfBranch,
+  trailerFor,
+  watchForPull,
+  type EarlyPull,
+} from "./early.ts";
 import { forkRepo, sealedForkFor } from "../actions/repos.ts";
 import { announceRun } from "../actions/runs.ts";
 import { previewEnv } from "../apps/data.ts";
@@ -691,6 +699,7 @@ async function work(
       summary: `pull #${pull.number} was closed before the run began`,
     };
   const continuing = pull !== undefined && pull.mergedAt !== null;
+  const pullStands = pull !== undefined && !continuing;
   const branch =
     pull !== undefined && !continuing && !reviewing
       ? pull.headBranch
@@ -735,6 +744,9 @@ async function work(
 
   let grant: Grant | undefined;
   let runTmp: string | undefined;
+  let early: EarlyPull | undefined;
+  // A paused run resumes: its pull keeps saying "In progress".
+  let pausing = false;
   try {
     // The secrets this run declared, for this run only: opened now, held for
     // redaction from this moment, dropped in the `finally` below — a crash
@@ -1089,6 +1101,22 @@ async function work(
         `sandbox: off here${options.sandboxNote === undefined ? "" : ` — ${options.sandboxNote}`}; the shell runs unrestricted`,
       );
     const working = budget - reserve;
+    if (!reviewing)
+      early = watchForPull({
+        app,
+        repo,
+        agent,
+        issue,
+        run,
+        fork: fork.value,
+        branch,
+        forkBare,
+        bare,
+        forgeUrl: options.forgeUrl,
+        write,
+        variantGroup: run.variantGroup,
+        continuing: pullStands,
+      });
     let result = await invoke(
       prompt,
       working,
@@ -1147,6 +1175,7 @@ async function work(
         run.attempt >= MAX_PAUSES
       )
         return undefined;
+      pausing = true;
       const at = new Date(Date.now() + NETWORK_PAUSE_MS);
       write(`network still down; paused, resumes ${whenText(at)}`);
       return {
@@ -1162,6 +1191,7 @@ async function work(
         ? { prompt, sessionId: undefined }
         : { prompt: "Continue where you stopped.", sessionId: last.sessionId },
     );
+    await early?.stop();
     const down = outagePause(result, result.costUsd);
     if (down !== undefined) return down;
     noteRunProgress(app.db, run.id, {
@@ -1216,6 +1246,7 @@ async function work(
           write(
             `${picked.subscription.name} rests until ${whenText(until)}; ${next.subscription.name} takes the run`,
           );
+          pausing = true;
           return {
             state: "paused",
             summary: `paused: ${pauseReason(picked.subscription.name, limit, said)}; ${next.subscription.name} takes over`,
@@ -1239,6 +1270,7 @@ async function work(
       }
       if (run.attempt < MAX_PAUSES) {
         const at = resumeAt(result.result, new Date());
+        pausing = true;
         return {
           state: "paused",
           summary: `paused: ${pauseReason(picked.kind === "ready" ? picked.subscription.name : undefined, limitOf(result.result, new Date()), said)}; resumes ${whenText(at)}`,
@@ -1385,6 +1417,8 @@ async function work(
       turns: result.turns,
     };
   } finally {
+    await early?.stop();
+    if (!pausing) early?.settle();
     grant?.release();
     deleteToken(app.db, agent.user.id, token.id);
     if (runTmp !== undefined) rmSync(runTmp, { recursive: true, force: true });
@@ -1761,26 +1795,20 @@ async function landWork(
     };
   }
 
-  const existing =
-    pull ??
-    listPulls(app.db, repo.id, {
-      sealed: true,
-      state: "open",
-      limit: 200,
-    }).find((p) => p.headRepoId === fork.id && p.headBranch === branch);
+  const existing = pull ?? pullOfBranch(app, repo, fork, branch);
   if (existing !== undefined) {
+    // A pull this run opened at its first push is still the run's opening.
+    const openedByRun = isEarlyBody(existing.body);
+    fillPull(app, agent, repo, existing, issue, report);
     if (report !== "") addComment(app, agent.user, repo, existing, report);
     return {
       pushed: true,
-      summary: `updated pull #${existing.number} (${remote?.slice(0, 7)})${committedForIt ? ", committing its leftover changes" : ""}`,
+      summary: `${openedByRun ? "opened" : "updated"} pull #${existing.number} (${remote?.slice(0, 7)})${committedForIt ? ", committing its leftover changes" : ""}`,
     };
   }
   // No pull to update and yet the task is one: the pull it continues was
   // merged, and this one follows it rather than closing it.
-  const trailer =
-    issue.kind === "pull"
-      ? `Continues #${issue.number}`
-      : `Closes #${issue.number}`;
+  const trailer = trailerFor(issue);
   const body = `${report === "" ? "" : `${report}\n\n`}${trailer}`;
   const opened = await openPull(app, agent.user, repo, {
     title: issue.title,

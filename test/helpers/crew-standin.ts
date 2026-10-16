@@ -62,6 +62,14 @@ echo "half-done" > PAUSED.md
 echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You\u2019ve hit your session limit \u00b7 resets 7:20am (UTC)","total_cost_usd":0.02,"num_turns":2,"session_id":"fake-1","terminal_reason":"api_error"}'
 exit 0
 fi
+if grep -q PUSH-THEN-DOWN "${promptFile}" && [ ! -f "${dataDir}/down" ]; then
+echo "work by the crew $(date +%s%N)" >> CREW.md
+git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
+sleep 2.5
+touch "${dataDir}/down"
+echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: Can'"'"'t reach the API server","total_cost_usd":0,"num_turns":0,"session_id":"fake-1","terminal_reason":"api_error"}'
+exit 0
+fi
 if grep -q NET-DOWN "${promptFile}"; then touch "${dataDir}/down"; fi
 if [ -f "${dataDir}/down" ] && grep -q "Continue where you stopped\\|NET-DOWN" "${promptFile}"; then
 echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: Can'"'"'t reach the API server","total_cost_usd":0,"num_turns":0,"session_id":"fake-1","terminal_reason":"api_error"}'
@@ -126,6 +134,9 @@ echo "work by the crew $(date +%s%N)" >> CREW.md
 # package cache in it. Never the work; the clone's exclude keeps it out.
 mkdir -p .tmp/cache && echo "junk" > .tmp/cache/leftover
 git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
+if grep -q LINGER-ME "${promptFile}"; then
+n=0; while [ ! -f "${dataDir}/release" ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n+1)); done
+fi
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"Added CREW.md."},{"type":"tool_use","name":"Read","input":{"file_path":"'"$(pwd)"'/CREW.md"}},{"type":"tool_use","name":"Bash","input":{"command":"cat /etc/hosts"}},{"type":"tool_use","name":"Bash","input":{"command":"git push"}}]}}'
 echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW.md as asked.","total_cost_usd":0.01,"num_turns":3,"session_id":"fake-1","terminal_reason":"completed"}'
 `,
