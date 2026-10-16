@@ -9,7 +9,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -871,18 +871,48 @@ describe("the look", () => {
   }, 120_000);
 
   test("a public app made private after its pictures were taken: a reader gets them no more, and no Look card; its writer still does (#845)", async () => {
-    const gallery = getRepo(app.db, "alice", "gallery")!;
-    const galleryApp = getAppByRepo(app.db, gallery.id)!;
-    const look = looksForEnv(app.db, galleryApp.id, "production").find(
+    // Its own app, branch, pull and pictures: no other test's capture.
+    const made = await newApp(app, alice, { name: "vault", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const gallery = made.value.repo;
+    const galleryApp = made.value.app;
+    const branch = await commitToBranch(app, alice, gallery, {
+      branch: "frame",
+      base: gallery.defaultBranch,
+      message: "A frame",
+      files: [{ path: "FRAME.md", content: "frame\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, gallery, {
+      title: "A frame",
+      baseBranch: gallery.defaultBranch,
+      headBranch: "frame",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const env = previewEnv(opened.value.number);
+    const commitOid = branch.value.commitOid;
+    mkdirSync(join(dataDir, "looks", galleryApp.id, env), { recursive: true });
+    for (const kind of ["thumb", "desktop", "phone"] as const) {
+      const path = `looks/${galleryApp.id}/${env}/${commitOid}-${kind}.png`;
+      writeFileSync(join(dataDir, path), PNG);
+      // Taken as nobody while the app was public.
+      recordLook(app.db, {
+        appId: galleryApp.id,
+        env,
+        commitOid,
+        kind,
+        path,
+        takenAs: "nobody",
+      });
+    }
+    const look = looksForEnv(app.db, galleryApp.id, env).find(
       (l) => l.kind === "phone" && l.error === null,
     )!;
-    // Taken as nobody while the app was public.
-    app.db.query(`UPDATE look SET taken_as = 'nobody' WHERE app_id = ?1`).run(galleryApp.id);
-    const at = `/alice/gallery/looks/production/${look.commitOid}/phone.png`;
+    const at = `/alice/vault/looks/${env}/${look.commitOid}/phone.png`;
     expect((await web(at, bobCookie)).status).toBe(200);
-    const pull = listPulls(app.db, gallery.id, { state: "open" })[0]!;
+    const pull = opened.value;
     const card = async (cookie: string) =>
-      (await (await web(`/alice/gallery/pulls/${pull.number}`, cookie)).text()).includes("<h2>Look</h2>");
+      (await (await web(`/alice/vault/pulls/${pull.number}`, cookie)).text()).includes("<h2>Look</h2>");
     expect(await card(bobCookie)).toBe(true);
     // Made private: the same files, asked again on every fetch.
     app.db.query(`UPDATE app SET access = 'private' WHERE id = ?1`).run(galleryApp.id);
