@@ -60,9 +60,11 @@ beforeAll(async () => {
   tok.bob = createToken(app.db, bob.id, "t", "admin").token;
   app.db.run("INSERT INTO repo (id, owner_id, name) VALUES ('rb', ?, 'n')", [alice.id]);
   const ins = app.db.prepare("INSERT INTO run (id, repo_id, kind, state, turns, created_at) VALUES (?, 'rb', ?, ?, ?, ?)");
-  ins.run("a", "agent", "ok", 2, new Date(Date.now() - 86_400_000 * 2).toISOString());
-  ins.run("b", "deploy", "failed", 3, new Date(Date.now() - 86_400_000).toISOString());
-  ins.run("c", "check", "ok", 5, new Date(Date.now() - 3_600_000).toISOString());
+  // Three distinct UTC days at any hour: noon two days back, noon yesterday, a second ago.
+  const today = Math.floor(Date.now() / 86_400_000) * 86_400_000;
+  ins.run("a", "agent", "ok", 2, new Date(today - 86_400_000 * 2 + 43_200_000).toISOString());
+  ins.run("b", "deploy", "failed", 3, new Date(today - 86_400_000 + 43_200_000).toISOString());
+  ins.run("c", "check", "ok", 5, new Date(Math.max(today, Date.now() - 1_000)).toISOString());
 });
 
 afterAll(async () => {
