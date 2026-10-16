@@ -19,6 +19,7 @@ import {
   refreshTimes,
   parseShardSpec,
   shardCount,
+  shardCountFromEnv,
   sliceFiles,
   splitArgs,
   splitFiles,
@@ -219,6 +220,24 @@ describe("shardCount", () => {
     expect(shardCount(4, 22)).toEqual({ ok: true, value: 4 });
     expect(shardCount(1, 22)).toEqual({ ok: true, value: 1 });
     expect(shardCount(80, 3)).toEqual({ ok: true, value: 3 });
+  });
+
+  test("the cell's CPU limit caps the shards below it, whatever the host reports (#2257)", () => {
+    expect(shardCount(80, 400, undefined, undefined, "4")).toEqual({ ok: true, value: 3 });
+    expect(shardCount(80, 400, undefined, undefined, "16")).toEqual({ ok: true, value: 15 });
+    expect(shardCount(80, 2, undefined, undefined, "16")).toEqual({ ok: true, value: 2 });
+    expect(shardCount(80, 400, undefined, undefined, "1")).toEqual({ ok: true, value: 1 });
+    expect(shardCount(2, 400, undefined, undefined, "16")).toEqual({ ok: true, value: 2 });
+    // Unset, empty or nonsense: as today.
+    expect(shardCount(80, 400, undefined, undefined, undefined)).toEqual({ ok: true, value: SHARDS_MAX });
+    expect(shardCount(80, 400, undefined, undefined, "")).toEqual({ ok: true, value: SHARDS_MAX });
+    expect(shardCount(80, 400, undefined, undefined, "lots")).toEqual({ ok: true, value: SHARDS_MAX });
+  });
+
+  test("the environment's FORGE_CELL_CPUS caps the count; FORGE_CHECK_SHARDS still overrides it (#2257)", () => {
+    expect(shardCountFromEnv({ FORGE_CELL_CPUS: "4" }, 80, 400)).toEqual({ ok: true, value: 3 });
+    expect(shardCountFromEnv({}, 80, 400)).toEqual({ ok: true, value: SHARDS_MAX });
+    expect(shardCountFromEnv({ FORGE_CELL_CPUS: "4", FORGE_CHECK_SHARDS: "6" }, 80, 400)).toEqual({ ok: true, value: 6 });
   });
 
   test("the check cell's 16 CPUs and 8 GiB run 16 at once; less memory runs fewer (#2038)", () => {

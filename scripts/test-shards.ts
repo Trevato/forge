@@ -52,7 +52,7 @@ import {
   parseTimes,
   SHARDS_MAX,
   WORKER_MEMORY_BYTES,
-  shardCount,
+  shardCountFromEnv,
   sliceFiles,
   splitArgs,
   splitFiles,
@@ -345,7 +345,7 @@ const memory = memoryLimit(totalmem(), [
   readLimit("/sys/fs/cgroup/memory.max"),
   readLimit("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
 ]);
-const count = shardCount(cpus, files.length, shardsOverride, memory);
+const count = shardCountFromEnv(process.env, cpus, files.length, memory);
 if (!count.ok) {
   console.error(`test-shards: ${count.error}`);
   process.exit(2);

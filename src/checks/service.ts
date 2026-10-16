@@ -792,6 +792,9 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         FORGE_CHECK: run.id,
         FORGE_COMMIT: x.commitOid,
         FORGE_CHECK_IMPACT: IMPACT_FILE,
+        // The cell's CPU limit, which `availableParallelism()` may not
+        // report inside it; the shard count follows this (#2257).
+        FORGE_CELL_CPUS: String(resolveLimits("step", manifest.limits).cpus),
         ...(base === undefined
           ? {}
           : {

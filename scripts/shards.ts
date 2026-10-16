@@ -31,15 +31,23 @@ export const WORKER_MEMORY_BYTES = 512 * 1024 * 1024;
  * not fewer: most of a forge test's time is spent waiting on git children
  * and timers, not computing. `memory` absent is not a bound.
  * `FORGE_CHECK_SHARDS` overrides it (still capped at the file count) so a
- * small or busy host can turn it down.
+ * small or busy host can turn it down; that is an explicit operator
+ * choice and wins over the cell cap below. `cellCpus` (`FORGE_CELL_CPUS`, the
+ * CPU limit of the cell the check runs in) caps the count at one less than
+ * the limit, since the runner itself needs a core and the cell's guard
+ * kills a check that uses more than its limit; unset or not a whole number
+ * from 1 is no limit.
  */
 export function shardCount(
   cpus: number,
   files: number,
   override?: string,
   memory?: number,
+  cellCpus?: string,
 ): { ok: true; value: number } | { ok: false; error: string } {
   let n = Math.min(SHARDS_MAX, Math.floor(cpus));
+  if (cellCpus !== undefined && /^[1-9][0-9]{0,3}$/.test(cellCpus.trim()))
+    n = Math.min(n, Number(cellCpus.trim()) - 1);
   if (memory !== undefined && Number.isFinite(memory) && memory > 0)
     n = Math.min(n, Math.floor(memory / WORKER_MEMORY_BYTES));
   if (override !== undefined && override.trim() !== "") {
@@ -51,6 +59,20 @@ export function shardCount(
     n = Number(override.trim());
   }
   return { ok: true, value: Math.max(1, Math.min(n, files)) };
+}
+
+/**
+ * {@link shardCount} from the process environment: `FORGE_CHECK_SHARDS`
+ * (the override) and `FORGE_CELL_CPUS` (the cell's CPU limit, which the
+ * forge sets for a check in `src/checks/service.ts`).
+ */
+export function shardCountFromEnv(
+  env: Readonly<Record<string, string | undefined>>,
+  cpus: number,
+  files: number,
+  memory?: number,
+): { ok: true; value: number } | { ok: false; error: string } {
+  return shardCount(cpus, files, env["FORGE_CHECK_SHARDS"], memory, env["FORGE_CELL_CPUS"]);
 }
 
 /**

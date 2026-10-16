@@ -35,6 +35,7 @@ import {
   parseImpact,
   reach,
 } from "../src/checks/impact.ts";
+import { resolveLimits } from "../src/apps/contain.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "../src/checks/impact-store.ts";
 
@@ -508,6 +509,45 @@ describe("the tiers in the forge's own checks service", () => {
     expect(again.ok).toBe(true);
     expect(again.lines.join("\n")).toContain("already proven green by gate-");
     expect(again.lines.join("\n")).not.toContain("FULL-GREEN");
+  });
+
+  test("a check's environment carries its cell's CPU limit (#2257)", async () => {
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Declare check limits",
+      files: [
+        {
+          path: "forge.json",
+          content: JSON.stringify({
+            check: { run: "echo WHOLE", fast: 'echo "CELL-CPUS=$FORGE_CELL_CPUS"', limits: { cpus: 3 } },
+          }),
+        },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const branched = await commitToBranch(app, alice, repo, {
+      branch: "cpu-limit",
+      message: "Touch d",
+      files: [{ path: "d.txt", content: "d\n" }],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    const opened = await openPull(app, alice, repo, {
+      title: "Limits",
+      baseBranch: "main",
+      headBranch: "cpu-limit",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const deadline = Date.now() + 30_000;
+    let run: Run | undefined;
+    while (Date.now() < deadline) {
+      run = listRuns(app.db, repo.id, { kind: "check", limit: 20 }).find(
+        (r) => r.issueId === opened.value.id && r.commitOid === branched.value.commitOid,
+      );
+      if (run && (run.state === "ok" || run.state === "failed")) break;
+      await Bun.sleep(50);
+    }
+    expect(run?.state).toBe("ok");
+    const want = resolveLimits("step", { cpus: 3 }).cpus;
+    expect(readRunLog(dataDir, run!.id).lines.join("\n")).toContain(`CELL-CPUS=${want}`);
   });
 
   test("a red full gate names its tests and the pull learns the files", async () => {
