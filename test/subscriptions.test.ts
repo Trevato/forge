@@ -1,5 +1,5 @@
-import { getHeadroom } from "../src/core/standing.ts";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { getHeadroom, setHeadroom } from "../src/core/standing.ts";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -67,11 +67,11 @@ describe("the pool", () => {
   let dataDir: string;
   let app: App;
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-subs-"));
     app = createApp({ dataDir, port: 0 });
   });
-  afterAll(async () => {
+  afterEach(async () => {
     app.close();
     await rm(dataDir, { recursive: true, force: true });
   });
@@ -147,9 +147,12 @@ describe("the pool", () => {
   test("picks the nearest grant whole, an agent's before everyone's, and rotates", () => {
     const work = addSubscription(app.db, dataDir, { name: "work", token: KEY });
     if (!work.ok) throw new Error(work.error);
-    const personal = listSubscriptions(app.db).find(
-      (s) => s.name === "Personal",
-    )!;
+    const added = addSubscription(app.db, dataDir, {
+      name: "Personal",
+      token: OAT,
+    });
+    if (!added.ok) throw new Error(added.error);
+    const personal = added.value;
     const scope = { repoId: "repo-1", ownerId: "org-1", agentId: "bot-1" };
     const now = new Date("2026-09-28T12:00:00Z");
 
@@ -359,14 +362,26 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     throw new Error("did not happen in time");
   }
 
+  // Both accounts on the repository's grant, awake, whatever ran before.
+  function pool() {
+    const named = (name: string, token: string) => {
+      const found = listSubscriptions(app.db).find((s) => s.name === name);
+      if (found) return found;
+      const added = addSubscription(app.db, dataDir, { name, token });
+      if (!added.ok) throw new Error(added.error);
+      return added.value;
+    };
+    const personal = named("personal", OAT);
+    const work = named("work", KEY);
+    wakeSubscription(app.db, personal.id);
+    wakeSubscription(app.db, work.id);
+    setGrants(app.db, repo.id, EVERYONE, [personal.id, work.id]);
+    return { personal, work };
+  }
+
   test("rests the account the provider refused and hands the run to the next", async () => {
-    const personal = addSubscription(app.db, dataDir, {
-      name: "personal",
-      token: OAT,
-    });
-    const work = addSubscription(app.db, dataDir, { name: "work", token: KEY });
-    if (!personal.ok || !work.ok) throw new Error("pool");
-    setGrants(app.db, repo.id, EVERYONE, [personal.value.id, work.value.id]);
+    const { personal, work } = pool();
+    const used = invocations();
 
     const issue = openIssue(app, alice, repo, {
       title: "Plant tulips",
@@ -379,18 +394,18 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
         (r) => r.issueId === issue.value.id && r.state === "ok",
       ),
     );
-    expect(invocations()).toBe(2);
+    expect(invocations()).toBe(used + 2);
     // Neither used before: the first by name went first, and was refused.
-    expect(envOf(1)).toBe(`OAUTH=${OAT}\nKEY=\n`);
-    expect(envOf(2)).toBe(`OAUTH=\nKEY=${KEY}\n`);
+    expect(envOf(used + 1)).toBe(`OAUTH=${OAT}\nKEY=\n`);
+    expect(envOf(used + 2)).toBe(`OAUTH=\nKEY=${KEY}\n`);
 
-    const rested = getSubscription(app.db, personal.value.id)!;
+    const rested = getSubscription(app.db, personal.id)!;
     expect(rested.restingUntil).not.toBeNull();
     expect(new Date(rested.restingUntil!).getTime()).toBeGreaterThan(
       Date.now(),
     );
     expect(rested.restingSaid).toContain("weekly limit");
-    expect(getSubscription(app.db, work.value.id)!.restingUntil).toBeNull();
+    expect(getSubscription(app.db, work.id)!.restingUntil).toBeNull();
 
     const runs = listRuns(app.db, repo.id, { kind: "agent" }).filter(
       (r) => r.issueId === issue.value.id,
@@ -409,7 +424,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
         "SELECT subscription_id FROM run WHERE id = ?1",
       )
       .get(refused.id)!;
-    expect(first.subscription_id).toBe(personal.value.id);
+    expect(first.subscription_id).toBe(personal.id);
     expect(done.id).not.toBe(refused.id);
     const spent = app.db
       .query<
@@ -417,17 +432,14 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
         [string]
       >("SELECT subscription_id FROM run WHERE id = ?1")
       .get(done.id)!;
-    expect(spent.subscription_id).toBe(work.value.id);
+    expect(spent.subscription_id).toBe(work.id);
   }, 60_000);
 
   test("holds a run without a call while every account on the grant rests", async () => {
-    const work = listSubscriptions(app.db).find((s) => s.name === "work")!;
-    restSubscription(
-      app.db,
-      work.id,
-      new Date(Date.now() + 3_600_000).toISOString(),
-      "session limit",
-    );
+    const { personal, work } = pool();
+    const later = new Date(Date.now() + 3_600_000).toISOString();
+    restSubscription(app.db, personal.id, later, "weekly limit");
+    restSubscription(app.db, work.id, later, "session limit");
     const before = invocations();
     const issue = openIssue(app, alice, repo, {
       title: "Plant roses",
@@ -506,7 +518,18 @@ describe("the pages", () => {
   const get = (path: string) =>
     fetch(`${base}${path}`, { headers: { cookie } }).then((r) => r.text());
 
+  // The one account the pages work on, added once whatever ran before.
+  const account = () => {
+    const found = listSubscriptions(app.db).find((s) => s.name === "work");
+    if (found) return found;
+    const added = addSubscription(app.db, dataDir, { name: "work", token: KEY });
+    if (!added.ok) throw new Error(added.error);
+    return added.value;
+  };
+
   test("an admin adds an account and sees its name, never its token", async () => {
+    // The empty pool is what this test starts from, whatever ran before.
+    for (const s of listSubscriptions(app.db)) deleteSubscription(app.db, s.id);
     let html = await get("/settings/subscriptions");
     expect(html).toContain("Add one");
     expect(html).toContain("The crew works on the forge");
@@ -528,7 +551,7 @@ describe("the pages", () => {
   });
 
   test("the crew page grants it to the repository, and a run there picks it", async () => {
-    const work = listSubscriptions(app.db)[0]!;
+    const work = account();
     let html = await get(`/ada/hello/settings/crew`);
     expect(html).toContain('class="table grants"');
     expect(html).toContain(`value="*:${work.id}"`);
@@ -563,7 +586,7 @@ describe("the pages", () => {
   test("an organization's page carries the table for every repository under it", async () => {
     const org = createOrg(app, ada, "acme");
     if (!org.ok) throw new Error(String(org.error));
-    const work = listSubscriptions(app.db)[0]!;
+    const work = account();
     let html = await get("/acme");
     expect(html).toContain("Subscriptions for every repository here");
     const saved = await post(
@@ -579,7 +602,8 @@ describe("the pages", () => {
   });
 
   test("an admin keeps a share of each window for people, and sees each window", async () => {
-    const work = listSubscriptions(app.db)[0]!;
+    const work = account();
+    setHeadroom(app.db, work.id, 0);
     let html = await get("/settings/subscriptions");
     expect(html).toContain(`action="/settings/subscriptions/${work.id}/headroom"`);
     expect(html).toContain("5-hour: ~$0.00 used · opens on next use");
@@ -630,8 +654,9 @@ describe("the pages", () => {
       redirect: "manual",
     });
     expect(posted.status).toBe(404);
+    const work = account();
     expect(listSubscriptions(app.db)).toHaveLength(1);
-    const work = listSubscriptions(app.db)[0]!;
+    setHeadroom(app.db, work.id, 25);
     const headroom = await fetch(`${base}/settings/subscriptions/${work.id}/headroom`, {
       method: "POST",
       headers: { cookie: guest, origin: base },

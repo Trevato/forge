@@ -95,11 +95,6 @@ export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/standards.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/studio-phone.test.ts", reason: "not yet admitted", issue: 261 },
   {
-    file: "test/subscriptions.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  {
     file: "test/tui-code.test.ts",
     reason:
       "red: the dashboard counts query runs 3 times and a bus event does not refresh it",
