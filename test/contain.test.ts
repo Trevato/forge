@@ -11,14 +11,14 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { enableApp } from "../src/actions/apps.ts";
-import { openPull } from "../src/actions/pulls.ts";
-import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { openPull, submitReview } from "../src/actions/pulls.ts";
+import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import {
   cellCounters,
   cellsAvailable,
@@ -1005,5 +1005,130 @@ describe.skipIf(noCells)(
       expect(said).toMatch(/^PUBLIC 200 PRIVATE (403|refused)$/);
       expect(seen).toEqual(["example.com:443"]);
     }, 60_000);
+  },
+);
+
+describe.skipIf(noCells)(
+  "cells: an outside pull's check cannot reach the forge's data (#2080)",
+  () => {
+    const CANARY = `forge-canary-${crypto.randomUUID()}`;
+    let dataDir: string;
+    let app: App;
+    let servers: Servers;
+    let checks: ChecksHandle;
+    let listener: ReturnType<typeof Bun.serve>;
+
+    beforeAll(async () => {
+      process.env["FORGE_TEST_CANARY"] = CANARY;
+      dataDir = await mkdtemp(join(tmpdir(), "forge-cells-outside-"));
+      app = createApp({ dataDir, port: 0 });
+      servers = await serve(app);
+      checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
+      listener = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: () => new Response("inside"),
+      });
+    }, 60_000);
+
+    afterAll(async () => {
+      delete process.env["FORGE_TEST_CANARY"];
+      await checks?.stop();
+      listener?.stop(true);
+      servers?.stop();
+      app?.close();
+      await rm(dataDir, { recursive: true, force: true });
+    });
+
+    test("a fork's code, run by the base's check once approved, is refused everything but the forge", async () => {
+      const user = async (username: string, first = false): Promise<User> => {
+        const made = await createUser(app.db, {
+          trusted: true,
+          username,
+          email: `${username}@forge.local`,
+          password: "a-good-passphrase",
+          adminIfFirst: first,
+        });
+        if (!made.ok) throw new Error(made.error);
+        return made.value;
+      };
+      const alice = await user("alice", true);
+      const mallory = await user("mallory");
+      const made = await createRepo(app, alice, {
+        name: "lib",
+        visibility: "public",
+      });
+      if (!made.ok) throw new Error(String(made.error));
+      const repo = made.value;
+
+      // Something of another tenant's to steal, where an app's data lives.
+      const stolen = envDir(dataDir, "someone-elses-app", "production");
+      mkdirSync(join(stolen, "data"), { recursive: true });
+      writeFileSync(join(stolen, "data", "books.txt"), "private");
+
+      const source = probeSource({
+        dataDir,
+        otherAppDir: stolen,
+        canary: CANARY,
+        listenerPort: listener.port ?? 0,
+        forgePid: process.pid,
+      });
+      // The base declares a harmless check; the fork's tree supplies the code.
+      const gate = await commitToBranch(app, alice, repo, {
+        message: "The base's check",
+        files: [
+          {
+            path: "forge.json",
+            content: JSON.stringify({
+              egress: ["localhost"],
+              check: { run: "bun probe.ts check", timeout: 120 },
+            }),
+          },
+          { path: "probe.ts", content: "console.log('base');\n" },
+        ],
+      });
+      if (!gate.ok) throw new Error(JSON.stringify(gate.error));
+
+      const forked = await forkRepo(app, mallory, repo);
+      if (!forked.ok) throw new Error(String(forked.error));
+      const committed = await commitToBranch(app, mallory, forked.value, {
+        branch: "from-fork",
+        message: "From the fork",
+        files: [{ path: "probe.ts", content: source }],
+      });
+      if (!committed.ok) throw new Error(JSON.stringify(committed.error));
+      const opened = await openPull(app, mallory, repo, {
+        title: "From the fork",
+        baseBranch: "main",
+        headBranch: "from-fork",
+        headRepo: forked.value,
+      });
+      if (!opened.ok) throw new Error(String(opened.error));
+      expect(opened.value.crossRepo).toBe(true);
+      const approved = await submitReview(app, alice, repo, opened.value, {
+        state: "approved",
+      });
+      if (!approved.ok) throw new Error(String(approved.error));
+
+      const deadline = Date.now() + 90_000;
+      let run: Run | undefined;
+      while (Date.now() < deadline) {
+        run = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
+          (r) =>
+            r.issueId === opened.value.id &&
+            r.commitOid === committed.value.commitOid,
+        );
+        if (run && (run.state === "ok" || run.state === "failed")) break;
+        await Bun.sleep(100);
+      }
+      if (!run) throw new Error("the fork's check did not run");
+      expect(run.state).toBe("ok");
+      expect(run.sandboxEnforced).toBe(true);
+      const line = readRunLog(dataDir, run.id).lines.find((l) =>
+        l.startsWith("PROBE "),
+      );
+      expect(line).toBeDefined();
+      expectContained(JSON.parse(line!.slice(6)) as Record<string, string>);
+    }, 240_000);
   },
 );
