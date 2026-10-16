@@ -41,6 +41,8 @@ import { accessScreen } from "./screens/access.ts";
 import { domainsScreen } from "./screens/domains.ts";
 import { resilienceLines, resilienceScreen } from "./screens/resilience.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
+import { releasesScreen } from "./screens/releases.ts";
+import { mayRead } from "../release/gate.ts";
 import { stalledScreen } from "./screens/stalled.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
@@ -241,6 +243,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Resilience",
         hint: "each protection green, red or untested",
         run: () => ctx.push(resilienceScreen(ctx, resilienceLines(session.app.config.dataDir))),
+      });
+    // The live release and the kept ones, as /releases gates them: a site admin or a reader of FORGE_REPO.
+    if (mayRead(session.app, session.user))
+      commands.push({
+        id: "releases",
+        title: "Releases",
+        hint: "the live release and the kept ones",
+        run: () => ctx.push(releasesScreen(session, ctx)),
       });
     // Stalled flow steps the viewer can unblock, as the home's cards show them (#1807).
     if (session.signedIn)
