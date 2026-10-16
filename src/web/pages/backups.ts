@@ -96,8 +96,8 @@ function drillLine(ctx: Ctx): Html {
       ? html`<p class="backups-drill">No restore drill has run yet.</p>`
       : d.verdict === "green"
         ? html`<p class="backups-drill">
-            ${icon("check")} Last drill ${time(d.at)}: snapshot
-            <code>${d.snapshotId ?? ""}</code> restored green in ${d.ms} ms —
+            ${icon("check")} Last drill: ${time(d.at)}, ${d.ms} ms, all counts matched —
+            snapshot <code>${d.snapshotId ?? ""}</code>, key opened —
             ${d.counts.users} users, ${d.counts.repositories} repositories, ${d.counts.issues} issues, ${d.counts.pulls} pulls, ${d.counts.apps} apps.
           </p>`
         : html`<p class="backups-error backups-drill">

@@ -14,6 +14,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { bootRestored } from "./boot.ts";
 import { forgetKey, open } from "../kernel/secret.ts";
+import { countRows, mismatched, type DrillCounts } from "./counts.ts";
 import { restoreSnapshot } from "./restore.ts";
 import { listSnapshots } from "./snapshot.ts";
 import type { Store } from "./store.ts";
@@ -35,13 +36,7 @@ export interface DrillDeps {
   readonly boot?: typeof bootRestored | undefined;
 }
 
-export interface DrillCounts {
-  readonly repositories: number;
-  readonly issues: number;
-  readonly users: number;
-  readonly pulls: number;
-  readonly apps: number;
-}
+export type { DrillCounts };
 
 export interface DrillResult {
   readonly at: string;
@@ -72,7 +67,7 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
   const at = clock().toISOString();
   const timeoutMs = deps.timeoutMs ?? DRILL_TIMEOUT_MS;
   const restore = deps.restore ?? restoreSnapshot;
-  const counts = { repositories: 0, issues: 0, users: 0, pulls: 0, apps: 0 };
+  const counts: { -readonly [K in keyof DrillCounts]: number } = { repositories: 0, issues: 0, users: 0, pulls: 0, apps: 0 };
   let snapshotId: string | null = null;
   let step: DrillStep = "fetch";
   let scratch: string | undefined;
@@ -103,13 +98,16 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
       // The constructor is lazy; reading the header is what proves a database.
       db.query("PRAGMA schema_version").get();
       step = "count";
-      const n = (sql: string): number =>
-        db.query<{ n: number }, []>(sql).get()?.n ?? 0;
-      counts.repositories = n("SELECT count(*) AS n FROM repo");
-      counts.issues = n("SELECT count(*) AS n FROM issue");
-      counts.users = n("SELECT count(*) AS n FROM user");
-      counts.pulls = n("SELECT count(*) AS n FROM pull");
-      counts.apps = n("SELECT count(*) AS n FROM app");
+      Object.assign(counts, countRows(db));
+      // A snapshot that kept its counts must restore to the same ones.
+      const kept = newest.counts;
+      const off = kept === undefined ? [] : mismatched(kept, counts);
+      if (kept !== undefined && off.length > 0)
+        throw new Error(
+          `counts differ from the snapshot's: ${off
+            .map((k) => `${k} ${kept[k as keyof DrillCounts]} became ${counts[k as keyof DrillCounts]}`)
+            .join(", ")}`,
+        );
 
       step = "unseal";
       const secret = db

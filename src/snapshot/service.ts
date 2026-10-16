@@ -10,7 +10,7 @@
 
 import type { App } from "../app.ts";
 import { createLog } from "../kernel/log.ts";
-import { reportVerdict, seedFirstSeen } from "./verdict.ts";
+import { firstSeen, reportVerdict, seedFirstSeen } from "./verdict.ts";
 import {
   KEEP,
   listSnapshots,
@@ -20,7 +20,8 @@ import {
   type Progress,
 } from "./snapshot.ts";
 import { runDrill, type DrillDeps, type DrillResult } from "./drill.ts";
-import { recordDrill } from "./drills.ts";
+import { drillDue } from "./due.ts";
+import { lastDrill, recordDrill } from "./drills.ts";
 import { lastMirror, mirrorPass, MIRROR_EVERY_MS, recordMirror, type MirrorState } from "./mirror.ts";
 import type { Store } from "./store.ts";
 
@@ -44,6 +45,8 @@ export interface SnapshotsHandle {
   readonly last: () => { manifest?: Manifest; error?: string; at?: string };
   /** Drill the newest snapshot now and keep the result; waits for any snapshot in flight. */
   readonly drill: () => Promise<DrillResult>;
+  /** Drill if this week's slot has no drill yet; says whether it did. */
+  readonly drillIfDue: () => Promise<boolean>;
   /** The off-box mirror's store; undefined when the forge has none. */
   readonly mirror: Store | undefined;
   /** Bring the mirror level now; waits for any snapshot in flight. Undefined when there is no mirror. */
@@ -64,6 +67,7 @@ export const snapshotsOf = (app: App): SnapshotsHandle | undefined =>
 /** The weekly restore drill: Sunday, an hour after the nightly snapshot. */
 const DRILL_DAY_UTC = 0;
 const DRILL_HOUR_UTC = 9;
+const CATCH_UP_MS = 5 * 60_000;
 
 export function untilDrill(now = Date.now()): number {
   const next = new Date(now);
@@ -235,16 +239,25 @@ export function startSnapshots(
     log.warn("drill: first-seen time not kept; a missing drill will not be flagged", { error: String(error) });
   }
 
+  let catchUp: ReturnType<typeof setTimeout> | undefined;
   let drillTimer: ReturnType<typeof setTimeout> | undefined;
   const scheduleDrill = (): void => {
     if (options.nightly === false || stopped) return;
     drillTimer = setTimeout(() => {
-      drill()
-        .catch((error) => log.error("restore drill failed to run", { error: String(error) }))
-        .finally(scheduleDrill);
+      runIfDue().finally(scheduleDrill);
     }, untilDrill());
   };
+  // Owed and not yet kept: run it once. A restart after the drill ran finds it kept.
+  const runIfDue = async (): Promise<boolean> => {
+    if (!drillDue(lastDrill(app.db)?.at, firstSeen(app.config.dataDir), Date.now())) return false;
+    await drill().catch((error) => log.error("restore drill failed to run", { error: String(error) }));
+    return true;
+  };
   scheduleDrill();
+  // A forge that was down at the slot catches up shortly after boot.
+  if (options.nightly !== false) {
+    catchUp = setTimeout(() => void runIfDue(), CATCH_UP_MS);
+  }
 
   // Within the hour: look for snapshots the mirror lacks, soon after boot and then hourly.
   let mirrorTimer: ReturnType<typeof setTimeout> | undefined;
@@ -266,6 +279,7 @@ export function startSnapshots(
     wraps: !!options.passphrase,
     now: take,
     drill,
+    drillIfDue: runIfDue,
     list: async () => {
       const store = current();
       return store === undefined ? [] : listSnapshots(store);
@@ -286,6 +300,7 @@ export function startSnapshots(
       stopped = true;
       if (timer !== undefined) clearTimeout(timer);
       if (drillTimer !== undefined) clearTimeout(drillTimer);
+      if (catchUp !== undefined) clearTimeout(catchUp);
       if (mirrorTimer !== undefined) clearTimeout(mirrorTimer);
       if (mirroring !== undefined) await mirroring.catch(() => {});
       if (inFlight !== undefined) await inFlight.catch(() => {});

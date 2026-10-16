@@ -21,7 +21,7 @@
  * lists them in the order they were handed over, not the order they landed.
  */
 
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -31,6 +31,7 @@ import { listEveryRepo } from "../core/repos.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
+import { countRows, type DrillCounts } from "./counts.ts";
 import type { Store } from "./store.ts";
 import { unwrapKey, wrapKey, WRAPPED_KEY } from "./wrap.ts";
 
@@ -54,6 +55,8 @@ export interface Manifest {
   readonly apps: number;
   readonly files: readonly SnapshotFile[];
   readonly bytes: number;
+  /** What the database copy held; the drill checks the restore against it. Absent before the drill compared. */
+  readonly counts?: DrillCounts;
   /**
    * What the snapshot carries of the forge's key: `wrapped` under the
    * operator's passphrase, `none` (sealed values are lost on restore), or
@@ -213,6 +216,7 @@ export async function takeSnapshot(
   const prefix = `${SNAPSHOT_PREFIX}${name}/`;
   const scratch = mkdtempSync(join(tmpdir(), "forge-snapshot-"));
   const files: SnapshotFile[] = [];
+  let dbCounts: DrillCounts | undefined;
   const started = Date.now();
   const everyObjects = forge.progressEvery?.objects ?? PROGRESS_OBJECTS;
   const everyMs = forge.progressEvery?.ms ?? PROGRESS_MS;
@@ -293,6 +297,14 @@ export async function takeSnapshot(
     // The database, consistently, from the live connection.
     const dbCopy = join(scratch, "forge.db");
     forge.db.run("VACUUM INTO ?1", [dbCopy]);
+    const copy = new Database(dbCopy, { readonly: true });
+    try {
+      dbCounts = countRows(copy);
+    } catch {
+      // A database that cannot be counted is the drill's to find; the snapshot still goes up.
+    } finally {
+      copy.close();
+    }
     await putFile("forge.db", dbCopy);
     // The key travels only wrapped. Without a passphrase it stays home.
     let key: Manifest["key"] = "none";
@@ -420,6 +432,7 @@ export async function takeSnapshot(
       apps: kept,
       files,
       bytes: files.reduce((n, f) => n + f.bytes, 0),
+      ...(dbCounts === undefined ? {} : { counts: dbCounts }),
       key,
     };
     await store.put(

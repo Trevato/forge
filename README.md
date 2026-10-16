@@ -662,6 +662,12 @@ into scratch, opens it, counts what is there and unseals a value; the page
 waits for it, up to 10 minutes, and the last drill shows there as one line.
 Only one runs at a time. See `docs/SNAPSHOT.md`.
 
+The forge also runs one itself every Sunday 09:00 UTC (a forge that was down
+then runs it five minutes after waking, once). Each snapshot's manifest keeps
+the five counts of its database; a restore that counts differently is red at
+`count` and, like any red drill, one board line and one push. Snapshots from
+before the counts were kept are not compared.
+
 **Failure domains** (`/settings/resilience`, not `/resilience`, which is the THREATS.md page; admins only; a non-admin gets the same
 404 as the other admin settings pages): one row per failure domain from
 `docs/DOMAINS.md` — what breaks, the words the forge says, and the domain's
