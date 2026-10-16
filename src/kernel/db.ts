@@ -6,6 +6,7 @@
  */
 
 import { Database } from "bun:sqlite";
+import { existsSync, writeFileSync } from "node:fs";
 import { migrate } from "./migrate.ts";
 
 /**
@@ -34,10 +35,46 @@ const CACHE_KIB = 64 * 1024;
 const MMAP_BYTES = 512 * 1024 * 1024;
 
 export function openDb(path: string, migrations: readonly string[]): Database {
-  const db = new Database(path, { create: true, strict: true });
+  const memory = path === ":memory:";
+  const fresh = memory || !existsSync(path);
+  const image = fresh ? migratedEmpty.get(migrations) : undefined;
+  let db: Database;
+  if (image !== undefined && memory) {
+    db = Database.deserialize(rollbackJournal(image), { strict: true });
+  } else {
+    if (image !== undefined) writeFileSync(path, image, { flag: "wx" });
+    db = new Database(path, { create: true, strict: true });
+  }
   applyPragmas(db);
+  // On a copy every migration is already recorded, so this is a no-op —
+  // and a list that grew since the copy was taken still runs what is new.
   migrate(db, migrations);
+  if (fresh && image === undefined) migratedEmpty.set(migrations, db.serialize());
   return db;
+}
+
+/**
+ * The empty database each migration list makes, kept by this process after
+ * it makes it once: a fresh database after the first is a copy of it, not
+ * ninety-odd migrations again. A forge opens one fresh database in its life,
+ * so this is the test suite's saving — about 90 ms of every `createApp` — and
+ * production never reads a copy. Keyed by the list itself, so a test's own
+ * list is never confused with the schema. An empty database is the same
+ * bytes however it was made: the migrations that draw randomness only
+ * rewrite rows an empty database does not have.
+ */
+const migratedEmpty = new WeakMap<readonly string[], Uint8Array>();
+
+/**
+ * The image with its header saying "rollback journal" (bytes 18 and 19 of a
+ * SQLite file are the read and write versions: 2 is WAL, 1 legacy), which
+ * an in-memory database needs — memory has no write-ahead log to open.
+ */
+function rollbackJournal(image: Uint8Array): Uint8Array {
+  const copy = image.slice();
+  copy[18] = 1;
+  copy[19] = 1;
+  return copy;
 }
 
 /**

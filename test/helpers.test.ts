@@ -28,6 +28,8 @@ describe("a git client's environment under test", () => {
     expect(env["GIT_CONFIG_PARAMETERS"]).toBeUndefined();
     expect(env["GIT_CONFIG_GLOBAL"]).toBe("/dev/null");
     expect(env["GIT_CONFIG_SYSTEM"]).toBe("/dev/null");
+    expect(env["GIT_CONFIG_NOSYSTEM"]).toBe("1");
+    expect(env["GIT_OPTIONAL_LOCKS"]).toBe("0");
     expect(env["GIT_TERMINAL_PROMPT"]).toBe("0");
     expect(env["PATH"]).toBe(process.env["PATH"] ?? "/usr/bin:/bin");
     // The test's own additions win.

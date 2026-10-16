@@ -738,11 +738,25 @@ bun run check:record  # the same, and rewrites scripts/test-times.json
 `bun run check` is the gate: the same command `forge.json` declares, so what
 it says here is what the deploy will say. It type-checks once, then runs the
 test files `scripts/gate.ts` lists in `GATE` as parallel `bun test` shards
-(`scripts/test-shards.ts`): one per CPU the process may use, at most eight,
-and `FORGE_CHECK_SHARDS=2` turns that down on a small or busy host. Each
+(`scripts/test-shards.ts`): one per CPU the process may use, no more than
+one per 512 MiB of the memory its cgroup allows (16 on the 16-CPU, 8 GiB
+check cell; the old ceiling of eight left half of it idle, #2038), and
+`FORGE_CHECK_SHARDS=2` turns that down on a small or busy host. Each
 shard's output is written whole as it finishes; the log ends with every
 failing test from every shard, or on green with one line — how many tests,
 across how many files, in how long, then the slowest and fastest shard.
+
+Two things keep a test's setup in milliseconds (#2038). `bunfig.toml`
+preloads `test/helpers/preload.ts`, which hashes passwords at argon2id's
+floor (8 KiB, one pass) instead of Bun's default 64 MiB, two passes:
+making an account and signing it in was ~700 ms of a typical `beforeAll`
+and is now ~15 ms; the forge itself never loads it. And `openDb` keeps
+the empty database each migration list makes: the second fresh database
+in a process is a copy of it rather than ninety-odd migrations again
+(`createApp` ~100 ms → ~6 ms). No test file runs one subject long
+enough to set the gate's floor alone: the studio's and the apps
+adversarial suites are split by subject into `test/studio*.test.ts` and
+`test/apps-adversarial*.test.ts`.
 
 The check's first step is the gate-list audit (`bun scripts/gate.ts`), so a
 test file listed in neither `GATE` nor `EXCLUDED` fails in under a second,

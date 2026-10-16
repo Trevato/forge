@@ -2,3 +2,6 @@
 # where a running forge keeps the crew's clones, each with its own tests.
 [test]
 root = "test"
+# Argon2 at its cheapest under test: most of a typical beforeAll was
+# hashing passwords (#2038). Production never loads it.
+preload = ["./test/helpers/preload.ts"]

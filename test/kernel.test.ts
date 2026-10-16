@@ -3,6 +3,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../src/kernel/db.ts";
+import { createUser, verifyPassword } from "../src/core/users.ts";
+import { migrations } from "../src/core/schema.ts";
+import { CHEAP, cheapened, realHash } from "./helpers/cheap-hash.ts";
 import { ForgeError, defect } from "../src/kernel/error.ts";
 import { id, secret } from "../src/kernel/id.ts";
 import {
@@ -148,10 +151,83 @@ describe("db", () => {
     }
   });
 
+  test("a fresh database after the first is a copy of the migrated empty one (#2038)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "forge-kernel-"));
+    try {
+      // random() tells a copy from a second run of the migrations.
+      const list = [
+        "CREATE TABLE seed (n INTEGER); INSERT INTO seed (n) VALUES (random())",
+        "CREATE TABLE parent (id INTEGER PRIMARY KEY); CREATE TABLE child (pid INTEGER REFERENCES parent(id))",
+      ];
+      const seed = (db: ReturnType<typeof openDb>) =>
+        db.query<{ n: number }, []>("SELECT n FROM seed").all();
+      const first = openDb(join(dir, "a.db"), list);
+      // Written after the image was taken: never part of a later copy.
+      first.exec("INSERT INTO parent (id) VALUES (1)");
+      const second = openDb(join(dir, "b.db"), list);
+      const memory = openDb(":memory:", list);
+      for (const copy of [second, memory]) {
+        expect(seed(copy)).toEqual(seed(first));
+        expect(copy.query("SELECT id FROM parent").all()).toEqual([]);
+        expect(() => copy.exec("INSERT INTO child (pid) VALUES (99)")).toThrow();
+        expect(copy.query("SELECT $n AS n").get({ n: 3 })).toEqual({ n: 3 });
+        expect(
+          copy.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version,
+        ).toBe(2);
+      }
+      expect(
+        second.query<{ journal_mode: string }, []>("PRAGMA journal_mode").get()?.journal_mode,
+      ).toBe("wal");
+      // A list that grew since the copy was taken still runs what is new.
+      list.push("CREATE TABLE later (z INTEGER)");
+      const third = openDb(join(dir, "c.db"), list);
+      expect(seed(third)).toEqual(seed(first));
+      third.exec("INSERT INTO later (z) VALUES (1)");
+      // A different list is never handed this one's copy.
+      const other = openDb(join(dir, "d.db"), [list[0]!]);
+      expect(seed(other)).not.toEqual(seed(first));
+      for (const db of [first, second, memory, third, other]) db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("foreign keys are enforced", () => {
     const db = openDb(":memory:", [
       "CREATE TABLE parent (id INTEGER PRIMARY KEY); CREATE TABLE child (pid INTEGER REFERENCES parent(id))",
     ]);
     expect(() => db.exec("INSERT INTO child (pid) VALUES (99)")).toThrow();
+  });
+});
+
+describe("passwords under test are hashed at argon2id's floor (#2038)", () => {
+  test("bunfig preloads it: an account made in a test stores the cheapest argon2id", async () => {
+    const db = openDb(":memory:", migrations);
+    const made = await createUser(db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!made.ok) throw new Error(made.error);
+    const row = db
+      .query<{ password_hash: string }, []>("SELECT password_hash FROM user")
+      .get();
+    expect(row?.password_hash.startsWith("$argon2id$v=19$m=8,t=1,p=1$")).toBe(true);
+    expect((await verifyPassword(db, "alice", "a-good-passphrase")).ok).toBe(true);
+    expect((await verifyPassword(db, "alice", "a-bad-passphrase")).ok).toBe(false);
+    db.close();
+  });
+
+  test("only the default is cheapened; a named cost and the runtime's own are kept", async () => {
+    expect(cheapened(undefined)).toEqual(CHEAP);
+    expect(cheapened("argon2id")).toEqual(CHEAP);
+    const named = { algorithm: "argon2id", memoryCost: 16, timeCost: 2 } as const;
+    expect(cheapened(named)).toBe(named);
+    expect(cheapened("bcrypt")).toBe("bcrypt");
+    // What production stores still verifies: the cost lives in the hash.
+    const real = await realHash("a-good-passphrase", "argon2id");
+    expect(real.startsWith("$argon2id$v=19$m=65536,t=2,p=1$")).toBe(true);
+    expect(await Bun.password.verify("a-good-passphrase", real)).toBe(true);
   });
 });

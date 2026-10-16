@@ -38,12 +38,13 @@
  * table is rewritten from those times when every file is green.
  */
 
-import { availableParallelism, tmpdir } from "node:os";
+import { availableParallelism, tmpdir, totalmem } from "node:os";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   formatTimes,
   heaviestFirst,
+  memoryLimit,
   overlayTimes,
   refreshTimes,
   parseShardSpec,
@@ -326,10 +327,21 @@ if (new Set(files).size !== files.length) {
   process.exit(2);
 }
 
+const readLimit = (path: string): string | undefined => {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+};
 const count = shardCount(
   availableParallelism(),
   files.length,
   process.env["FORGE_CHECK_SHARDS"],
+  memoryLimit(totalmem(), [
+    readLimit("/sys/fs/cgroup/memory.max"),
+    readLimit("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+  ]),
 );
 if (!count.ok) {
   console.error(`test-shards: ${count.error}`);

@@ -10,8 +10,10 @@ import { join } from "node:path";
 import {
   SECONDS_PER_BYTE_DEFAULT,
   SHARDS_MAX,
+  WORKER_MEMORY_BYTES,
   formatTimes,
   heaviestFirst,
+  memoryLimit,
   overlayTimes,
   parseTimes,
   refreshTimes,
@@ -213,10 +215,33 @@ describe("parseTimes", () => {
 
 describe("shardCount", () => {
   test("one per CPU, capped, at least one, never more than files", () => {
-    expect(shardCount(80, 22)).toEqual({ ok: true, value: SHARDS_MAX });
+    expect(shardCount(80, 400)).toEqual({ ok: true, value: SHARDS_MAX });
     expect(shardCount(4, 22)).toEqual({ ok: true, value: 4 });
     expect(shardCount(1, 22)).toEqual({ ok: true, value: 1 });
     expect(shardCount(80, 3)).toEqual({ ok: true, value: 3 });
+  });
+
+  test("the check cell's 16 CPUs and 8 GiB run 16 at once; less memory runs fewer (#2038)", () => {
+    const GiB = 1024 * 1024 * 1024;
+    expect(SHARDS_MAX).toBeGreaterThanOrEqual(16);
+    expect(shardCount(16, 400, undefined, 8 * GiB)).toEqual({ ok: true, value: 16 });
+    expect(shardCount(16, 400, undefined, 4 * GiB)).toEqual({ ok: true, value: 8 });
+    expect(shardCount(16, 400, undefined, 6 * GiB + 100)).toEqual({ ok: true, value: 12 });
+    // Less than one worker's room still runs one.
+    expect(shardCount(16, 400, undefined, WORKER_MEMORY_BYTES - 1)).toEqual({ ok: true, value: 1 });
+    // Memory never raises the count past the CPUs, and the override wins.
+    expect(shardCount(4, 400, undefined, 64 * GiB)).toEqual({ ok: true, value: 4 });
+    expect(shardCount(16, 400, "20", 4 * GiB)).toEqual({ ok: true, value: 20 });
+  });
+
+  test("memoryLimit: the least of the machine and each cgroup limit it can read", () => {
+    const GiB = 1024 * 1024 * 1024;
+    expect(memoryLimit(256 * GiB, [`${8 * GiB}\n`, undefined])).toBe(8 * GiB);
+    expect(memoryLimit(256 * GiB, ["max\n", undefined])).toBe(256 * GiB);
+    // cgroup v1's "no limit" is a page-rounded 2^63: bigger than the machine.
+    expect(memoryLimit(4 * GiB, [undefined, "9223372036854771712\n"])).toBe(4 * GiB);
+    expect(memoryLimit(4 * GiB, ["", "-1", "1e9", "0"])).toBe(4 * GiB);
+    expect(memoryLimit(64 * GiB, [`${16 * GiB}`, `${8 * GiB}`])).toBe(8 * GiB);
   });
 
   test("FORGE_CHECK_SHARDS turns it up or down; nonsense is refused", () => {

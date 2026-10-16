@@ -7,22 +7,41 @@
  * is disjoint and covering, and that one red shard makes the run red.
  */
 
-/** No more than this many `bun test` processes at once, whatever the host. */
-export const SHARDS_MAX = 8;
+/**
+ * No more than this many `bun test` processes at once, whatever the host:
+ * a ceiling for a big shared machine, not the check cell's number. The cell
+ * (16 CPUs, 8 GiB) is bounded by its CPUs and its memory (#2038); the
+ * old ceiling of 8 left half its CPUs idle.
+ */
+export const SHARDS_MAX = 32;
 
 /**
- * How many shards: one per CPU the process may use, capped at
+ * Memory one `bun test` process is given room for: the heaviest suite peaks
+ * near 260 MiB of its own (test/studio.test.ts, measured with
+ * `resourceUsage().maxRSS`), and an apps suite's deploys add children of
+ * their own, so twice that. Fewer workers than CPUs on a cell whose memory
+ * would not hold one per CPU, rather than an OOM kill mid-gate (#386).
+ */
+export const WORKER_MEMORY_BYTES = 512 * 1024 * 1024;
+
+/**
+ * How many shards: one per CPU the process may use, no more than its
+ * memory holds at {@link WORKER_MEMORY_BYTES} each, capped at
  * {@link SHARDS_MAX} and at the number of files, at least one. One per CPU,
  * not fewer: most of a forge test's time is spent waiting on git children
- * and timers, not computing. `FORGE_CHECK_SHARDS` overrides it (still
- * capped at the file count) so a small or busy host can turn it down.
+ * and timers, not computing. `memory` absent is not a bound.
+ * `FORGE_CHECK_SHARDS` overrides it (still capped at the file count) so a
+ * small or busy host can turn it down.
  */
 export function shardCount(
   cpus: number,
   files: number,
   override?: string,
+  memory?: number,
 ): { ok: true; value: number } | { ok: false; error: string } {
   let n = Math.min(SHARDS_MAX, Math.floor(cpus));
+  if (memory !== undefined && Number.isFinite(memory) && memory > 0)
+    n = Math.min(n, Math.floor(memory / WORKER_MEMORY_BYTES));
   if (override !== undefined && override.trim() !== "") {
     if (!/^[1-9][0-9]{0,2}$/.test(override.trim()))
       return {
@@ -32,6 +51,26 @@ export function shardCount(
     n = Number(override.trim());
   }
   return { ok: true, value: Math.max(1, Math.min(n, files)) };
+}
+
+/**
+ * The memory a process may use: the least of the machine's and each
+ * cgroup limit it can read (`memory.max` under v2, `memory.limit_in_bytes`
+ * under v1). "max", a v1 "no limit" (a page-rounded 2^63), an unreadable
+ * file (`undefined`) or anything not a whole number is no limit.
+ */
+export function memoryLimit(
+  total: number,
+  limits: readonly (string | undefined)[],
+): number {
+  let least = total;
+  for (const text of limits) {
+    const value = text?.trim() ?? "";
+    if (!/^[0-9]{1,19}$/.test(value)) continue;
+    const bytes = Number(value);
+    if (bytes > 0 && bytes < least) least = bytes;
+  }
+  return least;
 }
 
 /**

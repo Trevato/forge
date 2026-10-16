@@ -30,7 +30,8 @@ const IDENTITY = {
 /**
  * A deterministic environment for a git client under test: `PATH` and
  * nothing else from the host, no global or system config, no prompt, and a
- * fixed identity. `extra` is the test's own additions — a clone URL's
+ * fixed identity. No optional locks either: a `git status` in a test never
+ * rewrites the index it only reads (#2038). `extra` is the test's own additions — a clone URL's
  * askpass, `GIT_SSH_COMMAND`, a different author — and wins.
  */
 export function gitClientEnv(
@@ -41,6 +42,8 @@ export function gitClientEnv(
     HOME: "/dev/null",
     GIT_CONFIG_GLOBAL: "/dev/null",
     GIT_CONFIG_SYSTEM: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_OPTIONAL_LOCKS: "0",
     GIT_TERMINAL_PROMPT: "0",
     LC_ALL: "C",
     ...IDENTITY,
