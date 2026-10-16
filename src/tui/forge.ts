@@ -44,6 +44,7 @@ import { stalledScreen } from "./screens/stalled.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
 import { newPullScreen } from "./screens/newpull.ts";
+import { newForgeScreen } from "./screens/newforge.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
 import { repoScreen } from "./screens/repo.ts";
 import { signInScreen } from "./screens/signin.ts";
@@ -173,6 +174,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               ctx.push(signInScreen(session, ctx, () => ctx.invalidate())),
           },
     );
+    // A client's forge, as /forges/new makes it: any signed-in person's; the door decides the rest.
+    if (session.signedIn)
+      commands.push({
+        id: "new-forge",
+        title: "New forge",
+        hint: "spawn a client's forge and get its claim link",
+        run: () => ctx.push(newForgeScreen(session, ctx)),
+      });
     // What you asked for and what became of it, as /asked says it: a signed-in person's.
     if (session.signedIn)
       commands.push({

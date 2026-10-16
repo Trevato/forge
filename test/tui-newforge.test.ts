@@ -1,0 +1,161 @@
+/**
+ * "New forge" in the terminal (#1782): the page's fields through `spawnDoor`,
+ * the plan before the spawn, the claim link once, any signed-in person's.
+ */
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createRepo } from "../src/actions/repos.ts";
+import { createApp, type App } from "../src/app.ts";
+import { createUser, type User } from "../src/core/users.ts";
+import { usePlacement } from "../src/spawn/door.ts";
+import { hostedPlacement } from "../src/spawn/placement.ts";
+import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
+import { newForgeScreen } from "../src/tui/screens/newforge.ts";
+import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { quietLogs } from "./helpers/globals.ts";
+import { settleApp } from "./helpers/tui.ts";
+
+quietLogs();
+
+let dir: string;
+let app: App;
+let admin: User;
+let bob: User;
+
+const identity = (user?: User) => ({
+  sshUsername: user?.username ?? "git",
+  remoteAddress: "127.0.0.1",
+  fingerprint: "SHA256:test",
+  user,
+});
+const NAME_REASON = "name must be 1-39 characters of a-z";
+const BUDGET_REASON = "a budget is for a model key";
+const children = async () => (await readdir(join(dir, "spawn")).catch(() => [] as string[])).length;
+
+function open(user: User) {
+  const terminal = headlessTerminal(120, 40);
+  const { app: tui, session } = createForgeApp(app, identity(user), { terminal, exitHooks: false });
+  tui.start();
+  tui.ctx.push(newForgeScreen(session, tui.ctx));
+  return { tui, terminal };
+}
+
+beforeAll(async () => {
+  dir = await mkdtemp(join(tmpdir(), "forge-tui-newforge-"));
+  app = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
+  const mk = async (username: string, isAdmin: boolean) => {
+    const r = await createUser(app.db, {
+      trusted: true, username, email: `${username}@forge.local`, password: "a-good-passphrase", isAdmin,
+    });
+    if (!r.ok) throw new Error(r.error);
+    return r.value;
+  };
+  admin = await mk("alice", true);
+  bob = await mk("bob", false);
+  const repo = await createRepo(app, admin, { name: "bakery", visibility: "public" });
+  if (!repo.ok) throw new Error("repo");
+  usePlacement(app, hostedPlacement({ host: "forge.test" }));
+});
+afterAll(async () => {
+  app.db.close();
+  await rm(dir, { recursive: true, force: true });
+});
+
+/** Open the screen, run `body`, and always stop the terminal. */
+async function withScreen(user: User, body: (h: ReturnType<typeof open>) => Promise<void>) {
+  const h = open(user);
+  try {
+    await settleApp(h.tui);
+    await body(h);
+  } finally {
+    h.tui.stop?.();
+  }
+}
+
+describe("the new forge screen", () => {
+  test("the palette offers it to any signed-in person, as the page is", () => {
+    const ids = (u?: User) => forgeCommands(new Session(app, identity(u)))({} as never).map((c) => c.id);
+    expect(ids(admin)).toContain("new-forge");
+    expect(ids(bob)).toContain("new-forge");
+    expect(ids()).not.toContain("new-forge");
+  });
+
+  test("the plan is shown first and makes nothing; enter spawns and shows the claim link once", () =>
+    withScreen(admin, async ({ tui, terminal }) => {
+      const before = await children();
+      terminal.feed("kai\t\t\talice/bakery\r");
+      terminal.feed("\x10"); // ctrl+p
+      await settleApp(tui);
+      const plan = tui.screen.toText();
+      expect(plan).toContain("The plan");
+      expect(plan).toContain("kai--forge.test");
+      expect(await children()).toBe(before);
+      terminal.feed("\r");
+      await settleApp(tui);
+      expect(await children()).toBe(before + 1);
+      expect(tui.screen.toText()).toMatch(/https:\/\/kai--forge\.test\/claim#/);
+    }));
+
+  test("the door's refusal lands on the field it names, with focus there, and nothing is made", () =>
+    withScreen(admin, async ({ tui, terminal }) => {
+      const before = await children();
+      terminal.feed("Bad Name!\t\t\t"); // focus on "Apps to fork", name is wrong
+      terminal.feed("\x10");
+      await settleApp(tui);
+      const text = tui.screen.toText();
+      expect(text).not.toContain("The plan");
+      expect(text).toContain(NAME_REASON);
+      terminal.feed("Z"); // focus went back to Name
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("Bad Name!Z");
+      expect(await children()).toBe(before);
+    }));
+
+  test("a key without a budget is refused by the door, naming the budget", () =>
+    withScreen(admin, async ({ tui, terminal }) => {
+      const before = await children();
+      terminal.feed("lee\t\t\t\t\tsk-ant-api03-child-key-AAAAAAAAAAAAAAAAAAAAAAAA\x10");
+      await settleApp(tui);
+      const text = tui.screen.toText();
+      expect(text).not.toContain("The plan");
+      expect(text).toContain("budget");
+      expect(text).not.toContain("sk-ant-api03");
+      expect(await children()).toBe(before);
+    }));
+
+  test("a budget without a key is refused, with the door's reason", () =>
+    withScreen(admin, async ({ tui, terminal }) => {
+      const before = await children();
+      terminal.feed("max\t\t\t\t\t\t\t5\x10");
+      await settleApp(tui);
+      const text = tui.screen.toText();
+      expect(text).not.toContain("The plan");
+      expect(text).toContain(BUDGET_REASON);
+      expect(await children()).toBe(before);
+    }));
+
+  test("a refused key is cleared from the form", () =>
+    withScreen(admin, async ({ tui, terminal }) => {
+      terminal.feed("Bad Name!\t\t\t\t\tsk-ant-api03-child-key-AAAAAAAAAAAAAAAAAAAAAAAA\x10");
+      await settleApp(tui);
+      terminal.feed("\t\t\t\t\t"); // back to the key field, past the name
+      await settleApp(tui);
+      expect(tui.screen.toText()).not.toContain("••••");
+    }));
+
+  test("a person who is not an admin gets a plan and spawns, as on the page", () =>
+    withScreen(bob, async ({ tui, terminal }) => {
+      const before = await children();
+      terminal.feed("zed");
+      terminal.feed("\x10");
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("The plan");
+      expect(await children()).toBe(before);
+      terminal.feed("\r");
+      await settleApp(tui);
+      expect(await children()).toBe(before + 1);
+      expect(tui.screen.toText()).toMatch(/https:\/\/zed--forge\.test\/claim#/);
+    }));
+});

@@ -106,6 +106,14 @@ thoughts, then the issues you can write to that are not shipped, oldest first
 only, shows a guest nothing, and names nothing of a placement in a repository
 you cannot read.
 
+A client's forge: `Ctrl+K`, then **New forge** (any signed-in person's, as the
+page is), is `/forges/new` in the terminal — name, for whom, what it is for,
+apps to fork (`owner/name`, comma-separated), a fresh one-line app, model key
+(hidden as typed), API base URL and budget, through the same `spawnDoor` as the
+page, `POST /api/v1/forges` and the MCP `spawn`. `Ctrl+P` shows the plan and
+makes nothing; `enter` on the plan spawns, and the claim link is shown once, in
+a dialog, never kept.
+
 The family across forges: `:` → Family in the terminal, `/family` on the web,
 `GET /api/v1/family` and the MCP `family` tool all give the same view. The
 forge that sent this one is shown to anyone; the forges it sent, only to a
