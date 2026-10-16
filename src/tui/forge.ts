@@ -34,6 +34,8 @@ import { canSeeMemory } from "../boards/memory.ts";
 import { boardsScreen } from "./screens/boards.ts";
 import { askedScreen } from "./screens/asked.ts";
 import { deciderScreen } from "./screens/decider.ts";
+import { forgesScreen } from "./screens/forges.ts";
+import { clientRows } from "../spawn/clients.ts";
 import { familyScreen } from "./screens/family.ts";
 import { familyLines, familyView } from "../spawn/family.ts";
 import { issueScreen } from "./screens/issue.ts";
@@ -388,6 +390,17 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Owner's needs",
         hint: "what needs the owner, snapshots, failure domains",
         run: () => ctx.push(ownerScreen(session, ctx)),
+      });
+    // The forges this one sent, as /forges lists them: an admin's only.
+    if (session.user?.isAdmin === true)
+      commands.push({
+        id: "forges",
+        title: "Forges you sent",
+        hint: "each forge sent, claimed or not, and its apps",
+        run: () =>
+          runAsync(ctx, async () => {
+            ctx.push(forgesScreen(ctx, await clientRows(session.app)));
+          }),
       });
     commands.push({
       id: "family",

@@ -1,0 +1,51 @@
+/**
+ * The forges this one sent (#2211) in a card: one row per client with its
+ * claim state and the apps-running note, in the words /forges uses. Never a
+ * claim link; that stays on the page.
+ */
+
+import type { Ctx, Screen } from "../app/app.ts";
+import { binding } from "../app/keys.ts";
+import { CLAIM_WORDS, claimState, runningWords, type ClientRow } from "../../spawn/clients.ts";
+import { card } from "../ui/widgets.ts";
+import { drawFacts } from "./common.ts";
+
+/** [name, "for Maria · Claimed · 3 apps running"] per row; an empty line when none. */
+export function forgeLines(rows: readonly ClientRow[]): [string, string][] {
+  if (rows.length === 0) return [["", "You have not sent a forge yet"]];
+  return rows.map((r) => [
+    r.name,
+    [r.for === null ? null : `for ${r.for}`, CLAIM_WORDS[claimState(r)], runningWords(r)]
+      .filter((m): m is string => m !== null)
+      .join(" · "),
+  ]);
+}
+
+/** The lines that fit in `room` rows; when some do not, the last row says how many. */
+export function fitLines(lines: [string, string][], room: number): [string, string][] {
+  if (lines.length <= room) return lines;
+  const kept = lines.slice(0, Math.max(0, room - 1));
+  kept.push(["", `+${lines.length - kept.length} more (see /forges)`]);
+  return kept;
+}
+
+export function forgesScreen(ctx: Ctx, rows: readonly ClientRow[]): Screen {
+  const lines = forgeLines(rows);
+  return {
+    title: "Forges you sent",
+    keys: [binding(["esc"], "close")],
+    render(area, s) {
+      const c = ctx.theme.c;
+      const w = Math.min(100, Math.max(30, area.w - 6));
+      const h = Math.min(area.h, lines.length + 2);
+      const shown = fitLines(lines, h - 2);
+      const r = { x: area.x + ((area.w - w) >> 1), y: area.y + ((area.h - h) >> 1), w, h };
+      const inner = card(s, r, c, { title: "Forges you sent", focused: true });
+      drawFacts(s, { x: inner.x + 1, y: inner.y, w: Math.max(0, inner.w - 1), h: inner.h }, c, shown, c.card);
+    },
+    key(e) {
+      if (e.key === "esc" || e.key === "q") ctx.pop();
+      return true;
+    },
+  };
+}

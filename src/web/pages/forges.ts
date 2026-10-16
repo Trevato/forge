@@ -7,7 +7,7 @@
  */
 
 import type { Ctx } from "../../http/context.ts";
-import { clientRows, type ClientRow } from "../../spawn/clients.ts";
+import { CLAIM_WORDS, claimState, clientRows, runningWords, type ClientRow } from "../../spawn/clients.ts";
 import { notFoundPage, pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -17,31 +17,18 @@ import { btn, card, empty, time } from "../ui.ts";
 import { noRoom } from "../../spawn/door.ts";
 import { claimLinkBody } from "./new-forge.ts";
 
-const STATE: Record<"yes" | "no" | "unknown" | "making", string> = {
-  yes: "Claimed",
-  no: "Not claimed yet",
-  unknown: "Unknown",
-  making: "Still being made",
-};
-
-function stateOf(r: ClientRow): keyof typeof STATE {
-  if (!r.made) return "making";
-  return r.claimed === null ? "unknown" : r.claimed ? "yes" : "no";
-}
 
 /** "3 apps running", or which one is not and why. */
 function runningNote(r: ClientRow): Html | null {
-  const a = r.running;
-  if (a === null || a.total === 0) return null;
-  const word = `${a.running} ${a.running === 1 ? "app" : "apps"} running`;
-  if (a.notRunning.length === 0) return html`<span data-apps="up">${word}</span>`;
-  return html`<span data-apps="down"
-    >${word} · ${a.notRunning.map((n, i) => html`${i > 0 ? "; " : ""}${n.slug}: ${n.why}`)}</span
+  const words = runningWords(r);
+  if (words === null) return null;
+  return html`<span data-apps="${r.running!.notRunning.length === 0 ? "up" : "down"}"
+    >${words}</span
   >`;
 }
 
 function forgeRow(r: ClientRow): Html {
-  const state = stateOf(r);
+  const state = claimState(r);
   const meta = [
     r.for === null ? null : html`for ${r.for}`,
     r.apps.length === 0 ? null : html`${r.apps.join(", ")}`,
@@ -64,7 +51,7 @@ function forgeRow(r: ClientRow): Html {
           class="pill"
           ${state === "unknown" ? html`title="It did not answer just now"` : null}
           ${state === "yes" ? html`data-tone="accent"` : null}
-          >${STATE[state]}</span
+          >${CLAIM_WORDS[state]}</span
         >${state === "no"
           ? html`<form method="post" action="/forges/${r.name}/claim-link">
               ${btn("Send a fresh link", { size: "sm", title: "A new claim link; the old one stops working" })}

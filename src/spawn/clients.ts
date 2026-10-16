@@ -171,3 +171,25 @@ export async function clientRows(app: App): Promise<ClientRow[]> {
         a.name.localeCompare(b.name),
     );
 }
+
+/** A forge's claim state in words, as /forges and the terminal say it. */
+export const CLAIM_WORDS: Record<"yes" | "no" | "unknown" | "making", string> = {
+  yes: "Claimed",
+  no: "Not claimed yet",
+  unknown: "Unknown",
+  making: "Still being made",
+};
+
+export function claimState(r: ClientRow): keyof typeof CLAIM_WORDS {
+  if (!r.made) return "making";
+  return r.claimed === null ? "unknown" : r.claimed ? "yes" : "no";
+}
+
+/** "3 apps running", or which one is not and why; null when none are run here. */
+export function runningWords(r: ClientRow): string | null {
+  const a = r.running;
+  if (a === null || a.total === 0) return null;
+  const word = `${a.running} ${a.running === 1 ? "app" : "apps"} running`;
+  if (a.notRunning.length === 0) return word;
+  return `${word} · ${a.notRunning.map((n) => `${n.slug}: ${n.why}`).join("; ")}`;
+}
