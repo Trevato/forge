@@ -516,6 +516,9 @@ describe("the gate audit alone, first in the check", () => {
       // TypeScript 7 (#1864): a Go binary, so its heap bound is GOMEMLIMIT, not node's.
       expect(command).toContain(" && GOMEMLIMIT=2GiB ./node_modules/typescript/bin/tsc --noEmit ");
       expect(command.indexOf("scripts/gate.ts")).toBeLessThan(command.indexOf("bin/tsc"));
+      // tsc will not create its build-info directory (#1881): a checkout with no restored cache failed TS5033.
+      expect(command).toContain(`mkdir -p ${CHECK_CACHE} && `);
+      expect(command.indexOf(`mkdir -p ${CHECK_CACHE}`)).toBeLessThan(command.indexOf("bin/tsc"));
       expect(command).toContain(`--incremental --tsBuildInfoFile ${CHECK_CACHE}/tsc.tsbuildinfo`);
     }
   });

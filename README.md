@@ -719,7 +719,9 @@ across how many files, in how long, then the slowest and fastest shard.
 The check's first step is the gate-list audit (`bun scripts/gate.ts`), so a
 test file listed in neither `GATE` nor `EXCLUDED` fails in under a second,
 before install-heavy work. `tsc` then runs `--incremental` with a 2 GB heap,
-its build info in `.forge-cache/`. It is TypeScript 7, the native compiler (a
+its build info in `.forge-cache/` (made first with `mkdir -p`: tsc will not
+create the directory, and a checkout with no restored cache failed on it,
+#1881). It is TypeScript 7, the native compiler (a
 Go binary, so the bound is `GOMEMLIMIT=2GiB`): on this tree a cold check is
 ~3 s and ~17 CPU-s where 5.9 took ~30 s and ~50 CPU-s (#1864). 5.9 stays as
 the dev dependency `typescript-api` only because `scripts/hollow.ts` walks
