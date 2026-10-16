@@ -31,13 +31,29 @@ export const toolbarJs = `(function () {
   pill.setAttribute("aria-expanded", "false");
   pill.textContent = "\\u2692";
   pill.style.cssText = "all:unset;box-sizing:border-box;cursor:pointer;width:28px;height:28px;border-radius:14px;background:#1f2328;color:#fff;text-align:center;line-height:28px;font-size:14px;opacity:.55;box-shadow:0 1px 4px rgba(0,0,0,.4)";
-  var panel = document.createElement("a");
-  panel.href = home;
-  panel.target = "_blank";
-  panel.rel = "noopener";
-  panel.textContent = "Built on forge";
+  var d = me.dataset || {};
+  var panel = document.createElement("div");
   panel.hidden = true;
-  panel.style.cssText = "background:#1f2328;color:#fff;padding:6px 10px;border-radius:14px;text-decoration:none;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.4)";
+  panel.style.cssText = "background:#1f2328;color:#fff;padding:8px 12px;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.4);max-width:min(280px,calc(100vw - 64px));display:flex;flex-direction:column;gap:2px";
+  function line(text, bold) {
+    var el = document.createElement("div");
+    el.textContent = text;
+    el.style.cssText = "overflow-wrap:anywhere;" + (bold ? "font-weight:600" : "opacity:.85");
+    panel.appendChild(el);
+  }
+  if (d.app) line(d.app, true);
+  if (d.env === "production") line("Production");
+  else if (d.pull) line("Preview of pull #" + d.pull);
+  if (d.title) line(d.title);
+  var link = document.createElement("a");
+  link.textContent = "Home";
+  link.rel = "noopener";
+  link.style.cssText = "color:#8ab4ff;text-decoration:none;margin-top:4px";
+  try {
+    var target = new URL(home);
+    if (target.origin === new URL(me.src).origin) link.href = target.href;
+  } catch (e) {}
+  panel.appendChild(link);
   function set(open) {
     panel.hidden = !open;
     pill.setAttribute("aria-expanded", open ? "true" : "false");
@@ -45,6 +61,11 @@ export const toolbarJs = `(function () {
   }
   pill.addEventListener("click", function () { set(panel.hidden); });
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") set(false); });
+  document.addEventListener("pointerdown", function (e) {
+    if (panel.hidden) return;
+    var path = e.composedPath ? e.composedPath() : [];
+    if (path.indexOf(host) < 0) set(false);
+  });
   box.appendChild(pill);
   box.appendChild(panel);
   root.appendChild(box);
@@ -97,11 +118,48 @@ export function rewritable(headers: Headers, status: number): boolean {
   return Number(length) <= REWRITE_MAX;
 }
 
+/** What the pill says about where it is; the title only for a reader of the pull. */
+export type PillWhere = {
+  app: string;
+  env: string;
+  pull?: number;
+  title?: string;
+};
+
+/** `text` safe inside a double-quoted HTML attribute. */
+export function escapeAttr(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/'/g, "&#39;");
+}
+
+/** The script tag, with where-you-are as escaped data attributes. */
+export function toolbarTag(forgeUrl: string, where?: PillWhere): string {
+  const data =
+    where === undefined
+      ? ""
+      : [
+          ["app", where.app],
+          ["env", where.env],
+          ["pull", where.pull === undefined ? undefined : String(where.pull)],
+          ["title", where.title],
+        ]
+          .filter((pair): pair is [string, string] => pair[1] !== undefined)
+          .map(([k, v]) => ` data-${k}="${escapeAttr(v)}"`)
+          .join("");
+  return `<script src="${new URL(TOOLBAR_PATH, forgeUrl).href}"${data} defer></script>`;
+}
+
 /** `bytes` with the pill's tag before the last `</body>`, or at the end. */
-export function withToolbar(bytes: Uint8Array, forgeUrl: string): Uint8Array {
-  const tag = Buffer.from(
-    `<script src="${new URL(TOOLBAR_PATH, forgeUrl).href}" defer></script>`,
-  );
+export function withToolbar(
+  bytes: Uint8Array,
+  forgeUrl: string,
+  where?: PillWhere,
+): Uint8Array {
+  const tag = Buffer.from(toolbarTag(forgeUrl, where));
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   // latin1 is one character per byte, so an index in it is a byte offset.
   const at = buffer.toString("latin1").toLowerCase().lastIndexOf("</body");

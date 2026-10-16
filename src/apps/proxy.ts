@@ -34,7 +34,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
-import { rewritable, withToolbar } from "./toolbar.ts";
+import { rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
 
 export interface AppTarget {
   readonly app: AppRecord;
@@ -342,6 +342,30 @@ function sealedPull(runtime: AppsRuntime, target: AppTarget): Issue | undefined 
   return pull?.sealed === true ? pull : undefined;
 }
 
+/**
+ * What the pill says: the app, the environment and, for a preview, the pull
+ * and its title. The title goes only to a viewer who may read the pull.
+ */
+export function pillWhere(
+  runtime: AppsRuntime,
+  target: AppTarget,
+  who: GrantWho | undefined,
+): PillWhere {
+  const where: PillWhere = { app: target.app.slug, env: target.env };
+  const number = /^pull-(\d+)$/.exec(target.env)?.[1];
+  if (number === undefined) return where;
+  where.pull = Number(number);
+  const db = runtime.app.db;
+  const repo = getRepoById(db, target.app.repoId);
+  const pull = getIssue(db, target.app.repoId, where.pull);
+  if (repo === undefined || pull === undefined) return where;
+  const viewer = who === undefined ? undefined : getUserById(db, who.id);
+  const user = viewer !== undefined && isActive(viewer) ? viewer : undefined;
+  if (canRead(db, repo, user) && mayView(db, repo, pull, user))
+    where.title = pull.title;
+  return where;
+}
+
 /** Whether the person a grant names may enter this app now. */
 function stillEntitled(
   runtime: AppsRuntime,
@@ -616,6 +640,7 @@ export async function proxyApp(
       page = withToolbar(
         new Uint8Array(await response.arrayBuffer()),
         runtime.options.forgeUrl,
+        pillWhere(runtime, target, vouched?.who),
       );
     } catch {
       return unavailable(runtime, target, status, "the app stopped answering");

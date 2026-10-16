@@ -1,0 +1,128 @@
+/**
+ * What the forge pill says (#2178): the app, the environment and, for a
+ * preview, the pull and its title as escaped data attributes; the title
+ * withheld from a viewer who may not read the pull; the panel closing on a
+ * pointerdown outside it.
+ */
+
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App } from "../src/app.ts";
+import { newApp } from "../src/actions/apps.ts";
+import { pillWhere, type AppTarget } from "../src/apps/proxy.ts";
+import { toolbarJs, toolbarTag, withToolbar } from "../src/apps/toolbar.ts";
+import type { AppsRuntime } from "../src/apps/runtime.ts";
+import { getAppByRepo } from "../src/core/apps.ts";
+import { createIssue } from "../src/core/issues.ts";
+import { createUser } from "../src/core/users.ts";
+import { quietLogs } from "./helpers/globals.ts";
+
+quietLogs();
+
+describe("the pill's data", () => {
+  let dataDir: string;
+  let app: App;
+  let runtime: AppsRuntime;
+  let aliceId: string;
+  const targets: Record<string, AppTarget> = {};
+  const pulls: Record<string, number> = {};
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-pill-where-"));
+    app = createApp({ dataDir, port: 0, host: "forge.test" });
+    runtime = { app } as unknown as AppsRuntime;
+    const a = await createUser(app.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    aliceId = a.value.id;
+    for (const [name, visibility] of [
+      ["open", "public"],
+      ["closed", "private"],
+    ] as const) {
+      const made = await newApp(app, a.value, { name, description: "x", visibility });
+      if (!made.ok) throw new Error(String(made.error));
+      const record = getAppByRepo(app.db, made.value.repo.id)!;
+      targets[name] = { app: record, env: "production" } as AppTarget;
+      const pull = createIssue(app.db, {
+        repoId: made.value.repo.id,
+        authorId: a.value.id,
+        title: `<img src=x onerror=alert(1)> "q" & ${name}`,
+        kind: "pull",
+      });
+      if (!pull.ok) throw new Error(pull.error);
+      pulls[name] = pull.value.number;
+    }
+  }, 120_000);
+
+  afterAll(async () => {
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const preview = (name: string): AppTarget =>
+    ({ ...targets[name]!, env: `pull-${pulls[name]}` }) as AppTarget;
+
+  test("production names the app and the environment, no pull", () => {
+    expect(pillWhere(runtime, targets.open!, undefined)).toEqual({
+      app: targets.open!.app.slug,
+      env: "production",
+    });
+  });
+
+  test("a preview carries the pull number and, on a public repo, its title", () => {
+    const where = pillWhere(runtime, preview("open"), undefined);
+    expect(where.pull).toBe(pulls.open!);
+    expect(where.env).toBe(`pull-${pulls.open}`);
+    expect(where.title).toContain("onerror");
+  });
+
+  test("the title is withheld from a viewer who may not read the pull", () => {
+    const anon = pillWhere(runtime, preview("closed"), undefined);
+    expect(anon.pull).toBe(pulls.closed!);
+    expect(anon.title).toBeUndefined();
+    const owner = pillWhere(runtime, preview("closed"), { id: aliceId } as never);
+    expect(owner.title).toContain("closed");
+  });
+
+  test("a title with markup is escaped inside the attribute", () => {
+    const tag = toolbarTag("http://f.test", {
+      app: "a",
+      env: "pull-3",
+      pull: 3,
+      title: `<img src=x onerror=alert(1)> "q" & 'z'`,
+    });
+    expect(tag).not.toContain("<img");
+    expect(tag).toContain(
+      `data-title="&lt;img src=x onerror=alert(1)&gt; &quot;q&quot; &amp; &#39;z&#39;"`,
+    );
+    expect(tag.match(/<script/g)?.length).toBe(1);
+    const page = new TextDecoder().decode(
+      withToolbar(new TextEncoder().encode("<body></body>"), "http://f.test", {
+        app: "a",
+        env: "production",
+      }),
+    );
+    expect(page).toContain(`data-app="a" data-env="production"`);
+  });
+});
+
+describe("the pill's script", () => {
+  test("registers the outside-pointerdown close beside Escape and the tap", () => {
+    expect(toolbarJs).toContain('addEventListener("pointerdown"');
+    expect(toolbarJs).toContain('"Escape"');
+    expect(toolbarJs).toContain('pill.addEventListener("click"');
+  });
+
+  test("puts text in with textContent and checks the home href against the forge origin", () => {
+    expect(toolbarJs).toContain("textContent = text");
+    expect(toolbarJs).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
+    expect(toolbarJs).toContain("target.origin === new URL(me.src).origin");
+  });
+});

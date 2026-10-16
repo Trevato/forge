@@ -127,7 +127,8 @@ describe("the forge pill", () => {
       headers: { host: `notes.${DOMAIN}`, accept: "*/*" },
       redirect: "manual",
     });
-  const tag = () => `<script src="${servers.url}${TOOLBAR_PATH}" defer></script>`;
+  const tag = () =>
+    `<script src="${servers.url}${TOOLBAR_PATH}" data-app="notes" data-env="production" defer></script>`;
 
   test("HTML gets one script tag before </body>, with its length fixed", async () => {
     toolbar = undefined;
