@@ -11,6 +11,8 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, getUserByName, verifyPassword } from "../src/core/users.ts";
+import { keepClient, CALLBACK_PATH } from "../src/core/federation.ts";
+import { forgeSshSession } from "../src/tui/ssh.ts";
 import { addKey, findKeyByFingerprint, fingerprint, parseAuthorizedKey } from "../src/core/keys.ts";
 import { KeySet } from "../src/http/jwks.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -242,6 +244,43 @@ describe("sign in through the parent forge", () => {
     if (!parsed.ok) throw new Error("key");
     expect(addKey(child.db, local.id, "laptop", parsed.value).ok).toBe(true);
     expect(findKeyByFingerprint(child.db, fingerprint(parsed.value.blob))?.userId).toBe(local.id);
+
+    // And the terminal itself: a shell opened with that key is that account's.
+    let screen = "";
+    const closers: (() => void)[] = [];
+    const session = {
+      key: { fingerprint: fingerprint(parsed.value.blob), line },
+      username: "whoever",
+      remoteAddress: "203.0.113.9",
+      kind: "shell" as const,
+      command: undefined,
+      term: "xterm-256color",
+      env: {},
+      cols: 100,
+      rows: 30,
+      widthPx: 0,
+      heightPx: 0,
+      ended: false,
+      pending: 0,
+      write(data: Uint8Array | string) {
+        screen += typeof data === "string" ? data : Buffer.from(data).toString();
+      },
+      writeStderr() {},
+      onData() {},
+      onResize() {},
+      onEof() {},
+      onClose(cb: () => void) {
+        closers.push(cb);
+      },
+      exit() {
+        for (const cb of closers) cb();
+      },
+      drained: async () => {},
+    };
+    forgeSshSession(child)(session as never);
+    await Bun.sleep(300);
+    session.exit();
+    expect(screen).toContain("alice");
   });
 
   test("starting a sign-in is throttled, so a flood cannot push out those in flight", async () => {
@@ -385,5 +424,74 @@ describe("a parent's oversized answer", () => {
     const keys = new KeySet("https://p/oauth/jwks", async () => response);
     expect(await keys.find("a", 0)).toBeUndefined();
     expect(pulled.n).toBeLessThan(200);
+  });
+});
+
+describe("a parent's oversized register and token answers", () => {
+  const realFetch = globalThis.fetch;
+  const PARENT = "http://parent.invalid";
+  let dir = "";
+  let child: App;
+  let servers: Servers;
+  let pulled = { n: 0 };
+  let streaming: "register" | "token" | "" = "";
+
+  /** A body that never ends, counting how many chunks were pulled from it. */
+  const endless = (): Response => {
+    pulled = { n: 0 };
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          pulled.n++;
+          controller.enqueue(new Uint8Array(1024).fill(32));
+        },
+      }),
+      { status: 201, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-signin-"));
+    // The parent is this stub; every other address is reached as usual.
+    globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url === `${PARENT}/oauth/register` && streaming === "register") return Promise.resolve(endless());
+      if (url === `${PARENT}/oauth/token` && streaming === "token") return Promise.resolve(endless());
+      return realFetch(input, init);
+    }) as typeof fetch;
+    child = createApp({ dataDir: dir, port: 0, parentUrl: PARENT, parentLoopback: true });
+    servers = await serve(child);
+  });
+  afterAll(async () => {
+    globalThis.fetch = realFetch;
+    servers.stop();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a registration that streams forever is a 502, and few chunks are pulled", async () => {
+    streaming = "register";
+    const res = await fetch(`${servers.url}/signin/parent`, { redirect: "manual" });
+    expect(res.status).toBe(502);
+    expect(pulled.n).toBeGreaterThan(0);
+    expect(pulled.n).toBeLessThan(100);
+    expect(child.db.query("SELECT COUNT(*) AS n FROM rp_client").get()).toEqual({ n: 0 });
+  });
+
+  test("a token answer that streams forever is a 502 with no session, and few chunks are pulled", async () => {
+    streaming = "";
+    keepClient(child.db, `${PARENT}`, `${servers.url}${CALLBACK_PATH}`, "client-1");
+    const start = await fetch(`${servers.url}/signin/parent`, { redirect: "manual" });
+    expect(start.status).toBe(303);
+    const cookie = start.headers.getSetCookie()[0]!.split(";")[0]!;
+    const state = cookie.slice("forge_rp=".length);
+    streaming = "token";
+    const res = await fetch(`${servers.url}${CALLBACK_PATH}?code=abc&state=${state}`, {
+      redirect: "manual",
+      headers: { cookie },
+    });
+    expect(res.status).toBe(502);
+    expect(res.headers.getSetCookie().some((c) => c.startsWith("forge_session=") && !c.includes("Max-Age=0"))).toBe(false);
+    expect(pulled.n).toBeGreaterThan(0);
+    expect(pulled.n).toBeLessThan(100);
   });
 });
