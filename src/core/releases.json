@@ -2,6 +2,17 @@
   "note": "The migrations each release applied, newest first. The release agent adds the new release here when it cuts one: `migrations` counts the migration ids it applied (every file in src/core/migrations/), and `ids` names the stamped ones among them — every file past 0090, its name without .ts (`ls src/core/migrations | grep -v ^0 | sed s/.ts$//`). A release from before #1837 has a count only: the first that many numbered files. Every migration that is not in both of the two newest releases must be additive (test/schema-additive.test.ts, notAdditive in src/kernel/migrate.ts): the old process keeps serving on the same database while the new one rolls in.",
   "releases": [
     {
+      "version": "0.7.133",
+      "migrations": 96,
+      "ids": [
+        "20261015000100-plans-need-a-nod",
+        "20261015090000-feed-chips",
+        "20261015120000-check-base-tip",
+        "20261015230000-a-domain-drill",
+        "20261016090000-sentinel-kept-settings"
+      ]
+    },
+    {
       "version": "0.7.132",
       "migrations": 96,
       "ids": [
