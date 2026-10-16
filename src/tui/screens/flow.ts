@@ -17,16 +17,24 @@ import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { pad, truncate, wrap } from "../term/width.ts";
 import { dialog } from "../ui/widgets.ts";
+import { live } from "../../system/live.ts";
+import { duplicateLines } from "./system.ts";
 
 const WIDTH = 64;
 
 /** What the dialog says, line by line, wrapped to fit inside it. */
-export function flowLines(db: Database, now = new Date()): string[] {
+export function flowLines(
+  db: Database,
+  now = new Date(),
+  dups = live().read().duplicates,
+  /** What an agent reader may see: its queue lines and conflicted pulls come already cut to public. */
+  agent?: { queues: ReturnType<typeof readQueues> },
+): string[] {
   const stages = readPipeline(db, now);
   const flow = readThroughput(db, stages.map((s) => s.key), now);
   const inner = WIDTH - 6;
-  const queues = readQueues(db, now);
-  const conflicted = conflictedSays(conflictedPulls(db), now.getTime());
+  const queues = agent?.queues ?? readQueues(db, now);
+  const conflicted = conflictedSays(conflictedPulls(db, agent !== undefined), now.getTime());
   return [
     ...wrap(verdict(stages, now.getTime()), inner),
     "",
@@ -46,6 +54,8 @@ export function flowLines(db: Database, now = new Date()): string[] {
             `${pad(truncate(q.repo, 30), 30)} ${pad(String(q.queued), 6, "right")} ${pad(String(q.gating), 6, "right")} ${pad(String(q.landedHour), 9, "right")}`,
         )),
     ...(conflicted === null ? [] : ["", ...wrap(conflicted, inner)]),
+    "",
+    ...duplicateLines(dups, inner),
   ];
 }
 

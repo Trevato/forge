@@ -15,22 +15,22 @@ export interface ConflictedPull {
   readonly since: string;
 }
 
-/** Oldest first. */
-export function conflictedPulls(db: Database): ConflictedPull[] {
+/** Oldest first; `publicOnly` leaves out private repositories, for a reader who must not learn their names. */
+export function conflictedPulls(db: Database, publicOnly = false): ConflictedPull[] {
   return db
-    .query<ConflictedPull, []>(
+    .query<ConflictedPull, [number]>(
       `SELECT o.username || '/' || r.name AS repo, i.number AS number,
               MIN(u.created_at) AS since
          FROM run u JOIN issue i ON i.id = u.issue_id
          JOIN pull p ON p.issue_id = i.id JOIN repo r ON r.id = i.repo_id JOIN user o ON o.id = r.owner_id
         WHERE u.kind = 'agent' AND u.reason = 'conflict' AND i.state = 'open'
-          AND p.merged_at IS NULL
+          AND p.merged_at IS NULL AND (?1 = 0 OR r.visibility = 'public')
           AND (SELECT state FROM run n WHERE n.issue_id = i.id AND n.kind = 'agent'
                   AND n.reason = 'conflict' ORDER BY n.created_at DESC, n.id DESC LIMIT 1)
               IN ('queued','running','failed')
         GROUP BY i.id ORDER BY since`,
     )
-    .all();
+    .all(publicOnly ? 1 : 0);
 }
 
 /** One sentence for /flow, or null when none is conflicted. */

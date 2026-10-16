@@ -83,9 +83,10 @@ describe("GET /system", () => {
     expect(body).toContain("40.0 MiB");
   });
 
-  test("a non-admin and an anonymous visitor get 403", async () => {
-    expect((await get("bob")).status).toBe(403);
-    expect((await get(null)).status).toBe(403);
+  test("a non-admin gets 404 and an anonymous visitor is sent to sign in", async () => {
+    expect((await get("bob")).status).toBe(404);
+    const anon = await fetch(servers.url + "/system", { redirect: "manual" });
+    expect(anon.status).toBe(303);
   });
 });
 
@@ -98,8 +99,8 @@ describe("reaching /system", () => {
   });
 
   test("a refused visitor gets a page, not bare text", async () => {
-    const res = await get(null);
-    expect(res.status).toBe(403);
-    expect(await res.text()).toContain("<h1>403</h1>");
+    const res = await get("bob");
+    expect(res.status).toBe(404);
+    expect(await res.text()).toContain("<h1>");
   });
 });

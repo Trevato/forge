@@ -21,10 +21,6 @@ import { voteVariant } from "../actions/variants.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { listAccess } from "../actions/access_log.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
-import { conflictedPulls, conflictedSays } from "../flow/conflicted.ts";
-import { readPipeline, verdict } from "../flow/pipeline.ts";
-import { readQueues } from "../flow/queue.ts";
-import { readThroughput, stageOut, throughputSays } from "../flow/throughput.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
 import { changeQuotas, readQuotas } from "../actions/quotas.ts";
 import { QUOTA_KEYS } from "../settings/quotas.ts";
@@ -147,6 +143,8 @@ import {
 } from "../actions/explore.ts";
 import { frontInput, frontJson, setFront } from "../actions/front.ts";
 import { readHealth } from "../actions/health.ts";
+import { noteRead, telemetryReader } from "../actions/telemetry.ts";
+import { flowFor, systemFor, welcome } from "../system/telemetry.ts";
 import { running } from "../kernel/version.ts";
 import { parentForgeFor } from "../core/parent_releases.ts";
 import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
@@ -2077,27 +2075,34 @@ const TOOLS: readonly Tool[] = [
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
-      if (!user.isAdmin)
-        return bad("forbidden", "only an admin of this forge reads its pipeline");
-      const now = new Date();
-      const stages = readPipeline(ctx.app.db, now);
-      const flow = readThroughput(ctx.app.db, stages.map((s) => s.key), now);
-      const conflicted = conflictedPulls(ctx.app.db);
-      return good({
-        says: verdict(stages, now.getTime()),
-        conflicted: {
-          says: conflictedSays(conflicted, now.getTime()),
-          pulls: conflicted,
-        },
-        stages,
-        throughput: {
-          says: throughputSays(flow),
-          medianAskToLiveMs: flow.medianAskToLiveMs,
-          stages: flow.stages.map(stageOut),
-        },
-        queue: readQueues(ctx.app.db, now),
-      });
+      const reader = telemetryReader(ctx.app, user);
+      if (!reader)
+        return bad("forbidden", "only an admin of this forge, or an agent granted telemetry:read, reads its pipeline");
+      noteRead(ctx.app, user, reader, "flow");
+      return good(flowFor(ctx.app, reader));
     },
+  },
+  {
+    name: "system",
+    description:
+      "The machine the forge runs on, now: per-core CPU, temperatures, load, memory, disk per mount, network, and every process grouped by what launched it (which check, which app), each group with CPU cores, memory and age; and the test files running in more than one check at once (duplicates). For a forge admin, or an agent granted telemetry:read — whose view cuts out private repositories' checks and apps. Read-only; the same as /system and /api/v1/telemetry/system.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run(ctx, user) {
+      const reader = telemetryReader(ctx.app, user);
+      if (!reader)
+        return bad("forbidden", "only an admin of this forge, or an agent granted telemetry:read, reads its machine");
+      noteRead(ctx.app, user, reader, "system");
+      return good(systemFor(ctx.app, reader));
+    },
+  },
+  {
+    name: "contribute",
+    description:
+      "For any agent that arrives: what this forge is, where its bottleneck is right now, the open issues in public repositories labelled “help wanted” that welcome outside work, and how to propose (fork, pull, the gate it must pass). Open to every caller.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run: (ctx) => good(welcome(ctx.app)),
   },
   {
     name: "limits",

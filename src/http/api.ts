@@ -58,6 +58,8 @@ import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
 import { relationOf, takeUpdates } from "../actions/forks.ts";
+import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
+import { flowFor, historyFor, sourcesOut, systemFor, welcome } from "../system/telemetry.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
 import { markReaders, mayDirectCrew } from "../crew/direct.ts";
 import {
@@ -1324,6 +1326,26 @@ export function apiRoutes(router: Router<Handler>): void {
       ? undefined
       : forbidden();
   };
+
+  // Open read hooks (#1789): the owner, or an agent holding `telemetry:read`.
+  // Anyone else is refused; every agent read is logged.
+  const telemetryRead =
+    (what: string, out: (ctx: Ctx, reader: Reader) => unknown) =>
+    (ctx: Ctx): Response => {
+      if (!ctx.auth.user) return unauthorized();
+      const denied = requireScope(ctx, "ro");
+      if (denied) return denied;
+      const reader = telemetryReader(ctx.app, ctx.auth.user);
+      if (!reader) return forbidden();
+      noteRead(ctx.app, ctx.auth.user, reader, what);
+      return json(out(ctx, reader));
+    };
+  router.add("GET", "/api/v1/telemetry/system", telemetryRead("system", (c, r) => systemFor(c.app, r)));
+  router.add("GET", "/api/v1/telemetry/flow", telemetryRead("flow", (c, r) => flowFor(c.app, r)));
+  router.add("GET", "/api/v1/telemetry/sources", telemetryRead("sources", () => ({ sources: sourcesOut() })));
+  router.add("GET", "/api/v1/telemetry/history", telemetryRead("history", (c) => ({ points: historyFor(c.app) })));
+  // The funnel: what any agent that arrives should know. Open to all.
+  router.add("GET", "/api/v1/contribute", (ctx) => json(welcome(ctx.app)));
 
   router.add("GET", "/api/v1/boards/sources", (ctx) => {
     const denied = boardsAdmin(ctx);

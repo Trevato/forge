@@ -19,6 +19,8 @@
  * command and the MCP `flow` tool read too.
  */
 
+import { noteRead, telemetryReader } from "../../actions/telemetry.ts";
+import { queuesFor, systemFor } from "../../system/telemetry.ts";
 import { conflictedPulls, conflictedSays } from "../../flow/conflicted.ts";
 import {
   bottleneck,
@@ -41,6 +43,7 @@ import {
 } from "../../flow/throughput.ts";
 import { readQueues, type QueueRow } from "../../flow/queue.ts";
 import type { Ctx } from "../../http/context.ts";
+import { live } from "../../system/live.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -99,14 +102,17 @@ function outCell(t: StageThroughput): Html {
 // GET /flow
 export function flowPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
-  if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  const reader = telemetryReader(ctx.app, ctx.auth.user);
+  if (!reader) return notFoundPage(ctx);
+  noteRead(ctx.app, ctx.auth.user, reader, "flow");
   const now = Date.now();
   const stages = readPipeline(ctx.app.db, new Date(now));
   const worst = bottleneck(stages);
   const flow = readThroughput(ctx.app.db, stages.map((s) => s.key), new Date(now));
   const out = new Map(flow.stages.map((t) => [t.key, t]));
   const landed = out.get("approved");
-  const conflicted = conflictedSays(conflictedPulls(ctx.app.db), now);
+  const dups = systemFor(ctx.app, reader).duplicates;
+  const conflicted = conflictedSays(conflictedPulls(ctx.app.db, reader.kind === "agent"), now);
   const listed = asked(ctx.url);
   const shown = listed === null ? undefined : out.get(listed.key);
   const body = html`<div class="page-head">
@@ -116,7 +122,8 @@ export function flowPage(ctx: Ctx): Response {
         long its oldest has waited, and what limits it. The limits are set on
         <a href="/settings/capacity">Capacity</a> and in each repository's
         autonomy settings. How the forge stands against its threats is on
-        <a href="/resilience">Resilience</a>.
+        <a href="/resilience">Resilience</a>. Where an outside agent can
+        help is on <a href="/contribute">Contribute</a>.
       </p>
     </div>
     <p id="bottleneck" data-stage="${worst?.key ?? ""}">
@@ -131,6 +138,13 @@ export function flowPage(ctx: Ctx): Response {
       in 24 h · median ask→live
       <span data-median>${flow.medianAskToLiveMs === null ? "—" : hoursSpan(flow.medianAskToLiveMs)}</span>
       (24 h)
+    </p>
+    <p id="duplicate-work" data-count="${String(dups.length)}" class="${dups.length === 0 ? "muted" : ""}">
+      ${dups.length === 0
+        ? html`No test file is running in more than one check.`
+        : html`<strong>${String(dups.length)} test file${dups.length === 1 ? " is" : "s are"} running in more than one check:</strong>
+          ${dups.slice(0, 5).map((d) => html`<span class="mono small">${d.file} (${d.checks.join(", ")})</span> `)}`}
+      <a href="/system">System</a>
     </p>
     ${card(
       html`<div class="table-scroll">
@@ -169,7 +183,7 @@ export function flowPage(ctx: Ctx): Response {
       </div>`,
       { pad: false },
     )}
-    ${queueCard(readQueues(ctx.app.db, new Date(now)))}
+    ${queueCard(queuesFor(ctx.app, reader, new Date(now)))}
     ${listed === null || shown === undefined ? null : outList(shown, listed.hour, now)}`;
   return page({ ctx, title: "Flow", body, styleCss: css });
 }

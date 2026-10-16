@@ -12,7 +12,7 @@ import { createApp, type App } from "../src/app.ts";
 import { recordMemory } from "../src/boards/memory.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
-import { memoryLines, systemScreen } from "../src/tui/screens/system.ts";
+import { memoryLines, memoryScreen } from "../src/tui/screens/system.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
@@ -37,7 +37,7 @@ async function screenText(user?: User): Promise<string> {
   const terminal = headlessTerminal(120, 30);
   const { app: tui, session } = createForgeApp(app, identity(user), { terminal, exitHooks: false });
   tui.start();
-  tui.ctx.push(systemScreen(session, tui.ctx));
+  tui.ctx.push(memoryScreen(session, tui.ctx));
   await settleApp(tui);
   const text = tui.screen.toText();
   tui.stop?.();
@@ -87,13 +87,13 @@ describe("tui system memory", () => {
     const text = await screenText(carol);
     expect(text).toContain("123.0");
     expect(text).toContain("45.0");
-    expect(doors(carol)).toContain("system");
+    expect(doors(carol)).toContain("system-memory");
   });
 
   test("nobody else has rows or the door", async () => {
     for (const who of [bob, bot, undefined]) {
       expect(memoryLines(new Session(app, identity(who)))).toEqual([]);
-      expect(doors(who)).not.toContain("system");
+      expect(doors(who)).not.toContain("system-memory");
       expect(await screenText(who)).not.toContain("123.0");
     }
   });

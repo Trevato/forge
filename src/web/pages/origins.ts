@@ -81,6 +81,7 @@ export type AccountSection =
   | "backups"
   | "secrets"
   | "capacity"
+  | "telemetry"
   | "access"
   | "resilience"
   | "limits"
@@ -135,6 +136,12 @@ export function accountSections(
             href: "/settings/capacity",
             icon: "activity" as const,
             current: current === "capacity",
+          },
+          {
+            label: "Telemetry",
+            href: "/settings/telemetry",
+            icon: "activity" as const,
+            current: current === "telemetry",
           },
           {
             label: "Access",

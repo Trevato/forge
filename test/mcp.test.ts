@@ -209,6 +209,8 @@ describe("the forge over MCP", () => {
       "access",
       "capacity",
       "flow",
+      "system",
+      "contribute",
       "limits",
       "quotas",
       "boards",

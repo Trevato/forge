@@ -11,11 +11,13 @@ import { unsealReleased } from "../actions/sealed.ts";
 import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { flowPage } from "../web/pages/flow.ts";
+import { systemPage } from "../web/pages/system.ts";
+import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
+import { contributePage } from "../web/pages/contribute.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
 import { domainsPage } from "../web/pages/domains.ts";
 import { resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet } from "../web/pages/admin-limits.ts";
-import { systemPage } from "../web/pages/system.ts";
 import { boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost } from "../web/pages/boards-edit.ts";
 import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
@@ -667,6 +669,10 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/map", globalMapPage);
   // The pipeline's stages and its bottleneck, for a forge admin (#1554); literal, above /:owner.
   router.add("GET", "/flow", flowPage);
+  router.add("GET", "/system", systemPage);
+  router.add("GET", "/contribute", contributePage);
+  router.add("GET", "/settings/telemetry", telemetryPage);
+  router.add("POST", "/settings/telemetry", telemetrySet);
   // Each THREATS.md protection against the last gate; literal, above /:owner.
   router.add("GET", "/resilience", resiliencePage);
   // A selection's spend and runs over time; literal, above /:owner.
@@ -745,7 +751,6 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings/resilience", domainsPage);
   router.add("GET", "/settings/capacity", capacityPage);
   router.add("POST", "/settings/capacity", capacitySet);
-  router.add("GET", "/system", systemPage);
   router.add("GET", "/boards", boardsList);
   router.add("GET", "/boards/data", boardsPage);
   router.add("POST", "/boards/new", boardNew);

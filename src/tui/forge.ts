@@ -24,13 +24,13 @@ import {
   ORIGIN_MARK,
   PULL_MARK,
   errorText,
+  pickerScreen,
   promptScreen,
   openOnWeb,
   runAsync,
 } from "./screens/common.ts";
 import { canSeeMemory } from "../boards/memory.ts";
 import { boardsScreen } from "./screens/boards.ts";
-import { systemScreen } from "./screens/system.ts";
 import { askedScreen } from "./screens/asked.ts";
 import { deciderScreen } from "./screens/decider.ts";
 import { familyScreen } from "./screens/family.ts";
@@ -45,6 +45,11 @@ import { flagsScreen } from "./screens/flags.ts";
 import { domainsScreen } from "./screens/domains.ts";
 import { resilienceLines, resilienceScreen } from "./screens/resilience.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
+import { memoryScreen, systemLines, systemScreen } from "./screens/system.ts";
+import { grantable, READS_KEPT, recentReads } from "../core/telemetry.ts";
+import { noteRead, setTelemetryGrant, telemetryReader } from "../actions/telemetry.ts";
+import { queuesFor, systemFor } from "../system/telemetry.ts";
+import { live as liveMachine } from "../system/live.ts";
 import { releasesScreen } from "./screens/releases.ts";
 import { mayRead } from "../release/gate.ts";
 import { stalledScreen } from "./screens/stalled.ts";
@@ -235,19 +240,70 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
     // The forge's RSS beside its JS heap, as /system gates it (#2151).
     if (canSeeMemory(session.user))
       commands.push({
-        id: "system",
+        id: "system-memory",
         title: "System memory",
         hint: "RSS beside the JS heap, hourly for 24 h",
-        run: () => ctx.push(systemScreen(session, ctx)),
+        run: () => ctx.push(memoryScreen(session, ctx)),
       });
     // The pipeline's bottleneck and throughput, as /flow says them: a site admin's (#1554, #1786).
-    if (session.user?.isAdmin === true)
+    const flowReader = telemetryReader(session.app, session.user);
+    if (flowReader)
       commands.push({
         id: "flow",
         title: "Flow",
         hint: "the pipeline's bottleneck and throughput",
-        run: () => ctx.push(flowScreen(ctx, flowLines(session.db))),
+        run: () => {
+          if (session.user) noteRead(session.app, session.user, flowReader, "flow");
+          ctx.push(flowScreen(ctx, flowLines(
+              session.db,
+              new Date(),
+              systemFor(session.app, flowReader).duplicates,
+              flowReader.kind === "agent" ? { queues: queuesFor(session.app, flowReader) } : undefined,
+            )));
+        },
       });
+    // The machine, as /system says it, and which agents may read it: the owner's, a person (#1789).
+    if (session.user?.isAdmin === true && session.user.kind !== "agent") {
+      commands.push({
+        id: "system",
+        title: "System",
+        hint: "the machine now: CPU, memory, disks, processes",
+        run: () => ctx.push(systemScreen(ctx, systemLines(liveMachine().read()))),
+      });
+      commands.push({
+        id: "telemetry",
+        title: "Telemetry",
+        hint: "which agents may read flow and system; enter flips the grant",
+        run: () => {
+          const actor = session.user;
+          const agents = grantable(session.db);
+          if (agents.length === 0) return ctx.toast("No agent accounts yet");
+          const last = new Map<string, { n: number; what: string; at: string }>();
+          for (const r of recentReads(session.db, READS_KEPT).reverse()) {
+            last.set(r.username, { n: (last.get(r.username)?.n ?? 0) + 1, what: r.what, at: r.at });
+          }
+          const readsOf = (name: string): string => {
+            const l = last.get(name);
+            return l ? `${l.n} read${l.n === 1 ? "" : "s"}, last ${l.what} ${l.at}` : "no reads";
+          };
+          ctx.push(
+            pickerScreen(ctx, blank("Telemetry"), {
+              title: "Telemetry: telemetry:read",
+              items: agents.map((a) => ({ id: a.username, label: a.username, hint: `${a.granted ? "granted" : "not granted"} · ${readsOf(a.username)}` })),
+              onPick: ([name]) => {
+                const was = agents.find((a) => a.username === name);
+                if (!was) return;
+                const done = setTelemetryGrant(session.app, actor, was.username, !was.granted);
+                ctx.toast(
+                  done.ok ? `${was.username}: telemetry:read ${done.value.on ? "granted" : "revoked"}` : "Could not change the grant",
+                  done.ok ? "success" : "attn",
+                );
+              },
+            }),
+          );
+        },
+      });
+    }
     // Each THREATS.md protection's standing, as /resilience says it: a site admin's.
     if (session.user?.isAdmin === true)
       commands.push({

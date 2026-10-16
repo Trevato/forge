@@ -806,3 +806,10 @@ function tick(): void {
     }
   }
 }
+
+/** The root process of every labelled cell being watched, for grouping the process table by what launched it (`system/view.ts`). */
+export function cellRoots(): { label: string; root: number }[] {
+  const out: { label: string; root: number }[] = [];
+  for (const e of watched) if (e.label !== undefined) out.push({ label: e.label, root: e.root });
+  return out;
+}
