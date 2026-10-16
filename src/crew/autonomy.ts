@@ -1002,6 +1002,35 @@ export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   return landed;
 }
 
+/** The sweep each repository has in flight, by repository id. */
+const sweeping = new Map<string, Promise<number>>();
+
+/**
+ * Starts the green sweep beside the tick, never in front of it: a landing
+ * gate takes minutes, and builders are picked meanwhile (#2015). One sweep
+ * per repository is in flight — a tick that finds one running returns it
+ * rather than start a second. Never rejects; a failure is logged.
+ */
+export function startSweep(
+  app: App,
+  repo: Repo,
+  sweep: (app: App, repo: Repo) => Promise<number> = sweepGreen,
+): Promise<number> {
+  const running = sweeping.get(repo.id);
+  if (running) return running;
+  const started = sweep(app, repo)
+    .catch((error) => {
+      log.error("green sweep failed", {
+        repo: `${repo.ownerName}/${repo.name}`,
+        error: String(error),
+      });
+      return 0;
+    })
+    .finally(() => sweeping.delete(repo.id));
+  sweeping.set(repo.id, started);
+  return started;
+}
+
 /** The label every direction issue's title starts with. Read elsewhere to
  * find a repository's standing direction — keep it exactly as it is. */
 const DIRECTION_PREFIX = "Direction: ";
@@ -1047,11 +1076,15 @@ export function ensureDirectionIssue(
 }
 
 /** Every repository that runs on its own, one turn each. */
-export async function autonomyTick(app: App, now = new Date()): Promise<void> {
+export async function autonomyTick(
+  app: App,
+  now = new Date(),
+  sweep: (app: App, repo: Repo) => Promise<number> = sweepGreen,
+): Promise<void> {
   if (crewOffInPreview()) return;
   for (const repo of listAutonomousRepos(app.db)) {
     try {
-      await sweepGreen(app, repo);
+      void startSweep(app, repo, sweep);
       const current = getRepoById(app.db, repo.id) ?? repo;
       const did = await driveRepo(app, current, now);
       // Every tick says what it did and why, so an app that sits still is
