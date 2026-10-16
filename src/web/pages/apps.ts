@@ -12,6 +12,7 @@
  * 404 for everyone.
  */
 
+import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { appLimitWords } from "../../actions/app_limit.ts";
 import { getUserByName } from "../../core/users.ts";
 import {
@@ -419,7 +420,9 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
         body: newAppForm(
           ctx,
           values,
-          made.error === "app_limit" && ownerId !== undefined
+          made.error === "repository_limit"
+            ? `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user!)}.`
+            : made.error === "app_limit" && ownerId !== undefined
             ? appLimitWords(ctx.app, ownerId)
             : (NEW_APP_ERRORS[made.error] ?? "That app could not be created."),
         ),

@@ -7,6 +7,7 @@
  * Every mutation is `migrateRepo`; the page only puts its answer into words.
  */
 
+import { repositoryLimitMessage } from "../../actions/repos.ts";
 import { listAllAgents } from "../../actions/crew.ts";
 import {
   migrateMessage,
@@ -354,7 +355,9 @@ export async function migrateSubmit(ctx: Ctx): Promise<Response> {
   if (!started.ok) {
     if (started.error === "forbidden_owner" || started.error === "unauthorized")
       return new Response("forbidden", { status: 403 });
-    return again(migrateMessage(started.error));
+    return again(
+      migrateMessage(started.error, repositoryLimitMessage(ctx.app, ctx.auth.user!)),
+    );
   }
   return redirect(`/migrate/jobs/${started.value.job.id}`);
 }

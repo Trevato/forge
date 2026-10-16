@@ -42,7 +42,7 @@ import { isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireAppRoom, appLimitWords } from "./app_limit.ts";
 import { enableApp } from "./apps.ts";
-import { FORKS_PER_DAY, forkRepo } from "./repos.ts";
+import { FORKS_PER_DAY, forkRepo, repositoryLimitMessage } from "./repos.ts";
 
 export interface MakeItYoursPlan {
   readonly dryRun: boolean;
@@ -69,7 +69,9 @@ export type MakeItYoursError =
   | { readonly kind: "own" }
   /** Today's copies are made; another may be made from `resetsAt`. */
   | { readonly kind: "limit"; readonly resetsAt: string }
-  | { readonly kind: "invalid"; readonly message: string };
+  | { readonly kind: "invalid"; readonly message: string }
+  /** The owner's repositories limit is reached: `message` says "10 of 10 repositories". */
+  | { readonly kind: "repository_limit"; readonly message: string };
 
 export const COPIED = ["the code", "its history"] as const;
 export const NOT_COPIED = [
@@ -228,6 +230,8 @@ export async function makeItYours(
         });
       case "limit":
         return err({ kind: "limit", resetsAt: resetsAt(app, actor.id, now) });
+      case "repository_limit":
+        return err({ kind: "repository_limit", message: repositoryLimitMessage(app, actor) });
       default:
         return err({
           kind: "invalid",

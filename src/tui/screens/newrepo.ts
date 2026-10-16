@@ -3,7 +3,7 @@
  * because the next thing anyone does is look at it.
  */
 
-import { createRepo, forkRepo } from "../../actions/repos.ts";
+import { createRepo, forkRepo, repositoryLimitMessage } from "../../actions/repos.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
 import type { Repo } from "../../core/repos.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -42,7 +42,10 @@ export function newRepoScreen(f: Session, ctx: Ctx, owner?: string): Screen {
         visibility,
       });
       if (!created.ok) {
-        error = errorText(created.error);
+        error =
+          created.error === "repository_limit"
+            ? `not made: ${repositoryLimitMessage(f.app, f.user!)}`
+            : errorText(created.error);
         ctx.toast(error, "danger");
         return;
       }
@@ -154,7 +157,10 @@ export function forkScreen(f: Session, ctx: Ctx, parent: Repo): Screen {
     runAsync(ctx, async () => {
       const forked = await forkRepo(f.app, f.user, parent, name);
       if (!forked.ok) {
-        error = errorText(forked.error);
+        error =
+          forked.error === "repository_limit"
+            ? `not made: ${repositoryLimitMessage(f.app, f.user!)}`
+            : errorText(forked.error);
         ctx.toast(error, "danger");
         return;
       }

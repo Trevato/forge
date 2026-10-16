@@ -9,15 +9,22 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { newApp } from "../src/actions/apps.ts";
+import { createAgent } from "../src/actions/crew.ts";
+import { makeItYours } from "../src/actions/make_it_yours.ts";
+import { createRepo, forkRepo } from "../src/actions/repos.ts";
+import { getRepo } from "../src/core/repos.ts";
+import { mirrorAndWait, newFakeState, serveFakeForge } from "./fake-origin.ts";
+import { proveAll } from "./helpers/verified.ts";
 import { getQuotas, quotaChanges } from "../src/settings/quotas.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { newApp } from "../src/actions/apps.ts";
-import { createRepo } from "../src/actions/repos.ts";
-import { makeItYours } from "../src/actions/make_it_yours.ts";
-import { getRepo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { createForgeApp } from "../src/tui/forge.ts";
+import { newRepoScreen } from "../src/tui/screens/newrepo.ts";
+import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { settleApp } from "./helpers/tui.ts";
 
 describe("quotas", () => {
   let dataDir: string;
@@ -315,5 +322,174 @@ describe("quotas", () => {
     } finally {
       await api(admin, "PATCH", { quotas: { apps: null } });
     }
+  });
+});
+
+describe("the repositories limit", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let admin: string;
+  let fresh: string;
+  let freshUser: User;
+  let boss: User;
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-quotas-limit-"));
+    app = createApp({ dataDir, port: 0 });
+    servers = await serve(app);
+    const users: User[] = [];
+    for (const username of ["boss", "fresh"]) {
+      const made = await createUser(app.db, {
+        trusted: true,
+        username,
+        email: `${username}@forge.local`,
+        password: "a-good-passphrase",
+        adminIfFirst: username === "boss",
+      });
+      if (!made.ok) throw new Error(made.error);
+      users.push(made.value);
+    }
+    freshUser = users[1]!;
+    boss = users[0]!;
+    admin = createToken(app.db, users[0]!.id, "t", "admin").token;
+    fresh = createToken(app.db, freshUser.id, "t", "rw").token;
+  });
+  afterAll(async () => {
+    await servers.stop();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const post = (token: string, path: string, body: unknown) =>
+    fetch(`${servers.url}${path}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const setLimit = (value: number | null) =>
+    fetch(`${servers.url}/api/v1/admin/settings`, {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${admin}`, "content-type": "application/json" },
+      body: JSON.stringify({ quotas: { repositories: value } }),
+    });
+
+  test("past the limit create and fork are refused with the sentence; admins and no limit are free", async () => {
+    // No limit: nothing changes.
+    expect((await post(admin, "/api/v1/repos", { name: "base", visibility: "public" })).status).toBe(201);
+    expect((await setLimit(2)).status).toBe(200);
+
+    for (const name of ["one", "two"])
+      expect((await post(fresh, "/api/v1/repos", { name })).status).toBe(201);
+    const third = await post(fresh, "/api/v1/repos", { name: "three" });
+    expect(third.status).toBe(403);
+    expect(await third.json()).toMatchObject({
+      error: "repository_limit",
+      message: "2 of 2 repositories",
+    });
+    const fork = await post(fresh, "/api/v1/repos/boss/base/forks", {});
+    expect(fork.status).toBe(403);
+    expect(((await fork.json()) as any).message).toBe("2 of 2 repositories");
+
+    // The owner (an admin) is never limited.
+    for (const name of ["a", "b", "c"])
+      expect((await post(admin, "/api/v1/repos", { name })).status).toBe(201);
+
+    // Clearing the limit lets the fresh account make one more.
+    expect((await setLimit(null)).status).toBe(200);
+    expect((await post(fresh, "/api/v1/repos", { name: "three" })).status).toBe(201);
+  });
+  test("a copy and a mirror say the sentence; an agent is not held to it", async () => {
+    // alice's public app, owned by the admin, for the copy.
+    const made = await newApp(app, boss, { name: "garden", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    expect((await setLimit(2)).status).toBe(200);
+    // fresh owns three here, so it is over the line.
+    const copy = await makeItYours(app, freshUser, made.value.repo, { dryRun: false });
+    expect(copy.ok).toBe(false);
+    if (!copy.ok) expect(copy.error).toEqual({ kind: "repository_limit", message: "3 of 2 repositories" });
+    const viaApi = await post(fresh, "/api/v1/repos/boss/garden/make-it-yours", { dryRun: false });
+    expect(viaApi.status).toBe(403);
+    expect(((await viaApi.json()) as any).message).toBe("3 of 2 repositories");
+
+    // A mirror is a repository too.
+    const state = newFakeState("forgejo", "someone", "tok");
+    state.repos.push({
+      id: 1,
+      fullName: "someone/gears",
+      cloneUrl: "http://127.0.0.1:1/someone/gears.git",
+      defaultBranch: "main",
+    });
+    const fake = serveFakeForge(state);
+    try {
+      proveAll(app);
+      const freshAdmin = createToken(app.db, freshUser.id, "o", "admin").token;
+      const connected = await post(freshAdmin, "/api/v1/user/origins", { host: fake.url, token: "tok" });
+      expect(connected.status).toBe(201);
+      const originId = ((await connected.json()) as { id: string }).id;
+      const job = await mirrorAndWait(
+        await post(freshAdmin, `/api/v1/user/origins/${originId}/mirror`, { fullName: "someone/gears" }),
+      );
+      expect(job?.stage).toBe("failed");
+      expect(job?.error).toBe("Not mirrored: 3 of 2 repositories.");
+    } finally {
+      fake.stop();
+    }
+
+    // An agent is held to nothing: it forks per issue to work.
+    const agent = await createAgent(app, boss, { username: "worker" });
+    if (!agent.ok) throw new Error(String(agent.error));
+    const forked = await forkRepo(app, agent.value.user, getRepo(app.db, "boss", "garden")!);
+    expect(forked.ok).toBe(true);
+
+    expect((await setLimit(null)).status).toBe(200);
+  });
+  test("owning exactly the limit is refused with 'N of N'; the pages and the terminal say so too", async () => {
+    const made = await createUser(app.db, {
+      trusted: true,
+      username: "exact",
+      email: "exact@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!made.ok) throw new Error(made.error);
+    const exact = made.value;
+    expect((await setLimit(2)).status).toBe(200);
+    for (const name of ["x1", "x2"]) expect((await createRepo(app, exact, { name })).ok).toBe(true);
+
+    const refused = await createRepo(app, exact, { name: "x3" });
+    expect(refused).toEqual({ ok: false, error: "repository_limit" });
+
+    // The new-repository page: a 422 with the sentence on the form.
+    const cookie = `forge_session=${createSession(app.db, exact.id).token}`;
+    const form = await fetch(`${servers.url}/new`, {
+      method: "POST",
+      headers: { cookie, origin: servers.url },
+      body: new URLSearchParams({ owner: "exact", name: "x3" }),
+      redirect: "manual",
+    });
+    expect(form.status).toBe(422);
+    expect(await form.text()).toContain("Not made: 2 of 2 repositories.");
+    expect(getRepo(app.db, "exact", "x3")).toBeUndefined();
+
+    // The terminal's new-repository screen: the same sentence, as a toast.
+    const terminal = headlessTerminal(120, 30);
+    const { app: tui, session } = createForgeApp(
+      app,
+      { sshUsername: "exact", remoteAddress: "127.0.0.1", fingerprint: "SHA256:exact", user: exact },
+      { terminal, exitHooks: false },
+    );
+    tui.start();
+    try {
+      tui.ctx.push(newRepoScreen(session, tui.ctx));
+      await settleApp(tui);
+      for (const ch of "x3")
+        tui.dispatch({ type: "key", key: ch, ctrl: false, alt: false, shift: false });
+      tui.dispatch({ type: "key", key: "d", ctrl: true, alt: false, shift: false });
+      await settleApp(tui);
+      expect(tui.screen.toText()).toContain("not made: 2 of 2 repositories");
+    } finally {
+      tui.stop();
+    }
+    expect(getRepo(app.db, "exact", "x3")).toBeUndefined();
+    expect((await setLimit(null)).status).toBe(200);
   });
 });

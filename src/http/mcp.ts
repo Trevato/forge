@@ -1394,6 +1394,8 @@ const TOOLS: readonly Tool[] = [
       if (!made.ok)
         return made.error.kind === "limit"
           ? bad("limit", `at most ${COPIES_PER_DAY} copies a day; another after ${made.error.resetsAt}`)
+          : made.error.kind === "repository_limit"
+          ? bad("repository_limit", made.error.message)
           : made.error.kind === "invalid"
           ? bad("invalid", made.error.message)
           : made.error.kind === "own"

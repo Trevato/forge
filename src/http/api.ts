@@ -135,6 +135,7 @@ import {
   deleteWebhook,
   FORKS_PER_DAY,
   forkRepo,
+  repositoryLimitMessage,
   privateRepoForSealed,
   updateRepoSettings,
 } from "../actions/repos.ts";
@@ -1898,6 +1899,8 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!created.ok) {
       if (created.error === "forbidden_owner")
         return json({ error: "forbidden_owner" }, 403);
+      if (created.error === "repository_limit")
+        return apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!));
       return respondAccess(created.error, 422);
     }
     return json(created.value, 201);
@@ -2008,7 +2011,9 @@ export function apiRoutes(router: Router<Handler>): void {
       str(input.name) || undefined,
     );
     if (!forked.ok)
-      return forked.error === "limit"
+      return forked.error === "repository_limit"
+        ? apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!))
+        : forked.error === "limit"
         ? apiError("limit", 429, `at most ${FORKS_PER_DAY} forks a day: try again tomorrow`)
         : respondAccess(forked.error, 422);
     return json(forked.value, 201);
@@ -4264,6 +4269,8 @@ export function apiRoutes(router: Router<Handler>): void {
             },
             429,
           )
+        : made.error.kind === "repository_limit"
+        ? apiError("repository_limit", 403, made.error.message)
         : made.error.kind === "invalid"
         ? apiError("invalid", 422, made.error.message)
         : made.error.kind === "own"
@@ -4393,6 +4400,8 @@ export function apiRoutes(router: Router<Handler>): void {
       ...(typeof input.agent === "string" ? { agent: input.agent } : {}),
     });
     if (!made.ok) {
+      if (made.error === "repository_limit")
+        return apiError("repository_limit", 403, repositoryLimitMessage(ctx.app, ctx.auth.user!));
       if (made.error === "app_limit")
         return appLimitResponse(
           ctx,
@@ -4467,7 +4476,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!started.ok)
       return started.error === "unauthorized"
         ? respondAccess(started.error, 401)
-        : apiError(started.error, 422, migrateMessage(started.error));
+        : apiError(started.error, 422, migrateMessage(started.error, repositoryLimitMessage(ctx.app, ctx.auth.user!)));
     return json(
       {
         repo: repoJson(ctx, started.value.repo),

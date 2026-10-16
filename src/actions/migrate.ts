@@ -170,7 +170,7 @@ export function migrationJobFor(
 }
 
 /** A refusal in words a person can act on. */
-export function migrateMessage(error: MigrateError): string {
+export function migrateMessage(error: MigrateError, limit = "at the repositories limit"): string {
   switch (error) {
     case "invalid_url":
       return "That is not a URL this forge will clone from. Paste an https:// (or http://, git://) address of a public repository, with no password in it.";
@@ -196,6 +196,8 @@ export function migrateMessage(error: MigrateError): string {
       return "Verify your email first: follow the link we sent, or ask for another under Settings.";
     case "refused":
       return "New accounts cannot create repositories yet.";
+    case "repository_limit":
+      return `Not made: ${limit}.`;
   }
 }
 

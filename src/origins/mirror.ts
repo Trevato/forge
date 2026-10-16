@@ -25,6 +25,7 @@ import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { bustOrigin } from "../view/cache.ts";
 import { providerForOrigin } from "./credential.ts";
+import { repositoryLimitMessage, repositoryLimitRefusal } from "../actions/repos.ts";
 import { redact, safeRemoteUrl } from "./credentials.ts";
 import { adoptDefaultBranch, configureMirror } from "./git-mirror.ts";
 import { advance, createJob, runningJob, type MirrorJob } from "./jobs.ts";
@@ -37,7 +38,8 @@ export type MirrorError =
   | "name_taken"
   | "already_mirrored"
   | "git_init_failed"
-  | "unreachable";
+  | "unreachable"
+  | "repository_limit";
 
 export interface MirrorResult {
   readonly repo: Repo;
@@ -118,6 +120,10 @@ export async function mirrorRepo(
   const wanted = name ?? remote.name;
   const chosen = availableName(app, actor.id, wanted, origin);
   if (chosen === undefined) return err("name_taken");
+
+  // A mirror is a repository the account owns: the repositories limit asks
+  // here as it does at create and fork (#2093).
+  if (repositoryLimitRefusal(app, actor) !== undefined) return err("repository_limit");
 
   const created = await createRepo(app.db, app.reposRoot, {
     ownerId: actor.id,
@@ -228,7 +234,10 @@ export function startMirror(
         advance(job.id, {
           stage: "failed",
           detail: "",
-          error: mirrorMessage(result.error),
+          error:
+            result.error === "repository_limit"
+              ? `Not mirrored: ${repositoryLimitMessage(app, actor)}.`
+              : mirrorMessage(result.error),
         });
         return;
       }
@@ -284,6 +293,8 @@ export function mirrorMessage(error: MirrorError): string {
       return "the local repository could not be created";
     case "unreachable":
       return "the origin could not be reached";
+    case "repository_limit":
+      return "this account is at the forge's repositories limit";
   }
 }
 

@@ -3,8 +3,8 @@
  * `forge_setting` under `quota.<key>`, and every change is kept in
  * `forge_setting_change` (who, when, from what to what). The default for
  * each is no limit (`null`), and creating an app asks the apps limit
- * (`actions/app_limit.ts`); repositories are not enforced yet. Room for more
- * keys is the `QUOTA_KEYS` list.
+ * (`actions/app_limit.ts`); creating, forking and copying a repository ask the
+ * repositories limit first (`actions/repos.ts`). Room for more keys is the `QUOTA_KEYS` list.
  */
 
 import type { Database } from "bun:sqlite";
@@ -47,6 +47,25 @@ export function getQuota(db: Database, key: QuotaKey): number | null {
 
 export function getQuotas(db: Database): Quotas {
   return { repositories: getQuota(db, "repositories"), apps: getQuota(db, "apps") };
+}
+
+/** Repositories an account owns, a sealed fork (nobody's to count) aside. */
+export function repositoriesOwned(db: Database, ownerId: string): number {
+  return (
+    db
+      .query<{ n: number }, [string]>(
+        "SELECT count(*) AS n FROM repo WHERE owner_id = ?1 AND sealed_for IS NULL",
+      )
+      .get(ownerId)?.n ?? 0
+  );
+}
+
+/** The sentence a refused creation says, or nothing when there is room. */
+export function repositoryLimitSentence(db: Database, ownerId: string): string | undefined {
+  const limit = getQuota(db, "repositories");
+  if (limit === null) return undefined;
+  const owned = repositoriesOwned(db, ownerId);
+  return owned >= limit ? `${owned} of ${limit} repositories` : undefined;
 }
 
 /** Set `key` (`null` clears it) and keep the change. */

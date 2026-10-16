@@ -9,6 +9,7 @@ import type { App } from "../app.ts";
 import { canSeeSealed } from "../core/sealed.ts";
 import { capacityValue } from "../core/capacity.ts";
 import { NEW_FOR_MS } from "./accounts.ts";
+import { repositoryLimitSentence } from "../settings/quotas.ts";
 import {
   createLabel as insertLabel,
   deleteLabel as removeLabel,
@@ -69,7 +70,27 @@ export type CreateRepoActionError =
   | CreateRepoError
   | "unauthorized"
   | "forbidden_owner"
-  | "refused";
+  | "refused"
+  | "repository_limit";
+
+/**
+ * The repositories limit (#2093): when the owner has set one, an account at
+ * it makes no more, by create, fork or copy. Admins and agents are not held
+ * to it. Only a repository the account owns itself is counted and asked: creating
+ * under an organisation is not, since the quota is per account. Returns the refusal sentence ("10 of 10 repositories") or nothing.
+ */
+export function repositoryLimitRefusal(app: App, user: User, ownerId = user.id): string | undefined {
+  if (user.isAdmin || user.kind === "agent") return undefined;
+  return repositoryLimitSentence(app.db, ownerId);
+}
+
+/**
+ * The sentence for a refusal just given. Always words: if a repository went
+ * between the refusal and now, it still says the limit was the reason.
+ */
+export function repositoryLimitMessage(app: App, user: User, ownerId = user.id): string {
+  return repositoryLimitRefusal(app, user, ownerId) ?? "at the repositories limit";
+}
 
 /**
  * The new-account guard (`guard_new_accounts`): when it is on, an account
@@ -117,6 +138,8 @@ export async function createRepo(
   if (!guarded.ok) return guarded;
   const ownerId = resolveOwner(app, user.value, input.owner ?? "");
   if (ownerId === undefined) return err("forbidden_owner");
+  if (ownerId === user.value.id && repositoryLimitRefusal(app, user.value) !== undefined)
+    return err("repository_limit");
   const created = await initRepo(app.db, app.reposRoot, {
     ownerId,
     name: input.name,
@@ -148,13 +171,14 @@ export async function forkRepo(
   parent: Repo,
   name?: string,
   options: { visibility?: "public" | "private"; now?: number } = {},
-): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified" | "refused">> {
+): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified" | "refused" | "repository_limit">> {
   const user = requireParticipant(app, actor, parent);
   if (!user.ok) return user;
   const proven = requireVerified(app, user.value);
   if (!proven.ok) return proven;
   const guarded = requireNewAccountGuard(app, user.value);
   if (!guarded.ok) return guarded;
+  if (repositoryLimitRefusal(app, user.value) !== undefined) return err("repository_limit");
   const forked = await cloneRepo(
     app.db,
     app.reposRoot,
