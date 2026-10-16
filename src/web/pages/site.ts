@@ -12,7 +12,7 @@ import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { limitValue } from "../../settings/limits.ts";
 import { signOutHere } from "../../actions/signins.ts";
-import { bucketOf, clientAddress } from "../../http/peer.ts";
+import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../../actions/repos.ts";
@@ -29,6 +29,7 @@ import { homeTop } from "../studio/asks_page.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
+import { signupWindow } from "../../actions/signup-window.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
 import { field, readForm } from "../form.ts";
 import { passkeyJs } from "../passkey-client.ts";
@@ -458,29 +459,12 @@ export function signinAllowed(ctx: Ctx, username: string): number | undefined {
 }
 
 /**
- * Sign-ups, throttled the same way, by the socket's peer (`clientAddress`,
- * which reads a forwarding header only from a proxy the operator trusts):
- * a source may make a few accounts a minute and the forge as a whole more.
- * Asked by the signup form and the API signup, which share one window; the
- * passkey door follows (#2322). A refused call is not counted.
+ * Sign-ups by the socket's peer (`actions/signup-window.ts`), asked by the
+ * signup form, the API signup and the terminal's create screen, which share
+ * one window; the passkey door follows (#2322).
  */
-const signupLimits = new WeakMap<Ctx["app"], RateLimiter>();
-
 export function signupAllowed(ctx: Ctx): number | undefined {
-  let limiter = signupLimits.get(ctx.app);
-  if (limiter === undefined) {
-    limiter = new RateLimiter({ perMinute: 0, adminPerMinute: 0, enabled: true });
-    signupLimits.set(ctx.app, limiter);
-  }
-  limiter.setLimits({
-    perMinute: limitValue(ctx.app.db, "signup.per_source"),
-    adminPerMinute: limitValue(ctx.app.db, "signup.per_forge"),
-    enabled: true,
-  });
-  const one = limiter.take(`source:${bucketOf(clientAddress(ctx.request))}`, "ro");
-  if (!one.allowed) return one.retryAfter;
-  const whole = limiter.take("forge", "admin");
-  return whole.allowed ? undefined : whole.retryAfter;
+  return signupWindow(ctx.app, clientAddress(ctx.request));
 }
 
 export async function signinSubmit(ctx: Ctx): Promise<Response> {

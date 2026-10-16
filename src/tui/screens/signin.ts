@@ -9,6 +9,7 @@
  */
 
 import { SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
+import { signupWindow, waitText } from "../../actions/signup-window.ts";
 import { hasAnyUser } from "../../core/users.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -66,6 +67,11 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
             string,
             string,
           ];
+          const wait = signupWindow(f.app, f.identity.remoteAddress);
+          if (wait !== undefined) {
+            error = waitText(wait);
+            return;
+          }
           const created = await signUp(
             f.app,
             { username, email, password },
