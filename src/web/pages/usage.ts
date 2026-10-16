@@ -1,0 +1,64 @@
+/**
+ * Usage, for a forge admin: every route pattern the router knows with its
+ * requests over the last 30 days by role and by surface. The unused ones
+ * come first, each with its last use or "never": candidates to drop.
+ * Anyone else is told 403, and an agent is never an admin here.
+ */
+
+import { mayManageFlags } from "../../core/flags.ts";
+import { ROLES, SURFACES } from "../../core/usage_count.ts";
+import { routeUsage, WINDOW_DAYS } from "../../core/usage_report.ts";
+import type { Ctx } from "../../http/context.ts";
+import { settingsLayout, signInFirst } from "../chrome.ts";
+import { html } from "../html.ts";
+import { page } from "../layout.ts";
+import { btn, card, empty, icon } from "../ui.ts";
+import { accountSections } from "./origins.ts";
+
+const part = (counts: Readonly<Record<string, number>>, keys: readonly string[]) =>
+  keys.map((k) => `${k} ${counts[k] ?? 0}`).join(" · ");
+
+// GET /settings/usage
+export function usagePage(ctx: Ctx, patterns: () => readonly string[]): Response {
+  const user = ctx.auth.user;
+  if (!user) return signInFirst(ctx);
+  if (!mayManageFlags(user))
+    return page(
+      {
+        ctx,
+        title: "Forbidden",
+        body: html`<div class="page-head"><h1>403</h1></div>
+          ${empty({
+            icon: "lock",
+            title: "Admins only",
+            note: "Usage is read by a forge admin.",
+            action: btn("Go home", { href: "/", variant: "primary" }),
+          })}`,
+      },
+      403,
+    );
+  const rows = routeUsage(ctx.app.db, patterns(), new Date());
+  const unused = rows.filter((r) => r.total === 0).length;
+  const body = card(
+    html`<p class="muted small card-body">${String(unused)} of ${String(rows.length)} routes had no request in
+        ${String(WINDOW_DAYS)} days; they are listed first. Counted by <code>usage_count</code>; one pattern
+        covers every method.</p>
+      <table class="table" aria-label="Route usage">
+        <thead><tr><th scope="col">Pattern</th><th scope="col" class="num">${String(WINDOW_DAYS)} days</th>
+          <th scope="col">By role</th><th scope="col">By surface</th><th scope="col">Last use (UTC)</th></tr></thead>
+        <tbody>${rows.map(
+          (r) => html`<tr data-unused="${r.total === 0 ? "1" : "0"}">
+            <td class="mono">${r.pattern}</td><td class="num mono">${String(r.total)}</td>
+            <td class="mono small">${part(r.roles, ROLES)}</td><td class="mono small">${part(r.surfaces, SURFACES)}</td>
+            <td class="mono">${r.last === null ? "never" : r.last.replace("T", " ") + ":00"}</td></tr>`,
+        )}</tbody>
+      </table>`,
+    { head: html`${icon("activity")}<h2>Usage</h2>`, pad: false },
+  );
+  return page({
+    ctx,
+    title: "Usage",
+    body: html`<div class="page-head"><h1>Usage</h1></div>
+      ${settingsLayout(accountSections("usage", { admin: true }), body, "Account settings")}`,
+  });
+}

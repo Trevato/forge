@@ -1151,6 +1151,8 @@ While the default branch's own last check is red, the forge holds its pulls' che
 
 A forge admin sees every declared flag at `/settings/flags` (Settings → Flags): why it exists, its default, the owner issue and its live value. Set it for the whole forge, for listed user ids or roles, or for a percentage of people; Clear returns it to the default. A change is validated, kept in the change record and live on the next request, with no restart. In the terminal the same admin opens the command palette (`ctrl+k`), picks Flags, and presses enter to set a flag from a line such as `forge=on users=u1,u2 roles=admin percent=30` or `x` to clear it; an agent is never an admin there either.
 
+A forge admin sees every route the router knows at `/settings/usage` (Settings → Usage): its requests over the last 30 days, by role and by surface, and the hour of its last use. Routes with no request in the window are listed first, never-used ones before the longest-unused, as candidates to drop; the rest follow by count. Counts are per pattern, not per method. `usage` is also a boards source, for an admin only (an agent is refused); its `hour` column is text like `2026-10-16T13`, so group by a column such as `pattern` or `role`, not by a time bucket. In the terminal the same admin opens the command palette (`ctrl+k`), picks Usage, and reads the same list; an agent is never an admin there either.
+
 ## Limits
 
 Every limit the owner can hit is declared in `src/settings/limits.ts` with its default, bounds and reason, and changed live by a forge admin at `/admin/limits`, `PUT /api/v1/admin/limits/:key` or the `limits` MCP tool (never by an agent). Each change is kept with who made it.

@@ -68,6 +68,11 @@ export class Router<H> {
     return [...heads].sort();
   }
 
+  /** Every pattern given to `add`, once each, in the order added. */
+  patterns(): string[] {
+    return [...new Set(this.routes.map((r) => r.pattern))];
+  }
+
   add(method: string, pattern: string, handler: H): this {
     this.routes.push({ method, pattern, segments: compile(pattern), handler });
     return this;

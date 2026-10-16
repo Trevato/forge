@@ -42,6 +42,7 @@ import { dashboardScreen } from "./screens/dashboard.ts";
 import { mayManageFlags } from "../core/flags.ts";
 import { accessScreen } from "./screens/access.ts";
 import { flagsScreen } from "./screens/flags.ts";
+import { usageScreen } from "./screens/usage.ts";
 import { quotasScreen } from "./screens/quotas.ts";
 import { domainsScreen } from "./screens/domains.ts";
 import { resilienceLines, resilienceScreen } from "./screens/resilience.ts";
@@ -344,6 +345,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Flags",
         hint: "declared flags and their live values",
         run: () => ctx.push(flagsScreen(session, ctx)),
+      });
+    // Settings → Usage, as the page has it: the same gate as Flags (#1565).
+    if (mayManageFlags(session.user))
+      commands.push({
+        id: "usage",
+        title: "Usage",
+        hint: "every route, unused ones first",
+        run: () => ctx.push(usageScreen(session, ctx)),
       });
     // Account quotas, as /admin/limits has them: an admin who is not an agent (#2191).
     if (session.user?.isAdmin === true && session.user.kind !== "agent")

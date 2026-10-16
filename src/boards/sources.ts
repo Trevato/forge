@@ -98,6 +98,26 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       outcome: "text", at: "time",
     },
   },
+  // Requests counted by the hour (`core/usage_count.ts`): admin only. `hour`
+  // is `2026-10-16T13`, so `from` and `to` bound it by string and a bucket
+  // cannot read it; group by a column instead.
+  usage: {
+    table: "usage_count",
+    owner: "admin",
+    time: "hour",
+    columns: {
+      hour: "time", pattern: "text", method: "text", status: "text",
+      role: "text", surface: "text", n: "number",
+    },
+    docs: {
+      hour: "the hour the requests were answered in, UTC, like 2026-10-16T13",
+      pattern: "the route pattern that matched, or (unmatched) for every path that matched none",
+      status: "the status class: 2xx, 3xx, 4xx or 5xx",
+      role: "anon, user, admin or agent",
+      surface: "api, mcp or web",
+      n: "requests in that hour with that pattern, method, status class, role and surface",
+    },
+  },
   // What the machine used (`boards/sampler.ts`, kept by `boards/ring.ts`):
   // 15-s points for the last day, 5-min points before that, never both
   // for one moment.

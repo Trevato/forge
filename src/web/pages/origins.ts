@@ -75,6 +75,7 @@ export type AccountSection =
   | "keys"
   | "passkeys"
   | "origins"
+  | "usage"
   | "crew"
   | "accounts"
   | "subscriptions"
@@ -166,6 +167,12 @@ export function accountSections(
             href: "/settings/flags",
             icon: "activity" as const,
             current: current === "flags",
+          },
+          {
+            label: "Usage",
+            href: "/settings/usage",
+            icon: "activity" as const,
+            current: current === "usage",
           },
           {
             label: "Backups",

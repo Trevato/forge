@@ -74,7 +74,7 @@ afterAll(async () => {
 
 describe("tell the crew in the terminal", () => {
   test("the owner's palette has the row", async () => {
-    expect(await palette(alice, [":"])).toContain("alice/lobby — Tell the crew");
+    expect(await palette(alice, [":", "tell"])).toContain("alice/lobby — Tell the crew");
   });
 
   test("a reader who may not direct the crew sees no row", async () => {

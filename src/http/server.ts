@@ -15,6 +15,7 @@ import { systemPage } from "../web/pages/system.ts";
 import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { contributePage } from "../web/pages/contribute.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
+import { usagePage } from "../web/pages/usage.ts";
 import { domainsPage } from "../web/pages/domains.ts";
 import { resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet, signupSet } from "../web/pages/admin-limits.ts";
@@ -770,6 +771,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/boards/:slug/:op", boardPost);
   router.add("GET", "/settings/flags", flagsPage);
   router.add("POST", "/settings/flags", flagsSet);
+  router.add("GET", "/settings/usage", (ctx) => usagePage(ctx, knownPatterns));
   router.add("GET", "/admin/limits", limitsPage);
   router.add("POST", "/admin/limits", limitsSet);
   router.add("POST", "/admin/quotas", quotasSet);
@@ -1296,6 +1298,12 @@ export function buildApiRouter(): Router<Handler> {
   apiRoutes(router);
   feedRoutes(router);
   return router;
+}
+
+let known: string[] | undefined;
+/** Every pattern the studio's and the API's routers know, read once on first use. */
+export function knownPatterns(): string[] {
+  return (known ??= [...buildRouter().patterns(), ...buildApiRouter().patterns()]);
 }
 
 async function withGitAccess(
