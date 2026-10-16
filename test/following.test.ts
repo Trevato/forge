@@ -1082,7 +1082,7 @@ describe("an open chain page hears a sever", () => {
   test("the page carries a live region for forge.severed, scoped to its repository", async () => {
     const page = await chainPage();
     expect(page).toContain('id="live-chain"');
-    expect(page).toContain('data-live="forge.severed"');
+    expect(page).toContain('data-live="forge.severed,forge.proposal"');
     expect(page).toContain('data-live-repo="kid/forge"');
     expect(page).not.toContain("follows nothing since");
   });

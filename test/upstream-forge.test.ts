@@ -256,11 +256,35 @@ describe("a child forge proposes to its parent forge", () => {
     await land("termed", "Add termed");
     const toasts: string[] = [];
     const ctx = { toast: (m: string) => toasts.push(m), pop() {}, push() {}, theme: {} } as any;
+    const heard: any[] = [];
+    const off = child.bus.subscribe((e) => e.kind === "forge.proposal" && heard.push(e));
     const screen = await chainScreen(child, kid, ctx);
     expect(screen.keys.map((k: any) => k.keys?.[0] ?? k[0])).toContain("p");
     screen.key({ key: "p" } as any);
     await Bun.sleep(1500);
+    off();
     expect(toasts.join("\n")).toContain("Proposed to the parent forge as #");
+    // One event, tied to the forge's repository so only its readers hear it.
+    expect(heard).toHaveLength(1);
+    expect(heard[0].repoId).toBe(forge.id);
+    expect(heard[0].payload).toMatchObject({ repo: "kid/forge", state: "open" });
+    expect(toasts.join("\n")).toContain(`#${heard[0].payload.number}`);
+  });
+
+  test("a state the parent changes is published once, and not again while it holds", async () => {
+    const open = (await forgeProposals(child, forge, Date.now() + 20 * STATE_TTL_MS)).find((p) => p.state === "open")!;
+    const heard: any[] = [];
+    const off = child.bus.subscribe((e) => e.kind === "forge.proposal" && heard.push(e));
+    // Asked again with the parent unchanged: nothing to say.
+    await forgeProposals(child, forge, Date.now() + 40 * STATE_TTL_MS);
+    expect(heard).toHaveLength(0);
+    parent.db.query("UPDATE issue SET state = 'closed' WHERE repo_id = ?1 AND number = ?2").run(lib.id, open.number);
+    await forgeProposals(child, forge, Date.now() + 60 * STATE_TTL_MS);
+    await forgeProposals(child, forge, Date.now() + 80 * STATE_TTL_MS);
+    off();
+    expect(heard).toHaveLength(1);
+    expect(heard[0].payload).toMatchObject({ number: open.number, state: "closed" });
+    expect(heard[0].repoId).toBe(forge.id);
   });
 
   test("the page button: a writer's form POST proposes; a cross-origin one is refused", async () => {

@@ -18,7 +18,7 @@ import { flashOrJson, page, redirect } from "../layout.ts";
 import { btn, card } from "../ui.ts";
 
 /** The events that change what the chain page says. */
-export const CHAIN_LIVE = "forge.severed";
+export const CHAIN_LIVE = "forge.severed,forge.proposal";
 
 const MODE_WORDS = { "tell-me": "recorded: tell me (nothing tells it yet)", "take-updates": "recorded: take updates (nothing acts on it yet)" } as const;
 

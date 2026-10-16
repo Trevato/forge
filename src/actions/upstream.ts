@@ -271,16 +271,30 @@ export async function proposeToParentForge(
     return err({ kind: "refused", reason: "the parent's answer was not a pull" });
 
   const now = Date.now();
-  app.db
+  const inserted = app.db
     .query(
       `INSERT INTO upstream_proposal (repo_id, branch, number, title, source, state, reachable, checked_at, created_at)
        VALUES (?1, ?2, ?3, ?4, ?5, 'open', 1, ?6, ?6) ON CONFLICT (repo_id, branch) DO NOTHING`,
     )
     .run(repo.id, branch, made.number, title.slice(0, 200), source, now);
+  if (inserted.changes > 0) announce(app, repo, actor, made.number, "open");
   const row = app.db
     .query<Row, [string, string]>("SELECT * FROM upstream_proposal WHERE repo_id = ?1 AND branch = ?2")
     .get(repo.id, branch)!;
   return ok({ ...asProposal(cred, row), opened: true });
+}
+
+/**
+ * Tell an open chain page its Proposals card changed. Tied to the repository,
+ * so the stream hands it only to those who can already see the forge.
+ */
+function announce(app: App, repo: Repo, actor: User | undefined, number: number, state: ForgeProposalState): void {
+  app.bus.append({
+    kind: "forge.proposal",
+    repoId: repo.id,
+    ...(actor === undefined ? {} : { actorId: actor.id }),
+    payload: { repo: `${repo.ownerName}/${repo.name}`, number, state },
+  });
 }
 
 /** Ask the parent how one pull stands; undefined when it did not say. */
@@ -323,9 +337,15 @@ export async function forgeProposals(
       if (!refresh || i >= REFRESHED || r.state !== "open" || now - r.checked_at < STATE_TTL_MS) return r;
       const state = await readState(cred, r.number);
       const next = { ...r, state: state ?? r.state, reachable: state === undefined ? 0 : 1, checked_at: now };
+      // The state is compared in the write itself, so two readers racing to
+      // record the same change publish it once between them.
+      const moved = app.db
+        .query("UPDATE upstream_proposal SET state = ?1 WHERE id = ?2 AND state != ?1")
+        .run(next.state, r.id);
       app.db
-        .query("UPDATE upstream_proposal SET state = ?1, reachable = ?2, checked_at = ?3 WHERE id = ?4")
-        .run(next.state, next.reachable, now, r.id);
+        .query("UPDATE upstream_proposal SET reachable = ?1, checked_at = ?2 WHERE id = ?3")
+        .run(next.reachable, now, r.id);
+      if (moved.changes > 0) announce(app, repo, undefined, r.number, next.state);
       return next;
     }),
   );
