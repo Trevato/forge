@@ -24,7 +24,7 @@ import { getRepoRun } from "../../actions/runs.ts";
 import { appsForRepos, getAppBySlug, isSlug } from "../../core/apps.ts";
 import { audit } from "../../contract/audit.ts";
 import { latestProbes } from "../../contract/probes.ts";
-import { listActiveRuns } from "../../core/runs.ts";
+import { checkSummary, listActiveRuns } from "../../core/runs.ts";
 import {
   canRead,
   countsForRepos,
@@ -35,6 +35,7 @@ import {
 } from "../../core/repos.ts";
 import { dependenciesOf, repoGraph, readyNow } from "../../core/dependencies.ts";
 import { getIssue, getIssueById, type Issue } from "../../core/issues.ts";
+import { mergerOf } from "../../core/merges.ts";
 import { getPull, type Pull } from "../../core/pulls.ts";
 import { mayView, mayViewId, sealedScope } from "../../core/sealed.ts";
 import { isSafeName } from "../../git/guard.ts";
@@ -124,6 +125,40 @@ function threePart(
   return repo && { repo, rest };
 }
 
+type Verdict = "green" | "red" | "running" | "cancelled" | "none";
+
+/**
+ * The check verdict a pull page shows, in a word. Read at the head recorded
+ * on the pull, not the live git head the page resolves: the card does no git
+ * work, so it can briefly disagree with the page after a push.
+ */
+function verdict(ctx: Ctx, pull: Pull): Verdict {
+  const { state } = checkSummary(ctx.app.db, pull.id, pull.headOid);
+  if (state === "ok") return "green";
+  if (state === "failed") return "red";
+  if (state === "queued" || state === "running") return "running";
+  // A check that was stopped is not the absence of one.
+  if (state === "cancelled") return "cancelled";
+  return "none";
+}
+
+function pullInput(ctx: Ctx, repo: Repo, pull: Pull): CardInput {
+  const merged = pull.mergedAt !== null;
+  const mergedBy = merged ? mergerOf(ctx.app.db, pull.id) : null;
+  return {
+    kind: "pull",
+    title: pull.title,
+    lines: [
+      `${repo.ownerName}/${repo.name}`,
+      `by ${pull.originAuthor ?? pull.authorName}`,
+      ...(pull.mergedAt
+        ? [`merged ${pull.mergedAt.slice(0, 10)}${mergedBy ? ` by ${mergedBy}` : ""}`]
+        : []),
+    ],
+    stat: `#${pull.number} · ${pull.state}${merged ? " · merged" : ""} · check ${verdict(ctx, pull)}`,
+  };
+}
+
 function threadInput(ctx: Ctx, kind: OgKind, ref: string): CardInput | undefined {
   const at = threePart(ctx, ref);
   if (!at || !/^[1-9][0-9]{0,8}$/.test(at.rest)) return undefined;
@@ -133,7 +168,7 @@ function threadInput(ctx: Ctx, kind: OgKind, ref: string): CardInput | undefined
     kind === "pull" ? getPull(db, at.repo.id, n) : getIssue(db, at.repo.id, n);
   if (!item || item.kind !== kind || !mayView(db, at.repo, item, undefined))
     return undefined;
-  const merged = "mergedAt" in item && item.mergedAt !== null;
+  if (kind === "pull") return pullInput(ctx, at.repo, item as Pull);
   return {
     kind,
     title: item.title,
@@ -143,7 +178,7 @@ function threadInput(ctx: Ctx, kind: OgKind, ref: string): CardInput | undefined
         ? [waiting(ctx, at.repo, item)]
         : []),
     ],
-    stat: `#${item.number} · ${item.state}${merged ? " · merged" : ""}`,
+    stat: `#${item.number} · ${item.state}`,
   };
 }
 

@@ -8,7 +8,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createApp } from "../src/core/apps.ts";
 import { addDependency } from "../src/core/dependencies.ts";
 import { getIssue, createIssue } from "../src/core/issues.ts";
-import { createRun } from "../src/core/runs.ts";
+import { cancelRun, claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -192,6 +192,59 @@ describe("og cards", () => {
       expect(merged).toContain("closed");
       const open = await (await get("/og/pull/alice~shown~2.svg")).text();
       expect(open).not.toContain("merged");
+    });
+
+    test("a pull card says its check verdict, author and merge date", async () => {
+      const sh = getRepo(app.db, "alice", "shown")!.id;
+      const none = await (await get("/og/pull/alice~shown~2.svg")).text();
+      expect(none).toContain("check none");
+      expect(none).toContain("by alice");
+      const before = (await get("/og/pull/alice~shown~2.svg")).headers.get("etag");
+      const pull = getIssue(app.db, sh, 2)!;
+      const run = createRun(app.db, {
+        repoId: sh,
+        kind: "check",
+        issueId: pull.id,
+        commitOid: "",
+      });
+      expect(await (await get("/og/pull/alice~shown~2.svg")).text()).toContain("check running");
+      claimRun(app.db, run.id);
+      expect(await (await get("/og/pull/alice~shown~2.svg")).text()).toContain("check running");
+      finishRun(app.db, run.id, { state: "failed", summary: "red" });
+      const red = await get("/og/pull/alice~shown~2.svg");
+      expect(await red.text()).toContain("check red");
+      expect(red.headers.get("etag")).not.toBe(before);
+      // A newer run at the same head supersedes the red one.
+      const again = createRun(app.db, { repoId: sh, kind: "check", issueId: pull.id, commitOid: "" });
+      claimRun(app.db, again.id);
+      finishRun(app.db, again.id, { state: "ok", summary: "green" });
+      const green = await get("/og/pull/alice~shown~2.svg");
+      expect(await green.text()).toContain("check green");
+      expect(green.headers.get("etag")).not.toBe(red.headers.get("etag"));
+      // A stopped check is not the absence of one.
+      const stopped = createRun(app.db, { repoId: sh, kind: "check", issueId: pull.id, commitOid: "" });
+      cancelRun(app.db, stopped.id);
+      expect(await (await get("/og/pull/alice~shown~2.svg")).text()).toContain("check cancelled");
+      const merged = await (await get("/og/pull/alice~shown~4.svg")).text();
+      expect(merged).toContain("merged 2026-01-01<");
+      expect(merged).toContain("#4 · closed · merged · check none");
+      const bob = await createUser(app.db, {
+        trusted: true,
+        username: "bob",
+        email: "bob@forge.local",
+        password: "bob-passphrase",
+      });
+      if (!bob.ok) throw new Error(bob.error);
+      app.db
+        .query(
+          `UPDATE pull SET merged_by = ?1 WHERE issue_id =
+             (SELECT id FROM issue WHERE repo_id = ?2 AND number = 4)`,
+        )
+        .run(bob.value.id, sh);
+      const byBob = await (await get("/og/pull/alice~shown~4.svg")).text();
+      expect(byBob).toContain("merged 2026-01-01 by bob");
+      expect(byBob).toContain("by alice");
+      expect(merged).toContain("check none");
     });
 
     test("private repos, sealed reports and unreadable runs are 404", async () => {
