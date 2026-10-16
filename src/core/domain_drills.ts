@@ -25,3 +25,21 @@ export function recordDrill(
   ).run(row, domain, by, seen.health, seen.board, backSeconds, verdict.green ? 1 : 0, verdict.why);
   return { id: row, domain, backSeconds, ...verdict };
 }
+
+export interface LastDrill {
+  readonly green: boolean;
+  readonly why: string;
+  readonly backSeconds: number;
+  readonly at: string;
+}
+
+/** The newest drill kept for a domain, or null when none has run. */
+export function lastDrill(db: Database, domain: string): LastDrill | null {
+  const r = db
+    .query<{ green: number; why: string; back_seconds: number; at: string }, [string]>(
+      `SELECT green, why, back_seconds, at FROM domain_drill
+       WHERE domain = ?1 ORDER BY at DESC, rowid DESC LIMIT 1`,
+    )
+    .get(domain);
+  return r === null ? null : { green: r.green === 1, why: r.why, backSeconds: r.back_seconds, at: r.at };
+}

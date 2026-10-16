@@ -82,6 +82,7 @@ export type AccountSection =
   | "secrets"
   | "capacity"
   | "access"
+  | "resilience"
   | "limits"
   | "cloud";
 
@@ -139,6 +140,12 @@ export function accountSections(
             href: "/settings/access",
             icon: "activity" as const,
             current: current === "access",
+          },
+          {
+            label: "Failure domains",
+            href: "/settings/resilience",
+            icon: "activity" as const,
+            current: current === "resilience",
           },
           {
             label: "Limits",

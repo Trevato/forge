@@ -11,6 +11,7 @@ import { unsealReleased } from "../actions/sealed.ts";
 import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { flowPage } from "../web/pages/flow.ts";
+import { domainsPage } from "../web/pages/domains.ts";
 import { resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet } from "../web/pages/admin-limits.ts";
 import { boardsPage } from "../web/pages/boards.ts";
@@ -738,6 +739,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/cloud/audit", cloudAudit);
   router.add("POST", "/settings/cloud/remove", cloudRemove);
   router.add("GET", "/settings/access", accessPage);
+  router.add("GET", "/settings/resilience", domainsPage);
   router.add("GET", "/settings/capacity", capacityPage);
   router.add("POST", "/settings/capacity", capacitySet);
   router.add("GET", "/boards", boardsList);

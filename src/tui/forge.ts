@@ -38,6 +38,7 @@ import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
 import { accessScreen } from "./screens/access.ts";
+import { domainsScreen } from "./screens/domains.ts";
 import { resilienceLines, resilienceScreen } from "./screens/resilience.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
 import { stalledScreen } from "./screens/stalled.ts";
@@ -256,6 +257,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Access",
         hint: "what outside agents tried",
         run: () => ctx.push(accessScreen(session, ctx)),
+      });
+    // Each failure domain and its last drill, as Settings → Failure domains says it (#1945).
+    if (session.user?.isAdmin === true && session.user.kind !== "agent")
+      commands.push({
+        id: "domains",
+        title: "Failure domains",
+        hint: "failure domains and their last drill",
+        run: () => ctx.push(domainsScreen(session, ctx)),
       });
     commands.push({
       id: "family",
