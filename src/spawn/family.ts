@@ -7,16 +7,44 @@
 import type { App } from "../app.ts";
 import { parentForgeFor } from "../core/parent_releases.ts";
 import { running } from "../kernel/version.ts";
+import type { ChildAppsSummary } from "./child-apps.ts";
 import { childStandings, parentUpstream, type ChildStanding } from "./heartbeat.ts";
+import { hostedChildApps } from "./host.ts";
+
+/** A child as the family shows it: its standing, and what its apps are doing. */
+export interface FamilyChild extends ChildStanding {
+  /** "1 of 2 apps running — bakery asleep", or null when it was given no apps. */
+  readonly apps: string | null;
+}
+
+const REASONS = new Set(["asleep", "failed", "stopped", "deploying"]);
+
+/** One word for why an app is not running; free-text errors read as failing. */
+function reason(why: string): string {
+  if (why === "not started") return "not deployed";
+  return REASONS.has(why) ? why : "failing";
+}
+
+/** The one line /family and the terminal share, from the state /forges shows. */
+export function appsLine(s: ChildAppsSummary | undefined | null): string | null {
+  if (s === undefined || s === null || s.total === 0) return null;
+  const head = `${s.running} of ${s.total} ${s.total === 1 ? "app" : "apps"} running`;
+  if (s.notRunning.length === 0) return head;
+  return `${head} — ${s.notRunning.map((n) => `${n.slug} ${reason(n.why)}`).join("; ")}`;
+}
 
 export interface FamilyView {
   readonly parent: { readonly url: string; readonly host: string; readonly behind: number | null } | null;
   readonly here: { readonly host: string | null; readonly version: string };
-  readonly children: readonly ChildStanding[];
+  readonly children: readonly FamilyChild[];
   readonly more: number;
 }
 
-export async function familyView(app: App, isAdmin: boolean): Promise<FamilyView> {
+export async function familyView(
+  app: App,
+  isAdmin: boolean,
+  appsOf: (app: App, name: string) => ChildAppsSummary | undefined = hostedChildApps,
+): Promise<FamilyView> {
   const known = parentForgeFor(app.config);
   const url = app.config.parentUrl ?? (await parentUpstream(app));
   const kids = isAdmin ? await childStandings(app) : { items: [], more: 0 };
@@ -29,7 +57,7 @@ export async function familyView(app: App, isAdmin: boolean): Promise<FamilyView
       host: app.config.url === undefined ? null : new URL(app.config.url).host,
       version: running().version,
     },
-    children: kids.items,
+    children: kids.items.map((c) => ({ ...c, apps: appsLine(appsOf(app, c.name)) })),
     more: kids.more,
   };
 }
@@ -53,6 +81,7 @@ export function familyLines(view: FamilyView): [string, string][] {
             c.openProposals === null ? "" : `${c.openProposals} open`,
           ].filter((b) => b !== "");
     out.push([`child ${c.name}`, bits.join(" · ")]);
+    if (c.apps !== null) out.push(["", c.apps]);
   }
   if (view.more > 0) out.push(["", `${view.more} more not shown`]);
   return out;

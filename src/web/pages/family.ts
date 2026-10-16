@@ -8,11 +8,10 @@
  */
 
 import type { Ctx } from "../../http/context.ts";
-import { familyView } from "../../spawn/family.ts";
-import {
-  MAX_DEPTH,
-  type ChildStanding,
-} from "../../spawn/heartbeat.ts";
+import type { ChildAppsSummary } from "../../spawn/child-apps.ts";
+import { familyView, type FamilyChild } from "../../spawn/family.ts";
+import { hostedChildApps } from "../../spawn/host.ts";
+import { MAX_DEPTH } from "../../spawn/heartbeat.ts";
 import { pageHead } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -30,7 +29,7 @@ interface Node {
 const plural = (n: number, one: string, many = `${one}s`) =>
   `${n} ${n === 1 ? one : many}`;
 
-function standingNode(c: ChildStanding): Node {
+function standingNode(c: FamilyChild): Node {
   const meta: Html[] = [];
   if (c.state === "unheard") meta.push(html`has not reported yet`);
   else {
@@ -44,6 +43,7 @@ function standingNode(c: ChildStanding): Node {
     if (c.ownChildren !== null && c.ownChildren > 0)
       meta.push(html`${plural(c.ownChildren, "forge")} of its own`);
   }
+  if (c.apps !== null) meta.push(html`<span data-apps>${c.apps}</span>`);
   return {
     label: c.name,
     href: c.url,
@@ -83,10 +83,13 @@ function row(n: Node, depth: number): Html {
 }
 
 // GET /family
-export async function familyPage(ctx: Ctx): Promise<Response> {
+export async function familyPage(
+  ctx: Ctx,
+  appsOf: (app: Ctx["app"], name: string) => ChildAppsSummary | undefined = hostedChildApps,
+): Promise<Response> {
   const app = ctx.app;
   const owns = ctx.auth.user?.isAdmin === true;
-  const view = await familyView(app, owns);
+  const view = await familyView(app, owns, appsOf);
   const parent = view.parent;
   const kids = { items: view.children, more: view.more };
 

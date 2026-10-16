@@ -24,8 +24,14 @@ import {
   sign,
   SIGNATURE_HEADER,
 } from "../src/spawn/heartbeat.ts";
-import { familyLines, familyView } from "../src/spawn/family.ts";
+import { appsLine, familyLines, familyView } from "../src/spawn/family.ts";
 import { firstBoot } from "../src/spawn/first-boot.ts";
+import { createForgeApp } from "../src/tui/forge.ts";
+import { familyScreen } from "../src/tui/screens/family.ts";
+import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import type { Ctx } from "../src/http/context.ts";
+import { familyPage } from "../src/web/pages/family.ts";
+import { settleApp } from "./helpers/tui.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -219,6 +225,65 @@ describe("family heartbeats", () => {
     const admin = familyLines(await familyView(parent, true));
     expect(guest.some(([k]) => k === "child maria")).toBe(false);
     expect(admin.some(([k]) => k === "child maria")).toBe(true);
+  });
+
+  const two = () => ({
+    total: 2,
+    running: 1,
+    notRunning: [{ slug: "bakery", why: "asleep" }],
+  });
+  const line = "1 of 2 apps running — bakery asleep";
+
+  test("the family view carries the apps line for an admin and none for a guest", async () => {
+    const view = await familyView(parent, true, two);
+    expect(view.children[0]?.apps).toBe(line);
+    expect(familyLines(view).some(([, v]) => v === line)).toBe(true);
+    expect((await familyView(parent, false, two)).children).toEqual([]);
+    expect((await familyView(parent, true, () => ({ total: 0, running: 0, notRunning: [] }))).children[0]?.apps).toBeNull();
+  });
+
+  test("the terminal's Family card shows the apps line", async () => {
+    const view = await familyView(parent, true, two);
+    const { app } = createForgeApp(
+      parent,
+      { sshUsername: "alice", remoteAddress: "127.0.0.1", user: undefined },
+      { terminal: headlessTerminal(120, 30), exitHooks: false },
+    );
+    app.start();
+    await settleApp(app);
+    app.push(familyScreen(app.ctx, familyLines(view)));
+    await settleApp(app);
+    expect(app.screen.toText()).toContain(line);
+    app.stop();
+  });
+
+  test("the family page shows the apps line to an admin, escaped, and to no guest", async () => {
+    const ctxOf = (isAdmin: boolean): Ctx => ({
+      app: parent,
+      request: new Request("http://localhost/family"),
+      url: new URL("http://localhost/family"),
+      params: {},
+      auth: isAdmin
+        ? { user: { id: 1, username: "alice", isAdmin: true } as never, scope: undefined, via: "session" }
+        : { user: undefined, scope: undefined, via: "none" },
+      theme: undefined,
+    });
+    const text = async (c: Ctx, f: Parameters<typeof familyPage>[1]) => (await familyPage(c, f)).text();
+    expect(await text(ctxOf(true), two)).toContain(`<span data-apps>${line}</span>`);
+    const hostileHtml = await text(ctxOf(true), () => ({
+      total: 1,
+      running: 0,
+      notRunning: [{ slug: "<b>x</b>", why: "asleep" }],
+    }));
+    expect(hostileHtml).toContain("&lt;b&gt;x&lt;/b&gt; asleep");
+    expect(hostileHtml).not.toContain("<b>x</b>");
+    expect(await text(ctxOf(false), two)).not.toContain("data-apps");
+    expect(await text(ctxOf(true), () => ({ total: 0, running: 0, notRunning: [] }))).not.toContain("data-apps");
+  });
+
+  test("appsLine counts what runs and says why the rest does not", () => {
+    expect(appsLine({ total: 2, running: 0, notRunning: [{ slug: "a", why: "not started" }, { slug: "b", why: "boom: x" }] }))
+      .toBe("0 of 2 apps running — a not deployed; b failing");
   });
 
   test("a child sends its own beat, signed with the key spawn gave it", async () => {
