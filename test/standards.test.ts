@@ -4,7 +4,7 @@
  * an installable manifest with real icons, and the metadata a link needs
  * to unfurl.
  */
-import { parseReleases } from "../src/core/parent_releases.ts";
+import { MAX_RELEASES, parseReleases } from "../src/core/parent_releases.ts";
 import releasesFile from "../src/core/releases.json" with { type: "json" };
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -90,7 +90,8 @@ describe("what the open web expects", () => {
     expect(res.headers.get("content-type")).toContain("application/json");
     const doc = (await res.json()) as { releases: unknown[] };
     const read = parseReleases(doc, true);
-    expect(read!.length).toBe(doc.releases.length);
+    // A child reads the newest MAX_RELEASES; the record itself keeps every release.
+    expect(read!.length).toBe(Math.min(doc.releases.length, MAX_RELEASES));
     expect(read![0]!.name).toBe(releasesFile.releases[0]!.version);
     expect(read![0]!.url).toStartWith(`${base}/releases.json#`);
   });

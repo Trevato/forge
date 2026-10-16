@@ -23,7 +23,8 @@ export const FRESH_MS = 10 * 60_000;
 export const RETRY_MS = 60_000;
 const TIMEOUT_MS = 3_000;
 const MAX_BYTES = 256 * 1024;
-const MAX_RELEASES = 100;
+/** The most releases a child reads from its parent, newest first. */
+export const MAX_RELEASES = 100;
 
 export interface ParentRelease {
   readonly name: string;
