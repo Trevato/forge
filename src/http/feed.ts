@@ -29,6 +29,7 @@ import {
   readFeed,
 } from "../feed/feed.ts";
 import { decideAsk, undoDecideAsk } from "../actions/asks_decide.ts";
+import { actOnProposal, isProposalVerb } from "../actions/proposals.ts";
 import { asksAnswer } from "../web/studio/asks.ts";
 import {
   applyAsksBulk,
@@ -161,6 +162,21 @@ export function feedRoutes(router: Router<Handler>): void {
     const undone = undoDecideAsk(ctx.app, ctx.auth.user, ctx.params.id);
     if (!undone.ok) return bulkError(undone.error);
     return json(undone.value, 201);
+  });
+
+  // A wave proposal's four verbs (`actions/proposals.ts`): approve, redirect (with `words`), later, again.
+  router.add("POST", "/api/v1/asks/proposal/:id/:verb", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const verb = ctx.params.verb;
+    if (!isProposalVerb(verb)) return notFound();
+    const input = await body(ctx.request);
+    const done = actOnProposal(ctx.app, ctx.auth.user, verb, ctx.params.id, input.words);
+    if (done.ok) return json(done.value ?? { ok: true }, 201);
+    const { code, message } = done.error;
+    if (code === "not_found") return notFound();
+    if (code === "unauthorized") return unauthorized();
+    return apiError(code, code === "forbidden" ? 403 : code === "conflict" ? 409 : 422, message);
   });
 
   router.add("POST", "/api/v1/feed/interactions", async (ctx) => {

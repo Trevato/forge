@@ -18,7 +18,7 @@ export interface WaitingFor {
 
 export interface WaitFacts {
   /** The ask's kind (`DecisionKind`). */
-  readonly kind: "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover" | "assigned" | "setting";
+  readonly kind: "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover" | "assigned" | "proposal" | "setting";
   /** Files stopping the pull from merging, as the last sweep found it. */
   readonly conflicts: number;
   /** Whether the pull or issue the ask is about is assigned to the viewer. */

@@ -22,10 +22,14 @@ import { nextStepsFor } from "../../core/next-steps.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
 import { mayView } from "../../core/sealed.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
+import { getProposal } from "../../core/proposals.ts";
 import { getIssueById, listAssignedTo, type Issue } from "../../core/issues.ts";
 import { askLinesFor } from "../../web/studio/asks.ts";
 import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
+import { actOnProposal, type ProposalVerb } from "../../actions/proposals.ts";
+import { putAsideWaves } from "../../web/studio/asks.ts";
+import type { Proposal } from "../../core/proposals.ts";
 import { answerSetting, openFindings } from "../../actions/setting_ask.ts";
 import {
   applyAsksBulk,
@@ -118,6 +122,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let pins: Pin[] = [];
   let pinned = new Set<string>();
   let onYou: OnYouItem[] = [];
+  /** Wave proposals that wait for this person's nod, listed after the rows above. */
+  let waves: { proposal: Proposal; repo: Repo }[] = [];
+  /** Waves put aside with Later, which `B` brings back. */
+  let asideWaves: Proposal[] = [];
   /** Repositories the viewer muted that hold work assigned to them: said, never silent. */
   let silenced = new Map<string, Repo>();
   /** The rows marked for one verb, by issue id. */
@@ -161,6 +169,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     pinned = f.user ? pinnedRepoIds(f.db, f.user.id) : new Set<string>();
     all = listReposVisibleTo(f.db, f.user, { limit: 200 });
     onYou = assignedToMe();
+    waves = f.user === undefined ? [] : wavesFor();
+    asideWaves = f.user === undefined ? [] : putAsideWaves(f.db, f.user);
     for (const id of [...marked])
       if (!onYou.some((item) => item.issue.id === id)) marked.delete(id);
     lastSet = f.user ? latestUndoable(f.app, f.user) : undefined;
@@ -272,6 +282,60 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         out.push({ issue, repo, waiting: waitingOf(id), ...(flag === "hand" ? { hand: true as const } : { over: true as const }) });
     }
     return out;
+  };
+
+  /** The wave proposals that ask this person, as the web's asks list has them. */
+  const wavesFor = (): { proposal: Proposal; repo: Repo }[] => {
+    if (f.user === undefined) return [];
+    const out: { proposal: Proposal; repo: Repo }[] = [];
+    for (const row of askLinesFor(f.db, f.user)) {
+      if (row.proposal === undefined) continue;
+      const proposal = getProposal(f.db, row.proposal.id);
+      const repo = proposal === undefined ? undefined : getRepoById(f.db, proposal.repoId);
+      if (proposal !== undefined && repo !== undefined) out.push({ proposal, repo });
+    }
+    return out;
+  };
+
+  /** The wave under the cursor, when the cursor is past the issues and pulls. */
+  const waveHere = (): { proposal: Proposal; repo: Repo } | undefined =>
+    waves[at("onyou").index - onYou.length];
+
+  /** One verb on the wave under the cursor, through the action every door uses. */
+  const actOnWave = (verb: ProposalVerb, words?: string): void => {
+    const here = waveHere();
+    if (here === undefined) {
+      ctx.toast("only a wave proposal takes this", "attn");
+      return;
+    }
+    const done = actOnProposal(f.app, f.user, verb, here.proposal.id, words);
+    reload();
+    ctx.toast(
+      done.ok ? (verb === "approve" ? "issues opened" : verb === "later" ? "put aside · B brings it back" : "sent to the planner") : done.error.message,
+      done.ok ? "success" : "danger",
+    );
+  };
+
+  const redirectWave = (): void => {
+    if (waveHere() === undefined) return actOnWave("redirect");
+    ctx.push(
+      promptScreen(ctx, screen, {
+        title: "Redirect the planner",
+        label: "Plan this instead",
+        hint: "Your words go to the planner as a new run.",
+        onSubmit: (value) => {
+          actOnWave("redirect", value);
+          return undefined;
+        },
+      }),
+    );
+  };
+
+  const bringBackWaves = (): void => {
+    let n = 0;
+    for (const w of asideWaves) if (actOnProposal(f.app, f.user, "again", w.id).ok) n++;
+    reload();
+    ctx.toast(`${n} ${n === 1 ? "wave" : "waves"} back`, "success");
   };
 
   /** The marked rows, or the one under the cursor when none is marked. */
@@ -474,7 +538,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     pane === "repos"
       ? shown().length
       : pane === "onyou"
-        ? onYou.length
+        ? onYou.length + waves.length
         : pins.length;
 
   const cycle = (step: number): void => {
@@ -556,6 +620,12 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         // The On you verbs show only where they act, so the bar stays short.
         ...(focus === "onyou" && onYou[at("onyou").index]?.hand === true
           ? [binding(["D"], "let the decider")]
+          : []),
+        ...(focus === "onyou" && waveHere() !== undefined
+          ? [binding(["y"], "approve wave"), binding(["R"], "redirect"), binding(["l"], "later")]
+          : []),
+        ...(asideWaves.length > 0 && !(focus === "onyou" && onYou[at("onyou").index]?.setting !== undefined)
+          ? [binding(["B"], "bring waves back")]
           : []),
         ...(focus === "onyou" && onYou[at("onyou").index]?.setting !== undefined
           ? [binding(["K"], "keep setting"), binding(["B"], "put back")]
@@ -707,9 +777,13 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         if (e.key === "S") return shipSet(), true;
         if (e.key === "D" && item !== undefined) return handToDecider(), true;
         if (e.key === "K") return answerHere("keep"), true;
-        if (e.key === "B") return answerHere("put"), true;
+        if (e.key === "B" && item?.setting !== undefined) return answerHere("put"), true;
         if (e.key === "h") return hideAuthor(), true;
+        if (e.key === "y") return actOnWave("approve"), true;
+        if (e.key === "R") return redirectWave(), true;
+        if (e.key === "l") return actOnWave("later"), true;
       }
+      if (e.key === "B" && f.user && asideWaves.length > 0) return bringBackWaves(), true;
       if (e.key === "u" && f.user) return undoSet(), true;
       if (e.key === "U" && f.user) return undoHand(), true;
       if (e.key === "L" && f.user) return listenAgain(), true;
@@ -766,7 +840,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       focused: on,
       ...(footer === undefined ? {} : { footer }),
     });
-    if (onYou.length === 0) {
+    if (onYou.length + waves.length === 0) {
       note(s, inner, c, [
         silenced.size > 0
           ? "Nothing is on you outside muted repositories."
@@ -779,7 +853,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       inner,
       c,
       at("onyou"),
-      onYou.map((item): ListRow => {
+      [
+        ...onYou.map((item): ListRow => {
         const mark =
           set === "nerd"
             ? icon(item.issue.kind === "pull" ? "pull" : "issue", set)
@@ -791,9 +866,16 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
           meta: `${item.waiting.word} · on ${item.waiting.on}`,
         };
       }),
+        ...waves.map(
+          (w): ListRow => ({
+            title: `wave ${w.proposal.title} · ${w.repo.ownerName}/${w.repo.name}`,
+            meta: "waits for your nod · y approve · R redirect · l later",
+          }),
+        ),
+      ],
       on,
     );
-    hitList(ctx, inner, at("onyou"), onYou.length, {
+    hitList(ctx, inner, at("onyou"), onYou.length + waves.length, {
       select: () => {
         focus = "onyou";
       },
@@ -825,6 +907,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     if (lastSet !== undefined) parts.push(`u undo ${lastSet.verb}`);
     if (lastHand !== undefined) parts.push("U undo decider");
     if (onYou[at("onyou").index]?.hand === true) parts.push("D let the decider");
+    if (asideWaves.length > 0) parts.push(`${asideWaves.length} ${asideWaves.length === 1 ? "wave" : "waves"} put aside · B bring back`);
     return parts.length > 0 ? parts.join(" · ") : undefined;
   }
 

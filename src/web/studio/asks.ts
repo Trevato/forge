@@ -18,6 +18,7 @@ import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos, getAppByRepo, listApps } from "../../core/apps.ts";
 import { latestDecision, stopStands } from "../../core/decisions.ts";
 import { getHold, holdsFor } from "../../core/holds.ts";
+import { issueTitles, proposalsFor, type Proposal } from "../../core/proposals.ts";
 import { chipsOf } from "../../core/feed_chips.ts";
 import { chipHides } from "../../feed/chips.ts";
 import { askDismissals, mutedRepos } from "../../core/interactions.ts";
@@ -106,7 +107,7 @@ export function writableAppsOf(ctx: Ctx, user: User | undefined) {
   );
 }
 
-export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover" | "assigned" | "setting";
+export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover" | "assigned" | "proposal" | "setting";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
@@ -121,6 +122,8 @@ export interface Decision {
   /** For "parked": the issue the breaker stopped; for "declined": the
    * direction issue the planner declined. */
   readonly issue?: Issue | undefined;
+  /** For "proposal": the wave waiting for a nod. */
+  readonly proposal?: Proposal | undefined;
   readonly who: string;
   /** Three sentences at most: what, why, what happens next. */
   readonly says: string;
@@ -190,6 +193,11 @@ export const ASK_WORDS: Readonly<Record<DecisionKind, AskWords>> = {
     options: ["Open it"],
     ifNothing: "it stays assigned to you",
   },
+  proposal: {
+    decision: "Open this wave of issues?",
+    options: ["Approve", "Redirect", "Later"],
+    ifNothing: "it stays proposed; no issue is opened",
+  },
   setting: {
     decision: "A setting is away from its default: keep it, or put it back?",
     options: ["Keep", "Put back"],
@@ -215,6 +223,7 @@ export interface Consequence {
 
 /** The tier of a kind when nothing about the thing itself says more. */
 export const KIND_TIER: Readonly<Record<DecisionKind, Consequence>> = {
+  proposal: { score: 60, why: "a wave of work waits for your nod" },
   paused: { score: 80, why: "money: the crew is stopped at its ceiling" },
   declined: { score: 70, why: "the planner has stopped for this app" },
   stopped: { score: 50, why: "red, and the crew stopped" },
@@ -252,6 +261,8 @@ interface AskCandidate {
   readonly repo: Repo;
   readonly pull?: Pull;
   readonly issue?: Issue;
+  /** For "proposal": the wave waiting for a nod. */
+  readonly proposal?: Proposal;
   readonly who: string;
   /** Whether the author is a crew member — a "look" card words itself
    * differently for a person's own change than for the crew's (below).
@@ -459,6 +470,16 @@ function askCandidatesFor(
       who: "the planner",
       decline: { runId: d.runId, words: d.words },
     });
+  // A wave the planner proposed waits for the owner's nod: one card each.
+  for (const proposal of proposalsFor(db, repos.map((r) => r.id), "pending"))
+    out.push({
+      kind: "proposal",
+      id: `proposal:${proposal.id}`,
+      since: proposal.createdAt,
+      repo: byId.get(proposal.repoId)!,
+      proposal,
+      who: getUserById(db, proposal.authorId)?.username ?? "the planner",
+    });
   // A setting the sentinel found away from its default is the owner's to keep
   // or put back, never a crew run: one ask per key, from its newest open finding.
   if (user.isAdmin)
@@ -572,7 +593,7 @@ function consequencesOf(
 /** The row an ask collapses into: one kind in one repository. */
 const groupId = (a: { kind: DecisionKind; repo: Repo; id: string }): string =>
   // Work assigned to you is each its own row: they share no decision.
-  a.kind === "assigned" || a.kind === "setting" ? a.id : `${a.kind}:${a.repo.id}`;
+  a.kind === "assigned" || a.kind === "proposal" || a.kind === "setting" ? a.id : `${a.kind}:${a.repo.id}`;
 
 /**
  * The asks the viewer has not set aside: a muted repository's asks are all
@@ -731,6 +752,13 @@ function scoredFor(
   }));
 }
 
+/** The waves the viewer put aside with Later, oldest first, for the line that brings them back. */
+export function putAsideWaves(db: Database, user: User): Proposal[] {
+  const repos = listReposVisibleTo(db, user, { limit: 200 });
+  const mine = ownerFactRepoIds(db, repos, user);
+  return proposalsFor(db, repos.filter((r) => mine.has(r.id)).map((r) => r.id), "later");
+}
+
 /**
  * The viewer's muted repositories that hold asks right now: said on the
  * home, never silent, so a mute is always one tap from being taken back.
@@ -873,6 +901,8 @@ function lineOf(c: AskCandidate): string {
     return `"${c.pull?.title ?? c.issue?.title ?? ""}" is assigned to you`;
   if (c.kind === "parked")
     return `the crew parked #${c.issue!.number} after three failed runs`;
+  if (c.kind === "proposal")
+    return `proposes "${c.proposal?.title ?? ""}" and waits for your nod`;
   if (c.kind === "declined")
     return "the planner declined the direction and waits for you";
   if (c.kind === "setting" && c.setting)
@@ -905,6 +935,7 @@ export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> =
   parked: (n) => `the crew parked ${n} issues after three failed runs`,
   handover: (n) => `${n} changes had three reviews asking for changes and wait for you`,
   declined: (n) => `the planner declined ${n} times and waits for you`,
+  proposal: (n) => `${n} waves wait for your nod`,
   paused: (n) => `${n} pauses at the ceiling`,
   setting: (n) => `${n} settings are away from their defaults`,
   assigned: (n) => `${n} things assigned to you`,
@@ -937,6 +968,8 @@ export function askLinesFor(
   link: string;
   /** The pull's or issue's number, for a row of one that is about one. */
   number?: number;
+  /** For a wave proposal: what it says, as plain text (the reader escapes it). */
+  proposal?: { id: string; title: string; why: string; issues: string[] };
   items: string[];
   /** The decision, its options and what happens if nobody acts (`ASK_WORDS`). */
   words: AskWords;
@@ -968,6 +1001,18 @@ export function askLinesFor(
     const line = `${row.repo.name}${only.kind === "paused" ? " " : ": "}${lineOf(only)}`;
     if (only.kind === "paused")
       return { ...about, line, link: `${base}/settings/autonomy` };
+    if (only.proposal !== undefined)
+      return {
+        ...about,
+        line,
+        link: `/#${askAnchor(only.id)}`,
+        proposal: {
+          id: only.proposal.id,
+          title: only.proposal.title,
+          why: only.proposal.why,
+          issues: issueTitles(only.proposal),
+        },
+      };
     if (only.pull === undefined && only.issue !== undefined)
       return {
         ...about,
@@ -1032,6 +1077,16 @@ export function decisionsFor(
         short: `assigned to you · updated ${thing.updatedAt.slice(0, 10)}`,
       };
     }
+    if (c.kind === "proposal" && c.proposal)
+      return {
+        kind: "proposal",
+        id: `proposal:${c.proposal.id}`,
+        repo: c.repo,
+        proposal: c.proposal,
+        who: c.who,
+        says: `${c.who} proposes "${c.proposal.title}" (${issueTitles(c.proposal).length} issues). Approve opens them, Redirect hands your words to the planner, Later puts it aside.`,
+        short: `proposes "${c.proposal.title}"`,
+      };
     if (c.kind === "parked" && c.issue)
       return {
         kind: "parked",
@@ -1151,6 +1206,7 @@ export function decisionForm(d: Decision, back?: string): Html | null {
     return html`<form ${own} action="/asks/decide">
       <input type="hidden" name="ask" value="${d.id}" />
     </form>`;
+  if (d.kind === "proposal" && d.proposal) return proposalForms(d, back);
   if (d.kind === "setting" && d.setting)
     return html`<form ${own}-keep action="/asks/setting">
         <input type="hidden" name="key" value="${d.setting.key}" />
@@ -1226,6 +1282,11 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
         variant: "primary",
       }),
       others: [],
+    };
+  if (d.kind === "proposal" && d.proposal)
+    return {
+      primary: btn("Approve", { size: "sm", form: askFormId(d), variant: "primary" }),
+      others: [btn("Later", { size: "sm", form: `${askFormId(d)}-later` })],
     };
   if (d.kind === "setting" && d.setting)
     return {
@@ -1393,9 +1454,24 @@ export function askTargetsFor(
     else if (ask === undefined) refused.push({ item, reason: "it no longer asks you" });
     else if (ask.kind === "paused")
       refused.push({ item, reason: "a ceiling is raised in the app's settings" });
+    else if (ask.kind === "proposal")
+      refused.push({ item, reason: "a proposal is approved, redirected or put aside on its card" });
     else if (ask.kind === "declined")
       refused.push({ item, reason: "a planner's decline is answered on its issue" });
     else issueIds.push((ask.pull ?? ask.issue)!.id);
   }
   return { issueIds: [...new Set(issueIds)], refused };
+}
+
+/**
+ * The forms behind a proposal card: Approve, Later and Redirect, each one
+ * POST to `/asks/proposal/:id/<verb>` that lands back on the page it came
+ * from. They sit apart from the card's own form, as forms do not nest.
+ */
+function proposalForms(d: Decision, back?: string): Html {
+  const id = askFormId(d);
+  const post = (verb: string) => `/asks/proposal/${d.proposal!.id}/${verb}`;
+  const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
+  return html`<form id="${id}" method="post" action="${post("approve")}" hidden>${where}</form>
+    <form id="${id}-later" method="post" action="${post("later")}" hidden>${where}</form>`;
 }

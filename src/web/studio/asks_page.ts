@@ -29,7 +29,10 @@ import type { Ctx } from "../../http/context.ts";
 import type { User } from "../../core/users.ts";
 import { onYouAnswer, studioHome } from "./home.ts";
 import { notFoundPage, repoBase, signInFirst } from "../chrome.ts";
-import { field, readForm } from "../form.ts";
+import { backTo, field, readForm } from "../form.ts";
+import { MAX_BODY } from "../../core/issues.ts";
+import { issueTitles } from "../../core/proposals.ts";
+import { actOnProposal, type ProposalVerb } from "../../actions/proposals.ts";
 import {
   canRead,
   getRepoById,
@@ -50,6 +53,7 @@ import {
   decisionsFor,
   forgeNeedsFor,
   silencedRepos,
+  putAsideWaves,
   type AskRow,
   type Consequence,
   type Decision,
@@ -168,6 +172,7 @@ const KIND_LABEL: Readonly<Record<Decision["kind"], string>> = {
   handover: "Handed over",
   parked: "Parked",
   declined: "Declined",
+  proposal: "Proposed",
   paused: "Paused",
   assigned: "Assigned",
   setting: "Setting away",
@@ -191,15 +196,33 @@ function acts(ctx: Ctx, d: Decision): Html {
   </div>`;
 }
 
+/** A wave proposal's why, its issue titles and the Redirect box; nothing for any other ask. */
+function proposalBody(ctx: Ctx, d: Decision): Html | null {
+  if (!d.proposal) return null;
+  return html`<p class="small">${d.proposal.why}</p>
+    <ul class="small">
+      ${issueTitles(d.proposal).map((t) => html`<li>${t}</li>`)}
+    </ul>
+    <form method="post" action="/asks/proposal/${d.proposal.id}/redirect" class="bar">
+      <input type="hidden" name="back" value="${ctx.url.pathname}" />
+      <label class="sr-only" for="redirect-${d.proposal.id}">Redirect the planner</label>
+      <textarea id="redirect-${d.proposal.id}" name="words" rows="2" maxlength="${MAX_BODY}" required placeholder="Plan this instead…"></textarea>
+      ${btn("Redirect", { size: "sm" })}
+    </form>`;
+}
+
 function decisionCard(ctx: Ctx, d: Decision, picked: ReadonlySet<string>): Html {
   const base = repoBase(d.repo);
   const title = d.pull
     ? html`<a href="${changeHref(base, d.pull.number)}">${d.pull.title}</a>`
     : d.issue
       ? html`<a href="${base}/issues/${d.issue.number}">${d.issue.title}</a>`
-      : html`<a href="${base}/settings/autonomy">Paused</a>`;
+      : d.proposal
+        ? html`${d.proposal.title}`
+        : html`<a href="${base}/settings/autonomy">Paused</a>`;
   return card(
     html`${clause(d, d.kind, d.consequence)}
+      ${proposalBody(ctx, d)}
       ${acts(ctx, d)}`,
     {
       id: askAnchor(d.id),
@@ -379,6 +402,22 @@ export function needsYouSection(
           >
           <button type="submit" class="btn btn-sm btn-ghost">Listen again</button>
         </form>`;
+  const aside = putAsideWaves(ctx.app.db, user);
+  const asideNote =
+    aside.length === 0
+      ? null
+      : html`<details class="bar">
+          <summary class="muted small"
+            >${aside.length} ${aside.length === 1 ? "wave" : "waves"} put aside</summary
+          >
+          ${aside.map(
+            (w) => html`<form method="post" action="/asks/proposal/${w.id}/again" class="bar">
+              <input type="hidden" name="back" value="${ctx.url.pathname}" />
+              <span class="small">${w.title}</span>
+              ${btn("Bring back", { size: "sm" })}
+            </form>`,
+          )}
+        </details>`;
   const last = latestUndoable(ctx.app, user);
   const undo =
     last === undefined
@@ -391,7 +430,7 @@ export function needsYouSection(
   const count = rows.length + needs.length;
   if (count === 0 && top === undefined)
     return {
-      body: html`<h2 id="asks-sentence" class="sr-only">${askSentence(0)}</h2>${silencedNote}${undo}`,
+      body: html`<h2 id="asks-sentence" class="sr-only">${askSentence(0)}</h2>${silencedNote}${asideNote}${undo}`,
       scriptJs: "",
     };
   // The forge's own health first, then the few asks that matter most;
@@ -442,7 +481,7 @@ export function needsYouSection(
           ${reasonInput(top?.reason)} ${btn("Preview", { size: "sm" })}
           <span class="muted small">on the selected asks</span>
         </form>`}
-    ${silencedNote} ${undo}
+    ${silencedNote} ${asideNote} ${undo}
     ${decisions.map((d) => decisionForm(d, ctx.url.pathname))}
   </section>`;
   return { body, scriptJs: SELECT_JS };
@@ -647,6 +686,23 @@ export async function asksDecide(ctx: Ctx): Promise<Response> {
   const done = await decideAsk(ctx.app, ctx.auth.user, field(form, "ask"));
   if (!done.ok) return await asksScreen(ctx, nothingDone(done.error.message));
   return redirect(`/?decided=${done.value.id}#asks-bulk-result`);
+}
+
+/** POST /asks/proposal/:id/(approve|redirect|later|again) — one wave proposal, then back to the page the person came from. */
+export function asksProposal(verb: ProposalVerb) {
+  return async (ctx: Ctx): Promise<Response> => {
+    if (!ctx.auth.user) return signInFirst(ctx);
+    const form = await readForm(ctx, "rw");
+    if (form instanceof Response) return form;
+    const done = actOnProposal(ctx.app, ctx.auth.user, verb, ctx.params.id, form.get("words"));
+    if (!done.ok)
+      return done.error.code === "not_found"
+        ? notFoundPage(ctx)
+        : done.error.code === "forbidden" || done.error.code === "unauthorized"
+          ? new Response("forbidden", { status: 403 })
+          : await asksScreen(ctx, nothingDone(done.error.message));
+    return redirect(backTo(form, "/"));
+  };
 }
 
 /** POST /asks/setting — the owner's Keep or Put back on a setting away from its default. */

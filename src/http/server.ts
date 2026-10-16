@@ -222,6 +222,7 @@ import {
   asksBulkSubmit,
   asksBulkUndo,
   asksDecide,
+  asksProposal,
   asksSetting,
   asksDecideUndo,
   asksListen,
@@ -623,6 +624,10 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/asks/bulk/:id/undo", asksBulkUndo);
   router.add("POST", "/asks/listen", asksListen);
   router.add("POST", "/asks/mute", asksMute);
+  router.add("POST", "/asks/proposal/:id/approve", asksProposal("approve"));
+  router.add("POST", "/asks/proposal/:id/redirect", asksProposal("redirect"));
+  router.add("POST", "/asks/proposal/:id/later", asksProposal("later"));
+  router.add("POST", "/asks/proposal/:id/again", asksProposal("again"));
   router.add("POST", "/asks/decide", asksDecide);
   router.add("POST", "/asks/setting", asksSetting);
   router.add("POST", "/asks/decide/:id/undo", asksDecideUndo);

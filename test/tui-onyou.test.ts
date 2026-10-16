@@ -249,4 +249,13 @@ describe("terminal On you: mutes and many in one move", () => {
     expect(h.text()).not.toContain("setting cells.egress");
     h.stop();
   });
+
+  test("B with no wave put aside and no setting under the cursor does nothing", async () => {
+    hunt(forge, "alice/lamp");
+    const h = await boot();
+    await h.press("B");
+    expect(h.text()).not.toContain("wave back");
+    expect(h.text()).not.toContain("waves back");
+    h.stop();
+  });
 });

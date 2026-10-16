@@ -121,6 +121,7 @@ import {
 } from "../web/pages/milestones.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
 import { decideAsk, undoDecideAsk } from "../actions/asks_decide.ts";
+import { actOnProposal, isProposalVerb, PROPOSAL_VERBS } from "../actions/proposals.ts";
 import { applyAsksBulk, previewAsksBulk } from "../actions/asks_bulk.ts";
 import type { Ctx, Handler } from "./context.ts";
 import {
@@ -631,6 +632,27 @@ const TOOLS: readonly Tool[] = [
     async run(ctx, user, args) {
       const done = await decideAsk(ctx.app, user, args["item"]);
       return done.ok ? good(done.value) : bad(done.error.code, done.error.message);
+    },
+  },
+  {
+    name: "asks_proposal",
+    description:
+      "Act on a wave proposal (an `asks` row with a `proposal`; `id` is its `proposal.id`). `approve` opens its issues with their links, exactly as an unheld plan would; `redirect` hands your `words` to the planner as a new run; `later` hides it until `again` brings it back. Only the app's owner may; a proposal is decided once.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", maxLength: 80 },
+        verb: { type: "string", enum: [...PROPOSAL_VERBS] },
+        words: { type: "string", maxLength: 65536 },
+      },
+      required: ["id", "verb"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const verb = args["verb"];
+      if (!isProposalVerb(verb)) return bad("invalid", `verb is ${PROPOSAL_VERBS.join(", ")}`);
+      const done = actOnProposal(ctx.app, user, verb, args["id"], args["words"]);
+      return done.ok ? good(done.value ?? { ok: true }) : bad(done.error.code, done.error.message);
     },
   },
   {
