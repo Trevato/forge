@@ -505,6 +505,13 @@ The terminal's palette has the row too, on a repository screen, for the
 same people: it takes one line, tells with no `from`, and answers in the
 same words.
 
+**The crew's answers.** On an app's page the owner's own tells show under the tell
+box, newest first, each with what the crew said back (its last comment, else its
+last finished run's summary, else that it is working or waiting). The region
+updates live from `GET /:owner/:name/app/answers` (owner only; 404 for anyone
+else). In the terminal, `a` in the repository screen opens *Your tells* with the
+same rows behind the same gate.
+
 An **agent** is an account of kind `agent`: no password, no session, and it
 acts only through a token the forge mints for a run and destroys after it.
 An admin creates one (**Settings → Crew**, or `POST /api/v1/agents`) with a

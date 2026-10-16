@@ -91,6 +91,8 @@ import {
   proposingStatus,
   type OriginTarget,
 } from "./contribute.ts";
+import { canSeeAnswers } from "../../web/studio/answers.ts";
+import { answersScreen } from "./answers.ts";
 import { commitsScreen } from "./commits.ts";
 import { deploysScreen } from "./deploys.ts";
 import {
@@ -1290,6 +1292,9 @@ export function workspaceScreen(
               binding(["I"], "about this repository"),
               binding(["V"], "waves"),
               ...(repo === undefined ? [] : [binding(["d"], "production deploys")]),
+              ...(repo !== undefined && canSeeAnswers(f.db, repo, f.user)
+                ? [binding(["a"], "your tells and the crew's answers")]
+                : []),
               ...(repo !== undefined && admin()
                 ? [binding(["R"], `decisions by ${(getRepoById(f.db, repo.id) ?? repo).decisionsBy} (cycle)`)]
                 : []),
@@ -1614,6 +1619,10 @@ export function workspaceScreen(
       }
       if (plain && e.key === "d" && repo !== undefined) {
         ctx.push(deploysScreen(f, ctx, repo));
+        return true;
+      }
+      if (plain && e.key === "a" && repo !== undefined && canSeeAnswers(f.db, repo, f.user)) {
+        ctx.push(answersScreen(f, ctx, repo));
         return true;
       }
       if (plain && e.key === "I") {

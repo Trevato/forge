@@ -9,10 +9,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { listIssues } from "../src/core/issues.ts";
+import { listIssues, MAX_BODY } from "../src/core/issues.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { tellAnswer } from "../src/tui/screens/tell.ts";
-import { toldWords, UNVERIFIED_WORDS, type Told } from "../src/actions/tell.ts";
+import { tell, toldWords, TOO_LONG_WORDS, UNVERIFIED_WORDS, type Told } from "../src/actions/tell.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { repoScreen } from "../src/tui/screens/repo.ts";
 import { local } from "../src/tui/screens/where.ts";
@@ -109,5 +109,9 @@ describe("tell the crew in the terminal", () => {
 
   test("an unverified address gets the shared words", () => {
     expect(tellAnswer({ ok: false, error: "unverified" }).text).toBe(UNVERIFIED_WORDS);
+  });
+
+  test("an over-long line gets the page's words", async () => {
+    expect(tellAnswer(await tell(app, alice, repo, "x".repeat(MAX_BODY + 1))).text).toBe(TOO_LONG_WORDS);
   });
 });

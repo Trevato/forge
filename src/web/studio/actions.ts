@@ -11,7 +11,7 @@
 import { mayView } from "../../core/sealed.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment } from "../../actions/issues.ts";
-import { parseFrom, tell } from "../../actions/tell.ts";
+import { parseFrom, tell, TOO_LONG_WORDS } from "../../actions/tell.ts";
 import { keepThought } from "../../actions/thought.ts";
 import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
@@ -59,6 +59,11 @@ async function tellFrom(
       message: "Say something first.",
     });
   const told = await tell(ctx.app, ctx.auth.user, repo, text, 1, from);
+  if (!told.ok && told.error === "body_too_long")
+    return flashOrJson(ctx, back, {
+      tone: "danger",
+      message: TOO_LONG_WORDS,
+    });
   if (!told.ok)
     return flashOrJson(ctx, back, {
       tone: "danger",

@@ -6,7 +6,7 @@
  * screen has no page path of its own.
  */
 
-import { tell, toldWords, UNVERIFIED_WORDS, type Told, type TellError } from "../../actions/tell.ts";
+import { tell, toldWords, TOO_LONG_WORDS, UNVERIFIED_WORDS, type Told, type TellError } from "../../actions/tell.ts";
 import type { Repo } from "../../core/repos.ts";
 import { DIRECTION_NOTE, mayDirectCrew } from "../../crew/direct.ts";
 import type { Result } from "../../kernel/result.ts";
@@ -25,7 +25,9 @@ export function tellAnswer(told: Result<Told, TellError>): { text: string; tone:
         ? DIRECTION_NOTE
         : told.error === "unverified"
           ? UNVERIFIED_WORDS
-          : "That could not be told.",
+          : told.error === "body_too_long"
+            ? TOO_LONG_WORDS
+            : "That could not be told.",
   };
 }
 

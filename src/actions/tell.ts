@@ -8,7 +8,7 @@
 
 import type { App } from "../app.ts";
 import { listCrewRoles } from "../core/agents.ts";
-import type { Issue, TitleError } from "../core/issues.ts";
+import { MAX_BODY, type Issue, type TitleError } from "../core/issues.ts";
 import type { Repo } from "../core/repos.ts";
 import { listRuns } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
@@ -95,6 +95,8 @@ export async function tell(
   if (!requireVerified(app, participant.value).ok) return err("unverified");
   const text = said.trim();
   if (text === "") return err("empty");
+  // One long line becomes only a title, so the body cap never sees it.
+  if (text.length > MAX_BODY) return err("body_too_long");
   if (from !== null && parseFrom(from) !== from) return err("bad_from");
   const firstLine = text.split(/\n/)[0]!.trim();
   const title =
@@ -149,6 +151,9 @@ export async function tell(
 
 /** What every door says when a tell is refused for an unverified address. */
 export const UNVERIFIED_WORDS = "verify your email first";
+
+/** What both doors say when `tell` refuses a text over `MAX_BODY`. */
+export const TOO_LONG_WORDS = "That is too long to tell in one go.";
 
 /** What happened, in the sentence both doors say. */
 export function toldWords(told: Told): string {

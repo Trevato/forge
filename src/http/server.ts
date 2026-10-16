@@ -243,6 +243,7 @@ import {
   liveOnYouFragment,
   studioDoor,
 } from "../web/studio/home.ts";
+import { appAnswersFragment } from "../web/studio/answers.ts";
 import { appNowFragment } from "../web/studio/now.ts";
 import { appStateFragment } from "../web/studio/previews.ts";
 import { changesList, tellsList } from "../web/studio/lists.ts";
@@ -1086,6 +1087,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/app/state", appStateFragment);
   // "Now" on the same page, alone: the region's own address.
   router.add("GET", "/:owner/:name/app/now", appNowFragment);
+  router.add("GET", "/:owner/:name/app/answers", appAnswersFragment);
   router.add("GET", "/:owner/:name/app/:env/open", appOpen);
   // Where a private app sends a person who arrived by its link.
   router.add("GET", "/apps/open", appsOpen);

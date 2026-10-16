@@ -15,6 +15,7 @@ import { egressNote } from "./egress.ts";
 import { audit } from "../../contract/audit.ts";
 import { latestProbes } from "../../contract/probes.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
+import { MAX_BODY } from "../../core/issues.ts";
 import { listCrewRoles } from "../../core/agents.ts";
 import type { AppRecord } from "../../core/apps.ts";
 import { decisionStats, type DecisionStat } from "../../core/decisions.ts";
@@ -47,6 +48,7 @@ import {
   userTag,
 } from "../ui.ts";
 import { changesHref, tellsHref } from "./nouns.ts";
+import { answersRegion } from "./answers.ts";
 import { nowCard, nowRegion } from "./now.ts";
 import { repoAsks } from "./asks.ts";
 import { appPanels } from "./previews.ts";
@@ -300,6 +302,7 @@ export async function studioApp(
           name="text"
           rows="3"
           required
+          maxlength="${MAX_BODY}"
           placeholder="${builders.length === 0
             ? "Add a crew member under Settings → Crew, then tell them what you want."
             : "What should change? One thing at a time works best."}"
@@ -476,6 +479,7 @@ export async function studioApp(
     <div class="dash">
       <div class="dash-main stack">
         ${tell}
+        ${ownerFacts && ctx.auth.user ? answersRegion(ctx, repo, ctx.auth.user) : null}
         <div id="app-previews">${previews}</div>
         ${nowRegion(repo, now)}
       </div>
