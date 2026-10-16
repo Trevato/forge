@@ -6,6 +6,7 @@
  */
 
 import type { LimitWindow } from "../core/standing.ts";
+import { isNetworkError } from "./network.ts";
 import type { ClaudeOutcome } from "./claude.ts";
 
 /** How many times one task may be paused before the forge gives up on it. */
@@ -22,7 +23,7 @@ const SLACK_MS = 60_000;
  * the limit, and is checked too in case the ending is named differently.
  */
 export function isRateLimited(outcome: ClaudeOutcome): boolean {
-  if (outcome.ok) return false;
+  if (outcome.ok || isNetworkError(outcome)) return false;
   return (
     outcome.reason === "api_error" ||
     /rate[ _-]?limit|session limit|usage limit|weekly limit|hit your \w+ limit|overloaded|too many requests|\b(?:429|529)\b/i.test(

@@ -17,7 +17,7 @@ export const INTERRUPTED = "interrupted: ";
 const PROVIDER =
   /rate[ _-]?limit|session limit|usage limit|weekly limit|hit your \w+ limit|overloaded|too many requests|\b(?:429|529)\b|\(api_error\)|may use is resting|resting —/i;
 const NETWORK =
-  /ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|fetch failed|unable to connect|connection error|could not reach|unreachable|socket hang up/i;
+  /ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|fetch failed|unable to connect|connection error|could not reach|can'?t reach the API server|unreachable|socket hang up/i;
 const RESTART =
   /^cancelled$|interrupted by a restart|stopped for a restart|the forge stopped/i;
 
@@ -37,8 +37,8 @@ export function interruptionOf(summary: string): Interruption | undefined {
   }
   if (/^declined\b/i.test(s)) return undefined;
   if (RESTART.test(s)) return "restart";
-  if (PROVIDER.test(s)) return "provider limit";
   if (NETWORK.test(s)) return "network error";
+  if (PROVIDER.test(s)) return "provider limit";
   return undefined;
 }
 

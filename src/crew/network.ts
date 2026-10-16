@@ -13,6 +13,9 @@ const NETWORK =
 /** Seconds to wait before each retry; its length is the number of retries. */
 export const NETWORK_RETRY_SECONDS: readonly number[] = [5, 20, 60];
 
+/** How long a run waits, paused, when the retries found the network still down. */
+export const NETWORK_PAUSE_MS = 5 * 60_000;
+
 /** Whether the run ended on the network rather than on the work. */
 export function isNetworkError(outcome: ClaudeOutcome): boolean {
   if (outcome.ok) return false;

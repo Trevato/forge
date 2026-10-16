@@ -62,6 +62,11 @@ echo "half-done" > PAUSED.md
 echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"You\u2019ve hit your session limit \u00b7 resets 7:20am (UTC)","total_cost_usd":0.02,"num_turns":2,"session_id":"fake-1","terminal_reason":"api_error"}'
 exit 0
 fi
+if grep -q NET-DOWN "${promptFile}"; then touch "${dataDir}/down"; fi
+if [ -f "${dataDir}/down" ] && grep -q "Continue where you stopped\\|NET-DOWN" "${promptFile}"; then
+echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: Can'"'"'t reach the API server","total_cost_usd":0,"num_turns":0,"session_id":"fake-1","terminal_reason":"api_error"}'
+exit 0
+fi
 if grep -q NET-FLAKE "${promptFile}" && [ ! -f "${dataDir}/flaked" ]; then
 touch "${dataDir}/flaked"
 echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: Can'"'"'t reach the API server — check your internet or DNS (EAI_AGAIN)","total_cost_usd":0,"num_turns":0,"session_id":"fake-1","terminal_reason":"api_error"}'

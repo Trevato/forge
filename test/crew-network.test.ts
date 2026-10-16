@@ -3,12 +3,18 @@
  * not judged (#1613).
  */
 
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { App } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
-import { isNetworkError } from "../src/crew/network.ts";
+import { listRuns, type Run } from "../src/core/runs.ts";
+import { MAX_PAUSES } from "../src/crew/limits.ts";
+import { isNetworkError, NETWORK_PAUSE_MS } from "../src/crew/network.ts";
+import { isRateLimited } from "../src/crew/limits.ts";
+import { interruptionOf } from "../src/crew/interrupted.ts";
 import type { ClaudeOutcome } from "../src/crew/claude.ts";
 import {
   agentRunSettled,
@@ -77,4 +83,70 @@ describe("the crew, with a stand-in Claude Code: network errors", () => {
     expect(run.state).toBe("ok");
     expect(run.summary).toContain("opened pull");
   }, 60_000);
+
+  test("an outage that outlasts the retries pauses the run; after MAX_PAUSES it ends", async () => {
+    const issue = openIssue(app, alice, repo, {
+      title: "Network down",
+      body: "NET-DOWN",
+    });
+    if (!issue.ok) throw new Error(String(issue.error));
+    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+    const mine = () =>
+      listRuns(app.db, repo.id, { kind: "agent" }).filter(
+        (r) => r.issueId === issue.value.id,
+      );
+    const waitFor = async (where: (r: Run) => boolean): Promise<Run> => {
+      const until = Date.now() + 30_000;
+      while (Date.now() < until) {
+        const found = mine().find(where);
+        if (found) return found;
+        await Bun.sleep(50);
+      }
+      throw new Error("run did not settle: " + JSON.stringify(mine().map((r) => [r.state, r.attempt, r.summary])));
+    };
+    const paused = await waitFor((r) => r.state === "cancelled");
+    expect(paused.summary).toStartWith("paused: network error");
+    const next = await waitFor((r) => r.state === "queued");
+    expect(next.attempt).toBe(1);
+    const wait = Date.parse(next.notBefore ?? "") - Date.now();
+    expect(wait).toBeGreaterThan(NETWORK_PAUSE_MS - 30_000);
+    expect(wait).toBeLessThanOrEqual(NETWORK_PAUSE_MS);
+
+    // The sixth pause was the last: the run that starts now ends instead.
+    app.db
+      .query("UPDATE run SET attempt = ?1, not_before = ?2 WHERE id = ?3")
+      .run(MAX_PAUSES, new Date().toISOString(), next.id);
+    const ended = await waitFor((r) => r.id === next.id && r.state === "failed");
+    expect(ended.summary).not.toStartWith("paused");
+    rmSync(join(standIn.dataDir, "down"));
+  }, 60_000);
+});
+
+describe("a network outage is not a provider limit", () => {
+  const down = {
+    result:
+      "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN)",
+    reason: "api_error",
+  };
+
+  test("an unreachable API is not rate limited", () => {
+    expect(isRateLimited(outcome(down))).toBe(false);
+    expect(
+      isRateLimited(
+        outcome({ result: "429 too many requests", reason: "api_error" }),
+      ),
+    ).toBe(true);
+  });
+
+  test("the phrase alone reads as a network error", () => {
+    expect(interruptionOf("no changes pushed: Can't reach the API server")).toBe(
+      "network error",
+    );
+  });
+
+  test("its summary reads as a network error", () => {
+    expect(
+      interruptionOf(`no changes pushed: ${down.result} (api_error)`),
+    ).toBe("network error");
+  });
 });

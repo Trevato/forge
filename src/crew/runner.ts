@@ -78,6 +78,7 @@ import {
 import { policyBrief } from "../contract/audit.ts";
 import {
   isNetworkError,
+  NETWORK_PAUSE_MS,
   NETWORK_RETRY_SECONDS,
   pause,
 } from "./network.ts";
@@ -1074,6 +1075,25 @@ async function work(
         sessionId: again.sessionId || result.sessionId,
         costUsd: result.costUsd + again.costUsd,
         turns: result.turns + again.turns,
+      };
+    }
+    // Still unreachable after the retries: an outage, not a verdict. The run
+    // pauses with its clone and session and asks again later, as it does for
+    // a provider limit, rather than ending as "no changes pushed".
+    if (
+      isNetworkError(result) &&
+      !signal.aborted &&
+      Date.now() < deadline &&
+      run.attempt < MAX_PAUSES
+    ) {
+      const at = new Date(Date.now() + NETWORK_PAUSE_MS);
+      write(`network still down; paused, resumes ${whenText(at)}`);
+      return {
+        state: "paused",
+        summary: `paused: network error, resumes ${whenText(at)}`,
+        resumeAt: at.toISOString(),
+        sessionId: result.sessionId,
+        costUsd: result.costUsd,
       };
     }
     noteRunProgress(app.db, run.id, {
