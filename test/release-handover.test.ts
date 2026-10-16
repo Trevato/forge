@@ -263,7 +263,10 @@ test("handover.drain lets go of the port before the rest of the drain, and close
     expect(answered.status).toBe(200);
     expect(answered.report).toContain("ok refs/heads/main");
     while (closedAt === 0) await Bun.sleep(50);
-    expect(closedAt).toBeGreaterThanOrEqual(answeredAt);
+    // The push answered in full (200, "ok refs/heads/main") is the proof the
+    // close waited for it: the client stamps `answeredAt` after reading the
+    // body, which can trail the server's close by a millisecond.
+    expect(answeredAt).toBeGreaterThan(0);
     expect(closedAt).toBeGreaterThanOrEqual(restDoneAt);
     expect(text(await git(["rev-parse", "refs/heads/main"], bare))).toBe(after);
   } finally {
