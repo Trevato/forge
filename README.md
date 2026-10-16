@@ -689,6 +689,7 @@ last kept drill (when, green or red with its reason, seconds until back) or
 the sentence on why it is not drilled. In the terminal it is the **Failure domains**
 command (`ctrl+k`; the **Resilience** command is the THREATS.md one), shown to an admin only and read through the same
 `listResilience` action. Only the latest drill per domain is shown.
+The **Owner's needs** command (admin only, `ownerView`) is the owner's one screen: the forge's needs as the board strip says them, where snapshots go (and any mirror) with the newest snapshot, and every domain with what the owner does.
 
 A red drill, or none in eight days, is one line for the forge's admin on the
 board's forge strip, in the terminal's dashboard (same `forgeNeeds`), and in

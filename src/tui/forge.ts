@@ -46,6 +46,7 @@ import { cloudScreen } from "./screens/cloud.ts";
 import { usageScreen } from "./screens/usage.ts";
 import { quotasScreen } from "./screens/quotas.ts";
 import { domainsScreen } from "./screens/domains.ts";
+import { ownerScreen } from "./screens/owner.ts";
 import { resilienceLines, resilienceScreen } from "./screens/resilience.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
 import { memoryScreen, systemLines, systemScreen } from "./screens/system.ts";
@@ -378,6 +379,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Failure domains",
         hint: "failure domains and their last drill",
         run: () => ctx.push(domainsScreen(session, ctx)),
+      });
+    // What needs the owner: needs, snapshot store, every failure domain (#1236).
+    if (session.user?.isAdmin === true && session.user.kind !== "agent")
+      commands.push({
+        id: "owner",
+        title: "Owner's needs",
+        hint: "what needs the owner, snapshots, failure domains",
+        run: () => ctx.push(ownerScreen(session, ctx)),
       });
     commands.push({
       id: "family",
