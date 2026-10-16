@@ -108,6 +108,7 @@ import { clearStaleLocks, lockedOut } from "./locks.ts";
 import { interruptedSummary } from "./interrupted.ts";
 import { laterGate } from "./later.ts";
 import { parkedTwice } from "./parks.ts";
+import { heldNow, stuckOf } from "./held.ts";
 import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import {
@@ -913,11 +914,13 @@ async function work(
               .get(issue.id, run.id, run.createdAt)!.n > 0,
           }
         : {}),
-      // A planning run is given what the crew handed over (`parks.ts`).
+      // A planning run is given what the crew handed over (`parks.ts`),
+      // and what holds the ready list when nothing on it can start (`held.ts`).
       ...(brief.role === "planner" && issue.id === repo.directionIssueId
         ? {
             parkedTwice: [...parkedTwice(app.db, [repo]), ...handedOverPulls(app.db, repo)],
             laterGate: laterGate(app.db, repo.id),
+            stuck: stuckOf(heldNow(app, repo)),
           }
         : {}),
       checkKind:

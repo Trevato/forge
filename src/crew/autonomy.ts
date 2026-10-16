@@ -35,8 +35,6 @@ import {
   crewRole,
 } from "../core/agents.ts";
 import { pickBuilder, routeIssue } from "./route.ts";
-import { coveredByRedFix } from "./red_fix.ts";
-import { isSettingFinding } from "./setting_finding.ts";
 import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
 import {
   latestDecision,
@@ -91,13 +89,8 @@ import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
-import {
-  capReached,
-  handedOverPulls,
-  runCapOf,
-  SKIP_SUMMARY,
-  skipsReplan,
-} from "./guard.ts";
+import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
+import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
 import { BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import { ALREADY_NOTE, alreadyDoneOids } from "./already.ts";
 import { interruptionOf } from "./interrupted.ts";
@@ -115,8 +108,6 @@ import {
   directorsAmong,
   landsOnItsOwn,
   markReaders,
-  proposedWork,
-  speaksForCrew,
 } from "./direct.ts";
 import { crewOffInPreview } from "./preview.ts";
 import { moveRequested } from "./requested.ts";
@@ -364,7 +355,8 @@ export async function driveRepo(
   // operator's; at a wall nothing new starts until the reset.
   const paced = repoPace(app, repo, now);
   if (paced.slots === 0 && slotted.length === 0) return "waiting";
-  const ready = startable(app, repo, readyNow(repoGraph(app.db, repo.id, { sealed: true })), crew, active);
+  const held = heldBy(app, repo, readyNow(repoGraph(app.db, repo.id, { sealed: true })), crew, active);
+  const ready = held.startable;
   if (slotted.length >= paced.slots) {
     // The builders are busy; the planner can still refill the map, when
     // it is thin — counted, never assumed: a full crew with a full map is
@@ -412,17 +404,20 @@ export async function driveRepo(
     return "picked";
   }
 
-  // Nothing is ready: the planner is asked, thin or dry, at most every
-  // REPLAN_AFTER_MS.
-  if (await planIfThin(app, repo, by, crew, active, 0, now)) return "planned";
+  // Nothing is startable with slots free: the planner is asked, thin or
+  // dry, at most every REPLAN_AFTER_MS. When ready issues are held by what
+  // re-planning lifts — stalled, capped, parked twice — it is asked with
+  // that breakdown, and neither a full plate nor its own unanswered
+  // decline holds it: nothing else will move them (#2244).
+  const stuck = replannable(held).length > 0 ? held : null;
+  if (await planIfThin(app, repo, by, crew, active, 0, now, stuck)) return "planned";
   return "idle";
 }
 
 /**
- * The ready issues a builder may start now: not the direction, not in
- * flight, not already proposed in an open pull, not held by the planner or
- * a reviewer, not stalled, capped, parked, covered by a red fix, or a
- * setting's finding. The tick log counts these beside the raw ready list.
+ * The ready issues a builder may start now: not the direction, and held by
+ * none of `held.ts`'s filters. The tick log counts these beside the raw
+ * ready list, and the held ones per filter.
  */
 export function startable(
   app: App,
@@ -431,24 +426,7 @@ export function startable(
   crew: readonly { agent: Agent; role: CrewRole }[],
   active: readonly Run[],
 ): Ranked[] {
-  const busyIssues = new Set(active.map((r) => r.issueId));
-  const proposed = proposedWork(app.db, repo);
-  // An issue a planner or a reviewer holds is theirs, not a builder's.
-  const planners = new Set(
-    crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
-  );
-  return ready.filter(
-    (r) =>
-      r.issue.id !== repo.directionIssueId &&
-      !busyIssues.has(r.issue.id) &&
-      !proposed.has(r.issue.number) &&
-      (r.issue.assigneeId === null || !planners.has(r.issue.assigneeId)) &&
-      !stalled(app, repo, r.issue) &&
-      !atRunCap(app, repo, r.issue) &&
-      parkedCount(app, repo, r.issue.id) < PARK_STRIKES &&
-      !coveredByRedFix(app.db, repo.id, r.issue) &&
-      !isSettingFinding(app.db, r.issue.id),
-  );
+  return heldBy(app, repo, ready, crew, active).startable;
 }
 
 /** The map is thin below this many ready issues; the planner refills it. */
@@ -581,6 +559,7 @@ async function planIfThin(
   active: readonly Run[],
   ready: number,
   now: Date,
+  stuck: Held | null = null,
 ): Promise<boolean> {
   const handed = [...parkedTwice(app.db, [repo]), ...handedOverPulls(app.db, repo)];
   if (ready >= THIN_MAP && handed.length === 0) return false;
@@ -604,19 +583,23 @@ async function planIfThin(
   const seen = lastPlan?.created_at ?? "";
   const owed = handed.filter((issue) => issue.at > seen);
   if (ready >= THIN_MAP && owed.length === 0) return false;
+  // Nothing startable for issues held since its last pass that re-planning
+  // lifts: owed one pass like a hand-over, once (#2244).
+  const unstuck = stuck === null ? [] : replannable(stuck).filter((issue) => heldSince(app, issue, seen));
+  const news = owed.length + unstuck.length;
   // The direction is the planner's standing issue, not one issue retried:
   // it is held to its own day's share, never the builders' cap (#2143).
   if (atRunCap(app, repo, direction))
     return notPlanned(repo, "parked: the direction is at its day's planning cap");
   // An issue the crew handed over is owed its pass whatever the hold: the
   // planner splitting it is how work starts landing again.
-  const hold = owed.length === 0 ? plannerHold(app, repo, now) : null;
+  const hold = news === 0 ? plannerHold(app, repo, now) : null;
   if (hold !== null) return held(repo, holdWhy(hold));
   if (lastPlan !== null && lastPlan !== undefined) {
     // A planner that declined the direction is not asked again until a
     // person has said something on it, or the crew hands it an issue.
     if (
-      owed.length === 0 &&
+      news === 0 &&
       lastPlan.state === "failed" &&
       declinedUnanswered(app, repo, direction)
     )
@@ -631,7 +614,7 @@ async function planIfThin(
     // Nobody spoke and the map has not moved since the last pass: another
     // would read its own summary and change nothing (#1097).
     if (
-      owed.length === 0 &&
+      news === 0 &&
       skipsReplan(app.db, repo, direction, planner, lastPlan.created_at)
     )
       return notPlanned(repo, SKIP_SUMMARY);
@@ -650,9 +633,11 @@ async function planIfThin(
   log.info(
     owed.length > 0
       ? "parked twice; planner asked"
-      : ready === 0
-        ? "map ran dry; planner asked"
-        : "map is thin; planner asked",
+      : unstuck.length > 0
+        ? "nothing startable; planner asked"
+        : ready === 0
+          ? "map ran dry; planner asked"
+          : "map is thin; planner asked",
     {
       repo: `${repo.ownerName}/${repo.name}`,
       planner: planner.user.username,
@@ -660,43 +645,25 @@ async function planIfThin(
       ...(owed.length > 0
         ? { parkedTwice: owed.map((issue) => `#${issue.number}`).join(" ") }
         : {}),
+      ...(stuck === null ? {} : { held: heldWords(stuck) }),
     },
   );
   return true;
 }
 
 /**
- * An issue a builder already ran on and left without a pull — declined, or
- * cut short — is not picked again by the clock: running it again blind is
- * the loop autonomy refuses. It waits for a person's word, which is a
- * feedback run like any other.
+ * Whether `issue` came to be held after `since` — its newest builder run
+ * ended then, which is what stalls or caps it — so a planning pass that
+ * started before has not seen it.
  */
-function stalled(app: App, repo: Repo, issue: Issue): boolean {
+function heldSince(app: App, issue: Issue, since: string): boolean {
   const last = app.db
-    .query<{ state: string; summary: string; created_at: string }, [string]>(
-      `SELECT state, summary, created_at FROM run WHERE issue_id = ?1 AND kind = 'agent'
-       ORDER BY created_at DESC LIMIT 1`,
+    .query<{ at: string | null }, [string]>(
+      `SELECT MAX(COALESCE(finished_at, created_at)) AS at FROM run
+        WHERE issue_id = ?1 AND kind = 'agent'`,
     )
-    .get(issue.id);
-  if (last === null || last === undefined) return false;
-  if (last.state === "queued" || last.state === "running") return true;
-  if (/opened pull #|updated pull #/.test(last.summary)) return false;
-  // Cut short by the provider or a restart: nobody tried it, so the clock
-  // tries again (`interrupted.ts`).
-  if (last.state === "failed" && interruptionOf(last.summary) !== undefined)
-    return false;
-  // A word since then — from someone who may direct the crew, or the
-  // planner's when it re-planned a parked issue — is what un-stalls it. A
-  // reader's comment stays on the thread, and so does one imported from
-  // an origin, whoever connected it (#619).
-  return !app.db
-    .query<{ id: string }, [string, string]>(
-      `SELECT DISTINCT n.author_id AS id FROM comment n
-        WHERE n.issue_id = ?1 AND n.created_at > ?2 AND n.origin_author IS NULL
-          AND NOT (n.body LIKE '${DONE_LIKE}' AND ${BY_CREW})`,
-    )
-    .all(issue.id, last.created_at)
-    .some((r) => speaksForCrew(app.db, repo, getUserById(app.db, r.id)));
+    .get(issue.id)?.at;
+  return typeof last === "string" && last > since;
 }
 
 /** Whether the newest run on the issue was a decline and no person has spoken since. */
@@ -797,11 +764,6 @@ export function parkForBreaker(
     issue: issue.number,
   });
   return true;
-}
-
-/** Whether `issue` is at its run cap (`guard.ts`): the clock neither picks nor plans it. */
-export function atRunCap(app: App, repo: Repo, issue: Issue): boolean {
-  return capReached(app.db, repo, issue, runCapOf(repo, issue, app.config));
 }
 
 /** How many times the crew has parked this issue since a person who directs it last spoke (`parks.ts`). */
@@ -1147,19 +1109,21 @@ export async function autonomyTick(
       // never a mystery: the numbers behind "idle" are on the line.
       const status = autonomyStatus(app, current, now);
       const ready = readyNow(repoGraph(app.db, current.id, { sealed: true }));
+      const held = heldBy(
+        app,
+        current,
+        ready,
+        listCrewRoles(app.db, current.id),
+        activeRuns(app, current.id),
+      );
       log.info("tick", {
         repo: `${repo.ownerName}/${repo.name}`,
         did,
         ready: ready.length,
-        // What the builders could start after the filters: 47 ready with 0
-        // startable is every one in a pull, stalled or capped (#2143).
-        startable: startable(
-          app,
-          current,
-          ready,
-          listCrewRoles(app.db, current.id),
-          activeRuns(app, current.id),
-        ).length,
+        // What the builders could start after the filters (#2143), and
+        // what holds the rest, per filter (#2244).
+        startable: held.startable.length,
+        held: heldWords(held),
         active: status.active,
         slots: status.slots,
         ...(requested.length === 0

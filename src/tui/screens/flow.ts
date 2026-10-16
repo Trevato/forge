@@ -6,11 +6,15 @@
  * MCP `flow` tool read. Under them, each repository's merge queue (#2036):
  * queued, gating, landed in the last hour (`flow/queue.ts`); then the
  * conflicted pulls, and the pulls with changes requested waiting on a
- * builder and on a reviewer (`flow/requested.ts`, #2172). Read-only;
- * Enter, Esc or q closes it.
+ * builder and on a reviewer (`flow/requested.ts`, #2172); then each
+ * autonomous repository's ready list, startable beside the count per
+ * filter that holds the rest (`flow/held.ts`, #2244), as /flow draws it.
+ * Read-only; Enter, Esc or q closes it.
  */
 
 import type { Database } from "bun:sqlite";
+import { HOLDS } from "../../crew/held.ts";
+import type { HeldRow } from "../../flow/held.ts";
 import { conflictedPulls, conflictedSays } from "../../flow/conflicted.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
 import { readQueues } from "../../flow/queue.ts";
@@ -31,7 +35,9 @@ export function flowLines(
   now = new Date(),
   dups = live().read().duplicates,
   /** What an agent reader may see: its queue lines, conflicted pulls and changes-requested waits come already cut to public. */
-  agent?: { queues: ReturnType<typeof readQueues> },
+  agent?: { queues: ReturnType<typeof readQueues> } | undefined,
+  /** Why ready issues wait, per autonomous repository (`readHeld`, already cut to what the reader may see). */
+  held?: readonly HeldRow[],
 ): string[] {
   const stages = readPipeline(db, now);
   const flow = readThroughput(db, stages.map((s) => s.key), now);
@@ -63,8 +69,27 @@ export function flowLines(
         )),
     ...(conflicted === null ? [] : ["", ...wrap(conflicted, inner)]),
     ...waits,
+    ...(held === undefined ? [] : ["", ...heldLines(held, inner)]),
     "",
     ...duplicateLines(dups, inner),
+  ];
+}
+
+/** One line per autonomous repository: its name, then `startable=N` and each filter holding any. */
+export function heldLines(rows: readonly HeldRow[], inner: number): string[] {
+  if (rows.length === 0) return ["Ready, and why it waits: no repository runs on its own."];
+  return [
+    "Ready, and why it waits:",
+    ...rows.flatMap((r) =>
+      wrap(
+        [
+          r.repo,
+          `startable=${r.startable}`,
+          ...HOLDS.filter((h) => r.counts[h] > 0).map((h) => `${h}=${r.counts[h]}`),
+        ].join(" "),
+        inner,
+      ),
+    ),
   ];
 }
 

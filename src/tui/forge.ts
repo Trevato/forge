@@ -53,6 +53,7 @@ import { domainsScreen } from "./screens/domains.ts";
 import { ownerScreen } from "./screens/owner.ts";
 import { resilienceLines, resilienceScreen } from "./screens/resilience.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
+import { readHeld } from "../flow/held.ts";
 import { memoryScreen, systemLines, systemScreen } from "./screens/system.ts";
 import { grantable, READS_KEPT, recentReads } from "../core/telemetry.ts";
 import { noteRead, setTelemetryGrant, telemetryReader } from "../actions/telemetry.ts";
@@ -267,6 +268,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               new Date(),
               systemFor(session.app, flowReader).duplicates,
               flowReader.kind === "agent" ? { queues: queuesFor(session.app, flowReader) } : undefined,
+              readHeld(session.app, flowReader.kind === "owner"),
             )));
         },
       });

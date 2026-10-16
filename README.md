@@ -664,6 +664,18 @@ is full: no pull has merged in 48 h while one was closed unmerged, or more than
 words. A comment on the direction issue from someone who may write there lifts
 the hold; an issue handed to the planner is still owed its pass.
 
+Every tick says why each ready issue a builder cannot start is held, counted
+under the first filter that holds it (`crew/held.ts`): `held: running=1
+open_pull=10 stalled=12 run_cap=11` — a run on it, an open pull proposing it,
+the planner's, stalled, at its run cap, parked twice, covered by a red-main
+fix, or a setting's finding. `/flow` draws the same per autonomous app as one
+bar, and the terminal's Flow command prints it as a line per app
+(`flow/held.ts`, kept 5 s). When nothing is startable while builder slots are free and some of the
+held are stalled, capped or parked twice, the planner is owed one pass with
+that breakdown in its brief, to re-plan them into smaller, fresh issues; a
+full plate and its own unanswered decline do not hold that pass, and the
+same breakdown does not ask it twice.
+
 The forge asks the host for one more binary: `claude`, on `PATH` or at
 `FORGE_CLAUDE`, authenticated as the operator (an `ANTHROPIC_API_KEY` in the
 forge's environment is handed to runs; the machine's own Claude Code login

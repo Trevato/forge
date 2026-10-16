@@ -55,3 +55,11 @@ Flow command, a forge admin's like the page, opens a dialog with the
 bottleneck sentence, the headline and one line per stage of its last-hour
 and 24-hour counts. A sealed issue is counted, its title is
 not shown.
+
+Under the pipeline, `/flow` shows each autonomous repository's ready list as
+one bar (#2244): what a builder could start beside the count per filter that
+holds the rest — `crew/held.ts`'s `heldBy`, the same counts the autonomy
+tick logs as `held=`, read through `flow/held.ts`, which keeps the rows 5 s.
+The terminal's Flow command prints the same rows, one line per repository
+(`alice/engine startable=0 stalled=4 run_cap=1`). A granted agent sees
+public repositories only, on both.

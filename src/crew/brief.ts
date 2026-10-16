@@ -187,6 +187,20 @@ export interface TaskInput extends BriefInput {
   readonly parkedTwice?: readonly HandedOver[] | undefined;
   /** For a planner: the issue deferred work waits behind, if there is one. */
   readonly laterGate?: number | undefined;
+  /** For a planner: nothing ready can start, and what holds it (`held.ts`). */
+  readonly stuck?: Stuck | undefined;
+}
+
+/** Ready issues no builder can start, as the planner is told of them (#2244). */
+export interface Stuck {
+  /** The count per filter, as the tick line says it: `open_pull=10 stalled=3`. */
+  readonly held: string;
+  /** The held issues re-planning lifts: stalled or at their run cap. */
+  readonly issues: readonly {
+    readonly number: number;
+    readonly title: string;
+    readonly hold: "stalled" | "run_cap";
+  }[];
 }
 
 /** An issue the crew parked twice, as the planner is told of it. */
@@ -219,7 +233,9 @@ function taskBody(input: TaskInput): string {
   const { issue } = input;
   const out: string[] = [];
   const isAgent = (name: string): boolean => name === input.agent.user.username;
-  const handed = parkedTwiceLines(input);
+  const handed = [parkedTwiceLines(input), stuckLines(input)]
+    .filter((lines) => lines.length > 0)
+    .flatMap((lines, n) => (n === 0 ? lines : ["", ...lines]));
   const readers = input.readers ?? new Set<string>();
   const said = (author: string): string =>
     readers.has(author) ? `@${author} ${READER}` : `@${author}`;
@@ -512,6 +528,26 @@ function parkedTwiceLines(input: TaskInput): string[] {
         ]
       : []),
     "Never leave one as it was: what you leave stays on the owner's board and comes back to you.",
+  ];
+}
+
+/**
+ * What a planner is told when no ready issue can start while builders sit
+ * free: the count per filter, and each stalled or capped issue, to re-plan
+ * now rather than wait for a word nobody is going to write.
+ */
+function stuckLines(input: TaskInput): string[] {
+  const stuck = input.role === "planner" ? input.stuck : undefined;
+  if (stuck === undefined || stuck.issues.length === 0) return [];
+  const issues = `$FORGE_URL/api/v1/repos/${input.repo.ownerName}/${input.repo.name}/issues`;
+  return [
+    `Builders are free and no ready issue can start. What holds them: ${stuck.held}.`,
+    "Only re-planning moves these; do not wait for a person's comment on them:",
+    ...stuck.issues.map(
+      (issue) =>
+        `- #${issue.number} ${issue.title} (${issue.hold === "stalled" ? "stalled: a builder left it without a pull" : "at its run cap for the day"})`,
+    ),
+    `Re-plan each into smaller, fresh issues a builder can finish in one run: open them, then close the old one as split into them — PATCH ${issues}/N with {"state":"closed","reason":"split","into":[A,B]} — or, for one fresh issue, with "into":[M]. Say on the old issue what the fresh ones do differently.`,
   ];
 }
 
