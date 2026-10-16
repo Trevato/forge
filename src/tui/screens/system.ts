@@ -40,6 +40,10 @@ export function duplicateLines(dups: SystemView["duplicates"], inner: number): s
       );
 }
 
+/** A cell's memory beside its cap and who holds it, as /system says it (#2410); the forge and the host have none. */
+const capOf = (g: SystemView["groups"][number]): string =>
+  g.capBytes === null ? "" : `${bytes(g.rssBytes)} of ${bytes(g.capBytes)} ${g.capBy === "kernel" ? "kernel" : "watched"}`;
+
 export function systemLines(v: SystemView): string[] {
   const inner = WIDTH - 6;
   return [
@@ -47,7 +51,7 @@ export function systemLines(v: SystemView): string[] {
     `hottest ${v.hottestC === null ? "—" : `${v.hottestC.toFixed(0)}°C`} · memory ${v.memory ? `${bytes(v.memory.usedBytes)} of ${bytes(v.memory.totalBytes)}` : "—"} · ${v.processes} processes`,
     ...v.disks.map((d) => `${pad(d.mount, 20)} ${Math.round((d.usedBytes / Math.max(1, d.totalBytes)) * 100)}% of ${bytes(d.totalBytes)}`),
     "",
-    ...v.groups.slice(0, GROUPS).map((g) => `${pad(g.label, 28)} ${pad(String(g.procs), 4, "right")} procs`),
+    ...v.groups.slice(0, GROUPS).map((g) => `${pad(g.label, 24)} ${pad(String(g.procs), 4, "right")} procs  ${capOf(g)}`.trimEnd()),
     "",
     ...duplicateLines(v.duplicates, inner),
   ];

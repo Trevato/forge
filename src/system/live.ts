@@ -8,7 +8,7 @@
 import type { App } from "../app.ts";
 import { cellRoots } from "../apps/contain.ts";
 import { HOST, readRaw, type Paths, type Raw } from "./proc.ts";
-import { buildSystem, forAgent, type SystemView } from "./view.ts";
+import { buildSystem, forAgent, type Roots, type SystemView } from "./view.ts";
 
 const FRESH_MS = 1_000;
 
@@ -16,7 +16,7 @@ export type Live = {
   read(now?: number): SystemView;
 };
 
-export function createLive(options: { paths?: Paths; roots?: typeof cellRoots; self?: number } = {}): Live {
+export function createLive(options: { paths?: Paths; roots?: () => Roots; self?: number } = {}): Live {
   const paths = options.paths ?? HOST;
   const roots = options.roots ?? cellRoots;
   const self = options.self ?? process.pid;

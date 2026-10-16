@@ -888,7 +888,8 @@ describe.skipIf(noCells)("cells: limits stop a step, and say which", () => {
     expect(result.ok).toBe(false);
     if (!result.ok)
       expect(result.error).toMatch(
-        /^check stopped: it used \d+ MiB of memory, over its 128 MiB limit$/,
+        // The watch's tick, or — where the forge holds a delegated cgroup — the kernel's cap first.
+        /^check stopped: it (used \d+ MiB of memory, over its 128 MiB limit|reached its 128 MiB memory cap, and the kernel killed it)$/,
       );
   }, 30_000);
 

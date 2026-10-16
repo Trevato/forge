@@ -1,0 +1,231 @@
+/**
+ * A cell's memory cap, held by the kernel: each cell gets a cgroup v2 of
+ * its own under the forge's, with `memory.max` set to the cell's memory
+ * limit, so a cell that allocates past it is OOM-killed alone — never the
+ * forge, never its neighbours (#2410). The watch in `apps/contain.ts`
+ * still reads every cell once a second; this is the floor under it, for
+ * a cell that allocates faster than a second's tick.
+ *
+ * It needs the forge's own cgroup delegated to it: cgroup v2, mounted
+ * read-write, owned by the forge's user, with the memory controller
+ * available. A container gets that from its runtime (a delegated
+ * subtree, or a writable `/sys/fs/cgroup`); without it, cells are
+ * watched only, and `cgroupHost()` says why (shown on /system).
+ *
+ * Layout under the forge's cgroup `R` (cgroup v2's "no internal
+ * processes" rule: a cgroup that hands memory to children holds no
+ * process of its own):
+ *
+ *   R/forge/         the forge and everything it starts outside a cell
+ *   R/cells/c<n>/    one per cell: memory.max, memory.swap.max = 0,
+ *                    memory.oom.group = 1 (the whole cell dies together)
+ *
+ * `FORGE_CELL_CGROUP` names `R` (an absolute path) or turns this `off`;
+ * unset, `R` is `/sys/fs/cgroup` when the forge is at the root of its
+ * cgroup namespace (`0::/` in `/proc/self/cgroup`: a container's own).
+ */
+
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmdirSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+
+export type CgroupHost =
+  | { readonly ok: true; readonly root: string }
+  | { readonly ok: false; readonly reason: string };
+
+/** The cgroup a cell's process is in, open for the life of the cell. */
+export interface CellCgroup {
+  readonly dir: string;
+  /** The cap, bytes (`memory.max`). */
+  readonly maxBytes: number;
+  /** How many times the kernel OOM-killed in it (`memory.events` `oom_kill`). */
+  readonly oomKills: () => number;
+  /** Kill whatever is left and remove the cgroup, retrying while it empties. */
+  readonly remove: () => void;
+}
+
+let host: CgroupHost | undefined;
+let nextCell = 1;
+
+/** Whether cells get a kernel memory cap here, decided once (and the layout prepared). */
+export function cgroupHost(): CgroupHost {
+  host ??= prepare(cgroupRoot());
+  return host;
+}
+
+/** The forge's own cgroup directory, or why there is none to use. */
+export function cgroupRoot(
+  env: string | undefined = process.env["FORGE_CELL_CGROUP"],
+  self: () => string = () => readFileSync("/proc/self/cgroup", "utf8"),
+): { ok: true; root: string } | { ok: false; reason: string } {
+  if (env === "off") return { ok: false, reason: "FORGE_CELL_CGROUP=off" };
+  if (env !== undefined && env !== "") {
+    if (!env.startsWith("/") || env.split("/").includes(".."))
+      return { ok: false, reason: `FORGE_CELL_CGROUP must be an absolute path, not ${JSON.stringify(env)}` };
+    return { ok: true, root: env };
+  }
+  if (process.platform !== "linux") return { ok: false, reason: `no cgroups on ${process.platform}` };
+  let text: string;
+  try {
+    text = self();
+  } catch {
+    return { ok: false, reason: "/proc/self/cgroup is unreadable" };
+  }
+  // cgroup v2 is the one line `0::<path>`; v1 has a line per controller.
+  const line = text.split("\n").find((l) => l.startsWith("0::"));
+  if (line === undefined) return { ok: false, reason: "this host has no cgroup v2" };
+  // At the root of its own cgroup namespace (a container), the cgroup is
+  // the container's to divide. Anywhere else (a developer's login session)
+  // it is shared with processes that are not the forge's: only when named.
+  if (line.slice(3).trim() !== "/")
+    return { ok: false, reason: "not at a cgroup namespace root; FORGE_CELL_CGROUP names a delegated cgroup" };
+  return { ok: true, root: "/sys/fs/cgroup" };
+}
+
+const read = (path: string): string | undefined => {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+};
+
+const writable = (path: string): boolean => {
+  try {
+    accessSync(path, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const words = (text: string | undefined): string[] => (text ?? "").trim().split(/\s+/).filter((w) => w !== "");
+
+/**
+ * Make `R/forge` and `R/cells` and give `cells` the memory controller,
+ * moving the forge's processes out of `R` first. Idempotent: a forge that
+ * restarts finds the layout standing, and removes the cells of a forge
+ * that is gone — never those of one still draining its checks in a roll.
+ */
+export function prepare(
+  found: { ok: true; root: string } | { ok: false; reason: string },
+): CgroupHost {
+  if (!found.ok) return found;
+  const { root } = found;
+  if (!words(read(join(root, "cgroup.controllers"))).includes("memory"))
+    return { ok: false, reason: `${root} has no memory controller (cgroup v2 not delegated here)` };
+  for (const file of ["", "cgroup.procs", "cgroup.subtree_control"])
+    if (!writable(join(root, file)))
+      return { ok: false, reason: `${root} is read-only to the forge (no delegated cgroup)` };
+  try {
+    if (!words(read(join(root, "cgroup.subtree_control"))).includes("memory")) {
+      const leaf = join(root, "forge");
+      mkdirSync(leaf, { recursive: true });
+      // One pid per write: cgroupfs takes them one at a time.
+      for (const pid of words(read(join(root, "cgroup.procs")))) {
+        try {
+          writeFileSync(join(leaf, "cgroup.procs"), pid);
+        } catch {
+          // gone between the read and the write, or a kernel thread
+        }
+      }
+      writeFileSync(join(root, "cgroup.subtree_control"), "+memory");
+    }
+    const cells = join(root, "cells");
+    mkdirSync(cells, { recursive: true });
+    writeFileSync(join(cells, "cgroup.subtree_control"), "+memory");
+    for (const name of readdirSync(cells)) {
+      const owner = /^c\d+-(\d+)$/.exec(name)?.[1];
+      if (owner !== undefined && !alive(Number(owner))) removeDir(join(cells, name));
+    }
+  } catch (error) {
+    return { ok: false, reason: `cannot lay out ${root}: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  return { ok: true, root };
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Kill what is in a cell's cgroup and remove it; a few tries while the processes go. */
+function removeDir(dir: string, tries = 10): void {
+  try {
+    if (existsSync(join(dir, "cgroup.kill"))) writeFileSync(join(dir, "cgroup.kill"), "1");
+  } catch {
+    // already empty, or the kernel has no cgroup.kill (before 5.14)
+  }
+  try {
+    rmdirSync(dir);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || tries <= 1) return;
+    // EBUSY: a killed process is not reaped yet.
+    setTimeout(() => removeDir(dir, tries - 1), 200).unref();
+  }
+}
+
+/** A cgroup of its own for one cell, capped at `memoryMiB`; `undefined` where the host has none. */
+export function openCellCgroup(memoryMiB: number, at: CgroupHost = cgroupHost()): CellCgroup | undefined {
+  if (!at.ok) return undefined;
+  const dir = join(at.root, "cells", `c${nextCell++}-${process.pid}`);
+  const maxBytes = Math.floor(memoryMiB * 1024 * 1024);
+  try {
+    mkdirSync(dir);
+    writeFileSync(join(dir, "memory.max"), String(maxBytes));
+  } catch {
+    removeDir(dir, 1);
+    return undefined;
+  }
+  // Swap would only let a cell outlive its cap slowly; one OOM kills the cell, not a process of it.
+  for (const [file, value] of [["memory.swap.max", "0"], ["memory.oom.group", "1"]] as const) {
+    try {
+      if (existsSync(join(dir, file))) writeFileSync(join(dir, file), value);
+    } catch {
+      // an older kernel: the cap still holds
+    }
+  }
+  return {
+    dir,
+    maxBytes,
+    oomKills: () => oomKills(read(join(dir, "memory.events"))),
+    remove: () => removeDir(dir),
+  };
+}
+
+/** `oom_kill` from a `memory.events` file; 0 when it is absent. */
+export function oomKills(events: string | undefined): number {
+  const match = /^oom_kill (\d+)$/m.exec(events ?? "");
+  return match ? Number(match[1]) : 0;
+}
+
+/**
+ * The argv that moves itself into the cgroup whose `cgroup.procs` is
+ * `procs`, then becomes `argv` — so the cell and every process it starts
+ * are under the cap from their first instruction. If it cannot enter, it
+ * refuses to run rather than run uncapped. No caller text reaches the
+ * shell: the path and the argv are arguments, never script.
+ */
+export function enterArgv(procs: string, argv: readonly string[]): string[] {
+  return [
+    "/bin/sh",
+    "-c",
+    'echo $$ > "$1" || { echo "cell: cannot enter its memory cgroup" >&2; exit 125; }; shift; exec "$@"',
+    "cgroup-enter",
+    procs,
+    ...argv,
+  ];
+}

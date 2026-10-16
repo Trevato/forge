@@ -55,7 +55,7 @@ import {
   shardCountFromEnv,
   sliceFiles,
   splitArgs,
-  splitFiles,
+  splitCapped,
   tally,
   weigher,
   type ShardResult,
@@ -381,7 +381,7 @@ const perFile = record || measure || serialFiles || timed;
 const slices =
   perFile
     ? heaviestFirst(files, weight).map((file) => [file])
-    : splitFiles(files, count.value, weight);
+    : splitCapped(files, count.value, weight);
 const work = files.reduce((sum, file) => sum + weight(file), 0);
 
 const banner = record
@@ -537,7 +537,8 @@ const started = performance.now();
 // Serial one-file processes when SHARDS=1; record keeps its worker width;
 // multi-shard still runs every slice side by side.
 const results = await pool(
-  serialFiles ? 1 : record || measure || timed ? count.value : slices.length,
+  // Never more side by side than the count: capped slices outnumber it.
+  serialFiles ? 1 : Math.min(count.value, slices.length),
 );
 if (results.length < slices.length) {
   const skipped = slices.length - results.length;

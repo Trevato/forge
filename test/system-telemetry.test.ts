@@ -193,7 +193,7 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
       createLive({
         paths: { proc: join(host, "proc"), sys: join(host, "sys") },
         roots: () => [
-          { label: "check:RUN1", root: 200 },
+          { label: "check:RUN1", root: 200, cap: { bytes: 8192 * 2 ** 20, by: "kernel" } },
           { label: "check:RUN2", root: 300 },
           { label: "check:RUN3", root: 400 },
         ],
@@ -299,6 +299,9 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     const html = await page.text();
     expect(html).toContain('id="duplicates" data-count="1"');
     expect(html).toContain("test/shared.test.ts");
+    // Each check cell's memory beside its cap, and who holds the cap (#2410).
+    expect(html).toContain('data-cap="8589934592" data-cap-by="kernel">of 8.0 GiB (kernel cap)');
+    expect(html).toMatch(/id="cell-caps" data-by="(kernel|watch)"/);
     const flowPage = await fetch(`${servers.url}/flow`, { headers: { cookie: await login("alice") } });
     expect(await flowPage.text()).toContain('id="duplicate-work" data-count="1"');
 
@@ -409,7 +412,11 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     const sys = run(alice, "system");
     sys.cmd!.run();
     expect(sys.pushed.map((x) => x.title)).toEqual(["System"]);
-    expect(systemLines(JSON.parse(JSON.stringify(live().read()))).join("\n")).toContain("1 test file is running in more than one check");
+    const lines = systemLines(JSON.parse(JSON.stringify(live().read())));
+    expect(lines.join("\n")).toContain("1 test file is running in more than one check");
+    // A check cell's memory beside its cap and who holds it, as /system says it (#2410).
+    expect(lines.find((l) => l.startsWith("check:RUN1"))).toMatch(/procs {2}\S+ \S+ of 8\.0 GiB kernel$/);
+    expect(lines.every((l) => l.length <= 66)).toBe(true);
 
     expect(flowLines(app.db, new Date(), JSON.parse(JSON.stringify(live().read().duplicates))).join("\n")).toContain(
       "1 test file is running in more than one check",

@@ -294,6 +294,9 @@ export async function runStep(
       proc.exited,
     ]);
     if (why !== undefined) return err(why);
+    // The kernel's OOM kill at the cell's cap is a breach no watch tick saw.
+    const kernel = code === 0 ? undefined : cell?.breach();
+    if (kernel !== undefined) return err(`${name} stopped: it ${kernel}`);
     if (code !== 0) {
       const reason = recent.length > 0 ? ` — ${failureReason(recent)}` : "";
       return err(`${name} exited with code ${code}${reason}`);

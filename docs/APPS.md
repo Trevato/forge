@@ -261,6 +261,22 @@ are capped by the machine (`FORGE_CELL_MEMORY_MAX_MIB`, default 4096; the
 number of cores; `FORGE_CELL_DISK_MAX_MIB`, default 16384). A cell's `/tmp`
 holds at most 256 MiB.
 
+Memory is held twice. The watch reads every cell's resident memory once a
+second and stops one over its limit. Where the forge holds a delegated
+cgroup v2 (`apps/cgroup.ts`), the kernel holds it as well: each cell runs
+in `<R>/cells/c<n>-<pid>` with `memory.max` set to its limit,
+`memory.swap.max` 0 and `memory.oom.group` 1, and the forge moves itself
+to `<R>/forge`. A check that allocates past its cap faster than a tick is
+then OOM-killed alone (`check stopped: it reached its 8192 MiB memory cap,
+and the kernel killed it`), never the forge or the other checks (#2410).
+`R` is `/sys/fs/cgroup` when the forge is at its container's cgroup
+namespace root, or `FORGE_CELL_CGROUP` (a path, or `off`). The cgroup has to
+be writable by the forge's user. A container's `/sys/fs/cgroup` is
+read-only by default, so the operator delegates it, for example as a
+writable cgroup mount owned by the forge's uid. Without that, cells are
+watched only. /system says which holds the cap, and why, and shows each
+cell's memory beside its cap.
+
 Where the host cannot hold cells (or the crew's shell sandbox), the forge
 runs uncontained and says so in one line: a boot warning, and, in the foot of
 every page a site admin reads, `Reduced protection: apps (<reason>) runs
@@ -1103,6 +1119,7 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_CHECKS_DRAIN_S`       | `300`                          | seconds a roll lets running checks finish first   |
 | `FORGE_CHECK_SHARDS`      | the machine's cores             | test shards per check (live: Settings → Capacity) |
 | `FORGE_CELLS_EGRESS`      | `enforce`                       | `report` lets undeclared egress through on 80/443 (live: Settings → Capacity) |
+| `FORGE_CELL_CGROUP`       | `/sys/fs/cgroup` at a namespace root | the delegated cgroup v2 whose children cap each cell's memory; `off` watches only |
 | `FORGE_CREW_BUDGET_USD`   | `5`                             | spend per run unless the agent says otherwise     |
 | `FORGE_CREW_TIMEOUT_MIN`  | `45`                            | wall-clock limit of one agent run                 |
 | `FORGE_CREW_ALLOW_HOSTS`  | —                               | hosts an agent's shell may reach, comma-separated |

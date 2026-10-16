@@ -157,6 +157,36 @@ export function splitFiles(
     );
 }
 
+/**
+ * The most test files one `bun test` process runs. A process keeps what
+ * each file leaves behind (one global per process), and the forge was
+ * OOM-killed with 29 of them at 230–380 MiB each, ~110 files apiece
+ * (#2410). Measured with VmHWM on Bun 1.3.14, light gate files in name
+ * order: 40 files peaked at 548 MiB and 120 at 549 MiB — a process's peak
+ * is its heaviest file's plus what the files before it left, so 40 keeps
+ * that under 1 GiB with room, and costs a spawn (~0.1 s) per 40 files.
+ */
+export const FILES_PER_PROCESS = 40;
+
+/**
+ * {@link splitFiles}, with no slice over `max` files: enough slices that
+ * every one fits, balanced by weight, and any still over (many light files
+ * on one slice) cut in order into runs of `max`. A runner runs at most
+ * `n` of them at once; this decides only what each process holds.
+ */
+export function splitCapped(
+  files: readonly string[],
+  n: number,
+  weight: (file: string) => number = () => 1,
+  max = FILES_PER_PROCESS,
+): string[][] {
+  const per = Math.max(1, Math.floor(max));
+  const slices = splitFiles(files, Math.max(n, Math.ceil(files.length / per)), weight);
+  return slices.flatMap((slice) =>
+    Array.from({ length: Math.ceil(slice.length / per) }, (_, i) => slice.slice(i * per, (i + 1) * per)),
+  );
+}
+
 /** How a test file is named: the same rule `scripts/test-shards.ts` uses. */
 export const TEST_FILE = /\.test\.[cm]?[jt]sx?$/;
 

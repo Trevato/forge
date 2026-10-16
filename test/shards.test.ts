@@ -12,6 +12,7 @@ import {
   SHARDS_MAX,
   WORKER_MEMORY_BYTES,
   CELL_CPU_SHARE,
+  FILES_PER_PROCESS,
   formatTimes,
   heaviestFirst,
   memoryLimit,
@@ -23,6 +24,7 @@ import {
   shardCountFromEnv,
   sliceFiles,
   splitArgs,
+  splitCapped,
   splitFiles,
   tally,
   weigher,
@@ -64,6 +66,42 @@ describe("splitFiles", () => {
   test("never makes more shards than files, nor fewer than one", () => {
     expect(splitFiles(["only"], 8)).toEqual([["only"]]);
     expect(splitFiles(["a", "b"], 0)).toEqual([["a", "b"]]);
+  });
+});
+
+describe("splitCapped: no bun test holds more than FILES_PER_PROCESS files (#2410)", () => {
+  const many = Array.from({ length: 330 }, (_, i) => `test/m${String(i).padStart(3, "0")}.test.ts`);
+
+  test("the fast tier's ~110 files a process, at 3 shards, become slices of at most 40", () => {
+    expect(FILES_PER_PROCESS).toBe(40);
+    const slices = splitCapped(many, 3);
+    // 330 / 40 = 8.25, so at least 9 slices; the old split made 3 of 110.
+    expect(splitFiles(many, 3).map((s) => s.length)).toEqual([110, 110, 110]);
+    expect(slices.length).toBeGreaterThanOrEqual(9);
+    for (const slice of slices) {
+      expect(slice.length).toBeGreaterThan(0);
+      expect(slice.length).toBeLessThanOrEqual(40);
+    }
+    const all = slices.flat();
+    expect(all.length).toBe(many.length);
+    expect([...all].sort()).toEqual(many);
+  });
+
+  test("many light files on one heavy-balanced slice are cut, in order", () => {
+    // One heavy file takes a slice alone; the other 99 share the other and are cut in runs of 40.
+    const weight = (file: string) => (file === "test/m000.test.ts" ? 1_000 : 1);
+    const list = many.slice(0, 100);
+    const slices = splitCapped(list, 2, weight, 40);
+    for (const slice of slices) expect(slice.length).toBeLessThanOrEqual(40);
+    expect(slices.find((s) => s.includes("test/m000.test.ts"))!.length).toBeLessThanOrEqual(40);
+    expect(slices.flat().sort()).toEqual(list);
+    for (const slice of slices) expect(slice).toEqual(list.filter((f) => slice.includes(f)));
+  });
+
+  test("under the cap it is splitFiles exactly", () => {
+    const weight = (file: string) => (Number(file.match(/\d+/)![0]) * 37) % 11;
+    expect(splitCapped(files, 3, weight)).toEqual(splitFiles(files, 3, weight));
+    expect(splitCapped(["only"], 8)).toEqual([["only"]]);
   });
 });
 

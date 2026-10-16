@@ -12,9 +12,11 @@
  *   else. The way out is the forge's proxy (`apps/egress.ts`), which reaches
  *   the forge and the hosts the repository declared, and refuses the rest.
  *   The way in, for an app, is a relay from the port the forge proxies to.
- * - **Limits.** Memory, CPU and disk are watched from outside (a container
- *   cannot create cgroups), and a cell over any of them is stopped with the
- *   reason, which becomes the step's error or the app's last log line.
+ * - **Limits.** Memory, CPU and disk are watched from outside, and a cell
+ *   over any of them is stopped with the reason, which becomes the step's
+ *   error or the app's last log line. Where the forge holds a delegated
+ *   cgroup (`apps/cgroup.ts`), memory is also capped by the kernel: a cell
+ *   that allocates past it between two ticks is OOM-killed alone.
  *
  * Where the host cannot hold a cell (no bubblewrap, no user namespaces —
  * macOS, or a locked-down container), the code runs as before and every
@@ -35,6 +37,7 @@ import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { portInsteadOfSocket } from "../git/hook-address.ts";
 import { relay, startEgress, type Egress } from "./egress.ts";
+import { cgroupHost, enterArgv, openCellCgroup } from "./cgroup.ts";
 
 export interface Limits {
   /** Resident memory of every process in the cell together, MiB. */
@@ -316,7 +319,12 @@ export function openCell(
   // small and bounded, and the ones that only exist to hide are read-only.
   const SMALL = String(1 << 20);
 
-  const argv = (command: string): string[] => [
+  const cgroup = openCellCgroup(spec.limits.memoryMiB);
+  const argv = (command: string): string[] => {
+    const inner = bwrapArgv(command);
+    return cgroup === undefined ? inner : enterArgv(join(cgroup.dir, "cgroup.procs"), inner);
+  };
+  const bwrapArgv = (command: string): string[] => [
     "bwrap",
     ...NAMESPACES,
     ...(spec.terminal === true ? [] : ["--new-session"]),
@@ -365,8 +373,17 @@ export function openCell(
 
   let breach: string | undefined;
   let unwatch: (() => void) | undefined;
+  // The kernel's kill leaves no watch tick behind: its count is the reason.
+  const killed = (): string | undefined =>
+    cgroup !== undefined && cgroup.oomKills() > 0
+      ? `reached its ${spec.limits.memoryMiB} MiB memory cap, and the kernel killed it`
+      : undefined;
   const watch = (pid: number, stop: (why: string) => void): void => {
-    unwatch = watchTree(pid, spec.limits, writable, spec.label, (why) => {
+    const cap: MemoryCap =
+      cgroup === undefined
+        ? { bytes: Math.floor(spec.limits.memoryMiB * 1024 * 1024), by: "watch" }
+        : { bytes: cgroup.maxBytes, by: "kernel" };
+    unwatch = watchTree(pid, spec.limits, cap, writable, spec.label, (why) => {
       if (breach !== undefined) return;
       breach = why;
       log(`stopped: ${why}`);
@@ -377,8 +394,11 @@ export function openCell(
     argv,
     env,
     watch,
-    breach: () => breach,
+    breach: () => breach ?? killed(),
     close: () => {
+      const kernel = breach === undefined ? killed() : undefined;
+      if (kernel !== undefined) log(`stopped: ${kernel}`);
+      cgroup?.remove();
       unwatch?.();
       for (const o of opened) o.close();
       rmSync(sockets, { recursive: true, force: true });
@@ -514,6 +534,8 @@ interface Watched {
   ticks: number;
   readonly key: number;
   readonly label: string | undefined;
+  /** The memory cap, and who holds it: the kernel (a cgroup) or this watch alone. */
+  readonly cap: MemoryCap;
   /** The tree's CPU ticks so far and resident KiB, at the last tick. */
   last?: { ticks: number; kib: number };
 }
@@ -521,6 +543,18 @@ interface Watched {
 const watched = new Set<Watched>();
 let timer: ReturnType<typeof setInterval> | undefined;
 let nextKey = 1;
+
+/** A cell's memory cap, bytes, and who holds it: the kernel (`apps/cgroup.ts`) or the watch alone. */
+export interface MemoryCap {
+  readonly bytes: number;
+  readonly by: "kernel" | "watch";
+}
+
+/** Whether cells' memory caps are the kernel's here, or why they are watched only. */
+export function memoryCapHolder(): { by: "kernel" } | { by: "watch"; reason: string } {
+  const host = cgroupHost();
+  return host.ok ? { by: "kernel" } : { by: "watch", reason: host.reason };
+}
 
 /** One labelled cell as its watch last read it: cumulative CPU and resident memory. */
 export interface CellCounter {
@@ -641,6 +675,7 @@ function descendants(root: number): number[] {
 function watchTree(
   root: number,
   limits: Limits,
+  cap: MemoryCap,
   writable: readonly string[],
   label: string | undefined,
   breach: (why: string) => void,
@@ -654,6 +689,7 @@ function watchTree(
     ticks: 0,
     key: nextKey++,
     label,
+    cap,
   };
   watched.add(entry);
   timer ??= setInterval(tick, WATCH.tickMs);
@@ -808,8 +844,8 @@ function tick(): void {
 }
 
 /** The root process of every labelled cell being watched, for grouping the process table by what launched it (`system/view.ts`). */
-export function cellRoots(): { label: string; root: number }[] {
-  const out: { label: string; root: number }[] = [];
-  for (const e of watched) if (e.label !== undefined) out.push({ label: e.label, root: e.root });
+export function cellRoots(): { label: string; root: number; cap: MemoryCap }[] {
+  const out: { label: string; root: number; cap: MemoryCap }[] = [];
+  for (const e of watched) if (e.label !== undefined) out.push({ label: e.label, root: e.root, cap: e.cap });
   return out;
 }

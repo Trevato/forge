@@ -13,12 +13,19 @@ import { drawChart } from "../../boards/chart.ts";
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { telemetryReader } from "../../actions/telemetry.ts";
 import type { Ctx } from "../../http/context.ts";
+import { memoryCapHolder } from "../../apps/contain.ts";
 import { bytes, span } from "../../system/format.ts";
 import { live } from "../../system/live.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { card, empty } from "../ui.ts";
+
+/** A group's memory, and a cell's beside its cap and who holds the cap. */
+const memoryOf = (g: { rssBytes: number; capBytes: number | null; capBy: "kernel" | "watch" | null }): Html =>
+  g.capBytes === null
+    ? html`${bytes(g.rssBytes)}`
+    : html`${bytes(g.rssBytes)} <span class="muted small" data-cap="${String(g.capBytes)}" data-cap-by="${g.capBy ?? ""}">of ${bytes(g.capBytes)} (${g.capBy === "kernel" ? "kernel cap" : "watched"})</span>`;
 
 const pct = (n: number | null): string => (n === null ? "—" : `${n.toFixed(1)}%`);
 const coresOf = (n: number | null): string => (n === null ? "—" : n.toFixed(2));
@@ -62,6 +69,11 @@ export function systemPage(ctx: Ctx): Response {
           <ul class="list small mono">
             ${v.duplicates.map((d) => html`<li>${d.file} · ${String(d.checks.length)} checks: ${d.checks.join(", ")}</li>`)}
           </ul>`;
+  const holder = memoryCapHolder();
+  const caps: Html =
+    holder.by === "kernel"
+      ? html`<p class="small" id="cell-caps" data-by="kernel">Each cell's memory is capped by the kernel (its own cgroup's <code>memory.max</code>): a cell over it is killed alone.</p>`
+      : html`<p class="small" id="cell-caps" data-by="watch">Each cell's memory is watched once a second and the cell stopped over its cap; the kernel does not cap it (${holder.reason}).</p>`;
   const cores = v.cpu.cores.map(
     (c, i) => html`<span class="mono small" title="cpu${String(i)}">${c === null ? "—" : String(Math.round(c))}</span> `,
   );
@@ -85,6 +97,7 @@ export function systemPage(ctx: Ctx): Response {
           ${String(v.processes)} processes
         </p>
         <p class="small" id="cores" aria-label="Per-core CPU, percent">${cores}</p>
+        ${caps}
         <p class="small mono" id="temps">${v.temps.map((t) => `${t.chip} ${t.label} ${t.celsius.toFixed(0)}°C`).join(" · ")}</p>
       </div>`,
       { head: html`<h2>Machine</h2>` },
@@ -111,7 +124,7 @@ export function systemPage(ctx: Ctx): Response {
         <tbody>
           ${v.groups.map(
             (g) => html`<tr data-kind="${g.kind}"><td class="mono">${g.label}</td><td>${String(g.procs)}</td>
-              <td>${coresOf(g.cpuCores)}</td><td>${bytes(g.rssBytes)}</td><td>${span(g.oldestSeconds)}</td>
+              <td>${coresOf(g.cpuCores)}</td><td>${memoryOf(g)}</td><td>${span(g.oldestSeconds)}</td>
               <td class="small mono">${g.top.slice(0, 3).map((p) => `${p.comm} ${coresOf(p.cpuCores)}`).join(" · ")}</td></tr>`,
           )}
         </tbody></table></div>`,

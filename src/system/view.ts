@@ -15,6 +15,9 @@ export type Group = {
   procs: number;
   cpuCores: number | null;
   rssBytes: number;
+  /** A cell's memory cap, bytes, and who holds it (`apps/contain.ts`); null for the forge and the host. */
+  capBytes: number | null;
+  capBy: "kernel" | "watch" | null;
   oldestSeconds: number;
   top: { pid: number; comm: string; cpuCores: number | null; rssBytes: number; ageSeconds: number }[];
   tests: string[];
@@ -38,7 +41,7 @@ export type SystemView = {
   duplicates: Duplicate[];
 };
 
-export type Roots = readonly { label: string; root: number }[];
+export type Roots = readonly { label: string; root: number; cap?: { bytes: number; by: "kernel" | "watch" } }[];
 
 const kindOf = (label: string): Group["kind"] =>
   label.startsWith("check:") ? "check" : label.startsWith("app:") ? "app" : label === "forge" ? "forge" : "host";
@@ -88,12 +91,24 @@ export function buildSystem(prev: Raw | undefined, next: Raw, roots: Roots, self
   const before = new Map((prev?.procs ?? []).map((p) => [p.pid, p]));
   const where = groupOf(next.procs, roots, self);
   const groups = new Map<string, Group>();
+  const caps = new Map(roots.map((r) => [r.label, r.cap]));
   const files = new Map<string, Set<string>>();
   for (const p of next.procs) {
     const label = where.get(p.pid) ?? "host";
     const g =
       groups.get(label) ??
-      { label, kind: kindOf(label), procs: 0, cpuCores: null, rssBytes: 0, oldestSeconds: 0, top: [], tests: [] };
+      {
+        label,
+        kind: kindOf(label),
+        procs: 0,
+        cpuCores: null,
+        rssBytes: 0,
+        capBytes: caps.get(label)?.bytes ?? null,
+        capBy: caps.get(label)?.by ?? null,
+        oldestSeconds: 0,
+        top: [],
+        tests: [],
+      };
     const old = before.get(p.pid);
     const cpu = old && old.age <= p.age ? rate(old.ticks, p.ticks, seconds * TICKS_PER_SECOND) : null;
     g.procs++;
