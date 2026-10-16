@@ -31,6 +31,9 @@ export function parseContext(v: unknown): TellContext | undefined | null {
         : null;
     if (url === null || (url.protocol !== "http:" && url.protocol !== "https:"))
       return null;
+    // A fragment holds client-only state (tokens, invite keys); the issue
+    // body may be public, so it never travels.
+    url.hash = "";
     out.page = url.href;
   }
   if (o["pull"] !== undefined) {
