@@ -209,6 +209,91 @@ describe("the forge pill", () => {
   });
 });
 
+describe("the pill's keyboard and touch behaviour", () => {
+  describe("the panel the script builds", () => {
+    interface El {
+      tag: string;
+      attrs: Record<string, string>;
+      style: { cssText: string; [k: string]: string };
+      children: El[];
+      listeners: Record<string, ((e?: unknown) => void)[]>;
+      hidden: boolean;
+      textContent: string;
+      href?: string;
+      tabIndex?: number;
+      focused: boolean;
+      setAttribute(k: string, v: string): void;
+      appendChild(c: El): El;
+      addEventListener(t: string, f: (e?: unknown) => void): void;
+      focus(): void;
+      attachShadow(): El;
+    }
+    const make = (tag: string): El => ({
+      tag,
+      attrs: {},
+      style: { cssText: "" },
+      children: [],
+      listeners: {},
+      hidden: false,
+      textContent: "",
+      focused: false,
+      setAttribute(k, v) { this.attrs[k] = v; },
+      appendChild(c) { this.children.push(c); return c; },
+      addEventListener(t, f) { (this.listeners[t] ??= []).push(f); },
+      focus() { this.focused = true; },
+      attachShadow() { return make("shadow"); },
+    });
+    const all = (el: El): El[] => [el, ...el.children.flatMap(all)];
+    // The script keeps its tree in the shadow root; capture it.
+    function tree(data: Record<string, string>) {
+      let root!: El;
+      const orig = make;
+      const patched = (tag: string): El => {
+        const el = orig(tag);
+        el.attachShadow = () => (root = make("shadow"));
+        return el;
+      };
+      const doc = {
+        currentScript: { src: "https://forge.test/assets/t.js", dataset: data },
+        createElement: patched,
+        body: { appendChild: () => undefined },
+        listeners: {} as Record<string, ((e: unknown) => void)[]>,
+        addEventListener(t: string, f: (e: unknown) => void) { (this.listeners[t] ??= []).push(f); },
+      };
+      new Function("window", "document", "URL", toolbarJs)({}, doc, URL);
+      const els = all(root);
+      const pill = els.find((e) => e.tag === "button")!;
+      const panel = els.find((e) => e.attrs.role === "region")!;
+      return { doc, pill, panel, lines: panel.children };
+    }
+
+
+    test("the panel is a labelled region, opens with focus inside, and Escape returns focus to the pill", () => {
+      const { doc, pill, panel } = tree({ app: "notes", env: "production" });
+      expect(panel.attrs["aria-label"]).toBeTruthy();
+      expect(panel.hidden).toBe(true);
+      pill.listeners.click![0]!();
+      expect(panel.hidden).toBe(false);
+      expect(panel.focused).toBe(true);
+      expect(pill.attrs["aria-expanded"]).toBe("true");
+      pill.focused = false;
+      doc.listeners.keydown![0]!({ key: "Escape" });
+      expect(panel.hidden).toBe(true);
+      expect(pill.focused).toBe(true);
+    });
+
+    test("the pill has a visible focus ring and a thumb-sized, legible target", () => {
+      const { pill } = tree({ app: "notes" });
+      pill.listeners.focus![0]!();
+      expect(pill.style.outline).toContain("solid");
+      pill.listeners.blur![0]!();
+      expect(pill.style.outline).toBe("none");
+      expect(pill.style.cssText).toContain("width:44px;height:44px");
+      expect(Number(/opacity:([.\d]+)/.exec(pill.style.cssText)![1])).toBeGreaterThanOrEqual(0.8);
+    });
+  });
+});
+
 describe("the opt-out, from forge.json to the proxy", () => {
   let dataDir: string;
   let app: App;

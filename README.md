@@ -526,6 +526,12 @@ environment. Browsers resolve `*.localhost` to loopback, so a laptop forge
 needs no DNS at all; elsewhere point a wildcard at it and set
 `FORGE_APP_DOMAIN`.
 
+The forge pill on an app's pages says where you are: its accessible name reads
+`notes, production` or `notes, preview of pull #7`, and pressing it opens a
+panel with the app, the environment, and a link home. The pull's title is shown
+only to people who may read the pull. A tap outside the open panel, or Escape,
+closes it.
+
 With a sentence and **Pick for me**, the sentence becomes a plan before the
 page comes back: `src/crew/plan.ts` makes one non-interactive call to
 `claude` — the quickest model, a fixed JSON shape, at most 3 seconds — for a

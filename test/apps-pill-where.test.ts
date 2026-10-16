@@ -120,6 +120,25 @@ describe("the pill's script", () => {
     expect(toolbarJs).toContain('pill.addEventListener("click"');
   });
 
+  test("the aria-label follows the environment, from the same data attributes", () => {
+    function label(data: Record<string, string>): string {
+      let name = "";
+      const pill = { type: "", textContent: "", style: {}, setAttribute: (k: string, v: string) => { if (k === "aria-label") name = v; }, addEventListener() {} };
+      const el = () => ({ style: {}, appendChild() {}, setAttribute() {}, addEventListener() {}, set hidden(_v: boolean) {} });
+      const doc = {
+        currentScript: { src: "https://forge.test/assets/x.js", dataset: data },
+        createElement: (t: string) => (t === "button" ? pill : { ...el(), attachShadow: () => ({ appendChild() {} }) }),
+        addEventListener() {},
+        body: { appendChild() {} },
+      };
+      new Function("window", "document", "URL", toolbarJs)({}, doc, URL);
+      return name;
+    }
+    expect(label({ app: "notes", env: "production" })).toBe("notes, production");
+    expect(label({ app: "notes", env: "preview", pull: "7" })).toBe("notes, preview of pull #7");
+    expect(label({})).toBe("Forge");
+  });
+
   test("puts text in with textContent and checks the home href against the forge origin", () => {
     expect(toolbarJs).toContain("textContent = text");
     expect(toolbarJs).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/);

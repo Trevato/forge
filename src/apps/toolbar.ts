@@ -27,14 +27,18 @@ export const toolbarJs = `(function () {
   box.style.cssText = "font:13px/1.3 system-ui,sans-serif;color:#fff;display:flex;align-items:center;gap:8px;flex-direction:row-reverse";
   var pill = document.createElement("button");
   pill.type = "button";
-  pill.setAttribute("aria-label", "Forge");
+  var d = me.dataset || {};
+  var where = d.env === "production" ? "production" : d.pull ? "preview of pull #" + d.pull : "";
+  pill.setAttribute("aria-label", [d.app, where].filter(Boolean).join(", ") || "Forge");
   pill.setAttribute("aria-expanded", "false");
   pill.textContent = "\\u2692";
-  pill.style.cssText = "all:unset;box-sizing:border-box;cursor:pointer;width:28px;height:28px;border-radius:14px;background:#1f2328;color:#fff;text-align:center;line-height:28px;font-size:14px;opacity:.55;box-shadow:0 1px 4px rgba(0,0,0,.4)";
-  var d = me.dataset || {};
+  pill.style.cssText = "all:unset;box-sizing:border-box;cursor:pointer;width:44px;height:44px;border-radius:22px;background:#1f2328;color:#fff;text-align:center;line-height:44px;font-size:20px;opacity:.85;box-shadow:0 1px 4px rgba(0,0,0,.4)";
   var panel = document.createElement("div");
   panel.hidden = true;
-  panel.style.cssText = "background:#1f2328;color:#fff;padding:8px 12px;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.4);max-width:min(280px,calc(100vw - 64px));display:flex;flex-direction:column;gap:2px";
+  panel.setAttribute("role", "region");
+  panel.setAttribute("aria-label", "Where you are");
+  panel.tabIndex = -1;
+  panel.style.cssText = "outline:none;background:#1f2328;color:#fff;padding:8px 12px;border-radius:14px;box-shadow:0 1px 4px rgba(0,0,0,.4);max-width:min(280px,calc(100vw - 64px));display:flex;flex-direction:column;gap:2px";
   function line(text, bold) {
     var el = document.createElement("div");
     el.textContent = text;
@@ -57,10 +61,17 @@ export const toolbarJs = `(function () {
   function set(open) {
     panel.hidden = !open;
     pill.setAttribute("aria-expanded", open ? "true" : "false");
-    pill.style.opacity = open ? "1" : ".55";
+    pill.style.opacity = open ? "1" : ".85";
+    if (open) panel.focus();
   }
   pill.addEventListener("click", function () { set(panel.hidden); });
-  document.addEventListener("keydown", function (e) { if (e.key === "Escape") set(false); });
+  pill.addEventListener("focus", function () { pill.style.outline = "3px solid #58a6ff"; pill.style.outlineOffset = "2px"; });
+  pill.addEventListener("blur", function () { pill.style.outline = "none"; });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape" || panel.hidden) return;
+    set(false);
+    pill.focus();
+  });
   document.addEventListener("pointerdown", function (e) {
     if (panel.hidden) return;
     var path = e.composedPath ? e.composedPath() : [];
