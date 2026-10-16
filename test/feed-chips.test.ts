@@ -14,6 +14,7 @@ import { chipsOf, KIND_CHIPS, noChips, setChip } from "../src/core/feed_chips.ts
 import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { mcpTool } from "./helpers/mcp.ts";
 import { chipHides } from "../src/feed/chips.ts";
 import type { FeedKind } from "../src/feed/items.ts";
 import { readFeed } from "../src/feed/feed.ts";
@@ -172,5 +173,22 @@ describe("the chips of a forge", () => {
     expect(page).toMatch(/data-chip="kind"\s+data-value="reviews"\s+aria-pressed="true"/);
     expect(page).toMatch(/data-chip="person"\s+data-value="alice"/);
     setChip(app.db, bob.id, { kind: "kind", value: "crew" }, false);
+  });
+
+  test("MCP feed applies the saved filter and takes the same filter as arguments", async () => {
+    const tool = (token: string, name: string, args: unknown = {}) =>
+      mcpTool(servers.url, token, name, args);
+    const kindsVia = async (args: unknown = {}) =>
+      (((await tool(bobToken, "feed", args)) as any).value.items as { kind: string }[]).map((i) => i.kind).sort();
+    expect(await kindsVia()).toEqual(["look", "pull", "release", "run"]);
+    expect(await kindsVia({ hide_kinds: ["releases"] })).toEqual(["look", "pull", "run"]);
+    expect(await kindsVia({ hide_people: ["carol"] })).toEqual(["look", "release", "run"]);
+    // Saved, it applies by default; given, the arguments replace it.
+    setChip(app.db, bob.id, { kind: "kind", value: "crew" }, true);
+    expect(await kindsVia()).toEqual(["pull", "release", "run"]);
+    expect(await kindsVia({ hide_kinds: [] })).toEqual(["look", "pull", "release", "run"]);
+    setChip(app.db, bob.id, { kind: "kind", value: "crew" }, false);
+    expect(((await tool(bobToken, "feed", { hide_kinds: ["x"] })) as any).error).toContain("hide_kinds");
+    expect(((await tool(bobToken, "feed", { hide_people: [5] })) as any).error).toContain("hide_people");
   });
 });

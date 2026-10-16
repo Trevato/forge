@@ -7,6 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import type { Chips } from "../core/feed_chips.ts";
 import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../core/events.ts";
@@ -199,12 +200,13 @@ export function candidatesFor(
   db: Database,
   viewer: User,
   now: number,
+  chips?: Chips,
 ): Candidate[] {
   const events = listEventsVisibleTo(db, viewer, { limit: EVENT_WINDOW }).filter(
     audienceFilter(db, viewer),
   );
   const writable = listReposWritableTo(db, viewer, { limit: 200 });
-  const asks = askLinesFor(db, viewer);
+  const asks = askLinesFor(db, viewer, chips);
   const decided = listDecidedIn(
     db,
     writable.map((r) => r.id),

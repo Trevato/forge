@@ -23,6 +23,7 @@ import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { mcpTool } from "./helpers/mcp.ts";
 import { askCountFor, askLinesFor, repoAsks } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -217,5 +218,41 @@ describe("muting a repository's asks", () => {
     expect(lines()).toBe(0);
     setChip(app.db, alice.id, { kind: "person", value: bot.id }, false);
     expect(lines()).toBe(1);
+  });
+
+  test("MCP asks applies the saved filter, and takes the same filter as arguments", async () => {
+    const token = createToken(app.db, alice.id, "ro", "ro").token;
+
+    const tool = (token: string, name: string, args: unknown = {}) =>
+      mcpTool(servers.url, token, name, args);
+    const bot = getUserByName(app.db, "bot")!;
+    const rows = async (args: unknown = {}) => ((await tool(token, "asks", args)) as any).value.rows.length;
+    expect(await rows()).toBe(1);
+    // Given, the filter replaces the saved one for that call only.
+    expect(await rows({ hide_kinds: ["reviews"] })).toBe(0);
+    expect(await rows({ hide_people: ["bot"] })).toBe(0);
+    expect(await rows({ hide_people: ["bob"], hide_kinds: ["crew"] })).toBe(1);
+    expect(await rows({ hide_kinds: [] })).toBe(1);
+    // Saved, it applies with no arguments; an empty filter given lifts it.
+    setChip(app.db, alice.id, { kind: "person", value: bot.id }, true);
+    expect(await rows()).toBe(0);
+    expect(await rows({ hide_kinds: [] })).toBe(1);
+    setChip(app.db, alice.id, { kind: "person", value: bot.id }, false);
+    // Bad filters are refused, not guessed at.
+    expect(((await tool(token, "asks", { hide_kinds: ["nope"] })) as any).error).toContain("hide_kinds");
+    expect(((await tool(token, "asks", { hide_people: ["nobody"] })) as any).error).toContain("hide_people");
+    expect(((await tool(token, "asks", { hide_kinds: "reviews" })) as any).error).toContain("lists");
+    // The manifest says so.
+    const res = await fetch(`${servers.url}/mcp`, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" }),
+    });
+    const tools = ((await res.json()) as any).result.tools as any[];
+    for (const name of ["asks", "feed"]) {
+      const t = tools.find((x) => x.name === name);
+      expect(t.description).toContain("saved filter");
+      expect(Object.keys(t.inputSchema.properties)).toEqual(expect.arrayContaining(["hide_kinds", "hide_people"]));
+    }
   });
 });

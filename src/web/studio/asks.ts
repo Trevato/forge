@@ -18,7 +18,7 @@ import { appsForRepos, getAppByRepo } from "../../core/apps.ts";
 import { latestDecision, stopStands } from "../../core/decisions.ts";
 import { getHold, holdsFor } from "../../core/holds.ts";
 import { issueTitles, proposalsFor, type Proposal } from "../../core/proposals.ts";
-import { chipsOf } from "../../core/feed_chips.ts";
+import { chipsOf, type Chips } from "../../core/feed_chips.ts";
 import { chipHides } from "../../feed/chips.ts";
 import { askDismissals, mutedRepos } from "../../core/interactions.ts";
 import { askMeasure, syncAskLedger, type AskEnd } from "../../core/ask_ledger.ts";
@@ -613,10 +613,11 @@ function notDismissed<T extends AskCandidate>(
   db: Database,
   user: User,
   asks: readonly T[],
+  given?: Chips,
 ): T[] {
   const muted = mutedRepos(db, user.id);
   const dismissed = askDismissals(db, user.id);
-  const chips = chipsOf(db, user.id);
+  const chips = given ?? chipsOf(db, user.id);
   // A change waiting on review is a `pull`; anything else is a decision.
   // The author is the actor the person chip names.
   const chipped = (a: T): boolean =>
@@ -806,9 +807,10 @@ function waitingOn(
   db: Database,
   user: User | undefined,
   repos: readonly Repo[],
+  chips?: Chips,
 ): Scored[] {
   if (!user) return [];
-  return notDismissed(db, user, scoredFor(db, user, repos));
+  return notDismissed(db, user, scoredFor(db, user, repos), chips);
 }
 
 /** How an ask that is no longer asked ended, when nobody dismissed it. */
@@ -965,6 +967,7 @@ export const askAnchor = (id: string): string => id.replace(/[^a-z0-9-]/g, "-");
 export function askLinesFor(
   db: Database,
   user: User,
+  chips?: Chips,
 ): {
   id: string;
   line: string;
@@ -987,7 +990,7 @@ export function askLinesFor(
   waitingFor: WaitingFor;
 }[] {
   const repos = listReposVisibleTo(db, user, { limit: 200 });
-  return askRows(waitingOn(db, user, repos)).map((row) => {
+  return askRows(waitingOn(db, user, repos, chips)).map((row) => {
     const base = `/${row.repo.ownerName}/${row.repo.name}`;
     const about = {
       id: row.id,
@@ -1367,10 +1370,10 @@ export function askSentence(count: number): string {
  * admin, and the week's measure of asks raised against acted on, dismissed
  * and gone by themselves. `GET /api/v1/asks` and the MCP's `asks` read this.
  */
-export function asksAnswer(ctx: Ctx, user: User) {
+export function asksAnswer(ctx: Ctx, user: User, chips?: Chips) {
   const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
   return {
-    rows: askLinesFor(ctx.app.db, user),
+    rows: askLinesFor(ctx.app.db, user, chips),
     forge: forgeNeedsFor(ctx, user).map((d) => needLine(d)),
     measure: { days: 7, ...askMeasure(ctx.app.db, user.id, since) },
   };

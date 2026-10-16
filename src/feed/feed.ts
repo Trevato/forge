@@ -7,7 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { chipsOf } from "../core/feed_chips.ts";
+import { chipsOf, type Chips } from "../core/feed_chips.ts";
 import { chipHides } from "./chips.ts";
 import { dismissedItems, mutedRepos } from "../core/interactions.ts";
 import { affinityFor } from "./affinity.ts";
@@ -39,6 +39,7 @@ export function readFeed(
     limit?: number;
     cursor?: { score: number; id: string };
     now?: number;
+    chips?: Chips;
     /** The home pins asks above the feed: they must not fill its page. */
     withoutAsks?: boolean;
   } = {},
@@ -47,14 +48,14 @@ export function readFeed(
   const limit = Math.min(options.limit ?? FEED_LIMIT_DEFAULT, FEED_LIMIT_MAX);
   const muted = mutedRepos(db, viewer.id);
   const dismissed = dismissedItems(db, viewer.id);
-  const chips = chipsOf(db, viewer.id);
+  const chips = options.chips ?? chipsOf(db, viewer.id);
   drainQueue(db, viewer.id, now);
   const shared = sharedCandidates(db, viewer, now).filter(
     (c) => !dismissed.has(c.itemId),
   );
   const boosted = new Set(shared.map((c) => c.itemId));
   const candidates = [
-    ...candidatesFor(db, viewer, now).filter((c) => !boosted.has(c.id)),
+    ...candidatesFor(db, viewer, now, chips).filter((c) => !boosted.has(c.id)),
     ...shared,
   ]
     // The chips: the one filter. An ask was filtered by it in `askLinesFor`.

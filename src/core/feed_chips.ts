@@ -51,3 +51,34 @@ export function setChip(
       "DELETE FROM feed_chip WHERE viewer_id = ?1 AND kind = ?2 AND value = ?3",
     ).run(viewerId, chip.kind, chip.value);
 }
+
+/**
+ * A filter given as arguments (`hide_kinds`, `hide_people`, the latter by
+ * username): the chips it names, or why it is not one. Absent is undefined —
+ * the viewer's saved chips stand; given, it replaces them for that call.
+ */
+export function parseChipArgs(
+  args: { hide_kinds?: unknown; hide_people?: unknown },
+  userId: (name: string) => string | undefined,
+): Chips | undefined | { error: string } {
+  const { hide_kinds: k, hide_people: p } = args;
+  if (k === undefined && p === undefined) return undefined;
+  const kinds = new Set<KindChip>();
+  const people = new Set<string>();
+  const list = (v: unknown): unknown[] | undefined =>
+    v === undefined ? [] : Array.isArray(v) && v.length <= 50 ? v : undefined;
+  const ks = list(k);
+  const ps = list(p);
+  if (ks === undefined || ps === undefined)
+    return { error: "hide_kinds and hide_people are lists of at most 50" };
+  for (const v of ks) {
+    if (!isKindChip(v)) return { error: `hide_kinds are ${KIND_CHIPS.join(", ")}` };
+    kinds.add(v);
+  }
+  for (const v of ps) {
+    const id = typeof v === "string" ? userId(v) : undefined;
+    if (id === undefined) return { error: "hide_people are usernames of people or agents here" };
+    people.add(id);
+  }
+  return { kinds, people };
+}

@@ -106,7 +106,7 @@ import {
 import { plannerDeclines } from "../crew/autonomy.ts";
 import { checkSummary, listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
-import { getUsersByIds, type User } from "../core/users.ts";
+import { getUserByName, getUsersByIds, type User } from "../core/users.ts";
 import { openapi } from "../contract/openapi.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
@@ -124,6 +124,7 @@ import {
   milestoneData,
   milestonesJson,
 } from "../web/pages/milestones.ts";
+import { KIND_CHIPS, parseChipArgs } from "../core/feed_chips.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
 import { decideAsk, undoDecideAsk } from "../actions/asks_decide.ts";
 import { actOnProposal, isProposalVerb, PROPOSAL_VERBS } from "../actions/proposals.ts";
@@ -202,6 +203,29 @@ interface Tool {
   /** A write that only plans (`dryRun` not false) is a read: `ro` may ask. */
   readonly dryByDefault?: true;
   run(ctx: Ctx, user: User, args: Args): Promise<Answer> | Answer;
+}
+
+const CHIP_ARGS = {
+  hide_kinds: {
+    type: "array",
+    items: { type: "string", enum: [...KIND_CHIPS] },
+    maxItems: 50,
+    description: "Kinds to leave out (reviews, decisions, crew, releases). Given, it replaces your saved filter for this call.",
+  },
+  hide_people: {
+    type: "array",
+    items: { type: "string", maxLength: 39 },
+    maxItems: 50,
+    description: "Usernames of people or agents to leave out. Given, it replaces your saved filter for this call.",
+  },
+} as const;
+
+/** The filter a call names, or undefined for the viewer's saved one. */
+function chipArgs(ctx: Ctx, args: Record<string, unknown>) {
+  return parseChipArgs(args, (name) => {
+    const who = getUserByName(ctx.app.db, name.trim());
+    return who && who.kind !== "org" ? who.id : undefined;
+  });
 }
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
@@ -595,11 +619,13 @@ const TOOLS: readonly Tool[] = [
   {
     name: "asks",
     description:
-      "What waits on you, most consequential first: each row names the decision, its options and what happens if nobody acts, and why it ranks where it does (security, money, held-up work, then age). Rows of one kind in one app are collapsed with their item ids. Also the forge's own needs (for a site admin) and the last 7 days' asks raised, acted on, dismissed and gone by themselves.",
-    inputSchema: { type: "object", properties: {} },
+      "What waits on you, most consequential first: each row names the decision, its options and what happens if nobody acts, and why it ranks where it does (security, money, held-up work, then age). Rows of one kind in one app are collapsed with their item ids. Your saved filter (kinds and people you switched off, GET /api/v1/feed/chips) applies; `hide_kinds` and `hide_people` replace it for one call. Also the forge's own needs (for a site admin) and the last 7 days' asks raised, acted on, dismissed and gone by themselves.",
+    inputSchema: { type: "object", properties: { ...CHIP_ARGS } },
     writes: false,
-    run(ctx, user) {
-      return good(asksAnswer(ctx, user));
+    run(ctx, user, args) {
+      const chips = chipArgs(ctx, args);
+      if (chips && "error" in chips) return bad("invalid", chips.error);
+      return good(asksAnswer(ctx, user, chips));
     },
   },
   {
@@ -1343,16 +1369,19 @@ const TOOLS: readonly Tool[] = [
   {
     name: "feed",
     description:
-      "Your home timeline, as the forge's home shows it: tells, replies, runs, changes and looks across the apps you can see, ranked, each with who did it, what it says, why it is there and a link to its thing. Pass `cursor` (next_cursor from the last answer) for the next page. The same items as GET /api/v1/feed.",
+      "Your home timeline, as the forge's home shows it: tells, replies, runs, changes and looks across the apps you can see, ranked, each with who did it, what it says, why it is there and a link to its thing. Pass `cursor` (next_cursor from the last answer) for the next page. The same items as GET /api/v1/feed. Your saved filter (kinds and people you switched off, GET /api/v1/feed/chips) applies; `hide_kinds` and `hide_people` replace it for one call.",
     inputSchema: {
       type: "object",
       properties: {
         limit: { type: "integer", minimum: 1, maximum: FEED_LIMIT_MAX },
         cursor: { type: "string" },
+        ...CHIP_ARGS,
       },
     },
     writes: false,
     run(ctx, user, args) {
+      const chips = chipArgs(ctx, args);
+      if (chips && "error" in chips) return bad("invalid", chips.error);
       const raw = args["limit"];
       const limit = raw === undefined ? FEED_LIMIT_DEFAULT : Number(raw);
       if (!Number.isInteger(limit) || limit < 1 || limit > FEED_LIMIT_MAX)
@@ -1364,6 +1393,7 @@ const TOOLS: readonly Tool[] = [
       return good(
         readFeed(ctx.app.db, user, {
           limit,
+          ...(chips === undefined ? {} : { chips }),
           ...(cursor === undefined ? {} : { cursor }),
         }),
       );
