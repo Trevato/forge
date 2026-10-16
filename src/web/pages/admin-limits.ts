@@ -7,6 +7,8 @@
 
 import { changeLimit, listLimits } from "../../actions/limits.ts";
 import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
+import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../../actions/invites.ts";
+import { DEFAULT_DAYS, MAX_DAYS } from "../../core/invites.ts";
 import { changeSignup, readSignup } from "../../actions/signup.ts";
 import { SIGNUP_MODES } from "../../settings/signup.ts";
 import { QUOTA_KEYS } from "../../settings/quotas.ts";
@@ -150,7 +152,51 @@ export function limitsPage(ctx: Ctx): Response {
       pad: false,
     },
   );
-  const body = html`${signupCard}${quotaCard}${card(
+  const invites = listInviteLinks(ctx.app, ctx.auth.user);
+  const inviteRows = (invites.ok ? invites.value : []).map((i) =>
+    row({
+      lead: icon("activity"),
+      title: html`<span class="mono">${i.id}</span> <span class="muted small">${i.state}</span>`,
+      meta: html`Made ${time(i.createdAt)} · expires ${time(i.expiresAt)}`,
+      trail:
+        i.state === "open"
+          ? html`<form class="row-actions" method="post" action="/admin/invites/${i.id}/revoke">
+              ${btn("Revoke", { size: "sm", label: `Revoke invite ${i.id}` })}
+            </form>`
+          : html``,
+    }),
+  );
+  const inviteCard = card(
+    html`<div class="card-body">
+      <p class="muted small">
+        A link is shown once, when it is made, and is good for one signup.
+        Nothing reads these yet.
+      </p>
+      <form class="row-actions" method="post" action="/admin/invites">
+        <label class="small">expires in (days)
+          <input
+            class="input mono"
+            type="number"
+            name="days"
+            min="1"
+            max="${String(MAX_DAYS)}"
+            step="1"
+            value="${String(DEFAULT_DAYS)}"
+          /></label>
+        ${btn("Make a link", { size: "sm", variant: "primary", label: "Make an invite link" })}
+      </form>
+    </div>
+    ${when(
+      inviteRows.length > 0,
+      () => html`<ul class="list">${inviteRows}</ul>`,
+    )}`,
+    {
+      head: html`${icon("activity")}
+        <h2>Invite links</h2>`,
+      pad: false,
+    },
+  );
+  const body = html`${signupCard}${inviteCard}${quotaCard}${card(
       html`<div class="card-body">
           <p class="muted small">
             Every limit you can hit, and why it is there. A change governs
@@ -264,5 +310,41 @@ export async function signupSet(ctx: Ctx): Promise<Response> {
     changed.ok
       ? { message: "Signup saved." }
       : { tone: "danger", message: "Signup is open, invite or closed." },
+  );
+}
+
+// POST /admin/invites
+export async function inviteMint(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent")
+    return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const raw = field(form, "days").trim();
+  const made = mintInviteLink(ctx.app, ctx.auth.user, /^\d{1,3}$/.test(raw) ? Number(raw) : -1);
+  if (!made.ok && made.error === "not_found") return notFoundPage(ctx);
+  if (!made.ok)
+    return flashTo(ctx, "/admin/limits", {
+      tone: "danger",
+      message: `Days is a whole number from 1 to ${MAX_DAYS}.`,
+    });
+  return flashTo(ctx, "/admin/limits", {
+    message: "Invite link made. It is shown only now:",
+    code: inviteLink(ctx.app.config.url ?? ctx.url.origin, made.value.token),
+  });
+}
+
+// POST /admin/invites/:id/revoke
+export async function inviteRevoke(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent")
+    return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const done = revokeInviteLink(ctx.app, ctx.auth.user, ctx.params.id ?? "");
+  return flashTo(
+    ctx,
+    "/admin/limits",
+    done.ok
+      ? { message: "Invite link revoked." }
+      : { tone: "danger", message: "That link is not open." },
   );
 }

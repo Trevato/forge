@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { signUp } from "../src/actions/users.ts";
 import { listEvents } from "../src/core/events.ts";
+import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { listInvites, mintInvite, revokeInvite } from "../src/core/invites.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -94,5 +95,67 @@ describe("invites: an admin mints, lists and revokes", () => {
     const used = mintInvite(app.db, "x");
     app.db.query("UPDATE invite SET used_at = ?2 WHERE id = ?1").run(used.invite.id, "2026-01-01T00:00:00Z");
     expect(revokeInvite(app.db, used.invite.id).ok).toBe(false);
+  });
+});
+
+describe("invites: the settings form", () => {
+  let dir: string;
+  let app: App;
+  let servers: Servers;
+  let alice: string;
+  let bob: string;
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-invites-form-"));
+    app = createApp({ dataDir: dir, port: 0 });
+    servers = await serve(app);
+    const a = await signUp(app, { username: "olive", email: "o@f.dev", password: "owner-passphrase" });
+    const b = await signUp(app, { username: "ada", email: "a@f.dev", password: "guest-passphrase" });
+    if (!a.ok || !b.ok) throw new Error("signup");
+    proveAll(app);
+    alice = `forge_session=${createSession(app.db, a.value.id).token}`;
+    bob = `forge_session=${createSession(app.db, b.value.id).token}`;
+  });
+  afterAll(async () => {
+    servers.stop();
+    app.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const post = (cookie: string, path: string, fields: Record<string, string>, origin = servers.url) =>
+    fetch(`${servers.url}${path}`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { cookie, "content-type": "application/x-www-form-urlencoded", origin },
+      body: new URLSearchParams(fields),
+    });
+
+  test("mint shows the link once, the list shows the row, revoke closes it", async () => {
+    const res = await post(alice, "/admin/invites", { days: "3" });
+    expect(res.status).toBe(303);
+    const flash = res.headers.get("set-cookie") ?? "";
+    expect(decodeURIComponent(flash)).toContain("/signup?invite=invite_");
+    const page = await (await fetch(`${servers.url}/admin/limits`, { headers: { cookie: alice } })).text();
+    expect(page).toContain("Invite links");
+    expect(page).not.toContain("invite_");
+    const [item] = listInvites(app.db);
+    expect(item!.state).toBe("open");
+    expect(page).toContain(`/admin/invites/${item!.id}/revoke`);
+    expect((await post(alice, `/admin/invites/${item!.id}/revoke`, {})).status).toBe(303);
+    expect(listInvites(app.db)[0]!.state).toBe("revoked");
+  });
+
+  test("days outside 1 to 30 mint nothing", async () => {
+    const before = listInvites(app.db).length;
+    await post(alice, "/admin/invites", { days: "31" });
+    await post(alice, "/admin/invites", { days: "abc" });
+    expect(listInvites(app.db).length).toBe(before);
+  });
+
+  test("a cross-origin post is refused and a non-admin gets the not-found page", async () => {
+    const before = listInvites(app.db).length;
+    expect((await post(alice, "/admin/invites", { days: "3" }, "https://evil.example")).status).toBe(403);
+    expect((await post(bob, "/admin/invites", { days: "3" })).status).toBe(404);
+    expect(listInvites(app.db).length).toBe(before);
   });
 });

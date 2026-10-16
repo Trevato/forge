@@ -51,6 +51,7 @@ import { canScreen } from "./screens/can.ts";
 import { peopleScreen } from "./screens/people.ts";
 import { modelCeilingPrompt, modelGrantPrompt, modelScreen } from "./screens/model.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
+import { invitesScreen } from "./screens/invites.ts";
 import { quotasScreen } from "./screens/quotas.ts";
 import { domainsScreen } from "./screens/domains.ts";
 import { ownerScreen } from "./screens/owner.ts";
@@ -419,6 +420,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Account quotas",
         hint: "what one account may own, and who changed it",
         run: () => ctx.push(quotasScreen(session, ctx)),
+      });
+    // Invite links, as /admin/limits has them: an admin who is a person (#2337).
+    if (session.user?.isAdmin === true && session.user.kind === "user")
+      commands.push({
+        id: "invites",
+        title: "Invite links",
+        hint: "make a single-use link, see which are open, revoke one",
+        run: () => ctx.push(invitesScreen(session, ctx)),
       });
     // Cloud accounts, as Settings → Cloud accounts has them: a forge admin (#2199).
     if (session.user?.isAdmin === true)
