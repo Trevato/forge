@@ -58,7 +58,9 @@ import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
-import { relationOf, takeUpdates } from "../actions/forks.ts";
+import { severForge, takeOrTell } from "../actions/follow.ts";
+import { relationOf } from "../actions/forks.ts";
+import { chainOfRepo } from "../spawn/chain.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
 import { flowFor, historyFor, sourcesOut, systemFor, welcome } from "../system/telemetry.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
@@ -385,7 +387,7 @@ import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 
 /** Take the parent's updates for `repo` and answer as the API does, for every route that asks. */
 async function respondTake(ctx: Ctx, repo: Repo): Promise<Response> {
-  const took = await takeUpdates(ctx.app, ctx.auth.user, repo);
+  const took = await takeOrTell(ctx.app, ctx.auth.user, repo);
   if (!took.ok) {
     const e = took.error;
     if (typeof e === "string")
@@ -396,8 +398,10 @@ async function respondTake(ctx: Ctx, repo: Repo): Promise<Response> {
       return json(
         {
           error: "conflict",
-          message: "both sides changed these files; the crew can converge",
+          message: "both sides changed these files; the crew was told",
           files: e.files,
+          converge: "converge" in e ? e.converge.kind : null,
+          issue: "converge" in e && "issue" in e.converge ? e.converge.issue.number : null,
         },
         409,
       );
@@ -2035,13 +2039,18 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const relation = await relationOf(ctx.app, ctx.auth.user, repo);
+    const chain = await chainOfRepo(ctx.app, repo);
     if (relation === undefined)
-      return apiError("not_a_fork", 404, "this repository follows nothing");
+      return chain === undefined
+        ? apiError("not_a_fork", 404, "this repository follows nothing")
+        : json({ chain: chain.lines, severedAt: chain.severedAt });
     const converge =
       relation.state === "diverged" && !relation.clean
         ? convergeState(ctx.app, repo, relation.parent)
         : undefined;
     return json({
+      chain: chain?.lines ?? null,
+      severedAt: chain?.severedAt ?? null,
       parent: `${relation.parent.ownerName}/${relation.parent.name}`,
       parentBranch: relation.parent.defaultBranch,
       // A parent whose origin was disconnected: the counts below are against
@@ -2086,6 +2095,23 @@ export function apiRoutes(router: Router<Handler>): void {
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
       return respondTake(ctx, repo);
+    },
+  );
+
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/following/sever",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const cut = await severForge(ctx.app, ctx.auth.user, repo);
+      if (!cut.ok)
+        return cut.error === "not_following"
+          ? apiError("not_following", 404, "this repository follows nothing across forges")
+          : respondAccess(cut.error, 403);
+      return json({ severedAt: cut.value });
     },
   );
 

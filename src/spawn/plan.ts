@@ -8,6 +8,7 @@
  */
 
 import { err, ok, type Result } from "../kernel/result.ts";
+import { DEFAULT_MODE, type FollowMode } from "./chain.ts";
 
 export const MAX_APPS = 50;
 export const MAX_BRIEFS = 100;
@@ -66,6 +67,8 @@ export interface SpawnInput {
   readonly budgetUsd?: unknown;
   /** One line describing a fresh app to start in the child, beside the forked ones; optional. */
   readonly fresh?: unknown;
+  /** How the child follows the forge's code: `tell-me` (default) or `take-updates`. */
+  readonly followMode?: unknown;
 }
 
 /** What the parent has to offer. Extra fields are ignored, never copied. */
@@ -104,6 +107,8 @@ export interface SpawnPlan {
   readonly forWhom?: string;
   /** A fresh app, present only when asked for. */
   readonly fresh?: PlannedFresh;
+  /** How the child follows its parent's forge code; absent means `tell-me`. */
+  readonly followMode?: FollowMode;
 }
 
 export interface DryRun {
@@ -237,6 +242,14 @@ export function planSpawn(
     };
   }
 
+  let followMode: FollowMode | undefined;
+  if (input.followMode !== undefined && input.followMode !== null && input.followMode !== "") {
+    if (input.followMode !== "tell-me" && input.followMode !== "take-updates")
+      return refuse("followMode", "must be tell-me or take-updates");
+    // Only a chosen mode is named, so a plan without one hashes as it always did.
+    if (input.followMode !== DEFAULT_MODE) followMode = input.followMode;
+  }
+
   // `forWhom` only when said, so a plan without it hashes as it always did.
   return ok({
     name,
@@ -249,6 +262,7 @@ export function planSpawn(
     budgetUsd,
     ...(forWhom === "" ? {} : { forWhom }),
     ...(fresh === undefined ? {} : { fresh }),
+    ...(followMode === undefined ? {} : { followMode }),
   });
 }
 

@@ -259,6 +259,37 @@ describe("+ New forge", () => {
     expect(await again.text()).not.toMatch(/claim#[A-Za-z0-9_-]{43}/);
   });
 
+  test("the form offers how the child follows the forge's code, tell-me by default, and take-updates is recorded", async () => {
+    const html = (await (await get(admin, "/forges/new")).text()).replace(/\s+/g, " ");
+    expect(html).toMatch(/name="followMode" value="tell-me" checked/);
+    expect(html).toContain('value="take-updates"');
+    (app.config as { forgeRepo?: string }).forgeRepo = "alice/bakery";
+    try {
+      const res = await post(admin, [
+        ["name", "follower"],
+        ["followMode", "take-updates"],
+        ["do", "spawn"],
+      ]);
+      expect(res.status).toBe(201);
+      const docs = await Promise.all(
+        (await readdir(join(dir, "children"))).map((d) =>
+          Bun.file(join(dir, "children", d, "parent.json")).json().catch(() => undefined),
+        ),
+      );
+      const mine = docs.find((d) => d?.name === "follower");
+      expect(mine?.forgeCode?.mode).toBe("take-updates");
+      const bad = await post(admin, [
+        ["name", "wrongmode"],
+        ["followMode", "yolo"],
+        ["do", "plan"],
+      ]);
+      expect(bad.status).toBe(422);
+      expect(await bad.text()).toContain("must be tell-me or take-updates");
+    } finally {
+      delete (app.config as { forgeRepo?: string }).forgeRepo;
+    }
+  });
+
   test("a forge at its depth limit shows no door, and its page says why", async () => {
     usePlacement(app, hostedPlacement({ host: "forge.test", depth: 2 }));
     expect(await (await get(admin, "/")).text()).not.toContain('href="/forges/new"');

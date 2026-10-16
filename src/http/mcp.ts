@@ -31,7 +31,9 @@ import { changeSignup, readSignup } from "../actions/signup.ts";
 import { SIGNUP_MODES } from "../settings/signup.ts";
 import { QUOTA_KEYS } from "../settings/quotas.ts";
 import { LIMIT_KEYS } from "../settings/limits.ts";
-import { relationOf, takeUpdates } from "../actions/forks.ts";
+import { convergeWords, severForge, takeOrTell } from "../actions/follow.ts";
+import { relationOf } from "../actions/forks.ts";
+import { chainOfRepo } from "../spawn/chain.ts";
 import { watchMilestone } from "../actions/watches.ts";
 import {
   addCommentThrough,
@@ -1036,13 +1038,18 @@ const TOOLS: readonly Tool[] = [
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
       const relation = await relationOf(ctx.app, user, repo);
+      const chain = await chainOfRepo(ctx.app, repo);
       if (relation === undefined)
-        return bad("not_a_fork", "this repository follows nothing");
+        return chain === undefined
+          ? bad("not_a_fork", "this repository follows nothing")
+          : good({ chain: chain.lines, severedAt: chain.severedAt });
       const converge =
         relation.state === "diverged" && !relation.clean
           ? convergeState(ctx.app, repo, relation.parent)
           : undefined;
       return good({
+        chain: chain?.lines ?? null,
+        severedAt: chain?.severedAt ?? null,
         parent: `${relation.parent.ownerName}/${relation.parent.name}`,
         state: relation.state,
         behind: relation.behind,
@@ -1084,6 +1091,12 @@ const TOOLS: readonly Tool[] = [
           type: "string",
           description:
             "One line (at most 200 characters) on a fresh app to start in the child beside the copied ones: it gets a README and a small app that runs.",
+        },
+        followMode: {
+          type: "string",
+          enum: ["tell-me", "take-updates"],
+          description:
+            "How the child follows this forge's code: tell-me (default) says when the parent has moved; take-updates takes them.",
         },
         keepAccess: {
           type: "boolean",
@@ -1166,7 +1179,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "take_updates",
     description:
-      "Take the parent's updates into a fork: a fast-forward, or a merge when git merges cleanly. A conflict is refused with its files; use `converge` then.",
+      "Take the parent's updates into a fork: a fast-forward, or a merge when git merges cleanly. A conflict is refused with its files, and the crew is told: the converge issue is opened (or found) and named in the answer.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -1176,7 +1189,7 @@ const TOOLS: readonly Tool[] = [
     async run(ctx, user, args) {
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
-      const took = await takeUpdates(ctx.app, user, repo);
+      const took = await takeOrTell(ctx.app, user, repo);
       if (took.ok)
         return good({
           says: !took.value.updated
@@ -1187,6 +1200,8 @@ const TOOLS: readonly Tool[] = [
           ...took.value,
         });
       const e = took.error;
+      const up = forkParentFor(ctx.app.db, repo, user);
+      const parentName = up === undefined ? "the parent" : `${up.ownerName}/${up.name}`;
       if (typeof e === "string")
         return bad(
           e,
@@ -1197,12 +1212,33 @@ const TOOLS: readonly Tool[] = [
       return e.kind === "conflict"
         ? bad(
             "conflict",
-            `both sides changed ${e.files.join(", ")}; converge with the crew`,
+            `both sides changed ${e.files.join(", ")}. ${"converge" in e ? convergeWords(e.converge, parentName).message : ""}`,
           )
         : bad(
             e.kind,
             e.kind === "moved" ? "something moved; try again" : e.message,
           );
+    },
+  },
+  {
+    name: "sever",
+    description:
+      "Cut a spawned forge's link to the forge its code came from (its `forge` repository's owner only). Nothing is deleted or sent; the chain then says it follows nothing since today.",
+    inputSchema: {
+      type: "object",
+      properties: { repo: REPO_ARG },
+      required: ["repo"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const cut = await severForge(ctx.app, user, repo);
+      if (cut.ok) return good({ says: `Severed: following nothing since ${cut.value.slice(0, 10)}.`, severedAt: cut.value });
+      return bad(
+        cut.error,
+        cut.error === "not_following" ? "this repository follows nothing across forges" : "only this forge's owner can sever it",
+      );
     },
   },
   {

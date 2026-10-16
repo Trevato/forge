@@ -212,6 +212,15 @@ taking a release is not done here. This forge publishes its own
 `/releases.json` (the version names, each linking to that document), so any
 forge can be a parent. The terminal shows the count, not the release names.
 
+A spawned forge's own code is a fork of its parent's (`<org>/forge`, chosen
+`followMode` `tell-me` or `take-updates`; recorded, not yet acted on). Its chain
+to the root is at `/:owner/forge/following`, in `chain` of `GET
+/api/v1/repos/:owner/forge/following` and the MCP `following` tool, and in the
+terminal's **Chain** command; the owner severs it with the page's Sever,
+`POST …/following/sever` or the MCP `sever` tool (nothing is deleted). Taking
+updates into a conflict opens the converge issue at every door. See
+`docs/SPAWN.md` and `docs/FOLLOWING.md`.
+
 ## Archive
 
 An admin puts a repository away from **Settings → Archive**, with

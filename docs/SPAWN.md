@@ -69,3 +69,39 @@ Children report in; the parent never reaches in. Every ten minutes a spawned chi
 ## Callers
 
 `POST /api/v1/forges {name, apps[], crew[], direction?, keepAccess?, modelKey?, budgetUsd?, dryRun}` (rw token, admin only) and the MCP `spawn` tool share `src/spawn/door.ts`. `dryRun` is true unless it is `false`: the answer is the plan and what is left behind, and nothing is made. `GET /api/v1/forges` lists the ledger's children. The child's org is its name; `crew` names the agents whose briefs travel. Errors: 401 unauthorized, 403 forbidden / cross_origin, 422 invalid, 409 refused / exists, 500 failed — each with one sentence. The MCP lets an `ro` token plan, never make.
+
+## The forge's own code, and the chain (#1085)
+
+Every child is born with `<org>/forge`: a fork, with full history, of the
+repository its parent forge is deployed from (`forgeRepo`; a spawned forge
+has none configured, so it uses the fork it was born with). The child's owner
+may change it freely. A grandchild forks the child's `forge`, so the chain
+reads child → parent → … → root.
+
+`parent.json` keeps `forgeCode`: `repo`, `upstream`, `mode`, `tip` (the
+upstream's tip at birth) and `chain` (the ancestors' hops, copied from the
+parent's own `parent.json`, so a grandchild reads the whole chain offline).
+The spawner chooses `followMode` in the spawn input: `tell-me` (default) or
+`take-updates`; it is part of the plan. `/:owner/forge/following` on the
+child shows the chain, root first, one line per hop with its mode and how
+many commits of its own it had when the next hop was born (the last hop is
+counted now). Behind-counts are not shown: they need a fetch of the parent,
+which spawn does not do; that waits on cross-forge following (#1052), which
+is also what will make `mode` act. Until a follower acts on it, `tell-me`
+and `take-updates` are the owner's recorded choice, shown on the chain, not
+behaviour.
+
+Every door reads and cuts the chain the same way: the page
+(`GET /:owner/forge/following`), `GET /api/v1/repos/:owner/forge/following`
+(`chain`, `severedAt`), `POST …/following/sever` (rw token, owner only), the
+MCP `following` and `sever` tools, and the terminal's **Chain** command.
+Sever's one implementation is `severForge` in `src/actions/follow.ts`.
+
+A child's heartbeat adds `forgeTip` and `severedAt` when it carries a fork;
+`/family` on the parent shows `code at <tip>` or `follows nothing since …`.
+
+**Sever** (`POST /:owner/forge/following/sever`, owner only, same-origin,
+type `sever`) writes `severedAt` into `forgeCode` and nothing else: the
+fork, its history and the record of where it came from stay, and nothing
+leaves. The page and the parent's tree then say it follows nothing since
+the date.

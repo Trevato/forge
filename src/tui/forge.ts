@@ -29,6 +29,7 @@ import {
   openOnWeb,
   runAsync,
 } from "./screens/common.ts";
+import { chainScreen } from "./screens/chain.ts";
 import { canSeeMemory } from "../boards/memory.ts";
 import { boardsScreen } from "./screens/boards.ts";
 import { askedScreen } from "./screens/asked.ts";
@@ -396,6 +397,15 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         runAsync(ctx, async () => {
           const view = await familyView(session.app, session.user?.isAdmin === true);
           ctx.push(familyScreen(ctx, familyLines(view)));
+        }),
+    });
+    commands.push({
+      id: "chain",
+      title: "Chain",
+      hint: "the forges this forge's code descends from, root first",
+      run: () =>
+        runAsync(ctx, async () => {
+          ctx.push(await chainScreen(session.app, session.user, ctx));
         }),
     });
     commands.push({

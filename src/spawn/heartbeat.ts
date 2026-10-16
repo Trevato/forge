@@ -19,6 +19,7 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { beatKeyOf, listChildren } from "../actions/spawn.ts";
 import releases from "../core/releases.json" with { type: "json" };
+import { forgeLinkOf, forgeTipOf } from "./chain.ts";
 import { running } from "../kernel/version.ts";
 
 export const SIGNATURE_HEADER = "x-forge-signature";
@@ -41,6 +42,10 @@ export interface Beat {
   readonly version: string;
   readonly openProposals: number;
   readonly children: number;
+  /** The tip of the child's own forge code; absent from an older child, null when it carries none. */
+  readonly forgeTip?: string | null;
+  /** When the child cut its upstream link; null while it follows. */
+  readonly severedAt?: string | null;
 }
 
 export function sign(key: string, body: string): string {
@@ -66,14 +71,31 @@ export function parseBeat(raw: string): Beat | undefined {
   }
   if (typeof doc !== "object" || doc === null || Array.isArray(doc)) return undefined;
   const d = doc as Record<string, unknown>;
-  const keys = Object.keys(d).sort().join(",");
+  const keys = Object.keys(d)
+    .filter((k) => k !== "forgeTip" && k !== "severedAt")
+    .sort()
+    .join(",");
   if (keys !== "at,children,name,openProposals,version") return undefined;
-  const { name, at, version, openProposals, children } = d;
+  const { name, at, version, openProposals, children, forgeTip, severedAt } = d;
+  const tipOk = forgeTip === undefined || forgeTip === null || (typeof forgeTip === "string" && /^[0-9a-f]{40,64}$/.test(forgeTip));
+  const sevOk =
+    severedAt === undefined ||
+    severedAt === null ||
+    (typeof severedAt === "string" && severedAt.length <= 40 && !Number.isNaN(Date.parse(severedAt)));
+  if (!tipOk || !sevOk) return undefined;
   if (typeof name !== "string" || !NAME.test(name)) return undefined;
   if (typeof at !== "number" || !Number.isSafeInteger(at) || at <= 0) return undefined;
   if (typeof version !== "string" || !VERSION.test(version)) return undefined;
   if (!count(openProposals) || !count(children)) return undefined;
-  return { name, at, version, openProposals, children };
+  return {
+    name,
+    at,
+    version,
+    openProposals,
+    children,
+    ...(forgeTip === undefined ? {} : { forgeTip: forgeTip as string | null }),
+    ...(severedAt === undefined ? {} : { severedAt: severedAt as string | null }),
+  };
 }
 
 const beatPath = (app: App, name: string): string =>
@@ -189,11 +211,16 @@ export async function sendBeat(
   const link = await parentLink(app);
   if (link === undefined) return false;
   const own = (await listChildren(app)).length;
+  const forge = await forgeLinkOf(app);
   // Strictly later than the last one sent, so a quick restart is not a replay.
   lastAt = Math.max(now, lastAt + 1);
   const body = JSON.stringify({
     ...standing(app, link.name, lastAt),
     children: Math.min(own, COUNT_MAX),
+    // Only a forge that carries a fork of its parent's code has these to say.
+    ...(forge === undefined
+      ? {}
+      : { forgeTip: await forgeTipOf(app), severedAt: forge.severedAt ?? null }),
   });
   try {
     const res = await fetcher(`${link.upstream}/api/v1/heartbeat`, {
@@ -228,6 +255,10 @@ export interface ChildStanding {
   readonly behind: number | null;
   readonly openProposals: number | null;
   readonly ownChildren: number | null;
+  /** The tip of the child's own forge code, as last reported; null when none. */
+  readonly forgeTip: string | null;
+  /** When the child cut its link to this forge's code; null while it follows or when unheard. */
+  readonly severedAt: string | null;
 }
 
 /** How many releases of this forge are newer than `version`; null when it is not one of them. */
@@ -254,6 +285,8 @@ export async function childStandings(
       behind: heard === undefined ? null : releasesBehind(heard.beat.version),
       openProposals: heard?.beat.openProposals ?? null,
       ownChildren: heard?.beat.children ?? null,
+      forgeTip: heard?.beat.forgeTip ?? null,
+      severedAt: heard?.beat.severedAt ?? null,
     });
   }
   return { items, more: Math.max(0, all.length - MAX_CHILDREN) };

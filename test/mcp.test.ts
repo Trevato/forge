@@ -184,6 +184,7 @@ describe("the forge over MCP", () => {
       "forges",
       "claim_link",
       "take_updates",
+      "sever",
       "converge",
       "family",
       "next_steps",

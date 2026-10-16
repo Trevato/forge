@@ -78,6 +78,7 @@ export function familyLines(view: FamilyView): [string, string][] {
         : [
             c.state,
             c.version === null ? "" : `version ${c.version}`,
+            c.severedAt !== null ? `follows nothing since ${c.severedAt.slice(0, 10)}` : c.forgeTip === null ? "" : `code at ${c.forgeTip.slice(0, 7)}`,
             c.openProposals === null ? "" : `${c.openProposals} open`,
           ].filter((b) => b !== "");
     out.push([`child ${c.name}`, bits.join(" · ")]);

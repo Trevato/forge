@@ -53,6 +53,7 @@ import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
 import { childPublicUrl, type Placement } from "../spawn/placement.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
+import { chainForChild, DEFAULT_MODE, forgeLinkOf, type FollowMode, type Hop } from "../spawn/chain.ts";
 import { requireUser } from "./access.ts";
 
 export interface Spawned {
@@ -364,7 +365,7 @@ async function copyInto(
     // A cross-forge fork: the history is copied by git, and the upstream
     // is recorded in parent.json for the child to pull from. Skipped when
     // the forge does not name its code repository (`forgeRepo`).
-    const forgeCode = await forkForgeCode(app, child, org.username);
+    const forgeCode = await forkForgeCode(app, child, org.username, plan.followMode ?? DEFAULT_MODE);
     if (!forgeCode.ok) return err(forgeCode.error);
 
     for (const b of plan.briefs) {
@@ -441,7 +442,7 @@ async function copyInto(
         // the child can follow its parent's updates.
         ...(forgeCode.value === undefined
           ? {}
-          : { forgeCode: { repo: `${plan.org}/forge`, upstream: forgeCode.value } }),
+          : { forgeCode: { repo: `${plan.org}/forge`, ...forgeCode.value } }),
         // Only the hash: the parent alone holds what it answers to.
         ...(ledger.statusToken === undefined ? {} : { statusHash: sha256(ledger.statusToken) }),
         // The key the child signs its heartbeats with; the parent holds the same.
@@ -527,8 +528,11 @@ async function forkForgeCode(
   app: App,
   child: App,
   orgName: string,
-): Promise<Result<string | undefined, string>> {
-  const ref = app.config.forgeRepo;
+  mode: FollowMode,
+): Promise<Result<{ upstream: string; mode: FollowMode; tip: string; chain: readonly Hop[] } | undefined, string>> {
+  // A spawned forge names no `forgeRepo` of its own: its code is the fork
+  // it was born with, so a grandchild forks that.
+  const ref = app.config.forgeRepo ?? (await forgeLinkOf(app))?.repo;
   if (ref === undefined) return ok(undefined);
   const parts = ref.split("/");
   if (parts.length !== 2 || !parts[0] || !parts[1]) return ok(undefined);
@@ -559,7 +563,8 @@ async function forkForgeCode(
     { cwd: repoDir(child.reposRoot, orgName, name), timeoutMs: 600_000 },
   );
   if (!fetched.ok) return err(`could not copy the forge's code: ${fetched.error.stderr}`);
-  return ok(`${o}/${n}`);
+  const born = await chainForChild(app, `${o}/${n}`);
+  return ok({ upstream: `${o}/${n}`, mode, tip: born?.tip ?? "", chain: born?.chain ?? [] });
 }
 
 /**

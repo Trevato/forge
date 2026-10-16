@@ -158,4 +158,24 @@ describe("the new forge screen", () => {
       expect(await children()).toBe(before + 1);
       expect(tui.screen.toText()).toMatch(/https:\/\/zed--forge\.test\/claim#/);
     }));
+
+  test("the follow mode is a field: take-updates reaches parent.json", () =>
+    withScreen(admin, async ({ tui, terminal }) => {
+      (app.config as { forgeRepo?: string }).forgeRepo = "alice/bakery";
+      try {
+        terminal.feed("tuifollow" + "\t".repeat(8) + "take-updates\x10");
+        await settleApp(tui);
+        expect(tui.screen.toText()).toContain("take-updates");
+        terminal.feed("\r");
+        await settleApp(tui);
+        const docs = await Promise.all(
+          (await readdir(join(dir, "children"))).map((d) =>
+            Bun.file(join(dir, "children", d, "parent.json")).json().catch(() => undefined),
+          ),
+        );
+        expect(docs.find((d) => d?.name === "tuifollow")?.forgeCode?.mode).toBe("take-updates");
+      } finally {
+        delete (app.config as { forgeRepo?: string }).forgeRepo;
+      }
+    }));
 });

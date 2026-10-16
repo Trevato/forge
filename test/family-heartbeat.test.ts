@@ -309,4 +309,21 @@ describe("family heartbeats", () => {
     // A forge that was not spawned has no one to tell.
     expect(await sendBeat(parent, async () => new Response("{}"))).toBe(false);
   });
+
+  test("the parent's /family says where a child's code is, and when it stopped following", async () => {
+    const tip = "0123456789abcdef0123456789abcdef01234567";
+    const send = async (o: Record<string, unknown>) => {
+      const body = beat({ at: Date.now() + 1000, ...o });
+      expect((await post(body, sign(key, body))).status).toBeLessThan(300);
+    };
+    await send({ forgeTip: tip });
+    const before = (await family(adminCookie)).replace(/\s+/g, " ");
+    expect(before).toContain("code at");
+    expect(before).toContain("0123456");
+    expect(before).not.toContain("follows nothing since");
+    await send({ forgeTip: tip, severedAt: "2030-02-03T04:05:06.000Z", at: Date.now() + 2000 });
+    const after = (await family(adminCookie)).replace(/\s+/g, " ");
+    expect(after).toContain("follows nothing since 2030-02-03");
+    expect(after).not.toContain("code at");
+  });
 });

@@ -10,10 +10,8 @@
  * — it becomes the crew's proposal, or an honest sentence about why not.
  */
 
-import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import {
   relationOf,
-  takeUpdates,
   type ForkRelation,
 } from "../../actions/forks.ts";
 import { listCrewRoles } from "../../core/agents.ts";
@@ -39,6 +37,7 @@ import {
 } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
 import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
+import { convergeWords, takeOrTell } from "../../actions/follow.ts";
 import { openProposal, proposeUpstream } from "../../actions/upstream.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
@@ -440,7 +439,7 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
     );
   }
 
-  const took = await takeUpdates(ctx.app, ctx.auth.user, repo);
+  const took = await takeOrTell(ctx.app, ctx.auth.user, repo);
   if (!took.ok) {
     const e = took.error;
     if (typeof e === "string")
@@ -451,12 +450,16 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
             ? "This repository follows nothing."
             : "You need write access to take updates here.",
       });
+    // A conflict is a tell for the crew (`actions/follow.ts`).
+    if (e.kind === "conflict") {
+      const files = `${e.files.length === 1 ? "One file needs" : `${e.files.length} files need`} a decision (${e.files.join(", ")})`;
+      const words = "converge" in e ? convergeWords(e.converge, parentName) : { message: "" };
+      return flashOrJson(ctx, base, { tone: "danger", message: `${files}. ${words.message}` });
+    }
     return flashOrJson(ctx, base, {
       tone: "danger",
       message:
-        e.kind === "conflict"
-          ? `${e.files.length === 1 ? "One file needs" : `${e.files.length} files need`} a decision (${e.files.join(", ")}); the crew can converge it.`
-          : e.kind === "moved"
+        e.kind === "moved"
             ? "Something moved while this was read; try again."
             : `Git could not take the updates: ${e.message}`,
     });
@@ -468,54 +471,4 @@ export async function followingSubmit(ctx: Ctx): Promise<Response> {
         ? `Took ${parentName}'s updates: merged into ${repo.defaultBranch} at ${took.value.to.slice(0, 7)}.`
         : `Took ${parentName}'s updates: ${repo.defaultBranch} is at ${took.value.to.slice(0, 7)}.`,
   });
-}
-
-function convergeWords(
-  outcome: Converge,
-  parentName: string,
-): { tone?: "danger"; message: string } {
-  switch (outcome.kind) {
-    case "queued":
-      return {
-        message: `${outcome.agent.user.username} is converging with ${parentName} on #${outcome.issue.number}; the proposal comes back as a pull.`,
-      };
-    case "working":
-      return {
-        message: `The crew is already converging on #${outcome.issue.number}.`,
-      };
-    case "proposed":
-      return {
-        message: `The crew's proposal is already open: pull #${outcome.pull.number}.`,
-      };
-    case "parked":
-      return {
-        tone: "danger",
-        message: `The crew tried its limit on #${outcome.issue.number}; say there what to do.`,
-      };
-    case "nothing":
-      return {
-        message:
-          outcome.relation?.state === "diverged"
-            ? "They merge cleanly; Take updates does it without the crew."
-            : "Nothing to converge.",
-      };
-    case "no_crew":
-      return {
-        tone: "danger",
-        message:
-          "Nobody is on the crew here; add someone under Settings → Crew.",
-      };
-    case "nobody":
-      return {
-        tone: "danger",
-        message: "Nobody can open the converge issue here.",
-      };
-    case "forbidden":
-      return { tone: "danger", message: DIRECTION_NOTE };
-    case "ceiling":
-      return {
-        tone: "danger",
-        message: "The crew is at today's ceiling; it converges tomorrow.",
-      };
-  }
 }

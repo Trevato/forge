@@ -236,9 +236,9 @@ describe("a fork that follows its parent", () => {
       headers: as(bobToken),
     });
     expect(res.status).toBe(409);
-    expect(((await res.json()) as { files: string[] }).files).toEqual([
-      "README.md",
-    ]);
+    const said = (await res.json()) as { files: string[]; converge: string | null };
+    expect(said.files).toEqual(["README.md"]);
+    expect(said.converge).toBe("no_crew");
     const page = await fetch(`${base}/bob/game`, {
       headers: { authorization: `Bearer ${bobToken}`, accept: "text/html" },
     }).then((p) => p.text());
@@ -380,6 +380,42 @@ describe("a fork that follows its parent", () => {
     expect(prompt).toContain("README.md");
     expect(prompt).toContain(`Closes #${issue.number}`);
     expect(prompt).toContain("Never drop this repository's own work");
+  });
+
+  test("taking updates into a conflict tells the crew: the same issue, never a second", async () => {
+    const issue = listIssues(app.db, fork.id, { state: "open" }).find(
+      (i) => i.title === convergeTitle(fresh(parent)),
+    );
+    expect(issue).toBeDefined();
+    const before = listIssues(app.db, fork.id, { state: "open" }).length;
+    const res = await fetch(`${base}/bob/game/following`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${bobToken}`,
+        "content-type": "application/x-www-form-urlencoded",
+        accept: "application/json",
+      },
+      body: "do=take",
+    });
+    expect(res.status).toBe(422);
+    const said = ((await res.json()) as { error: string }).error;
+    expect(said).toContain("README.md");
+    expect(said).toContain(`#${issue!.number}`);
+    expect(listIssues(app.db, fork.id, { state: "open" }).length).toBe(before);
+  });
+
+  test("the API's take tells the crew the same way: the converge issue is named", async () => {
+    const issue = listIssues(app.db, fork.id, { state: "open" }).find(
+      (i) => i.title === convergeTitle(fresh(parent)),
+    );
+    const res = await fetch(`${base}/api/v1/repos/bob/game/following/take`, {
+      method: "POST",
+      headers: as(bobToken),
+    });
+    expect(res.status).toBe(409);
+    const said = (await res.json()) as { issue: number | null; converge: string };
+    expect(said.converge).toBe("working");
+    expect(said.issue).toBe(issue!.number);
   });
 
   test("a fork with autonomy on converges by itself when its parent moves", async () => {

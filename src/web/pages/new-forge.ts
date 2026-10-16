@@ -34,6 +34,7 @@ interface Values {
   readonly apps: readonly string[];
   readonly crew: readonly string[];
   readonly fresh: string;
+  readonly followMode: string;
   readonly keepAccess: boolean;
   readonly budgetUsd: string;
   readonly modelEndpoint: string;
@@ -48,6 +49,7 @@ const EMPTY: Values = {
   apps: [],
   crew: [],
   fresh: "",
+  followMode: "tell-me",
   keepAccess: false,
   budgetUsd: "",
   modelEndpoint: "",
@@ -176,6 +178,34 @@ function formView(
           hint: `One line on what it is; the child gets a small app to start from (at most ${MAX_FRESH_CHARS} characters).`,
           ...(errors["fresh"] ? { error: errors["fresh"] } : {}),
         })}
+        <fieldset class="field" ${errors["followMode"] ? html`data-invalid` : null}>
+          <legend>How it follows this forge's code (recorded for now; nothing acts on it yet)</legend>
+          <label class="check">
+            <input
+              type="radio"
+              name="followMode"
+              value="tell-me"
+              ${values.followMode !== "take-updates" ? html`checked` : null}
+            />
+            <span
+              >Tell me <span class="muted small">is recorded as your choice; nothing tells you yet.</span></span
+            >
+          </label>
+          <label class="check">
+            <input
+              type="radio"
+              name="followMode"
+              value="take-updates"
+              ${values.followMode === "take-updates" ? html`checked` : null}
+            />
+            <span
+              >Take updates <span class="muted small">is recorded as your choice; nothing takes updates automatically yet.</span></span
+            >
+          </label>
+          ${errors["followMode"]
+            ? html`<span class="error" id="f-followMode-err">${errors["followMode"]}</span>`
+            : null}
+        </fieldset>
         ${crew.length === 0
           ? null
           : html`<fieldset class="field">
@@ -360,6 +390,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     apps: all(form, "apps"),
     crew: all(form, "crew"),
     fresh: field(form, "fresh").trim(),
+    followMode: field(form, "followMode").trim() || "tell-me",
     keepAccess: asBool(form, "keepAccess"),
     budgetUsd: field(form, "budgetUsd").trim(),
     modelEndpoint: field(form, "modelEndpoint").trim(),
@@ -373,6 +404,7 @@ export async function newForgeSubmit(ctx: Ctx): Promise<Response> {
     crew: values.crew,
     keepAccess: values.keepAccess,
     ...(values.fresh === "" ? {} : { fresh: values.fresh }),
+    followMode: values.followMode,
     ...(values.forWhom === "" ? {} : { for: values.forWhom }),
     ...(values.direction.trim() === "" ? {} : { direction: values.direction }),
     ...(key === "" ? {} : { modelKey: key }),

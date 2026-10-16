@@ -116,6 +116,7 @@ import {
   signinPasskey,
 } from "../web/pages/passkeys.ts";
 import { confirmPage, searchPage } from "../web/pages/search.ts";
+import { chainPage, severSubmit } from "../web/pages/chain.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { reconnectSubmit } from "../web/pages/frozen.ts";
 import { activityAtom } from "../web/feeds.ts";
@@ -1210,6 +1211,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/make-it-yours", makeItYoursSubmit);
   // A fork takes what it follows: git's part by itself, the rest by the crew.
   router.add("POST", "/:owner/:name/following", followingSubmit);
+  router.add("GET", "/:owner/:name/following", chainPage);
+  router.add("POST", "/:owner/:name/following/sever", severSubmit);
   // A mirror pulls on demand; a pin says "keep this on my machine". Both are
   // ordinary repo-scoped writes, not account-level ones.
   router.add("POST", "/:owner/:name/sync", repoSyncSubmit);

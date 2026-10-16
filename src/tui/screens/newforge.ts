@@ -33,6 +33,7 @@ const SPECS: readonly Spec[] = [
   { key: "modelKey", label: "Model key", hint: "Sealed in the child, never shown again. Optional.", secret: true },
   { key: "modelEndpoint", label: "API base URL", hint: "A gateway for the key; empty for Anthropic. Optional." },
   { key: "budgetUsd", label: "Budget in dollars", hint: `${MIN_BUDGET_USD}–${MAX_BUDGET_USD}, for the key's whole life. Needed with a key.` },
+  { key: "followMode", label: "Follows this forge's code", hint: "tell-me (default) or take-updates. Recorded only; nothing acts on it yet." },
 ];
 
 /** The door's "field: reason" refusal, as the field it names and the reason. */
@@ -58,6 +59,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
       name: val("name"),
       apps,
       ...(val("fresh") === "" ? {} : { fresh: val("fresh") }),
+      followMode: val("followMode") === "" ? "tell-me" : val("followMode"),
       ...(val("for") === "" ? {} : { for: val("for") }),
       ...(val("direction") === "" ? {} : { direction: val("direction") }),
       ...(val("modelKey") === "" ? {} : { modelKey: val("modelKey") }),
@@ -107,6 +109,7 @@ export function newForgeScreen(f: Session, ctx: Ctx): Screen {
           const budget = (body["plan"] as { budgetUsd?: number | null } | undefined)?.budgetUsd ?? null;
           plan = [
             `A forge at ${childUrlOf(f.app, val("name"))}.`,
+            `Recorded for now, not acted on: it follows this forge's code as ${val("followMode") === "" ? "tell-me" : val("followMode")}.`,
             "Whoever opens the link becomes its admin.",
             ...(budget === null ? [] : [`Its crew runs on your key, up to $${budget} for the key's whole life.`]),
             "Copied into it:",

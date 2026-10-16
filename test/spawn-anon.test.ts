@@ -140,7 +140,9 @@ describe("anonymous spawn", () => {
       const parent = (await Bun.file(
         join(childDirOf(app, body.bodyId), "parent.json"),
       ).json()) as any;
-      expect(parent.forgeCode).toEqual({ repo: "kid/forge", upstream: "alice/forge-code" });
+      expect(parent.forgeCode).toEqual(
+        expect.objectContaining({ repo: "kid/forge", upstream: "alice/forge-code", mode: "tell-me" }),
+      );
     } finally {
       child.close();
     }

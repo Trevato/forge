@@ -40,6 +40,8 @@ function standingNode(c: FamilyChild): Node {
       meta.push(html`${c.behind === 0 ? "up to date" : `${plural(c.behind, "release")} behind`}`);
     if (c.openProposals !== null)
       meta.push(html`${plural(c.openProposals, "open proposal")}`);
+    if (c.severedAt !== null) meta.push(html`follows nothing since ${c.severedAt.slice(0, 10)}`);
+    else if (c.forgeTip !== null) meta.push(html`code at <span class="mono">${c.forgeTip.slice(0, 7)}</span>`);
     if (c.ownChildren !== null && c.ownChildren > 0)
       meta.push(html`${plural(c.ownChildren, "forge")} of its own`);
   }

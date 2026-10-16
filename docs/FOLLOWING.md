@@ -180,3 +180,16 @@ the fork owner's name, `trevato/main` proposing into `main`. Landing it
 there is landing it upstream.
 `POST /api/v1/repos/:owner/:name/following/propose` is the same press over
 the API.
+
+A fork across forges (#1085): a spawned forge's `<org>/forge` follows its
+parent's forge code in the mode the spawner chose, `tell-me` (default) or
+`take-updates`; `/:owner/forge/following` shows the chain to the root and
+the owner's **Sever**, which cuts the link and deletes nothing (the page
+and the parent's `/family` say "follows nothing since …"). `docs/SPAWN.md`
+has the shape. A **conflict** on **Take updates** is a tell for the crew:
+the press opens (or finds) the converge issue naming the files in conflict,
+assigned to a builder when the repository has one, and says why not when it
+has none. The step is `takeOrTell` in `src/actions/follow.ts`, shared by the
+page, `POST /api/v1/repos/:owner/:name/following/take` (409, naming the
+converge issue), and the MCP `take_updates` tool, so the same press does the
+same thing at every door.
