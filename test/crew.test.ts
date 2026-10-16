@@ -1,135 +1,36 @@
 /**
  * The crew loop with a stand-in for Claude Code (`helpers/crew-standin.ts`):
  * one pull's life — assigned, cloned, worked, landed, fed back on, closed.
- * The early pull is in `crew-early.test.ts`.
+ * Feedback is in `crew-feedback.test.ts`, closing in `crew-closed.test.ts`,
+ * the early pull in `crew-early.test.ts`.
  * The rest of the loop is in the other `crew-*.test.ts` files, each on a
  * forge of its own so they run apart and in parallel (#1798).
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  realpathSync,
-  symlinkSync,
-} from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../src/app.ts";
-import {
-  addComment,
-  assignIssue,
-  openIssue,
-  setIssueState,
-} from "../src/actions/issues.ts";
+import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { sandboxAvailable } from "../src/crew/sandbox.ts";
-import { queueAgentRun, type CrewHandle } from "../src/crew/dispatch.ts";
+import type { CrewHandle } from "../src/crew/dispatch.ts";
 import { workdirFor } from "../src/crew/runner.ts";
 import { getAgentByName } from "../src/core/agents.ts";
-import { getIssue, listComments } from "../src/core/issues.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { listPaths } from "../src/git/read.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { getForkOf, type Repo } from "../src/core/repos.ts";
-import { listRuns, type Run } from "../src/core/runs.ts";
+import type { Run } from "../src/core/runs.ts";
 import type { User } from "../src/core/users.ts";
 import type { Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
-import { spellings, stripForgeDirs } from "../src/runs/paths.ts";
 import {
   agentRunSettled,
   startStandInCrew,
   stopStandInCrew,
   type StandInCrew,
 } from "./helpers/crew-standin.ts";
-
-describe("stripForgeDirs", () => {
-  test("strips a known directory, leaves the rest of the path", () => {
-    expect(
-      stripForgeDirs(["/data/crew/bot/1/2"], "/data/crew/bot/1/2/src/a.ts"),
-    ).toBe("src/a.ts");
-  });
-
-  test("a line with no match passes through whole", () => {
-    expect(stripForgeDirs(["/data/crew/bot/1/2"], "/usr/bin/ssh")).toBe(
-      "/usr/bin/ssh",
-    );
-  });
-
-  test("an empty directory is dropped, not used as a prefix", () => {
-    expect(stripForgeDirs([""], "/usr/bin/ssh")).toBe("/usr/bin/ssh");
-  });
-
-  test("the directory alone reads as here, wherever it stands in the line", () => {
-    const dir = "/data/crew/bot/1/2";
-    expect(stripForgeDirs([dir], `cd ${dir} && ls ${dir}/src`)).toBe(
-      "cd . && ls src",
-    );
-    expect(stripForgeDirs([dir], `at "${dir}/a.ts":3 (${dir})`)).toBe(
-      'at "a.ts":3 (.)',
-    );
-  });
-
-  test("its text inside a longer path is left whole, never a path that was not there", () => {
-    const dir = "/var/folders/x/work";
-    // The same directory through a symlink the forge did not resolve.
-    expect(stripForgeDirs([dir], `/private${dir}/CREW.md`)).toBe(
-      `/private${dir}/CREW.md`,
-    );
-    // A sibling whose name begins the same way.
-    expect(stripForgeDirs(["/data/1/2"], "/data/1/23/a.ts /data/1/2.bak")).toBe(
-      "/data/1/23/a.ts /data/1/2.bak",
-    );
-    // And the whole one beside them still goes.
-    expect(
-      stripForgeDirs(["/data/1/2"], "/data/1/23/a.ts /data/1/2/a.ts"),
-    ).toBe("/data/1/23/a.ts a.ts");
-  });
-
-  test("a directory before a full stop that punctuates goes, and the stop stays", () => {
-    const dir = "/var/folders/x/work";
-    expect(stripForgeDirs([dir], `wrote to ${dir}.`)).toBe("wrote to .");
-    expect(stripForgeDirs([dir], `${dir}. Then ${dir}/a.ts`)).toBe(
-      ". Then a.ts",
-    );
-    // Inside brackets or quotes, before a comma, and in an ellipsis.
-    expect(stripForgeDirs([dir], `(see ${dir}.)`)).toBe("(see .)");
-    expect(stripForgeDirs([dir], `"${dir}.", it said`)).toBe('".", it said');
-    expect(stripForgeDirs([dir], `${dir}...`)).toBe("...");
-    // A name that goes on after the dot is a sibling, left whole — after
-    // one dot or two.
-    expect(stripForgeDirs([dir], `${dir}.bak is kept`)).toBe(
-      `${dir}.bak is kept`,
-    );
-    expect(stripForgeDirs([dir], `${dir}..bak is kept`)).toBe(
-      `${dir}..bak is kept`,
-    );
-  });
-
-  test("a directory reached through a symlink reads relative under either spelling", async () => {
-    const root = realpathSync(await mkdtemp(join(tmpdir(), "forge-paths-")));
-    try {
-      const real = join(root, "real");
-      const link = join(root, "link");
-      mkdirSync(real);
-      symlinkSync(real, link);
-      // The forge named the link; a child process reports the real path.
-      const dirs = spellings([link]);
-      expect(dirs).toEqual([link, real].sort((a, b) => b.length - a.length));
-      expect(stripForgeDirs(dirs, `${real}/CREW.md`)).toBe("CREW.md");
-      expect(stripForgeDirs(dirs, `${link}/CREW.md`)).toBe("CREW.md");
-      // A directory that is not there yet keeps its own spelling.
-      expect(spellings([join(root, "later"), ""])).toEqual([
-        join(root, "later"),
-      ]);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-});
 
 describe("the crew, with a stand-in Claude Code", () => {
   let standIn: StandInCrew;
@@ -148,7 +49,8 @@ describe("the crew, with a stand-in Claude Code", () => {
 
   beforeAll(async () => {
     standIn = await startStandInCrew();
-    ({ dataDir,app,servers,crew,alice,bot,repo,argsFile,promptFile } = standIn);
+    ({ dataDir, app, servers, crew, alice, bot, repo, argsFile, promptFile } =
+      standIn);
   }, 30_000);
 
   afterAll(() => stopStandInCrew(standIn));
@@ -284,88 +186,4 @@ describe("the crew, with a stand-in Claude Code", () => {
       ),
     ).toBe(true);
   }, 60_000);
-
-  test("feedback from a person resumes the session on the same branch", async () => {
-    const pull = listPulls(app.db, repo.id, { state: "open" })[0]!;
-    const before = listRuns(app.db, repo.id, { kind: "agent" }).length;
-    // The agent's own comment is not feedback.
-    expect(addComment(app, bot, repo, pull, "Working on it.").ok).toBe(true);
-    await Bun.sleep(300);
-    expect(listRuns(app.db, repo.id, { kind: "agent" }).length).toBe(before);
-    // A person's is.
-    expect(
-      addComment(app, alice, repo, pull, "Also plant daffodils please.").ok,
-    ).toBe(true);
-    const run = await settled((r) => r.reason === "feedback");
-    expect(run.state).toBe("ok");
-    expect(run.summary).toMatch(/^updated pull #\d+/);
-    const args = readFileSync(argsFile, "utf8");
-    expect(args).toContain("--resume\nfake-1");
-    const prompt = readFileSync(promptFile, "utf8");
-    expect(prompt).toContain("feedback on your pull");
-    expect(prompt).toContain("Also plant daffodils please.");
-    expect(prompt).not.toContain("Working on it.");
-    // The agent reported on the pull, and the branch moved.
-    const comments = listComments(app.db, pull.id).filter(
-      (c) => c.authorName === "bot",
-    );
-    expect(comments.map((c) => c.body)).toContain("Added CREW.md as asked.");
-    // The branch moved in the fork (the pull row keeps its opening snapshot;
-    // the live head is git's), and the base's snapshot of it followed.
-    const fork = getForkOf(app.db, bot.id, repo.id)!;
-    const tip = await resolveOid(
-      repoDir(app.reposRoot, fork.ownerName, fork.name),
-      `refs/heads/${pull.headBranch}`,
-    );
-    expect(tip).toBeDefined();
-    expect(tip).not.toBe(pull.headOid);
-    await Bun.sleep(300);
-    expect(
-      await resolveOid(
-        repoDir(app.reposRoot, repo.ownerName, repo.name),
-        `refs/pull/${pull.number}/head`,
-      ),
-    ).toBe(tip);
-  }, 60_000);
-
-  test("closing the pull removes the clone; a closed issue starts nothing", async () => {
-    const pull = listPulls(app.db, repo.id, { state: "open" })[0]!;
-    const dir = workdirFor(
-      dataDir,
-      getAgentByName(app.db, "bot")!,
-      repo,
-      issueNumber,
-    );
-    expect(existsSync(dir)).toBe(true);
-    expect(setIssueState(app, alice, repo, pull, "closed").ok).toBe(true);
-    const deadline = Date.now() + 5_000;
-    while (existsSync(dir) && Date.now() < deadline) await Bun.sleep(50);
-    expect(existsSync(dir)).toBe(false);
-    const before = listRuns(app.db, repo.id, { kind: "agent" }).length;
-    expect(addComment(app, alice, repo, pull, "one more thing").ok).toBe(true);
-    await Bun.sleep(300);
-    expect(listRuns(app.db, repo.id, { kind: "agent" }).length).toBe(before);
-  }, 30_000);
-
-  test("a pull closed without a merge has nothing to continue: its follow-up fails before it begins", async () => {
-    const agent = getAgentByName(app.db, "bot")!;
-    // Closed without a merge, the proposal was declined: nothing to continue.
-    const closed = listPulls(app.db, repo.id, { state: "closed" }).find(
-      (p) => p.mergedAt === null,
-    )!;
-    expect(closed).toBeDefined();
-    const dead = queueAgentRun(
-      app,
-      repo,
-      getIssue(app.db, repo.id, closed.number)!,
-      agent,
-      "feedback",
-      alice.id,
-    )!;
-    const outcome = await settled((r) => r.id === dead.id);
-    expect(outcome.state).toBe("failed");
-    expect(outcome.summary).toBe(
-      `pull #${closed.number} was closed before the run began`,
-    );
-  }, 30_000);
 });
