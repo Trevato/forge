@@ -6,7 +6,8 @@
  * Anyone else is told 403, and an agent is never an admin here.
  */
 
-import { checkInput, flagRegistry, mayManageFlags, useFlagRegistry, type FlagDecl, type FlagValue } from "../../core/flags.ts";
+import { checkInput, flagRegistry, usesLine, winnerOffer, mayManageFlags, useFlagRegistry, type FlagDecl, type FlagValue } from "../../core/flags.ts";
+import { makeWinnerDefault } from "../../actions/flag_winner.ts";
 import type { Ctx } from "../../http/context.ts";
 import { settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -66,14 +67,17 @@ export function flagsPage(ctx: Ctx): Response {
   const rows = names.map((name) => {
     const decl = (registry.decls as Record<string, FlagDecl>)[name]!;
     const v = registry.value(name as never);
+    const week = registry.uses(ctx.app.db, name, 7);
+    const month = registry.uses(ctx.app.db, name, 30);
+    const lead = winnerOffer(month, v);
     return row({
       lead: icon("activity"),
       title: html`<span class="mono">${name}</span>`,
       meta: html`${decl.why}<br />Default
         <span class="mono">${decl.default ? "on" : "off"}</span> · owner
         ${issueLink(repo, decl.issue)} ·
-        live: ${summary(v)}`,
-      trail: html`<form class="row-actions" method="post" action="/settings/flags">
+        live: ${summary(v)}<br /><span class="mono">${usesLine(week, month)}</span>`,
+      trail: html`<form class="row-actions flag-form" method="post" action="/settings/flags">
         <input type="hidden" name="name" value="${name}" />
         <select class="input" name="forge" aria-label="${name} for the forge">
           <option value="" ${v?.forge === undefined ? "selected" : ""}>forge: default</option>
@@ -85,6 +89,9 @@ export function flagsPage(ctx: Ctx): Response {
         <input class="input mono" name="percent" placeholder="%" size="3" value="${v?.percent === undefined ? "" : String(v.percent)}" aria-label="${name} percent" />
         ${btn("Save", { size: "sm", variant: "primary", label: `Save ${name}` })}
         ${btn("Clear", { size: "sm", name: "clear", value: "1", label: `Clear ${name}` })}
+        ${lead === undefined
+          ? ""
+          : btn(`Make ${lead} the default`, { size: "sm", name: "winner", value: lead, label: `Make ${lead} the default for ${name}` })}
       </form>`,
     });
   });
@@ -119,6 +126,17 @@ export async function flagsSet(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "admin");
   if (form instanceof Response) return form;
   const name = field(form, "name");
+  const winner = field(form, "winner");
+  if (winner === "on" || winner === "off") {
+    const made = makeWinnerDefault(ctx.app, ctx.auth.user!, name, winner);
+    return flashTo(
+      ctx,
+      "/settings/flags",
+      made.ok
+        ? { message: `${name}: ${winner} is the default; issue #${made.issue.number} asks the crew to remove the flag.` }
+        : { tone: "danger", message: made.message },
+    );
+  }
   const checked =
     field(form, "clear") === "1"
       ? ({ ok: true, value: undefined } as const)

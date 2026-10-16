@@ -3,8 +3,9 @@
  * why it exists, its default, the owner issue and its live value, as
  * Settings → Flags shows them. Enter sets one from a line like
  * `forge=on users=u1,u2 roles=admin percent=30` (checked by `checkInput`, the
- * page's own check); `x` clears it. A change goes through the registry's
- * `set`, so it is live at once, as on the page. The gate is the page's:
+ * page's own check); `x` clears it; `w` makes the 30-day winner the default
+ * and opens the removal issue (`makeWinnerDefault`). A change goes through
+ * the registry's `set`, so it is live at once, as on the page. The gate is the page's:
  * an admin who is not an agent; anyone else sees nothing and sets nothing.
  */
 
@@ -12,10 +13,13 @@ import {
   checkInput,
   flagRegistry,
   mayManageFlags,
+  usesLine,
+  winnerOffer,
   type FlagDecl,
   type FlagInput,
   type FlagValue,
 } from "../../core/flags.ts";
+import { makeWinnerDefault } from "../../actions/flag_winner.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -65,13 +69,30 @@ export function flagsScreen(f: Session, ctx: Ctx): Screen {
     ctx.invalidate();
   };
 
+  /** The read-out of the flag under the cursor. */
+  const usesOf = (name: string): string =>
+    `${name}  ${usesLine(flagRegistry().uses(f.db, name, 7), flagRegistry().uses(f.db, name, 30))}`;
+
+  const offer = (name: string) =>
+    winnerOffer(flagRegistry().uses(f.db, name, 30), flagRegistry().value(name as never));
+
+  const winner = (name: string): void => {
+    const lead = offer(name);
+    if (!allowed || f.user === undefined || lead === undefined) return;
+    const made = makeWinnerDefault(f.app, f.user, name, lead);
+    note = made.ok
+      ? `${name}: ${lead} is the default; issue #${made.issue.number} asks the crew to remove the flag.`
+      : made.message;
+    ctx.invalidate();
+  };
+
   const rows = (): ListRow[] =>
     names().map((name) => {
       const decl = (flagRegistry().decls as Record<string, FlagDecl>)[name]!;
       return {
         title: name,
         secondary: show(flagRegistry().value(name as never)),
-        meta: `${decl.why}  default ${decl.default ? "on" : "off"}  owner #${decl.issue}`,
+        meta: `${offer(name) === undefined ? "" : `w: make ${offer(name)} the default  `}${decl.why}  default ${decl.default ? "on" : "off"}  owner #${decl.issue}`,
       };
     });
 
@@ -81,6 +102,7 @@ export function flagsScreen(f: Session, ctx: Ctx): Screen {
       binding(["j", "k"], "move cursor"),
       binding(["enter"], "set"),
       binding(["x"], "clear"),
+      binding(["w"], "make the winner the default"),
     ],
     render(area, s) {
       const c = ctx.theme.c;
@@ -92,7 +114,7 @@ export function flagsScreen(f: Session, ctx: Ctx): Screen {
             ? "Flags are set by a forge admin."
             : names().length === 0
               ? "No flag is declared yet."
-              : `${names().length} flag${names().length === 1 ? "" : "s"}`;
+              : usesOf(names()[state.index] ?? names()[0]!);
       s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, list!, c, state, rows());
     },
@@ -103,6 +125,7 @@ export function flagsScreen(f: Session, ctx: Ctx): Screen {
       const name = all[state.index];
       if (name === undefined) return false;
       if (e.key === "x") save(name, undefined);
+      else if (e.key === "w") winner(name);
       else if (e.key === "enter")
         ctx.push(
           promptScreen(ctx, screen, {

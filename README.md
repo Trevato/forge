@@ -1174,3 +1174,5 @@ stays empty — the preview has no install step, so the files are committed unde
 
 Not done: the SVG route is unchanged and still the card's source of truth; the
 rasterizer runs on the main thread (about 100 ms once per distinct card).
+
+Every read of a flag is counted in memory by UTC day and variant (on or off) and written in one batch every ten seconds and at exit, so a request runs no extra query. Beside each flag, Settings → Flags shows its reads per variant for the last 7 and 30 days. When one variant leads, "Make on/off the default" sets the flag to that value for everyone (user, role and percentage rules are cleared), and opens an issue on the forge's repository asking the crew to remove the losing path and the flag; if the issue cannot be opened, the flag is left as it was. The button shows only when the 30-day leader has at least 50 reads in all, the variants are not tied, and the flag's forge value is not already the leader. In the terminal the Flags screen shows the same `Uses, 7 days / 30 days` line for the flag under the cursor, and `w` does the same as the button (same admin, non-agent gate). Counts are of reads, not of people.

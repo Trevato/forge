@@ -362,6 +362,14 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   .row:has(.headroom) { flex-wrap: wrap; }
   .row:has(.headroom) .row-trail { flex-basis: 100%; flex-wrap: wrap; }
 }
+/* Settings → Flags: a flag's controls wrap under its text on a phone, never sideways. */
+.flag-form { flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
+@media (max-width: 640px) {
+  .row:has(.flag-form) { flex-wrap: wrap; }
+  .row:has(.flag-form) .row-trail { flex-basis: 100%; min-width: 0; }
+  .flag-form { justify-content: flex-start; }
+  .flag-form .input { min-width: 0; flex: 1 1 8rem; }
+}
 .backups-now { margin-top: 12px; }
 /* The fleet graph: a selection's spend and runs, hour by hour and day by day.
    Series colours are Okabe–Ito (told apart with common colour-vision

@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { makeFlags, useFlagRegistry } from "../src/core/flags.ts";
+import { createRepo } from "../src/core/repos.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { flagsScreen, parseLine } from "../src/tui/screens/flags.ts";
@@ -100,6 +101,26 @@ describe("flags in the terminal", () => {
     h.stop();
   });
 
+  test("the read-out shows, and w makes the winner the default and opens the issue", async () => {
+    const owner = getUserByName(forge.db, "alice")!;
+    const made = await createRepo(forge.db, forge.reposRoot, { ownerId: owner.id, name: "forge", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    forge.config.forgeRepo = "alice/forge";
+    for (let i = 0; i < 60; i++) reg.flag("alpha");
+    const h = boot("alice");
+    await open(h);
+    expect(h.text()).toContain("Uses, 7 days: on 1 · off 60");
+    expect(h.text()).toContain("w: make off the default");
+    await h.press("w");
+    expect(reg.value("alpha")).toEqual({ forge: false });
+    expect(h.text()).toContain("off is the default; issue #1");
+    expect(forge.db.query("SELECT title FROM issue").all()).toEqual([{ title: "Remove flag alpha: keep the off path" }]);
+    await h.press("w"); // already the value: no second issue
+    expect(forge.db.query("SELECT 1 FROM issue").all().length).toBe(1);
+    await h.press("x");
+    h.stop();
+  });
+
   test("a bad line is refused and nothing changes", async () => {
     const h = boot("alice");
     await open(h);
@@ -132,8 +153,10 @@ describe("flags in the terminal", () => {
       const key = (k: string) => screen.key?.({ type: "key", key: k, ctrl: false, alt: false, shift: false } as never);
       key("enter");
       key("x");
+      key("w");
       expect(pushed).toEqual([]);
       expect(reg.value("alpha")).toBeUndefined();
+      expect(forge.db.query("SELECT 1 FROM issue WHERE author_id = ?1").all(user.id)).toEqual([]);
       expect(forge.db.query("SELECT key FROM forge_setting_change WHERE key = 'flag.alpha' AND actor_id = ?1").all(user.id).length).toBe(0);
     }
   });

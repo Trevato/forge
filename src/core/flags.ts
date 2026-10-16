@@ -41,6 +41,24 @@ export type FlagValue = {
   percent?: number;
 };
 
+/** How many times a flag answered each way. */
+export type FlagUses = { on: number; off: number };
+
+/** Fewer reads than this in 30 days are too few to call a winner. */
+export const MIN_WINNER_READS = 50;
+
+/** The variant to offer as the default: the 30-day leader, unless it is too few reads, a tie, or already the forge's value. */
+export function winnerOffer(uses: FlagUses, current: FlagValue | undefined): "on" | "off" | undefined {
+  if (uses.on + uses.off < MIN_WINNER_READS || uses.on === uses.off) return undefined;
+  const lead = uses.on > uses.off ? "on" : "off";
+  return current?.forge === (lead === "on") ? undefined : lead;
+}
+
+/** The read-out line both doors show. */
+export function usesLine(week: FlagUses, month: FlagUses): string {
+  return `Uses, 7 days: on ${week.on} · off ${week.off} · 30 days: on ${month.on} · off ${month.off}`;
+}
+
 const KEY_PREFIX = "flag.";
 
 /** FNV-1a with a final avalanche, so near ids do not land in near buckets. */
@@ -169,6 +187,9 @@ export function unreadFlags(
 /** A flag registry over `decls`; the forge's own is `flag`/`loadFlags` below. */
 export function makeFlags<const D extends Record<string, FlagDecl>>(decls: D) {
   let values = new Map<string, FlagValue>();
+  // Reads waiting to be written: `day\tflag\tvariant` → count. Counting is a
+  // map bump; `flush` writes the lot in one transaction, so a read costs no query.
+  let pending = new Map<string, number>();
   return {
     /** Read every stored value once. A failure leaves the defaults. */
     load(db: Database): void {
@@ -230,7 +251,43 @@ export function makeFlags<const D extends Record<string, FlagDecl>>(decls: D) {
       return true;
     },
     flag(name: keyof D & string, viewer?: Viewer): boolean {
-      return evaluate(name, decls[name]!.default, values.get(name), viewer);
+      const on = evaluate(name, decls[name]!.default, values.get(name), viewer);
+      const key = `${new Date().toISOString().slice(0, 10)}\t${name}\t${on ? 1 : 0}`;
+      pending.set(key, (pending.get(key) ?? 0) + 1);
+      return on;
+    },
+    /** Write the counted reads. A failure keeps them for the next try. */
+    flush(db: Database): void {
+      if (pending.size === 0) return;
+      const taken = pending;
+      pending = new Map();
+      try {
+        const up = db.query(
+          `INSERT INTO flag_use (day, flag, variant, n) VALUES (?1, ?2, ?3, ?4)
+           ON CONFLICT (day, flag, variant) DO UPDATE SET n = n + excluded.n`,
+        );
+        db.transaction(() => {
+          for (const [key, n] of taken) {
+            const [day, flag, variant] = key.split("\t");
+            up.run(day!, flag!, Number(variant), n);
+          }
+        })();
+      } catch {
+        for (const [key, n] of taken) pending.set(key, (pending.get(key) ?? 0) + n);
+      }
+    },
+    /** Reads per variant over the last `days` UTC days, today included. */
+    uses(db: Database, name: string, days: number, now = new Date()): FlagUses {
+      this.flush(db);
+      const since = new Date(now.getTime() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+      const rows = db
+        .query<{ variant: number; n: number }, [string, string]>(
+          "SELECT variant, SUM(n) AS n FROM flag_use WHERE flag = ?1 AND day >= ?2 GROUP BY variant",
+        )
+        .all(name, since);
+      const out: FlagUses = { on: 0, off: 0 };
+      for (const r of rows) out[r.variant === 1 ? "on" : "off"] = r.n;
+      return out;
     },
   };
 }
@@ -242,6 +299,9 @@ export const loadFlags = forgeFlags.load;
 
 /** Whether `name` is on for `viewer` (none: signed out). */
 export const flag = forgeFlags.flag;
+
+/** Write the counted flag reads; the boot calls it on a timer and at exit. */
+export const flushFlagUses = forgeFlags.flush;
 
 /** The forge's registry, for the settings page. */
 export const forgeRegistry = forgeFlags;

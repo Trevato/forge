@@ -12,7 +12,7 @@ import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
 import { backfillCarried } from "./core/carried.ts";
-import { loadFlags } from "./core/flags.ts";
+import { flushFlagUses, loadFlags } from "./core/flags.ts";
 import { reconcile } from "./core/reconcile.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { bootHostedChildren } from "./spawn/host.ts";
@@ -242,6 +242,7 @@ const app = createApp({
 });
 
 loadFlags(app.db);
+const flagTimer = setInterval(() => flushFlagUses(app.db), 10_000);
 await reconcile(app);
 // Issues linked under a pillar's umbrella before pillars had labels.
 const labelled = syncAllPillars(app);
@@ -568,6 +569,8 @@ function close(): void {
   app.log.info("forge shutting down");
   ssh?.stop();
   servers.stop();
+  clearInterval(flagTimer);
+  flushFlagUses(app.db);
   app.close();
   process.exit(0);
 }
