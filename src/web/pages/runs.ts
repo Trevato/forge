@@ -68,6 +68,11 @@ export function runTitle(
           return number === undefined ? "" : `#${number}`;
         })()
       : `#${issue.number} ${issue.title}`;
+  if (run.kind === "check") {
+    const number = issue?.number ?? envNumber(run.env);
+    const of = `Check of ${run.commitOid.slice(0, 7)}`;
+    return number === undefined ? of : `${of} for #${number}`;
+  }
   if (run.kind === "deploy")
     return about === "" ? "Deploy production" : `Deploy preview ${about}`;
   const who = actor ?? "an agent";

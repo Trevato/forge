@@ -34,6 +34,7 @@ import {
   type PullStatus,
 } from "../../core/pulls.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
+import { checkWords } from "../../checks/summary.ts";
 import { checkStale } from "../../checks/stale.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import {
@@ -228,8 +229,9 @@ export function checksLine(
       ? null
       : html`<span class="where-sep" aria-hidden="true">·</span
           ><a href="${base}/runs/${run.id}"
-            >deploy ${run.commitOid.slice(0, 7)}</a
+            >${run.kind === "check" ? "Check of" : "deploy"} ${run.commitOid.slice(0, 7)}</a
           >`;
+  const words = run === null ? undefined : checkWords(run);
   const against =
     run !== null && run.baseOid !== "" && baseBranch !== ""
       ? html`<span class="where-sep" aria-hidden="true">·</span
@@ -247,16 +249,16 @@ export function checksLine(
           >${icon("clock")}Checked against an older ${baseBranch || "base"}</span
         >${link}`
     : check.state === "ok"
-      ? html`<span class="ok">${icon("check")}Checks passed</span>${link}`
+      ? html`<span class="ok">${icon("check")}${words ?? "Checks passed"}</span>${link}`
       : check.state === "failed"
-        ? html`<span class="bad">${icon("x")}Checks failed</span>${link}`
+        ? html`<span class="bad">${icon("x")}${words ?? "Checks failed"}</span>${link}`
         : check.state === "queued"
           ? html`<span class="now"
               >${icon("loader")}Checks
               ${run ? queuedPhrase(run.createdAt) : "queued"}</span
             >${link}`
           : check.state === "running"
-            ? html`<span class="now">${icon("loader")}Checks running</span
+            ? html`<span class="now">${icon("loader")}${words ?? "Checks running"}</span
                 >${link}`
             : check.state === "cancelled"
               ? html`<span>${icon("ban")}Checks cancelled</span>${link}`
