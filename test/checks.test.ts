@@ -15,6 +15,8 @@ import { setIssueState } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { parseBunTestFailure } from "../src/checks/bun-test.ts";
 import { summariseCheckFailure } from "../src/checks/summary.ts";
+import { SLOW_SECONDS, summaryLines } from "../scripts/gate-summary.ts";
+import { tally } from "../scripts/shards.ts";
 import {
   pickNext,
   requeueAbandonedChecks,
@@ -234,6 +236,72 @@ describe("summariseCheckFailure: what a failed check's summary says first", () =
     );
     expect(summary.length).toBeLessThanOrEqual(200);
     expect(summary.endsWith("…")).toBe(true);
+  });
+});
+
+describe("summariseCheckFailure: a red gate is summarised by its red test, never a warning line (#2271)", () => {
+  // The sharded gate's log, as `scripts/test-shards.ts` prints it: each
+  // shard's own bun test output whole, the red one first, then the tally,
+  // then the gate summary block with its slow-file warning.
+  const red =
+    "bun test v1.3.14\n\ntest/standards.test.ts:\n(pass) the README names every script [1.00ms]\n" +
+    "(fail) releases.json is the shipped releases > every entry is a release [3.00ms]\n\n" +
+    " 11 pass\n 1 fail\n 40 expect() calls\nRan 12 tests across 1 file. [80.00ms]\n";
+  const slow =
+    "bun test v1.3.14\n\ntest/crew.test.ts:\n(pass) a crew is listed [2.00ms]\n\n" +
+    " 30 pass\n 0 fail\n 90 expect() calls\nRan 30 tests across 1 file. [52.40s]\n";
+  const results = [
+    { files: ["test/standards.test.ts"], code: 1, output: red, seconds: 1.2 },
+    { files: ["test/crew.test.ts"], code: 0, output: slow, seconds: 52.5 },
+  ];
+  const block = (times: { file: string; seconds: number }[]): string[] =>
+    summaryLines({
+      shards: 2,
+      cpus: 16,
+      shardsMax: 16,
+      files: 2,
+      override: undefined,
+      memoryBytes: 8 * 1024 ** 3,
+      workerBytes: 1024 ** 3,
+      memory: { limit: undefined, peak: undefined },
+      wallSeconds: 52.6,
+      times,
+    });
+  const log = (shards: typeof results): string[] => [
+    ...shards.flatMap((r, i) => [`── shard ${i + 1}/2 (exit ${r.code}, ${r.seconds}s): ${r.files[0]}`, ...r.output.split("\n")]),
+    ...tally(shards, 52.6).lines,
+    "",
+    ...block(shards.map((r) => ({ file: r.files[0]!, seconds: r.seconds }))),
+  ];
+
+  test("one red file and one slow file: the summary is the red file's test", () => {
+    const lines = log(results);
+    expect(lines.at(-1)).toBe(`test-shards: over ${SLOW_SECONDS} s: test/crew.test.ts (52.5s)`);
+    expect(summariseCheckFailure(lines, "check exited with code 1")).toEqual({
+      summary: '1 of 42 tests — "releases.json is the shipped releases > every entry is a release"',
+      detail: {
+        passed: 41,
+        failed: 1,
+        names: ["releases.json is the shipped releases > every entry is a release"],
+      },
+    });
+  });
+
+  test("a red shard that named no test is named by its files, not by the gate summary block", () => {
+    const crashed = [
+      { files: ["test/standards.test.ts"], code: 137, output: "bun test v1.3.14\n", seconds: 1.2 },
+      results[1]!,
+    ];
+    expect(summariseCheckFailure(log(crashed), "check exited with code 1").summary).toBe(
+      "shard 1 exited 137 without naming a test: test/standards.test.ts",
+    );
+  });
+
+  test("without names or a tally, the last line before the gate summary block, never a line of it", () => {
+    const lines = ["test-shards: something went wrong", "", ...block([{ file: "test/crew.test.ts", seconds: 52.5 }])];
+    expect(summariseCheckFailure(lines, "check exited with code 1").summary).toBe(
+      "test-shards: something went wrong",
+    );
   });
 });
 

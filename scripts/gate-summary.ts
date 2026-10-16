@@ -9,6 +9,8 @@
  * code: a slow file is a warning, not a red.
  */
 
+import { GATE_SUMMARY_HEADING } from "../src/checks/summary.ts";
+
 /** A file over this many seconds is named on its own warning line. */
 export const SLOW_SECONDS = 45;
 /** How many of the slowest files the block lists. */
@@ -107,7 +109,7 @@ export function summaryLines(s: GateSummary): string[] {
   // Fail-fast leaves files unstarted: the list is of the files that ran.
   const skipped = s.files - s.times.length;
   return [
-    "── gate summary",
+    GATE_SUMMARY_HEADING,
     `test-shards: shards: ${why(s)}`,
     `test-shards: wall: ${s.wallSeconds.toFixed(1)}s`,
     `test-shards: peak memory: ${peak}`,
