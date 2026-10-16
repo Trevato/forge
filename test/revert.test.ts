@@ -6,7 +6,7 @@
  * `git clone`/`git push` over HTTP, which does not run in this sandbox.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -68,7 +68,7 @@ describe("take it back: reverting a shipped change, headless", () => {
     return getPull(app.db, repo.id, opened.value.number)!;
   };
 
-  beforeAll(async () => {
+  beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-revert-"));
     app = createApp({ dataDir, port: 0 });
 
@@ -96,7 +96,7 @@ describe("take it back: reverting a shipped change, headless", () => {
     });
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     app.close();
     await rm(dataDir, { recursive: true, force: true });
   });
@@ -126,7 +126,9 @@ describe("take it back: reverting a shipped change, headless", () => {
   });
 
   test("a change already taken back is refused rather than reverted twice", async () => {
-    const shipped = getPull(app.db, repo.id, 1)!;
+    const shipped = await shipChange("loud", "Make it loud", "alpha\nBETA\n");
+    const first = await revertPull(app, alice, repo, shipped);
+    expect(first.ok).toBe(true);
     const again = await revertPull(app, alice, repo, shipped);
     expect(again).toEqual({ ok: false, error: "already_reverted" });
     expect(revertOf(app.db, repo.id, shipped.id)).toBeDefined();
@@ -154,7 +156,7 @@ describe("take it back: reverting a shipped change, headless", () => {
     const shipped = await shipChange(
       "epsilon",
       "Add epsilon",
-      "alpha\nDELTA\nEPSILON\n",
+      "alpha\nEPSILON\n",
     );
     const refused = await revertPull(app, agent.value.user, repo, shipped);
     expect(refused).toEqual({ ok: false, error: "forbidden" });
@@ -165,7 +167,7 @@ describe("take it back: reverting a shipped change, headless", () => {
       branch: "zeta",
       base: "main",
       message: "not merged",
-      files: [{ path: "code.txt", content: "alpha\nDELTA\nZETA\n" }],
+      files: [{ path: "code.txt", content: "alpha\nZETA\n" }],
     });
     const opened = await openPull(app, alice, repo, {
       title: "Add zeta",
