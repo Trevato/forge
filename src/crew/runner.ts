@@ -923,7 +923,7 @@ async function work(
     // else's run waits for a grant rather than spend what is not theirs.
     if (picked.kind === "none") {
       const said =
-        "no model credential reaches this repository; ask an admin to grant one";
+        "This repository has no model account: ask an admin to grant one";
       write(said);
       return { state: "failed", summary: said };
     }
