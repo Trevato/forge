@@ -8,7 +8,8 @@
  *   bun scripts/test-shards.ts --record [bun test flags…] test/a.test.ts …
  *   bun scripts/test-shards.ts [bun test flags…] -- a b …   (test/a.test.ts …)
  *
- * `--gate` runs the files `scripts/gate.ts` admits, which is how
+ * `--gate` runs the files `scripts/gate.ts` admits (every test file not
+ * excluded), which is how
  * `forge.json`'s `check.run` names them; files on the command line are for
  * running a slice by hand. `--shard N/M` (or `FORGE_CHECK_SHARD_INDEX` +
  * `FORGE_CHECK_SHARD_TOTAL`) keeps only the Nth contiguous slice of that
@@ -59,7 +60,7 @@ import {
   weigher,
   type ShardResult,
 } from "./shards.ts";
-import { GATE, gateRefusal, presentTests } from "./gate.ts";
+import { gateFiles, gateRefusal, presentTests } from "./gate.ts";
 import { cgroupMemory, summaryLines } from "./gate-summary.ts";
 import { GATE_FILE, executedFiles, formatImpact, gateListAdds, handedImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
 import { fastSet, importsOf, duration } from "../src/checks/tiers.ts";
@@ -223,8 +224,8 @@ if (!split.ok) {
   process.exit(2);
 }
 const flags = split.flags;
-// A test file in neither GATE nor EXCLUDED costs a whole gate run to find
-// out; say so before anything spawns. Explicit files alone are not audited.
+// A stale exclusion costs a whole gate run to find out; say so before
+// anything spawns. Explicit files alone are not audited.
 if (gate || tier === "fast") {
   const refusal = gateRefusal(presentTests());
   if (refusal.length > 0) {
@@ -232,6 +233,7 @@ if (gate || tier === "fast") {
     process.exit(2);
   }
 }
+const GATE = gateFiles();
 let files = [...(gate || tier === "fast" ? GATE : []), ...split.files];
 if (tier === "fast") {
   const diff = Bun.spawnSync(

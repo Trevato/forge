@@ -91,15 +91,16 @@ export function formatImpact(map: ReadonlyMap<string, readonly string[]>): strin
 export const GATE_FILE = "scripts/gate.ts";
 
 /**
- * The test files a `git diff -U0 scripts/gate.ts` adds to GATE or EXCLUDED
- * (a move counts as an add). `undefined` when any changed line is anything
- * but a list entry — that is logic, and the map cannot bound it. Removed
- * entries select nothing and are not logic.
+ * The test files a `git diff -U0 scripts/gate.ts` brings into the gate: the
+ * entries it takes out of EXCLUDED and does not put back (a move within the
+ * list admits nothing). `undefined` when any changed line is anything but an
+ * exclusion — that is logic, and the map cannot bound it. Added entries
+ * take a file out of the gate, which selects nothing and is not logic.
  */
 export function gateListAdds(diff: string): string[] | undefined {
-  const entry = /^"(test\/[A-Za-z0-9_.-]+\.test\.[cm]?[jt]sx?)",?(?:\s*\/\/.*)?$/;
   const exclusion = /^\{?\s*file:\s*"(test\/[A-Za-z0-9_.-]+\.test\.[cm]?[jt]sx?)",?/;
   const data = /^(\{|\},?|reason:\s*.*|issue:\s*\d+,?)$/;
+  const removed = new Set<string>();
   const added = new Set<string>();
   let inHunk = false;
   for (const line of diff.split("\n")) {
@@ -109,18 +110,17 @@ export function gateListAdds(diff: string): string[] | undefined {
     const sign = line[0];
     if (sign !== "+" && sign !== "-") continue;
     const text = line.slice(1).trim();
-    const match = entry.exec(text) ?? exclusion.exec(text);
-    if (match) {
-      if (sign === "+") added.add(match[1]!);
-    } else if (text !== "" && !data.test(text) && !/^\{\s*file:.*\},?$/.test(text)) return undefined;
+    const match = exclusion.exec(text);
+    if (match) (sign === "-" ? removed : added).add(match[1]!);
+    else if (text !== "" && !data.test(text)) return undefined;
   }
-  return [...added];
+  return [...removed].filter((file) => !added.has(file));
 }
 
 /**
  * What the map cannot bound: manifests, scripts, the kernel. `gateAdds` is
  * the result of `gateListAdds` for this pull; with it, a change to
- * scripts/gate.ts alone is bounded by the tests it lists.
+ * scripts/gate.ts alone is bounded by the tests it admits.
  */
 export function needsFull(
   changed: readonly string[],

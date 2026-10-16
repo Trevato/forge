@@ -9,7 +9,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { auditGate, GATE, type Exclusion } from "../scripts/gate.ts";
+import { auditGate, gateFiles, type Exclusion } from "../scripts/gate.ts";
 import {
   admissionRecord,
   admitted,
@@ -21,6 +21,7 @@ import {
   HUNT_RUNS,
   issueFor,
   quarantine,
+  quarantineFlaky,
   readRun,
   retries,
   ROOT_CAUSES,
@@ -164,30 +165,58 @@ describe("the issue", () => {
 
 describe("quarantine", () => {
   const source = read("scripts/gate.ts");
-  const file = GATE[0]!;
+  const file = gateFiles()[0]!;
 
-  test("moves the file from GATE to EXCLUDED under the issue", async () => {
+  test("takes the file out of the gate into EXCLUDED under the issue", async () => {
     const moved = quarantine(source, file, 4242);
     expect(moved).not.toBe(source);
     const dir = await scratch();
     await writeFile(join(dir, "gate.ts"), moved);
     const mod = (await import(join(dir, "gate.ts"))) as {
-      GATE: readonly string[];
       EXCLUDED: readonly Exclusion[];
+      gateFiles: (present?: readonly string[]) => string[];
     };
     const present = readdirSync(`${root}test`)
       .filter((name) => name.endsWith(".test.ts"))
-      .map((name) => `test/${name}`);
-    expect(auditGate(present, mod.GATE, mod.EXCLUDED)).toEqual([]);
-    expect(mod.GATE).not.toContain(file);
-    expect(mod.GATE).toHaveLength(GATE.length - 1);
+      .map((name) => `test/${name}`)
+      .sort();
+    expect(auditGate(present, mod.EXCLUDED)).toEqual([]);
+    const gate = mod.gateFiles(present);
+    expect(gate).not.toContain(file);
+    expect(gate).toHaveLength(gateFiles().length - 1);
     expect(mod.EXCLUDED.at(-1)).toMatchObject({ file, issue: 4242 });
   });
 
-  test("a file not in GATE is left alone", async () => {
+  test("a file excluded already is left alone", async () => {
     const { EXCLUDED } = await import("../scripts/gate.ts");
     expect(quarantine(source, EXCLUDED[0]!.file, 1)).toBe(source);
-    expect(quarantine(source, "test/nope.test.ts", 1)).toBe(source);
+    expect(quarantine("no list here", file, 1)).toBe("no list here");
+  });
+});
+
+describe("quarantineFlaky", () => {
+  const source = read("scripts/gate.ts");
+  const file = gateFiles()[0]!;
+  const present = new Set(gateFiles());
+
+  test("an issue naming a missing file adds no EXCLUDED entry", () => {
+    const got = quarantineFlaky(source, [["test/gone.test.ts", 77]], present);
+    expect(got.source).toBe(source);
+    expect(got.moved).toEqual([]);
+  });
+
+  test("a present file is quarantined and named; one excluded already is not", () => {
+    const got = quarantineFlaky(
+      source,
+      [
+        ["test/gone.test.ts", 77],
+        [file, 78],
+        [file, 79],
+      ],
+      present,
+    );
+    expect(got.source).toBe(quarantine(source, file, 78));
+    expect(got.moved).toEqual([`${file} (#78)`]);
   });
 });
 
@@ -268,7 +297,7 @@ describe("no retry in the gate", () => {
         (name) => `.forgejo/workflows/${name}`,
       ),
       // This file holds the detector's own examples.
-      ...GATE.filter((file) => file !== "test/flake.test.ts"),
+      ...gateFiles().filter((file) => file !== "test/flake.test.ts"),
     ];
     expect(named.flatMap((path) => retries(path, read(path)))).toEqual([]);
   });

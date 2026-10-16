@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { junitFiles, redFiles, runsAll, verdict, missed, type Row } from "../src/checks/changed_compare.ts";
 import { GATE_FILE, gateListAdds, parseImpact } from "../src/checks/impact.ts";
 import { fastSet, importsOf } from "../src/checks/tiers.ts";
+import { treeGate } from "./gate.ts";
 
 const argv = process.argv.slice(2);
 const flag = (name: string, fallback: string): string => {
@@ -106,8 +107,7 @@ for (const pull of pulls) {
   if (!existsSync(tree)) git("worktree", "add", "--detach", "-f", tree, oid);
   else Bun.spawnSync(["git", "-C", tree, "checkout", "--detach", "--force", oid]);
   if (!existsSync(join(tree, "node_modules"))) symlinkSync(join(root, "node_modules"), join(tree, "node_modules"));
-  const gateModule = (await import(`${join(tree, "scripts/gate.ts")}?${oid}`)) as { GATE: string[] };
-  const gate = new Set<string>(gateModule.GATE);
+  const gate = new Set<string>(await treeGate(tree, oid));
   const cache = new Map<string, string[]>();
   const imports = (file: string): string[] => {
     let found = cache.get(file);

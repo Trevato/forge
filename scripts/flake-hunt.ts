@@ -10,8 +10,8 @@
  *       seed and the run (FORGE_API, FORGE_REPO, FORGE_TOKEN; FORGE_RUN_URL
  *       names the run). Exits 1 when it found one.
  *   bun scripts/flake-hunt.ts quarantine
- *       Moves every file an open `Flaky: test/….test.ts` issue the hunt filed
- *       (author is the token's user, not untrusted) names from GATE to
+ *       Puts every file an open `Flaky: test/….test.ts` issue the hunt filed
+ *       (author is the token's user, not untrusted) names into
  *       EXCLUDED under that issue, in scripts/gate.ts. The issue is
  *       the record; this is the only hand that edits the list for a flake.
  *   bun scripts/flake-hunt.ts admit test/x.test.ts [--runs 10]
@@ -30,12 +30,12 @@ import {
   huntedFile,
   HUNT_RUNS,
   issueFor,
-  quarantine,
+  quarantineFlaky,
   readRun,
   shuffled,
   type FileRun,
 } from "./flake.ts";
-import { GATE } from "./gate.ts";
+import { gateFiles, presentTests } from "./gate.ts";
 import { parseShardSpec, sliceFiles } from "./shards.ts";
 
 const GATE_FILE = new URL("./gate.ts", import.meta.url).pathname;
@@ -175,7 +175,7 @@ async function hunt(): Promise<number> {
   const runs = runsOf(HUNT_RUNS);
   const spec = parseShardSpec(valueOf("--shard"));
   if (!spec.ok) fail(spec.error);
-  let files = [...GATE];
+  let files = gateFiles();
   if (!("none" in spec)) {
     const sliced = sliceFiles(files, spec.index, spec.total);
     if (!sliced.ok) fail(sliced.error);
@@ -233,14 +233,11 @@ async function hunt(): Promise<number> {
 }
 
 async function quarantineAll(): Promise<number> {
-  let source = readFileSync(GATE_FILE, "utf8");
-  const moved: string[] = [];
-  for (const [file, issue] of await openFlakyIssues()) {
-    const next = quarantine(source, file, issue);
-    if (next === source) continue;
-    source = next;
-    moved.push(`${file} (#${issue})`);
-  }
+  const { source, moved } = quarantineFlaky(
+    readFileSync(GATE_FILE, "utf8"),
+    await openFlakyIssues(),
+    new Set(presentTests()),
+  );
   if (moved.length === 0) {
     console.log("nothing to quarantine");
     return 0;

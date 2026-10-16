@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { GATE } from "../scripts/gate.ts";
+import { EXCLUDED } from "../scripts/gate.ts";
 import { audit, hollow, readSources } from "../scripts/hollow.ts";
 
 const root = new URL("..", import.meta.url).pathname;
@@ -54,8 +54,8 @@ describe("the repository", () => {
     WHOLE_TREE,
   );
 
-  test("this guard is itself in the gate", () => {
-    expect(GATE).toContain("test/hollow.test.ts");
+  test("this guard is itself in the gate: no exclusion names it", () => {
+    expect(EXCLUDED.map((e) => e.file)).not.toContain("test/hollow.test.ts");
   });
 
   test(

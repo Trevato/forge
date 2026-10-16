@@ -73,7 +73,7 @@ export interface FastInput {
   readonly tests: readonly string[];
   /** A file's relative imports; `[]` for one that cannot be read. */
   readonly imports: (file: string) => readonly string[];
-  /** The tests a diff of scripts/gate.ts adds (`gateListAdds`); `undefined` when it is logic or unread. */
+  /** The tests a diff of scripts/gate.ts admits (`gateListAdds`); `undefined` when it is logic or unread. */
   readonly gateAdds?: readonly string[];
   /** Seconds each test took last time (`scripts/test-times.json`). */
   readonly times: ReadonlyMap<string, number>;
@@ -118,7 +118,7 @@ export function fastSet(input: FastInput): FastPlan {
     for (const test of input.tests) why.set(test, `full: ${unbounded} changed`);
     return finish(`full tier, ${unbounded} changed`);
   }
-  // A gate.ts that only lists tests is those tests, nothing more.
+  // A gate.ts that only edits EXCLUDED is the tests it admits, nothing more.
   const diffed =
     input.gateAdds === undefined
       ? input.changed

@@ -4,8 +4,8 @@
  * A test file that is red in one run and green in another, over the same
  * code, is flaky. `scripts/flake-hunt.ts` runs each gate file several times
  * in random order and hands every run here; this module names the flaky
- * files, writes the issue that carries the evidence, and moves a file from
- * `GATE` to `EXCLUDED` in `scripts/gate.ts` — so nobody hand-edits the list.
+ * files, writes the issue that carries the evidence, and adds a file to
+ * `EXCLUDED` in `scripts/gate.ts` — so nobody hand-edits a quarantine.
  *
  * The unit is the file, judged by `bun test`'s exit code: that is what the
  * gate judges, what quarantine moves, and the only verdict a crash between
@@ -173,7 +173,7 @@ export function issueFor(
       "",
       ...ROOT_CAUSES.map((cause) => `- [ ] ${cause.name} — ${cause.fix}`),
       "",
-      `To rejoin the gate: fix it, run \`bun scripts/flake-hunt.ts admit ${flake.file}\`, and put its ${ADMISSION_RUNS}-run record in the pull that moves the file back to \`GATE\`.`,
+      `To rejoin the gate: fix it, run \`bun scripts/flake-hunt.ts admit ${flake.file}\`, and put its ${ADMISSION_RUNS}-run record in the pull that deletes its \`EXCLUDED\` entry.`,
     ].join("\n"),
   };
 }
@@ -190,8 +190,8 @@ export function flakyFile(title: string): string | undefined {
 /**
  * The file an issue from the forge's list quarantines, or undefined. Only
  * an issue the hunt filed counts: its author is the hunt's own user and the
- * forge has not marked it `untrusted`. Anyone else's `Flaky:` title moves
- * nothing out of GATE.
+ * forge has not marked it `untrusted`. Anyone else's `Flaky:` title takes
+ * nothing out of the gate.
  */
 export function huntedFile(
   issue: { title?: unknown; authorId?: unknown; untrusted?: unknown },
@@ -213,25 +213,42 @@ const entryFor = (file: string, reason: string, issue: number): string =>
     "",
   ].join("\n");
 
-/** `scripts/gate.ts` with `file` moved from GATE to EXCLUDED under `issue`. */
+/**
+ * `scripts/gate.ts` with `file` excluded under `issue`: one entry at the end
+ * of `EXCLUDED`. Unchanged when the file is excluded already.
+ */
 export function quarantine(
   source: string,
   file: string,
   issue: number,
   reason = "flaky: red in one hunt run and green in another",
 ): string {
-  const gateStart = source.indexOf("export const GATE");
-  const gateEnd = source.indexOf("\n];", gateStart);
-  const line = `  ${JSON.stringify(file)},\n`;
-  const at = source.indexOf(line, gateStart);
-  if (gateStart === -1 || at === -1 || at > gateEnd) return source;
-  const without = source.slice(0, at) + source.slice(at + line.length);
-  const end = without.indexOf("\n];", without.indexOf("export const EXCLUDED"));
-  return (
-    without.slice(0, end + 1) +
-    entryFor(file, reason, issue) +
-    without.slice(end + 1)
-  );
+  const start = source.indexOf("export const EXCLUDED");
+  const end = source.indexOf("\n];", start);
+  if (start === -1 || end === -1) return source;
+  if (source.slice(start, end).includes(`file: ${JSON.stringify(file)}`)) return source;
+  return source.slice(0, end + 1) + entryFor(file, reason, issue) + source.slice(end + 1);
+}
+
+/**
+ * `scripts/gate.ts` with every open hunt issue's file quarantined, and the
+ * `file (#issue)` lines that moved. A file no longer `present` is skipped:
+ * an exclusion for a file that is gone would turn the gate's audit red.
+ */
+export function quarantineFlaky(
+  source: string,
+  flaky: Iterable<readonly [string, number]>,
+  present: ReadonlySet<string>,
+): { source: string; moved: string[] } {
+  const moved: string[] = [];
+  for (const [file, issue] of flaky) {
+    if (!present.has(file)) continue;
+    const next = quarantine(source, file, issue);
+    if (next === source) continue;
+    source = next;
+    moved.push(`${file} (#${issue})`);
+  }
+  return { source, moved };
 }
 
 /** A retry anywhere in what the gate runs: the lines that carry one. */

@@ -85,11 +85,12 @@ bun run src/main.ts   # boots on :3000, data in ./data
   (the gate list), `test/check-list.test.ts`, `test/hollow.test.ts`. Never
   `bun scripts/test-shards.ts --gate` inside a run: the check on your push is
   that same gate, and running both doubles the load on a small machine.
-  It runs the files in `GATE` (`scripts/gate.ts`), not the whole suite; every
-  other test file is in `EXCLUDED` with its reason and owning issue. Add a new
-  test file to `GATE`, or the check goes red.
-- **A flaky test is a red that teaches nothing.** A file joins `GATE` only
-  with ten green random-order runs under load in the pull
+  It runs every `test/*.test.ts` except the few in `EXCLUDED`
+  (`scripts/gate.ts`), each with its reason and owning issue. A new test file
+  is in the gate by existing: edit no list for it.
+- **A flaky test is a red that teaches nothing.** An excluded file rejoins the
+  gate (its `EXCLUDED` entry deleted) only with ten green random-order runs
+  under load in the pull
   (`bun scripts/flake-hunt.ts admit test/x.test.ts`); the nightly hunt files
   a `Flaky:` issue and `flake-hunt.ts quarantine` moves the file to
   `EXCLUDED`, so never hand-edit that move. Never add `retry` — fix the

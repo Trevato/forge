@@ -27,7 +27,7 @@ import {
   type ShardResult,
 } from "../scripts/shards.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
-import { EXCLUDED, GATE } from "../scripts/gate.ts";
+import { EXCLUDED, gateFiles, presentTests } from "../scripts/gate.ts";
 import { CHECK_CACHE } from "../src/checks/cache.ts";
 
 const files = Array.from({ length: 23 }, (_, i) => `test/f${i}.test.ts`);
@@ -353,7 +353,7 @@ describe("splitArgs", () => {
     expect(split.ok).toBe(true);
     if (!split.ok) return;
     const files = [
-      ...(split.flags.includes("--gate") ? GATE : []),
+      ...(split.flags.includes("--gate") ? gateFiles() : []),
       ...split.files,
     ];
     expect(files.length).toBeGreaterThan(0);
@@ -464,11 +464,27 @@ test("says two things, a pause apart", async () => {
 
 describe("the gate audit before any shard", () => {
   const script = new URL("../scripts/test-shards.ts", import.meta.url).pathname;
-  const listed = [...GATE, ...EXCLUDED.map((e) => e.file)];
-  const run = async (extra: string[], args: string[]) => {
+  const listed = presentTests();
+  const git = (dir: string, ...args: string[]) =>
+    Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], {
+      cwd: dir,
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exitCode;
+  const run = async (extra: string[], args: string[], drop: string[] = [], commit = false) => {
     const dir = mkdtempSync(join(tmpdir(), "forge-audit-"));
     mkdirSync(join(dir, "test"));
-    for (const file of [...listed, ...extra]) writeFileSync(join(dir, file), "");
+    for (const file of listed) if (!drop.includes(file)) writeFileSync(join(dir, file), "");
+    if (commit) {
+      expect(git(dir, "init", "-q")).toBe(0);
+      expect(git(dir, "add", "-A")).toBe(0);
+      expect(git(dir, "commit", "-qm", "base")).toBe(0);
+    }
+    for (const file of extra) writeFileSync(join(dir, file), "");
+    if (commit) {
+      expect(git(dir, "add", "-A")).toBe(0);
+      expect(git(dir, "commit", "-qm", "add a test")).toBe(0);
+    }
     const started = performance.now();
     const child = Bun.spawn(["bun", script, ...args], {
       cwd: dir,
@@ -485,36 +501,43 @@ describe("the gate audit before any shard", () => {
     return { code, out, err, ms: performance.now() - started };
   };
 
-  test("an unlisted test file is refused by name, last line, nothing spawned", async () => {
+  test("a stale exclusion is refused by name, last line, nothing spawned", async () => {
+    const gone = EXCLUDED[0]!.file;
     for (const args of [["--gate"], ["--tier", "fast", "--diff", "a..b"]]) {
-      const got = await run(["test/zz-new.test.ts"], args);
+      const got = await run([], args, [gone]);
       expect(got.code).toBe(2);
       const last = got.err.trim().split("\n").pop()!;
-      expect(last).toContain("test/zz-new.test.ts");
-      expect(last).toContain("list it in GATE or EXCLUDED in scripts/gate.ts");
+      expect(last).toBe(`test-shards: ${gone}: fix its EXCLUDED entry in scripts/gate.ts`);
       expect(got.out + got.err).not.toContain("start ");
       expect(got.out).not.toContain("── shard");
       expect(got.ms).toBeLessThan(1000);
     }
   });
 
-  test("a listed set proceeds, and explicit files are not audited", async () => {
-    const last = String(GATE.length);
-    const got = await run([], ["--gate", "--shard", `${last}/${last}`]);
-    expect(got.err).not.toContain("list it in GATE");
-    expect(got.out).toContain(`matrix slice ${last}/${last}`);
-    const explicit = await run(["test/zz-new.test.ts"], ["test/zz-new.test.ts"]);
-    expect(explicit.err).not.toContain("list it in GATE");
+  test("a new file is in the gate with no list naming it, and explicit files are not audited", async () => {
+    const last = String(gateFiles().length + 1);
+    const got = await run(["test/zz-new.test.ts"], ["--gate", "--shard", `${last}/${last}`]);
+    expect(got.err).not.toContain("EXCLUDED");
+    expect(got.out).toContain(`matrix slice ${last}/${last} (1 of ${last} files)`);
+    const explicit = await run(["test/zz-new.test.ts"], ["test/zz-new.test.ts"], [listed[0]!]);
+    expect(explicit.err).not.toContain("EXCLUDED");
+  }, 30_000);
+
+  test("a pull that only adds test/x.test.ts is gated on it (#2037)", async () => {
+    const got = await run(["test/zz-new.test.ts"], ["--tier", "fast", "--diff", "HEAD~1..HEAD"], [], true);
+    expect(got.err).not.toContain("EXCLUDED");
+    expect(got.out).toContain("for 1 changed");
+    expect(got.out).toContain("  test/zz-new.test.ts: changed\n");
   }, 30_000);
 });
 
 describe("the gate audit alone, first in the check", () => {
   const script = new URL("../scripts/gate.ts", import.meta.url).pathname;
-  const listed = [...GATE, ...EXCLUDED.map((e) => e.file)];
-  const run = async (extra: string[]) => {
+  const listed = presentTests();
+  const run = async (extra: string[], drop: string[] = []) => {
     const dir = mkdtempSync(join(tmpdir(), "forge-gate-"));
     mkdirSync(join(dir, "test"));
-    for (const file of [...listed, ...extra]) writeFileSync(join(dir, file), "");
+    for (const file of [...listed, ...extra]) if (!drop.includes(file)) writeFileSync(join(dir, file), "");
     const child = Bun.spawn(["bun", script], { cwd: dir, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
     const err = await new Response(child.stderr).text();
     const code = await child.exited;
@@ -522,13 +545,14 @@ describe("the gate audit alone, first in the check", () => {
     return { code, err };
   };
 
-  test("an unlisted file fails it by name; a listed set passes", async () => {
-    const red = await run(["test/zz-new.test.ts"]);
+  test("a stale exclusion fails it by name; a new unlisted file passes", async () => {
+    const gone = EXCLUDED[0]!.file;
+    const red = await run([], [gone]);
     expect(red.code).toBe(2);
-    expect(red.err.trim().split("\n").pop()).toContain(
-      "test/zz-new.test.ts: list it in GATE or EXCLUDED in scripts/gate.ts",
+    expect(red.err.trim().split("\n").pop()).toBe(
+      `gate: ${gone}: fix its EXCLUDED entry in scripts/gate.ts`,
     );
-    const green = await run([]);
+    const green = await run(["test/zz-new.test.ts"]);
     expect(green.code).toBe(0);
     expect(green.err).toBe("");
   }, 30_000);

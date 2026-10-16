@@ -198,16 +198,22 @@ describe("the fast set, by measured coverage", () => {
     expect(fastSet({ ...base, changed: ["scripts/test-times.json"] }).files).toEqual([]);
   });
 
-  test("a gate.ts diff that only lists tests selects those tests; logic runs full", () => {
+  test("a gate.ts diff that only edits EXCLUDED selects the tests it admits; logic runs full", () => {
     const listed = [
-      "@@ -10,0 +11,2 @@",
-      '+  "test/new.test.ts",',
-      '+  { file: "test/other.test.ts", reason: "slow", issue: 5 },',
-      "@@ -20 +22,0 @@",
-      '-  "test/old.test.ts",',
+      "@@ -10,2 +10,0 @@",
+      '-  { file: "test/new.test.ts", reason: "slow", issue: 5 },',
+      "-  {",
+      '-    file: "test/other.test.ts",',
+      '-    reason: "flaky",',
+      "-    issue: 6,",
+      "-  },",
+      "@@ -20,0 +18,2 @@",
+      '+  { file: "test/old.test.ts", reason: "flaky", issue: 7 },',
+      '+  { file: "test/other.test.ts", reason: "moved", issue: 6 },',
     ].join("\n");
     const adds = gateListAdds(listed);
-    expect(adds).toEqual(["test/new.test.ts", "test/other.test.ts"]);
+    // Quarantining old selects nothing; other only moved, so it stays out.
+    expect(adds).toEqual(["test/new.test.ts"]);
     const plan = fastSet({ ...base, changed: ["scripts/gate.ts"], gateAdds: adds! });
     expect(plan.line).not.toContain("full tier");
     expect(plan.files).not.toContain("test/web-phone.test.ts");
@@ -219,12 +225,15 @@ describe("the fast set, by measured coverage", () => {
       gateAdds: adds!,
     });
     expect(more.why.get("test/new.test.ts")).toBe("changed");
-    expect(gateListAdds('@@ -1 +1 @@\n+  "test/a.test.ts",\n+export const X = 1;')).toBeUndefined();
-    expect(gateListAdds('@@ -1 +1 @@\n-  if (x) return;')).toBeUndefined();
-    const hunk = "@@ -1,0 +2,2 @@\n";
-    expect(gateListAdds(`${hunk}+  "test/a.test.ts",\n+++i;`)).toBeUndefined();
-    expect(gateListAdds(`${hunk}+  "test/a.test.ts",\n---n;`)).toBeUndefined();
-    expect(gateListAdds(`--- a/scripts/gate.ts\n+++ b/scripts/gate.ts\n${hunk}+  "test/a.test.ts",`)).toEqual(["test/a.test.ts"]);
+    const hunk = "@@ -1,2 +1,0 @@\n";
+    const entry = '-  { file: "test/a.test.ts", reason: "slow", issue: 1 },';
+    expect(gateListAdds(`${hunk}${entry}\n+export const X = 1;`)).toBeUndefined();
+    expect(gateListAdds("@@ -1 +1 @@\n-  if (x) return;")).toBeUndefined();
+    // A bare name is no list entry now: there is no GATE to put it in.
+    expect(gateListAdds('@@ -1 +1 @@\n+  "test/a.test.ts",')).toBeUndefined();
+    expect(gateListAdds(`${hunk}${entry}\n+++i;`)).toBeUndefined();
+    expect(gateListAdds(`${hunk}${entry}\n---n;`)).toBeUndefined();
+    expect(gateListAdds(`--- a/scripts/gate.ts\n+++ b/scripts/gate.ts\n${hunk}${entry}`)).toEqual(["test/a.test.ts"]);
     const logic = fastSet({ ...base, changed: ["scripts/gate.ts"] });
     expect(logic.files).toEqual(base.tests);
   });

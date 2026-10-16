@@ -1,14 +1,16 @@
 /**
- * Which test files the gate runs, and why every other one does not.
+ * Which test files the gate runs, and why the few others do not.
  *
- * `GATE` is the list `bun scripts/test-shards.ts --gate` runs, so
- * `forge.json`'s `check.run` names no test file itself. `EXCLUDED` is every
- * other `test/*.test.ts`, each with the reason it is out and the issue that
- * owns bringing it in. `test/check-list.test.ts` goes red when a file is in
- * neither list, in both, or named here without existing — so a new test file
- * cannot sit outside the gate silently.
+ * The gate is every `test/*.test.ts` minus `EXCLUDED` (`gateFiles`): the
+ * list `bun scripts/test-shards.ts --gate` runs, so `forge.json`'s
+ * `check.run` names no test file itself, and a new test file is gated the
+ * moment it exists — no shared list to edit, nothing to conflict on (#2037).
+ * `EXCLUDED` is the quarantine: each file with the reason it is out and the
+ * issue that owns bringing it back. `test/check-list.test.ts` goes red when
+ * an exclusion names a file that does not exist, twice, or without a reason
+ * or an issue.
  *
- * A file joins the gate by moving from `EXCLUDED` to `GATE` in a pull whose
+ * A file rejoins the gate by deleting its `EXCLUDED` entry in a pull whose
  * check is green and whose description carries ten green runs in random
  * order under load (`bun scripts/flake-hunt.ts admit <file>`). A flaky file
  * leaves it only through `bun scripts/flake-hunt.ts quarantine`, under the
@@ -16,6 +18,7 @@
  */
 
 import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
 export type Exclusion = {
   /** Repository-relative path, `test/….test.ts`. */
@@ -25,382 +28,6 @@ export type Exclusion = {
   /** The issue that owns admitting it. */
   issue: number;
 };
-
-export const GATE: readonly string[] = [
-  "test/archive.test.ts",
-  "test/tui-archive.test.ts",
-  "test/archive-agent.test.ts",
-  "test/waves-page.test.ts",
-  "test/waves-order.test.ts",
-  "test/domain-drill.test.ts",
-  "test/conflicts.test.ts",
-  "test/lands-once.test.ts",
-  "test/merge-queue.test.ts",
-  "test/conflicts-tui.test.ts",
-  "test/accounts-retire.test.ts",
-  "test/releases-page.test.ts",
-  "test/client-home.test.ts",
-  "test/cloud-use.test.ts",
-  "test/accounts.test.ts",
-  "test/asks-mute.test.ts",
-  "test/feed-chips.test.ts",
-  "test/agents.test.ts",
-  "test/app-domains.test.ts",
-  "test/app.test.ts",
-  "test/apps-idle.test.ts",
-  "test/body-limits.test.ts",
-  "test/boards-query.test.ts",
-  "test/boards-page.test.ts",
-  "test/boards-store.test.ts",
-  "test/boards-sampler.test.ts",
-  "test/turnstile.test.ts",
-  "test/variants-deck.test.ts",
-  "test/variants-surfaces.test.ts",
-  "test/thoughts.test.ts",
-  "test/triage.test.ts",
-  "test/passkeys.test.ts",
-  "test/passkey-recovery.test.ts",
-  "test/signup-passkey.test.ts",
-  "test/webauthn.test.ts",
-  "test/chaos.test.ts",
-  "test/flow-stage.test.ts",
-  "test/resilience.test.ts",
-  "test/flow-card.test.ts",
-  "test/cluster-jobs.test.ts",
-  "test/checks-placement.test.ts",
-  "test/checks-job-vanish.test.ts",
-  "test/fuzz-found.test.ts",
-  "test/fuzz-parsers.test.ts",
-  "test/attach-look.test.ts",
-  "test/protection.test.ts",
-  "test/tui-limbs.test.ts",
-  "test/tui-onyou.test.ts",
-  "test/tui-waves.test.ts",
-  "test/tui-deploys.test.ts",
-  "test/tui-access.test.ts",
-  "test/tui-newforge.test.ts",
-  "test/tui-decider.test.ts",
-  "test/claim-link.test.ts",
-  "test/og-card.test.ts",
-  "test/og-route.test.ts",
-  "test/og-png.test.ts",
-  "test/og-designs.test.ts",
-  "test/router.test.ts",
-  "test/health.test.ts",
-  "test/client-address.test.ts",
-  "test/client-list.test.ts",
-  "test/family-heartbeat.test.ts",
-  "test/contents-api.test.ts",
-  "test/crew-agents-only.test.ts",
-  "test/crew-brief-audience.test.ts",
-  "test/run-log-audience.test.ts",
-  "test/crew.test.ts",
-  "test/crew-already-done.test.ts",
-  "test/crew-check-failed.test.ts",
-  "test/crew-continues.test.ts",
-  "test/crew-declines.test.ts",
-  "test/crew-network.test.ts",
-  "test/crew-pause.test.ts",
-  "test/crew-review.test.ts",
-  "test/crew-review-budget.test.ts",
-  "test/commit-identity.test.ts",
-  "test/enterable-apps.test.ts",
-  "test/event-order.test.ts",
-  "test/refresh-meta.test.ts",
-  "test/unfurl.test.ts",
-  "test/restore-card.test.ts",
-  "test/recovery-doc.test.ts",
-  "test/release-checkout.test.ts",
-  "test/release-preflight.test.ts",
-  "test/release-rollback.test.ts",
-  "test/release-swap.test.ts",
-  "test/release-handover.test.ts",
-  "test/threats-doc.test.ts",
-  "test/returns.test.ts",
-  "test/review-route.test.ts",
-  "test/review-lines.test.ts",
-  "test/review-gate.test.ts",
-  "test/review-from-check.test.ts",
-  "test/review-from-green.test.ts",
-  "test/themes.test.ts",
-  "test/waves.test.ts",
-  "test/cut-wave.test.ts",
-  "test/crew-wrapup.test.ts",
-  "test/crew-limits.test.ts",
-  "test/crew-parks.test.ts",
-  "test/crew-red-main.test.ts",
-  "test/crew-sandbox.test.ts",
-  "test/crew-remotes.test.ts",
-  "test/crew-brief-gate.test.ts",
-  "test/passport.test.ts",
-  "test/passport-edge.test.ts",
-  "test/crew-direction.test.ts",
-  "test/crew-direction-autonomy.test.ts",
-  "test/crew-guard.test.ts",
-  "test/review-waits.test.ts",
-  "test/scale.test.ts",
-  "test/sealed-private-work.test.ts",
-  "test/settings.test.ts",
-  "test/signin-throttle.test.ts",
-  "test/signins.test.ts",
-  "test/sole-owner-suspend.test.ts",
-  "test/standing-every-process.test.ts",
-  "test/steer.test.ts",
-  "test/sealed-git.test.ts",
-  "test/sealed-issues.test.ts",
-  "test/sealed-release.test.ts",
-  "test/sealed-preview.test.ts",
-  "test/session-settle.test.ts",
-  "test/landing.test.ts",
-  "test/decide.test.ts",
-  "test/ledger.test.ts",
-  "test/capacity.test.ts",
-  "test/access-log.test.ts",
-  "test/flow-pipeline.test.ts",
-  "test/flow-throughput.test.ts",
-  "test/limits.test.ts",
-  "test/guard-new-accounts.test.ts",
-  "test/checks.test.ts",
-  "test/dependencies.test.ts",
-  "test/map-closing.test.ts",
-  "test/parked-close.test.ts",
-  "test/autonomy.test.ts",
-  "test/autonomy_sweep.test.ts",
-  "test/conflict_sweep.test.ts",
-  "test/studio.test.ts",
-  "test/studio-changes.test.ts",
-  "test/studio-door.test.ts",
-  "test/studio-runs.test.ts",
-  "test/studio-shipping.test.ts",
-  "test/studio-search.test.ts",
-  "test/studio-words.test.ts",
-  "test/converge-settled.test.ts",
-  "test/following.test.ts",
-  "test/forks.test.ts",
-  "test/front.test.ts",
-  "test/fork-counts.test.ts",
-  "test/fork-flow.test.ts",
-  "test/approve-here.test.ts",
-  "test/fork-pull-approval.test.ts",
-  "test/cross-repo-pull.test.ts",
-  "test/pull-mergeable.test.ts",
-  "test/pull-variants.test.ts",
-  "test/pull-checks-line.test.ts",
-  "test/pulls.test.ts",
-  "test/api-reader-marks.test.ts",
-  "test/app-members.test.ts",
-  "test/apps.test.ts",
-  "test/apps-crew.test.ts",
-  "test/apps-identity.test.ts",
-  "test/apps-new.test.ts",
-  "test/apps-slow-test.test.ts",
-  "test/apps-tests-clause.test.ts",
-  "test/apps-adversarial.test.ts",
-  "test/apps-adversarial-teardown.test.ts",
-  "test/apps-adversarial-test-step.test.ts",
-  "test/apps-adversarial-grants.test.ts",
-  "test/apps-adversarial-rules.test.ts",
-  "test/apps-busy.test.ts",
-  "test/apps-token.test.ts",
-  "test/contain.test.ts",
-  "test/contract.test.ts",
-  "test/subscription-budget.test.ts",
-  "test/surfaces-adversarial.test.ts",
-  "test/orgs.test.ts",
-  "test/suspended-hidden.test.ts",
-  "test/verify-email.test.ts",
-  "test/web.test.ts",
-  "test/git-trust.test.ts",
-  "test/helpers.test.ts",
-  "test/shards.test.ts",
-  "test/gate-summary.test.ts",
-  "test/snapshot-drill.test.ts",
-  "test/drill-verdict.test.ts",
-  "test/drill-board-line.test.ts",
-  "test/snapshot-drill-page.test.ts",
-  "test/snapshot-store.test.ts",
-  "test/snapshot-mirror.test.ts",
-  "test/snapshot-mirror-page.test.ts",
-  "test/migrate.test.ts",
-  "test/schema-additive.test.ts",
-  "test/schema-migrations.test.ts",
-  "test/domains.test.ts",
-  "test/vitals.test.ts",
-  "test/vitals-degraded.test.ts",
-  "test/red-main.test.ts",
-  "test/sentinel.test.ts",
-  "test/tui-sentinel.test.ts",
-  "test/version.test.ts",
-  "test/watches.test.ts",
-  "test/guard.test.ts",
-  "test/asked.test.ts",
-  "test/thought-stream.test.ts",
-  "test/asks.test.ts",
-  "test/review-wait.test.ts",
-  "test/asks-bulk.test.ts",
-  "test/proposal-card.test.ts",
-  "test/asks-waiting-for.test.ts",
-  "test/asks-one-list.test.ts",
-  "test/hand-decider.test.ts",
-  "test/decisions-by-doors.test.ts",
-  "test/standing-rule.test.ts",
-  "test/asks-expiry.test.ts",
-  "test/asks-rank.test.ts",
-  "test/plan-pillars.test.ts",
-  "test/plan-route.test.ts",
-  "test/planner-declined.test.ts",
-  "test/feed.test.ts",
-  "test/feed-choose.test.ts",
-  "test/feed-page.test.ts",
-  "test/card-shell.test.ts",
-  "test/offline.test.ts",
-  "test/share.test.ts",
-  "test/cloud.test.ts",
-  "test/run-secrets.test.ts",
-  "test/reserved-names.test.ts",
-  "test/forge-cloudflare.test.ts",
-  "test/forge-cloudflare-celld.test.ts",
-  "test/branch_tell.test.ts",
-  "test/tell_from.test.ts",
-  "test/usage.test.ts",
-  "test/tokens.test.ts",
-  "test/credentials.test.ts",
-  "test/standing.test.ts",
-  "test/board.test.ts",
-  "test/decider-day.test.ts",
-  "test/spawn-plan.test.ts",
-  "test/spawn-anon.test.ts",
-  "test/spawn-host.test.ts",
-  "test/spawn.test.ts",
-  "test/spawn-api.test.ts",
-  "test/spawn-child-apps.test.ts",
-  "test/spawn-child-runs-apps.test.ts",
-  "test/spawn-first-boot.test.ts",
-  "test/spawn-fresh-forks.test.ts",
-  "test/spawn-keys.test.ts",
-  "test/web-apps.test.ts",
-  "test/web-ui.test.ts",
-  "test/fleet-ops.test.ts",
-  "test/meter.test.ts",
-  "test/told-by.test.ts",
-  "test/highlight.test.ts",
-  "test/diff-edge-cases.test.ts",
-  "test/diff.test.ts",
-  "test/edge-auth.test.ts",
-  "test/own-session.test.ts",
-  "test/edit-words.test.ts",
-  "test/edits-security.test.ts",
-  "test/edits.test.ts",
-  "test/event-audience.test.ts",
-  "test/everyday.test.ts",
-  "test/explore.test.ts",
-  "test/feeds.test.ts",
-  "test/first-login.test.ts",
-  "test/fleet-graph.test.ts",
-  "test/git-local.test.ts",
-  "test/git-ssh.test.ts",
-  "test/git.test.ts",
-  "test/hardening.test.ts",
-  "test/here-manifest.test.ts",
-  "test/image-gif.test.ts",
-  "test/image-graphics.test.ts",
-  "test/image-jpeg.test.ts",
-  "test/image-png.test.ts",
-  "test/issues.test.ts",
-  "test/kernel.test.ts",
-  "test/keys.test.ts",
-  "test/limb_order.test.ts",
-  "test/limbs.test.ts",
-  "test/live-pages.test.ts",
-  "test/live.test.ts",
-  "test/looks.test.ts",
-  "test/mail-caps.test.ts",
-  "test/make-it-yours.test.ts",
-  "test/map.test.ts",
-  "test/pillars.test.ts",
-  "test/carried.test.ts",
-  "test/carried-deploy.test.ts",
-  "test/milestones.test.ts",
-  "test/mcp.test.ts",
-  "test/name-marks.test.ts",
-  "test/new-forge.test.ts",
-  "test/notify.test.ts",
-  "test/onboarding.test.ts",
-  "test/org-owners.test.ts",
-  "test/origins-oauth.test.ts",
-  "test/origins-operator.test.ts",
-  "test/origins-reconnect.test.ts",
-  "test/origins-security-auth.test.ts",
-  "test/origins-security-provider.test.ts",
-  "test/origins-security-push.test.ts",
-  "test/origins-sync.test.ts",
-  "test/origins.test.ts",
-  "test/overlap.test.ts",
-  "test/outsiders-switch.test.ts",
-  "test/check-budget.test.ts",
-  "test/check-proven.test.ts",
-  "test/check-list.test.ts",
-  "test/check-land-main.test.ts",
-  "test/check-tiers.test.ts",
-  "test/changed-compare.test.ts",
-  "test/pull-check-again.test.ts",
-  "test/holds.test.ts",
-  "test/hollow.test.ts",
-  "test/flags.test.ts",
-  "test/home-feed.test.ts",
-  "test/home-walk.test.ts",
-  "test/oauth-discovery.test.ts",
-  "test/oauth-flow.test.ts",
-  "test/oidc.test.ts",
-  "test/data-home.test.ts",
-  "test/tree.test.ts",
-  "test/reports.test.ts",
-  "test/report-discovery.test.ts",
-  "test/apps-report.test.ts",
-  "test/apps-toolbar.test.ts",
-  "test/private-app.test.ts",
-  "test/view-source.test.ts",
-  "test/web-browse.test.ts",
-  "test/web-editor.test.ts",
-  "test/web-phone.test.ts",
-  "test/web-workflows.test.ts",
-  "test/webhooks.test.ts",
-  "test/actions.test.ts",
-  "test/app-env.test.ts",
-  "test/apps-ssh.test.ts",
-  "test/pacing.test.ts",
-  "test/openapi.test.ts",
-  "test/palette.test.ts",
-  "test/qr.test.ts",
-  "test/branches.test.ts",
-  "test/cli-sync.test.ts",
-  "test/code.test.ts",
-  "test/counts.test.ts",
-  "test/crew-loop.test.ts",
-  "test/crew-totals.test.ts",
-  "test/flake.test.ts",
-  "test/crew-locks.test.ts",
-  "test/ssh-site.test.ts",
-  "test/web-code.test.ts",
-  "test/web-origins.test.ts",
-  "test/roll.test.ts",
-  "test/rehearsal.test.ts",
-  "test/tui-tell.test.ts",
-  "test/tui-app.test.ts",
-  "test/tui-apps.test.ts",
-  "test/tui-editor.test.ts",
-  "test/tui-icons.test.ts",
-  "test/tui-input.test.ts",
-  "test/tui-local.test.ts",
-  "test/tui-mouse.test.ts",
-  "test/tui-render.test.ts",
-  "test/tui-screens.test.ts",
-  "test/tui-size.test.ts",
-  "test/tui-widgets.test.ts",
-  "test/tui-width.test.ts",
-  "test/tui-workflows.test.ts",
-  "test/tui-workspace.test.ts",
-];
 
 export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/crew-sandbox-real.test.ts", reason: "landed unlisted and red locally; the builder admits it", issue: 1238 },
@@ -487,38 +114,26 @@ export const EXCLUDED: readonly Exclusion[] = [
 ];
 
 /**
- * Everything wrong with a gate list, against the test files that exist:
- * one line per problem, none when every file is accounted for exactly once.
+ * Everything wrong with the quarantine, against the test files that exist:
+ * one line per problem, none when every exclusion is sound.
  */
 export function auditGate(
   present: readonly string[],
-  gate: readonly string[],
   excluded: readonly Exclusion[],
 ): string[] {
   const problems: string[] = [];
   const exists = new Set(present);
-  const gated = new Set<string>();
-  for (const file of gate) {
-    if (gated.has(file)) problems.push(`${file} is in GATE twice`);
-    gated.add(file);
-    if (!exists.has(file))
-      problems.push(`${file} is in GATE but does not exist`);
-  }
   const out = new Set<string>();
   for (const { file, reason, issue } of excluded) {
     if (out.has(file)) problems.push(`${file} is in EXCLUDED twice`);
     out.add(file);
     if (!exists.has(file))
       problems.push(`${file} is in EXCLUDED but does not exist`);
-    if (gated.has(file)) problems.push(`${file} is in both GATE and EXCLUDED`);
     if (typeof reason !== "string" || reason.trim() === "")
       problems.push(`${file} is excluded with no reason`);
     if (!Number.isInteger(issue) || issue <= 0)
       problems.push(`${file} is excluded with no issue number`);
   }
-  for (const file of present)
-    if (!gated.has(file) && !out.has(file))
-      problems.push(`${file} is in neither GATE nor EXCLUDED`);
   return problems;
 }
 
@@ -534,24 +149,50 @@ export function presentTests(root = "."): string[] {
   }
 }
 
+/** What the gate runs: every present test file not excluded, in name order. */
+export function gateFiles(
+  present: readonly string[] = presentTests(),
+  excluded: readonly Exclusion[] = EXCLUDED,
+): string[] {
+  const out = new Set(excluded.map((e) => e.file));
+  return present.filter((file) => !out.has(file));
+}
+
 /**
- * What the check prints when the list is wrong: every problem, then one
- * last line naming the files to list. Empty when the list is right.
+ * The gate a checked-out tree's own `scripts/gate.ts` names, whichever shape
+ * it has: a tree from before #2071 lists it in `GATE`; a later one derives
+ * it with `gateFiles` from the tree's test files. `key` makes each tree's
+ * import its own module, so one process can read many commits.
+ */
+export async function treeGate(tree: string, key: string): Promise<string[]> {
+  const module = (await import(`${join(tree, "scripts/gate.ts")}?${key}`)) as {
+    GATE?: readonly string[];
+    gateFiles?: (present: readonly string[]) => string[];
+    presentTests?: (root: string) => string[];
+  };
+  if (module.gateFiles && module.presentTests)
+    return module.gateFiles(module.presentTests(tree));
+  return [...(module.GATE ?? [])];
+}
+
+/**
+ * What the check prints when the quarantine is wrong: every problem, then
+ * one last line naming the files to fix. Empty when it is right.
  */
 export function gateRefusal(present: readonly string[]): string[] {
-  const problems = auditGate(present, GATE, EXCLUDED);
+  const problems = auditGate(present, EXCLUDED);
   if (problems.length === 0) return [];
   const named = [
     ...new Set(problems.map((p) => p.match(/^(test\/\S+\.test\.ts) /)?.[1])),
   ].filter((f): f is string => f !== undefined);
   return [
     ...problems,
-    `${named.join(", ")}: list it in GATE or EXCLUDED in scripts/gate.ts`,
+    `${named.join(", ")}: fix its EXCLUDED entry in scripts/gate.ts`,
   ];
 }
 
 // `bun scripts/gate.ts`: the audit alone, first in `forge.json`'s check, so
-// an unlisted file fails in under a second — not after install and tsc.
+// a stale exclusion fails in under a second — not after install and tsc.
 if (import.meta.main) {
   const refusal = gateRefusal(presentTests());
   for (const line of refusal) console.error(`gate: ${line}`);

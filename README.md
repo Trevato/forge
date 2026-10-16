@@ -805,7 +805,8 @@ bun run check:record  # the same, and rewrites scripts/test-times.json
 
 `bun run check` is the gate: the same command `forge.json` declares, so what
 it says here is what the deploy will say. It type-checks once, then runs the
-test files `scripts/gate.ts` lists in `GATE` as parallel `bun test` shards
+test files `scripts/gate.ts` admits — every `test/*.test.ts` not in its
+`EXCLUDED` — as parallel `bun test` shards
 (`scripts/test-shards.ts`): one per CPU the process may use, no more than
 one per 512 MiB of the memory its cgroup allows (16 on the 16-CPU, 8 GiB
 check cell; the old ceiling of eight left half of it idle, #2038), and
@@ -826,8 +827,9 @@ enough to set the gate's floor alone: the studio's and the apps
 adversarial suites are split by subject into `test/studio*.test.ts` and
 `test/apps-adversarial*.test.ts`.
 
-The check's first step is the gate-list audit (`bun scripts/gate.ts`), so a
-test file listed in neither `GATE` nor `EXCLUDED` fails in under a second,
+The check's first step is the gate-list audit (`bun scripts/gate.ts`), so an
+`EXCLUDED` entry for a file that is gone, or one with no reason or issue,
+fails in under a second,
 before install-heavy work. `tsc` then runs `--incremental` with a 2 GB heap,
 its build info in `.forge-cache/` (made first with `mkdir -p`: tsc will not
 create the directory, and a checkout with no restored cache failed on it,
@@ -890,15 +892,21 @@ in that test. Two things it will not do:
   and names the tool (`test/helpers/tools.ts`). Install OpenSSH and they run
   again — the skip is conditional on the binary, never on anything else.
 
-Every `test/*.test.ts` is either in `GATE` or in `EXCLUDED` with a one-line
-reason and the issue that owns admitting it; `test/check-list.test.ts` goes
-red on a file in neither, in both, or named without existing, so a new test
-file never sits outside the gate silently. A file joins the gate by moving
-from `EXCLUDED` to `GATE` in a pull whose check is green and whose description
-carries ten green runs in random order under load:
+Every `test/*.test.ts` is in the gate unless `EXCLUDED` names it with a
+one-line reason and the issue that owns admitting it, so a new test file is
+gated the moment it exists and no pull edits a shared list for it (#2037).
+`test/check-list.test.ts` goes red on an exclusion named twice, without a
+reason or issue, or for a file that does not exist. An excluded file rejoins
+the gate by deleting its `EXCLUDED` entry in a pull whose check is green and
+whose description carries ten green runs in random order under load:
 `bun scripts/flake-hunt.ts admit test/x.test.ts` runs the file ten times, each
 its own `bun test --randomize` with a fresh seed beside busy loops, prints the
 record and exits non-zero unless all ten are green.
+
+A brand-new test file does not need that record: it joins the gate on its
+own green check, not ten runs. That is accepted on purpose — a flaky new
+test can turn the gate red once before anyone sees it — and the nightly
+flake hunt below is the backstop that files it and quarantines it.
 
 **No flaky tests.** Nightly, `.forgejo/workflows/flake-hunt.yml` runs every
 gate file five times on a loaded box, each run a fresh seed that orders both
@@ -910,8 +918,9 @@ dependence, a leaked server, a timeout set near the real duration, a tight
 wall-clock bound); then
 `bun scripts/flake-hunt.ts quarantine` moves every file an open `Flaky:`
 issue the hunt itself filed (its author is the token's user and the forge
-has not marked it untrusted) names from `GATE` to `EXCLUDED` under that issue and proposes the move
-as a pull. Nobody hand-edits the list. A file red in every run is broken,
+has not marked it untrusted) into `EXCLUDED` under that issue and proposes
+the move as a pull; a file the issue names that no longer exists is skipped,
+since its exclusion would turn the audit red. Nobody hand-edits the list. A file red in every run is broken,
 not flaky, and the check already says so. The fix is the test's shape, never
 a retry: `test/flake.test.ts` fails on `--retry`, `--rerun-each`, a bunfig
 `retry` or a `{ retry: N }` anywhere the gate runs, and on any test that
