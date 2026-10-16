@@ -348,6 +348,12 @@ door: an admin with a notify URL is paged once when a drain passes five
 minutes and once, by the draining process as it exits, when it ends. A process
 that dies mid-drain says nothing more.
 
+The same push pages the vitals causes `errors`, `internal`, `queue:*` and `disk`
+once each has held five minutes, and says Recovered once it has been gone five
+(a flap in between is no news). A cause present at boot is taken as already
+paged. Every other cause (`drill`, `mirror`, `stuck:*`, `red:*`, `snapshots`,
+`budget:*`) is paged elsewhere or is a setting, and is ignored here.
+
 ## Origins
 
 Your forge is the index of everything you work on, wherever it actually lives.

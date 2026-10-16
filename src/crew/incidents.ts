@@ -42,3 +42,59 @@ export function nextPage(
     return { line: RECOVERED, paged: undefined };
   return undefined;
 }
+
+/** How long a cause must hold to be paged, and stay gone to be recovered. */
+export const HOLD_MS = 5 * 60_000;
+
+/** The vitals causes this pager owns; the rest are paged elsewhere or are settings. */
+export function owned(cause: string): boolean {
+  return cause === "errors" || cause === "internal" || cause === "disk" || cause.startsWith("queue:");
+}
+
+/** One owned cause being watched. */
+export interface Watched {
+  readonly since: number;
+  readonly sentence: string;
+  /** Set once the page was delivered (or was already sent before a restart). */
+  paged: boolean;
+  /** When it was last seen gone, until it is seen again. */
+  absentSince?: number;
+}
+
+export type Watch = Map<string, Watched>;
+
+/**
+ * Looks at the causes present now. Returns the pages due and the Recovereds
+ * due; nothing is marked, so a send that failed is due again next time.
+ * `seed` takes every owned cause present as already paged, whatever its age.
+ */
+export function observe(
+  watch: Watch,
+  present: readonly { cause: string; sentence: string }[],
+  now: number,
+  seed = false,
+): { pages: string[]; recovered: string[] } {
+  const here = new Set<string>();
+  for (const p of present) {
+    if (!owned(p.cause)) continue;
+    here.add(p.cause);
+    const w = watch.get(p.cause);
+    if (w === undefined) watch.set(p.cause, { since: now, sentence: p.sentence, paged: seed });
+    else delete w.absentSince;
+  }
+  const pages: string[] = [];
+  const recovered: string[] = [];
+  for (const [key, w] of [...watch]) {
+    if (here.has(key)) {
+      if (!w.paged && now - w.since >= HOLD_MS) pages.push(key);
+      continue;
+    }
+    w.absentSince ??= now;
+    if (now - w.absentSince < HOLD_MS) continue;
+    if (w.paged) recovered.push(key);
+    else watch.delete(key);
+  }
+  return { pages, recovered };
+}
+
+export const recoveredLine = (cause: string): string => `Recovered: ${cause} has cleared`;

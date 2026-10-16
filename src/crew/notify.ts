@@ -33,7 +33,8 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { drillNeed, firstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { health } from "../http/health.ts";
-import { RECOVERED, drainIncident, nextPage } from "./incidents.ts";
+import { forgeVitals } from "../actions/health.ts";
+import { RECOVERED, drainIncident, nextPage, observe, recoveredLine, type Watch } from "./incidents.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
 const KEY = "notify_url";
@@ -204,6 +205,8 @@ export interface NotifyOptions {
   clockMs?: number;
   /** When this process began draining; the live health unless a test says. */
   drainingSince?: () => number | null;
+  /** The causes the vitals hold now; the live vitals unless a test says. */
+  causes?: () => readonly { cause: string; sentence: string }[];
 }
 
 const oneLine = (s: string): string =>
@@ -220,6 +223,8 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
   const pause = new Map<string, { until: number; next: number }>();
   /** Per admin: the drain last paged and not yet recovered, set only after delivery. */
   const paged = new Map<string, string | undefined>();
+  /** Per admin: the owned vitals causes being watched. */
+  const watching = new Map<string, Watch>();
   /** Admins this process itself paged and has not yet told Recovered. */
   const mine = new Set<string>();
   let queue: Promise<void> = Promise.resolve();
@@ -251,8 +256,60 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
     const url = notifyUrlOf(app.db, userId);
     if (user === undefined || url === undefined || !user.isAdmin || user.kind !== "user") {
       paged.delete(userId);
+      watching.delete(userId);
       return;
     }
+    await pageDrain(userId, url, baseline);
+    await pageCauses(userId, url, baseline);
+  }
+
+  /** Sends one line under the hourly cap and the backoff; whether it was delivered. */
+  async function push(userId: string, url: string, line: string): Promise<boolean> {
+    const t = now();
+    const recent = (sent.get(userId) ?? []).filter((s) => t - s < HOUR_MS);
+    sent.set(userId, recent);
+    if (recent.length >= HOURLY || t < (pause.get(userId)?.until ?? 0)) return false;
+    recent.push(t);
+    let delivered = false;
+    try {
+      delivered = await send(url, `${oneLine(line)}\n${link}`, {
+        click: link,
+        title: "forge",
+      });
+    } catch {
+      delivered = false;
+    }
+    if (delivered) {
+      pause.delete(userId);
+      return true;
+    }
+    const wait = Math.min(pause.get(userId)?.next ?? BACKOFF_FIRST_MS, BACKOFF_MAX_MS);
+    pause.set(userId, { until: now() + wait, next: wait * 2 });
+    app.log.warn("notify endpoint failed; pausing", {
+      host: notifyHost(url) ?? "",
+      pauseMs: wait,
+    });
+    return false;
+  }
+
+  /** Errors, internal faults, a long queue or a full disk: paged once held, recovered once gone. */
+  async function pageCauses(userId: string, url: string, baseline: boolean): Promise<void> {
+    const present = options.causes ? options.causes() : forgeVitals(app).degraded;
+    let watch = watching.get(userId);
+    const seed = baseline || watch === undefined;
+    if (watch === undefined) watching.set(userId, (watch = new Map()));
+    const due = observe(watch, present, now(), seed);
+    for (const key of due.pages) {
+      if (!(await push(userId, url, watch.get(key)!.sentence))) return;
+      watch.get(key)!.paged = true;
+    }
+    for (const key of due.recovered) {
+      if (!(await push(userId, url, recoveredLine(key)))) return;
+      watch.delete(key);
+    }
+  }
+
+  async function pageDrain(userId: string, url: string, baseline: boolean): Promise<void> {
     const current = drainIncident(drainStart(), now());
     if (baseline || !paged.has(userId)) {
       // A restart has paged what it paged: start from what is true now.
@@ -261,34 +318,11 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
     }
     const next = nextPage(current, paged.get(userId));
     if (next === undefined) return;
-    const t = now();
-    const recent = (sent.get(userId) ?? []).filter((s) => t - s < HOUR_MS);
-    sent.set(userId, recent);
-    if (recent.length >= HOURLY || t < (pause.get(userId)?.until ?? 0)) return;
-    recent.push(t);
-    let delivered = false;
-    try {
-      delivered = await send(url, `${oneLine(next.line)}\n${link}`, {
-        click: link,
-        title: "forge",
-      });
-    } catch {
-      delivered = false;
-    }
-    if (delivered) {
-      paged.set(userId, next.paged);
-      // Only a page this process delivered is this process's to recover.
-      if (next.paged === undefined) mine.delete(userId);
-      else mine.add(userId);
-      pause.delete(userId);
-      return;
-    }
-    const wait = Math.min(pause.get(userId)?.next ?? BACKOFF_FIRST_MS, BACKOFF_MAX_MS);
-    pause.set(userId, { until: now() + wait, next: wait * 2 });
-    app.log.warn("notify endpoint failed; pausing", {
-      host: notifyHost(url) ?? "",
-      pauseMs: wait,
-    });
+    if (!(await push(userId, url, next.line))) return;
+    paged.set(userId, next.paged);
+    // Only a page this process delivered is this process's to recover.
+    if (next.paged === undefined) mine.delete(userId);
+    else mine.add(userId);
   }
 
   async function tell(userId: string, baseline: boolean): Promise<void> {
