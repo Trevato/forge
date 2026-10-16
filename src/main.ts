@@ -15,6 +15,7 @@ import { createApp } from "./app.ts";
 import { backfillCarried } from "./core/carried.ts";
 import { flushFlagUses, loadFlags } from "./core/flags.ts";
 import { reconcile } from "./core/reconcile.ts";
+import { offerStartingBoards } from "./actions/boards.ts";
 import { syncAllPillars } from "./actions/pillars.ts";
 import { bootHostedChildren } from "./spawn/host.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
@@ -353,6 +354,10 @@ const snapshots = startSnapshots(
 // node, every 15 s into a ring the `machine` board source reads.
 const sampler = startSampler(app);
 const memorySampler = startMemorySampler(app);
+// The Usage and Crew starting boards, once each (actions/boards.ts).
+void offerStartingBoards(app)
+  .then((slugs) => slugs.length > 0 && app.log.info("starting boards offered", { slugs: slugs.join(", ") }))
+  .catch((error) => app.log.warn("starting boards not offered", { error: String(error) }));
 const crewHeldOff = crewOffInPreview();
 if (appsOn && crewHeldOff)
   app.log.info(CREW_OFF_IN_PREVIEW, {

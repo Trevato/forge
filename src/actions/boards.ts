@@ -14,10 +14,13 @@ import {
   BOARDS_OWNER, BOARDS_REPO, emptyBoard, isSlug, listBoards, parseBoard, readBoard, removeBoard, saveBoard, slugOf,
   type Board, type Stored, type StoreError,
 } from "../boards/store.ts";
-import { commitIdentity } from "../core/commit_identity.ts";
+import { OFFERED_FILE, readOffered, STARTING_BOARDS } from "../boards/starting.ts";
+import { commitFiles } from "../git/write.ts";
+import { repoDir } from "../git/repos.ts";
+import { commitIdentity, forgeHost } from "../core/commit_identity.ts";
 import { createOrg } from "../core/orgs.ts";
 import { createRepo, getRepo } from "../core/repos.ts";
-import { getUserByName, type User } from "../core/users.ts";
+import { getUserById, getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 export type BoardError = StoreError | "not_found" | "no_slug" | "repo" | { refused: string };
@@ -27,7 +30,7 @@ function admin(actor: User | undefined): Result<User, "not_found"> {
 }
 
 /** The forge's boards repo, made if it is not there yet. */
-async function ensureRepo(app: App, who: User): Promise<boolean> {
+export async function ensureRepo(app: App, who: User): Promise<boolean> {
   if (getRepo(app.db, BOARDS_OWNER, BOARDS_REPO)) return true;
   let owner = getUserByName(app.db, BOARDS_OWNER);
   if (!owner) {
@@ -139,4 +142,37 @@ export async function deleteBoard(app: App, actor: User | undefined, slug: strin
   const done = await removeBoard(app.reposRoot, slug, commitIdentity(app.config, who.value), `Delete board ${slug}`);
   if (done.ok) app.bus.append({ kind: "board.deleted", actorId: who.value.id, payload: { slug } });
   return done;
+}
+
+/**
+ * Write the starting boards the forge has not offered yet, in one commit
+ * that also records them in `.offered`. A board that was offered is never
+ * written again, so an edit stays and a deletion sticks. Needs a person who
+ * is an admin to found the repo; without one nothing is written and the
+ * next boot tries again. Returns the slugs written.
+ */
+export async function offerStartingBoards(app: App): Promise<string[]> {
+  const founder = app.db
+    .query<{ id: string }, []>("SELECT id FROM user WHERE is_admin = 1 AND is_agent = 0 AND kind = 'user' ORDER BY created_at LIMIT 1")
+    .get();
+  const person = founder ? getUserById(app.db, founder.id) : undefined;
+  if (!person) return [];
+  if (!(await ensureRepo(app, person))) return [];
+  const offered = await readOffered(app.reposRoot);
+  const fresh = Object.keys(STARTING_BOARDS).filter((slug) => !offered.includes(slug));
+  if (fresh.length === 0) return [];
+  // A board a person already made under that slug is theirs: recorded as offered, not written.
+  const free: string[] = [];
+  for (const slug of fresh) if ((await readBoard(app.reposRoot, slug)) === undefined) free.push(slug);
+  const done = await commitFiles(repoDir(app.reposRoot, BOARDS_OWNER, BOARDS_REPO), {
+    branch: "main",
+    message: `Offer the starting boards: ${fresh.join(", ")}`,
+    files: [
+      ...free.map((slug) => ({ path: `${slug}.json`, content: `${JSON.stringify(STARTING_BOARDS[slug], null, 2)}\n` })),
+      { path: OFFERED_FILE, content: `${JSON.stringify([...offered, ...fresh])}\n` },
+    ],
+    author: { name: "forge", email: `forge@${forgeHost(app.config)}` },
+  });
+  if (!done.ok) return [];
+  return free;
 }

@@ -1244,9 +1244,10 @@ work here.
   it aside. Number is the latest group's value over a sparkline of all of them.
   `/boards` holds the boards themselves: a board is one JSON file
   (`{title, range, refresh: off|10s|1m, panels: [{title, chart, query, w, h}]}`) in
-  `forge/boards`, a repo the forge owns and makes on the first board; every save is a commit
+  `forge/boards`, a repo the forge owns and makes on the first boot with an admin; every save is a commit
   by the admin who made it, and a file that does not validate is not shown. Make, rename,
   duplicate, delete, add/edit/remove/reorder panels, or pin the query on `/boards/data`.
+  The first boot also writes two starting boards, **Usage** and **Crew**, once each: `.offered` in that repo records them, so an edit stays and a deletion sticks.
   A board with a refresh redraws its grid on that beat through the live-region swap
   (`/boards/:slug/live`, etag'd). The same doors are in the API: `GET /api/v1/boards`, `GET|PUT|DELETE /api/v1/boards/:slug`
   (an agent or anyone but an admin is 403; a panel whose query cannot run is refused with 422). The same four doors are MCP tools (`boards`, `board_write`, `board_delete`; `boards` with a `slug` reads one) and, for the same person, a **Boards** screen in the terminal that lists boards and shows a board's panels as text. No dependency was added.
