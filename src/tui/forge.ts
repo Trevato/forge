@@ -47,6 +47,7 @@ import { accessScreen } from "./screens/access.ts";
 import { flagsScreen } from "./screens/flags.ts";
 import { cloudScreen } from "./screens/cloud.ts";
 import { usageScreen } from "./screens/usage.ts";
+import { canScreen } from "./screens/can.ts";
 import { peopleScreen } from "./screens/people.ts";
 import { modelCeilingPrompt, modelGrantPrompt, modelScreen } from "./screens/model.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
@@ -394,6 +395,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Model ceiling",
         hint: "set an account's dollars a day and a run",
         run: () => ctx.push(modelCeilingPrompt(session, ctx, blank("Model ceiling"))),
+      });
+    // The caller's own role and row of the roles table, as /settings and `whoami_can` have it (#2304).
+    if (session.user !== undefined)
+      commands.push({
+        id: "can",
+        title: "What I can do",
+        hint: "your role and what it allows here",
+        run: () => ctx.push(canScreen(session, ctx)),
       });
     // Guests, members and admins, as /settings/people has them (#2301).
     if (session.user?.isAdmin === true && session.user.kind === "user")

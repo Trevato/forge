@@ -20,6 +20,7 @@ import { getRepoById, updateRepoSettings, type Repo } from "../src/core/repos.ts
 import { createRun, listRuns, setRunBase } from "../src/core/runs.ts";
 import { getAccountCeiling } from "../src/core/account_ceiling.ts";
 import { createToken } from "../src/core/tokens.ts";
+import { setMember } from "../src/core/roles.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { savePlacement } from "../src/core/placements.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -181,6 +182,7 @@ describe("the forge over MCP", () => {
       "health",
       "audit",
       "model_grant",
+      "whoami_can",
       "account_role",
       "model_ceiling",
       "outsiders",
@@ -928,6 +930,20 @@ describe("the forge over MCP", () => {
     const back = await tool(rw, "feed_chips", { kind: "kind", value: "releases", hidden: false });
     expect(back.value).toEqual({ kinds: [], people: [] });
     expect(await kinds()).toContain("release");
+  });
+
+  test("whoami_can: the caller's role and its row, for a guest, a member and an admin", async () => {
+    const guest = (await tool(bobRw, "whoami_can")).value;
+    expect(guest.role).toBe("guest");
+    expect(guest.can).toEqual({ read: true, comment: true, make_it_yours: false, run_crew: false, administer: false });
+    setMember(app.db, bob.id, true, alice.id, new Date());
+    const member = (await tool(bobRw, "whoami_can")).value;
+    expect(member.role).toBe("member");
+    expect(member.can).toEqual({ read: true, comment: true, make_it_yours: true, run_crew: true, administer: false });
+    setMember(app.db, bob.id, false, alice.id, new Date());
+    const admin = (await tool(ro, "whoami_can")).value;
+    expect(admin.role).toBe("admin");
+    expect(admin.can.administer).toBe(true);
   });
 
   test("model_ceiling: dry by default, an admin person with an admin token sets and clears it", async () => {

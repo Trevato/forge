@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { getModelGrant } from "../src/core/model_grant.ts";
-import { ABILITIES, CAN, ROLES, can, roleOf, rolesTable } from "../src/core/roles.ts";
+import { ABILITIES, CAN, ROLES, can, roleOf, rolesTable, setMember } from "../src/core/roles.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -86,6 +86,20 @@ describe("roles on /settings/people", () => {
     expect(html).toContain("Make member");
     const bob = await signIn("bob");
     expect((await fetch(`${servers.url}/settings/people`, { headers: { cookie: bob } })).status).toBe(404);
+  });
+
+  test("the account page shows the caller's own row of the table", async () => {
+    const page = async (c: string) => (await fetch(`${servers.url}/settings`, { headers: { cookie: c } })).text();
+    const bob = await page(await signIn("bob"));
+    expect(bob).toContain("What you can do here");
+    expect(bob).toMatch(/Administer the forge: <strong>no<\/strong>/);
+    setMember(app.db, (getUserByName(app.db, "bob"))!.id, true, "x", new Date());
+    const member = await page(await signIn("bob"));
+    expect(member).toMatch(/Make an app their own: <strong>yes<\/strong>/);
+    expect(member).toMatch(/Administer the forge: <strong>no<\/strong>/);
+    setMember(app.db, getUserByName(app.db, "bob")!.id, false, "x", new Date());
+    const alice = await page(await signIn("alice"));
+    expect(alice).toMatch(/Administer the forge: <strong>yes<\/strong>/);
   });
 
   test("a guest is promoted with no allowance by default, and demoted", async () => {

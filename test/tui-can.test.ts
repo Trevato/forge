@@ -1,0 +1,72 @@
+/**
+ * "What I can do" in the terminal (#2304): every signed-in session sees its
+ * role and its row of the roles table.
+ */
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createApp, type App as Forge } from "../src/app.ts";
+import { setMember } from "../src/core/roles.ts";
+import { createUser, getUserByName } from "../src/core/users.ts";
+import { createForgeApp } from "../src/tui/forge.ts";
+import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import type { TuiIdentity } from "../src/tui/session.ts";
+import { quietLogs } from "./helpers/globals.ts";
+import { settleApp } from "./helpers/tui.ts";
+
+quietLogs();
+
+describe("what I can do in the terminal", () => {
+  let dataDir: string;
+  let forge: Forge;
+
+  async function shown(username: string): Promise<string> {
+    const terminal = headlessTerminal(140, 32);
+    const user = getUserByName(forge.db, username)!;
+    const identity: TuiIdentity = { sshUsername: "t", remoteAddress: "127.0.0.1", user };
+    const { app } = createForgeApp(forge, identity, { terminal, exitHooks: false });
+    app.start();
+    const key = (k: string, ctrl = false) => app.dispatch({ type: "key", key: k, ctrl, alt: false, shift: false });
+    key("k", true);
+    for (const ch of "What I can do") key(ch);
+    key("enter");
+    await settleApp(app);
+    const text = app.screen.toText();
+    app.stop();
+    return text;
+  }
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-tui-can-"));
+    forge = createApp({ dataDir, port: 0 });
+    for (const [username, adminIfFirst] of [["alice", true], ["bob", false]] as const) {
+      const made = await createUser(forge.db, {
+        trusted: true,
+        username,
+        email: `${username}@forge.local`,
+        password: "a-good-passphrase",
+        adminIfFirst,
+      });
+      if (!made.ok) throw new Error(made.error);
+    }
+  });
+  afterAll(async () => {
+    forge.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("a guest, a member and an admin each see their own row", async () => {
+    const guest = await shown("bob");
+    expect(guest).toContain("You are guest here.");
+    expect(guest).toContain("Make an app their own: no");
+    setMember(forge.db, getUserByName(forge.db, "bob")!.id, true, "x", new Date());
+    const member = await shown("bob");
+    expect(member).toContain("You are member here.");
+    expect(member).toContain("Make an app their own: yes");
+    expect(member).toContain("Administer the forge: no");
+    const admin = await shown("alice");
+    expect(admin).toContain("You are admin here.");
+    expect(admin).toContain("Administer the forge: yes");
+  });
+});

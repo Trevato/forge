@@ -26,6 +26,7 @@ import {
   setNotifyUrl,
 } from "../../crew/notify.ts";
 import { forgeHost, noreplyAddress } from "../../core/commit_identity.ts";
+import { ABILITIES, roleOf, rowOf, type Ability } from "../../core/roles.ts";
 import { listKeys } from "../../core/keys.ts";
 import { endAccountSession } from "../../actions/signins.ts";
 import { listSessions, type SessionInfo } from "../../core/sessions.ts";
@@ -159,9 +160,24 @@ export async function resendVerifyLink(ctx: Ctx): Promise<Response> {
   return flashTo(ctx, "/settings", { message });
 }
 
+/** The signed-in account's role and its row of the roles table. */
+function roleView(ctx: Ctx): Html {
+  const role = roleOf(ctx.app.db, ctx.auth.user!);
+  const row = rowOf(role);
+  return card(
+    html`<p>You are ${badge(role)} here.</p>
+      <ul class="role-can">
+        ${(Object.keys(ABILITIES) as Ability[]).map(
+          (a) => html`<li>${ABILITIES[a]}: <strong>${row[a] ? "yes" : "no"}</strong></li>`,
+        )}
+      </ul>`,
+    { head: html`<h3>What you can do here</h3>` },
+  );
+}
+
 function profileView(ctx: Ctx, values: ProfileForm): Html {
   const user = ctx.auth.user!;
-  return html`${unverifiedNotice(ctx)}${card(
+  return html`${unverifiedNotice(ctx)}${roleView(ctx)}${card(
     html`<form method="post" action="/settings">
       <div class="field">
         <label for="f-username">Username</label>

@@ -29,6 +29,13 @@ export const CAN: Readonly<Record<Role, readonly Ability[]>> = {
 
 export const can = (role: Role, ability: Ability): boolean => CAN[role].includes(ability);
 
+/** One role's row of the table: every ability, yes or no. */
+export function rowOf(role: Role): Record<Ability, boolean> {
+  const row = {} as Record<Ability, boolean>;
+  for (const a of Object.keys(ABILITIES) as Ability[]) row[a] = can(role, a);
+  return row;
+}
+
 /** The table as `docs/ROLES.md` prints it. */
 export function rolesTable(): string {
   const rows = (Object.keys(ABILITIES) as Ability[]).map(

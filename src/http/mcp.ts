@@ -63,6 +63,7 @@ import {
 } from "../web/studio/cards.ts";
 import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
 import { setRole } from "../actions/roles.ts";
+import { ABILITIES, roleOf, rowOf } from "../core/roles.ts";
 import { keepThought } from "../actions/thought.ts";
 import {
   FROM_WORDS,
@@ -1001,6 +1002,17 @@ const TOOLS: readonly Tool[] = [
             : "no such person, or not one a grant is for",
         );
       return good(set.value);
+    },
+  },
+  {
+    name: "whoami_can",
+    description:
+      "What you can do here as you: your role (guest, member or admin) and that role's row of the roles table, each ability yes or no. Read only.",
+    inputSchema: { type: "object", properties: {} },
+    writes: false,
+    run: (ctx, user) => {
+      const role = roleOf(ctx.app.db, user);
+      return good({ username: user.username, role, can: rowOf(role), abilities: ABILITIES });
     },
   },
   {
