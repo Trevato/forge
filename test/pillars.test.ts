@@ -40,7 +40,7 @@ import {
 } from "../src/core/issues.ts";
 import { pillarsOf, pillarView } from "../src/core/pillars.ts";
 import { askToLiveFor } from "../src/web/ask_to_live.ts";
-import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { getRepoById, updateRepoSettings, type Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -169,7 +169,8 @@ describe("pillars", () => {
       visibility: "public",
     });
     if (!made.ok) throw new Error(String(made.error));
-    repo = made.value;
+    // These plans open issues: plans need a nod is off (test/plan-route.test.ts covers on).
+    repo = updateRepoSettings(app.db, made.value, { plansNeedNod: false });
     const seeded = await commitToBranch(app, alice, repo, {
       message: "Start",
       files: [{ path: "README.md", content: "# engine\n" }],

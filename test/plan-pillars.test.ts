@@ -21,7 +21,7 @@ import {
   type Issue,
 } from "../src/core/issues.ts";
 import { findPillar, pillarsOf } from "../src/core/pillars.ts";
-import type { Repo } from "../src/core/repos.ts";
+import { updateRepoSettings, type Repo } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { systemPrompt } from "../src/crew/brief.ts";
@@ -81,7 +81,8 @@ describe("a plan says what each issue is for", () => {
   const repo = async (name: string): Promise<Repo> => {
     const made = await createRepo(app, alice, { name, visibility: "private" });
     if (!made.ok) throw new Error(String(made.error));
-    return made.value;
+    // These plans open issues: plans need a nod is off (test/plan-route.test.ts covers on).
+    return updateRepoSettings(app.db, made.value, { plansNeedNod: false });
   };
 
   beforeAll(async () => {
@@ -404,7 +405,7 @@ describe("whose issue stands for a pillar", () => {
       visibility: "public",
     });
     if (!made.ok) throw new Error(String(made.error));
-    open = made.value;
+    open = updateRepoSettings(app.db, made.value, { plansNeedNod: false });
   }, 30_000);
 
   afterAll(async () => {

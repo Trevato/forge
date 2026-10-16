@@ -278,7 +278,7 @@ import {
   unlinkIssue,
   confirmIssue,
 } from "../actions/dependencies.ts";
-import { openPlan, parsePlan } from "../actions/plan.ts";
+import { openPlan, parsePlan, proposePlan } from "../actions/plan.ts";
 import { dependenciesOf, repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
@@ -1823,6 +1823,8 @@ export function apiRoutes(router: Router<Handler>): void {
         422,
         "decisionsBy is me, decider or decider_tell",
       );
+    if (input.plansNeedNod !== undefined && typeof input.plansNeedNod !== "boolean")
+      return apiError("bad_plans_need_nod", 422, "plansNeedNod is true or false");
     const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
       ...(input.visibility === "public" || input.visibility === "private"
         ? { visibility: input.visibility }
@@ -1849,6 +1851,10 @@ export function apiRoutes(router: Router<Handler>): void {
       // The standing rule for its decisions: also an admin's, never an agent's.
       ...(isDecisionsBy(input.decisionsBy)
         ? { decisionsBy: input.decisionsBy }
+        : {}),
+      // Whether a plan waits for a nod: an admin's, never an agent's.
+      ...(typeof input.plansNeedNod === "boolean"
+        ? { plansNeedNod: input.plansNeedNod }
         : {}),
     });
     if (!updated.ok) return respondAccess(updated.error, 422);
@@ -2614,15 +2620,22 @@ export function apiRoutes(router: Router<Handler>): void {
     const items = parsePlan(input.issues);
     if (!items.ok)
       return apiError(items.error.error, 422, items.error.message);
-    const planned = openPlan(ctx.app, ctx.auth.user, repo, items.value);
-    if (!planned.ok) {
-      const { error, message } = planned.error;
-      return apiError(
-        error,
-        error === "not_found" ? 404 : error === "forbidden" ? 403 : 422,
-        message,
+    const failed = (e: { error: string; message: string }) =>
+      apiError(
+        e.error,
+        e.error === "not_found" ? 404 : e.error === "forbidden" ? 403 : 422,
+        e.message,
       );
+    // With "plans need a nod" the plan is stored, not opened.
+    if (repo.plansNeedNod) {
+      const proposed = proposePlan(ctx.app, ctx.auth.user, repo, items.value, {
+        title: input.title,
+        why: input.why,
+      });
+      return proposed.ok ? json(proposed.value, 202) : failed(proposed.error);
     }
+    const planned = openPlan(ctx.app, ctx.auth.user, repo, items.value);
+    if (!planned.ok) return failed(planned.error);
     return json(planned.value, 201);
   });
   router.add(

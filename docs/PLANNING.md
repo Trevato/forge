@@ -565,3 +565,14 @@ not confirm its own plan. Split also moves the parent's blocked-by edges to
 the issues named in `into` (a child that would make a loop is skipped), and
 the parent waits for nothing. Reopening clears the reason. Closes that
 predate reasons count as done.
+
+## Plans need a nod
+
+A repository setting, `plansNeedNod` (PATCH `/api/v1/repos/:owner/:name`,
+admin only, never an agent), off by default: nothing reads a stored proposal
+yet, so on would hide the planner's work. On, `POST …/plan` and the MCP
+`plan` tool run every check as ever (`no_pillar`, loops, unknown keys) and
+then store one proposal — title, why, the ordered issues with their
+`blockedBy` — answering `proposed` with its id (HTTP 202). No issue is opened.
+Off, the plan opens its linked issues all or none. A person's nod that opens
+a stored proposal is not built yet.

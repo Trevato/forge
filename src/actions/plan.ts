@@ -25,6 +25,7 @@ import {
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { transact } from "../kernel/db.ts";
+import { id as newId } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { isMirror } from "../origins/write-through.ts";
 import { followLink } from "./pillars.ts";
@@ -186,12 +187,22 @@ function loopAt(items: readonly PlanItem[]): string | undefined {
   return undefined;
 }
 
-export function openPlan(
+/** What a good plan was checked against, for opening it. */
+interface Vetted {
+  readonly actor: User;
+  readonly existing: Map<number, Issue>;
+  readonly serves: Map<string, Pillar>;
+  readonly gate: Issue | undefined;
+  readonly later: Issue | undefined;
+}
+
+/** Every refusal a plan can meet, before anything is written. */
+function vet(
   app: App,
   actor: User | undefined,
   repo: Repo,
   items: readonly PlanItem[],
-): Result<Planned, PlanError> {
+): Result<Vetted, PlanError> {
   if (!actor || !canRead(app.db, repo, actor))
     return refuse("not_found", "no such app or repository (owner/name)");
   if (!canWrite(app.db, repo, actor) && !isCrew(app.db, repo.id, actor.id))
@@ -258,6 +269,66 @@ export function openPlan(
         `"${item.key}" names no pillar: give it ${namesOf(pillars)}, or later: true and why`,
       );
   }
+  return ok({ actor, existing, serves, gate, later });
+}
+
+export interface Proposed {
+  readonly status: "proposed";
+  readonly id: string;
+}
+
+/**
+ * "Plans need a nod": the same checks as `openPlan`, then the plan is kept
+ * as one proposal (title, why, the ordered issues with their blockedBy) and
+ * no issue is opened. A person's nod opens it.
+ */
+export function proposePlan(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  items: readonly PlanItem[],
+  say: { title?: unknown; why?: unknown } = {},
+): Result<Proposed, PlanError> {
+  const title = typeof say.title === "string" ? say.title.trim() : "";
+  if (say.title !== undefined && typeof say.title !== "string")
+    return refuse("invalid", "title must be text");
+  if (title.length > MAX_TITLE)
+    return refuse("title_too_long", `title is over ${MAX_TITLE} characters`);
+  if (say.why !== undefined && typeof say.why !== "string")
+    return refuse("invalid", "why must be text");
+  const why = ((say.why ?? "") as string).trim();
+  if (why.length > MAX_BODY)
+    return refuse("body_too_long", `why is over ${MAX_BODY} characters`);
+  const vetted = vet(app, actor, repo, items);
+  if (!vetted.ok) return vetted;
+  const id = newId();
+  app.db
+    .query(
+      `INSERT INTO plan_proposal (id, repo_id, author_id, title, why, issues, created_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+    )
+    .run(
+      id,
+      repo.id,
+      vetted.value.actor.id,
+      title === "" ? items[0]!.title : title,
+      why,
+      JSON.stringify(items),
+      new Date().toISOString(),
+    );
+  return ok({ status: "proposed", id });
+}
+
+export function openPlan(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  items: readonly PlanItem[],
+): Result<Planned, PlanError> {
+  const vetted = vet(app, actor, repo, items);
+  if (!vetted.ok) return vetted;
+  const { existing, serves, gate, later } = vetted.value;
+  actor = vetted.value.actor;
 
   const opened: { key: string; number: number }[] = [];
   /** The links an item's purpose adds: [the issue that waits, what it waits for]. */

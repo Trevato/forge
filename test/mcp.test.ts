@@ -14,7 +14,7 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import { listIssues } from "../src/core/issues.ts";
-import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { getRepoById, updateRepoSettings, type Repo } from "../src/core/repos.ts";
 import { createRun, listRuns, setRunBase } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -552,7 +552,40 @@ describe("the forge over MCP", () => {
     expect(after.ready.map((i: any) => i.number)).toContain(b);
   });
 
+  test("with plans need a nod on, the plan tool stores one proposal and opens nothing", async () => {
+    updateRepoSettings(app.db, getRepoById(app.db, game.id)!, { plansNeedNod: true });
+    const count = async () =>
+      (await tool(ro, "map", { app: "alice/game" })).value.issues.length;
+    const before = await count();
+    const issues = [
+      { key: "a", title: "First" },
+      { key: "b", title: "Second", blockedBy: ["a"] },
+    ];
+    const done = await tool(rw, "plan", {
+      app: "alice/game",
+      title: "Two steps",
+      why: "worth a look",
+      issues,
+    });
+    expect(done.value.status).toBe("proposed");
+    const row = app.db
+      .query<{ title: string; why: string; issues: string }, [string]>(
+        "SELECT title, why, issues FROM plan_proposal WHERE id = ?1",
+      )
+      .get(done.value.id)!;
+    expect(row.title).toBe("Two steps");
+    expect(JSON.parse(row.issues).map((i: any) => i.key)).toEqual(["a", "b"]);
+    expect(await count()).toBe(before);
+    // The checks run as ever: a loop is refused and stores nothing.
+    const loop = await tool(rw, "plan", {
+      app: "alice/game",
+      issues: [{ key: "x", title: "X", blockedBy: ["x"] }],
+    });
+    expect(loop.error).toContain("self");
+  });
+
   test("plan opens linked issues all or none", async () => {
+    updateRepoSettings(app.db, getRepoById(app.db, game.id)!, { plansNeedNod: false });
     const issues = [
       { key: "a", title: "First" },
       { key: "b", title: "Second", body: "two" },

@@ -249,7 +249,8 @@ export async function updateRepoSettings(
   // one on a team that administers the repository (`crew/direct.ts`).
   if (
     (settings.crewOutsiders !== undefined ||
-      settings.decisionsBy !== undefined) &&
+      settings.decisionsBy !== undefined ||
+      settings.plansNeedNod !== undefined) &&
     admin.value.kind === "agent"
   )
     return err("not_found");
@@ -276,6 +277,7 @@ export async function updateRepoSettings(
       "requireChecks",
       "crewOutsiders",
       "decisionsBy",
+      "plansNeedNod",
     ] as const
   ).filter((k) => settings[k] !== undefined && settings[k] !== repo[k]);
   app.bus.append({

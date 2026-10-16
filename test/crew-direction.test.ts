@@ -145,6 +145,25 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
+describe("plans need a nod setting", () => {
+  test("an agent's PATCH of it is refused and the setting stays; a person's works", async () => {
+    const own = await createRepoRow(app.db, app.reposRoot, {
+      ownerId: bot.user.id,
+      name: "botplans",
+      visibility: "public",
+    });
+    if (!own.ok) throw new Error(String(own.error));
+    const refused = await updateRepoSettings(app, bot.user, own.value, { plansNeedNod: true });
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) expect(refused.error).toBe("not_found");
+    expect(getRepoById(app.db, own.value.id)!.plansNeedNod).toBe(false);
+    const mine = await updateRepoSettings(app, alice, fresh(), { plansNeedNod: true });
+    expect(mine.ok).toBe(true);
+    expect(fresh().plansNeedNod).toBe(true);
+    await updateRepoSettings(app, alice, fresh(), { plansNeedNod: false });
+  });
+});
+
 describe("the rule", () => {
   test("a writer and the crew's reviewer direct; a reader, a builder agent and nobody do not", () => {
     expect(mayDirectCrew(app.db, repo, alice)).toBe(true);

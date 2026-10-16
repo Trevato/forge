@@ -39,7 +39,7 @@ import {
   unlinkIssue,
 } from "../actions/dependencies.ts";
 import { holdPull, releasePull } from "../actions/holds.ts";
-import { openPlan, parsePlan, PLAN_MAX } from "../actions/plan.ts";
+import { openPlan, parsePlan, PLAN_MAX, proposePlan } from "../actions/plan.ts";
 import { cancelRepoRun } from "../actions/runs.ts";
 import { familyView } from "../spawn/family.ts";
 import { clientRows } from "../spawn/clients.ts";
@@ -1897,11 +1897,13 @@ const TOOLS: readonly Tool[] = [
   },
   {
     name: "plan",
-    description: `Open several small issues and link them in one call: all of them or none. Each item has a key, a title, a body and optionally blockedBy, a list of keys of this plan or numbers of issues already open. Where the app has pillars (umbrella issues titled like "P0 Trust: …"), each item also says what it is for: pillar, the one it serves, or later: true with why, one sentence, which puts it behind the Later gate instead of on the ready list; an item that says neither is refused. A bad link (loop, unknown key) refuses the whole plan and names the item. At most ${PLAN_MAX} issues. Answers with the numbers opened, by key, what is ready now, and what waits for later.`,
+    description: `Open several small issues and link them in one call: all of them or none. Each item has a key, a title, a body and optionally blockedBy, a list of keys of this plan or numbers of issues already open. Where the app has pillars (umbrella issues titled like "P0 Trust: …"), each item also says what it is for: pillar, the one it serves, or later: true with why, one sentence, which puts it behind the Later gate instead of on the ready list; an item that says neither is refused. A bad link (loop, unknown key) refuses the whole plan and names the item. At most ${PLAN_MAX} issues. Answers with the numbers opened, by key, what is ready now, and what waits for later. Where the app has "plans need a nod" on, the same checks run and one proposal is stored (optional title and why for the whole plan); nothing is opened, and it answers status proposed with the proposal id.`,
     inputSchema: {
       type: "object",
       properties: {
         app: APP_ARG,
+        title: { type: "string", maxLength: 256 },
+        why: { type: "string", maxLength: 65536 },
         issues: {
           type: "array",
           minItems: 1,
@@ -1948,6 +1950,18 @@ const TOOLS: readonly Tool[] = [
       if (isAnswer(repo)) return repo;
       const items = parsePlan(args["issues"]);
       if (!items.ok) return bad(items.error.error, items.error.message);
+      if (repo.plansNeedNod) {
+        const proposed = proposePlan(ctx.app, user, repo, items.value, {
+          title: args["title"],
+          why: args["why"],
+        });
+        if (!proposed.ok)
+          return bad(proposed.error.error, proposed.error.message);
+        return good({
+          says: `Proposed plan ${proposed.value.id}: nothing is opened until a person nods.`,
+          ...proposed.value,
+        });
+      }
       const planned = openPlan(ctx.app, user, repo, items.value);
       if (!planned.ok) return bad(planned.error.error, planned.error.message);
       const { opened, ready, later, gate } = planned.value;
