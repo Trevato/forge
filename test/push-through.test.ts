@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -152,6 +152,12 @@ describe("push-through: the origin gets the last word", () => {
     expect((await git(["clone", "-q", remote, clone], work)).code).toBe(0);
   });
 
+  // The clone is shared, so each test starts on `main`: the topic test leaves
+  // HEAD on `topic`, and a later `push origin main` would then push nothing.
+  beforeEach(async () => {
+    expect((await git(["checkout", "-q", "-f", "main"], clone)).code).toBe(0);
+  });
+
   afterAll(async () => {
     fake.stop();
     servers.stop();
@@ -281,7 +287,7 @@ describe("push-through: the origin gets the last word", () => {
   });
 
   test("a new branch is created upstream, and a deletion is forwarded", async () => {
-    await git(["checkout", "-q", "-b", "topic"], clone);
+    await git(["checkout", "-q", "-B", "topic"], clone);
     await Bun.write(join(clone, "c.txt"), "three\n");
     await git(["add", "."], clone);
     await git(["commit", "-q", "-m", "topic work"], clone);
