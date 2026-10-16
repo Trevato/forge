@@ -64,6 +64,7 @@ import {
 import { edgeIdentity } from "./edge.ts";
 import { signupClosed } from "../actions/users.ts";
 import { liveResponse, readyResponse } from "./health.ts";
+import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
 import { noteRefusedInternal } from "../kernel/internal_refused.ts";
 import { pushCap, storageChanged, storageRefusal, storageRefusedText, storageSentence } from "../core/storage.ts";
@@ -2235,7 +2236,10 @@ async function answerGet(
   const url = publicUrl(request, app.config.url);
   if (url.pathname === "/healthz") {
     noteUsage(request, { pattern: "/healthz", role: "anon" });
-    return liveResponse(() => app.db.query("select 1").get(), app.log);
+    const live = liveResponse(() => app.db.query("select 1").get(), app.log);
+    // A smoke test learns which release answered, old pod or new.
+    live.headers.set("X-Forge-Version", running().version);
+    return live;
   }
   if (url.pathname === "/readyz") {
     noteUsage(request, { pattern: "/readyz", role: "anon" });

@@ -13,6 +13,7 @@ import {
   startDraining,
 } from "../src/http/health.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { running } from "../src/kernel/version.ts";
 import type { Log, LogFields } from "../src/kernel/log.ts";
 
 /** A log that keeps its lines, so a test can read what was said. */
@@ -100,6 +101,13 @@ describe("the served paths", () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("/healthz names the running version and keeps the security headers", async () => {
+    const res = await fetch(`${servers.url}/healthz`);
+    expect(res.headers.get("x-forge-version")).toBe(running().version);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toBeTruthy();
   });
 
   test("a slow database query (fake) does not turn /healthz into 503", async () => {
