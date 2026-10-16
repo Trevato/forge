@@ -109,7 +109,7 @@ describe("notify", () => {
     await notifier.settled();
   });
   afterAll(async () => {
-    notifier.stop();
+    await notifier.close();
     await rm(dataDir, { recursive: true, force: true });
   });
 

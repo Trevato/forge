@@ -579,8 +579,10 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
 }
 
 /** The last step of a drain: cut what is left and exit. */
-function close(): void {
+async function close(): Promise<void> {
   app.log.info("forge shutting down");
+  // Says Recovered if this process paged a drain: its exit is the end of it.
+  await notifier.close().catch(() => {});
   ssh?.stop();
   servers.stop();
   clearInterval(flagTimer);

@@ -16,7 +16,10 @@
 
 import type { Log } from "../kernel/log.ts";
 
-export const health = { draining: false };
+export const health: { draining: boolean; drainingSince: number | null } = {
+  draining: false,
+  drainingSince: null,
+};
 
 /** Whether the last liveness answer was a 503, so the log says so once. */
 let databaseDown = false;
@@ -28,6 +31,7 @@ let databaseDown = false;
 export function startDraining(log: Log, why: string, fields: Record<string, number> = {}): void {
   if (health.draining) return;
   health.draining = true;
+  health.drainingSince = Date.now();
   log.info("forge draining: /readyz answers 503 from now", { why, ...fields });
 }
 

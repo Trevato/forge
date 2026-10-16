@@ -32,6 +32,8 @@ import { landedLines } from "../core/watches.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { drillNeed, firstSeen, lastVerdict } from "../snapshot/verdict.ts";
+import { health } from "../http/health.ts";
+import { RECOVERED, drainIncident, nextPage } from "./incidents.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
 const KEY = "notify_url";
@@ -39,6 +41,7 @@ export const MAX_URL = 200;
 const HOURLY = 10;
 const HOUR_MS = 3_600_000;
 const CLOCK_MS = 10 * 60_000;
+const PAGE_MS = 60_000;
 const SEND_TIMEOUT_MS = 5_000;
 const BACKOFF_FIRST_MS = 60_000;
 const BACKOFF_MAX_MS = HOUR_MS;
@@ -184,7 +187,12 @@ export function mirrorLines(
 export interface Notifier {
   /** Resolves when the work queued so far is done. For tests and shutdown. */
   settled(): Promise<void>;
+  /** Looks at the forge's own health now, as the minute's clock does. */
+  tick(): Promise<void>;
+  /** Stops listening and the asks' clock; the drain pager keeps watching. */
   stop(): void;
+  /** Stops everything, the pager too: the last step before the process goes. */
+  close(): Promise<void>;
 }
 
 export interface NotifyOptions {
@@ -194,6 +202,8 @@ export interface NotifyOptions {
   now?: () => number;
   /** How often the clock wakes the notifier; ten minutes unless a test says. */
   clockMs?: number;
+  /** When this process began draining; the live health unless a test says. */
+  drainingSince?: () => number | null;
 }
 
 const oneLine = (s: string): string =>
@@ -208,6 +218,10 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
   const seen = new Map<string, Set<string>>();
   const sent = new Map<string, number[]>();
   const pause = new Map<string, { until: number; next: number }>();
+  /** Per admin: the drain last paged and not yet recovered, set only after delivery. */
+  const paged = new Map<string, string | undefined>();
+  /** Admins this process itself paged and has not yet told Recovered. */
+  const mine = new Set<string>();
   let queue: Promise<void> = Promise.resolve();
   let stopped = false;
 
@@ -219,6 +233,63 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       >("SELECT user_id FROM user_setting WHERE key = ?1 AND value <> ''")
       .all(KEY)
       .map((r) => r.user_id);
+
+  const drainStart = (): number | null =>
+    options.drainingSince
+      ? options.drainingSince()
+      : health.draining
+        ? health.drainingSince
+        : null;
+
+  /**
+   * The admin is paged once for a drain past five minutes and once when it
+   * ends. The key is recorded after delivery only, so a page the cap or the
+   * backoff held back is tried again next tick and its Recovered is kept.
+   */
+  async function page(userId: string, baseline: boolean): Promise<void> {
+    const user = getUserById(app.db, userId);
+    const url = notifyUrlOf(app.db, userId);
+    if (user === undefined || url === undefined || !user.isAdmin || user.kind !== "user") {
+      paged.delete(userId);
+      return;
+    }
+    const current = drainIncident(drainStart(), now());
+    if (baseline || !paged.has(userId)) {
+      // A restart has paged what it paged: start from what is true now.
+      paged.set(userId, current?.key);
+      return;
+    }
+    const next = nextPage(current, paged.get(userId));
+    if (next === undefined) return;
+    const t = now();
+    const recent = (sent.get(userId) ?? []).filter((s) => t - s < HOUR_MS);
+    sent.set(userId, recent);
+    if (recent.length >= HOURLY || t < (pause.get(userId)?.until ?? 0)) return;
+    recent.push(t);
+    let delivered = false;
+    try {
+      delivered = await send(url, `${oneLine(next.line)}\n${link}`, {
+        click: link,
+        title: "forge",
+      });
+    } catch {
+      delivered = false;
+    }
+    if (delivered) {
+      paged.set(userId, next.paged);
+      // Only a page this process delivered is this process's to recover.
+      if (next.paged === undefined) mine.delete(userId);
+      else mine.add(userId);
+      pause.delete(userId);
+      return;
+    }
+    const wait = Math.min(pause.get(userId)?.next ?? BACKOFF_FIRST_MS, BACKOFF_MAX_MS);
+    pause.set(userId, { until: now() + wait, next: wait * 2 });
+    app.log.warn("notify endpoint failed; pausing", {
+      host: notifyHost(url) ?? "",
+      pauseMs: wait,
+    });
+  }
 
   async function tell(userId: string, baseline: boolean): Promise<void> {
     const user = getUserById(app.db, userId);
@@ -300,7 +371,10 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
 
   // A forge that was down has told what it told: start from what asks now.
   queue = queue.then(async () => {
-    for (const id of people()) await tell(id, true).catch(() => undefined);
+    for (const id of people()) {
+      await tell(id, true).catch(() => undefined);
+      await page(id, true).catch(() => undefined);
+    }
   });
 
   // Eight days of silence is no event: the clock wakes the notifier too.
@@ -315,12 +389,45 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
   }, options.clockMs ?? CLOCK_MS);
   clock.unref();
 
+  // A drain is paged within a minute of its fifth, not within ten.
+  const pageAll = (): Promise<void> => {
+    queue = queue.then(async () => {
+      try {
+        for (const id of people()) await page(id, false);
+      } catch (error) {
+        app.log.error("notify failed", { error: String(error) });
+      }
+    });
+    return queue;
+  };
+  const pager = setInterval(() => void pageAll(), Math.min(options.clockMs ?? CLOCK_MS, PAGE_MS));
+  pager.unref();
+
   return {
     settled: () => queue,
+    tick: pageAll,
     stop() {
       stopped = true;
       clearInterval(clock);
       unsubscribe();
+    },
+    async close() {
+      this.stop();
+      clearInterval(pager);
+      await queue;
+      // The process that paged is the one whose exit ends the drain: it says
+      // Recovered itself, once, however the release was ordered. A process
+      // that dies without closing says nothing.
+      for (const userId of [...mine]) {
+        const url = notifyUrlOf(app.db, userId);
+        if (url === undefined) continue;
+        try {
+          if (await send(url, `${RECOVERED}\n${link}`, { click: link, title: "forge" }))
+            mine.delete(userId);
+        } catch {
+          // a dead endpoint costs nothing more at exit
+        }
+      }
     },
   };
 }
