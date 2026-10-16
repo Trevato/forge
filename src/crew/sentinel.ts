@@ -233,15 +233,24 @@ export function ledgerStreaks(db: Database, now: number): Finding[] {
       lookFor: "A retry decision that is not stop, or a green check after a stop.",
     });
   }
+  // A skip is a run the guard saved — nothing new to act on — not a run it
+  // refused; only the decisions that parked work are counted.
   const parks = new Map<string, number>();
-  for (const d of decisionsSince(db, "guard", new Date(now - DAY_MS).toISOString()))
-    parks.set(d.repoId, (parks.get(d.repoId) ?? 0) + 1);
+  const skips = new Map<string, number>();
+  for (const d of decisionsSince(db, "guard", new Date(now - DAY_MS).toISOString())) {
+    const into = d.answer === "skipped" ? skips : parks;
+    into.set(d.repoId, (into.get(d.repoId) ?? 0) + 1);
+  }
   for (const [repoId, n] of parks) {
     if (n < 20) continue;
+    const skipped = skips.get(repoId) ?? 0;
     out.push({
       key: `parks:${repoId}`,
       title: `The guard parked ${n} runs in ${repoSlug(db, repoId)} in a day`,
-      evidence: [`${n} \`guard\` decisions since ${new Date(now - DAY_MS).toISOString()}`],
+      evidence: [
+        `${n} \`guard\` decisions that parked a run since ${new Date(now - DAY_MS).toISOString()}`,
+        ...(skipped > 0 ? [`${skipped} skips of a run with nothing new are not counted`] : []),
+      ],
       pillar: "Throughput: the crew spends on work, not on being refused",
       lookFor: "Fewer than 20 guard decisions a day for the repository.",
     });

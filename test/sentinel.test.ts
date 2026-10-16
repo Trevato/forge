@@ -274,6 +274,27 @@ describe("the guard", () => {
     park();
     expect(parks()?.evidence[0]).toContain("20 `guard` decisions");
   });
+
+  test("a skip is a run saved, not a park: skips alone are never named", () => {
+    app.db.query("DELETE FROM decision WHERE kind = 'guard'").run();
+    const guard = (answer: string) =>
+      recordDecision(app.db, {
+        kind: "guard",
+        repoId: repo.id,
+        state: { reason: "feedback" },
+        answer,
+        p: 1,
+        by: "rule",
+        ms: 0,
+      });
+    const parks = () => findFaults(app.db, Date.now()).find((x) => x.key === `parks:${repo.id}`);
+    for (let n = 0; n < 30; n++) guard("skipped");
+    for (let n = 0; n < 19; n++) guard("capped");
+    expect(parks()).toBeUndefined();
+    guard("capped");
+    expect(parks()?.title).toContain("parked 20 runs");
+    expect(parks()?.evidence.join("\n")).toContain("30 skips");
+  });
 });
 
 describe("the log", () => {
