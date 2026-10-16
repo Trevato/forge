@@ -1053,6 +1053,10 @@ export interface RepoSettings {
   plansNeedNod?: boolean;
 }
 
+/** The repositories still awake: what Yours lists before anyone types a filter. */
+export const withoutArchived = (repos: readonly Repo[]): Repo[] =>
+  repos.filter((repo) => repo.archivedAt === null);
+
 /** The one line said wherever the crew declines to start a run here. */
 export const ARCHIVED_WHY = "This repository is archived; wake it to start a run.";
 

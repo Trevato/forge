@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { updateRepoSettings } from "../src/actions/repos.ts";
 import { createRepo } from "../src/actions/repos.ts";
+import { openIssue } from "../src/actions/issues.ts";
+import { setAssignee } from "../src/core/issues.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
@@ -107,6 +109,36 @@ describe("archive in the terminal", () => {
       expect(h.text()).not.toMatch(/\ba +(wake|archive)\b/);
       await h.press("a");
       expect(getRepo(forge.db, "alice", "beacon")?.archivedAt).not.toBeNull();
+    } finally {
+      h.app.stop();
+    }
+  });
+
+  test("the home leaves an archived repository out of Yours and On you", async () => {
+    const live = await createRepo(forge, alice, { name: "livelyrepo", visibility: "public" });
+    const old = await createRepo(forge, alice, { name: "oldrepo", visibility: "public" });
+    if (!live.ok || !old.ok) throw new Error("repo failed");
+    for (const [r, title] of [
+      [live.value, "livelytask"],
+      [old.value, "oldtask"],
+    ] as const) {
+      const issue = await openIssue(forge, alice, r, { title, body: "x" });
+      if (!issue.ok) throw new Error("issue failed");
+      setAssignee(forge.db, issue.value.id, alice.id);
+    }
+    await updateRepoSettings(forge, alice, old.value, { archived: true });
+    const h = boot({
+      sshUsername: "alice",
+      remoteAddress: "127.0.0.1",
+      fingerprint: "SHA256:test",
+      user: alice,
+    });
+    try {
+      await settleUntil(h.app, "livelyrepo");
+      const text = h.text();
+      expect(text).toContain("livelytask");
+      expect(text).not.toContain("alice/oldrepo");
+      expect(text).not.toContain("oldtask");
     } finally {
       h.app.stop();
     }

@@ -48,6 +48,7 @@ import {
   getRepo,
   getReposByIds,
   listReposVisibleTo,
+  withoutArchived,
   type Repo,
   getRepoById,
 } from "../../core/repos.ts";
@@ -201,12 +202,14 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     const orgs = f.user
       ? listOrgsForUser(f.db, f.user.id).map((o) => o.username)
       : [];
+    // Archived ones leave Yours as they leave the web home; the filter still finds them.
+    const live = withoutArchived(all);
     repos = f.user
-      ? all.filter(
+      ? live.filter(
           (repo) =>
             repo.ownerId === f.user?.id || orgs.includes(repo.ownerName),
         )
-      : all;
+      : live;
     ctx.invalidate();
   };
 
@@ -240,6 +243,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       const repo = byId.get(issue.repoId);
       if (
         repo === undefined ||
+        repo.archivedAt !== null ||
         !canRead(f.db, repo, f.user) ||
         !mayView(f.db, repo, issue, f.user)
       )
