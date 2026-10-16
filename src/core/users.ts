@@ -145,6 +145,15 @@ export interface CreateUserInput {
   reservedSelf?: string;
 }
 
+/**
+ * Undo an account made a moment ago whose sign-up did not finish (its key
+ * was refused). Only an account with no password, no repository and no
+ * other trace is removed; anything else stays.
+ */
+export function discardFreshUser(db: Database, userId: string): void {
+  db.query("DELETE FROM user WHERE id = ?1 AND password_hash = ''").run(userId);
+}
+
 export async function createUser(
   db: Database,
   input: CreateUserInput,

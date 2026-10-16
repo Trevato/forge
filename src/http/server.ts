@@ -5,6 +5,7 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
 import { accessPage } from "../web/pages/access.ts";
@@ -686,6 +687,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/passkeys/:id/delete", passkeyDelete);
   router.add("POST", "/signin/passkey/options", signinOptions);
   router.add("POST", "/signin/passkey", signinPasskey);
+  router.add("POST", "/signup/passkey/options", signupOptions);
+  router.add("POST", "/signup/passkey", signupPasskey);
   // The crew: a forge admin's section, hidden from everyone else.
   router.add("GET", "/settings/subscriptions", subscriptionsPage);
   router.add("POST", "/settings/subscriptions", subscriptionAdd);

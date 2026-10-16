@@ -15,7 +15,7 @@ import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo } from "../../actions/repos.ts";
-import { HUMAN_CHECK_MESSAGE, signUp } from "../../actions/users.ts";
+import { HUMAN_CHECK_MESSAGE, PASSKEY_REQUIRED_MESSAGE, signUp } from "../../actions/users.ts";
 import { listAssignedTo, type Issue } from "../../core/issues.ts";
 import { joinMany } from "../../core/pulls.ts";
 import { conflictsOf } from "../../crew/stale_asks.ts";
@@ -379,6 +379,10 @@ function authForm(
       </div>`,
   );
 
+  // No door makes a password-only account: sign-up is a name, an address and
+  // a passkey, made in the browser (`signup-passkey.ts`).
+  const byPasskey = kind === "signup" && ctx.app.config.passkeyOnlySignup === true;
+
   const body = html`${throughEdge}
     <form method="post" action="${action}">
       ${formField({
@@ -407,21 +411,32 @@ function authForm(
           ...(errors.email ? { error: errors.email } : {}),
         }),
       )}
-      ${formField({
-        label: "Password",
-        name: "password",
-        type: "password",
-        autocomplete: kind === "signin" ? "current-password" : "new-password",
-        required: true,
-        ...(kind === "signup"
-          ? { minlength: 10, hint: "At least 10 characters." }
-          : {}),
-        ...(errors.password ? { error: errors.password } : {}),
-      })}
+      ${when(!byPasskey, () =>
+        formField({
+          label: "Password",
+          name: "password",
+          type: "password",
+          autocomplete: kind === "signin" ? "current-password" : "new-password",
+          required: true,
+          ...(kind === "signup"
+            ? { minlength: 10, hint: "At least 10 characters." }
+            : {}),
+          ...(errors.password ? { error: errors.password } : {}),
+        }),
+      )}
       ${when(
         kind === "signup" ? siteKey(ctx) : undefined,
         (key) =>
           html`<div class="cf-turnstile mb" data-sitekey="${key}"></div>`,
+      )}
+      ${when(
+        byPasskey,
+        () => html`<p class="muted small mb">
+          A passkey signs you in with a fingerprint, face or device PIN; there
+          is no password to remember.
+        </p>
+        <p class="error-note mb" id="passkey-signup-note" role="alert">${errors.password ?? ""}</p>
+        <noscript><p class="muted small">Signing up needs JavaScript for the passkey.</p></noscript>`,
       )}
       ${when(
         errors.human,
@@ -436,9 +451,11 @@ function authForm(
           </p>`,
       )}
       <div class="form-actions">
-        ${btn(kind === "signin" ? "Sign in" : "Create account", {
-          variant: "primary",
-        })}
+        ${byPasskey
+          ? html`<button type="button" id="passkey-signup" class="btn" data-variant="primary">Create account with a passkey</button>`
+          : btn(kind === "signin" ? "Sign in" : "Create account", {
+              variant: "primary",
+            })}
         <span class="spacer"></span>
         ${kind === "signin"
           ? btn("Need an account? Sign up", {
@@ -497,6 +514,7 @@ export function signupPage(ctx: Ctx): Response {
     title: "Sign up",
     body: authForm(ctx, "signup"),
     turnstile: siteKey(ctx) !== undefined,
+    ...(ctx.app.config.passkeyOnlySignup === true ? { scriptJs: passkeyJs } : {}),
   });
 }
 
@@ -628,6 +646,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       email_taken: { email: "That email already has an account." },
       weak_password: { password: "Passwords need at least 10 characters." },
       human_check: { human: HUMAN_CHECK_MESSAGE },
+      passkey_required: { human: PASSKEY_REQUIRED_MESSAGE },
     }[created.error] ?? { username: "Something went wrong." };
     return page(
       {
@@ -635,6 +654,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
         title: "Sign up",
         body: authForm(ctx, "signup", { values: { username, email }, errors }),
         turnstile: siteKey(ctx) !== undefined,
+        ...(ctx.app.config.passkeyOnlySignup === true ? { scriptJs: passkeyJs } : {}),
       },
       422,
     );

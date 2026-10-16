@@ -121,6 +121,14 @@ export interface ForgeConfig {
    */
   sshPort?: number;
   /**
+   * Refuse every sign-up that would make an account with only a password:
+   * the web form, `POST /api/v1/users` and the terminal answer in words,
+   * and `signUpWithPasskey` is the one way in. `main.ts` sets it; the
+   * library default is off so a test can still seed accounts with a
+   * password.
+   */
+  passkeyOnlySignup?: boolean;
+  /**
    * The Turnstile secret (`FORGE_TURNSTILE_SECRET`). Set, signup refuses a
    * missing or bad token before it hashes a password or makes an account.
    * Unset, signup is open as before.

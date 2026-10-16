@@ -142,6 +142,7 @@ import {
   deleteSshKey,
   deleteToken,
   HUMAN_CHECK_MESSAGE,
+  PASSKEY_REQUIRED_MESSAGE,
   signUp,
   updateProfile,
 } from "../actions/users.ts";
@@ -1135,6 +1136,8 @@ export function apiRoutes(router: Router<Handler>): void {
       },
       { address: clientAddress(ctx.request) },
     );
+    if (!created.ok && created.error === "passkey_required")
+      return apiError("passkey_required", 422, PASSKEY_REQUIRED_MESSAGE);
     if (!created.ok && created.error === "human_check")
       return apiError("human_check", 422, HUMAN_CHECK_MESSAGE);
     if (!created.ok) return json({ error: created.error }, 422);

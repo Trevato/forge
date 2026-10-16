@@ -33,15 +33,15 @@ import { accountShell } from "./account.ts";
 import { safeNext, sessionCookie, signinAllowed } from "./site.ts";
 
 /** One-time challenges, one store per ceremony per forge. */
-const stores = new WeakMap<App, { add: ReturnType<typeof challenges>; signin: ReturnType<typeof challenges> }>();
-function store(app: App) {
+const stores = new WeakMap<App, { add: ReturnType<typeof challenges>; signin: ReturnType<typeof challenges>; signup: ReturnType<typeof challenges> }>();
+export function store(app: App) {
   let s = stores.get(app);
-  if (!s) stores.set(app, (s = { add: challenges(), signin: challenges() }));
+  if (!s) stores.set(app, (s = { add: challenges(), signin: challenges(), signup: challenges() }));
   return s;
 }
 
 /** What the browser must see as the relying party: the forge's public address. */
-function relying(ctx: Ctx) {
+export function relying(ctx: Ctx) {
   return { origin: ctx.url.origin, rpId: ctx.url.hostname };
 }
 
@@ -65,7 +65,7 @@ export function passkeysPage(ctx: Ctx): Response {
       a password. Add one per device; each can be removed on its own.
     </p>
     ${keys.length === 0
-      ? empty({ icon: "key", title: "No passkeys yet", note: "Add one to sign in without typing a password." })
+      ? empty({ icon: "key", title: "No passkeys yet", note: "Your password still works; add a passkey now, as every new account starts with one." })
       : card(
           html`<div class="table-scroll">
             <table class="table" id="passkeys">

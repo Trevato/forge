@@ -116,6 +116,7 @@ account; `src/auth/webauthn.ts` verifies, no dependency, `none` attestation).
 The sign-in page's "Sign in with a passkey" gives the same HttpOnly session a
 password does. The relying party is the address the browser used (or
 `FORGE_URL`), so a passkey does not follow a forge to another hostname.
+Sign-up is a username, an email address and a passkey (`/signup`, `src/web/pages/signup-passkey.ts`); the running server refuses a password-only sign-up on the form, `POST /api/v1/users` and the terminal (`passkeyOnlySignup`, set in `main.ts`). Accounts that already have a password still sign in. Two paths still make an account without a passkey and are the next step: the owner claim of a spawned forge (`web/pages/claim.ts`) and an admin's everyday account (`web/pages/everyday.ts`).
 
 Your SSH key is your identity. A key the forge knows signs you straight in; any
 other key browses public repos as a guest and can press `s` to sign in with a

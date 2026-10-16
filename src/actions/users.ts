@@ -5,6 +5,8 @@
 
 import { emailChanged, welcome } from "./verify.ts";
 import type { App } from "../app.ts";
+import type { Credential } from "../auth/webauthn.ts";
+import { addPasskey, findPasskey } from "../core/passkeys.ts";
 import {
   addKey,
   deleteKey,
@@ -23,6 +25,7 @@ import {
   changePassword as rehash,
   cleanDisplayName,
   createUser,
+  discardFreshUser,
   hasAnyUser,
   updateProfile as writeProfile,
   verifyPassword,
@@ -42,7 +45,16 @@ export interface SignUpInput {
   humanToken?: string;
 }
 
-export type SignUpError = CreateUserError | "human_check";
+export type SignUpError = CreateUserError | "human_check" | "passkey_required";
+
+/** What anyone is told at a door that still offers a password-only sign-up. */
+export const PASSKEY_REQUIRED_MESSAGE =
+  "New accounts sign up with a passkey and an email address. Open the sign-up page in a browser and choose \u201cCreate account with a passkey\u201d.";
+
+/** A plausible address: one @, no spaces. The link sent to it is the proof. */
+export function plausibleEmail(email: string): boolean {
+  return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
 
 /** What a person is told when the check fails. */
 export const HUMAN_CHECK_MESSAGE =
@@ -68,6 +80,11 @@ export async function signUp(
     door?: "terminal";
   } = {},
 ): Promise<Result<User, SignUpError>> {
+  // Password sign-in stays for the accounts that have a password. It can go
+  // when every such account has a passkey (Settings → Passkeys shows who is
+  // left) and recovery without a password exists (#1618): then delete this
+  // action's password path, `verifyPassword`'s doors and the password column.
+  if (app.config.passkeyOnlySignup === true) return err("passkey_required");
   const secret = app.config.turnstileSecret;
   const bootstrap = from.door === "terminal" && !hasAnyUser(app.db);
   if (secret !== undefined && !bootstrap) {
@@ -89,6 +106,57 @@ export async function signUp(
   });
   // The address is proven by the link it is sent (the first account by
   // being first); until then nothing it does may create or cost.
+  await welcome(app, created.value);
+  return created;
+}
+
+export interface PasskeySignUpInput {
+  username: string;
+  email: string;
+  /** The verified key (`verifyRegistration`) and what its owner calls the device. */
+  passkey: Credential;
+  passkeyName: string;
+  humanToken?: string;
+}
+
+/**
+ * Sign up with a passkey and an email address: the one way a new account is
+ * made. The account has no password. The key was verified by the caller
+ * against a challenge this forge issued. The account is made, then its key;
+ * a refused key takes the account back (the hash-free insert cannot yield to
+ * another request, so no transaction spans the two calls).
+ */
+export async function signUpWithPasskey(
+  app: App,
+  input: PasskeySignUpInput,
+  from: { address?: string | undefined } = {},
+): Promise<Result<User, SignUpError | "passkey_taken">> {
+  const secret = app.config.turnstileSecret;
+  if (secret !== undefined) {
+    const verify = app.config.verifyHuman ?? turnstileVerifier(secret);
+    if (!(await verify(input.humanToken ?? "", from.address)))
+      return err("human_check");
+  }
+  if (findPasskey(app.db, input.passkey.id)) return err("passkey_taken");
+  const created = await createUser(app.db, {
+    username: input.username,
+    email: input.email,
+    adminIfFirst: true,
+  });
+  if (!created.ok) return created;
+  const kept = addPasskey(app.db, created.value.id, input.passkeyName, input.passkey);
+  if (!kept.ok) {
+    discardFreshUser(app.db, created.value.id);
+    return err("passkey_taken");
+  }
+  app.bus.append({
+    kind: "user.created",
+    actorId: created.value.id,
+    payload: {
+      via: "signup",
+      ...(from.address === undefined ? {} : { address: from.address }),
+    },
+  });
   await welcome(app, created.value);
   return created;
 }

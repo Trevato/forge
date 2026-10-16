@@ -72,6 +72,30 @@ export const passkeyJs = /* js */ `
       });
     }).then(function () { location.reload(); });
   });
+  wire('passkey-signup', function () {
+    function val(n) { var el = doc.querySelector('[name=' + n + ']'); return el ? el.value : ''; }
+    var who = { username: val('username'), email: val('email') };
+    return post('/signup/passkey/options', who).then(function (o) {
+      return navigator.credentials.create({ publicKey: {
+        challenge: bytes(o.challenge),
+        rp: { id: o.rpId, name: o.rpName },
+        user: { id: bytes(o.user.id), name: o.user.name, displayName: o.user.displayName },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
+        attestation: 'none',
+        timeout: 120000
+      } }).then(function (cred) {
+        return post('/signup/passkey' + location.search, {
+          username: who.username,
+          email: who.email,
+          humanToken: val('cf-turnstile-response'),
+          challenge: o.challenge,
+          clientDataJSON: text(cred.response.clientDataJSON),
+          attestationObject: text(cred.response.attestationObject)
+        });
+      });
+    }).then(function (r) { location.href = r.next; });
+  });
   wire('passkey-signin', function () {
     return post('/signin/passkey/options').then(function (o) {
       return navigator.credentials.get({ publicKey: {
