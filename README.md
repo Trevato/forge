@@ -576,7 +576,10 @@ push (`src/crew/early.ts`). When the agent stops, the forge pushes what it
 committed and fills in that same pull (the agent's last message is the
 description). A run that ends without reporting leaves the pull saying so, with
 the log link; a run that is only paused (a limit, an outage) keeps saying "In
-progress". A body a person has edited is left alone, unless they kept its first
+progress". A run that declines after its pull opened closes that pull with the
+decline sentence and the run link, unless a person has commented on or reviewed
+it: then it stays open with a comment. An agent may withdraw (close) a pull it
+wrote itself, and nothing else. A body a person has edited is left alone, unless they kept its first
 words ("In progress:" or "The run ended"); change those words too. Leave
 feedback on the pull — a comment, a request for changes, a line comment — and
 the agent picks it up in the background, resuming its session. A failed check re-engages it too, a bounded number of

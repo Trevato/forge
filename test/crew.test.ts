@@ -33,7 +33,7 @@ import { queueAgentRun, type CrewHandle } from "../src/crew/dispatch.ts";
 import { abortAgentRun } from "../src/crew/running.ts";
 import { workdirFor } from "../src/crew/runner.ts";
 import { getAgentByName } from "../src/core/agents.ts";
-import { getIssue, listComments } from "../src/core/issues.ts";
+import { createIssue, getIssue, listComments } from "../src/core/issues.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { listPaths } from "../src/git/read.ts";
@@ -436,6 +436,96 @@ describe("the crew, with a stand-in Claude Code", () => {
     const run = await settled((r) => r.branch === branch);
     expect(run.summary).toMatch(new RegExp(`^updated pull #${early.number}\\b`));
     expect(mine()[0]!.body).toBe("My own words.\n\nCloses #1");
+  }, 60_000);
+
+  /** An agent's issue and ask, assigned, with the pull its first push opens. */
+  async function pullAfterPush(word: string, slug: string) {
+    rmSync(join(dataDir, "release"), { force: true });
+    const issue = openIssue(app, alice, repo, { title: `Weed ${slug}`, body: word });
+    if (!issue.ok) throw new Error("issue");
+    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+    const branch = `bot/${issue.value.number}-weed-${slug}`;
+    const mine = () =>
+      listPulls(app.db, repo.id, { state: "all", limit: 200 }).filter(
+        (p) => p.headBranch === branch,
+      );
+    const deadline = Date.now() + 20_000;
+    while (mine().length === 0 && Date.now() < deadline) await Bun.sleep(100);
+    expect(mine()[0]!.state).toBe("open");
+    writeFileSync(join(dataDir, "release"), "");
+    const run = await settled((r) => r.branch === branch);
+    return { run, pull: mine()[0]! };
+  }
+
+  test("a run that declines after its pull opened early closes that pull with the reason", async () => {
+    const { run, pull } = await pullAfterPush("PUSH-THEN-DECLINE", "declines");
+    expect(pull.state).toBe("closed");
+    expect(pull.body).not.toContain("In progress:");
+    expect(pull.body).toContain("Declined: this turned out to be out of scope.");
+    expect(pull.body).toContain(`/runs/${run.id}`);
+  }, 60_000);
+
+  test("a run that fails after its pull opened early has pushed work: the pull stays open for review", async () => {
+    const { run, pull } = await pullAfterPush("PUSH-THEN-FAIL", "fails");
+    expect(run.state).toBe("ok");
+    expect(pull.state).toBe("open");
+    expect(pull.body).not.toContain("In progress:");
+  }, 60_000);
+
+  test("an agent may close a pull it wrote and nothing else", () => {
+    const make = (authorId: string, kind: "issue" | "pull") => {
+      const made = createIssue(app.db, {
+        repoId: repo.id,
+        authorId,
+        title: `Withdraw ${kind}`,
+        kind,
+      });
+      if (!made.ok) throw new Error("issue");
+      return made.value;
+    };
+    const own = make(bot.id, "pull");
+    expect(setIssueState(app, bot, repo, own, "closed").ok).toBe(true);
+    const theirs = make(alice.id, "pull");
+    const refused = setIssueState(app, bot, repo, theirs, "closed");
+    expect(refused.ok).toBe(false);
+    expect(getIssue(app.db, repo.id, theirs.number)!.state).toBe("open");
+    const ownIssue = make(bot.id, "issue");
+    expect(setIssueState(app, bot, repo, ownIssue, "closed").ok).toBe(false);
+    expect(getIssue(app.db, repo.id, ownIssue.number)!.state).toBe("open");
+  });
+
+  test("a pull a person commented on stays open when the run declines, with a comment", async () => {
+    rmSync(join(dataDir, "release"), { force: true });
+    const issue = openIssue(app, alice, repo, {
+      title: "Weed PUSH-THEN-DECLINE twice",
+      body: "PUSH-THEN-DECLINE",
+    });
+    if (!issue.ok) throw new Error("issue");
+    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+    const branch = `bot/${issue.value.number}-weed-push-then-decline-twice`;
+    const mine = () =>
+      listPulls(app.db, repo.id, { state: "all", limit: 200 }).filter(
+        (p) => p.headBranch === branch,
+      );
+    const deadline = Date.now() + 20_000;
+    while (mine().length === 0 && Date.now() < deadline) await Bun.sleep(100);
+    const early = mine()[0]!;
+    expect(addComment(app, alice, repo, early, "I like where this goes.").ok).toBe(true);
+    writeFileSync(join(dataDir, "release"), "");
+    await settled((r) => r.branch === branch);
+    // The comment queued a follow-up run; let it end before the next test.
+    const idle = Date.now() + 20_000;
+    while (
+      listRuns(app.db, repo.id, { kind: "agent" }).some(
+        (r) => r.state === "queued" || r.state === "running",
+      ) &&
+      Date.now() < idle
+    )
+      await Bun.sleep(100);
+    expect(mine()[0]!.state).toBe("open");
+    const last = listComments(app.db, early.id).at(-1)!;
+    expect(last.body).toContain("this turned out to be out of scope.");
+    expect(last.body).toContain("Left open");
   }, 60_000);
 
   test("a run cancelled after its first push leaves the pull saying the run ended, with the log", async () => {

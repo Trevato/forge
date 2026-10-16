@@ -108,6 +108,20 @@ if grep -q "Carry on from where you stopped" "${promptFile}"; then
 if [ -f PAUSED.md ]; then kept=yes; else kept=no; fi
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"PAUSED.md present: '"$kept"'"}]}}'
 fi
+if grep -q PUSH-THEN-DECLINE "${promptFile}"; then
+echo "early work $(date +%s%N)" >> CREW.md
+git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
+n=0; while [ ! -f "${dataDir}/release" ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n+1)); done
+echo '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: this turned out to be out of scope.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-5","terminal_reason":"completed"}'
+exit 0
+fi
+if grep -q PUSH-THEN-FAIL "${promptFile}"; then
+echo "early work $(date +%s%N)" >> CREW.md
+git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
+n=0; while [ ! -f "${dataDir}/release" ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n+1)); done
+echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"the tool crashed","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-6","terminal_reason":"tool_error"}'
+exit 0
+fi
 if grep -q DECLINE-ME "${promptFile}"; then
 echo "half-done edit" > SHOULD-NOT-LAND.md
 echo '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: this is out of scope for me.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-2","terminal_reason":"completed"}'

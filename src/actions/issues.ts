@@ -386,8 +386,16 @@ export function setIssueState(
     user.value.kind !== "agent" &&
     user.value.id === issue.authorId &&
     !issue.sealed;
+  // The one close an agent has on a pull: its own proposal, withdrawn when
+  // its run declines or fails (`crew/early.ts`). A person can reopen it.
+  const withdrawsOwn =
+    state === "closed" &&
+    issue.kind === "pull" &&
+    user.value.kind === "agent" &&
+    user.value.id === issue.authorId;
   const mayModerate =
     ownSay ||
+    withdrawsOwn ||
     canWrite(app.db, repo, user.value) ||
     (state === "closed" &&
       handedToPlanner(app, repo, issue, user.value, closing));

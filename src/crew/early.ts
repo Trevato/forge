@@ -11,12 +11,15 @@
  */
 
 import { openPull } from "../actions/pulls.ts";
-import { editIssue } from "../actions/issues.ts";
+import { editIssue, addComment, setIssueState } from "../actions/issues.ts";
 import type { App } from "../app.ts";
 import type { Agent } from "../core/agents.ts";
 import type { Issue } from "../core/issues.ts";
+import { listComments } from "../core/issues.ts";
 import { listPulls, type Pull } from "../core/pulls.ts";
+import { listReviews } from "../core/reviews.ts";
 import type { Repo } from "../core/repos.ts";
+import { getUserById } from "../core/users.ts";
 import type { Run } from "../core/runs.ts";
 import { aheadCount, resolveOid } from "../git/merge.ts";
 
@@ -72,10 +75,31 @@ export interface EarlyInput {
   intervalMs?: number;
 }
 
+/**
+ * How a run ended without work to land. A run that errors after its pull
+ * opened has pushed work, which `landWork` lands for review: only a decline
+ * closes the pull.
+ */
+export type Ending = { kind: "declined"; sentence: string };
+
 export interface EarlyPull {
   stop: () => Promise<void>;
-  /** The run is over: a pull still saying "in progress" says it ended. */
-  settle: () => void;
+  /**
+   * The run is over: a pull still saying "in progress" says it ended. A
+   * decline or a failure closes the pull with the reason, unless a person
+   * has spoken on it: that one stays open with a comment.
+   */
+  settle: (ending?: Ending) => void;
+}
+
+/** A person has commented on or reviewed the pull: it is theirs to close. */
+function spokenOn(app: App, pull: Pull): boolean {
+  const person = (id: string): boolean =>
+    getUserById(app.db, id)?.kind === "user";
+  return (
+    listComments(app.db, pull.id).some((c) => person(c.authorId)) ||
+    listReviews(app.db, pull.id).some((r) => person(r.authorId))
+  );
 }
 
 /**
@@ -130,9 +154,30 @@ export function watchForPull(input: EarlyInput): EarlyPull {
   };
   schedule();
   return {
-    settle: () => {
+    settle: (ending) => {
       const pull = pullOfBranch(input.app, input.repo, input.fork, input.branch);
-      if (pull === undefined || !pull.body.startsWith(IN_PROGRESS)) return;
+      if (pull === undefined) return;
+      if (ending !== undefined) {
+        const said = `Declined: ${ending.sentence} Run log: ${log}`;
+        if (spokenOn(input.app, pull)) {
+          addComment(
+            input.app,
+            input.agent.user,
+            input.repo,
+            pull,
+            `${said} Left open: someone has spoken on this pull.`,
+          );
+          return;
+        }
+        if (isEarlyBody(pull.body))
+          editIssue(input.app, input.agent.user, input.repo, pull, {
+            body: `${said}\n\n${trailerFor(input.issue)}`,
+          });
+        else addComment(input.app, input.agent.user, input.repo, pull, said);
+        setIssueState(input.app, input.agent.user, input.repo, pull, "closed");
+        return;
+      }
+      if (!pull.body.startsWith(IN_PROGRESS)) return;
       editIssue(input.app, input.agent.user, input.repo, pull, {
         body: `${ENDED} Run log: ${log}\n\n${trailerFor(input.issue)}`,
       });

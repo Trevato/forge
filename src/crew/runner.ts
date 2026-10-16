@@ -25,6 +25,7 @@ import {
   trailerFor,
   watchForPull,
   type EarlyPull,
+  type Ending,
 } from "./early.ts";
 import { forkRepo, sealedForkFor } from "../actions/repos.ts";
 import { announceRun } from "../actions/runs.ts";
@@ -747,6 +748,7 @@ async function work(
   let early: EarlyPull | undefined;
   // A paused run resumes: its pull keeps saying "In progress".
   let pausing = false;
+  let ending: Ending | undefined;
   try {
     // The secrets this run declared, for this run only: opened now, held for
     // redaction from this moment, dropped in the `finally` below — a crash
@@ -1334,6 +1336,7 @@ async function work(
     if (declined) {
       const why = result.result.replace(/^\s*DECLINED:?\s*/i, "").trim();
       write(`declined: ${why.split("\n")[0] ?? ""}`);
+      ending = { kind: "declined", sentence: why.split("\n")[0] ?? "" };
       // Done on the base already, by a commit that is there: its own
       // outcome, not a park (`already.ts`). A claim without one is an
       // ordinary decline.
@@ -1418,7 +1421,7 @@ async function work(
     };
   } finally {
     await early?.stop();
-    if (!pausing) early?.settle();
+    if (!pausing) early?.settle(ending);
     grant?.release();
     deleteToken(app.db, agent.user.id, token.id);
     if (runTmp !== undefined) rmSync(runTmp, { recursive: true, force: true });
