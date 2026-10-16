@@ -13,6 +13,10 @@ type Error = "not_found" | "invalid_days";
 const admin = (actor: User | undefined): actor is User =>
   actor !== undefined && actor.isAdmin && actor.kind === "user";
 
+/** The link an admin hands over: the signup page with the token in it. */
+export const inviteLink = (origin: string, token: string): string =>
+  `${origin.replace(/\/$/, "")}/signup?invite=${token}`;
+
 export function mint(app: App, actor: User | undefined, days: unknown): Result<{ invite: Invite; token: string }, Error> {
   if (!admin(actor)) return err("not_found");
   const n = parseDays(days);

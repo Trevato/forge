@@ -63,6 +63,7 @@ import {
   cardFor,
 } from "../web/studio/cards.ts";
 import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
+import { inviteLink, mint as mintInviteLink } from "../actions/invites.ts";
 import { setRole } from "../actions/roles.ts";
 import { ABILITIES, roleOf, rowOf } from "../core/roles.ts";
 import { keepThought } from "../actions/thought.ts";
@@ -1014,6 +1015,27 @@ const TOOLS: readonly Tool[] = [
     run: (ctx, user) => {
       const role = roleOf(ctx.app.db, user);
       return good({ username: user.username, role, can: rowOf(role), abilities: ABILITIES });
+    },
+  },
+  {
+    name: "mint_invite",
+    description:
+      "Mint a single-use invite link for someone to sign up with: it expires in `days` (1 to 30, 7 by default) and the link, shown once, is in the answer. A forge admin who is a person, with an admin token, mints it. Each mint is recorded in the audit; the token is not.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        days: { type: "integer", minimum: 1, maximum: 30, description: "Days the link lasts; 7 by default." },
+      },
+    },
+    writes: true,
+    run(ctx, user, args) {
+      if (!mayBoards(user)) return bad("forbidden", "an invite is a forge admin's to mint");
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "an invite needs an admin token");
+      const made = mintInviteLink(ctx.app, user, args["days"]);
+      if (!made.ok) return bad("invalid", "days is a whole number from 1 to 30");
+      const origin = ctx.app.config.url ?? ctx.url.origin;
+      return good({ ...made.value.invite, link: inviteLink(origin, made.value.token) });
     },
   },
   {

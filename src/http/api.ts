@@ -341,7 +341,7 @@ import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Result } from "../kernel/result.ts";
-import { list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../actions/invites.ts";
+import { inviteLink, list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../actions/invites.ts";
 import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
 import { subscribe as subscribeJob, type MirrorJob } from "../origins/jobs.ts";
 import type { Origin } from "../origins/types.ts";
@@ -1578,7 +1578,7 @@ export function apiRoutes(router: Router<Handler>): void {
         : notFound();
     const origin = ctx.app.config.url ?? ctx.url.origin;
     return json(
-      { ...made.value.invite, token: made.value.token, link: `${origin.replace(/\/$/, "")}/signup?invite=${made.value.token}` },
+      { ...made.value.invite, token: made.value.token, link: inviteLink(origin, made.value.token) },
       201,
     );
   });

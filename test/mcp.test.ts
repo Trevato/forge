@@ -183,6 +183,7 @@ describe("the forge over MCP", () => {
       "audit",
       "model_grant",
       "whoami_can",
+      "mint_invite",
       "account_role",
       "model_ceiling",
       "outsiders",
@@ -944,6 +945,20 @@ describe("the forge over MCP", () => {
     const admin = (await tool(ro, "whoami_can")).value;
     expect(admin.role).toBe("admin");
     expect(admin.can.administer).toBe(true);
+  });
+
+  test("mint_invite: an admin person with an admin token gets a link; anyone else is refused", async () => {
+    const admin = createToken(app.db, alice.id, "admin", "admin").token;
+    expect((await tool(bobRw, "mint_invite")).error).toContain("forbidden");
+    expect((await tool(rw, "mint_invite")).error).toContain("admin token");
+    expect((await tool(admin, "mint_invite", { days: 0 })).error).toContain("invalid");
+    const made = (await tool(admin, "mint_invite", { days: 3 })).value;
+    expect(made.link).toMatch(/\/signup\?invite=[\w-]+$/);
+    const token = made.link.split("invite=")[1];
+    expect(made.token).toBeUndefined();
+    expect(token.length).toBeGreaterThan(20);
+    const listed = await fetch(`${base}/api/v1/admin/invites`, { headers: { authorization: `Bearer ${admin}` } });
+    expect(JSON.stringify(await listed.json())).toContain(made.id);
   });
 
   test("model_ceiling: dry by default, an admin person with an admin token sets and clears it", async () => {
