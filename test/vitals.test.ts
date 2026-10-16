@@ -104,6 +104,7 @@ test("a full queue shows in queue, and an old one in needs", async () => {
   // Errors and refused calls are process-wide: another file in the shard may have left some.
   app.signals.errors.clear();
   app.signals.refused.clear();
+  app.db.query("DELETE FROM run").run();
   const old = Date.now() - 3_600_000;
   for (let i = 0; i < 3; i++) createRun(app.db, { repoId, kind: "agent" });
   const v = vitals({ db: app.db, signals: app.signals, dataDir });
@@ -252,6 +253,10 @@ test("two forges in one process keep their own error and refusal signals", async
   const { ERROR_BURST } = await import("../src/kernel/vitals.ts");
   const { createLog } = await import("../src/kernel/log.ts");
   const { noteRefusedInternal } = await import("../src/kernel/internal_refused.ts");
+  // The forge's ledger takes every unowned logger's errors while it lives, so
+  // anything another file in this process logged is in `app`'s: start empty.
+  (await import("../src/kernel/log.ts")).clearErrors();
+  app.signals.refused.clear();
   const dirB = await mkdtemp(join(tmpdir(), "forge-vitals-b-"));
   const other = createApp({ dataDir: dirB, port: 0 });
   try {

@@ -152,7 +152,9 @@ describe("a suspension holds in every process serving the forge", () => {
     const { ended } = await streamOn(drainingServers, cookie);
     expect(await within(ended, SWEEP_MS * 6)).toBe(false);
   });
-  // Last: a transfer cut mid-request leaves its connection to be dropped.
+  // A transfer cut mid-request leaves its connection to be dropped, so it
+  // takes a connection of its own: a pooled one handed to the next test's
+  // fetch comes back 400, and the file would pass only with this test last.
   test("a git transfer under way on the draining process is cut", async () => {
     const token = createToken(fresh.db, sam.id, "t", "rw").token;
     // An upload-pack whose negotiation never finishes: git waits on it,
@@ -162,6 +164,7 @@ describe("a suspension holds in every process serving the forge", () => {
     });
     const transfer = fetch(`${drainingServers.url}/sam/lab.git/git-upload-pack`, {
       method: "POST",
+      keepalive: false,
       headers: {
         authorization: `Basic ${Buffer.from(`sam:${token}`).toString("base64")}`,
         "content-type": "application/x-git-upload-pack-request",
