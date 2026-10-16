@@ -213,6 +213,8 @@ export function checksLine(
   again: Html | "" = "",
   /** Files the pull conflicts in; a passing check is not a green mark then. */
   conflicts = 0,
+  /** The pull's base branch, to name what the check was merged with. */
+  baseBranch = "",
 ): Html {
   if (!isApp && !required && check.state === "none" && !waiting && again === "")
     return html``;
@@ -224,6 +226,13 @@ export function checksLine(
           ><a href="${base}/runs/${run.id}"
             >deploy ${run.commitOid.slice(0, 7)}</a
           >`;
+  const against =
+    run !== null && run.baseOid !== "" && baseBranch !== ""
+      ? html`<span class="where-sep" aria-hidden="true">·</span
+          ><span class="checked-against"
+            >checked against ${baseBranch} at ${run.baseOid.slice(0, 7)}</span
+          >`
+      : html``;
   const body =
     check.state === "ok" && conflicts > 0
       ? html`<span class="bad"
@@ -247,7 +256,7 @@ export function checksLine(
                 ? html`<span>${icon("lock")}${WAITING_WORDS}</span>`
                 : html`<span>${icon("clock")}No checks on this head yet</span>`;
   return html`<p class="checks-line">
-    ${body}${when(
+    ${body}${against}${when(
       tier !== "",
       () =>
         html`<span class="where-sep" aria-hidden="true">·</span
@@ -327,6 +336,7 @@ function mergeBox(
         </form>`
       : "",
     status.conflicts.length,
+    pull.baseBranch,
   );
   const reopen = html`<form method="post" action="${thread}/state">
     <input type="hidden" name="state" value="open" />

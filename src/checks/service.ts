@@ -33,6 +33,7 @@ import {
   listActive,
   noteRunProgress,
   overranBefore,
+  setRunBase,
   vanishedBefore,
   VANISHED_SUMMARY,
   requeueCheck,
@@ -589,6 +590,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       const merged = await mergeForCheck(bare, x.pull.baseBranch, tip, x.commitOid);
       if (!merged.ok) return { ok: false, error: merged.error };
       source = merged.commit;
+      if (x.runId !== undefined) setRunBase(app.db, x.runId, tip);
       mergeLine = merged.line;
     }
     const run = { id: x.id, commitOid: source };

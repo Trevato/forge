@@ -82,6 +82,8 @@ export interface Run {
   readonly node: string;
   /** A failed check's own detail, when its output was recognised; null otherwise. */
   readonly checkDetail: CheckDetail | null;
+  /** The base tip a pull's check merged the head with; empty when it merged nothing. */
+  readonly baseOid: string;
   /** The variant group this run belongs to; null for an ordinary run. */
   readonly variantGroup: string | null;
   readonly createdAt: string;
@@ -112,6 +114,7 @@ interface RunRow {
   sandbox_enforced: number | null;
   sandbox_note: string;
   check_detail: string;
+  base_oid: string;
   placement: string;
   node: string;
   variant_group: string | null;
@@ -145,6 +148,7 @@ const toRun = (r: RunRow): Run => ({
   placement: r.placement,
   node: r.node,
   checkDetail: r.check_detail ? (JSON.parse(r.check_detail) as CheckDetail) : null,
+  baseOid: r.base_oid,
   variantGroup: r.variant_group,
   createdAt: r.created_at,
   startedAt: r.started_at,
@@ -298,6 +302,11 @@ export function finishRun(
       outcome.checkDetail ? JSON.stringify(outcome.checkDetail) : "",
     ).changes;
   return changes > 0 ? getRun(db, runId) : undefined;
+}
+
+/** Record the base tip a pull's check merged with. */
+export function setRunBase(db: Database, runId: string, baseOid: string): void {
+  db.query(`UPDATE run SET base_oid = ?2 WHERE id = ?1`).run(runId, baseOid);
 }
 
 /** Cancel a run that has not finished. Returns the row, or undefined if it had. */

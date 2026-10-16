@@ -220,6 +220,8 @@ export function pullScreen(
   let preview: EnvStatus | undefined;
   /** The deploy of the *current* head — what the merge box calls the checks. */
   let check: CheckSummary = NO_CHECK;
+  /** The pull's base branch, to name what the check was merged with. */
+  let checkBase = "";
   /** Agent runs about this pull, newest first. */
   const crew = new RunList(f);
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
@@ -267,6 +269,7 @@ export function pullScreen(
       row === undefined
         ? NO_CHECK
         : checkSummary(f.db, row.id, row.headOid || (facts?.headOid ?? ""));
+    checkBase = row?.baseBranch ?? facts?.baseBranch ?? "";
     const runs =
       repo === undefined || row === undefined
         ? undefined
@@ -691,7 +694,7 @@ export function pullScreen(
       // The box is exactly as tall as what is in it: the state, then a row
       // for the verdicts when there are any, then a row for the checks when
       // a deploy has run or the gate demands one.
-      const checksLine = checksText(check, requireChecks, isApp);
+      const checksLine = checksText(check, requireChecks, isApp, checkBase);
       const boxH =
         3 +
         (standingText(standing(), requireReview) === "" ? 0 : 1) +
@@ -1127,6 +1130,7 @@ export function checksText(
   check: CheckSummary,
   required: boolean,
   isApp: boolean,
+  baseBranch = "",
 ): string {
   if (check.state === "none")
     return required
@@ -1135,7 +1139,13 @@ export function checksText(
         ? "checks: no deploy of this head yet"
         : "";
   const run = check.run;
-  const summary = run === null || run.summary === "" ? "" : ` · ${run.summary}`;
+  const summary = `${
+    run === null || run.summary === "" ? "" : ` · ${run.summary}`
+  }${
+    run !== null && run.baseOid !== "" && baseBranch !== ""
+      ? ` · checked against ${baseBranch} at ${run.baseOid.slice(0, 7)}`
+      : ""
+  }`;
   switch (check.state) {
     case "ok":
       return `checks: passed${summary}`;

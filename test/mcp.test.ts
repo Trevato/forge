@@ -10,11 +10,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
 import { listIssues } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
-import { createRun, listRuns } from "../src/core/runs.ts";
+import { createRun, listRuns, setRunBase } from "../src/core/runs.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { savePlacement } from "../src/core/placements.ts";
@@ -447,6 +448,33 @@ describe("the forge over MCP", () => {
     expect(
       (await tool(rw, "probe", { repo: "alice/nothing" })).error,
     ).toContain("not_found");
+  });
+
+  test("pull carries the base tip its check was merged with (#1810)", async () => {
+    const branched = await commitToBranch(app, alice, game, {
+      branch: "feat",
+      message: "a change",
+      files: [{ path: "b.txt", content: "b\n" }],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    const opened = await openPull(app, alice, game, {
+      title: "Change",
+      baseBranch: "main",
+      headBranch: "feat",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    expect((await tool(ro, "pull", { repo: "alice/game", number: pull.number })).value.check).toEqual({ state: "none", baseOid: "" });
+    const run = createRun(app.db, {
+      repoId: game.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: branched.value.commitOid,
+    });
+    setRunBase(app.db, run.id, "abc1234abc1234abc1234abc1234abc1234abc12");
+    const read = await tool(ro, "pull", { repo: "alice/game", number: pull.number });
+    expect(read.value.check.baseOid).toBe("abc1234abc1234abc1234abc1234abc1234abc12");
   });
 
   test("stop takes a run id from now, and refuses a stale or foreign one", async () => {

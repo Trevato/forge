@@ -98,7 +98,7 @@ import {
   type Repo,
 } from "../core/repos.ts";
 import { plannerDeclines } from "../crew/autonomy.ts";
-import { listActiveRuns } from "../core/runs.ts";
+import { checkSummary, listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { getUsersByIds, type User } from "../core/users.ts";
 import { openapi } from "../contract/openapi.ts";
@@ -462,7 +462,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "pull",
     description:
-      "Read a pull: its title, state and head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`). The same two fields as GET /api/v1/repos/:owner/:name/pulls/:number.",
+      "Read a pull: its title, state and head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), and `check`: the latest check's state and the base tip it was merged with (`baseOid`, empty when it merged nothing). `mergeable` and `conflicts` are the same fields as GET /api/v1/repos/:owner/:name/pulls/:number; `check` is the latest check's `state` and `run.baseOid` from GET …/pulls/:number/checks.",
     inputSchema: {
       type: "object",
       properties: {
@@ -486,12 +486,14 @@ const TOOLS: readonly Tool[] = [
         await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull),
         pull,
       );
+      const check = checkSummary(ctx.app.db, pull.id, pull.headOid);
       return good({
         number: pull.number,
         title: pull.title,
         state: pull.mergedAt !== null ? "merged" : pull.state,
         base: pull.baseBranch,
         head: pull.headBranch,
+        check: { state: check.state, baseOid: check.run?.baseOid ?? "" },
         ...(state ?? {}),
       });
     },

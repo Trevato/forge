@@ -26,6 +26,7 @@ import {
   cancelRun,
   cancelRunsForPull,
   CHECK_RESTART_LIMIT,
+  checkSummary,
   checksForHead,
   claimRun,
   createRun,
@@ -35,6 +36,8 @@ import {
   type Run,
 } from "../src/core/runs.ts";
 import type { Pull } from "../src/core/pulls.ts";
+import { checksText } from "../src/tui/screens/pull.ts";
+import { checksLine } from "../src/web/pages/pull.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { STALE_AFTER_MS } from "../src/runs/lease.ts";
 import { pullWord, servingHistory } from "../src/web/studio/words.ts";
@@ -382,6 +385,28 @@ describe("checks", () => {
     // `test -f` is not `bun test`: its output is not this shape, so nothing
     // is guessed at it.
     expect(failed.checkDetail).toBeNull();
+    // The check names the base tip it merged with; a default-branch push
+    // merged nothing and records none (#1810).
+    expect(failed.baseOid).toBe(gate.value.commitOid);
+    const onMain = await settled((r) => r.commitOid === gate.value.commitOid && r.issueId === null);
+    expect(onMain.baseOid).toBe("");
+    const seen = checkSummary(app.db, pull.id, branched.value.commitOid);
+    const line = checksLine(
+      "/alice/lib",
+      seen,
+      false,
+      true,
+      false,
+      "",
+      "",
+      0,
+      "main",
+    ).toString();
+    const said = `checked against main at ${gate.value.commitOid.slice(0, 7)}`;
+    expect(line).toContain(said);
+    // The terminal says the same words (#1810).
+    expect(checksText(seen, false, true, "main")).toContain(` · ${said}`);
+    expect(checksText(seen, false, true)).not.toContain("checked against");
     expect(
       checksForHead(app.db, pull.id, branched.value.commitOid)[0]?.id,
     ).toBe(failed.id);
