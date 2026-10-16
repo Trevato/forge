@@ -386,6 +386,20 @@ export const GATE: readonly string[] = [
   "test/roll.test.ts",
   "test/rehearsal.test.ts",
   "test/tui-tell.test.ts",
+  "test/tui-app.test.ts",
+  "test/tui-apps.test.ts",
+  "test/tui-editor.test.ts",
+  "test/tui-icons.test.ts",
+  "test/tui-input.test.ts",
+  "test/tui-local.test.ts",
+  "test/tui-mouse.test.ts",
+  "test/tui-render.test.ts",
+  "test/tui-screens.test.ts",
+  "test/tui-size.test.ts",
+  "test/tui-widgets.test.ts",
+  "test/tui-width.test.ts",
+  "test/tui-workflows.test.ts",
+  "test/tui-workspace.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
@@ -462,31 +476,14 @@ export const EXCLUDED: readonly Exclusion[] = [
     reason: "not yet admitted",
     issue: 261,
   },
-  { file: "test/tui-app.test.ts", reason: "not yet admitted", issue: 261 },
+  {
+    file: "test/tui-code.test.ts",
+    reason:
+      "red: the dashboard counts query runs 3 times and a bus event does not refresh it",
+    issue: 2082,
+  },
   { file: "test/tui-asked.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/tui-boards.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-apps.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-code.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-editor.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-icons.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-input.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-local.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-mouse.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-render.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-screens.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-size.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-widgets.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/tui-width.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/tui-workflows.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  {
-    file: "test/tui-workspace.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
 ];
 
 /**
