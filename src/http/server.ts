@@ -220,6 +220,7 @@ import {
   asksBulkSubmit,
   asksBulkUndo,
   asksDecide,
+  asksSetting,
   asksDecideUndo,
   asksListen,
   asksMute,
@@ -620,6 +621,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/asks/listen", asksListen);
   router.add("POST", "/asks/mute", asksMute);
   router.add("POST", "/asks/decide", asksDecide);
+  router.add("POST", "/asks/setting", asksSetting);
   router.add("POST", "/asks/decide/:id/undo", asksDecideUndo);
   // What people asked of the crew, and what became of it (core/asked.ts).
   router.add("GET", "/asked", askedPage);

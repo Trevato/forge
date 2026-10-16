@@ -16,6 +16,8 @@ import { createApp, type App as Forge } from "../src/app.ts";
 import { chipsOf, setChip } from "../src/core/feed_chips.ts";
 import { getIssue } from "../src/core/issues.ts";
 import { mutedRepos, recordInteraction } from "../src/core/interactions.ts";
+import { setCapacity, storedCapacity } from "../src/core/capacity.ts";
+import { hunt } from "../src/crew/sentinel.ts";
 import { markVerified } from "../src/core/verify.ts";
 import type { Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
@@ -220,6 +222,31 @@ describe("terminal On you: mutes and many in one move", () => {
     await h.press("S", "right", "enter");
     expect(state(r.value, 1)).toBe("open");
     expect(h.text()).toContain("1 refused (bob/bobs#1: not a change)");
+    h.stop();
+  });
+
+  test("a setting away from its default is Kept or Put back from the terminal", async () => {
+    setCapacity(forge.db, "cells.egress", "report", alice.id);
+    forge.db
+      .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'cells.egress'")
+      .run(new Date(Date.now() - 10 * 86_400_000).toISOString());
+    hunt(forge, "alice/lamp");
+    const h = await boot();
+    for (let i = 0; i < 20; i++) await h.press("j"); // the setting row is last, and the cursor stops there
+    expect(h.text()).toContain("setting cells.egress");
+    await h.press("B");
+    expect(storedCapacity(forge.db, "cells.egress")).toBeUndefined();
+    expect(h.text()).not.toContain("setting cells.egress");
+    setCapacity(forge.db, "cells.egress", "report", alice.id);
+    forge.db
+      .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'cells.egress'")
+      .run(new Date(Date.now() - 10 * 86_400_000).toISOString());
+    hunt(forge, "alice/lamp", Date.now() + 3 * 3_600_000);
+    await h.press("r");
+    for (let i = 0; i < 20; i++) await h.press("j"); // the setting row is last, and the cursor stops there
+    await h.press("K");
+    expect(storedCapacity(forge.db, "cells.egress")).toBe("report");
+    expect(h.text()).not.toContain("setting cells.egress");
     h.stop();
   });
 });

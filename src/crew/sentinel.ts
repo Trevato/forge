@@ -188,7 +188,7 @@ export function settingsAway(db: Database, now: number): Finding[] {
         `set by ${row.username ?? "unknown"} at ${row.updated_at}`,
       ],
       pillar: "Trust: a setting is a decision, not a leftover",
-      lookFor: `${key} is back at "${capacityDefault(key)}", or someone says why it stays: close this issue with a reason (or comment one; a bare close keeps it too) and the setting is kept, reported again only if its value changes.`,
+      lookFor: `${key} is back at "${capacityDefault(key)}", or a person says why it stays: the owner is asked in the inbox, Keep or Put back, and a person's close or comment keeps it, reported again only if its value changes. No agent is assigned; a run cannot change a setting.`,
       kept: { value, updatedAt: row.updated_at },
       fix: `Put it back: clear ${key} on the capacity page (it is recorded and reversible).`,
     });
@@ -576,16 +576,26 @@ function settingKept(db: Database, f: Finding, actorId: string, at: string): boo
   const decided = db
     .query<{ n: number }, [string, string, string]>(
       `SELECT COUNT(*) AS n FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
-        WHERE t.key = ?1 AND ((i.state = 'closed' AND i.closed_at >= ?2)
+        WHERE t.key = ?1 AND ((i.state = 'closed' AND i.closed_at >= ?2
+            AND (SELECT e.actor_id FROM event e
+                  WHERE e.kind = 'issue.closed' AND e.repo_id = i.repo_id
+                    AND json_extract(e.payload, '$.number') = i.number
+                  ORDER BY e.id DESC LIMIT 1)
+                IN (SELECT id FROM user WHERE is_agent = 0 AND kind = 'user'))
           OR EXISTS (SELECT 1 FROM comment c WHERE c.issue_id = i.id AND c.author_id <> ?3 AND c.created_at >= ?2
             AND EXISTS (SELECT 1 FROM user u WHERE u.id = c.author_id AND u.is_agent = 0 AND u.kind = 'user')))`,
     )
     .get(f.key, updatedAt, actorId);
   if (decided === null || decided.n === 0) return false;
+  recordKept(db, f.key, value, updatedAt, at);
+  return true;
+}
+
+/** Remember that a person kept `key` as it stands: this value, set at `updatedAt`. */
+export function recordKept(db: Database, key: string, value: string, updatedAt: string, at: string): void {
   db.query(
     "INSERT INTO sentinel_kept (key, value, updated_at, kept_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = ?3, kept_at = ?4",
-  ).run(f.key, value, updatedAt, at);
-  return true;
+  ).run(key, value, updatedAt, at);
 }
 
 /**
@@ -653,7 +663,7 @@ export function hunt(
           }
           issueId = made.value.id;
           filed++;
-          if (f.urgent) handOver(app, repo, actor, made.value);
+          if (f.urgent && f.kept === undefined) handOver(app, repo, actor, made.value);
         }
         app.db
           .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)")

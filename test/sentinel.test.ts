@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import keptIsAPersons from "../src/core/migrations/20261016120000-kept-is-a-person-s.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
@@ -386,6 +387,52 @@ describe("the signals inside the hour", () => {
     expect(withRepo(() => sentinelTick(app, lastHunt() + 20 * 60_000))).toBeNull();
   });
 
+  /** Close an issue the way the close path does: the state, and the event naming who. */
+  const closeBy = (issueId: string, actorId: string, at: string): void => {
+    app.db.query("UPDATE issue SET state = 'closed', closed_at = ?2 WHERE id = ?1").run(issueId, at);
+    const i = app.db.query<{ number: number; repo_id: string }, [string]>("SELECT number, repo_id FROM issue WHERE id = ?1").get(issueId)!;
+    app.bus.append({ kind: "issue.closed", repoId: i.repo_id, actorId, payload: { number: i.number } });
+  };
+  const planter = async (name: string): Promise<User> => {
+    const made = await createUser(app.db, { trusted: true, username: name, email: `${name}@forge.local`, password: "a-good-passphrase" });
+    if (!made.ok) throw new Error(made.error);
+    app.db.query("UPDATE user SET is_agent = 1 WHERE id = ?1").run(made.value.id);
+    return made.value;
+  };
+
+  test("an agent's close does not keep a setting, and the migration takes back one it did (#2029)", async () => {
+    const bot = await planter("plannerbot");
+    app.db.query("DELETE FROM issue WHERE title LIKE 'Sentinel: Setting %'").run();
+    app.db.query("DELETE FROM sentinel_kept").run();
+    const base = Date.now();
+    setCapacity(app.db, "checks.concurrency", "4", alice.id);
+    const setAt = new Date(base - 10 * 24 * HOUR).toISOString();
+    app.db.query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'").run(setAt);
+    hunt(app, "alice/forge", base);
+    const issue = app.db.query<{ id: string }, []>("SELECT id FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting checks.concurrency %'").get()!;
+    closeBy(issue.id, bot.id, new Date(base + 1000).toISOString());
+    expect(hunt(app, "alice/forge", base + 2 * HOUR).filed).toBe(1);
+    expect(app.db.query("SELECT COUNT(*) AS n FROM sentinel_kept").get()).toEqual({ n: 0 });
+    // a row an agent's close made before this rule, beside one a person's close made
+    const plant = (key: string): void => {
+      app.db.query("INSERT INTO sentinel_kept (key, value, updated_at, kept_at) VALUES (?1, '4', ?2, ?2)").run(key, setAt);
+    };
+    plant("setting:checks.concurrency");
+    plant("setting:cells.egress");
+    const mine = app.db.query<{ id: string }, []>("SELECT id FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting checks.concurrency %'").get()!;
+    closeBy(mine.id, bot.id, new Date(base + 3000).toISOString());
+    setCapacity(app.db, "cells.egress", "report", alice.id);
+    app.db.query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'cells.egress'").run(setAt);
+    hunt(app, "alice/forge", base + 4 * HOUR);
+    const egress = app.db.query<{ id: string }, []>("SELECT id FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting cells.egress %'").get()!;
+    closeBy(egress.id, alice.id, new Date(base + 5000).toISOString());
+    app.db.exec(keptIsAPersons);
+    const left = app.db.query<{ key: string }, []>("SELECT key FROM sentinel_kept").all().map((r) => r.key);
+    expect(left).toEqual(["setting:cells.egress"]);
+    setCapacity(app.db, "checks.concurrency", "1", alice.id);
+    setCapacity(app.db, "cells.egress", "enforce", alice.id);
+  });
+
   test("a setting kept on purpose is not refiled until its value changes (#2001)", () => {
     const setAt = (value: string, at: string): void => {
       setCapacity(app.db, "checks.concurrency", value, alice.id);
@@ -400,9 +447,9 @@ describe("the signals inside the hour", () => {
     setAt("4", new Date(base - 10 * 24 * HOUR).toISOString());
     expect(hunt(app, "alice/forge", base).filed).toBe(1);
     const first = app.db.query<{ id: string; body: string }, []>("SELECT id, body FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting checks.concurrency %'").get()!;
-    expect(first.body).toContain("close this issue with a reason");
+    expect(first.body).toContain("Keep or Put back");
     // closed with a reason: kept
-    app.db.query("UPDATE issue SET state = 'closed', closed_at = ?2 WHERE id = ?1").run(first.id, new Date(base).toISOString());
+    closeBy(first.id, alice.id, new Date(base).toISOString());
     const comments = listComments(app.db, first.id).length;
     expect(hunt(app, "alice/forge", base + 2 * HOUR).filed).toBe(0);
     expect(hunt(app, "alice/forge", base + 4 * HOUR).filed).toBe(0);

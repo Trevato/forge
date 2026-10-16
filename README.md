@@ -652,6 +652,18 @@ one-day rule. The rule is mechanical: any close counts, with or without a
 reason, so a bare close silences the setting until its value changes. Other
 findings (`held`, `ledger`, `red`) are filed anew when they return.
 
+A setting finding is the site admin's ask, never a crew run: it is not
+assigned, and the autonomy clock leaves it out of the crew's ready list (`crew/setting_finding.ts`). It shows on the home (kind `setting`,
+one card per key: the value, its default, who set it and when) and in the
+terminal's On you card, with two answers — **Keep** and **Put back**. On the
+web they are `POST /asks/setting` (`key`, `answer=keep|put`, same-origin only);
+in the terminal, `K` keeps and `B` puts back the row under the cursor. Only a
+signed-in site admin can answer, whatever they can write: anyone else, and any
+agent, gets `not_found`/`unauthorized` and nothing changes. Keep closes the
+finding and records the value in `sentinel_kept`; Put back goes through the
+capacity page's own door (`changeCapacity`: same validation, record, event and
+reversal) and then closes the finding. Only a person's close keeps a setting.
+
 - **Board:** a site admin's forge strip shows the open findings and the last
   hunt; a guest or member sees nothing.
 - **Terminal:** press `ctrl+k`, run **Sentinel** — the same line as a toast.

@@ -17,9 +17,13 @@ import { recordDecision, resolveOpen } from "../src/core/decisions.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { getUserByName } from "../src/core/users.ts";
+import { markVerified } from "../src/core/verify.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { decisionsFor } from "../src/web/studio/asks.ts";
+import { setCapacity, storedCapacity, capacityChanges, capacityDefault } from "../src/core/capacity.ts";
+import { listEvents } from "../src/core/events.ts";
+import { hunt } from "../src/crew/sentinel.ts";
+import { ASK_WORDS, decisionsFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -261,5 +265,111 @@ describe("the asks page", () => {
     ).find((d) => d.id === `look:${pull.id}`);
     expect(card?.says).toContain("its tests passed");
     expect(card?.short).toContain("its tests passed");
+  });
+  describe("a setting away from its default (#2029)", () => {
+    const away = (key: "checks.concurrency" | "cells.egress", value: string): void => {
+      setCapacity(app.db, key, value, getUserByName(app.db, "alice")!.id);
+      app.db
+        .query("UPDATE forge_setting SET updated_at = ?2 WHERE key = ?1")
+        .run(key, new Date(Date.now() - 10 * 86_400_000).toISOString());
+    };
+    const post = (cookie: string, fields: Record<string, string>, origin = servers.url) =>
+      fetch(`${servers.url}/asks/setting`, {
+        method: "POST",
+        headers: { cookie, origin },
+        body: new URLSearchParams(fields),
+        redirect: "manual",
+      });
+    const settingCards = (): string[] =>
+      decisionsFor({ app, auth: { user: getUserByName(app.db, "alice")! } } as unknown as Ctx, [repo])
+        .filter((d) => d.kind === "setting")
+        .map((d) => d.id);
+    const reset = (): void => {
+      app.db.query("DELETE FROM forge_setting").run();
+      app.db.query("DELETE FROM sentinel_kept").run();
+      app.db.query("DELETE FROM sentinel_finding").run();
+      app.db.query("DELETE FROM issue WHERE title LIKE 'Sentinel: %'").run();
+    };
+
+    test("one ask per key, with the key, value, default, who and when; the crew is not dispatched", async () => {
+      reset();
+      away("checks.concurrency", "4");
+      away("cells.egress", "report");
+      hunt(app, "alice/garden");
+      hunt(app, "alice/garden", Date.now() + 3 * 3_600_000);
+      expect(settingCards().sort()).toEqual(["setting:cells.egress", "setting:checks.concurrency"]);
+      const card = decisionsFor({ app, auth: { user: getUserByName(app.db, "alice")! } } as unknown as Ctx, [repo]).find(
+        (d) => d.id === "setting:checks.concurrency",
+      )!;
+      expect(card.says).toContain('"4"');
+      expect(card.says).toContain("alice");
+      expect(card.says).toContain("checks.concurrency");
+      expect(ASK_WORDS.setting.options).toEqual(["Keep", "Put back"]);
+      const page = await get(alice, "/");
+      expect(page).toContain("Keep");
+      expect(page).toContain("Put back");
+      // not for a person who cannot put it back
+      expect(await get(bob, "/")).not.toContain("Put back");
+      expect(listEvents(app.db, { kind: "issue.assigned" }).length).toBe(0);
+    });
+
+    test("Keep closes the finding as kept, and it stays quiet", async () => {
+      const res = await post(alice, { key: "checks.concurrency", answer: "keep" });
+      expect(res.status).toBe(303);
+      expect(settingCards()).toEqual(["setting:cells.egress"]);
+      expect(app.db.query("SELECT value FROM sentinel_kept WHERE key = 'setting:checks.concurrency'").get()).toEqual({ value: "4" });
+      expect(hunt(app, "alice/garden", Date.now() + 5 * 3_600_000).filed).toBe(0);
+      expect(storedCapacity(app.db, "checks.concurrency")).toBe("4");
+      const closed = app.db
+        .query<{ close_reason: string }, []>("SELECT close_reason FROM issue WHERE title LIKE 'Sentinel: Setting checks.concurrency %'")
+        .get();
+      expect(closed?.close_reason).toBe("dropped");
+    });
+
+    test("Put back clears it on the capacity path, recorded, and closes the finding", async () => {
+      const res = await post(alice, { key: "cells.egress", answer: "put" });
+      expect(res.status).toBe(303);
+      expect(storedCapacity(app.db, "cells.egress")).toBeUndefined();
+      expect(capacityChanges(app.db).some((c) => c.key === "cells.egress" && c.to === capacityDefault("cells.egress"))).toBe(true);
+      expect(listEvents(app.db, { kind: "capacity.changed" }).some((e) => e.payload["key"] === "cells.egress")).toBe(true);
+      expect(settingCards()).toEqual([]);
+    });
+
+    test("a stranger, a bad answer and a foreign origin change nothing", async () => {
+      reset();
+      away("cells.egress", "report");
+      hunt(app, "alice/garden");
+      await post(bob, { key: "cells.egress", answer: "put" });
+      await post(alice, { key: "cells.egress", answer: "burn" });
+      await post(alice, { key: "nope", answer: "put" });
+      await post(alice, { key: "cells.egress", answer: "put" }, "https://evil.example");
+      expect(storedCapacity(app.db, "cells.egress")).toBe("report");
+      expect(settingCards()).toEqual(["setting:cells.egress"]);
+      reset();
+    });
+
+    test("a writer of the finding's repo who is not an admin cannot Keep or Put back", async () => {
+      reset();
+      const carol = await signUp("carol");
+      const carolUser = getUserByName(app.db, "carol")!;
+      markVerified(app.db, carolUser.id, new Date().toISOString());
+      const plot = await createRepo(app, carolUser, { name: "plot", visibility: "public" });
+      if (!plot.ok) throw new Error(String(plot.error));
+      away("cells.egress", "report");
+      hunt(app, "carol/plot");
+      expect(app.db.query("SELECT COUNT(*) AS n FROM sentinel_finding WHERE key = 'setting:cells.egress'").get()).toEqual({ n: 1 });
+      await post(carol, { key: "cells.egress", answer: "keep" });
+      await post(carol, { key: "cells.egress", answer: "put" });
+      expect(app.db.query("SELECT COUNT(*) AS n FROM sentinel_kept").get()).toEqual({ n: 0 });
+      expect(storedCapacity(app.db, "cells.egress")).toBe("report");
+      const open = app.db
+        .query("SELECT COUNT(*) AS n FROM issue WHERE title LIKE 'Sentinel: Setting cells.egress %' AND state = 'open'")
+        .get();
+      expect(open).toEqual({ n: 1 });
+      // the admin still can
+      await post(alice, { key: "cells.egress", answer: "keep" });
+      expect(app.db.query("SELECT COUNT(*) AS n FROM sentinel_kept").get()).toEqual({ n: 1 });
+      reset();
+    });
   });
 });

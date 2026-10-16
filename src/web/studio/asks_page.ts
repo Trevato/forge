@@ -8,6 +8,7 @@
  */
 
 import type { WaitingFor } from "../../core/waiting_for.ts";
+import { answerSetting } from "../../actions/setting_ask.ts";
 import {
   applyAsksBulk,
   BULK_MAX,
@@ -169,6 +170,7 @@ const KIND_LABEL: Readonly<Record<Decision["kind"], string>> = {
   declined: "Declined",
   paused: "Paused",
   assigned: "Assigned",
+  setting: "Setting away",
 };
 
 /**
@@ -645,6 +647,22 @@ export async function asksDecide(ctx: Ctx): Promise<Response> {
   const done = await decideAsk(ctx.app, ctx.auth.user, field(form, "ask"));
   if (!done.ok) return await asksScreen(ctx, nothingDone(done.error.message));
   return redirect(`/?decided=${done.value.id}#asks-bulk-result`);
+}
+
+/** POST /asks/setting — the owner's Keep or Put back on a setting away from its default. */
+export async function asksSetting(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const done = answerSetting(ctx.app, ctx.auth.user, field(form, "key"), field(form, "answer"));
+  if (!done.ok) {
+    const why: Record<string, string> = {
+      forbidden: "only a forge admin puts a setting back",
+      invalid: "that answer was not Keep or Put back",
+    };
+    return await asksScreen(ctx, nothingDone(why[done.error] ?? "it no longer asks you"));
+  }
+  return redirect("/");
 }
 
 /** POST /asks/decide/:id/undo — put a set-aside card back on the board, within a day. */
