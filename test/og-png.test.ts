@@ -11,9 +11,9 @@ import { recordLook } from "../src/core/looks.ts";
 import { createUser } from "../src/core/users.ts";
 import { encodePng } from "../src/design/image/png.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { renderCard } from "../src/web/og/card.ts";
+import { renderCard, type CardInput, type Figure } from "../src/web/og/card.ts";
 import { cardKey, pngCache } from "../src/web/og/png-cache.ts";
-import { useLoader } from "../src/web/og/raster.ts";
+import { rasterizer, useLoader } from "../src/web/og/raster.ts";
 
 const PNG = [0x89, 0x50, 0x4e, 0x47];
 
@@ -299,5 +299,144 @@ describe("og cards with a look", () => {
     look("production", "desktop", "nobody", 5);
     rmSync(join(dataDir, "looks", appId, "production", "5-desktop.png"));
     expect(images(await text("/og/app/peek-app.svg"))).toBe(0);
+  });
+});
+
+describe("og cards render cold within budget", () => {
+  const BUDGET_MS = 300;
+
+  /** A small page-like picture as a data URI, the size `shotUri` leaves on a card. */
+  const uri = (hue: number): string => {
+    const w = 480;
+    const h = 300;
+    const rgba = new Uint8Array(w * h * 4);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const o = (y * w + x) * 4;
+        const block = ((x >> 4) + (y >> 4)) % 3;
+        rgba[o] = (hue + block * 60 + (y >> 2)) & 255;
+        rgba[o + 1] = 40 + block * 50;
+        rgba[o + 2] = 200 - (x >> 2);
+        rgba[o + 3] = 255;
+      }
+    return `data:image/png;base64,${Buffer.from(encodePng(w, h, rgba)).toString("base64")}`;
+  };
+
+  /** A map of a dozen issues in chains, as full as a real plan's thumbnail. */
+  const mapFigure = (): Figure => {
+    const words = ["done", "working", "ready", "blocked", "waiting"] as const;
+    const nodes = Array.from({ length: 12 }, (_, i) => ({
+      level: Math.floor(i / 3),
+      slot: i % 3,
+      word: words[i % words.length]!,
+      critical: i % 4 === 0,
+    }));
+    const edges = nodes.slice(3).map((_, k) => ({
+      from: k,
+      to: k + 3,
+      via: [],
+      critical: k % 4 === 0,
+      done: k % 5 === 0,
+    }));
+    return { kind: "graph", width: 3, levels: 4, nodes, edges };
+  };
+
+  const designs: Record<string, CardInput> = {
+    map: {
+      kind: "map",
+      title: "alice/shown",
+      lines: ["12 open issues", "Critical path: 4 issues, #1 → #10", "Next: #3 Draw the thing"],
+      stat: "3 ready · 2 working · 2 blocked · 5 done",
+      figure: mapFigure(),
+    },
+    audit: {
+      kind: "audit",
+      title: "Audit",
+      lines: ["alice/one disobeys its contract", "bob/two: unsound — no doors", "3 apps have no contract.json"],
+      figure: { kind: "score", held: 5, of: 8, caption: "apps hold", tone: "attn" },
+    },
+    app: {
+      kind: "app",
+      title: "alice/peek",
+      lines: ["A small app that shows what it is for"],
+      stat: "4 issues · 2 pulls",
+      images: [{ id: "production", src: uri(1) }],
+    },
+    pull: {
+      kind: "pull",
+      title: "Make the card render faster without drawing less",
+      lines: ["alice/peek", "by bob", "merged 2026-10-01 by alice"],
+      stat: "#7 · closed · merged · check green",
+      images: [
+        { id: "before", label: "before", src: uri(2) },
+        { id: "after", label: "after", src: uri(3) },
+      ],
+    },
+    run: {
+      kind: "run",
+      title: "Opened pull #7 for the slow card",
+      lines: ["alice/peek", "#12 Cards are slow"],
+      stat: "scout · landed a pull · $0.42",
+    },
+    repo: {
+      kind: "repo",
+      title: "alice/shown",
+      lines: ["A repository with a description of some length", "5 ready · 2 waiting"],
+      stat: "9 issues · 3 pulls",
+    },
+    issue: {
+      kind: "issue",
+      title: "Each og card design renders its PNG cold within 300 ms",
+      lines: ["alice/shown", "waits on #4"],
+      stat: "#12 · open",
+    },
+  };
+
+  const median = (xs: number[]) => xs.toSorted((a, b) => a - b)[Math.floor(xs.length / 2)]!;
+
+  for (const [name, input] of Object.entries(designs)) {
+    test(`${name}: median of three cold renders is within ${BUDGET_MS} ms`, async () => {
+      const raster = await rasterizer();
+      raster(renderCard(designs.repo!)); // warm the wasm and fonts; never time the first render
+      const times: number[] = [];
+      for (let i = 0; i < 3; i++) {
+        const dir = await mkdtemp(join(tmpdir(), "forge-ogcold-"));
+        try {
+          const cache = pngCache({ dir, raster: async () => raster, svg: renderCard });
+          const t0 = performance.now();
+          const png = await cache.get(input);
+          times.push(performance.now() - t0);
+          expect([...png.slice(0, 4)]).toEqual(PNG);
+        } finally {
+          await rm(dir, { recursive: true, force: true });
+        }
+      }
+      const m = median(times);
+      console.log(`og ${name}: ${m.toFixed(1)} ms cold (median of ${times.map((t) => t.toFixed(0)).join(", ")})`);
+      expect(m).toBeLessThanOrEqual(BUDGET_MS);
+    });
+  }
+
+  test("a second request for the same card is served from cache, not rasterized again", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-oghit-"));
+    try {
+      let rasterized = 0;
+      const real = await rasterizer();
+      const cache = pngCache({
+        dir,
+        svg: renderCard,
+        raster: async () => (svg) => (rasterized++, real(svg)),
+      });
+      for (const input of Object.values(designs)) {
+        const first = await cache.get(input);
+        const before = rasterized;
+        const second = await cache.get(input);
+        expect(rasterized).toBe(before);
+        expect(second).toEqual(first);
+      }
+      expect(rasterized).toBe(Object.keys(designs).length);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
