@@ -125,6 +125,7 @@ import {
   backupsPage,
   backupsTest,
 } from "../web/pages/backups.ts";
+import { releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
   cloudAdd,
   cloudAudit,
@@ -634,6 +635,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/-/confirm", confirmPage);
   router.add("GET", "/new", newRepoPage);
   router.add("GET", "/audit", auditPage);
+  router.add("GET", "/releases", releasesPage);
+  router.add("POST", "/releases/:sha/rollback", rollbackSubmit);
   router.add("GET", "/audit.csv", auditCsv);
   router.add("POST", "/audit/:owner/:name/probe", auditProbeSubmit);
   router.add("POST", "/new", newRepoSubmit);

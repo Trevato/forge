@@ -6,6 +6,7 @@
  * best of what is public (`actions/front.ts`).
  */
 
+import { liveLine } from "../pages/releases.ts";
 import {
   frontPage,
   frontPicksJson,
@@ -214,7 +215,7 @@ export async function studioHome(
     });
   }
   const body = html`<h1 class="sr-only">Home</h1>
-    ${firstSteps ?? everydayCard(ctx, user)} ${address}
+    ${firstSteps ?? everydayCard(ctx, user)} ${address} ${liveLine(ctx)}
     ${when(
       steps,
       () => html`<p class="small muted" id="lean-home">
