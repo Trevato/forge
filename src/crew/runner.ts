@@ -1058,44 +1058,66 @@ async function work(
       write("the session could not be resumed; starting fresh");
       result = await invoke(prompt, working, undefined);
     }
-    // A dropped connection says nothing about the work: ask again, in the
-    // same session when there is one, before the run is judged.
-    for (const seconds of NETWORK_RETRY_SECONDS) {
-      if (!isNetworkError(result) || signal.aborted) break;
-      write(`network error; retrying in ${seconds}s`);
-      await pause(seconds * 1000 * (options.networkRetryScale ?? 1), signal);
-      if (signal.aborted || Date.now() >= deadline) break;
-      const again = await invoke(
-        result.sessionId === "" ? prompt : "Continue where you stopped.",
-        working,
-        result.sessionId === "" ? undefined : result.sessionId,
-      );
-      result = {
-        ...again,
-        sessionId: again.sessionId || result.sessionId,
-        costUsd: result.costUsd + again.costUsd,
-        turns: result.turns + again.turns,
-      };
-    }
+    // A dropped connection says nothing about the work: ask again before the
+    // run is judged. `next` names the prompt and session for each new ask,
+    // given what the last one left; the main turn and the wrap-up share this.
+    const retrying = async (
+      first: typeof result,
+      budgetUsd: number,
+      what: string,
+      next: (last: typeof result) => {
+        prompt: string;
+        sessionId: string | undefined;
+      },
+    ): Promise<typeof result> => {
+      let current = first;
+      for (const seconds of NETWORK_RETRY_SECONDS) {
+        if (!isNetworkError(current) || signal.aborted) break;
+        write(`network error; retrying${what} in ${seconds}s`);
+        await pause(seconds * 1000 * (options.networkRetryScale ?? 1), signal);
+        if (signal.aborted || Date.now() >= deadline) break;
+        const ask = next(current);
+        const again = await invoke(ask.prompt, budgetUsd, ask.sessionId);
+        current = {
+          ...again,
+          sessionId: again.sessionId || current.sessionId,
+          costUsd: current.costUsd + again.costUsd,
+          turns: current.turns + again.turns,
+        };
+      }
+      return current;
+    };
     // Still unreachable after the retries: an outage, not a verdict. The run
     // pauses with its clone and session and asks again later, as it does for
     // a provider limit, rather than ending as "no changes pushed".
-    if (
-      isNetworkError(result) &&
-      !signal.aborted &&
-      Date.now() < deadline &&
-      run.attempt < MAX_PAUSES
-    ) {
+    const outagePause = (
+      last: typeof result,
+      costUsd: number,
+    ): Outcome | undefined => {
+      if (
+        !isNetworkError(last) ||
+        signal.aborted ||
+        Date.now() >= deadline ||
+        run.attempt >= MAX_PAUSES
+      )
+        return undefined;
       const at = new Date(Date.now() + NETWORK_PAUSE_MS);
       write(`network still down; paused, resumes ${whenText(at)}`);
       return {
         state: "paused",
         summary: `paused: network error, resumes ${whenText(at)}`,
         resumeAt: at.toISOString(),
-        sessionId: result.sessionId,
-        costUsd: result.costUsd,
+        sessionId: last.sessionId,
+        costUsd,
       };
-    }
+    };
+    result = await retrying(result, working, "", (last) =>
+      last.sessionId === ""
+        ? { prompt, sessionId: undefined }
+        : { prompt: "Continue where you stopped.", sessionId: last.sessionId },
+    );
+    const down = outagePause(result, result.costUsd);
+    if (down !== undefined) return down;
     noteRunProgress(app.db, run.id, {
       sessionId: result.sessionId,
       costUsd: result.costUsd,
@@ -1195,7 +1217,19 @@ async function work(
     ) {
       stoppedAt = result.costUsd;
       write(`claude: wrapping up with the reserve, $${reserve.toFixed(2)}`);
-      const wrapped = await invoke(wrapUpPrompt(), reserve, result.sessionId);
+      const wrapped = await retrying(
+        await invoke(wrapUpPrompt(), reserve, result.sessionId),
+        reserve,
+        " the wrap-up",
+        (last) => ({
+          prompt: wrapUpPrompt(),
+          sessionId: last.sessionId || result.sessionId,
+        }),
+      );
+      // Still unreachable after the retries: the work is not judged on a
+      // wrap-up that never got through; the run pauses as the main turn does.
+      const wrapDown = outagePause(wrapped, result.costUsd + wrapped.costUsd);
+      if (wrapDown !== undefined) return wrapDown;
       write(
         `claude: ${wrapped.reason}, ${wrapped.turns} turns, $${wrapped.costUsd.toFixed(2)}`,
       );

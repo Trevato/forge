@@ -67,6 +67,30 @@ if [ -f "${dataDir}/down" ] && grep -q "Continue where you stopped\\|NET-DOWN" "
 echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: Can'"'"'t reach the API server","total_cost_usd":0,"num_turns":0,"session_id":"fake-1","terminal_reason":"api_error"}'
 exit 0
 fi
+if grep -q "You are out of budget" "${promptFile}"; then
+if [ -f "${dataDir}/wrapdown" ]; then
+echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: Can'"'"'t reach the API server","total_cost_usd":0,"num_turns":0,"session_id":"fake-1","terminal_reason":"api_error"}'
+exit 0
+fi
+if [ ! -f "${dataDir}/wrapflaked" ]; then
+touch "${dataDir}/wrapflaked"
+echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: Can'"'"'t reach the API server — check your internet or DNS (EAI_AGAIN)","total_cost_usd":0,"num_turns":0,"session_id":"fake-1","terminal_reason":"api_error"}'
+else
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrapped up after the outage.","total_cost_usd":0.01,"num_turns":1,"session_id":"fake-1","terminal_reason":"completed"}'
+fi
+exit 0
+fi
+if grep -q WRAP-DOWN "${promptFile}"; then
+touch "${dataDir}/wrapdown"
+echo '{"type":"result","subtype":"error_max_budget_usd","is_error":true,"result":"","total_cost_usd":0.5,"num_turns":9,"session_id":"fake-1","terminal_reason":"budget_exhausted"}'
+exit 0
+fi
+if grep -q WRAP-FLAKE "${promptFile}"; then
+echo "work by the crew $(date +%s%N)" >> CREW.md
+git add -A && git commit -qm "crew work" && git push -q -u origin HEAD
+echo '{"type":"result","subtype":"error_max_budget_usd","is_error":true,"result":"","total_cost_usd":0.5,"num_turns":9,"session_id":"fake-1","terminal_reason":"budget_exhausted"}'
+exit 0
+fi
 if grep -q NET-FLAKE "${promptFile}" && [ ! -f "${dataDir}/flaked" ]; then
 touch "${dataDir}/flaked"
 echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: Can'"'"'t reach the API server — check your internet or DNS (EAI_AGAIN)","total_cost_usd":0,"num_turns":0,"session_id":"fake-1","terminal_reason":"api_error"}'

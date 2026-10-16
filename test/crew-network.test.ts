@@ -3,7 +3,7 @@
  * not judged (#1613).
  */
 
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { App } from "../src/app.ts";
@@ -82,6 +82,42 @@ describe("the crew, with a stand-in Claude Code: network errors", () => {
     );
     expect(run.state).toBe("ok");
     expect(run.summary).toContain("opened pull");
+  }, 60_000);
+
+  test("a wrap-up that lost its connection asks again and lands the work", async () => {
+    const issue = openIssue(app, alice, repo, {
+      title: "Flaky wrap-up",
+      body: "WRAP-FLAKE",
+    });
+    if (!issue.ok) throw new Error(String(issue.error));
+    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+    const run = await agentRunSettled(
+      app,
+      repo,
+      (r) => r.issueId === issue.value.id,
+    );
+    expect(run.summary).toContain("opened pull");
+    expect(run.summary).not.toContain("network");
+    expect(existsSync(join(standIn.dataDir, "wrapflaked"))).toBe(true);
+  }, 60_000);
+
+  test("a wrap-up that never reconnects pauses the run instead of judging it", async () => {
+    const issue = openIssue(app, alice, repo, {
+      title: "Wrap-up down",
+      body: "WRAP-DOWN",
+    });
+    if (!issue.ok) throw new Error(String(issue.error));
+    expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
+    const until = Date.now() + 30_000;
+    let found: Run | undefined;
+    while (Date.now() < until && !found) {
+      found = listRuns(app.db, repo.id, { kind: "agent" }).find(
+        (r) => r.issueId === issue.value.id && r.state === "cancelled",
+      );
+      if (!found) await Bun.sleep(50);
+    }
+    expect(found?.summary).toStartWith("paused: network error");
+    rmSync(join(standIn.dataDir, "wrapdown"));
   }, 60_000);
 
   test("an outage that outlasts the retries pauses the run; after MAX_PAUSES it ends", async () => {
