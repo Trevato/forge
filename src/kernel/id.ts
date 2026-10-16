@@ -51,6 +51,16 @@ export function id(now: number = Date.now()): string {
   return out;
 }
 
+/**
+ * The least id `id()` hands out at `ms`: every id made at or after it sorts
+ * at or above this, so a time window over an id-indexed table is a range.
+ */
+export function idFloor(ms: number): string {
+  let out = "";
+  for (let shift = 45; shift >= 0; shift -= 5) out += alphabet[Math.floor(Math.max(0, ms) / 2 ** shift) % 32];
+  return out + "0".repeat(16);
+}
+
 /** 256 bits of entropy, base64url, ~43 chars. For tokens and session ids. */
 export function secret(): string {
   const bytes = new Uint8Array(32);

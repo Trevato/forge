@@ -28,6 +28,7 @@ import { newestDrills } from "../core/domain_drills.ts";
 import { DOMAINS } from "./domains.ts";
 import { domainDrillNeeds } from "./domain_drill.ts";
 import { heldChecks, redSentence } from "../checks/red_main.ts";
+import { flakeHref, sharedCause, sharedSentence, sharedTests } from "../checks/shared_red.ts";
 
 /** Free disk under this share of the volume is something to say. */
 export const DISK_FREE_MIN = 0.1;
@@ -49,7 +50,7 @@ export interface EnvCount {
 /**
  * One cause of the forge being off: the `needs` sentence, a `cause` key that
  * holds for as long as its condition does (`disk`, `errors`, `internal`,
- * `queue:<kind>`, `stuck:<runId>`, `red:<repoId>`), when it began by the forge's own evidence
+ * `queue:<kind>`, `stuck:<runId>`, `red:<repoId>`, `shared:<repoId>:<test>`), when it began by the forge's own evidence
  * (the oldest evidence the forge holds, else the first time this process saw
  * it, held until the cause clears; `at` is never the answer to a repeat
  * call), and where to look.
@@ -362,6 +363,10 @@ export function vitals(input: VitalsInput): Vitals {
       red.since,
       `/${red.repo}/runs/${red.runId}`,
     );
+
+  // A test failing on many pulls in the hour is one card, not a park per pull.
+  for (const shared of sharedTests(input.db, now))
+    need(sharedCause(shared), sharedSentence(shared), shared.since, flakeHref(input.db, shared));
 
   // A red restore drill, or none in eight days, is a card until a drill passes.
   const drill = lastVerdict(input.dataDir);

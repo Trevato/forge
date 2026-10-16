@@ -84,6 +84,7 @@ import {
 } from "./autonomy.ts";
 import { checksFor } from "../checks/service.ts";
 import { redMain, sharedWithMain } from "../checks/red_main.ts";
+import { sharedWithPulls } from "../checks/shared_red.ts";
 import { certain } from "./decide.ts";
 import { readRunLog } from "../runs/log.ts";
 import { whenText } from "./limits.ts";
@@ -588,8 +589,9 @@ function route(app: App, event: ForgeEvent): void {
       // is the agent's to look at.
       const agent = agentFor(app, issue);
       if (!agent) return;
-      // A red that main shares is not the pull's: no rework, no park, no
-      // strike; it waits and is checked again when main is green (#1971).
+      // A red that main shares (#1971), or that three pulls share within
+      // the hour (#2266), is not the pull's: no rework, no park, no
+      // strike; it waits and is checked again when main is green.
       if (waitOnMain(app, repo, issue, event.payload)) return;
       // Bounded: after a few failed checks in a row the agent stops and a
       // person must speak (docs/APPS.md, rule 7).
@@ -674,13 +676,14 @@ function route(app: App, event: ForgeEvent): void {
 }
 
 /**
- * Pulls whose check failed only on what main fails, per repository, with
+ * Pulls whose check failed only on what main fails, or on what the lane
+ * fails across pulls (`checks/shared_red.ts`), per repository, with
  * the head that was checked. Memory only: a restart forgets them, and the
  * pull's next push or a person's ask checks it again.
  */
 const waitingOnMain = new Map<string, Map<string, { env: string; commitOid: string }>>();
 
-/** Whether a failed check is main's red, shared: if so, the pull is noted as waiting. */
+/** Whether a failed check is main's red or the lane's, shared: if so, the pull is noted as waiting. */
 function waitOnMain(
   app: App,
   repo: Repo,
@@ -689,15 +692,20 @@ function waitOnMain(
 ): boolean {
   const { runId, commitOid, env } = payload;
   if (payload["kind"] !== "check" || typeof runId !== "string") return false;
-  if (!sharedWithMain(redMain(app.db, repo.id), getRun(app.db, runId))) return false;
+  const run = getRun(app.db, runId);
+  const main = sharedWithMain(redMain(app.db, repo.id), run);
+  if (!main && !sharedWithPulls(app.db, run)) return false;
   if (typeof commitOid === "string" && typeof env === "string") {
     const waiting = waitingOnMain.get(repo.id) ?? new Map();
     waiting.set(issue.id, { env, commitOid });
     waitingOnMain.set(repo.id, waiting);
   }
-  log.info("check failed only what main fails; waiting for main to be green", {
-    issue: issue.number,
-  });
+  log.info(
+    main
+      ? "check failed only what main fails; waiting for main to be green"
+      : "check failed only what other pulls fail this hour; waiting for main to be green",
+    { issue: issue.number },
+  );
   return true;
 }
 

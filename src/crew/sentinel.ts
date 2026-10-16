@@ -407,10 +407,12 @@ export function degradedCauses(db: Database, now: number): Finding[] {
 
 /**
  * The causes that are a budget breached: the lane, a silent run, a run
- * killed twice, a red main holding its pulls' checks. The last gets one fix
- * issue (#1971), and `crew/red_fix.ts` keeps other builders off its test.
+ * killed twice, a red main holding its pulls' checks, a test red on many
+ * pulls at once. A red main gets one fix issue (#1971), and
+ * `crew/red_fix.ts` keeps other builders off its test; a shared test gets
+ * one flake issue (#2266), which its vitals card links to.
  */
-const BREACH_CAUSE = /^(queue:check|stuck:|budget:|red:)/;
+const BREACH_CAUSE = /^(queue:check|stuck:|budget:|red:|shared:)/;
 
 /**
  * Each budget breach that holds right now, however briefly: the crew hears
@@ -435,7 +437,9 @@ export function budgetBreaches(db: Database, now: number): Finding[] {
       lookFor: `\`${s.cause}\` is gone from the degraded list and the cause is fixed, not waited out.`,
       fix: s.cause.startsWith("red:")
         ? "Fix the failing test on main in one pull. This is the only issue for it: pulls red on the same test wait for main, and no other builder is handed it while this is open."
-        : "Diagnose the cause from the evidence and hand the mechanical fix to a builder as its own issue.",
+        : s.cause.startsWith("shared:")
+          ? "Make the named test's verdict depend only on the code under test, not on the check machine's load, disk or clock, in one pull. Pulls red on it alone wait, unparked, for main's next green check."
+          : "Diagnose the cause from the evidence and hand the mechanical fix to a builder as its own issue.",
       urgent: true,
     });
   }

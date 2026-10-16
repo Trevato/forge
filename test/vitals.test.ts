@@ -156,8 +156,8 @@ test("the number of queries does not grow with runs", () => {
     if (i % 2) app.db.query("UPDATE run SET state='running' WHERE id=?1").run(r.id);
   }
   expect(count()).toBe(before);
-  // The queue, the running runs, the runs killed twice for their budget, the lane's depth and finished checks, and the red mains holding pulls' checks. and the newest drill of every domain.
-  expect(before).toBe(7);
+  // The queue, the running runs, the runs killed twice for their budget, the lane's depth and finished checks, the red mains holding pulls' checks, the tests red on many pulls, and the newest drill of every domain.
+  expect(before).toBe(8);
 });
 
 test("errors are counted, bounded, redacted, and a burst is said", async () => {
