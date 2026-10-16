@@ -142,7 +142,11 @@ function capFrom(db: Database, repo: Repo, issue: Issue, now: Date): string {
  * who may direct the crew last spoke on it. A run a restart or the
  * provider cut short, a resumed run and a skipped one are not new starts;
  * nor is a reviewer's run on a pull, which only answers a push the counted
- * runs made and is bounded by the hand-over (`HANDOVER_ROUNDS`).
+ * runs made and is bounded by the hand-over (`HANDOVER_ROUNDS`). Nor is a
+ * run bringing a pull up to a main that moved, or answering its red check:
+ * neither is the agent going round, and both already have their own bound
+ * (`CHECK_FAILED_LIMIT` over `automaticRunsSince`), which parks or releases
+ * the pull itself — counted here too, they parked pulls that were working.
  */
 export function capReached(
   db: Database,
@@ -156,7 +160,7 @@ export function capReached(
       `SELECT COUNT(*) AS n FROM run
         WHERE issue_id = ?1 AND kind = 'agent' AND created_at > ?2
           AND attempt = 0
-          AND reason != 'review'
+          AND reason NOT IN ('review', 'conflict', 'check_failed')
           AND summary NOT LIKE 'interrupted: %'
           AND summary NOT LIKE 'skipped: %'`,
     )

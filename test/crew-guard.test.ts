@@ -342,6 +342,32 @@ describe("an issue cannot loop", () => {
     ).toBe("queued");
   });
 
+  test("bringing a pull up to main and answering its red check are bounded on their own, not by the cap", () => {
+    const issue = held("Quieter toasts");
+    for (let n = 0; n < ISSUE_RUN_CAP - 1; n++) {
+      ran(issue, undefined, "ok", "feedback");
+      ran(issue, undefined, "ok", "conflict");
+      ran(issue, undefined, "ok", "check_failed");
+    }
+    const before = guards("capped");
+    expect(
+      queueAgentRun(app, fresh(), issue, bot, "assigned", alice.id)?.state,
+    ).toBe("queued");
+    expect(guards("capped")).toBe(before);
+  });
+
+  test("the agent's own starts still reach the cap", () => {
+    const issue = held("Louder toasts");
+    ran(issue);
+    for (let n = 1; n < ISSUE_RUN_CAP; n++) {
+      ran(issue, undefined, "ok", "feedback");
+      ran(issue, undefined, "ok", "conflict");
+    }
+    expect(
+      queueAgentRun(app, fresh(), issue, bot, "assigned", alice.id),
+    ).toBeUndefined();
+  });
+
   test("the cap is a setting", () => {
     const issue = held("Softer shadow");
     ran(issue);
