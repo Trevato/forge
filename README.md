@@ -212,6 +212,16 @@ taking a release is not done here. This forge publishes its own
 `/releases.json` (the version names, each linking to that document), so any
 forge can be a parent. The terminal shows the count, not the release names.
 
+## Archive
+
+An admin puts a repository away from **Settings → Archive**, with
+`PATCH /api/v1/repos/:owner/:name {"archived":true|false}` (admins only; anyone
+else gets 403), or in the terminal with `a` on the About card (`I`). The
+repository page and the card then say when it was archived, and an admin gets
+a Wake button or the same key to undo it. Archiving twice keeps the first date.
+It does not yet block anything: clone, push and links keep working, and the
+repository stays in every list.
+
 ## Health
 
 `GET /api/v1/health` (and the MCP `health` tool) answer a site admin with

@@ -339,6 +339,7 @@ import {
   settingsPage,
   settingsUpdate,
   waveCut,
+  archiveSubmit,
   webhookCreate,
   webhookDelete,
 } from "../web/pages/settings.ts";
@@ -1178,6 +1179,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/settings", settingsPage);
   router.add("POST", "/:owner/:name/settings", settingsUpdate);
   router.add("POST", "/:owner/:name/settings/wave", waveCut);
+  router.add("POST", "/:owner/:name/settings/archive", archiveSubmit);
   router.add("GET", "/:owner/:name/settings/app", appSettingsPage);
   router.add("POST", "/:owner/:name/settings/app", appSettingsUpdate);
   router.add("POST", "/:owner/:name/settings/app/disable", appDisable);

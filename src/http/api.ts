@@ -1817,6 +1817,11 @@ export function apiRoutes(router: Router<Handler>): void {
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
     const input = await body(ctx.request);
+    // The caller can already read this repository, so saying no is no leak.
+    if (input.archived !== undefined && !canAdmin(ctx.app.db, repo, ctx.auth.user))
+      return apiError("forbidden", 403, "only an admin archives or wakes");
+    if (input.archived !== undefined && typeof input.archived !== "boolean")
+      return apiError("bad_archived", 422, "archived is true or false");
     if (input.decisionsBy !== undefined && !isDecisionsBy(input.decisionsBy))
       return apiError(
         "bad_decisions_by",
@@ -1851,6 +1856,10 @@ export function apiRoutes(router: Router<Handler>): void {
       // The standing rule for its decisions: also an admin's, never an agent's.
       ...(isDecisionsBy(input.decisionsBy)
         ? { decisionsBy: input.decisionsBy }
+        : {}),
+      // Archive or wake (#1838): any admin's call, and only a real boolean.
+      ...(typeof input.archived === "boolean"
+        ? { archived: input.archived }
         : {}),
       // Whether a plan waits for a nod: an admin's, never an agent's.
       ...(typeof input.plansNeedNod === "boolean"

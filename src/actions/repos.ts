@@ -245,12 +245,14 @@ export async function updateRepoSettings(
 ): Promise<Result<Repo, UpdateSettingsError>> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
-  // Who the crew obeys is a person's call: an agent never widens it, even
-  // one on a team that administers the repository (`crew/direct.ts`).
+  // Who the crew obeys, and whether the repository is archived, are a
+  // person's call: an agent never changes them, even one on a team that
+  // administers the repository (`crew/direct.ts`).
   if (
     (settings.crewOutsiders !== undefined ||
       settings.decisionsBy !== undefined ||
-      settings.plansNeedNod !== undefined) &&
+      settings.plansNeedNod !== undefined ||
+      settings.archived !== undefined) &&
     admin.value.kind === "agent"
   )
     return err("not_found");
@@ -267,7 +269,7 @@ export async function updateRepoSettings(
     if (!moved.ok) return err("unknown_branch");
   }
   const updated = writeSettings(app.db, repo, settings);
-  const changed = (
+  const changed: string[] = (
     [
       "visibility",
       "description",
@@ -280,6 +282,8 @@ export async function updateRepoSettings(
       "plansNeedNod",
     ] as const
   ).filter((k) => settings[k] !== undefined && settings[k] !== repo[k]);
+  if (settings.archived !== undefined && settings.archived !== (repo.archivedAt !== null))
+    changed.push("archived");
   app.bus.append({
     kind: "repo.settings_updated",
     repoId: repo.id,

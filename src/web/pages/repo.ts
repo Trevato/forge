@@ -920,6 +920,28 @@ export async function repoFiles(ctx: Ctx): Promise<Response> {
   return await codeHome(ctx, repo);
 }
 
+/**
+ * "Archived on <date>" with, for an admin, the Wake button. A repository put
+ * away still clones, pushes and links as before; this only says so.
+ */
+function archivedLine(ctx: Ctx, repo: Repo): Html | null {
+  if (repo.archivedAt === null) return null;
+  return html`<div class="mt archived">
+    <p>
+      Archived on
+      <time datetime="${repo.archivedAt}">${repo.archivedAt.slice(0, 10)}</time>
+    </p>
+    ${when(
+      canAdmin(ctx.app.db, repo, ctx.auth.user),
+      () => html`<form method="post" action="${repoBase(repo)}/settings/archive">
+        <input type="hidden" name="archived" value="0" />
+        <input type="hidden" name="to" value="repo" />
+        ${btn("Wake", { size: "sm" })}
+      </form>`,
+    )}
+  </div>`;
+}
+
 /** The code at a ref: the tree, the README and the About rail — with, in
  * the studio, the offer to make a repository that is not an app one. */
 async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
@@ -930,7 +952,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const refs = await refSetFrom(scope.source);
 
   if (refs.branches.length === 0) {
-    const body = html`${scopeHeader(ctx, scope, "code")}${noApp}
+    const body = html`${scopeHeader(ctx, scope, "code")}${archivedLine(ctx, repo)}${noApp}
       <div class="mt">
         ${empty({
           icon: "repo",
@@ -989,7 +1011,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
   const following = await followingOf(ctx, repo);
   const body = html`${scopeHeader(ctx, scope, "code", {
     branchCount: refs.branches.length,
-  })}${noApp}
+  })}${archivedLine(ctx, repo)}${noApp}
   ${frozenBlock(ctx, repo)} ${appStrip(ctx, repo)}
   ${following === undefined
     ? forkBar(ctx, repo)

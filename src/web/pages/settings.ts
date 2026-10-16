@@ -321,12 +321,28 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
     </form>`,
     { head: html`${icon("rocket")}<h2>Cut a wave</h2>` },
   );
+  const archive = card(
+    html`<form method="post" action="${base}/settings/archive">
+      <input type="hidden" name="archived" value="${repo.archivedAt === null ? "1" : "0"}" />
+      <p class="muted">
+        ${repo.archivedAt === null
+          ? "Put a finished repository away without deleting it. Its page says when it was archived; links, clone and push keep working."
+          : html`Archived on ${repo.archivedAt.slice(0, 10)}. Wake it to take the label off.`}
+      </p>
+      <div class="form-actions">
+        ${btn(repo.archivedAt === null ? "Archive" : "Wake", {
+          variant: "primary",
+        })}
+      </div>
+    </form>`,
+    { head: html`${icon("folder")}<h2>Archive</h2>` },
+  );
   return settingsPageResponse(
     ctx,
     repo,
     "general",
     "Settings",
-    html`${lead}<div class="mt">${body}</div><div class="mt">${wave}</div>${secrets
+    html`${lead}<div class="mt">${body}</div><div class="mt">${wave}</div><div class="mt">${archive}</div>${secrets
       ? html`<div class="mt">${secrets}</div>`
       : null}`,
   );
@@ -380,6 +396,34 @@ export async function settingsUpdate(ctx: Ctx): Promise<Response> {
             : "Those settings could not be saved.",
       };
   return flashTo(ctx, `${base}/settings`, flash);
+}
+
+/**
+ * POST /:owner/:name/settings/archive — archive or wake. The state asked
+ * for travels in the form, so a double submit is idempotent.
+ */
+export async function archiveSubmit(ctx: Ctx): Promise<Response> {
+  const gate = await adminForm(ctx);
+  if (gate instanceof Response) return gate;
+  const { repo, form } = gate;
+  const asked = field(form, "archived");
+  if (asked !== "0" && asked !== "1")
+    return flashTo(ctx, `${repoBase(repo)}/settings`, {
+      tone: "danger",
+      message: "That could not be changed.",
+    });
+  const archived = asked === "1";
+  const updated = await updateRepoSettings(ctx.app, ctx.auth.user, repo, {
+    archived,
+  });
+  const back = field(form, "to") === "repo" ? repoBase(repo) : `${repoBase(repo)}/settings`;
+  return flashTo(
+    ctx,
+    back,
+    updated.ok
+      ? { message: archived ? "Archived." : "Awake again." }
+      : { tone: "danger", message: "That could not be changed." },
+  );
 }
 
 /** POST /:owner/:name/settings/wave — open the draft of the next wave. */

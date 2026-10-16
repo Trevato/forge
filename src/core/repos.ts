@@ -130,6 +130,8 @@ export interface Repo {
    * read only by the base's writers and crew. Null for every other one.
    */
   readonly sealedFor: string | null;
+  /** When an admin archived it (ISO time), or null: put away, not deleted. */
+  readonly archivedAt: string | null;
   /** The origin this mirrors, or null for a native repo. */
   readonly origin: RepoOrigin | null;
   /**
@@ -169,6 +171,7 @@ interface RepoRow {
   direction_issue_id: string | null;
   fork_parent_id: string | null;
   sealed_for: string | null;
+  archived_at: string | null;
   origin_id: string | null;
   origin_kind: "github" | "forgejo" | "gitea" | null;
   origin_full_name: string | null;
@@ -208,6 +211,7 @@ function toRepo(row: RepoRow): Repo {
     directionIssueId: row.direction_issue_id,
     forkParentId: row.fork_parent_id,
     sealedFor: row.sealed_for,
+    archivedAt: row.archived_at,
     origin:
       row.origin_id !== null && row.origin_kind !== null
         ? {
@@ -1040,6 +1044,8 @@ export interface RepoSettings {
   /** Whether someone who cannot write here may start or steer a run. */
   crewOutsiders?: boolean;
   decisionsBy?: DecisionsBy;
+  /** Archive (true) or wake (false); the time is stamped here. */
+  archived?: boolean;
   plansNeedNod?: boolean;
 }
 
@@ -1054,7 +1060,7 @@ export function updateRepoSettings(
        default_branch = ?4, require_review = ?5, require_checks = ?7,
        autonomy = ?8, autonomy_direction = ?9, autonomy_ceiling_usd = ?10,
        autonomy_slots = ?11, autonomy_by = ?12, crew_outsiders = ?13, decisions_by = ?14,
-       plans_need_nod = ?15
+       archived_at = ?15, plans_need_nod = ?16
      WHERE id = ?6`,
   ).run(
     settings.visibility ?? repo.visibility,
@@ -1071,6 +1077,11 @@ export function updateRepoSettings(
     settings.autonomyBy === undefined ? repo.autonomyBy : settings.autonomyBy,
     (settings.crewOutsiders ?? repo.crewOutsiders) ? 1 : 0,
     settings.decisionsBy ?? repo.decisionsBy,
+    settings.archived === undefined
+      ? repo.archivedAt
+      : settings.archived
+        ? (repo.archivedAt ?? new Date().toISOString())
+        : null,
     (settings.plansNeedNod ?? repo.plansNeedNod) ? 1 : 0,
   );
   return getRepoById(db, repo.id)!;

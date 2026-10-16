@@ -18,7 +18,8 @@
 import { isPinned } from "../../core/pins.ts";
 import { parentReleases, releasesSentence } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
-import type { Repo } from "../../core/repos.ts";
+import { updateRepoSettings } from "../../actions/repos.ts";
+import { canAdmin, getRepoById, type Repo } from "../../core/repos.ts";
 import type { RepoFacts, RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -43,15 +44,33 @@ export function aboutScreen(
   facts: RepoFacts | undefined,
   ref: string,
 ): Screen {
-  const repo = localRepo(src);
-  const rows = aboutFacts(f, src, facts, ref);
+  // Archiving changes the row under this card, so read it at use.
+  let repo = localRepo(src);
+  const may = (): boolean =>
+    repo !== undefined && f.user !== undefined && canAdmin(f.db, repo, f.user);
+  const factRows = (): [string, string][] => [
+    ...archivedRow(repo),
+    ...aboutFacts(f, src, facts, ref),
+  ];
+  let rows = factRows();
   const cloneUrl = rows.find(([label]) => label.startsWith("clone"))?.[1] ?? "";
   return {
     title: "About",
-    keys: [
-      binding(["y"], "copy the clone URL", { disabled: cloneUrl === "" }),
-      binding(["esc"], "close"),
-    ],
+    get keys() {
+      return [
+        binding(["y"], "copy the clone URL", { disabled: cloneUrl === "" }),
+        // Only an admin is offered the key, and only an admin's press counts.
+        ...(may()
+          ? [
+              binding(
+                ["a"],
+                repo?.archivedAt === null ? "archive" : "wake",
+              ),
+            ]
+          : []),
+        binding(["esc"], "close"),
+      ];
+    },
     render(area, s) {
       parent.render(area, s);
       const c = ctx.theme.c;
@@ -128,6 +147,20 @@ export function aboutScreen(
         ctx.toast("copied the clone URL", "success");
         return true;
       }
+      if (e.key === "a" && repo !== undefined && may()) {
+        const waking = repo.archivedAt !== null;
+        void updateRepoSettings(f.app, f.user, repo, {
+          archived: !waking,
+        }).then((done) => {
+          if (done.ok) {
+            repo = getRepoById(f.db, done.value.id) ?? done.value;
+            rows = factRows();
+            ctx.toast(waking ? "awake again" : "archived", "success");
+          } else ctx.toast("that could not be changed", "danger");
+          ctx.invalidate();
+        });
+        return true;
+      }
       if (e.key === "esc" || e.key === "q" || e.key === "I") {
         ctx.pop();
         return true;
@@ -135,6 +168,12 @@ export function aboutScreen(
       return true;
     },
   };
+}
+
+/** One line when an admin has put the repository away. */
+function archivedRow(repo: Repo | undefined): [string, string][] {
+  if (repo === undefined || repo.archivedAt === null) return [];
+  return [["archived", repo.archivedAt.slice(0, 10)]];
 }
 
 /**
