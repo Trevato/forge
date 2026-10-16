@@ -197,6 +197,8 @@ describe("the forge over MCP", () => {
       "claim_link",
       "take_updates",
       "sever",
+      "propose_to_parent_forge",
+      "forge_proposals",
       "converge",
       "family",
       "next_steps",

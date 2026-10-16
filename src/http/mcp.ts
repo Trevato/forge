@@ -138,6 +138,7 @@ import {
 import { KIND_CHIPS, parseChipArgs } from "../core/feed_chips.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
 import { decideAsk, undoDecideAsk } from "../actions/asks_decide.ts";
+import { forgeProposalLine, forgeProposals, proposeToParentForge } from "../actions/upstream.ts";
 import { listProposals, mintProposal, repoByName, revokeProposal } from "../actions/proposal_tokens.ts";
 import { actOnProposal, isProposalVerb, PROPOSAL_VERBS } from "../actions/proposals.ts";
 import { applyAsksBulk, previewAsksBulk } from "../actions/asks_bulk.ts";
@@ -1453,6 +1454,54 @@ const TOOLS: readonly Tool[] = [
         cut.error,
         cut.error === "not_following" ? "this repository follows nothing across forges" : "only this forge's owner can sever it",
       );
+    },
+  },
+  {
+    name: "propose_to_parent_forge",
+    description:
+      "Offer this forge's landed change to its parent forge: the default branch is pushed to `child/<name>/…` there and a pull opens, naming the change. Asking again for the same tip answers with the pull already made. A writer only. Needs the parent's proposal token (kept in parent.json); the same words as the Propose button on the following page.",
+    inputSchema: {
+      type: "object",
+      properties: { repo: REPO_ARG },
+      required: ["repo"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const made = await proposeToParentForge(ctx.app, user, repo);
+      if (made.ok)
+        return good({
+          says: made.value.opened
+            ? `Proposed to the parent forge as #${made.value.number}.`
+            : `Already proposed to the parent forge as #${made.value.number}.`,
+          opened: made.value.opened,
+          proposal: made.value,
+        });
+      const e = made.error;
+      if (e === "no_parent_forge") return bad(e, "this forge has no parent forge to propose to");
+      if (e === "nothing_to_propose") return bad(e, "nothing here is ahead of the parent forge");
+      if (typeof e === "string") return bad(e, "you need write access to propose from here");
+      return e.kind === "unreachable"
+        ? bad("parent_unreachable", "parent unreachable: nothing was proposed")
+        : bad("refused", `the parent forge did not take the proposal: ${e.reason}`);
+    },
+  },
+  {
+    name: "forge_proposals",
+    description:
+      "What this forge has proposed to its parent forge, newest first: each with its pull at the parent, its number, and its state there (open, merged or closed). `reachable` is false, and the line says \"parent unreachable\", when the parent did not answer and the last known state stands. The same as GET /api/v1/repos/:owner/:name/following/proposals.",
+    inputSchema: {
+      type: "object",
+      properties: { repo: REPO_ARG },
+      required: ["repo"],
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const items = await forgeProposals(ctx.app, repo, Date.now(), true);
+      return good({ items: items.map((p) => ({ ...p, says: forgeProposalLine(p) })) });
     },
   },
   {

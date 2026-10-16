@@ -119,7 +119,9 @@ The page and `GET …/following/proposals` show each proposal as open, merged or
 closed, read from the parent (the token may read back only pulls it opened) and
 cached for a minute (only a signed-in viewer makes the parent get asked); a merged or closed one is final. A parent that does not
 answer shows the last state with "parent unreachable" — never an error page.
-In the terminal, the Chain card lists the proposals and `p` proposes. No dependency was added. Left out: an MCP tool, and a UI to paste
+In the terminal, the Chain card lists the proposals and `p` proposes. The MCP `propose_to_parent_forge` tool (writer only) proposes with the page's
+words, and `forge_proposals` lists each proposal with its state and "parent
+unreachable" where that applies. No dependency was added. Left out: a UI to paste
 the token into `parent.json` (part 2 of #2182 covers minting and handing over).
 
 Minting, listing and revoking go through one action
