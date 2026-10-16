@@ -11,7 +11,7 @@ import { NOT_A_MEMBER } from "../../core/roles.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
-import type { RepoCounts } from "../../core/repos.ts";
+import { ARCHIVED_WHY, type RepoCounts } from "../../core/repos.ts";
 import { SIGNUP_CLOSED_MESSAGE } from "../../actions/users.ts";
 import type { Session } from "../session.ts";
 import { G, Screen as Surface, type Rect } from "../term/screen.ts";
@@ -815,6 +815,7 @@ export function slug(path: string): string {
 // ---- errors and time ----
 
 const MESSAGES: Record<string, string> = {
+  archived: ARCHIVED_WHY,
   not_member: NOT_A_MEMBER,
   not_found: "not found",
   signup_closed: SIGNUP_CLOSED_MESSAGE,

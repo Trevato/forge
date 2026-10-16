@@ -10,7 +10,7 @@ import { requireAbility } from "../actions/roles.ts";
 import type { App } from "../app.ts";
 import { getIssueById, listComments } from "../core/issues.ts";
 import { pullDir, pullStatus, type Pull } from "../core/pulls.ts";
-import { canWrite, type Repo } from "../core/repos.ts";
+import { ARCHIVED_WHY, canWrite, type Repo } from "../core/repos.ts";
 import { activeRunFor, listRuns, type Run } from "../core/runs.ts";
 import type { User } from "../core/users.ts";
 import { readConflictedFiles } from "../git/conflict-file.ts";
@@ -27,7 +27,8 @@ export type ProposeError =
   | "no_agent"
   | "busy"
   | "not_member"
-  | "not_queued";
+  | "not_queued"
+  | "archived";
 
 /** What the brief carries at most: a hand's worth, never a whole history. */
 const MAX_COMMITS = 20;
@@ -49,6 +50,7 @@ export async function proposeResolution(
 ): Promise<Result<Run, ProposeError>> {
   if (!canWrite(app.db, repo, actor)) return err("forbidden");
   if (pull.state !== "open") return err("not_open");
+  if (repo.archivedAt !== null) return err("archived");
   if (actor !== undefined && !requireAbility(app, actor, "run_crew").ok) return err("not_member");
   const issue = getIssueById(app.db, pull.id);
   const agent = issue === undefined ? undefined : agentFor(app, issue);
@@ -218,6 +220,7 @@ export const PROPOSE_WHY: Record<ProposeError, string> = {
   no_agent: "No agent holds this pull, so the crew has no hand to ask.",
   busy: "The crew is already working on this pull.",
   not_member: "Starting a run is for members: the owner has not made this account a member.",
+  archived: ARCHIVED_WHY,
   not_queued: "The crew could not take it on right now (its ceiling or breaker); try again later.",
 };
 

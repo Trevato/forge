@@ -70,7 +70,9 @@ export type Converge =
   | { kind: "forbidden" }
   /** A guest: the run is a member's to start, refused before anything is written. */
   | { kind: "not_member" }
-  | { kind: "ceiling" };
+  | { kind: "ceiling" }
+  /** The fork is archived: no issue, no run, until it is woken. */
+  | { kind: "archived" };
 
 /** The fork's open converge issue, if the parent's updates are in hand. */
 export function convergeIssue(
@@ -149,6 +151,8 @@ export async function convergeFork(
     return { kind: "forbidden" };
   if (actor !== undefined && !requireAbility(app, actor, "run_crew").ok)
     return { kind: "not_member" };
+  // An archived fork is put away: no issue, no run, and it says so.
+  if (fork.archivedAt !== null) return { kind: "archived" };
   const relation = await forkRelation(app, fork, parent);
   if (relation === undefined || relation.state !== "diverged" || relation.clean)
     return { kind: "nothing", relation };

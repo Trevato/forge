@@ -290,6 +290,11 @@ export function queueAgentRun(
 ): Run | undefined {
   // A suspended or removed owner's repositories run nothing, whoever asks.
   if (!accountActive(app.db, repo.ownerId)) return undefined;
+  // An archived repository starts nothing new; a run carrying on (`again`)
+  // is one already going, and finishes. A first run
+  // (`attempt` 0, as a conflict or converge run is queued) is new.
+  if (repo.archivedAt !== null && (again === undefined || again.attempt === 0))
+    return undefined;
   // A guest's word starts no run (a comment is still a comment); the
   // actions that start one by name refuse out loud before they get here.
   const asker = actorId === undefined ? undefined : getUserById(app.db, actorId);

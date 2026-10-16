@@ -12,7 +12,7 @@
 import type { App } from "../app.ts";
 import { listCrewRoles } from "../core/agents.ts";
 import { getProposal, moveProposal, type Proposal, type ProposalState } from "../core/proposals.ts";
-import { getRepoById, ownerFactRepoIds, canRead, type Repo } from "../core/repos.ts";
+import { ARCHIVED_WHY, getRepoById, ownerFactRepoIds, canRead, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { ensureDirectionIssue } from "../crew/autonomy.ts";
 import { queueAgentRun } from "../crew/dispatch.ts";
@@ -94,6 +94,7 @@ export function redirectProposal(
   const { proposal, repo } = found.value;
   // The run it starts is a member's: refused before anything is written.
   if (!requireAbility(app, found.value.actor, "run_crew").ok) return fail("forbidden", NOT_A_MEMBER);
+  if (repo.archivedAt !== null) return fail("invalid", ARCHIVED_WHY);
   const planner = listCrewRoles(app.db, repo.id).find((c) => c.role === "planner")?.agent;
   if (planner === undefined) return fail("invalid", "no planner on this crew to hand it to");
   const direction = ensureDirectionIssue(app, found.value.actor, repo);

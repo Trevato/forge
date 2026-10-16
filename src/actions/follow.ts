@@ -9,7 +9,7 @@ import { NOT_A_MEMBER } from "../core/roles.ts";
 import type { App } from "../app.ts";
 import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { convergeFork, type Converge } from "../crew/converge.ts";
-import { canAdmin, canWrite, forkParentFor, type Repo } from "../core/repos.ts";
+import { ARCHIVED_WHY, canAdmin, canWrite, forkParentFor, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { chainOfRepo, severChain } from "../spawn/chain.ts";
@@ -107,6 +107,8 @@ export function convergeWords(
       return { tone: "danger", message: DIRECTION_NOTE };
     case "not_member":
       return { tone: "danger", message: `Not started: ${NOT_A_MEMBER}.` };
+    case "archived":
+      return { tone: "danger", message: ARCHIVED_WHY };
     case "ceiling":
       return {
         tone: "danger",

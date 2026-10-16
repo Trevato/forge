@@ -1049,6 +1049,9 @@ export interface RepoSettings {
   plansNeedNod?: boolean;
 }
 
+/** The one line said wherever the crew declines to start a run here. */
+export const ARCHIVED_WHY = "This repository is archived; wake it to start a run.";
+
 /** Update the mutable repo fields, leaving unspecified ones untouched. */
 export function updateRepoSettings(
   db: Database,

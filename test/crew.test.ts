@@ -11,6 +11,14 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../src/app.ts";
+import { cancelRepoRun, requeueRepoRun } from "../src/actions/runs.ts";
+import { respondAccess } from "../src/http/respond.ts";
+import { errorText } from "../src/tui/screens/common.ts";
+import { queueAgentRun } from "../src/crew/dispatch.ts";
+import { autonomyTick } from "../src/crew/autonomy.ts";
+import { proposeResolution } from "../src/crew/proposal.ts";
+import { convergeFork } from "../src/crew/converge.ts";
+import { convergeWords } from "../src/actions/follow.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { sandboxAvailable } from "../src/crew/sandbox.ts";
 import type { CrewHandle } from "../src/crew/dispatch.ts";
@@ -20,8 +28,8 @@ import { listPulls } from "../src/core/pulls.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { listPaths } from "../src/git/read.ts";
 import { repoDir } from "../src/git/repos.ts";
-import { getForkOf, type Repo } from "../src/core/repos.ts";
-import type { Run } from "../src/core/runs.ts";
+import { getForkOf, ARCHIVED_WHY, updateRepoSettings, type Repo } from "../src/core/repos.ts";
+import { listRuns, type Run } from "../src/core/runs.ts";
 import type { User } from "../src/core/users.ts";
 import type { Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
@@ -186,4 +194,52 @@ describe("the crew, with a stand-in Claude Code", () => {
       ),
     ).toBe(true);
   }, 60_000);
+
+  test("an archived repository starts no new run, says why, and starts one again after Wake", async () => {
+    const issue = openIssue(app, alice, repo, { title: "Mow", body: "The lawn." });
+    expect(issue.ok).toBe(true);
+    if (!issue.ok) return;
+    const agent = getAgentByName(app.db, "bot")!;
+    // A finished run of this test's own, to be queued again.
+    const own = queueAgentRun(app, repo, issue.value, agent, "assigned");
+    expect(own).toBeDefined();
+    cancelRepoRun(app, alice, repo, own!.id);
+    const archived = updateRepoSettings(app.db, repo, { archived: true });
+    expect(archived.archivedAt).not.toBeNull();
+    expect(queueAgentRun(app, archived, issue.value, agent, "assigned")).toBeUndefined();
+    const refused = requeueRepoRun(app, alice, archived, own!.id);
+    expect(refused.ok ? "" : refused.error).toBe("archived");
+    // Asking for a conflict resolution starts a run too: refused the same way.
+    const pull = { state: "open", id: "none", number: 1 } as Parameters<typeof proposeResolution>[3];
+    expect(await proposeResolution(app, alice, archived, pull)).toMatchObject({ ok: false, error: "archived" });
+    const assigned = assignIssue(app, alice, archived, issue.value, bot);
+    expect(assigned.ok ? "" : assigned.error).toBe("archived");
+    expect(respondAccess("archived", 422).status).toBe(409);
+    expect(errorText("archived")).toBe(ARCHIVED_WHY);
+    // A fresh run the crew queues on its own (attempt 0) is new too.
+    const auto = { ...archived, autonomy: "autonomous" as const };
+    const fresh = { notBefore: new Date().toISOString(), attempt: 0, summary: "main moved" };
+    expect(queueAgentRun(app, auto, issue.value, agent, "conflict", undefined, fresh)).toBeUndefined();
+    // Converge on an archived fork says so, and opens nothing.
+    const converged = await convergeFork(app, archived, archived, undefined);
+    expect(converged.kind).toBe("archived");
+    expect(convergeWords(converged, "p/q").message).toBe(ARCHIVED_WHY);
+    // An archived autonomous repository's tick queues nothing.
+    const before = listRuns(app.db, archived.id, { limit: 200 }).length;
+    updateRepoSettings(app.db, archived, { autonomy: "autonomous" });
+    await autonomyTick(app);
+    updateRepoSettings(app.db, archived, { autonomy: "off" });
+    expect(listRuns(app.db, archived.id, { limit: 200 }).length).toBe(before);
+    // Taking someone off is not starting a run.
+    expect(assignIssue(app, alice, archived, issue.value, null).ok).toBe(true);
+    const woken = updateRepoSettings(app.db, archived, { archived: false });
+    expect(woken.archivedAt).toBeNull();
+    expect(assignIssue(app, alice, woken, issue.value, bot).ok).toBe(true);
+    // The assignment after Wake queued the run the archive had refused.
+    const run = listRuns(app.db, woken.id, { issueId: issue.value.id }).find(
+      (r) => r.state === "queued",
+    );
+    expect(run).toBeDefined();
+    cancelRepoRun(app, alice, woken, run!.id);
+  });
 });

@@ -201,7 +201,7 @@ export function requeueRepoRun(
   actor: User | undefined,
   repo: Repo,
   runId: string,
-): Result<Run, AccessError | "not_agent" | "not_finished" | "no_task" | "not_queued" | "not_member"> {
+): Result<Run, AccessError | "not_agent" | "not_finished" | "no_task" | "not_queued" | "not_member" | "archived"> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
   // A run costs money; like assigning, queueing one is a person's call.
@@ -209,6 +209,7 @@ export function requeueRepoRun(
   const run = getRun(app.db, runId);
   if (!run || run.repoId !== repo.id) return err("not_found");
   if (run.kind !== "agent") return err("not_agent");
+  if (repo.archivedAt !== null) return err("archived");
   const member = requireAbility(app, writer.value, "run_crew");
   if (!member.ok) return member;
   if (run.state !== "cancelled" && run.state !== "failed")

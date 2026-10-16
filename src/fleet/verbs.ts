@@ -33,6 +33,7 @@ import type { FleetValue } from "../core/fleet_ops.ts";
 import { findPillar, isStructural, type Pillars } from "../core/pillars.ts";
 import { getIssue, type Issue } from "../core/issues.ts";
 import {
+  ARCHIVED_WHY,
   canRead,
   isAutonomy,
   type Repo,
@@ -122,6 +123,7 @@ const WORDS: Record<string, string> = {
   not_agent: "only an agent run is queued again",
   not_finished: "only a cancelled or failed run is queued again",
   no_task: "its issue is closed or its agent is gone",
+  archived: ARCHIVED_WHY,
   not_queued: "the crew would not take it now (already queued, parked, or at the ceiling)",
   unknown_branch: "unknown branch",
 };

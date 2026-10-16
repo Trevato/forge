@@ -307,8 +307,13 @@ An admin puts a repository away from **Settings → Archive**, with
 else gets 403), or in the terminal with `a` on the About card (`I`). The
 repository page and the card then say when it was archived, and an admin gets
 a Wake button or the same key to undo it. Archiving twice keeps the first date.
-It does not yet block anything: clone, push and links keep working, and the
-repository stays in every list.
+An archived repository starts no new crew run. Assigning an issue to an agent,
+queueing a run again, asking the crew to propose a resolution, redirecting a
+wave and converging a fork each answer "This repository is archived; wake it to
+start a run."; the API answers 409 `archived`, and the terminal and MCP show
+the same line. The autonomy tick skips it. A run already going finishes, and
+Wake undoes all of it. Clone, push and links keep working, and the repository
+stays in every list.
 
 ## Health
 

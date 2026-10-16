@@ -12,6 +12,7 @@ import { createApp, type App } from "../src/app.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
 import { proposePlan } from "../src/actions/plan.ts";
 import { redirectProposal } from "../src/actions/proposals.ts";
+import { ARCHIVED_WHY, updateRepoSettings } from "../src/core/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
 import { getProposal } from "../src/core/proposals.ts";
 import { listComments } from "../src/core/issues.ts";
@@ -286,6 +287,27 @@ describe("a guest cannot own, copy or run", () => {
     expect(redirectProposal(app, bob, id, "Roses first").ok).toBe(true);
     setMember(app.db, bob.id, false, alice.id, new Date());
     expect(getProposal(app.db, id)!.state).toBe("redirected");
+  });
+
+  test("redirecting a wave in an archived repository is refused with the archived line, and nothing is written", () => {
+    const proposed = proposePlan(app, alice, lab, [{ key: "a", title: "Prune", body: "", blockedBy: [] }], {
+      title: "Autumn",
+    });
+    if (!proposed.ok) throw new Error(JSON.stringify(proposed.error));
+    const id = proposed.value.id;
+    const direction = ensureDirectionIssue(app, alice, lab)!;
+    const comments = listComments(app.db, direction.id).length;
+    const archived = updateRepoSettings(app.db, lab, { archived: true });
+    setMember(app.db, bob.id, true, alice.id, new Date());
+    expect(redirectProposal(app, bob, id, "Roses first")).toEqual({
+      ok: false,
+      error: { code: "invalid", message: ARCHIVED_WHY },
+    });
+    expect(getProposal(app.db, id)!.state).toBe("pending");
+    expect(listComments(app.db, direction.id)).toHaveLength(comments);
+    updateRepoSettings(app.db, archived, { archived: false });
+    expect(redirectProposal(app, bob, id, "Roses first").ok).toBe(true);
+    setMember(app.db, bob.id, false, alice.id, new Date());
   });
 
   test("the wake-up sweep starts no run on an issue a guest assigned, and a hundred of them do not hold back a member's", async () => {

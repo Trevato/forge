@@ -295,7 +295,7 @@ export function assignIssue(
   variantGroup?: string,
 ): Result<
   Issue,
-  AccessError | "assignee_cannot_read" | "agent_not_on_crew" | "unverified" | "not_member"
+  AccessError | "assignee_cannot_read" | "agent_not_on_crew" | "unverified" | "not_member" | "archived"
 > {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
@@ -316,6 +316,8 @@ export function assignIssue(
     // ...and only a member's allowance pays for it.
     if (assignee.kind === "agent" && !requireAbility(app, writer.value, "run_crew").ok)
       return err("not_member");
+    // Assigning an agent starts a run, and an archived repository starts none.
+    if (assignee.kind === "agent" && repo.archivedAt !== null) return err("archived");
   }
   const updated = setAssignee(app.db, issue.id, assignee?.id ?? null);
   if (!updated) return ok(issue);

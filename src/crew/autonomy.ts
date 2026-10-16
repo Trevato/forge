@@ -1090,6 +1090,8 @@ export async function autonomyTick(
 ): Promise<void> {
   if (crewOffInPreview()) return;
   for (const repo of listAutonomousRepos(app.db)) {
+    // An archived repository is put away: the crew starts nothing in it.
+    if (repo.archivedAt !== null) continue;
     try {
       void startSweep(app, repo, sweep);
       // Quick, and before the picks: a pull main moved under is brought up

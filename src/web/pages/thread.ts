@@ -38,7 +38,7 @@ import {
   MAX_BODY,
   MAX_TITLE,
 } from "../../core/issues.ts";
-import { canRead, canWrite, type Repo } from "../../core/repos.ts";
+import { ARCHIVED_WHY, canRead, canWrite, type Repo } from "../../core/repos.ts";
 import { inlineIcons, type IconName as Glyph } from "../icons.ts";
 import {
   getUserById,
@@ -725,6 +725,7 @@ export async function assigneeSubmit(
       assignee_cannot_read: `${name} cannot see this repository, so cannot be assigned to it.`,
       agent_not_on_crew: `${name} is not on this repository's crew. Add it under Settings → Crew first.`,
       forbidden: "You need write access to assign.",
+      archived: ARCHIVED_WHY,
     };
     return flashTo(ctx, dest, {
       tone: "danger",

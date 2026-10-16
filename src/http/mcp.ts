@@ -104,6 +104,7 @@ import { pillarView } from "../core/pillars.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import {
+  ARCHIVED_WHY,
   canRead,
   canWrite,
   forkParentFor,
@@ -1564,6 +1565,7 @@ const TOOLS: readonly Tool[] = [
       const outcome = await convergeFork(ctx.app, repo, parent, user);
       if (outcome.kind === "forbidden") return bad("forbidden", DIRECTION_NOTE);
       if (outcome.kind === "not_member") return bad("not_member", NOT_A_MEMBER);
+      if (outcome.kind === "archived") return bad("archived", ARCHIVED_WHY);
       return good({
         kind: outcome.kind,
         issue: "issue" in outcome ? outcome.issue.number : null,

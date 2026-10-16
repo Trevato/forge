@@ -2310,6 +2310,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (parent === undefined)
         return apiError("not_a_fork", 404, "this repository follows nothing");
       const outcome = await convergeFork(ctx.app, repo, parent, ctx.auth.user);
+      if (outcome.kind === "archived") return respondAccess("archived", 409);
       const status =
         outcome.kind === "queued"
           ? 202
