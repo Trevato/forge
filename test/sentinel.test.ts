@@ -13,7 +13,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { setCapacity } from "../src/core/capacity.ts";
 import { clearErrors, createLog } from "../src/kernel/log.ts";
 import { recordDecision } from "../src/core/decisions.ts";
-import { createLabel, labelsFor, listComments, listIssues } from "../src/core/issues.ts";
+import { addComment, createLabel, labelsFor, listComments, listIssues } from "../src/core/issues.ts";
 import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
@@ -41,6 +41,7 @@ let repo: Repo;
 const NOW = Date.parse("2026-10-13T12:00:00.000Z");
 const ago = (ms: number): string => new Date(NOW - ms).toISOString();
 const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
 
 function plantRun(
   kind: "check" | "agent",
@@ -383,6 +384,80 @@ describe("the signals inside the hour", () => {
     const r = withRepo(() => sentinelTick(app, l + 20 * 60_000));
     expect(r?.filed).toBe(1);
     expect(withRepo(() => sentinelTick(app, lastHunt() + 20 * 60_000))).toBeNull();
+  });
+
+  test("a setting kept on purpose is not refiled until its value changes (#2001)", () => {
+    const setAt = (value: string, at: string): void => {
+      setCapacity(app.db, "checks.concurrency", value, alice.id);
+      app.db.query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'").run(at);
+    };
+    const issuesFor = (): number =>
+      app.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM issue WHERE title LIKE 'Sentinel: Setting checks.concurrency %'").get()!.n;
+    app.db.query("DELETE FROM issue WHERE title LIKE 'Sentinel: Setting %'").run();
+    app.db.query("DELETE FROM sentinel_kept").run();
+    app.db.query("DELETE FROM forge_setting WHERE key IN ('cells.egress', 'checks.concurrency')").run();
+    const base = Date.now();
+    setAt("4", new Date(base - 10 * 24 * HOUR).toISOString());
+    expect(hunt(app, "alice/forge", base).filed).toBe(1);
+    const first = app.db.query<{ id: string; body: string }, []>("SELECT id, body FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting checks.concurrency %'").get()!;
+    expect(first.body).toContain("close this issue with a reason");
+    // closed with a reason: kept
+    app.db.query("UPDATE issue SET state = 'closed', closed_at = ?2 WHERE id = ?1").run(first.id, new Date(base).toISOString());
+    const comments = listComments(app.db, first.id).length;
+    expect(hunt(app, "alice/forge", base + 2 * HOUR).filed).toBe(0);
+    expect(hunt(app, "alice/forge", base + 4 * HOUR).filed).toBe(0);
+    expect(issuesFor()).toBe(1);
+    expect(listComments(app.db, first.id).length).toBe(comments);
+    // the value changes, and later is away a day: reported again
+    setAt("6", new Date(base + 3 * HOUR).toISOString());
+    expect(hunt(app, "alice/forge", base + 6 * HOUR).filed).toBe(0); // not yet a day away
+    expect(hunt(app, "alice/forge", base + 30 * HOUR).filed).toBe(1);
+    expect(issuesFor()).toBe(2);
+    expect(app.db.query("SELECT value FROM forge_setting WHERE key = 'checks.concurrency'").get()).toEqual({ value: "6" });
+    app.db.query("DELETE FROM forge_setting WHERE key = 'checks.concurrency'").run();
+  });
+
+  test("a comment saying why a setting stays keeps it too (#2001)", async () => {
+    const owner = await createUser(app.db, {
+      trusted: true,
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!owner.ok) throw new Error(owner.error);
+    app.db.query("DELETE FROM issue WHERE title LIKE 'Sentinel: Setting %'").run();
+    app.db.query("DELETE FROM sentinel_kept").run();
+    const base = Date.now();
+    setCapacity(app.db, "checks.concurrency", "4", alice.id);
+    app.db.query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'").run(new Date(base - 10 * 24 * HOUR).toISOString());
+    hunt(app, "alice/forge", base);
+    const issue = app.db.query<{ id: string; body: string }, []>("SELECT id, body FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting checks.concurrency %'").get()!;
+    const said = addComment(app.db, { issueId: issue.id, authorId: owner.value.id, body: "Kept on purpose: P0 wants it." });
+    expect(said.ok).toBe(true);
+    app.db.query("UPDATE comment SET created_at = ?2 WHERE issue_id = ?1").run(issue.id, new Date(base + 1000).toISOString());
+    const before = listComments(app.db, issue.id).length;
+    expect(hunt(app, "alice/forge", base + 2 * HOUR).filed).toBe(0);
+    expect(listComments(app.db, issue.id).length).toBe(before);
+    expect(app.db.query("SELECT value FROM sentinel_kept WHERE key = 'setting:checks.concurrency'").get()).toEqual({ value: "4" });
+    setCapacity(app.db, "checks.concurrency", "1", alice.id);
+  });
+
+  test("a comment from an agent does not keep a setting (#2001)", async () => {
+    app.db.query("DELETE FROM issue WHERE title LIKE 'Sentinel: Setting %'").run();
+    app.db.query("DELETE FROM sentinel_kept").run();
+    const base = Date.now();
+    setCapacity(app.db, "checks.concurrency", "4", alice.id);
+    app.db.query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'").run(new Date(base - 10 * 24 * HOUR).toISOString());
+    hunt(app, "alice/forge", base);
+    const issue = app.db.query<{ id: string }, []>("SELECT id FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting checks.concurrency %'").get()!;
+    const bot = await createUser(app.db, { trusted: true, username: "reviewbot", email: "reviewbot@forge.local", password: "a-good-passphrase" });
+    if (!bot.ok) throw new Error(bot.error);
+    app.db.query("UPDATE user SET is_agent = 1 WHERE id = ?1").run(bot.value.id);
+    addComment(app.db, { issueId: issue.id, authorId: bot.value.id, body: "Looks fine to me." });
+    app.db.query("UPDATE comment SET created_at = ?2 WHERE issue_id = ?1").run(issue.id, new Date(base + 1000).toISOString());
+    hunt(app, "alice/forge", base + 2 * HOUR);
+    expect(app.db.query("SELECT COUNT(*) AS n FROM sentinel_kept").get()).toEqual({ n: 0 });
+    setCapacity(app.db, "checks.concurrency", "1", alice.id);
   });
 
   test("a newly held slot hunts too", () => {

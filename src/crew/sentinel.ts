@@ -62,6 +62,8 @@ export interface Finding {
   readonly urgent?: true;
   /** What a person or a run would do, when it is mechanical and reversible. */
   readonly fix?: string;
+  /** A setting finding: the value and `updated_at` a person may have kept (#2001). */
+  readonly kept?: { readonly value: string; readonly updatedAt: string };
 }
 
 const clip = (text: string, n = 200): string =>
@@ -186,7 +188,8 @@ export function settingsAway(db: Database, now: number): Finding[] {
         `set by ${row.username ?? "unknown"} at ${row.updated_at}`,
       ],
       pillar: "Trust: a setting is a decision, not a leftover",
-      lookFor: `${key} is back at "${capacityDefault(key)}", or someone says in a comment why it stays.`,
+      lookFor: `${key} is back at "${capacityDefault(key)}", or someone says why it stays: close this issue with a reason (or comment one; a bare close keeps it too) and the setting is kept, reported again only if its value changes.`,
+      kept: { value, updatedAt: row.updated_at },
       fix: `Put it back: clear ${key} on the capacity page (it is recorded and reversible).`,
     });
   }
@@ -545,10 +548,45 @@ function handOver(app: App, repo: Repo, actor: User, issue: Issue): void {
   }
 }
 
+/** The finding is a setting whose kept value and `updated_at` are on record. */
+function keptRecorded(db: Database, f: Finding): boolean {
+  if (f.kept === undefined) return false;
+  const kept = db
+    .query<{ value: string; updated_at: string }, [string]>("SELECT value, updated_at FROM sentinel_kept WHERE key = ?1")
+    .get(f.key);
+  return kept !== null && kept.value === f.kept.value && kept.updated_at === f.kept.updatedAt;
+}
+
+/**
+ * Whether a person decided to keep this setting as it now stands: its
+ * finding was closed, or explained in a comment by a person (not the sentinel, not an agent),
+ * after the value was last set. A decision is recorded with the value and
+ * `updated_at` it was made at; the same pair is kept, any other is drift.
+ */
+function settingKept(db: Database, f: Finding, actorId: string, at: string): boolean {
+  if (f.kept === undefined) return false;
+  if (keptRecorded(db, f)) return true;
+  const { value, updatedAt } = f.kept;
+  const decided = db
+    .query<{ n: number }, [string, string, string]>(
+      `SELECT COUNT(*) AS n FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
+        WHERE t.key = ?1 AND ((i.state = 'closed' AND i.closed_at >= ?2)
+          OR EXISTS (SELECT 1 FROM comment c WHERE c.issue_id = i.id AND c.author_id <> ?3 AND c.created_at >= ?2
+            AND EXISTS (SELECT 1 FROM user u WHERE u.id = c.author_id AND u.is_agent = 0 AND u.kind = 'user')))`,
+    )
+    .get(f.key, updatedAt, actorId);
+  if (decided === null || decided.n === 0) return false;
+  db.query(
+    "INSERT INTO sentinel_kept (key, value, updated_at, kept_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = ?3, kept_at = ?4",
+  ).run(f.key, value, updatedAt, at);
+  return true;
+}
+
 /**
  * Read, file, record. One open issue per finding: a tracked finding whose
  * issue is open is commented on only when its evidence changed; one whose
- * issue is closed and returns is a new issue.
+ * issue is closed and returns is a new issue — except a setting a person
+ * kept (`settingKept`), which stays quiet until its value changes.
  */
 export function hunt(
   app: App,
@@ -565,6 +603,7 @@ export function hunt(
   if (repo !== undefined && actor !== undefined) {
     for (const f of findings) {
       try {
+        if (settingKept(app.db, f, actor.id, at)) continue;
         const evidence = f.evidence.join("\n");
         const tracked = app.db
           .query<
@@ -698,7 +737,7 @@ export function sentinelTick(app: App, now = Date.now()): HuntResult | null {
         .all()
         .map((r) => r.key),
     );
-    if (!signals.some((s) => !tracked.has(s.key))) return null;
+    if (!signals.some((s) => !tracked.has(s.key) && !keptRecorded(app.db, s))) return null;
   }
   return hunt(app, repoPath, now);
 }

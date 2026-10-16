@@ -624,6 +624,15 @@ default is new. Each finding is one issue with its evidence, filed in
 the first admin. Evidence is scrubbed of anything credential-shaped before it
 is filed.
 
+A setting kept on purpose is a decision, not drift. Closing a `setting:<key>`
+finding's issue, or commenting on it (a person, not the filer and not an agent), records the value
+and its `updated_at` in `sentinel_kept`; while both match, the sentinel files
+nothing and comments nothing for that key. Changing the value on the capacity
+page ends the keeping, and the setting is reported again under the usual
+one-day rule. The rule is mechanical: any close counts, with or without a
+reason, so a bare close silences the setting until its value changes. Other
+findings (`held`, `ledger`, `red`) are filed anew when they return.
+
 - **Board:** a site admin's forge strip shows the open findings and the last
   hunt; a guest or member sees nothing.
 - **Terminal:** press `ctrl+k`, run **Sentinel** — the same line as a toast.
