@@ -1,9 +1,9 @@
 /**
  * The one gate every proposal-token request passes, before any handler.
  *
- * A proposal token (`core/proposal_token.ts`) may do three things at the
+ * A proposal token (`core/proposal_token.ts`) may do four things at the
  * parent repository it was minted for and nothing else: advertise
- * receive-pack, run receive-pack, and open a pull. Everything is refused
+ * receive-pack, run receive-pack, open a pull, and read back one it opened. Everything is refused
  * unless it matches one of those exactly, so a route added tomorrow is
  * closed to these tokens until someone writes it in here. Which refs the
  * push may touch is decided at the ref update (`handleHook`), where the
@@ -11,9 +11,10 @@
  */
 
 import type { App } from "../app.ts";
+import { getPull } from "../core/pulls.ts";
 import { getRepoById } from "../core/repos.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
-import { PROPOSAL_BODY_MAX } from "../core/proposal_token.ts";
+import { PROPOSAL_BODY_MAX, pullProposalOf } from "../core/proposal_token.ts";
 import type { Auth } from "./context.ts";
 import { apiError } from "./respond.ts";
 
@@ -52,6 +53,21 @@ export function proposalGate(
   const proposal = auth.proposal;
   if (proposal === undefined) return undefined;
 
+  const parent = getRepoById(app.db, proposal.repoId);
+  if (parent === undefined) return refuse();
+  const at = `/${parent.ownerName}/${parent.name}.git`;
+  const pulls = `/api/v1/repos/${parent.ownerName}/${parent.name}/pulls`;
+  const path = url.pathname;
+  const method = request.method;
+
+  // A child may read back the state of a pull it opened, and no other.
+  const tail = method === "GET" && path.startsWith(`${pulls}/`) ? path.slice(pulls.length + 1) : "";
+  const own = /^[1-9][0-9]{0,8}$/.test(tail) ? Number(tail) : undefined;
+  if (own !== undefined) {
+    const pull = getPull(app.db, parent.id, own);
+    if (pull !== undefined && pullProposalOf(app.db, pull.id)?.child === proposal.child)
+      return undefined; // reading back spends none of the minute a press needs
+  }
   const verdict = proposalLimiter(app).take(proposal.tokenId, "rw");
   if (!verdict.allowed)
     return apiError(
@@ -59,13 +75,6 @@ export function proposalGate(
       429,
       `too many proposals: ${verdict.limit} per minute per token — retry in ${verdict.retryAfter}s`,
     );
-
-  const parent = getRepoById(app.db, proposal.repoId);
-  if (parent === undefined) return refuse();
-  const at = `/${parent.ownerName}/${parent.name}.git`;
-  const pulls = `/api/v1/repos/${parent.ownerName}/${parent.name}/pulls`;
-  const path = url.pathname;
-  const method = request.method;
 
   if (
     method === "GET" &&

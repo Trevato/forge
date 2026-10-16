@@ -6,9 +6,11 @@
  */
 
 import { severForge } from "../../actions/follow.ts";
-import { canAdmin } from "../../core/repos.ts";
+import { forgeProposals, proposeToParentForge, type ForgeProposal } from "../../actions/upstream.ts";
+import { canAdmin, canWrite } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { chainView, forgeLinkOf, type ChainLine } from "../../spawn/chain.ts";
+import { parentCredential } from "../../spawn/parent_credential.ts";
 import { loadRepo, notFoundPage, pageHead, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
@@ -50,6 +52,35 @@ async function carriesChain(ctx: Ctx): Promise<boolean> {
   return repo !== undefined && link !== undefined && link.repo === `${repo.ownerName}/${repo.name}`;
 }
 
+const STATE_WORDS = { open: "open", merged: "merged", closed: "closed" } as const;
+
+function proposalCard(base: string, proposals: readonly ForgeProposal[], writer: boolean): Html {
+  return card(
+    html`${proposals.length === 0
+        ? html`<p class="muted">Nothing proposed to the parent forge yet.</p>`
+        : html`<ul class="list" aria-label="Proposals to the parent forge">
+            ${proposals.map(
+              (p) => html`<li>
+                <div class="row">
+                  <span class="row-main">
+                    <a class="row-title" href="${p.url}" rel="noopener">#${p.number} ${p.title}</a>
+                    <span class="row-meta"
+                      >${STATE_WORDS[p.state]}${p.reachable ? null : html` · parent unreachable`}</span
+                    >
+                  </span>
+                </div>
+              </li>`,
+            )}
+          </ul>`}
+      ${writer
+        ? html`<form method="post" action="${base}/following/propose" class="mt">
+            <div class="form-actions">${btn("Propose to the parent forge", { type: "submit", icon: "merge" })}</div>
+          </form>`
+        : null}`,
+    { head: html`<h2>Proposals</h2>` },
+  );
+}
+
 // GET /:owner/:name/following
 export async function chainPage(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
@@ -59,6 +90,9 @@ export async function chainPage(ctx: Ctx): Promise<Response> {
   if (view === undefined) return redirect(`${repoBase(repo)}#following`);
   const base = repoBase(repo);
   const owner = canAdmin(ctx.app.db, repo, ctx.auth.user);
+  const proposing = view.severedAt === null && (await parentCredential(ctx.app)) !== undefined;
+  const proposals = proposing ? await forgeProposals(ctx.app, repo, Date.now(), ctx.auth.user !== undefined) : [];
+  const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
   return page({
     ctx,
     title: "Following",
@@ -77,6 +111,7 @@ export async function chainPage(ctx: Ctx): Promise<Response> {
         </ul>`,
         { pad: false },
       )}
+      ${proposing ? proposalCard(base, proposals, writer) : null}
       ${view.severedAt !== null
         ? html`<p class="muted" id="severed">
             This forge follows nothing since ${view.severedAt.slice(0, 10)}. Its code and history are
@@ -121,4 +156,36 @@ export async function severSubmit(ctx: Ctx): Promise<Response> {
       message: cut.error === "forbidden" ? "Only this forge's owner can sever it." : "This repository follows nothing.",
     });
   return flashOrJson(ctx, to, { message: `Severed: following nothing since ${cut.value.slice(0, 10)}. Nothing was deleted.` });
+}
+
+/** POST /:owner/:name/following/propose: push to the parent forge and open the pull there; a writer only. */
+export async function proposeParentSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const to = `${repoBase(repo)}/following`;
+  const made = await proposeToParentForge(ctx.app, ctx.auth.user, repo);
+  if (!made.ok) {
+    const e = made.error;
+    return flashOrJson(ctx, to, {
+      tone: "danger",
+      message:
+        e === "no_parent_forge"
+          ? "This forge has no parent forge to propose to."
+          : e === "nothing_to_propose"
+            ? "Nothing here is ahead of the parent forge."
+            : typeof e === "string"
+              ? "You need write access to propose from here."
+              : e.kind === "unreachable"
+                ? "Parent unreachable: nothing was proposed."
+                : `The parent forge did not take the proposal: ${e.reason}.`,
+    });
+  }
+  return flashOrJson(ctx, to, {
+    message: made.value.opened
+      ? `Proposed to the parent forge as #${made.value.number}.`
+      : `Already proposed to the parent forge as #${made.value.number}.`,
+  });
 }

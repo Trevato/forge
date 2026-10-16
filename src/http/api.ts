@@ -61,7 +61,7 @@ import { familyView } from "../spawn/family.ts";
 import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
-import { proposeUpstream } from "../actions/upstream.ts";
+import { forgeProposals, proposeToParentForge, proposeUpstream } from "../actions/upstream.ts";
 import { severForge, takeOrTell } from "../actions/follow.ts";
 import { relationOf } from "../actions/forks.ts";
 import { chainOfRepo } from "../spawn/chain.ts";
@@ -2263,6 +2263,38 @@ export function apiRoutes(router: Router<Handler>): void {
       return json({ number: pull.number, opened, changes, title: pull.title });
     },
   );
+
+  // Across forges: push this forge's change to the parent forge and open the
+  // pull there; GET says how each proposal stands, as the parent last said.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/following/propose-parent",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo) return notFound();
+      const made = await proposeToParentForge(ctx.app, ctx.auth.user, repo);
+      if (!made.ok) {
+        const e = made.error;
+        if (e === "no_parent_forge")
+          return apiError("no_parent_forge", 404, "this repository has no parent forge to propose to");
+        if (e === "nothing_to_propose")
+          return apiError("nothing_to_propose", 409, "nothing here is ahead of the parent forge");
+        if (typeof e === "string") return respondAccess(e, 403);
+        return e.kind === "unreachable"
+          ? apiError("parent_unreachable", 502, "parent unreachable")
+          : apiError("refused", 409, e.reason);
+      }
+      return json(made.value, made.value.opened ? 201 : 200);
+    },
+  );
+
+  router.add("GET", "/api/v1/repos/:owner/:name/following/proposals", async (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    return json({ items: await forgeProposals(ctx.app, repo, Date.now(), ctx.auth.user !== undefined) });
+  });
 
   router.add(
     "POST",

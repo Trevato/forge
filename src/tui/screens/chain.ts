@@ -6,7 +6,9 @@
 
 import type { App as Forge } from "../../app.ts";
 import { severForge } from "../../actions/follow.ts";
-import { canAdmin, canRead, getRepo, type Repo } from "../../core/repos.ts";
+import { forgeProposalLine, forgeProposals, proposeToParentForge } from "../../actions/upstream.ts";
+import { parentCredential } from "../../spawn/parent_credential.ts";
+import { canAdmin, canRead, canWrite, getRepo, type Repo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
 import { chainLines, chainOfRepo, forgeLinkOf, type ChainView } from "../../spawn/chain.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -33,12 +35,26 @@ export async function chainScreen(app: Forge, user: User | undefined, ctx: Ctx):
   const found = await readableChain(app, user);
   if (found === undefined) return familyScreen(ctx, [["chain", "this forge follows nothing across forges"]], "Chain");
   const { repo, view } = found;
-  const rows = chainLines(view);
   const owner = user !== undefined && view.severedAt === null && canAdmin(app.db, repo, user);
-  if (!owner) return familyScreen(ctx, rows, "Chain");
+  const writer = user !== undefined && view.severedAt === null && canWrite(app.db, repo, user);
+  const proposing = view.severedAt === null && (await parentCredential(app)) !== undefined;
+  const linesOf = async (): Promise<[string, string][]> => [
+    ...chainLines(view),
+    ...(proposing
+      ? (await forgeProposals(app, repo, Date.now(), user !== undefined)).map(
+          (p): [string, string] => ["proposal", forgeProposalLine(p)],
+        )
+      : []),
+  ];
+  let rows = await linesOf();
+  if (!owner && !writer) return familyScreen(ctx, rows, "Chain");
   const self: Screen = {
     title: "Chain",
-    keys: [binding(["s"], "sever"), binding(["esc"], "close")],
+    keys: [
+      ...(writer && proposing ? [binding(["p"], "propose")] : []),
+      ...(owner ? [binding(["s"], "sever")] : []),
+      binding(["esc"], "close"),
+    ],
     render(area, s) {
       const c = ctx.theme.c;
       const w = Math.min(78, Math.max(30, area.w - 6));
@@ -49,7 +65,25 @@ export async function chainScreen(app: Forge, user: User | undefined, ctx: Ctx):
     },
     key(e) {
       if (e.key === "esc" || e.key === "q") ctx.pop();
-      else if (e.key === "s")
+      else if (e.key === "p" && writer && proposing)
+        void proposeToParentForge(app, user, repo).then(async (made) => {
+          if (!made.ok) {
+            const err = made.error;
+            return ctx.toast(
+              err === "nothing_to_propose"
+                ? "Nothing here is ahead of the parent forge"
+                : typeof err === "string"
+                  ? `Not proposed: ${err}`
+                  : err.kind === "unreachable"
+                    ? "Parent unreachable: nothing was proposed"
+                    : `The parent forge did not take it: ${err.reason}`,
+              "danger",
+            );
+          }
+          rows = await linesOf();
+          ctx.toast(`Proposed to the parent forge as #${made.value.number}`, "success");
+        });
+      else if (e.key === "s" && owner)
         ctx.push(
           promptScreen(ctx, self, {
             title: "Sever from the parent forge",

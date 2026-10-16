@@ -104,6 +104,24 @@ opened with it says "proposed by child … from …" on every tab of the pull's
 page, in the terminal's pull view, and as `proposal` in the pull's JSON
 (`GET …/pulls/:number`, and MCP's `pull` tool).
 
+### Proposing to a parent forge
+
+A spawned forge can offer its own change to the forge it came from. The
+parent mints a proposal token for the child (above); the child keeps it in
+`parent.json` as `"proposal": {"child": "kid", "token": "…"}` beside the
+parent's address. On the child's `/<org>/forge/following` page a writer
+presses **Propose to the parent forge** (or `POST …/following/propose-parent`):
+the default branch is pushed to `child/<name>/<branch>-<tip>` at the parent,
+and the pull opens there, titled by the change that landed last and naming it
+(`org/forge#7`). Asking again for the same tip returns the pull already made.
+
+The page and `GET …/following/proposals` show each proposal as open, merged or
+closed, read from the parent (the token may read back only pulls it opened) and
+cached for a minute (only a signed-in viewer makes the parent get asked); a merged or closed one is final. A parent that does not
+answer shows the last state with "parent unreachable" — never an error page.
+In the terminal, the Chain card lists the proposals and `p` proposes. No dependency was added. Left out: an MCP tool, and a UI to paste
+the token into `parent.json` (part 2 of #2182 covers minting and handing over).
+
 Minting, listing and revoking go through one action
 (`src/actions/proposal_tokens.ts`) at every door, and only a writer of the
 repository may; anyone else is told "no such resource here, or it is not
