@@ -330,6 +330,7 @@ export const GATE: readonly string[] = [
   "test/check-list.test.ts",
   "test/check-land-main.test.ts",
   "test/check-tiers.test.ts",
+  "test/changed-compare.test.ts",
   "test/pull-check-again.test.ts",
   "test/holds.test.ts",
   "test/hollow.test.ts",
