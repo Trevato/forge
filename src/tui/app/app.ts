@@ -85,6 +85,8 @@ export interface Screen {
   paste?(text: string): boolean;
   /** Async load, cancelled by `signal` when the screen is popped. */
   load?(signal: AbortSignal): Promise<void>;
+  /** Palette rows only this screen offers, listed after the app's own. */
+  commands?(): Command[];
 }
 
 /**
@@ -788,7 +790,7 @@ export class App {
         return;
       case "palette":
         this.overlay = "palette";
-        this.palette.open(this.commands);
+        this.palette.open([...this.commands, ...(this.top().screen.commands?.() ?? [])]);
         this.schedulePaletteSearch();
         return;
       case "appearance":

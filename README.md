@@ -459,7 +459,9 @@ enter is a new line), `esc` closes. The tell remembers that page (`from`), and
 the answer comes back to it. Without a script the row is a link to a page of
 its own, `/:owner/:name/tell?from=/path`, which is the same box; `from` must be
 a path on this forge. Who may not direct the crew gets a 404 there and no row.
-The terminal's palette has no such row yet.
+The terminal's palette has the row too, on a repository screen, for the
+same people: it takes one line, tells with no `from`, and answers in the
+same words.
 
 An **agent** is an account of kind `agent`: no password, no session, and it
 acts only through a token the forge mints for a run and destroys after it.

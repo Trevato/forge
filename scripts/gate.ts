@@ -341,6 +341,7 @@ export const GATE: readonly string[] = [
   "test/web-origins.test.ts",
   "test/roll.test.ts",
   "test/rehearsal.test.ts",
+  "test/tui-tell.test.ts",
 ];
 
 export const EXCLUDED: readonly Exclusion[] = [
