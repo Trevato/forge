@@ -1,10 +1,15 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp as createForge, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
+import { createApp } from "../src/core/apps.ts";
+import { createIssue } from "../src/core/issues.ts";
+import { recordLook } from "../src/core/looks.ts";
 import { createUser } from "../src/core/users.ts";
+import { encodePng } from "../src/design/image/png.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { renderCard } from "../src/web/og/card.ts";
 import { cardKey, pngCache } from "../src/web/og/png-cache.ts";
@@ -169,5 +174,130 @@ describe("og png", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("og cards with a look", () => {
+  let dataDir: string;
+  let app: App;
+  let servers: Servers;
+  let base: string;
+  let appId = "";
+  let owner: { id: string };
+
+  /** A 1280×800 page-like picture: bands and blocks, so it compresses as a screenshot does. */
+  const screenshot = (hue: number): Uint8Array => {
+    const w = 1280;
+    const h = 800;
+    const rgba = new Uint8Array(w * h * 4);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const o = (y * w + x) * 4;
+        const block = ((x >> 5) + (y >> 5)) % 3;
+        rgba[o] = (hue + block * 60 + (y >> 3)) & 255;
+        rgba[o + 1] = 40 + block * 50;
+        rgba[o + 2] = 200 - (x >> 3);
+        rgba[o + 3] = 255;
+      }
+    return encodePng(w, h, rgba);
+  };
+
+  const look = (env: string, kind: "thumb" | "desktop", takenAs: "owner" | "nobody", hue: number) => {
+    const path = join("looks", appId, env, `${hue}-${kind}.png`);
+    mkdirSync(join(dataDir, "looks", appId, env), { recursive: true });
+    writeFileSync(join(dataDir, path), screenshot(hue));
+    return recordLook(app.db, { appId, env, commitOid: "a".repeat(40), kind, path, takenAs });
+  };
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-ogshot-"));
+    app = createForge({ dataDir, port: 0 });
+    servers = await serve(app);
+    base = servers.url;
+    const u = await createUser(app.db, {
+      trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "alice-passphrase",
+      adminIfFirst: true,
+    });
+    if (!u.ok) throw new Error(u.error);
+    owner = u.value;
+    const made = await createRepo(app, u.value, { name: "peek", visibility: "public" });
+    if (!made.ok) throw new Error(String(made.error));
+    const rec = createApp(app.db, { repoId: made.value.id, slug: "peek-app", access: "public" });
+    if (!rec.ok) throw new Error(rec.error);
+    appId = rec.value.id;
+    const issue = createIssue(app.db, {
+      repoId: made.value.id,
+      authorId: u.value.id,
+      title: "A pull with looks",
+      kind: "pull",
+    });
+    if (!issue.ok) throw new Error(String(issue.error));
+    app.db
+      .query(
+        `INSERT INTO pull (issue_id, base_branch, head_branch, base_oid, head_oid, head_repo_id)
+         VALUES (?1, 'main', 'topic', '', '', ?2)`,
+      )
+      .run(issue.value.id, made.value.id);
+  });
+
+  afterAll(async () => {
+    await servers.stop();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  const images = (svg: string) => svg.match(/<image /g)?.length ?? 0;
+  const text = async (path: string) => (await fetch(`${base}${path}`)).text();
+
+  test("without a look the app card is the card it was", async () => {
+    expect(images(await text("/og/app/peek-app.svg"))).toBe(0);
+  });
+
+  test("a look taken as the owner is not on the card; one taken as nobody is, and a new look is a new card", async () => {
+    look("production", "desktop", "owner", 1);
+    expect(images(await text("/og/app/peek-app.svg"))).toBe(0);
+    look("production", "desktop", "nobody", 2);
+    const first = await fetch(`${base}/og/app/peek-app.svg`);
+    expect(images(await first.text())).toBe(1);
+    const etag = first.headers.get("etag")!;
+    expect((await fetch(`${base}/og/app/peek-app.svg`, { headers: { "if-none-match": etag } })).status).toBe(304);
+
+    // A retake of the same slot is a new taking, hence a new card.
+    await Bun.sleep(5);
+    look("production", "desktop", "nobody", 3);
+    const second = await fetch(`${base}/og/app/peek-app.svg`);
+    expect(second.headers.get("etag")).not.toBe(etag);
+    await second.text();
+  });
+
+  test("the PNG twin carries the picture and stays small", async () => {
+    const bare = await fetch(`${base}/og/repo/alice~peek.png`);
+    const res = await fetch(`${base}/og/app/peek-app.png`);
+    expect(res.status).toBe(200);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect([...bytes.slice(0, 4)]).toEqual(PNG);
+    expect(bytes.length).toBeLessThan(300 * 1024);
+    // The picture's colour is in the right half of the card; the plain card's is not.
+    expect(bytes.length).toBeGreaterThan(new Uint8Array(await bare.arrayBuffer()).length);
+  });
+
+  test("a pull card carries before and after, and a sealed or absent look nothing", async () => {
+    expect(images(await text("/og/pull/alice~peek~1.svg"))).toBe(0);
+    look("pull-1", "desktop", "nobody", 4);
+    const svg = await text("/og/pull/alice~peek~1.svg");
+    expect(images(svg)).toBe(2);
+    expect(svg).toContain(">before<");
+    expect(svg).toContain(">after<");
+    app.db.query("UPDATE issue SET sealed = 1 WHERE kind = 'pull'").run();
+    expect((await fetch(`${base}/og/pull/alice~peek~1.svg`)).status).toBe(404);
+  });
+
+  test("a look whose file is gone leaves the plain card", async () => {
+    app.db.query("DELETE FROM look").run();
+    look("production", "desktop", "nobody", 5);
+    rmSync(join(dataDir, "looks", appId, "production", "5-desktop.png"));
+    expect(images(await text("/og/app/peek-app.svg"))).toBe(0);
   });
 });

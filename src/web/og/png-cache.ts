@@ -10,19 +10,19 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, rename, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { CardInput } from "./card.ts";
+import { signature, type CardInput } from "./card.ts";
 import type { Rasterizer } from "./raster.ts";
 
 export const OG_PNG_CAP = 512;
 export const OG_PNG_QUEUE = 4;
 /** Bump when the card's look or the fonts change: old files are then unreachable. */
-const LOOK = "1";
+const LOOK = "2";
 
 /** Thrown when too many cards wait; working as designed, not a failure. */
 export class Busy extends Error {}
 
 export function cardKey(input: CardInput): string {
-  return createHash("sha256").update(`${LOOK}\n${JSON.stringify(input)}`).digest("hex");
+  return createHash("sha256").update(`${LOOK}\n${signature(input)}`).digest("hex");
 }
 
 export interface PngCache {

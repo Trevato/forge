@@ -21,7 +21,7 @@ import type { App } from "../../app.ts";
 import type { Run } from "../../core/runs.ts";
 import { getUserById } from "../../core/users.ts";
 import { getRepoRun } from "../../actions/runs.ts";
-import { appsForRepos, getAppBySlug, isSlug } from "../../core/apps.ts";
+import { appsForRepos, getAppByRepo, getAppBySlug, isSlug } from "../../core/apps.ts";
 import { audit } from "../../contract/audit.ts";
 import { latestProbes } from "../../contract/probes.ts";
 import { checkSummary, listActiveRuns } from "../../core/runs.ts";
@@ -42,7 +42,8 @@ import { isSafeName } from "../../git/guard.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFound } from "../../http/respond.ts";
 import { auditInput, type AuditRow } from "../og/audit.ts";
-import { renderCard, type CardInput } from "../og/card.ts";
+import { renderCard, signature, type CardInput } from "../og/card.ts";
+import { appImages, embedShots, pullImages } from "../og/looks.ts";
 import { mapInput } from "../og/map.ts";
 import { marksFor } from "./map.ts";
 import { Busy, pngCache, type PngCache } from "../og/png-cache.ts";
@@ -207,7 +208,12 @@ function threadInput(ctx: Ctx, kind: OgKind, ref: string): CardInput | undefined
     kind === "pull" ? getPull(db, at.repo.id, n) : getIssue(db, at.repo.id, n);
   if (!item || item.kind !== kind || !mayView(db, at.repo, item, undefined))
     return undefined;
-  if (kind === "pull") return pullInput(ctx, at.repo, item as Pull);
+  if (kind === "pull") {
+    const input = pullInput(ctx, at.repo, item as Pull);
+    const record = getAppByRepo(db, at.repo.id);
+    const images = record ? pullImages(ctx.app, record, at.repo.id, n) : [];
+    return images.length ? { ...input, images } : input;
+  }
   return {
     kind,
     title: item.title,
@@ -324,8 +330,10 @@ async function resolve(ctx: Ctx, kind: OgKind, ref: string): Promise<CardInput |
   if (!repo) return undefined;
   const live = liveState(ctx, repo);
   const base = repoInput(ctx, repo, "app");
+  const images = appImages(ctx.app, record, repo.id);
   return {
     ...base,
+    ...(images.length ? { images } : {}),
     title: record.slug,
     lines: [
       ...(base.lines ?? []),
@@ -354,7 +362,7 @@ export function ogCard(kind: OgKind, format: "svg" | "png" = "svg") {
   return async (ctx: Ctx): Promise<Response> => {
     const input = await resolve(ctx, kind, ctx.params.ref ?? "");
     if (!input) return notFound();
-    const etag = `"${createHash("sha256").update(JSON.stringify(input)).digest("hex")}${format === "png" ? "-png" : ""}"`;
+    const etag = `"${createHash("sha256").update(signature(input)).digest("hex")}${format === "png" ? "-png" : ""}"`;
     const headers = {
       etag,
       "cache-control": "public, max-age=300",
@@ -362,9 +370,9 @@ export function ogCard(kind: OgKind, format: "svg" | "png" = "svg") {
     };
     if (ctx.request.headers.get("if-none-match") === etag)
       return new Response(null, { status: 304, headers });
-    if (format === "svg") return new Response(renderCard(input), { headers });
+    if (format === "svg") return new Response(renderCard(embedShots(input)), { headers });
     try {
-      return new Response(await cacheFor(ctx.app).get(input), { headers });
+      return new Response(await cacheFor(ctx.app).get(embedShots(input)), { headers });
     } catch (error) {
       if (!(error instanceof Busy))
         ctx.app.log.error("og card could not be rasterized", { kind, error: String(error) });

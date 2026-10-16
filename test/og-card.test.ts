@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CARD_KINDS, escapeXml, fit, renderCard } from "../src/web/og/card.ts";
+import { CARD_KINDS, escapeXml, fit, renderCard, signature } from "../src/web/og/card.ts";
 
 /** Minimal well-formedness check: balanced tags, no stray `<`/`&` in text. */
 function wellFormed(svg: string): void {
@@ -70,5 +70,53 @@ describe("og card", () => {
     expect(fit("short", 30, 1000)).toBe("short");
     expect(fit("a".repeat(200), 30, 300).endsWith("…")).toBe(true);
     expect(escapeXml(`<&>"'`)).toBe("&lt;&amp;&gt;&quot;&#39;");
+  });
+});
+
+describe("og card pictures", () => {
+  const src = "data:image/png;base64,iVBORw0KGgo=";
+  const base = { kind: "app", title: "peek", lines: ["a line"], stat: "1 issues" } as const;
+
+  test("a picture is drawn beside the words, which keep to their column", () => {
+    const plain = renderCard(base);
+    const svg = renderCard({ ...base, images: [{ id: "a", src }] });
+    wellFormed(svg);
+    expect(plain).not.toContain("<image");
+    expect(svg).toContain(`<image href="${src}"`);
+    expect(svg).toContain("peek");
+  });
+
+  test("two pictures are labelled before and after", () => {
+    const svg = renderCard({
+      ...base,
+      images: [
+        { id: "a", src, label: "before" },
+        { id: "b", src, label: "after" },
+      ],
+    });
+    wellFormed(svg);
+    expect(svg.match(/<image /g)).toHaveLength(2);
+    expect(svg).toContain(">before<");
+    expect(svg).toContain(">after<");
+  });
+
+  test("only a base64 PNG data URI is drawn", () => {
+    for (const bad of [
+      "https://example.com/x.png",
+      'data:image/png;base64,AAA" onload="x',
+      "data:image/svg+xml;base64,AAAA",
+      "data:image/png;base64," + "A".repeat(500_000),
+      "",
+    ]) {
+      const svg = renderCard({ ...base, images: [{ id: "a", src: bad }] });
+      expect(svg).toBe(renderCard(base));
+    }
+  });
+
+  test("the signature names a picture by id, not by bytes", () => {
+    const a = signature({ ...base, images: [{ id: "a", src, path: "/x" }] });
+    expect(signature({ ...base, images: [{ id: "a", src: "other", path: "/y" }] })).toBe(a);
+    expect(signature({ ...base, images: [{ id: "b", src }] })).not.toBe(a);
+    expect(a).not.toBe(signature(base));
   });
 });

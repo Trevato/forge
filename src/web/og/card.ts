@@ -7,6 +7,12 @@
  * score (`score.ts`) — drawn in a box on the right; the words then keep to
  * the left column, a little smaller, so the two never overlap.
  *
+ * A card may instead carry pictures (a look, or a before and after pair) as
+ * data URIs, in the same box; the words keep to the left column as with a
+ * figure. A picture is drawn only if it is a base64 PNG data URI of
+ * reasonable size, and its `id` — not its bytes — is what names the card
+ * (`signature`), so a new look is a new card.
+ *
  * Every text is stripped of characters XML cannot carry, clamped to the
  * card's width by an estimated advance (system fonts are unmeasurable here,
  * so the estimate is deliberately wide), ended with an ellipsis, and only
@@ -28,12 +34,26 @@ export type Figure = GraphFigure | ScoreFigure;
 
 export { escapeXml, fit };
 
+/** A picture on a card: `id` names it, `src` is the data URI, `path` where it is read from. */
+export interface CardImage {
+  id: string;
+  label?: string;
+  path?: string;
+  src?: string;
+}
+
 export interface CardInput {
   kind: CardKind;
   title: string;
   lines?: readonly string[];
   stat?: string;
   figure?: Figure;
+  images?: readonly CardImage[];
+}
+
+/** What names a card: its input, less the bytes of its pictures (their ids stand for them). */
+export function signature(input: CardInput): string {
+  return JSON.stringify(input, (key, value) => (key === "src" || key === "path" ? undefined : value));
 }
 
 const T = THEMES.dark.tokens;
@@ -114,6 +134,42 @@ function drawFigure(figure: unknown): string {
   return "";
 }
 
+const DATA_PNG = /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/;
+/** A picture longer than this (as a URI) is not drawn. */
+const MAX_URI = 400_000;
+const MAX_IMAGES = 2;
+export const IMAGE_BOX = { x: 740, y: 125, w: 380, h: 380 } as const;
+const LABEL_SIZE = 20;
+
+/** The pictures' SVG, or nothing when there is no usable one. */
+function drawImages(images: unknown): string {
+  const usable = (Array.isArray(images) ? images : [])
+    .filter(
+      (i): i is CardImage =>
+        typeof i?.src === "string" && i.src.length <= MAX_URI && DATA_PNG.test(i.src),
+    )
+    .slice(0, MAX_IMAGES);
+  if (usable.length === 0) return "";
+  const { x, y, w, h } = IMAGE_BOX;
+  const gap = 14;
+  const labelled = usable.length > 1;
+  const slot = labelled ? Math.floor((h - gap) / usable.length) - LABEL_SIZE - 6 : 240;
+  const out: string[] = [];
+  let top = labelled ? y : y + Math.floor((h - slot) / 2) - 40;
+  for (const image of usable) {
+    if (labelled) {
+      out.push(text(x, top + LABEL_SIZE, LABEL_SIZE, T["muted-fg"], clean(image.label), ` font-weight="700" letter-spacing="2"`));
+      top += LABEL_SIZE + 6;
+    }
+    out.push(
+      `<rect x="${x - 1}" y="${top - 1}" width="${w + 2}" height="${slot + 2}" rx="6" fill="${T.border}"/>`,
+      `<image href="${image.src}" x="${x}" y="${top}" width="${w}" height="${slot}" preserveAspectRatio="xMidYMid meet"/>`,
+    );
+    top += slot + gap;
+  }
+  return out.join("");
+}
+
 export function renderCard(input: CardInput): string {
   const kind: CardKind = CARD_KINDS.includes(input?.kind) ? input.kind : "page";
   const color = KIND_COLOR[kind];
@@ -134,7 +190,7 @@ export function renderCard(input: CardInput): string {
     text(CARD_WIDTH - PAD, PAD + 24, 24, color, label, ` font-weight="700" text-anchor="end" letter-spacing="2"`),
   );
 
-  const figure = drawFigure(input?.figure);
+  const figure = drawFigure(input?.figure) || drawImages(input?.images);
   const column = figure ? COLUMN : INNER;
   if (figure) out.push(figure);
 

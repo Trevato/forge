@@ -926,6 +926,16 @@ takes back (`supersedes`). `/asked` shows "said again, first on …", "takes bac
 social cards. They show only what an anonymous reader can open; anything
 private, sealed or unknown is the same 404.
 
+An app card carries the app's latest look (the production thumb, or a desktop
+or phone shot taken as nobody) beside the words; a pull card carries the
+production look as "before" and the pull's preview look as "after" (the
+preview alone if production has none, nothing if the pull has no look). Only
+a look an anonymous reader may fetch is used, of a public app and never a
+sealed pull's. The picture is decoded, reduced to fit 480×300 and embedded as
+a data URI (no dependency; the forge's own PNG codec), and the look's id and
+taking name the card, so a new look is a new card. A look whose file cannot be
+read leaves the card as it was.
+
 Two of them carry a figure beside the words:
 
 - **Map** — `/og/map/owner~name.svg`: the repository's dependency graph as a
