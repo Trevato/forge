@@ -315,6 +315,7 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
         Opens a pull that adds the next <code>waves/&lt;version&gt;.md</code>,
         listing every pull merged since the last wave. The headline and
         highlights are left as TODO for you to write.
+        <a href="${base}/waves">See the waves so far</a>.
       </p>
       <div class="form-actions">${btn("Cut a wave", { variant: "primary" })}</div>
     </form>`,

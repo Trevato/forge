@@ -168,6 +168,7 @@ import {
   branchDelete,
   branchesPage,
 } from "../web/pages/branches.ts";
+import { wavesPage } from "../web/pages/waves.ts";
 import {
   contributeSubmit,
   deleteFilePage,
@@ -1139,6 +1140,7 @@ export function buildRouter(): Router<Handler> {
   // The repository's activity, for a feed reader.
   router.add("GET", "/:owner/:name/activity.atom", activityAtom);
   router.add("GET", "/:owner/:name/branches", branchesPage);
+  router.add("GET", "/:owner/:name/waves", wavesPage);
   router.add("POST", "/:owner/:name/branches", branchCreate);
   router.add("POST", "/:owner/:name/branches/:branch/delete", branchDelete);
 

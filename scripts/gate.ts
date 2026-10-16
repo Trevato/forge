@@ -27,6 +27,8 @@ export type Exclusion = {
 };
 
 export const GATE: readonly string[] = [
+  "test/waves-page.test.ts",
+  "test/waves-order.test.ts",
   "test/domain-drill.test.ts",
   "test/conflicts.test.ts",
   "test/lands-once.test.ts",
@@ -68,6 +70,7 @@ export const GATE: readonly string[] = [
   "test/protection.test.ts",
   "test/tui-limbs.test.ts",
   "test/tui-onyou.test.ts",
+  "test/tui-waves.test.ts",
   "test/tui-deploys.test.ts",
   "test/tui-access.test.ts",
   "test/tui-newforge.test.ts",
