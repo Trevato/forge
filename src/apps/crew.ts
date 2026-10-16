@@ -8,6 +8,7 @@
 
 import type { Database } from "bun:sqlite";
 import type { AppRecord } from "../core/apps.ts";
+import { mayDirectCrew } from "../crew/direct.ts";
 import { getIssue } from "../core/issues.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
 import { workingAgentRuns } from "../core/runs.ts";
@@ -45,4 +46,23 @@ export function crewNow(
     who: actor?.username ?? "the crew",
     url: new URL(`/${repo.ownerName}/${repo.name}/runs/${run.id}`, forgeUrl).href,
   };
+}
+
+/**
+ * The forge page that says a tell for a signed-in person who may direct the
+ * crew on this app; nothing for anyone else, so a signed-out pill offers no
+ * action. It is always on the forge's own origin.
+ */
+export function tellLink(
+  db: Database,
+  forgeUrl: string,
+  app: AppRecord,
+  viewerId: string | undefined,
+): string | undefined {
+  if (viewerId === undefined) return undefined;
+  const viewer = getUserById(db, viewerId);
+  const repo = getRepoById(db, app.repoId);
+  if (viewer === undefined || !isActive(viewer) || repo === undefined) return undefined;
+  if (!canRead(db, repo, viewer) || !mayDirectCrew(db, repo, viewer)) return undefined;
+  return new URL(`/${repo.ownerName}/${repo.name}/tell`, forgeUrl).href;
 }

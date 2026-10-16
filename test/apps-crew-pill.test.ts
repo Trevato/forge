@@ -178,6 +178,7 @@ describe("the crew line", () => {
     expect(await ok.json()).toEqual({
       who: "scout",
       url: `${servers.url}/alice/notes/runs/${run.id}`,
+      tell: `${servers.url}/alice/notes/tell`,
     });
     expect(await (await ask()).json()).toEqual({});
     expect(await (await ask(`${grant}x`)).json()).toEqual({});

@@ -34,7 +34,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
-import { crewNow } from "./crew.ts";
+import { crewNow, tellLink } from "./crew.ts";
 import { rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
 
 export interface AppTarget {
@@ -554,7 +554,13 @@ export async function proxyApp(
       target.env,
       signed?.who?.id,
     );
-    return Response.json(crew ?? {}, {
+    const tell = tellLink(
+      runtime.app.db,
+      runtime.options.forgeUrl,
+      target.app,
+      signed?.who?.id,
+    );
+    return Response.json({ ...crew, ...(tell === undefined ? {} : { tell }) }, {
       headers: {
         "cache-control": "no-store",
         "x-content-type-options": "nosniff",

@@ -423,7 +423,7 @@ export interface ComposerOptions {
    * the button tells the crew, and `from` (a path on this forge, or null)
    * rides along as a hidden field so the tell remembers the page it was
    * said on (`actions/tell.ts`). `rows` sizes it; one is a single line. */
-  tell?: { from: string | null; rows?: number };
+  tell?: { from: string | null; rows?: number; page?: string; pull?: number; text?: string };
 }
 
 /** The comment box. Close and reopen are their own form, not an `intent`
@@ -504,9 +504,15 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
         ${tell ? raw('maxlength="2000"') : raw("data-grow")}
         placeholder="${tell ? "Tell the crew what should change" : "Leave a comment"}"
         required
-      ></textarea>
+      >${tell?.text ?? ""}</textarea>
       ${tell?.from
         ? html`<input type="hidden" name="from" value="${tell.from}" />`
+        : null}
+      ${tell?.page
+        ? html`<input type="hidden" name="page" value="${tell.page}" />`
+        : null}
+      ${tell?.pull
+        ? html`<input type="hidden" name="pull" value="${String(tell.pull)}" />`
         : null}
       ${o.crewNote === undefined
         ? null
@@ -516,6 +522,8 @@ export function composer(ctx: Ctx, o: ComposerOptions): Html {
           >${tell
             ? html`${tell.from
                 ? html`From <code>${tell.from}</code>. `
+                : null}${tell.page
+                ? html`From <code>${tell.page}</code>. `
                 : null}Enter sends.`
             : html`${icon("file")} Markdown is supported —
                 <code>**bold**</code>, <code>[link](url)</code>,

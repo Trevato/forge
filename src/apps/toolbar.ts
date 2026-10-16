@@ -86,9 +86,28 @@ export const toolbarJs = `(function () {
     fetch("/__forge/crew", { credentials: "same-origin", cache: "no-store" })
       .then(function (r) { return r.ok ? r.json() : {}; })
       .then(function (c) {
-        if (!c || typeof c.who !== "string" || typeof c.url !== "string") return;
+        if (!c) return;
+        var forge = new URL(me.src).origin;
+        // Signed in, the crew can be told from here. The form is the forge's
+        // own page, on its own origin, with its own CSRF check: the app's
+        // page only carries the address and the pull to it.
+        if (typeof c.tell === "string") {
+          var t = new URL(c.tell);
+          if (t.origin === forge) {
+            t.searchParams.set("page", location.href);
+            if (d.pull) t.searchParams.set("pull", d.pull);
+            var ta = document.createElement("a");
+            ta.textContent = "Tell the crew";
+            ta.target = "_blank";
+            ta.rel = "noopener";
+            ta.href = t.href;
+            ta.style.cssText = "color:#8ab4ff;text-decoration:none;display:flex;align-items:center;min-height:44px";
+            crew.appendChild(ta);
+          }
+        }
+        if (typeof c.who !== "string" || typeof c.url !== "string") return;
         var u = new URL(c.url);
-        if (u.origin !== new URL(me.src).origin) return;
+        if (u.origin !== forge) return;
         var a = document.createElement("a");
         a.textContent = c.who + " is working on this";
         a.rel = "noopener";

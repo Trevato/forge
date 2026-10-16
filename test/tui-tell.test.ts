@@ -87,6 +87,23 @@ describe("tell the crew in the terminal", () => {
     expect(listIssues(app.db, repo.id, {}).some((i) => i.title === "paint the door red")).toBe(true);
   });
 
+  test("a tell from a page carries its page and pull, and bob has no such row", async () => {
+    const keys = [":", "from a page", "\r", ..."https://notes.apps.test/a".split(""), "\r", "7", "\r", ..."move the button".split(""), "\r"];
+    const text = await palette(alice, keys);
+    expect(text).toContain("Nobody is on the crew to take it yet");
+    const issue = listIssues(app.db, repo.id, {}).find((i) => i.title === "move the button")!;
+    expect(issue.body).toContain("- page: https://notes.apps.test/a");
+    expect(issue.body).toContain("- pull: #7");
+    expect(await palette(bob, [":", "from a page"])).not.toContain("Tell the crew from a page");
+  });
+
+  test("a page that is not http(s) keeps the prompt open and tells nothing", async () => {
+    const before = listIssues(app.db, repo.id, {}).length;
+    const text = await palette(alice, [":", "from a page", "\r", ..."javascript:alert(1)".split(""), "\r"]);
+    expect(text).toContain("That is not an http(s) address.");
+    expect(listIssues(app.db, repo.id, {}).length).toBe(before);
+  });
+
   test("an empty line says so and tells nothing", async () => {
     const before = listIssues(app.db, repo.id, {}).length;
     const text = await palette(alice, [":", "tell", "\r", "\r"]);

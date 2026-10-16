@@ -580,6 +580,20 @@ pull, the panel also says `scout is working on this` and links the run; it asks
 read the repository (and, for a run on a sealed issue, that issue), and shows
 nothing when the crew is idle.
 
+**Tell the crew from the pill.** Signed in as someone who may direct the crew,
+the panel also offers *Tell the crew* (`/__forge/crew` adds a `tell` link, only
+for them; signed out there is no action). It opens the forge's own
+`/:owner/:name/tell?page=<address>&pull=<n>` in a new tab, so the POST is the
+forge's same-origin, CSRF-checked form and the app's origin can never send one.
+It is the same `tell()` as every door; `page` (an http(s) address) and `pull`
+(a number, on a preview) are checked again on send and written into the tell
+as the *Where this was told from* block. A receipt links the issue it opened; a
+refused tell returns to the box with the words, page and pull kept. The MCP
+`tell` takes the same through `context: { page, pull, run, commit, said }`, and
+the terminal's palette has *Tell the crew from a page*, which asks for the
+page, the pull (optional) and the line, through the same `parseContext` and
+`contextNote`.
+
 With a sentence and **Pick for me**, the sentence becomes a plan before the
 page comes back: `src/crew/plan.ts` makes one non-interactive call to
 `claude` — the quickest model, a fixed JSON shape, at most 3 seconds — for a

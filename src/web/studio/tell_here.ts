@@ -6,6 +6,7 @@
  * (`composer`, pages/thread.ts) saying a tell, so there is one box to keep.
  */
 
+import { parseContext } from "../../actions/tell_context.ts";
 import { parseFrom } from "../../actions/tell.ts";
 import { mayDirectCrew } from "../../crew/direct.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -20,11 +21,28 @@ export function tellHerePage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   if (!mayDirectCrew(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
   const from = parseFrom(ctx.url.searchParams.get("from") ?? undefined) ?? null;
+  // The page of the app the toolbar was pressed on, and its pull: both
+  // checked here and again when the tell is sent.
+  const pull = ctx.url.searchParams.get("pull");
+  const where = parseContext({
+    ...(ctx.url.searchParams.has("page") ? { page: ctx.url.searchParams.get("page") } : {}),
+    // A pull is only the pull of a page: alone it would be dropped on send.
+    ...(pull !== null && ctx.url.searchParams.has("page") && /^\d{1,9}$/.test(pull)
+      ? { pull: Number(pull) }
+      : {}),
+  });
+  const text = (ctx.url.searchParams.get("text") ?? "").slice(0, 2000);
   const box = composer(ctx, {
     action: `${repoBase(repo)}/tell`,
     state: "open",
     closeLabel: "",
-    tell: { from, rows: ctx.url.searchParams.get("in") === "place" ? 1 : 4 },
+    tell: {
+      from,
+      rows: ctx.url.searchParams.get("in") === "place" ? 1 : 4,
+      ...(text === "" ? {} : { text }),
+      ...(where?.page === undefined ? {} : { page: where.page }),
+      ...(where?.pull === undefined ? {} : { pull: where.pull }),
+    },
   });
   if (ctx.url.searchParams.get("in") === "place")
     return fragment(box, { request: ctx.request });

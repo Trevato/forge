@@ -8,6 +8,7 @@
 
 export interface TellContext {
   readonly page?: string;
+  readonly pull?: number;
   readonly run?: string;
   readonly commit?: string;
   readonly said?: string;
@@ -22,7 +23,7 @@ export function parseContext(v: unknown): TellContext | undefined | null {
   if (v === undefined) return undefined;
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
   const o = v as Record<string, unknown>;
-  const out: { page?: string; run?: string; commit?: string; said?: string } = {};
+  const out: { page?: string; pull?: number; run?: string; commit?: string; said?: string } = {};
   if (o["page"] !== undefined) {
     const url =
       typeof o["page"] === "string" && o["page"].length <= 2000
@@ -31,6 +32,11 @@ export function parseContext(v: unknown): TellContext | undefined | null {
     if (url === null || (url.protocol !== "http:" && url.protocol !== "https:"))
       return null;
     out.page = url.href;
+  }
+  if (o["pull"] !== undefined) {
+    const n = o["pull"];
+    if (typeof n !== "number" || !Number.isSafeInteger(n) || n < 1) return null;
+    out.pull = n;
   }
   if (o["run"] !== undefined) {
     if (typeof o["run"] !== "string" || !RUN.test(o["run"])) return null;
@@ -52,6 +58,7 @@ export function contextNote(c: TellContext | undefined): string {
   if (c === undefined) return "";
   const lines = [
     c.page === undefined ? "" : `- page: ${c.page}`,
+    c.pull === undefined ? "" : `- pull: #${c.pull}`,
     c.run === undefined ? "" : `- run: ${c.run}`,
     c.commit === undefined ? "" : `- commit: ${c.commit}`,
     c.said === undefined || c.said === ""

@@ -382,9 +382,10 @@ const TOOLS: readonly Tool[] = [
         context: {
           type: "object",
           description:
-            "Where this was told from, so the builder sees it: page (http/https address), run (id), commit (hex), said (the person's own words).",
+            "Where this was told from, so the builder sees it: page (http/https address), pull (number of the preview's pull), run (id), commit (hex), said (the person's own words).",
           properties: {
             page: { type: "string" },
+            pull: { type: "integer", minimum: 1 },
             run: { type: "string" },
             commit: { type: "string" },
             said: { type: "string", maxLength: 2000 },
@@ -410,7 +411,7 @@ const TOOLS: readonly Tool[] = [
       if (where === null)
         return bad(
           "invalid",
-          "context is { page?: http(s) address, run?: id, commit?: hex, said?: words }",
+          "context is { page?: http(s) address, pull?: number, run?: id, commit?: hex, said?: words }",
         );
       const from = parseFrom(args["from"]);
       if (from === undefined) return bad("invalid", FROM_WORDS);

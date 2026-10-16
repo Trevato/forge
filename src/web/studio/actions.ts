@@ -11,7 +11,8 @@
 import { mayView } from "../../core/sealed.ts";
 import { holdPull, releasePull } from "../../actions/holds.ts";
 import { addComment } from "../../actions/issues.ts";
-import { parseFrom, tell, TOO_LONG_WORDS } from "../../actions/tell.ts";
+import { parseFrom, tell, toldWords, TOO_LONG_WORDS } from "../../actions/tell.ts";
+import { contextNote, parseContext } from "../../actions/tell_context.ts";
 import { keepThought } from "../../actions/thought.ts";
 import { DIRECTION_NOTE } from "../../crew/direct.ts";
 import { mergePull } from "../../actions/pulls.ts";
@@ -20,9 +21,10 @@ import { getPull } from "../../core/pulls.ts";
 import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { bringUpToDate } from "../../crew/autonomy.ts";
 import type { Ctx } from "../../http/context.ts";
-import { loadRepo, notFoundPage, repoBase, signInFirst } from "../chrome.ts";
+import { crumbsFor, loadRepo, notFoundPage, pageHead, repoBase, signInFirst } from "../chrome.ts";
 import { backTo, field, readForm, type Form } from "../form.ts";
-import { flashOrJson, flashTo } from "../layout.ts";
+import { html } from "../html.ts";
+import { flashOrJson, flashTo, page } from "../layout.ts";
 import { FORGE_TARGET } from "./feed.ts";
 import { changeHref } from "./nouns.ts";
 
@@ -92,7 +94,53 @@ export async function tellSubmit(ctx: Ctx): Promise<Response> {
   if (!ctx.auth.user) return signInFirst(ctx);
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
+  if (field(form, "page") !== "") return tellFromPage(ctx, repo, form);
   return tellFrom(ctx, repo, form, repoBase(repo));
+}
+
+/**
+ * A tell from the forge toolbar of an app's page: the same `tell()`, with
+ * the page it was said on (and the pull, on a preview) written into the
+ * tell, answered with a receipt that links to the issue it opened.
+ */
+async function tellFromPage(ctx: Ctx, repo: Repo, form: Form): Promise<Response> {
+  const pull = field(form, "pull");
+  const where = parseContext({
+    page: field(form, "page"),
+    ...(pull === "" ? {} : { pull: /^\d{1,9}$/.test(pull) ? Number(pull) : -1 }),
+  });
+  // A refusal sends the person back to the box with their words, the page
+  // and the pull kept, so they can retry.
+  const keep = new URLSearchParams({ text: field(form, "text").slice(0, 1000) });
+  if (where?.page !== undefined) keep.set("page", where.page);
+  if (where?.pull !== undefined) keep.set("pull", String(where.pull));
+  const back = `${repoBase(repo)}/tell?${keep}`;
+  if (where === null || where === undefined)
+    return flashTo(ctx, back, { tone: "danger", message: "That page could not be told from." });
+  const text = field(form, "text").trim();
+  if (text === "") return flashTo(ctx, back, { tone: "danger", message: "Say something first." });
+  const told = await tell(ctx.app, ctx.auth.user, repo, `${text}${contextNote(where)}`);
+  if (!told.ok)
+    return flashTo(ctx, back, {
+      tone: "danger",
+      message:
+        told.error === "forbidden"
+          ? DIRECTION_NOTE
+          : told.error === "unverified"
+            ? "Verify your email first."
+            : told.error === "body_too_long"
+              ? TOO_LONG_WORDS
+              : "That could not be told.",
+    });
+  const issue = `${repoBase(repo)}/issues/${told.value.issue.number}`;
+  return page({
+    ctx,
+    title: `Told · ${repo.name}`,
+    crumbs: crumbsFor(repo),
+    body: html`${pageHead("Told")}
+      <p>${toldWords(told.value)}</p>
+      <p><a href="${issue}" data-receipt>See your tell, #${String(told.value.issue.number)}</a></p>`,
+  });
 }
 
 /**
