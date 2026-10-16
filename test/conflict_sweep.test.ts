@@ -20,7 +20,7 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { parkedCount } from "../src/crew/parks.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { sweepConflicts } from "../src/crew/autonomy.ts";
+import { settleAgentRun, sweepConflicts } from "../src/crew/autonomy.ts";
 import { conflictedPulls, conflictedSays } from "../src/flow/conflicted.ts";
 import { flowLines } from "../src/tui/screens/flow.ts";
 
@@ -188,7 +188,11 @@ test("a pull brought up to date before is not closed for it: only the current co
       branch,
       ...(base ? { base } : {}),
       message: `other ${value}`,
-      files: [{ path: "other.ts", content: `export const other = '${value}';\n` }],
+      files: [
+        { path: "other.ts", content: `export const other = '${value}';\n` },
+        // What only the branch adds, so it never just equals main.
+        ...(branch === "main" ? [] : [{ path: "own-other.ts", content: "own\n" }]),
+      ],
     });
     if (!r.ok) throw new Error(JSON.stringify(r.error));
   };
@@ -230,7 +234,11 @@ async function pullOn(file: string) {
       branch,
       ...(base ? { base } : {}),
       message: `${file} ${value}`,
-      files: [{ path: file, content: `export const v = '${value}';\n` }],
+      files: [
+        { path: file, content: `export const v = '${value}';\n` },
+        // What only the branch adds, so it never just equals main.
+        ...(branch === "main" ? [] : [{ path: `own-${file}`, content: "own\n" }]),
+      ],
     });
     if (!r.ok) throw new Error(JSON.stringify(r.error));
   };
@@ -287,4 +295,63 @@ test("a pull still conflicted 24 hours after the first attempt is closed, and it
   const { listComments } = await import("../src/core/issues.ts");
   const said = listComments(app.db, pull.id).map((c) => c.body).join("\n");
   expect(said).toContain("within 24 hours");
+});
+
+test("a pull whose change is already on main is closed by the first pass with no run, and its issue closes as done", async () => {
+  const { pull, ask, runs } = await pullOn("carried.ts");
+  // Main lands the very same change another way, after the branch was cut.
+  const landed = await commitToBranch(app, alice, repo, {
+    branch: "main",
+    message: "carried.ts, landed another way",
+    files: [
+      { path: "carried.ts", content: "export const v = 'branch';\n" },
+      { path: "own-carried.ts", content: "own\n" },
+    ],
+  });
+  if (!landed.ok) throw new Error(JSON.stringify(landed.error));
+  expect(await sweepConflicts(app, fresh())).toBe(1);
+  expect(runs().length).toBe(0);
+  expect(getIssueById(app.db, pull.id)!.state).toBe("closed");
+  expect(getIssueById(app.db, ask.id)!.state).toBe("closed");
+  const { listComments } = await import("../src/core/issues.ts");
+  const said = listComments(app.db, pull.id).map((c) => c.body).join("\n");
+  expect(said).toContain("already on main");
+});
+
+test("a run answering already done closes the pull as superseded and its issue as done", async () => {
+  const { pull, ask, write, runs } = await pullOn("answered.ts");
+  await write("main", "main 1");
+  expect(await sweepConflicts(app, fresh())).toBe(1);
+  const run = runs()[0]!;
+  claimRun(app.db, run.id);
+  const oid = "a".repeat(40);
+  finishRun(app.db, run.id, { state: "ok", summary: `already done: ${oid}` });
+  const mason = getUserByName(app.db, "mason")!;
+  settleAgentRun(app, fresh(), {
+    issueId: pull.id,
+    state: "ok",
+    summary: `already done: ${oid}`,
+    reason: "conflict",
+    actorId: mason.id,
+  });
+  expect(getIssueById(app.db, pull.id)!.state).toBe("closed");
+  expect(getIssueById(app.db, ask.id)!.state).toBe("closed");
+  const { listComments } = await import("../src/core/issues.ts");
+  const said = listComments(app.db, pull.id).map((c) => c.body).join("\n");
+  expect(said).toContain("aaaaaaaa");
+});
+
+test("the same main tip asks the crew at most twice", async () => {
+  const { pull, write, runs } = await pullOn("capped.ts");
+  await write("main", "main 1");
+  for (let round = 1; round <= 2; round++) {
+    expect(await sweepConflicts(app, fresh())).toBe(1);
+    const run = runs().find((r) => r.state === "queued")!;
+    claimRun(app.db, run.id);
+    finishRun(app.db, run.id, { state: "ok", summary: "nothing to push" });
+  }
+  expect(runs().length).toBe(2);
+  expect(await sweepConflicts(app, fresh())).toBe(0);
+  expect(runs().length).toBe(2);
+  expect(getIssueById(app.db, pull.id)!.state).toBe("open");
 });

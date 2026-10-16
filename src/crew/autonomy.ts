@@ -26,6 +26,7 @@ import { addLearned } from "../checks/learned.ts";
 import { enqueue, type GateCandidate, type Queued } from "../checks/queue.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { CLOSED_NOTE } from "../core/done_on_main.ts";
 import { mergePull } from "../actions/pulls.ts";
 import {
   listCrewRoles,
@@ -870,6 +871,13 @@ export function settleAgentRun(
   if (/opened pull #|updated pull #/.test(run.summary)) return false;
   if (interruptionOf(run.summary) !== undefined) return false;
   if (answeredWithoutChange(app, repo, run)) return true;
+  const carried = alreadyDoneOids(run.summary);
+  if (run.state === "ok" && carried.length > 0) {
+    const asked = getIssueById(app.db, run.issueId);
+    const own = asked?.kind === "pull" ? getPull(app.db, repo.id, asked.number) : undefined;
+    if (own && own.mergedAt === null)
+      return closeSuperseded(app, repo, own, carried);
+  }
   const issue = getIssueById(app.db, run.issueId);
   if (!issue || issue.kind !== "issue" || issue.state !== "open") return false;
   if (issue.id === repo.directionIssueId) return false;
@@ -1240,7 +1248,7 @@ function mergeWhy(error: AccessError | MergePullError): string {
 /** Pull id → the tips git last read, and the files in conflict (null: clean). */
 const checked = new Map<
   string,
-  { head: string; key: string; files: string[] | null }
+  { head: string; key: string; files: string[] | null; tree: string | null }
 >();
 /** Pull id → when the sweep last saw it merge cleanly. */
 const cleanAt = new Map<string, string>();
@@ -1269,6 +1277,52 @@ function conflictEpisodeStart(app: App, issue: Issue, pullId: string): string {
   }
   return start;
 }
+
+/**
+ * Close a pull whose change is already on the base, naming the commits that
+ * carry it, and close the issues it said it closes as done (#2121). Not a
+ * park and no strike: nothing failed, the work landed another way.
+ */
+export function closeSuperseded(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  oids: readonly string[],
+): boolean {
+  if (repo.autonomyBy === null) return false;
+  const by = getUserById(app.db, repo.autonomyBy);
+  const issue = getIssueById(app.db, pull.id);
+  if (!by || !issue || issue.state !== "open") return false;
+  const named = oids.map((o) => o.slice(0, 8)).join(" ");
+  addComment(
+    app,
+    by,
+    repo,
+    issue,
+    `Closed by the crew: superseded, its change is already on ${pull.baseBranch} in ${named}.`,
+  );
+  const closed = setIssueState(app, by, repo, issue, "closed");
+  if (!closed.ok) return false;
+  for (const number of closesFromBody(pull.body)) {
+    const about = getIssue(app.db, repo.id, number);
+    if (!about || about.state !== "open") continue;
+    if (about.assigneeId !== null) assignIssue(app, by, repo, about, null);
+    addComment(app, by, repo, about, `${CLOSED_NOTE}${named} (pull #${pull.number}).`);
+    setIssueState(app, by, repo, about, "closed", { reason: "done" });
+  }
+  log.info("superseded pull closed", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    pull: pull.number,
+    commits: oids.length,
+  });
+  return true;
+}
+
+/** Conflict runs the crew may spend on one pull for one main tip. */
+const RUNS_PER_TIP = 2;
+
+/** Pull id → the main tip it was last asked about, and how many times. */
+const asked = new Map<string, { tip: string; n: number }>();
 
 /** How long a conflicted pull may wait to be brought up to date. */
 const CONFLICT_LIMIT_MS = 24 * 3_600_000;
@@ -1331,6 +1385,7 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
     if (getIssueById(app.db, id)?.state !== "open") {
       checked.delete(id);
       cleanAt.delete(id);
+      asked.delete(id);
     }
   for (const pull of listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 })) {
     if (!pull.authorIsAgent || pull.mergedAt !== null) continue;
@@ -1350,6 +1405,7 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
       seen = {
         head: pull.headOid,
         key,
+        tree: reading.ok ? reading.value.treeOid : null,
         files: reading.ok
           ? null
           : reading.error.kind === "conflict"
@@ -1357,6 +1413,16 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
             : null,
       };
       checked.set(pull.id, seen);
+    }
+    // Merging main leaves main's own tree: the pull adds nothing, so there
+    // is no work to bring up to date and no run to spend on it.
+    if (seen.tree !== null && seen.tree === (await treeOf(dir, baseTip))) {
+      if (closeSuperseded(app, repo, pull, [baseTip])) {
+        acted++;
+        checked.delete(pull.id);
+        cleanAt.delete(pull.id);
+      }
+      continue;
     }
     if (seen.files === null) {
       // Merges cleanly: whatever came before was a different episode.
@@ -1389,7 +1455,17 @@ export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
       }
       continue;
     }
-    if (bringUpToDate(app, repo, pull, files, since) !== undefined) acted++;
+    // Main's tip asks no more than twice: a run that ends "ok" without a
+    // push must not be queued again on every tick.
+    const tried = asked.get(pull.id);
+    if (tried?.tip === baseTip && tried.n >= RUNS_PER_TIP) continue;
+    if (bringUpToDate(app, repo, pull, files, since) !== undefined) {
+      acted++;
+      asked.set(pull.id, {
+        tip: baseTip,
+        n: tried?.tip === baseTip ? tried.n + 1 : 1,
+      });
+    }
   }
   return acted;
 }
