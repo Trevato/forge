@@ -1,5 +1,5 @@
 /**
- * The boards the forge offers a new install: Usage, Crew and Security. They are plain
+ * The boards the forge offers a new install: Usage, Crew, Security and Throughput. They are plain
  * boards in `forge/boards` once written, so a person edits or deletes them
  * like any other; `.offered` (a JSON list of slugs, committed with the
  * boards) records what was offered so a deletion sticks and an edit is
@@ -17,6 +17,7 @@ const panel = (title: string, chart: Panel["chart"], query: Record<string, unkno
 });
 const MINUTE = { bucket: "minute" };
 const HOUR = { bucket: "hour" };
+const STAGES = { source: "stages", aggregate: "count" };
 const machine = (op: "eq" | "starts", value: string, column: string) => ({
   source: "machine", aggregate: "avg", column, groupBy: MINUTE, filter: [{ column: "target", op, value }],
 });
@@ -65,6 +66,16 @@ export const STARTING_BOARDS: Readonly<Record<string, Board>> = {
       panel("Tokens made per day", "bar", { source: "tokens", aggregate: "count", groupBy: { bucket: "day" } }),
       panel("Admin actions per hour", "bar", { source: "adminActions", aggregate: "count", groupBy: HOUR }, 2),
       panel("Admin actions by kind", "bar", { source: "adminActions", aggregate: "count", groupBy: "kind" }, 2),
+    ],
+  },
+  throughput: {
+    title: "Throughput",
+    range: "7d",
+    refresh: "1m",
+    panels: [
+      panel("Items entering each stage per hour", "bar", { ...STAGES, groupBy: HOUR, series: "stage" }, 3),
+      panel("Entered each stage", "bar", { ...STAGES, groupBy: "stage" }),
+      panel("Stages by hour", "heat", { ...STAGES, groupBy: HOUR, series: "stage" }, 2),
     ],
   },
 };

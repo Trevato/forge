@@ -235,7 +235,9 @@ describe("sources", () => {
   test("every listed column exists in the table", () => {
     for (const [name, s] of Object.entries(SOURCES)) {
       const real = new Set(
-        (db.query(`PRAGMA table_info("${s.table}")`).all() as { name: string }[]).map((c) => c.name),
+        s.select === undefined
+          ? (db.query(`PRAGMA table_info("${s.table}")`).all() as { name: string }[]).map((c) => c.name)
+          : db.query(`SELECT * FROM (${s.select}) LIMIT 0`).columnNames,
       );
       for (const c of Object.keys(s.columns)) expect(real.has(c), `${name}.${c}`).toBe(true);
       expect(s.columns[s.time]).toBe("time");

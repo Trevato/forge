@@ -19,6 +19,11 @@ export type Source = {
    * reads them.
    */
   owner: "repo_id" | "issue" | "admin";
+  /**
+   * A fixed SELECT read in place of a table, named `table` inside the
+   * query; no input in it. For a source that is a view over several tables.
+   */
+  select?: string;
   /** Fixed predicate narrowing the table to this source; no input in it. */
   where?: string;
   /** The column `from`, `to` and `{bucket}` apply to. */
@@ -172,6 +177,33 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       load: "node only: the 1-min load average, runnable tasks",
       celsius: "°C, mean over the step: a cpu:<nnn>'s core, a package or a sensor; null for the rest",
       celsius_max: "°C, the highest 15-s point in the step",
+    },
+  },
+  // Items entering each stage from issue to live, one row per entry, read
+  // from issue, run and pull as `flow/throughput.ts` reads them: an issue
+  // opens, a builder first starts on it (a retry is not a second item), its
+  // pull opens, the pull merges into the default branch, a production
+  // deploy serves. The stage names are numbered so they sort in that order.
+  stages: {
+    table: "stage",
+    owner: "repo_id",
+    select:
+      "SELECT '1 issue' AS stage, repo_id, id AS issue_id, created_at AS at FROM issue WHERE kind = 'issue' " +
+      "UNION ALL SELECT '2 run', x.repo_id, x.issue_id, MIN(x.started_at) FROM run x JOIN issue i ON i.id = x.issue_id " +
+      "WHERE x.kind = 'agent' AND x.reason != 'review' AND i.kind = 'issue' AND x.started_at IS NOT NULL GROUP BY x.issue_id " +
+      "UNION ALL SELECT '3 pull', i.repo_id, i.id, i.created_at FROM issue i JOIN pull p ON p.issue_id = i.id " +
+      "UNION ALL SELECT '4 merged', i.repo_id, i.id, p.merged_at FROM pull p JOIN issue i ON i.id = p.issue_id " +
+      "JOIN repo r ON r.id = i.repo_id WHERE p.merged_at IS NOT NULL AND p.base_branch = r.default_branch " +
+      "UNION ALL SELECT '5 live', repo_id, NULL, serving_at FROM run " +
+      "WHERE kind = 'deploy' AND env = 'production' AND serving_at IS NOT NULL",
+    time: "at",
+    columns: { stage: "text", repo_id: "text", issue_id: "text", at: "time" },
+    docs: {
+      stage:
+        "1 issue (opened), 2 run (a builder first started on the issue), 3 pull (opened), " +
+        "4 merged (into the default branch) or 5 live (a production deploy served)",
+      issue_id: "the issue or pull that entered; null for 5 live, which is a deploy",
+      at: "when the item entered the stage, UTC",
     },
   },
 };

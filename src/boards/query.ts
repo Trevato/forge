@@ -136,8 +136,9 @@ export function runQuery(db: Database, q: unknown, scope: Scope): Answer {
   }
   const grouped = [groupSql === "NULL" ? "" : "1", seriesSql === "" ? "" : "3"].filter(Boolean).join(", ");
 
+  const from = src.select === undefined ? ident(src.table) : `(${src.select}) AS ${ident(src.table)}`;
   const sql =
-    `SELECT ${groupSql} AS "group", ${valueSql} AS "value"${seriesSql} FROM ${ident(src.table)}` +
+    `SELECT ${groupSql} AS "group", ${valueSql} AS "value"${seriesSql} FROM ${from}` +
     (where.length ? ` WHERE ${where.join(" AND ")}` : "") +
     (grouped === "" ? "" : ` GROUP BY ${grouped} ORDER BY ${grouped}`) +
     ` LIMIT ${MAX_ROWS}`;

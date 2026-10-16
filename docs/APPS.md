@@ -1198,6 +1198,15 @@ leaves its series absent, never zero, and `/boards/data?source=machine`
 names each one. Its rows belong to no repo, so only an every-repo scope
 reads them; the sources list carries each column's unit in `docs`.
 
+The `stages` source counts items moving from issue to live: one row per
+item entering a stage, with `stage` one of `1 issue` (opened), `2 run` (a
+builder first started on the issue; a retry is not a second item), `3 pull`
+(opened), `4 merged` (into the default branch) or `5 live` (a production
+deploy served), and `at` when it entered. It is a fixed view over `issue`,
+`run` and `pull` — the same moves `/flow` counts (`flow/throughput.ts`) —
+and keeps no table of its own; the **Throughput** starting board reads it
+by the hour.
+
     POST /api/v1/boards/query
     {"source": "runs", "aggregate": "count", "groupBy": "state"}
     -> {"rows": [{"group": "failed", "value": 1}, {"group": "ok", "value": 7}]}

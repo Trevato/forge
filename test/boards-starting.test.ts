@@ -1,5 +1,5 @@
 /**
- * The forge offers the Usage, Crew and Security boards on boot: every panel runs, an
+ * The forge offers the Usage, Crew, Security and Throughput boards on boot: every panel runs, an
  * edit survives the next boot, and a deletion is not undone.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -10,7 +10,10 @@ import { changeBoard, deleteBoard, offerStartingBoards } from "../src/actions/bo
 import { createApp } from "../src/app.ts";
 import { runQuery } from "../src/boards/query.ts";
 import { STARTING_BOARDS } from "../src/boards/starting.ts";
-import { listBoards, readBoard } from "../src/boards/store.ts";
+import { OFFERED_FILE } from "../src/boards/starting.ts";
+import { BOARDS_OWNER, BOARDS_REPO, listBoards, readBoard } from "../src/boards/store.ts";
+import { repoDir } from "../src/git/repos.ts";
+import { commitFiles } from "../src/git/write.ts";
 import { createUser, type User } from "../src/core/users.ts";
 
 let dir: string;
@@ -33,10 +36,10 @@ test("a forge with no person to found the repo writes nothing", async () => {
   expect(await offerStartingBoards(bare)).toEqual([]);
 });
 
-test("a fresh boot writes Usage, Crew and Security, and every panel runs", async () => {
-  expect((await offerStartingBoards(app)).sort()).toEqual(["crew", "security", "usage"]);
+test("a fresh boot writes Usage, Crew, Security and Throughput, and every panel runs", async () => {
+  expect((await offerStartingBoards(app)).sort()).toEqual(["crew", "security", "throughput", "usage"]);
   const boards = await listBoards(app.reposRoot);
-  expect(boards.map((b) => b.slug)).toEqual(["crew", "security", "usage"]);
+  expect(boards.map((b) => b.slug)).toEqual(["crew", "security", "throughput", "usage"]);
   let panels = 0;
   for (const { board } of boards) {
     for (const p of board.panels) {
@@ -45,7 +48,7 @@ test("a fresh boot writes Usage, Crew and Security, and every panel runs", async
       panels++;
     }
   }
-  expect(panels).toBe(STARTING_BOARDS.usage!.panels.length + STARTING_BOARDS.crew!.panels.length + STARTING_BOARDS.security!.panels.length);
+  expect(panels).toBe(Object.values(STARTING_BOARDS).reduce((n, b) => n + b.panels.length, 0));
 });
 
 test("a second boot leaves an edit in place", async () => {
@@ -59,4 +62,21 @@ test("a deleted starting board stays deleted", async () => {
   expect((await deleteBoard(app, admin, "crew")).ok).toBe(true);
   expect(await offerStartingBoards(app)).toEqual([]);
   expect(await readBoard(app.reposRoot, "crew")).toBeUndefined();
+});
+
+test("a forge offered Usage, Crew and Security before gets Throughput, and the rest stay as they are", async () => {
+  // As a forge from before Throughput existed: it is not in `.offered` and has no file.
+  expect((await deleteBoard(app, admin, "throughput")).ok).toBe(true);
+  const rewound = await commitFiles(repoDir(app.reposRoot, BOARDS_OWNER, BOARDS_REPO), {
+    branch: "main",
+    message: "as offered before Throughput",
+    files: [{ path: OFFERED_FILE, content: `${JSON.stringify(["usage", "crew", "security"])}\n` }],
+    author: { name: "forge", email: "forge@x.test" },
+  });
+  expect(rewound.ok).toBe(true);
+  expect(await offerStartingBoards(app)).toEqual(["throughput"]);
+  expect((await readBoard(app.reposRoot, "throughput"))?.title).toBe("Throughput");
+  expect((await readBoard(app.reposRoot, "usage"))?.title).toBe("My usage");
+  expect(await readBoard(app.reposRoot, "crew")).toBeUndefined();
+  expect(await offerStartingBoards(app)).toEqual([]);
 });

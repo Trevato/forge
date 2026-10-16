@@ -354,7 +354,7 @@ const snapshots = startSnapshots(
 // node, every 15 s into a ring the `machine` board source reads.
 const sampler = startSampler(app);
 const memorySampler = startMemorySampler(app);
-// The Usage, Crew and Security starting boards, once each (actions/boards.ts).
+// The Usage, Crew, Security and Throughput starting boards, once each (actions/boards.ts).
 void offerStartingBoards(app)
   .then((slugs) => slugs.length > 0 && app.log.info("starting boards offered", { slugs: slugs.join(", ") }))
   .catch((error) => app.log.warn("starting boards not offered", { error: String(error) }));
