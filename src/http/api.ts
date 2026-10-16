@@ -22,6 +22,7 @@ import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
+import { changeQuotas, readQuotas } from "../actions/quotas.ts";
 import {
   accountSignIns,
   endAccountSession,
@@ -1433,6 +1434,34 @@ export function apiRoutes(router: Router<Handler>): void {
       changed.error.kind === "no_such_limit"
         ? "no such limit"
         : changed.error.message,
+    );
+  });
+
+  // Per-account quotas (`core/quotas.ts`): null is no limit. Nothing
+  // enforces them yet.
+  router.add("GET", "/api/v1/admin/settings", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const read = readQuotas(ctx.app, ctx.auth.user);
+    return read.ok ? json(read.value) : notFound();
+  });
+
+  router.add("PATCH", "/api/v1/admin/settings", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const quotas = input.quotas;
+    if (typeof quotas !== "object" || quotas === null || Array.isArray(quotas))
+      return apiError("invalid_body", 422, "send {\"quotas\": {\"repositories\": 5, \"apps\": null}}");
+    const changed = changeQuotas(ctx.app, ctx.auth.user, quotas as Record<string, unknown>);
+    if (changed.ok) return json({ quotas: changed.value });
+    if (changed.error === "not_found") return notFound();
+    return apiError(
+      changed.error,
+      422,
+      changed.error === "no_such_quota"
+        ? "no such quota"
+        : "a quota is a positive whole number, or null for no limit",
     );
   });
 

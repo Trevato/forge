@@ -1099,6 +1099,8 @@ While the default branch's own last check is red, the forge holds its pulls' che
 
 Every limit the owner can hit is declared in `src/settings/limits.ts` with its default, bounds and reason, and changed live by a forge admin at `/admin/limits`, `PUT /api/v1/admin/limits/:key` or the `limits` MCP tool (never by an agent). Each change is kept with who made it.
 
+Per-account quotas (`src/settings/quotas.ts`) — how many `repositories` and `apps` one account may own — are set the same way: **Account quotas** on `/admin/limits`, `GET`/`PATCH /api/v1/admin/settings` (`{"quotas": {"repositories": 5, "apps": null}}`) or the `quotas` MCP tool (dry by default, admin scope, never an agent). A value is a positive whole number, or empty/`null` for no limit, which is the default; anything else is a 422. Every change is kept with who made it and listed beside the form. Nothing enforces a quota yet: no create path reads one.
+
 ## Choosing among variants
 
 A tell with `variants: n` starts n builders whose pulls share a variant group.

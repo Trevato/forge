@@ -212,6 +212,37 @@ export type LimitError = {
 };
 
 /**
+ * The one write path for a forge setting kept under its own `forge_setting`
+ * key: set it (`null` removes it) and keep the change — who, when, from what
+ * to what — in `forge_setting_change`, in one transaction. `from` and `to`
+ * are the words kept for the change, which for a removed value is whatever
+ * stands in its place.
+ */
+export function writeSetting(
+  db: Database,
+  key: string,
+  value: string | null,
+  from: string,
+  to: string,
+  actorId: string,
+): void {
+  const at = new Date().toISOString();
+  db.transaction(() => {
+    if (value === null) db.query("DELETE FROM forge_setting WHERE key = ?1").run(key);
+    else
+      db.query(
+        `INSERT INTO forge_setting (key, value, updated_by, updated_at) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value,
+           updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+      ).run(key, value, actorId, at);
+    db.query(
+      `INSERT INTO forge_setting_change (key, from_value, to_value, actor_id, at)
+       VALUES (?1, ?2, ?3, ?4, ?5)`,
+    ).run(key, from, to, actorId, at);
+  })();
+}
+
+/**
  * Set `key` to `value` (`null` goes back to the default) and keep the
  * change. A value outside the bounds is refused with the bounds named.
  */
@@ -229,21 +260,14 @@ export function setLimit(
     setCapacity(db, cap, value === null ? null : String(value), actorId);
     return ok({ from, to: limitValue(db, key) });
   }
-  const at = new Date().toISOString();
-  db.transaction(() => {
-    if (value === null)
-      db.query("DELETE FROM forge_setting WHERE key = ?1").run(storeKey(key));
-    else
-      db.query(
-        `INSERT INTO forge_setting (key, value, updated_by, updated_at) VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT (key) DO UPDATE SET value = excluded.value,
-           updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
-      ).run(storeKey(key), String(value), actorId, at);
-    db.query(
-      `INSERT INTO forge_setting_change (key, from_value, to_value, actor_id, at)
-       VALUES (?1, ?2, ?3, ?4, ?5)`,
-    ).run(storeKey(key), String(from), String(limitValue(db, key)), actorId, at);
-  })();
+  writeSetting(
+    db,
+    storeKey(key),
+    value === null ? null : String(value),
+    String(from),
+    String(value ?? LIMITS[key].default),
+    actorId,
+  );
   return ok({ from, to: limitValue(db, key) });
 }
 

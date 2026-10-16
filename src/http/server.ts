@@ -12,7 +12,7 @@ import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { flowPage } from "../web/pages/flow.ts";
 import { resiliencePage } from "../web/pages/resilience.ts";
-import { limitsPage, limitsSet } from "../web/pages/admin-limits.ts";
+import { limitsPage, limitsSet, quotasSet } from "../web/pages/admin-limits.ts";
 import { boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost } from "../web/pages/boards-edit.ts";
 import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
@@ -749,6 +749,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/boards/:slug/:op", boardPost);
   router.add("GET", "/admin/limits", limitsPage);
   router.add("POST", "/admin/limits", limitsSet);
+  router.add("POST", "/admin/quotas", quotasSet);
   router.add("GET", "/settings/backups", backupsPage);
   router.add("POST", "/settings/backups/now", backupsNow);
   router.add("POST", "/settings/backups/drill", backupsDrill);

@@ -6,6 +6,8 @@
  */
 
 import { changeLimit, listLimits } from "../../actions/limits.ts";
+import { changeQuotas, readQuotas } from "../../actions/quotas.ts";
+import { QUOTA_KEYS } from "../../settings/quotas.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -69,7 +71,48 @@ export function limitsPage(ctx: Ctx): Response {
       meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}`,
     }),
   );
-  const body = html`${card(
+  const quotas = readQuotas(ctx.app, ctx.auth.user);
+  const quotaHistory = (quotas.ok ? quotas.value.changes : []).map((c) =>
+    row({
+      lead: icon("history"),
+      title: html`<span class="mono">${c.key}</span>
+        <span class="mono">${c.from || "no limit"}</span> →
+        <span class="mono">${c.to || "no limit"}</span>`,
+      meta: html`${c.actorName === "" ? "someone" : c.actorName} · ${time(c.at)}`,
+    }),
+  );
+  const quotaCard = card(
+    html`<div class="card-body">
+      <p class="muted small">
+        What one account may own. Empty is no limit, and nothing enforces
+        these yet.
+      </p>
+      <form class="row-actions" method="post" action="/admin/quotas">
+        ${QUOTA_KEYS.map(
+          (k) => html`<label class="small">${k}
+            <input
+              class="input mono"
+              type="number"
+              name="${k}"
+              min="1"
+              step="1"
+              value="${quotas.ok ? String(quotas.value.quotas[k] ?? "") : ""}"
+            /></label>`,
+        )}
+        ${btn("Save", { size: "sm", variant: "primary", label: "Save quotas" })}
+      </form>
+    </div>
+    ${when(
+      quotaHistory.length > 0,
+      () => html`<ul class="list">${quotaHistory}</ul>`,
+    )}`,
+    {
+      head: html`${icon("activity")}
+        <h2>Account quotas</h2>`,
+      pad: false,
+    },
+  );
+  const body = html`${quotaCard}${card(
       html`<div class="card-body">
           <p class="muted small">
             Every limit you can hit, and why it is there. A change governs
@@ -145,5 +188,26 @@ export async function limitsSet(ctx: Ctx): Promise<Response> {
               ? `${changed.error.message}.`
               : "There is no such limit.",
         },
+  );
+}
+
+// POST /admin/quotas
+export async function quotasSet(ctx: Ctx): Promise<Response> {
+  if (ctx.auth.user?.isAdmin !== true || ctx.auth.user.kind === "agent")
+    return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const changed = changeQuotas(
+    ctx.app,
+    ctx.auth.user,
+    Object.fromEntries(QUOTA_KEYS.map((k) => [k, field(form, k)])),
+  );
+  if (!changed.ok && changed.error === "not_found") return notFoundPage(ctx);
+  return flashTo(
+    ctx,
+    "/admin/limits",
+    changed.ok
+      ? { message: "Quotas saved." }
+      : { tone: "danger", message: "A quota is a positive whole number, or empty for no limit." },
   );
 }

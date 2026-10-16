@@ -210,6 +210,7 @@ describe("the forge over MCP", () => {
       "capacity",
       "flow",
       "limits",
+      "quotas",
       "boards",
       "board_write",
       "board_delete",
