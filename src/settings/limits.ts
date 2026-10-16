@@ -32,7 +32,9 @@ export type LimitKey =
   | "front.hidden_max"
   | "share.daily_max"
   | "signin.per_account"
-  | "signin.per_forge";
+  | "signin.per_forge"
+  | "signup.per_source"
+  | "signup.per_forge";
 
 export interface LimitDef {
   readonly label: string;
@@ -131,6 +133,22 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 1,
     max: 100_000,
     reason: "Spread across many accounts, guessing still burns CPU on hashes, so the forge as a whole has a ceiling.",
+  },
+  "signup.per_source": {
+    label: "Sign-ups per source a minute",
+    unit: "sign-ups",
+    default: 5,
+    min: 1,
+    max: 1_000,
+    reason: "Every sign-up costs a password hash and an account, and one source has no need to make many.",
+  },
+  "signup.per_forge": {
+    label: "Sign-ups per forge a minute",
+    unit: "sign-ups",
+    default: 60,
+    min: 1,
+    max: 100_000,
+    reason: "Spread across many sources, sign-ups still cost hashes and accounts, so the forge as a whole has a ceiling.",
   },
 };
 
