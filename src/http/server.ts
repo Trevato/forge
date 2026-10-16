@@ -6,6 +6,7 @@
  */
 
 import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
+import { toolbarComment, toolbarPage } from "../web/studio/toolbar.ts";
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
 import { parentCallback, parentStart } from "./rp.ts";
@@ -1230,6 +1231,9 @@ export function buildRouter(): Router<Handler> {
   // Make it yours (#606): a fork with its app, planned, then made.
   router.add("GET", "/:owner/:name/make-it-yours", makeItYoursPage);
   router.add("POST", "/:owner/:name/make-it-yours", makeItYoursSubmit);
+  // The toolbar's actions (#810): the bar links here, the forms post here.
+  router.add("GET", "/:owner/:name/toolbar", toolbarPage);
+  router.add("POST", "/:owner/:name/toolbar/comment", toolbarComment);
   // A fork takes what it follows: git's part by itself, the rest by the crew.
   router.add("POST", "/:owner/:name/following", followingSubmit);
   router.add("GET", "/:owner/:name/following", chainPage);

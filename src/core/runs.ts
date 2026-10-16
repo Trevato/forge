@@ -635,6 +635,8 @@ export interface ListRunsOptions {
   issueId?: string | undefined;
   /** Only runs for this environment. */
   env?: string | undefined;
+  /** Only runs in this state. */
+  state?: RunState | undefined;
   /** @default 50 */
   limit?: number | undefined;
   /** Resume after this run id (exclusive) — lists run newest first. */
@@ -659,6 +661,10 @@ export function listRuns(
   if (options.env !== undefined) {
     params.push(options.env);
     where += ` AND env = ?${params.length}`;
+  }
+  if (options.state !== undefined) {
+    params.push(options.state);
+    where += ` AND state = ?${params.length}`;
   }
   if (options.cursor !== undefined) {
     params.push(options.cursor);

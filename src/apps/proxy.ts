@@ -353,17 +353,20 @@ export function pillWhere(
   who: GrantWho | undefined,
 ): PillWhere {
   const where: PillWhere = { app: target.app.slug, env: target.env };
+  const db = runtime.app.db;
+  const repo = getRepoById(db, target.app.repoId);
+  if (repo === undefined) return where;
+  const viewer = who === undefined ? undefined : getUserById(db, who.id);
+  const user = viewer !== undefined && isActive(viewer) ? viewer : undefined;
+  // An app's access is not its repository's: the name goes only to a reader.
+  const reads = canRead(db, repo, user);
+  if (reads) where.repo = `${repo.ownerName}/${repo.name}`;
   const number = /^pull-(\d+)$/.exec(target.env)?.[1];
   if (number === undefined) return where;
   where.pull = Number(number);
-  const db = runtime.app.db;
-  const repo = getRepoById(db, target.app.repoId);
   const pull = getIssue(db, target.app.repoId, where.pull);
-  if (repo === undefined || pull === undefined) return where;
-  const viewer = who === undefined ? undefined : getUserById(db, who.id);
-  const user = viewer !== undefined && isActive(viewer) ? viewer : undefined;
-  if (canRead(db, repo, user) && mayView(db, repo, pull, user))
-    where.title = pull.title;
+  if (pull === undefined) return where;
+  if (reads && mayView(db, repo, pull, user)) where.title = pull.title;
   return where;
 }
 

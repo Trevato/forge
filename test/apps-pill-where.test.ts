@@ -45,9 +45,13 @@ describe("the pill's data", () => {
     for (const [name, visibility] of [
       ["open", "public"],
       ["closed", "private"],
+      ["leaky", "private"],
     ] as const) {
       const made = await newApp(app, a.value, { name, description: "x", visibility });
       if (!made.ok) throw new Error(String(made.error));
+      // The app's access is its own: this one is open on a private repo.
+      if (name === "leaky")
+        app.db.run("UPDATE app SET access='public' WHERE repo_id=?1", [made.value.repo.id]);
       const record = getAppByRepo(app.db, made.value.repo.id)!;
       targets[name] = { app: record, env: "production" } as AppTarget;
       const pull = createIssue(app.db, {
@@ -72,6 +76,7 @@ describe("the pill's data", () => {
   test("production names the app and the environment, no pull", () => {
     expect(pillWhere(runtime, targets.open!, undefined)).toEqual({
       app: targets.open!.app.slug,
+      repo: "alice/open",
       env: "production",
     });
   });
@@ -89,6 +94,23 @@ describe("the pill's data", () => {
     expect(anon.title).toBeUndefined();
     const owner = pillWhere(runtime, preview("closed"), { id: aliceId } as never);
     expect(owner.title).toContain("closed");
+  });
+
+  test("a public app on a private repo names the repo only to a reader", async () => {
+    expect(targets.leaky!.app.access).toBe("public");
+    expect(pillWhere(runtime, targets.leaky!, undefined).repo).toBeUndefined();
+    expect(pillWhere(runtime, preview("leaky"), undefined).title).toBeUndefined();
+    const bob = await createUser(app.db, {
+      trusted: true,
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!bob.ok) throw new Error(bob.error);
+    const stranger = pillWhere(runtime, targets.leaky!, { id: bob.value.id } as never);
+    expect(stranger.repo).toBeUndefined();
+    const owner = pillWhere(runtime, targets.leaky!, { id: aliceId } as never);
+    expect(owner.repo).toBe("alice/leaky");
   });
 
   test("a title with markup is escaped inside the attribute", () => {

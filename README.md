@@ -511,6 +511,26 @@ file), and if you named an agent, the sentence became issue #1, assigned.
   redeployed on each push and gone when the pull closes. Its data starts as
   a copy of production's — copy-on-write where the filesystem can — and
   never writes back. Merging moves code and touches no data.
+- **The forge pill acts.** The pill the proxy adds to an app's pages
+  (`"toolbar": false` in `forge.json` turns it off) links to a forge page,
+  `/:owner/:name/toolbar?env=production|pull-N`, opened in a tab of its own: the
+  pill posts nothing and reads nothing of the app's page, and every action is a
+  same-origin form on the forge. Signed out, the page is where you are and Home.
+  Signed in it shows the live agent run on this app or preview, linked to its
+  run page (read once when the page opens; runs on work you may not see, such as
+  a sealed report, are left out); *Report this page* / *Comment on this pull*,
+  previewed first, then a receipt; *Tell the crew* for those who may direct it
+  (the one `/:owner/:name/tell`); and *Make it yours* for everyone who cannot
+  write the app. A production comment opens an issue carrying the page address;
+  a preview comment goes on its pull. From a terminal or an agent the same
+  actions are, in the SSH terminal, rows of the palette on a repository
+  screen: *Working now* (while an agent run is live, left out when it is on work
+  you may not see), *Tell the crew*, *Report a problem* (one text, an issue
+  titled by its first line, through `openIssueThrough`) and *Make it yours*
+  (the fork screen, for those who cannot write the repository); a pull is
+  commented on from its own screen. Agents have the MCP `tell` and
+  `make_it_yours` tools and the API's `POST …/issues`,
+  `…/pulls/:n/comments` and `…/make-it-yours`.
 - **A run has a budget** (`src/kernel/budgets.ts`): a check past `gate`
   (60 min) or a reviewer's run past `review` (10 min) is killed with
   `budget: <what> took <n> min, limit <m>`, queued again once, and failed

@@ -62,6 +62,23 @@ export const toolbarJs = `(function () {
   crew.setAttribute("aria-live", "polite");
   panel.appendChild(crew);
   panel.appendChild(link);
+  // The actions live on a forge page, opened in a tab of its own: the bar
+  // posts nothing and reads nothing of this page beyond its address.
+  if (d.repo && /^[\\w.-]+\\/[\\w.-]+$/.test(d.repo)) {
+    var act = document.createElement("a");
+    act.textContent = "Comment, tell, make it yours";
+    act.target = "_blank";
+    act.rel = "noopener noreferrer";
+    act.style.cssText = "color:#8ab4ff;text-decoration:none;margin-top:4px";
+    try {
+      var dest = new URL(home);
+      dest.pathname = "/" + d.repo + "/toolbar";
+      dest.searchParams.set("env", d.env === "production" ? "production" : "pull-" + d.pull);
+      dest.searchParams.set("page", location.origin + location.pathname);
+      act.href = dest.href;
+      panel.appendChild(act);
+    } catch (e) {}
+  }
   // Who of the crew is working here, asked once as the pill loads, of the
   // app's own origin (same-origin, so its grant cookie goes along); nothing
   // is shown idle.
@@ -155,6 +172,8 @@ export function rewritable(headers: Headers, status: number): boolean {
 /** What the pill says about where it is; the title only for a reader of the pull. */
 export type PillWhere = {
   app: string;
+  /** `owner/name`, where the forge page of the bar's actions lives. */
+  repo?: string;
   env: string;
   pull?: number;
   title?: string;
@@ -177,6 +196,7 @@ export function toolbarTag(forgeUrl: string, where?: PillWhere): string {
       ? ""
       : [
           ["app", where.app],
+          ["repo", where.repo],
           ["env", where.env],
           ["pull", where.pull === undefined ? undefined : String(where.pull)],
           ["title", where.title],

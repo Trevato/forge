@@ -112,7 +112,10 @@ import {
   slug,
   openOnWeb,
 } from "./common.ts";
+import { reportCommands } from "./report.ts";
 import { tellCommands } from "./tell.ts";
+import { workingCommands } from "./working.ts";
+import { yoursCommands } from "./yours.ts";
 import { externalEditor, editorHint, hasExternalEditor } from "./external.ts";
 import { finderScreen } from "./finder.ts";
 import { issuesScreen } from "./issues.ts";
@@ -1267,7 +1270,12 @@ export function workspaceScreen(
   };
 
   const screen: Screen = {
-    commands: () => tellCommands(f, ctx, () => screen, repo),
+    commands: () => [
+      ...workingCommands(f, ctx, repo),
+      ...tellCommands(f, ctx, () => screen, repo),
+      ...reportCommands(f, ctx, () => screen, repo),
+      ...yoursCommands(f, ctx, repo),
+    ],
     get title() {
       return sourceName(src);
     },
