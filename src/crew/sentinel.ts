@@ -303,10 +303,11 @@ export function runStreaks(db: Database): Finding[] {
         lookFor: "A green check run for the repository's newest head.",
       });
     } else {
-      // A decline is the run's own decision ("I pushed nothing"), not a push that failed.
+      // A decline is the run's own decision ("I pushed nothing"), not a push that failed,
+      // whether or not the summary leads with it.
       const pushes = failed.filter(
         (r) =>
-          !/^declined\b/i.test(r.summary.trim()) &&
+          !/\bdeclined:/i.test(r.summary) &&
           /\bpush|sandbox|operation not permitted/i.test(r.summary),
       );
       if (pushes.length < STREAK) continue;

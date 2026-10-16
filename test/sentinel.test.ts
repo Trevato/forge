@@ -103,6 +103,37 @@ describe("a decline is not a failed push", () => {
   });
 });
 
+describe("a decline that does not lead the summary", () => {
+  test("is still not a failed push", async () => {
+    const made = await createRepo(app, alice, { name: "quiet2", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    for (let n = 0; n < 5; n++) {
+      const run = createRun(app.db, { repoId: made.value.id, kind: "agent" });
+      app.db
+        .query("UPDATE run SET state = 'failed', summary = ?2, created_at = ?3 WHERE id = ?1")
+        .run(run.id, "claude: declined: no feedback, so nothing to do.", ago((30 + n) * HOUR));
+    }
+    const keys = findFaults(app.db, NOW).map((f) => f.key);
+    expect(keys).not.toContain(`push:${made.value.id}`);
+  });
+});
+
+describe("a failed push that pushed nothing", () => {
+  test("still raises the push fault", async () => {
+    const made = await createRepo(app, alice, { name: "blocked", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    for (let n = 0; n < 5; n++) {
+      const run = createRun(app.db, { repoId: made.value.id, kind: "agent" });
+      app.db
+        .query("UPDATE run SET state = 'failed', summary = ?2, created_at = ?3 WHERE id = ?1")
+        .run(run.id, "push failed: operation not permitted. Pushed nothing.", ago((30 + n) * HOUR));
+    }
+    const keys = findFaults(app.db, NOW).map((f) => f.key);
+    app.db.query("DELETE FROM run WHERE repo_id = ?1").run(made.value.id);
+    expect(keys).toContain(`push:${made.value.id}`);
+  });
+});
+
 describe("the faults of the day", () => {
   let queuedId = "";
   beforeAll(() => {
