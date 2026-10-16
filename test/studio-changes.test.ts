@@ -303,6 +303,46 @@ describe("the studio, continued", () => {
     expect(deploys).toContain('href="/alice/notes/runs?kind=deploy&amp;word=told"');
   });
 
+  test("the runs list shows agent runs, checks and deploys together, and each kind link narrows it", async () => {
+    const scout = getUserByName(app.db, "scout")!;
+    const mk = (kind: "agent" | "check" | "deploy") => {
+      const run = createRun(app.db, {
+        repoId: repo.id,
+        kind,
+        actorId: kind === "agent" ? scout.id : undefined,
+        reason: "push",
+        commitOid: "abcdef1234567890abcdef1234567890abcdef12",
+      });
+      claimRun(app.db, run.id);
+      finishRun(app.db, run.id, { state: "ok", summary: "fine" });
+      return `href="/alice/notes/runs/${run.id}"`;
+    };
+    const agent = mk("agent");
+    const check = mk("check");
+    const deploy = mk("deploy");
+
+    const all = await (await get("/alice/notes/runs")).text();
+    for (const link of [agent, check, deploy]) expect(all).toContain(link);
+    expect(all).toContain("Check of abcdef1");
+    expect(all).toContain("abcdef1 · passed");
+    expect(all).toContain("took ");
+
+    const only = async (kind: string) =>
+      (await get(`/alice/notes/runs?kind=${kind}`)).text();
+    const a = await only("agent");
+    expect(a).toContain(agent);
+    expect(a).not.toContain(check);
+    expect(a).not.toContain(deploy);
+    const c = await only("check");
+    expect(c).toContain(check);
+    expect(c).not.toContain(agent);
+    expect(c).not.toContain(deploy);
+    const d = await only("deploy");
+    expect(d).toContain(deploy);
+    expect(d).not.toContain(agent);
+    expect(d).not.toContain(check);
+  });
+
   test("issues, pulls and runs on a repository that is not an app are the same one list", async () => {
     const plain = await createRepo(app, alice, {
       name: "plainlists",

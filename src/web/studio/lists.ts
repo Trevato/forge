@@ -52,7 +52,8 @@ import {
   seg,
   time,
 } from "../ui.ts";
-import { actorsFor, issuesFor, runTitleFrom } from "../pages/runs.ts";
+import type { Run } from "../../core/runs.ts";
+import { actorsFor, durationText, issuesFor, runTitleFrom } from "../pages/runs.ts";
 import { originGlyph } from "../pages/thread.ts";
 import { changeHref, PAGE_TITLES, pageTitle, tellHref } from "./nouns.ts";
 import { tellLine, tellsAnswered } from "./branch_tell.ts";
@@ -553,43 +554,49 @@ export async function changesList(ctx: Ctx): Promise<Response> {
   });
 }
 
-/** Which runs a list shows: the crew's by default, or the deploys or the
- * checks that `?kind=` asks for — the narrowing dev's list offered, kept
- * so a link written to it keeps meaning what it said. */
+/** Which runs a list shows: all three kinds by default, or the one that
+ * `?kind=` asks for — the narrowing dev's list offered, kept so a link
+ * written to it keeps meaning what it said. */
 type RunsKind = "agent" | "deploy" | "check";
 
-function readRunsKind(ctx: Ctx): RunsKind {
+function readRunsKind(ctx: Ctx): RunsKind | undefined {
   const raw = ctx.url.searchParams.get("kind");
-  return raw === "deploy" || raw === "check" ? raw : "agent";
+  return raw === "agent" || raw === "deploy" || raw === "check"
+    ? raw
+    : undefined;
 }
 
 /** The runs list's own address with a word, a kind and a cursor. */
 function runsHref(
   base: string,
-  kind: RunsKind,
+  kind: RunsKind | undefined,
   word: WordFilter | undefined,
   cursor?: string,
 ): string {
   const params = new URLSearchParams();
-  if (kind !== "agent") params.set("kind", kind);
+  if (kind !== undefined) params.set("kind", kind);
   if (word !== undefined) params.set("word", word);
   if (cursor !== undefined) params.set("cursor", cursor);
   const text = params.toString();
   return text === "" ? `${base}/runs` : `${base}/runs?${text}`;
 }
 
+/** A check's state in the words its row names it by. */
+const checkState = (run: Run): string =>
+  run.state === "ok" ? "passed" : run.state;
+
 const RUNS_KIND_WORDS: Record<RunsKind, string> = {
-  agent: "the crew's runs",
-  deploy: "deploys",
-  check: "checks",
+  agent: "Agent runs",
+  deploy: "Deploys",
+  check: "Checks",
 };
 
 /**
  * GET /:owner/:name/runs: every run, for every repository and every viewer,
  * one row per run in its studio word — who ran it, when it last moved, and
- * the transcript as the row's own link. The crew's runs by default;
- * `?kind=deploy|check` reads the deploys or the checks instead, from one
- * quiet line under the list. `?word=` narrows any of them.
+ * the transcript as the row's own link. Agent runs, checks and deploys
+ * together, newest first, by default; `?kind=agent|deploy|check` narrows to
+ * one, from the three links under the list. `?word=` narrows any of them.
  */
 export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const db = ctx.app.db;
@@ -620,7 +627,13 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
   const words = await Promise.all(fetched.map((run) => runWord(wordCtx, run)));
   const rows = fetched
     .map((run, i) => ({ run, info: words[i]! }))
-    .filter((r) => inWordFilter(r.info.word, filter));
+    .filter(
+      // With no word chosen a check or a deploy that finished is news too:
+      // the default list is the whole story, newest first.
+      (r) =>
+        (filter === undefined && r.run.kind !== "agent") ||
+        inWordFilter(r.info.word, filter),
+    );
 
   const list =
     rows.length === 0
@@ -630,7 +643,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
           note: emptyNote(
             filter,
             "No run",
-            kind === "agent"
+            kind === undefined || kind === "agent"
               ? "Nothing open. A run is one go the crew takes at a job; each one shows up here."
               : `Nothing open. Every ${kind === "deploy" ? "deploy" : "check"} shows up here while it runs.`,
           ),
@@ -649,16 +662,18 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
                   ? avatar(who)
                   : icon(run.kind === "check" ? "check" : "rocket"),
               title: runTitleFrom(run, actors, issues),
-              meta: html`${run.kind === "agent" ? html`${who} · ` : null}${info.note}
+              meta:
+                run.kind === "check"
+                  ? html`${run.commitOid.slice(0, 7)} · ${checkState(run)}
+                    ${when(durationText(run), (d) => html` · took ${d}`)} ·
+                    ${time(run.finishedAt ?? run.createdAt)}`
+                  : html`${run.kind === "agent" ? html`${who} · ` : null}${info.note}
               · ${time(run.finishedAt ?? run.createdAt)}`,
               trail: wordBadge(info.word, undefined, record === undefined),
             });
           }),
         );
   const last = fetched[fetched.length - 1];
-  const others = (["agent", "deploy", "check"] as const).filter(
-    (k) => k !== kind,
-  );
 
   const body = html`${repoHeader(ctx, repo, "runs", { compact: true })}
     <div class="mt">
@@ -675,12 +690,16 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
       )}
     </div>
     <p class="muted small mt">
-      Also ${others.map(
+      Show ${(["agent", "deploy", "check"] as const).map(
         (k, i) =>
-          html`${i > 0 ? " · " : ""}<a href="${runsHref(base, k, undefined)}"
-              >${RUNS_KIND_WORDS[k]}</a
-            >`,
-      )}
+          html`${i > 0 ? " · " : ""}${k === kind
+              ? html`<strong>${RUNS_KIND_WORDS[k]}</strong>`
+              : html`<a href="${runsHref(base, k, undefined)}"
+                  >${RUNS_KIND_WORDS[k]}</a
+                >`}`,
+      )}${kind === undefined
+        ? null
+        : html` · <a href="${runsHref(base, undefined, undefined)}">All</a>`}
     </p>
     ${liveMount({ repo: base })}`;
 
