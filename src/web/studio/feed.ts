@@ -287,6 +287,7 @@ ${outboxJs}
   if (!feed || typeof fetch === 'undefined') return;
   var note = document.getElementById('feed-note');
   var outbox = null;
+  var problem = '';
   try { outbox = forgeOutbox(window.localStorage, function (u, o) { return fetch(u, o); }); } catch (e) {}
   function ago(ms) {
     var m = Math.max(0, Math.round((Date.now() - ms) / 60000));
@@ -302,6 +303,7 @@ ${outboxJs}
       parts.push('Offline: this feed is from ' + ago(Number(note.getAttribute('data-rendered'))) + '.');
     var n = outbox ? outbox.size() : 0;
     if (n > 0) parts.push(n + (n === 1 ? ' act is' : ' acts are') + ' waiting to send.');
+    if (problem) parts.push(problem);
     note.textContent = parts.join(' ');
     note.hidden = parts.length === 0;
   }
@@ -327,14 +329,53 @@ ${outboxJs}
   }
   // Acting is instant: the card goes, the act is kept and sent.
   function act(card, kind) { if (send(card, kind)) gone(card); }
+  // A chip flips at once; the saved filter then redraws the region in place
+  // (the same fragment the live region pulls), keeping scroll and focus. A
+  // refusal puts the chip back and says why in the note.
+  function fail(c, was, why) {
+    c.setAttribute('aria-pressed', was);
+    problem = why;
+    paint();
+  }
+  function chip(c) {
+    var was = c.getAttribute('aria-pressed');
+    var kind = c.getAttribute('data-chip');
+    var value = c.getAttribute('data-value');
+    c.setAttribute('aria-pressed', was === 'true' ? 'false' : 'true');
+    problem = '';
+    paint();
+    fetch('/api/v1/feed/chips', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: kind, value: value, hidden: was === 'true' }) })
+      .then(function (r) {
+        if (r.ok) return refetch(kind, value);
+        fail(c, was, r.status === 401 || r.status === 403
+          ? 'The filter was not saved because you are signed out. Sign in again and press the chip once more.'
+          : 'The filter was not saved because the server refused it. Reload the page and try again.');
+      })
+      .catch(function () { fail(c, was, 'The filter was not saved because there is no connection. Check it and press the chip again.'); });
+  }
+  function refetch(kind, value) {
+    return fetch('/live/feed', { headers: { accept: 'text/html' }, credentials: 'same-origin' })
+      .then(function (r) { if (!r.ok) throw r; return r.text(); })
+      .then(function (text) {
+        var holder = document.createElement('template');
+        holder.innerHTML = text;
+        var fresh = holder.content.querySelector('#live-feed');
+        if (!fresh) return;
+        var had = document.activeElement && document.activeElement.closest && document.activeElement.closest('[data-chip]');
+        feed.innerHTML = fresh.innerHTML;
+        feed.dispatchEvent(new CustomEvent('forge:swapped', { bubbles: true }));
+        if (had) {
+          var all = feed.querySelectorAll('[data-chip]');
+          for (var i = 0; i < all.length; i++)
+            if (all[i].getAttribute('data-chip') === kind && all[i].getAttribute('data-value') === value) all[i].focus();
+        }
+      })
+      .catch(function () { problem = 'The filter was saved, but the feed could not be refreshed. Reload the page to see it.'; paint(); });
+  }
   feed.addEventListener('click', function (e) {
     var c = e.target && e.target.closest ? e.target.closest('[data-chip]') : null;
-    if (c) {
-      fetch('/api/v1/feed/chips', { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ kind: c.getAttribute('data-chip'), value: c.getAttribute('data-value'), hidden: c.getAttribute('aria-pressed') === 'true' }) })
-        .then(function (r) { if (r.ok) location.reload(); });
-      return;
-    }
+    if (c) { chip(c); return; }
     var t = e.target && e.target.closest ? e.target.closest('[data-feed],[data-feed-open]') : null;
     var card = t && t.closest('.fcard');
     if (!card) return;

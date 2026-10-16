@@ -18,6 +18,7 @@ import { mcpTool } from "./helpers/mcp.ts";
 import { chipHides } from "../src/feed/chips.ts";
 import type { FeedKind } from "../src/feed/items.ts";
 import { readFeed } from "../src/feed/feed.ts";
+import { feedJs } from "../src/web/studio/feed.ts";
 
 const ALL: FeedKind[] = [
   "run", "ask", "pull", "decision", "map", "cost", "tell", "reply", "look", "milestone", "choose", "release",
@@ -173,6 +174,26 @@ describe("the chips of a forge", () => {
     expect(page).toMatch(/data-chip="kind"\s+data-value="reviews"\s+aria-pressed="true"/);
     expect(page).toMatch(/data-chip="person"\s+data-value="alice"/);
     setChip(app.db, bob.id, { kind: "kind", value: "crew" }, false);
+  });
+
+  test("a pressed chip refreshes the region in place and says when it failed", async () => {
+    const handler = feedJs.slice(feedJs.indexOf("function chip(c)"), feedJs.indexOf("feed.addEventListener('click'"));
+    expect(handler).not.toContain("location.reload");
+    expect(handler).not.toMatch(/b\.message|b\.error|\.statusText/);
+    expect(handler).toContain("Sign in again");
+    expect(handler).toContain("/live/feed");
+    expect(handler).toContain("aria-pressed");
+    expect(feedJs).toContain("problem");
+    const session = createSession(app.db, bob.id);
+    const cookie = { cookie: `forge_session=${session.token}` };
+    await call(bobToken, "POST", "/api/v1/feed/chips", { kind: "kind", value: "crew", hidden: true });
+    const region = await (await fetch(`${servers.url}/live/feed`, { headers: cookie })).text();
+    expect(region).toMatch(/data-chip="kind"\s+data-value="crew"\s+aria-pressed="false"/);
+    expect(region).not.toContain('data-kind="look"');
+    await call(bobToken, "POST", "/api/v1/feed/chips", { kind: "kind", value: "crew", hidden: false });
+    const back = await (await fetch(`${servers.url}/live/feed`, { headers: cookie })).text();
+    expect(back).toMatch(/data-chip="kind"\s+data-value="crew"\s+aria-pressed="true"/);
+    expect(back).toContain('data-kind="look"');
   });
 
   test("MCP feed applies the saved filter and takes the same filter as arguments", async () => {
