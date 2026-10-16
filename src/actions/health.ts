@@ -13,7 +13,42 @@ import { appsRuntime } from "../apps/runtime.ts";
 import { listApps } from "../core/apps.ts";
 import type { User } from "../core/users.ts";
 import { forgeHealth, rolloutLine, type ForgeHealth } from "../kernel/guard.ts";
-import { laneLine, sinceWords, vitals, type Degraded, type Vitals } from "../kernel/vitals.ts";
+import {
+  laneLine,
+  sinceWords,
+  vitals,
+  type Degraded,
+  type Vitals,
+  type VitalsInput,
+} from "../kernel/vitals.ts";
+import { snapshotsOf } from "../snapshot/service.ts";
+
+/** Where this forge's snapshots go, as vitals reads it; undefined when it takes none. */
+export function snapshotPlace(app: App): VitalsInput["snapshots"] {
+  const handle = snapshotsOf(app);
+  if (handle === undefined) return undefined;
+  const dir = handle.store?.dir;
+  return { ...(dir === undefined ? {} : { dir }), mirrored: handle.mirror !== undefined };
+}
+
+/**
+ * This forge's vitals, as every surface reads them: the health answer, the
+ * board's forge strip and the asks. One place gathers what they measure.
+ */
+export function forgeVitals(app: App): Vitals {
+  const runtime = appsRuntime(app);
+  const envs = runtime
+    ? listApps(app.db).flatMap((record) => runtime.status(record))
+    : [];
+  return vitals({
+    db: app.db,
+    dataDir: app.config.dataDir,
+    envs,
+    signals: app.signals,
+    forgeUrl: app.config.url ?? `http://localhost:${app.config.port}`,
+    snapshots: snapshotPlace(app),
+  });
+}
 
 export function readHealth(
   app: App,
@@ -21,17 +56,7 @@ export function readHealth(
 ): ForgeHealth | (Vitals & ForgeHealth) {
   const forge = forgeHealth();
   if (!actor?.isAdmin) return forge;
-  const runtime = appsRuntime(app);
-  const envs = runtime
-    ? listApps(app.db).flatMap((record) => runtime.status(record))
-    : [];
-  const v = vitals({
-    db: app.db,
-    dataDir: app.config.dataDir,
-    envs,
-    signals: app.signals,
-    forgeUrl: app.config.url ?? `http://localhost:${app.config.port}`,
-  });
+  const v = forgeVitals(app);
   return { ...v, ...forge, ok: forge.ok && v.ok };
 }
 

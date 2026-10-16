@@ -12,6 +12,8 @@ import { dirname, join, relative } from "node:path";
 export interface Store {
   /** What this store is, for a page and a log; never a secret. */
   readonly where: string;
+  /** The directory it writes under, when it is one; a bucket has none. */
+  readonly dir?: string;
   put(key: string, body: Uint8Array | string): Promise<void>;
   get(key: string): Promise<Uint8Array | undefined>;
   /** Every key under `prefix`, in no particular order. */
@@ -90,6 +92,7 @@ export function withRetries(
   }
   return {
     where: inner.where,
+    ...(inner.dir === undefined ? {} : { dir: inner.dir }),
     put: (key, body) => tried(`put ${key}`, () => inner.put(key, body)),
     get: (key) => tried(`get ${key}`, () => inner.get(key)),
     list: (prefix) => tried(`list ${prefix}`, () => inner.list(prefix)),
@@ -192,6 +195,7 @@ export function dirStore(root: string): Store {
   };
   return {
     where: root,
+    dir: root,
     async put(key, body) {
       const path = at(key);
       mkdirSync(dirname(path), { recursive: true });

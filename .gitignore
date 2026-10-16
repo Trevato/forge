@@ -22,3 +22,18 @@ typesafe-api-key
 
 # what a check keeps for the next one (src/checks/cache.ts)
 /.forge-cache/
+
+# empty stubs an agent sandbox mounts over home-directory config; never the
+# forge's own files, and never committed (#1148)
+/.bash_profile
+/.bashrc
+/.profile
+/.zshrc
+/.zprofile
+/.gitconfig
+/.gitmodules
+/.idea
+/.vscode
+/.mcp.json
+/.ripgreprc
+/.claude/

@@ -25,6 +25,8 @@ import {
 } from "../src/actions/repos.ts";
 import { addSshKey, signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
+import { startSnapshots } from "../src/snapshot/service.ts";
+import { dirStore } from "../src/snapshot/store.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getIssue, listComments } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
@@ -783,6 +785,65 @@ describe("the forge's health in the terminal", () => {
       expect(other.text()).not.toContain("All fine");
       other.stop();
     } finally {
+      delete process.env["FORGE_GUARD_DIR"];
+      forge.close();
+      await rm(dataDir, { recursive: true, force: true });
+      await rm(guard, { recursive: true, force: true });
+    }
+  });
+
+  test("snapshots on the forge's own volume, mirrored nowhere: the admin's dashboard says so, nobody else's does", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "forge-tui-snapvol-"));
+    const guard = await mkdtemp(join(tmpdir(), "forge-tui-guard-"));
+    process.env["FORGE_GUARD_DIR"] = guard;
+    const forge = createApp({ dataDir, port: 0 });
+    const store = dirStore(join(dataDir, "snapshots"));
+    let svc = startSnapshots(forge, store, { version: "t", nightly: false });
+    try {
+      const a = await signUp(forge, {
+        username: "chief",
+        email: "chief@forge.test",
+        password: "a-long-passphrase",
+      });
+      const b = await signUp(forge, {
+        username: "bob",
+        email: "bob@forge.test",
+        password: "another-long-passphrase",
+      });
+      if (!a.ok || !b.ok) throw new Error("signup failed");
+      const as = (user: User): TuiIdentity => ({
+        sshUsername: user.username,
+        remoteAddress: "127.0.0.1",
+        fingerprint: "SHA256:test",
+        user,
+      });
+      const said = "Snapshots are kept on the forge's own volume";
+
+      const admin = boot(forge, as(a.value));
+      await admin.settle();
+      expect(admin.text()).toContain(said);
+      expect(admin.text()).not.toContain("All fine");
+      admin.stop();
+
+      const other = boot(forge, as(b.value));
+      await other.settle();
+      expect(other.text()).not.toContain(said);
+      other.stop();
+
+      // A mirror copying them off the box clears it.
+      await svc.stop();
+      svc = startSnapshots(forge, store, {
+        version: "t",
+        nightly: false,
+        mirror: dirStore(join(dataDir, "mirror")),
+        mirrorEveryMs: 3_600_000,
+      });
+      const mirrored = boot(forge, as(a.value));
+      await mirrored.settle();
+      expect(mirrored.text()).not.toContain(said);
+      mirrored.stop();
+    } finally {
+      await svc.stop();
       delete process.env["FORGE_GUARD_DIR"];
       forge.close();
       await rm(dataDir, { recursive: true, force: true });

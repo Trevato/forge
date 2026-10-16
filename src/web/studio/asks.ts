@@ -8,14 +8,13 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { needLine } from "../../actions/health.ts";
+import { forgeVitals, needLine } from "../../actions/health.ts";
 import type { Degraded } from "../../kernel/vitals.ts";
 import { previewEnv } from "../../apps/data.ts";
 import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { crewForRepos } from "../../core/agents.ts";
 import { capacityDefault, isCapacityKey, storedCapacity } from "../../core/capacity.ts";
-import { appsRuntime } from "../../apps/runtime.ts";
-import { appsForRepos, getAppByRepo, listApps } from "../../core/apps.ts";
+import { appsForRepos, getAppByRepo } from "../../core/apps.ts";
 import { latestDecision, stopStands } from "../../core/decisions.ts";
 import { getHold, holdsFor } from "../../core/holds.ts";
 import { issueTitles, proposalsFor, type Proposal } from "../../core/proposals.ts";
@@ -62,7 +61,6 @@ import { handoverLines, handoverOf, type Handover } from "../../crew/guard.ts";
 import { conflictsOf, isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
 import { reviewAttempts, waitsForPerson, waitsForReviewer, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
-import { vitals } from "../../kernel/vitals.ts";
 import { repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
 import { btn, card, icon, row } from "../ui.ts";
@@ -1338,17 +1336,7 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
  */
 export function forgeNeedsFor(ctx: Ctx, user: User | undefined): Degraded[] {
   if (!user?.isAdmin) return [];
-  const runtime = appsRuntime(ctx.app);
-  const envs = runtime
-    ? listApps(ctx.app.db).flatMap((record) => runtime.status(record))
-    : [];
-  return vitals({
-    db: ctx.app.db,
-    dataDir: ctx.app.config.dataDir,
-    signals: ctx.app.signals,
-    forgeUrl: ctx.app.config.url ?? `http://localhost:${ctx.app.config.port}`,
-    envs,
-  }).degraded;
+  return forgeVitals(ctx.app).degraded;
 }
 
 /**

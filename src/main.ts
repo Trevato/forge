@@ -53,6 +53,7 @@ import { configProblem, dataDirOf, preflight } from "./kernel/preflight.ts";
 import { running } from "./kernel/version.ts";
 import { record as recordDegraded } from "./kernel/degraded_history.ts";
 import { vitals } from "./kernel/vitals.ts";
+import { snapshotPlace } from "./actions/health.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -447,6 +448,7 @@ const tickAsks = async (): Promise<void> => {
         dataDir: app.config.dataDir,
         signals: app.signals,
         forgeUrl,
+        snapshots: snapshotPlace(app),
       }).degraded,
       Date.now(),
       app.log,

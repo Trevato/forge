@@ -9,7 +9,8 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { statfsSync } from "node:fs";
+import { statfsSync, statSync } from "node:fs";
+import { dirname } from "node:path";
 import { freemem, totalmem } from "node:os";
 import { refusedInternal, type RefusedLedger } from "./internal_refused.ts";
 import { recentErrors, type ErrorLedger, type ErrorLine } from "./log.ts";
@@ -36,6 +37,9 @@ export const ERROR_BURST = 20;
 export const NO_PROGRESS_MS = 6 * 3_600_000;
 /** A run that has waited this long to start is a queue that is not moving. */
 export const QUEUE_WAIT_MAX_MS = 30 * 60_000;
+/** Said when snapshots share the volume they are a copy of and nothing copies them off it. */
+export const SNAPSHOTS_ON_STATE_VOLUME =
+  "Snapshots are kept on the forge's own volume and mirrored nowhere: losing the volume loses them too.";
 
 export interface EnvCount {
   readonly env: string;
@@ -104,6 +108,25 @@ export interface VitalsInput {
   readonly diskFreeMin?: number;
   /** One forge's own signals (`App.signals`). */
   readonly signals: { errors: ErrorLedger; refused: RefusedLedger };
+  /** Where snapshots go: the directory, when the store is one, and whether an off-box mirror copies them. */
+  readonly snapshots?: { readonly dir?: string; readonly mirrored: boolean } | undefined;
+}
+
+/** The device a path lives on, read from it or its nearest parent that exists. */
+function deviceOf(path: string): number | undefined {
+  for (let at = path; ; at = dirname(at)) {
+    try {
+      return statSync(at).dev;
+    } catch {
+      if (dirname(at) === at) return undefined;
+    }
+  }
+}
+
+/** Whether two paths live on one volume: what loses one loses the other. */
+export function sharesVolume(a: string, b: string): boolean {
+  const da = deviceOf(a);
+  return da !== undefined && da === deviceOf(b);
 }
 
 /**
@@ -249,6 +272,15 @@ export function vitals(input: VitalsInput): Vitals {
       undefined,
       "/settings/capacity",
     );
+
+  // Snapshots on the volume they copy, and no mirror, share its one point of failure.
+  const snaps = input.snapshots;
+  if (
+    snaps?.dir !== undefined &&
+    !snaps.mirrored &&
+    sharesVolume(input.dataDir, snaps.dir)
+  )
+    need("snapshots", SNAPSHOTS_ON_STATE_VOLUME, undefined, "/settings/backups");
 
   const running = listRunning(input.db);
   const lane = readLane(input.db, running, now);

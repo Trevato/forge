@@ -699,6 +699,15 @@ wakes every 10 minutes for it. The time the forge first owed a drill is kept
 at boot in `drill/first-seen`; if the disk will not take it, a warning is
 logged and a forge with no drill ever is not flagged.
 
+Snapshots written to a directory on the forge's own volume, with no off-box
+mirror set, are lost with that volume. That is one line for the forge's admin,
+"Snapshots are kept on the forge's own volume and mirrored nowhere: losing the
+volume loses them too.", on the board's forge strip (linking Settings →
+Backups), in the terminal's dashboard (same `forgeNeeds`), in the asks, in
+`GET /api/v1/health` and MCP `health`. Anyone else sees nothing. It clears when
+the destination moves to another volume or a bucket, or a mirror is set. Every
+one of those reads the vitals through `forgeVitals` in `src/actions/health.ts`.
+
 `docs/EXTRACT.md` is the forge on a machine of its own, and the platform it
 grew up in switched off: what a host owes it, the moves in order, and what is
 given up.

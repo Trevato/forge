@@ -19,7 +19,7 @@ import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { askMeasure } from "../../core/ask_ledger.ts";
 import { reviewersOf, waitsForPerson } from "../../crew/review.ts";
 import { tokenReturns } from "../../core/returns.ts";
-import { needLine } from "../../actions/health.ts";
+import { forgeVitals, needLine } from "../../actions/health.ts";
 import { returnsRepos } from "../../actions/returns.ts";
 import {
   deciderCounts,
@@ -31,7 +31,6 @@ import {
   type Decision,
   type DecisionKind,
 } from "../../core/decisions.ts";
-import { appsRuntime } from "../../apps/runtime.ts";
 import { efficiencyForRepos } from "../../core/efficiency.ts";
 import { reviewStats, type ReviewStats } from "../../core/review-stats.ts";
 import { standings, WINDOW_MS } from "../../core/standing.ts";
@@ -44,9 +43,8 @@ import {
 import { readSpend } from "../../actions/spend.ts";
 import { spendView } from "./spend.ts";
 import type { HandContext } from "../../crew/handover.ts";
-import { listApps } from "../../core/apps.ts";
 import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
-import { laneLine, vitals, type Vitals } from "../../kernel/vitals.ts";
+import { laneLine, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
 import {
@@ -328,17 +326,7 @@ function sentinelSpan(app: Ctx["app"]): Html {
  */
 function forgeStrip(ctx: Ctx): Html | null {
   if (!ctx.auth.user?.isAdmin) return null;
-  const app = ctx.app;
-  const runtime = appsRuntime(app);
-  const v = vitals({
-    db: app.db,
-    dataDir: app.config.dataDir,
-    signals: app.signals,
-    forgeUrl: app.config.url ?? `http://localhost:${app.config.port}`,
-    envs: runtime
-      ? listApps(app.db).flatMap((record) => runtime.status(record))
-      : [],
-  });
+  const v = forgeVitals(ctx.app);
   const fh = forgeHealth();
   const rollout = rolloutLine(fh);
   const others = fh.incidents.filter(
@@ -354,7 +342,7 @@ function forgeStrip(ctx: Ctx): Html | null {
     data-rollout="${fh.rollout.state}"
     role="status"
   >
-    ${sentinelSpan(app)}
+    ${sentinelSpan(ctx.app)}
     ${rollout === null ? "" : html`<span class="board-forge-need">${rollout}</span>`}
     ${others.map((i) => html`<span class="board-forge-need">${i.key}: ${i.message}</span>`)}
     ${lane === null ? "" : html`<span class="board-forge-lane">Lane: ${lane}</span>`}

@@ -19,6 +19,19 @@ keeps a drill's verdict for any domain here (see the README).
 | The model credential | Agents cannot start work; everything else runs. | nothing yet | 5 | Set a fresh credential in the settings. | expire-token |
 | The runner | Checks and runs queue behind a lane that is not moving. | "wait behind one lane; the oldest since"; "is stuck: no heartbeat for" | 10 | Cancel the stuck run; restart the runner if the lane stays empty. | lose-runner |
 
+## Shared by accident
+
+Two domains that fail together are one domain. The forge checks the one
+pairing it can see from inside: snapshots written to a directory on the
+volume they copy, with no off-box mirror, are lost with that volume. Vitals
+then says "Snapshots are kept on the forge's own volume and mirrored
+nowhere" on the board, the asks and `/api/v1/health`, and links Settings →
+Backups, until the destination moves or a mirror is set. "One volume" means the
+two paths report the same device (`st_dev`): a snapshot directory on a
+different filesystem bind-mounted into the data directory is told apart, but
+two directories on one disk under different mounts that share a device, or
+two devices backed by the same physical disk, are not.
+
 ## Running a drill
 
 `scripts/drills/run.ts` walks you through one. It refuses a domain whose drill
