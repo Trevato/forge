@@ -7,10 +7,14 @@
  * anonymous reader could open (not sealed, runs readable). Anything else, or a
  * ref that is not shaped like one, is the same 404. The ETag is the sha256
  * of the card's inputs, so a changed repo is a new card and an unchanged
- * one is a 304.
+ * one is a 304. The `.png` twin is the same card rasterized once per input
+ * hash and kept under the data directory; if the rasterizer is unavailable it
+ * answers 503 and nothing else is affected.
  */
 
 import { createHash } from "node:crypto";
+import { join } from "node:path";
+import type { App } from "../../app.ts";
 import { getRepoRun } from "../../actions/runs.ts";
 import { getAppBySlug, isSlug } from "../../core/apps.ts";
 import {
@@ -27,6 +31,8 @@ import { isSafeName } from "../../git/guard.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFound } from "../../http/respond.ts";
 import { renderCard, type CardInput } from "../og/card.ts";
+import { Busy, pngCache, type PngCache } from "../og/png-cache.ts";
+import { rasterizer } from "../og/raster.ts";
 
 /** What an anonymous reader may see of a repository, or nothing. */
 function publicRepo(ctx: Ctx, repo: Repo | undefined): Repo | undefined {
@@ -110,18 +116,43 @@ function resolve(ctx: Ctx, kind: OgKind, ref: string): CardInput | undefined {
   return repo && { ...repoInput(ctx, repo, "app"), title: record.slug };
 }
 
-export function ogCard(kind: OgKind) {
-  return (ctx: Ctx): Response => {
+const caches = new WeakMap<App, PngCache>();
+
+function cacheFor(app: App): PngCache {
+  let c = caches.get(app);
+  if (!c) {
+    c = pngCache({
+      dir: join(app.config.dataDir, "og-png"),
+      raster: rasterizer,
+      svg: renderCard,
+    });
+    caches.set(app, c);
+  }
+  return c;
+}
+
+export function ogCard(kind: OgKind, format: "svg" | "png" = "svg") {
+  return async (ctx: Ctx): Promise<Response> => {
     const input = resolve(ctx, kind, ctx.params.ref ?? "");
     if (!input) return notFound();
-    const etag = `"${createHash("sha256").update(JSON.stringify(input)).digest("hex")}"`;
+    const etag = `"${createHash("sha256").update(JSON.stringify(input)).digest("hex")}${format === "png" ? "-png" : ""}"`;
     const headers = {
       etag,
       "cache-control": "public, max-age=300",
-      "content-type": "image/svg+xml; charset=utf-8",
+      "content-type": format === "png" ? "image/png" : "image/svg+xml; charset=utf-8",
     };
     if (ctx.request.headers.get("if-none-match") === etag)
       return new Response(null, { status: 304, headers });
-    return new Response(renderCard(input), { headers });
+    if (format === "svg") return new Response(renderCard(input), { headers });
+    try {
+      return new Response(await cacheFor(ctx.app).get(input), { headers });
+    } catch (error) {
+      if (!(error instanceof Busy))
+        ctx.app.log.error("og card could not be rasterized", { kind, error: String(error) });
+      return new Response("card unavailable\n", {
+        status: 503,
+        headers: { "content-type": "text/plain; charset=utf-8", "retry-after": "30" },
+      });
+    }
   };
 }

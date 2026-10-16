@@ -1014,3 +1014,30 @@ links to the deck, whatever the number of siblings; it is never muted away.
 Once a sibling ships or all but one close, the item leaves the feed. The
 terminal has no feed; the item is in `GET /api/v1/feed` and the MCP feed tool
 as kind `choose`.
+
+### OG cards as PNG
+
+`/og/{repo,app,issue,pull,run}/<ref>.png` is the same public card as the `.svg`,
+rasterized (1200×630) for the link previews that refuse SVG. Same refs, same
+404s, same ETag-per-inputs (suffixed `-png`). Each PNG is rendered once and kept
+under `$FORGE_APP_DATA/og-png/<sha256 of the inputs>.png`; the cache holds at
+most 512 files (`OG_PNG_CAP` in `src/web/og/png-cache.ts`), least recently used
+out first. Cold is about 120 ms, warm a file read. If the rasterizer will not
+load or render, the route answers 503 with `retry-after: 30` and logs; nothing
+else notices, since the rasterizer is only loaded on the first PNG request.
+
+**Dependencies (one, vendored, not installed):** `package.json` `dependencies`
+stays empty — the preview has no install step, so the files are committed under
+`src/web/og/vendor/`, unmodified.
+
+- *resvg* (`@resvg/resvg-wasm` 2.6.2, `resvg.mjs` + `resvg.wasm`): an SVG
+  renderer compiled to WebAssembly, so no native binary or platform build. Why:
+  rasterizing text and gradients correctly is not a 20-line file. 2.4 MB wasm +
+  17 KB glue. Licence MPL-2.0.
+- *DejaVu Sans, Sans Bold, Sans Mono, Sans Mono Bold* (2.37): the fonts the PNG
+  is drawn in, so its text is the same on every host (the SVG names system
+  fonts; the card clamps text with a deliberately wide estimate, which these
+  fit). 2.0 MB. Free licence, `vendor/DEJAVU-LICENSE`.
+
+Not done: the SVG route is unchanged and still the card's source of truth; the
+rasterizer runs on the main thread (about 100 ms once per distinct card).
