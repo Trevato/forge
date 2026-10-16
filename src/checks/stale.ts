@@ -13,3 +13,17 @@ export function checkStale(
   if (baseTip === undefined || baseTip === "") return false;
   return run.baseOid !== baseTip;
 }
+
+/**
+ * Whether `require_checks` holds a merge back: the live head's check is not
+ * green, or is green only against an older base — a check still to come.
+ * The page and the terminal read this one answer, so neither offers a merge
+ * the other would not.
+ */
+export function checksHold(
+  requireChecks: boolean,
+  state: string,
+  stale: boolean,
+): boolean {
+  return requireChecks && (state !== "ok" || stale);
+}

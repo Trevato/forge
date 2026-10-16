@@ -49,7 +49,8 @@ import { proposedByText } from "../../core/proposal_token.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
-import { checkStale } from "../../checks/stale.ts";
+import { askCheck } from "../../checks/again.ts";
+import { checkStale, checksHold } from "../../checks/stale.ts";
 import { resolveOid } from "../../git/merge.ts";
 import { getPull, pullDir, variantSiblings, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
@@ -471,7 +472,7 @@ export function pullScreen(
    * `checks_required` on its own.
    */
   const checksGated = (): boolean =>
-    repo !== undefined && requireChecks && check.state !== "ok";
+    repo !== undefined && checksHold(requireChecks, check.state, checkOld);
 
   /** `O` — the preview, through a grant when the app is private. */
   // Production beside the preview: comparing the two is the review.
@@ -729,6 +730,7 @@ export function pullScreen(
           ? [
               binding(["c"], tab === 1 ? "review line" : "comment"),
               binding(["R"], "review"),
+              binding(["C"], "check again"),
               ...(mayVote() ? [binding(["+", "-"], "like/dislike a variant")] : []),
               ...(mayApproveHere()
                 ? [
@@ -829,6 +831,7 @@ export function pullScreen(
       drawMergeBox(s, boxRow!, c, issue, facts, view.summary(), mirrored(), {
         gated: gated(),
         checksGated: checksGated(),
+        checkOld,
         check,
         checksLine,
         standing: standing(),
@@ -1016,8 +1019,24 @@ export function pullScreen(
         );
         return true;
       }
+      // `C` asks for the check again at the head, on the base as it is now.
+      if (e.key === "C" && mayWrite() && repo !== undefined && f.user !== undefined) {
+        const user = f.user;
+        const target = repo;
+        const row = getPull(f.db, target.id, number);
+        if (row === undefined) return true;
+        runAsync(ctx, async () => {
+          const asked = await askCheck(f.app, user, target, row);
+          ctx.toast(
+            asked.ok ? "check asked for at the current head" : `no check was asked for: ${asked.message}`,
+            asked.ok ? "success" : "danger",
+          );
+          if (asked.ok) await reload();
+        });
+        return true;
+      }
       if (e.key === "m" && mayWrite() && state() === "checks_required") {
-        ctx.toast(checksRefusal(check), "attn");
+        ctx.toast(checksRefusal(check, checkOld), "attn");
         return true;
       }
       if (
@@ -1249,7 +1268,9 @@ export function checksText(
 }
 
 /** Why `m` is refused by the checks gate, in words a person can act on. */
-export function checksRefusal(check: CheckSummary): string {
+export function checksRefusal(check: CheckSummary, old = false): string {
+  if (old && check.state === "ok")
+    return "checked against an older base; press C to check again";
   switch (check.state) {
     case "failed":
       return `the deploy of this head failed${check.run?.summary ? `: ${check.run.summary}` : ""}`;
@@ -1302,6 +1323,8 @@ function drawMergeBox(
   o: {
     gated: boolean;
     checksGated: boolean;
+    /** The green was checked against an older base. */
+    checkOld: boolean;
     check: CheckSummary;
     /** The checks row, already worded; "" draws none. */
     checksLine: string;
@@ -1351,11 +1374,13 @@ function drawMergeBox(
                   ? `Changes requested by ${o.standing.blocking.join(", ")}`
                   : "Needs an approval of this head before it can merge"
                 : state === "checks_required"
-                  ? o.check.state === "failed"
-                    ? "The deploy of this head failed; it cannot merge until one passes"
-                    : o.check.state === "running" || o.check.state === "queued"
-                      ? "Waiting for the deploy of this head to pass"
-                      : "Needs a passing deploy of this head before it can merge"
+                  ? o.check.state === "ok"
+                    ? "Waiting on checks: checked against an older base; press C to check again"
+                    : o.check.state === "failed"
+                      ? "The deploy of this head failed; it cannot merge until one passes"
+                      : o.check.state === "running" || o.check.state === "queued"
+                        ? "Waiting for the deploy of this head to pass"
+                        : "Needs a passing deploy of this head before it can merge"
                   : `Ready to merge · ${summary}`;
   const x = badge(s, inner.x, inner.y, c, {
     text:

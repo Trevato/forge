@@ -35,7 +35,7 @@ import {
 } from "../../core/pulls.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
 import { checkWords } from "../../checks/summary.ts";
-import { checkStale } from "../../checks/stale.ts";
+import { checkStale, checksHold } from "../../checks/stale.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import {
   anchorKey,
@@ -492,9 +492,13 @@ function mergeBox(
   // The check gate, `mergePull`'s `checks_required`: the deploy of the
   // commit that is head right now must have passed. Read live here so the
   // button is honest — the refusal itself happens in the merge.
-  if (repo.requireChecks && check.state !== "ok") {
+  if (checksHold(repo.requireChecks, check.state, stale)) {
     const why =
-      check.state === "failed"
+      check.state === "ok"
+        ? html`This head was checked against an older
+            <span class="mono">${pull.baseBranch}</span>. Use Check again to judge
+            it on the current base; the merge unlocks when that passes.`
+        : check.state === "failed"
         ? html`The deploy of this head failed. Push a fix — a passing deploy is
           required before merging.`
         : check.state === "running" || check.state === "queued"

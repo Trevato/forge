@@ -18,6 +18,7 @@ import { joinMany, pullStatus } from "../core/pulls.ts";
 import { getIssuesByIds } from "../core/issues.ts";
 import { getRepoById } from "../core/repos.ts";
 import { latestRunsForIssues } from "../core/runs.ts";
+import { checkStale } from "../checks/stale.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 
@@ -27,6 +28,8 @@ interface Known {
   /** The pull's head the answer was taken at, as the database names it. */
   readonly head: string;
   readonly stale: boolean;
+  /** The base's tip when it was last read; empty when it could not be. */
+  readonly base: string;
   /** The files that stop it merging; 0 when it merges or is simply already in. */
   readonly conflicts: number;
   /** When a sweep last saw it go from not merging to merging: its ask is new from then. */
@@ -49,6 +52,21 @@ export function isStalePull(
 ): boolean {
   const known = knownByDb.get(db)?.get(pullId);
   return known !== undefined && known.stale && known.head === headOid;
+}
+
+/**
+ * Whether this pull's green was checked against an older tip of its base, as
+ * the last sweep read that tip (#1179's `checkStale`). A tip not yet read is
+ * no answer, and the green stands.
+ */
+export function staleGreen(
+  db: Database,
+  pull: { readonly id: string; readonly headOid: string },
+  check: { readonly baseOid: string } | null | undefined,
+): boolean {
+  const known = knownByDb.get(db)?.get(pull.id);
+  if (known === undefined || known.head !== pull.headOid) return false;
+  return checkStale(check ?? null, known.base);
 }
 
 /**
@@ -96,7 +114,6 @@ export async function sweepStaleAsks(app: App): Promise<void> {
     .query<{ id: string }, [number]>(
       `SELECT issue.id AS id FROM issue JOIN repo ON repo.id = issue.repo_id
        WHERE issue.kind = 'pull' AND issue.state = 'open'
-         AND repo.autonomy <> 'autonomous'
        ORDER BY issue.updated_at DESC LIMIT ?1`,
     )
     .all(SWEEP_LIMIT)
@@ -115,10 +132,14 @@ export async function sweepStaleAsks(app: App): Promise<void> {
         (await resolveOid(dir, `refs/heads/${pull.baseBranch}`)) ?? "";
       const between = `${pull.headOid}:${base}`;
       if (known.get(pull.id)?.between === between) continue;
-      const status = await pullStatus(dir, pull);
+      // An autonomous repository settles its own mergeability; only the
+      // base tip is read there, for the stale green.
+      const status =
+        repo.autonomy === "autonomous" ? undefined : await pullStatus(dir, pull);
       const stale =
-        status.ahead === 0 ||
-        (!status.mergeable && status.conflicts.length > 0);
+        status !== undefined &&
+        (status.ahead === 0 ||
+          (!status.mergeable && status.conflicts.length > 0));
       const was = known.get(pull.id);
       const mergesSince =
         !stale && was?.stale === true && was.head === pull.headOid
@@ -130,7 +151,9 @@ export async function sweepStaleAsks(app: App): Promise<void> {
         between,
         head: pull.headOid,
         stale,
-        conflicts: status.mergeable ? 0 : status.conflicts.length,
+        base,
+        conflicts:
+          status === undefined || status.mergeable ? 0 : status.conflicts.length,
         ...(mergesSince === undefined ? {} : { mergesSince }),
       });
     } catch (error) {

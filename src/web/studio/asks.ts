@@ -58,7 +58,7 @@ import {
 import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { handoverLines, handoverOf, type Handover } from "../../crew/guard.ts";
-import { conflictsOf, isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
+import { conflictsOf, isStalePull, mergesAgainSince, staleGreen } from "../../crew/stale_asks.ts";
 import { reviewAttempts, waitsForPerson, waitsForReviewer, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
@@ -379,7 +379,9 @@ function askCandidatesFor(
       repo.autonomy !== "autonomous" &&
       // A green pull that no longer merges as it stands cannot be shipped:
       // bringing it up to date is work, not a person's decision.
-      !isStalePull(db, pull.id, pull.headOid)
+      !isStalePull(db, pull.id, pull.headOid) &&
+      // A green checked against an older base is a check still to come.
+      !staleGreen(db, pull, check)
     ) {
       // An agent's green pull waits for its reviewer first: it is the
       // crew's to wait on, and reaches the owner with the verdict (#1602).
@@ -403,7 +405,8 @@ function askCandidatesFor(
     } else if (
       check?.state === "ok" &&
       repo.autonomy === "autonomous" &&
-      !isStalePull(db, pull.id, pull.headOid)
+      !isStalePull(db, pull.id, pull.headOid) &&
+      !staleGreen(db, pull, check)
     ) {
       // An autonomous repository lands its own green pulls once reviewed;
       // an agent's change with no reviewer, or whose review lapsed, waits
