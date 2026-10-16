@@ -57,7 +57,7 @@ import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { proposeUpstream } from "../actions/upstream.ts";
-import { relationOf, syncFork, takeUpdates } from "../actions/forks.ts";
+import { relationOf, takeUpdates } from "../actions/forks.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
 import { markReaders, mayDirectCrew } from "../crew/direct.ts";
 import {
@@ -376,6 +376,35 @@ import {
   waitingReports,
 } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
+
+/** Take the parent's updates for `repo` and answer as the API does, for every route that asks. */
+async function respondTake(ctx: Ctx, repo: Repo): Promise<Response> {
+  const took = await takeUpdates(ctx.app, ctx.auth.user, repo);
+  if (!took.ok) {
+    const e = took.error;
+    if (typeof e === "string")
+      return e === "not_a_fork"
+        ? apiError("not_a_fork", 404, "this repository follows nothing")
+        : respondAccess(e, 403);
+    if (e.kind === "conflict")
+      return json(
+        {
+          error: "conflict",
+          message: "both sides changed these files; the crew can converge",
+          files: e.files,
+        },
+        409,
+      );
+    return apiError(
+      e.kind,
+      409,
+      e.kind === "moved"
+        ? "something moved while this was read; try again"
+        : e.message,
+    );
+  }
+  return json(took.value);
+}
 
 /** The 401 a stranger gets where an account is needed but a report is not. */
 function reportInstead(ctx: Ctx, repo: Repo): Response {
@@ -2002,31 +2031,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (denied) return denied;
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
-      const took = await takeUpdates(ctx.app, ctx.auth.user, repo);
-      if (!took.ok) {
-        const e = took.error;
-        if (typeof e === "string")
-          return e === "not_a_fork"
-            ? apiError("not_a_fork", 404, "this repository follows nothing")
-            : respondAccess(e, 403);
-        if (e.kind === "conflict")
-          return json(
-            {
-              error: "conflict",
-              message: "both sides changed these files; the crew can converge",
-              files: e.files,
-            },
-            409,
-          );
-        return apiError(
-          e.kind,
-          409,
-          e.kind === "moved"
-            ? "something moved while this was read; try again"
-            : e.message,
-        );
-      }
-      return json(took.value);
+      return respondTake(ctx, repo);
     },
   );
 
@@ -4038,8 +4043,10 @@ export function apiRoutes(router: Router<Handler>): void {
     );
   });
 
-  // Sync one mirror. This only pulls, so an ordinary repo writer may ask —
-  // it borrows nobody's identity and grants nobody anything.
+  // Sync one mirror, or let a fork take its parent's updates. A mirror only
+  // pulls, so any writer may ask. A fork fast-forwards, or writes a merge
+  // commit authored as the caller when it has work of its own and the merge
+  // is clean (409 conflict otherwise) — which is why it needs a writer.
   router.add("POST", "/api/v1/repos/:owner/:name/sync", async (ctx) => {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
@@ -4047,12 +4054,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     // A native fork follows its parent; a mirror its origin.
     if (repo.origin === null && repo.forkParentId !== null) {
-      const followed = await syncFork(ctx.app, ctx.auth.user, repo);
-      if (!followed.ok)
-        return followed.error === "diverged" || followed.error === "not_a_fork"
-          ? json({ error: followed.error }, 409)
-          : respondAccess(followed.error, 404);
-      return json(followed.value);
+      return respondTake(ctx, repo);
     }
     const synced = await syncRepoNow(ctx.app, ctx.auth.user, repo);
     if (!synced.ok) return respondAccess(synced.error, 404);

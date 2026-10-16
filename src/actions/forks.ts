@@ -8,7 +8,6 @@
 
 import type { App } from "../app.ts";
 import {
-  fastForwardFork,
   forkRelation,
   takeUpdates as take,
   type ForkRelation,
@@ -30,24 +29,9 @@ import { requireWriter, type AccessError } from "./access.ts";
 
 export type { ForkRelation, ForkSync, TakeError } from "../core/following.ts";
 
-export type SyncForkError = AccessError | "not_a_fork" | "diverged";
-
 /** The parent, while `actor` may read it (`forkParentFor`). */
 const parentOf = (app: App, fork: Repo, actor: User | undefined) =>
   forkParentFor(app.db, fork, actor);
-
-/** Bring a fork's default branch up to its parent's, if nothing was committed on it. */
-export async function syncFork(
-  app: App,
-  actor: User | undefined,
-  fork: Repo,
-): Promise<Result<ForkSync, SyncForkError>> {
-  const writer = requireWriter(app, actor, fork);
-  if (!writer.ok) return writer;
-  const parent = parentOf(app, fork, actor);
-  if (parent === undefined) return err("not_a_fork");
-  return fastForwardFork(app, fork, parent, writer.value.id);
-}
 
 /**
  * Where the fork stands against its parent, for anyone who may read the

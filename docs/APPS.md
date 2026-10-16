@@ -849,7 +849,10 @@ Forks follow their parents. A fork's default branch is a copy of the
 parent's until someone commits on it, and while that is so the parent
 moving is the fork moving — fast-forward only, as pushes land, a mirror's
 sync included. A fork with commits of its own on that branch is left as it
-is; `Update from parent` on its page (or `POST …/sync`) says so. This is
+is by that following; `Update from parent` on its page (or `POST …/sync`)
+merges the parent in, as a merge commit authored by the person who asked,
+and refuses with 409 `{error: "conflict", files, message}` when both sides
+changed the same files (`docs/FOLLOWING.md`). This is
 what lets one person's fork stand between the crew and the outside world:
 the crew proposes into it, the person merges there, and proposes the
 result onward as one pull (see `docs/ORIGINS.md`, "a fork of a mirror").

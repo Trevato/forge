@@ -9,9 +9,10 @@ import {
   forkRepo,
   updateRepoSettings,
 } from "../src/actions/repos.ts";
-import { syncFork } from "../src/actions/forks.ts";
+import { takeUpdates } from "../src/actions/forks.ts";
 import { createApp, type App } from "../src/app.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
+import { createToken } from "../src/core/tokens.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";
@@ -127,17 +128,63 @@ describe("forks", () => {
     expect(await follows(carol, moved)).toBe(true);
 
     // Asked by hand, there is nothing left to do.
-    const again = must(await syncFork(app, users["carol"]!, carol));
+    const again = must(await takeUpdates(app, users["carol"]!, carol));
     expect(again.updated).toBe(false);
     expect(again.to).toBe(moved!);
 
+    // The follower never merges: bob has work of his own and stays where he was.
     const bob = getRepo(app.db, "bob", "app")!;
-    const before = await tip(bob);
-    const refused = await syncFork(app, users["bob"]!, bob);
-    expect(refused.ok).toBe(false);
-    if (!refused.ok) expect(refused.error).toBe("diverged");
-    expect(await tip(bob)).toBe(before);
+    expect(await tip(bob)).not.toBe(moved);
   });
+
+  test("Update from parent merges a diverged fork cleanly, and refuses a conflicting one untouched", async () => {
+    const parent = must(
+      await createRepo(app, users["alice"]!, { name: "lib", visibility: "public" }),
+    );
+    await commitAs("alice", parent, "README.md", "seed");
+    const clean = await forkAs("carol", parent);
+    const conflicting = await forkAs("dan", parent);
+    await commitAs("carol", clean, "MINE.md", "carol's own");
+    await commitAs("dan", conflicting, "README.md", "dan rewrote it");
+    await commitAs("alice", parent, "README.md", "alice rewrote it");
+    const parentTip = (await tip(parent))!;
+    for (let turns = 0; turns < 200; turns++)
+      await new Promise((resolve) => setImmediate(resolve)); // let the follower refuse
+
+    const sync = (who: string, repo: Repo) =>
+      fetch(`${base}/api/v1/repos/${repo.ownerName}/${repo.name}/sync`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${createToken(app.db, users[who]!.id, "t", "rw").token}`,
+        },
+      });
+    const git = async (repo: Repo, ...args: string[]) =>
+      (await Bun.$`git -C ${dirOf(repo)} ${args}`.text()).trim();
+
+    const ownTip = (await tip(clean))!;
+    const res = await sync("carol", clean);
+    expect(res.status).toBe(200);
+    const merged = (await res.json()) as { updated: boolean; merged: boolean; to: string };
+    expect(merged.updated).toBe(true);
+    expect(merged.merged).toBe(true);
+    const mergeOid = (await tip(clean))!;
+    expect(merged.to).toBe(mergeOid);
+    expect((await git(clean, "rev-list", "--parents", "-n1", mergeOid)).split(" ").slice(1).sort()).toEqual(
+      [ownTip, parentTip].sort(),
+    );
+    expect(await git(clean, "log", "-1", "--format=%an", mergeOid)).toBe("carol");
+    // Merged once, there is nothing left to take.
+    const again = (await (await sync("carol", clean)).json()) as { updated: boolean };
+    expect(again.updated).toBe(false);
+
+    const before = await tip(conflicting);
+    const refused = await sync("dan", conflicting);
+    expect(refused.status).toBe(409);
+    const body = (await refused.json()) as { error: string; files: string[] };
+    expect(body.error).toBe("conflict");
+    expect(body.files).toEqual(["README.md"]);
+    expect(await tip(conflicting)).toBe(before);
+  }, 30_000);
 
   test("the About rail says how far a fork is from its parent, and offers an update only when one can be taken", async () => {
     // Dan forks as upstream stands: level, nothing offered.

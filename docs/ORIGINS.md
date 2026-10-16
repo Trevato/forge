@@ -525,7 +525,9 @@ GET    /api/v1/user/origins/:id/mirror/:job/stream   SSE: mirror.<stage>, ends o
 GET    /api/v1/user/origin-apps                registered OAuth apps (no secrets)
 POST   /api/v1/user/origin-apps                {host, clientId, clientSecret?}
 DELETE /api/v1/user/origin-apps/:id
-POST   /api/v1/repos/:o/:n/sync                sync this mirror now
+POST   /api/v1/repos/:o/:n/sync                sync this mirror now; on a fork, take the
+                                               parent's updates (fast-forward or merge;
+                                               404 not_a_fork, 409 conflict + files + message)
 POST   /api/v1/repos/:o/:n/origin/reconnect    {originId} → repo JSON; re-attach a
                                                detached mirror (admin token, repo
                                                admin, own origin; else 404/422 code)
