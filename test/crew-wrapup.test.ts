@@ -174,7 +174,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       "Along the fence. BUDGET-ME",
     );
     expect(run.state).toBe("ok");
-    expect(run.summary).toMatch(/^opened pull #\d+$/);
+    expect(run.summary).toMatch(/^opened pull #\d+( \([0-9a-f]{7,40}\))?$/);
     expect(run.sessionId).toBe("fake-1");
     // Both parts.
     expect(run.costUsd).toBeCloseTo(1.55, 5);
@@ -209,7 +209,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
   test("a run that finishes on its own gets no wrap-up", async () => {
     const { run, number } = await assigned("Plant roses", "Along the wall.");
     expect(run.state).toBe("ok");
-    expect(run.summary).toMatch(/^opened pull #\d+$/);
+    expect(run.summary).toMatch(/^opened pull #\d+( \([0-9a-f]{7,40}\))?$/);
     expect(run.costUsd).toBeCloseTo(0.01, 5);
     expect(invocations()).toBe(1);
     expect(args(1)).toContain("--max-budget-usd\n1.50");

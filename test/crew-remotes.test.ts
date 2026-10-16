@@ -128,7 +128,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     expect(assignIssue(app, alice, repo, issue.value, bot).ok).toBe(true);
     const run = await settled((r) => r.issueId === issue.value.id);
     expect(run.state).toBe("ok");
-    expect(run.summary).toMatch(/^opened pull #\d+$/);
+    expect(run.summary).toMatch(/^opened pull #\d+( \([0-9a-f]{7,40}\))?$/);
     const [fetchUrl, pushUrl] = readFileSync(remotesFile, "utf8")
       .trim()
       .split("\n");
