@@ -113,15 +113,71 @@ function drillLine(ctx: Ctx): Html {
     </form>`;
 }
 
+const SNAPSHOT_FRESH_MS = 26 * 3_600_000;
+const DRILL_FRESH_MS = 8 * 86_400_000;
+
+function ago(ms: number): string {
+  const hours = Math.floor(ms / 3_600_000);
+  if (hours < 48) return hours === 1 ? "1 hour" : `${hours} hours`;
+  return `${Math.floor(hours / 24)} days`;
+}
+
+export interface Recovery {
+  /** Whether the store answered; false when there is no store or listing failed. */
+  readonly reachable: boolean;
+  readonly unreachable?: string | undefined;
+  readonly newest?: { finishedAt: string; key: "wrapped" | "none" | "raw" } | undefined;
+  readonly drill?: { at: string; verdict: "green" | "red" } | undefined;
+  readonly now: number;
+}
+
+/** "Recoverable now", or the first of four facts that stands in the way. */
+export function recoverySentence(r: Recovery): string {
+  const no = (why: string): string => `Not recoverable now: ${why}`;
+  if (!r.reachable) return no(r.unreachable ?? "the snapshot store cannot be reached");
+  if (r.newest === undefined) return no("there is no snapshot yet");
+  const age = r.now - Date.parse(r.newest.finishedAt);
+  if (!(age < SNAPSHOT_FRESH_MS))
+    return no(
+      Number.isNaN(age)
+        ? "the newest snapshot has no readable date"
+        : `the newest snapshot is ${ago(age)} old`,
+    );
+  if (r.newest.key !== "wrapped") return no("the newest snapshot does not carry a wrapped key");
+  if (r.drill === undefined) return no("no restore drill has run yet");
+  if (r.drill.verdict !== "green") return no("the last restore drill failed");
+  const drillAge = r.now - Date.parse(r.drill.at);
+  if (!(drillAge < DRILL_FRESH_MS))
+    return no(
+      Number.isNaN(drillAge)
+        ? "the last restore drill has no readable date"
+        : `the last restore drill is ${ago(drillAge)} old`,
+    );
+  return "Recoverable now";
+}
+
+function recoveryLine(r: Recovery): Html {
+  const sentence = recoverySentence(r);
+  const ok = sentence === "Recoverable now";
+  return html`<p class="backups-recovery${ok ? "" : " backups-error"}" role="status">
+    ${icon(ok ? "check" : "alert")} <strong>${sentence}</strong>
+  </p>`;
+}
+
 export async function backupsPage(ctx: Ctx): Promise<Response> {
   const denied = requireAdmin(ctx);
   if (denied) return denied;
   const svc = snapshotsOf(ctx.app);
   const form = html`${destinationCard(ctx)}${mirrorCard(ctx)}`;
+  const now = Date.now();
   if (svc === undefined || svc.store === undefined)
     return shell(
       ctx,
-      html`${empty({
+      html`${recoveryLine({
+        reachable: false,
+        unreachable: "no snapshot store is set",
+        now,
+      })}${empty({
         icon: "download",
         title: "No snapshots are taken",
         note: "This forge was given nowhere to put them. On the platform an app's bucket (S3_*) is the place; on a machine, FORGE_SNAPSHOT_DIR names a directory. Seal a bucket below, or restart with one set, and a snapshot is taken every night at 08:00 UTC.",
@@ -137,13 +193,23 @@ export async function backupsPage(ctx: Ctx): Promise<Response> {
   } catch (error) {
     listing = String(error);
   }
+  const d = lastDrill(ctx.app.db);
+  const recovery = recoveryLine({
+    reachable: listing === undefined,
+    unreachable: "the snapshot store could not be listed",
+    ...(snapshots[0]
+      ? { newest: { finishedAt: snapshots[0].finishedAt, key: keyOf(snapshots[0]) } }
+      : {}),
+    ...(d ? { drill: { at: d.at, verdict: d.verdict } } : {}),
+    now,
+  });
   const restore = snapshots[0]
     ? html`<pre class="backups-restore">
 bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
     : null;
   return shell(
     ctx,
-    html`${card(
+    html`${recovery}${card(
       html`<p>
           Every night at 08:00 UTC the forge writes what cannot be rebuilt — its
           database, its keys, every repository, every app's production data, the

@@ -139,3 +139,76 @@ describe("the drill on the Backups page", () => {
     expect(rows() - rowsBefore).toBe(1);
   });
 });
+
+import { recoverySentence, type Recovery } from "../src/web/pages/backups.ts";
+
+describe("the recovery line", () => {
+  const now = Date.parse("2026-10-16T12:00:00Z");
+  const hoursAgo = (h: number) => new Date(now - h * 3_600_000).toISOString();
+  const good: Recovery = {
+    reachable: true,
+    newest: { finishedAt: hoursAgo(5), key: "wrapped" },
+    drill: { at: hoursAgo(24), verdict: "green" },
+    now,
+  };
+  const say = (over: Partial<Recovery>) => recoverySentence({ ...good, ...over });
+
+  test("all four facts hold", () => {
+    expect(say({})).toBe("Recoverable now");
+  });
+  test("the store is unreachable", () => {
+    expect(say({ reachable: false })).toBe(
+      "Not recoverable now: the snapshot store cannot be reached",
+    );
+  });
+  test("the newest snapshot is old", () => {
+    expect(say({ newest: { finishedAt: hoursAgo(72), key: "wrapped" } })).toBe(
+      "Not recoverable now: the newest snapshot is 3 days old",
+    );
+    expect(say({ newest: undefined })).toBe("Not recoverable now: there is no snapshot yet");
+  });
+  test("the key is not carried", () => {
+    expect(say({ newest: { finishedAt: hoursAgo(5), key: "none" } })).toBe(
+      "Not recoverable now: the newest snapshot does not carry a wrapped key",
+    );
+  });
+  test("the drill is missing, red or old", () => {
+    expect(say({ drill: undefined })).toBe("Not recoverable now: no restore drill has run yet");
+    expect(say({ drill: { at: hoursAgo(1), verdict: "red" } })).toBe(
+      "Not recoverable now: the last restore drill failed",
+    );
+    expect(say({ drill: { at: hoursAgo(24 * 9), verdict: "green" } })).toBe(
+      "Not recoverable now: the last restore drill is 9 days old",
+    );
+  });
+  test("the first failing fact wins", () => {
+    expect(say({ reachable: false, drill: undefined })).toContain("cannot be reached");
+  });
+});
+
+describe("the recovery line on the page", () => {
+  test("is the first thing on the page, escaped", async () => {
+    const root = mkdtempSync(join(tmpdir(), "forge-recov-"));
+    const app = createApp({ dataDir: root, port: 0 });
+    const u = await createUser(app.db, {
+      trusted: true, username: "alice", email: "a@forge.local",
+      password: "a-good-passphrase", adminIfFirst: true,
+    });
+    if (!u.ok) throw new Error(u.error);
+    const servers = await serve(app);
+    try {
+      const r = await fetch(`${servers.url}/signin`, {
+        method: "POST", headers: { origin: servers.url },
+        body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
+        redirect: "manual",
+      });
+      const cookie = (r.headers.get("set-cookie") ?? "").split(";")[0]!;
+      const html = await (await fetch(`${servers.url}/settings/backups`, { headers: { cookie } })).text();
+      expect(html).toContain("Not recoverable now: no snapshot store is set");
+    } finally {
+      servers.stop();
+      app.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
