@@ -42,6 +42,8 @@ export interface ExploreQuery {
   readonly sort: ExploreSort;
   /** Words a row's name, owner or description must contain. */
   readonly text: string;
+  /** `archived:yes` — put-away repositories are in the list; off, they are not. */
+  readonly archived: boolean;
 }
 
 const KINDS: Record<string, ExploreKind> = {
@@ -73,6 +75,7 @@ const ROWS = 60;
 export function parseExploreQuery(line: string): ExploreQuery {
   let kind: ExploreKind | "all" = "all";
   let sort: ExploreSort = "score";
+  let archived = false;
   const words: string[] = [];
   for (const word of line
     .trim()
@@ -86,10 +89,12 @@ export function parseExploreQuery(line: string): ExploreQuery {
       (SORTS as readonly string[]).includes(value.toLowerCase())
     )
       sort = value.toLowerCase() as ExploreSort;
+    else if (k === "archived" && ["yes", "no"].includes(value.toLowerCase()))
+      archived = value.toLowerCase() === "yes";
     else if (k === "q" && value !== "") words.push(value);
     else words.push(word);
   }
-  return { kind, sort, text: words.join(" ").slice(0, 100) };
+  return { kind, sort, text: words.join(" ").slice(0, 100), archived };
 }
 
 /** The line a query reads as, for links and the query box. */
@@ -97,6 +102,7 @@ export function exploreLine(query: ExploreQuery): string {
   return [
     query.kind === "all" ? "" : `kind:${query.kind}`,
     query.sort === "score" ? "" : `sort:${query.sort}`,
+    query.archived ? "archived:yes" : "",
     query.text,
   ]
     .filter((p) => p !== "")
@@ -137,7 +143,10 @@ export async function explore(
   now = Date.now(),
 ): Promise<ExploreRow[]> {
   const db = app.db;
-  const repos = listReposVisibleTo(db, viewer, { limit: READ });
+  const repos = listReposVisibleTo(db, viewer, {
+    limit: READ,
+    withoutArchived: !query.archived,
+  });
   const records = appsForRepos(
     db,
     repos.map((r) => r.id),

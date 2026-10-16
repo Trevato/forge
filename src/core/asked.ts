@@ -117,7 +117,10 @@ export function askedRepos(
   viewer: User | undefined,
   repoSpec: string | null | undefined,
 ): readonly Repo[] {
-  const writable = listReposWritableTo(db, viewer, { limit: 200 });
+  const writable = listReposWritableTo(db, viewer, {
+    limit: 200,
+    withoutArchived: true,
+  });
   if (repoSpec === null || repoSpec === undefined || repoSpec === "")
     return writable;
   const [owner, name, ...rest] = repoSpec.split("/");

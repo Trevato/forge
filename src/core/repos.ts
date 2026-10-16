@@ -649,6 +649,8 @@ export interface ListReposOptions {
   cursor?: string;
   /** Repositories that run an app first, each half newest first (not with `cursor`). */
   appsFirst?: boolean;
+  /** Leave archived repositories out. @default false */
+  withoutArchived?: boolean;
 }
 
 // Visibility in SQL: public, owned, or owned by an org the viewer is on a
@@ -679,6 +681,7 @@ export function listReposVisibleTo(
     params.push(options.cursor);
     where += ` AND repo.id < ?${params.length}`;
   }
+  if (options.withoutArchived === true) where += " AND repo.archived_at IS NULL";
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(
@@ -713,6 +716,7 @@ export function listReposWritableTo(
     params.push(options.cursor);
     where += ` AND repo.id < ?${params.length}`;
   }
+  if (options.withoutArchived === true) where += " AND repo.archived_at IS NULL";
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(

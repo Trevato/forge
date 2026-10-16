@@ -49,7 +49,10 @@ interface RunRow {
 }
 
 export function readStalled(db: Database, viewer: User, now: Date): StalledStep[] {
-  const repos = listReposWritableTo(db, viewer, { limit: REPOS_MAX });
+  const repos = listReposWritableTo(db, viewer, {
+    limit: REPOS_MAX,
+    withoutArchived: true,
+  });
   if (repos.length === 0) return [];
   const byId = new Map(repos.map((r) => [r.id, r]));
   const ids = [...byId.keys()];

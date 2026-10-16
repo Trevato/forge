@@ -30,17 +30,24 @@ describe("the one line", () => {
       kind: "app",
       sort: "forks",
       text: "garden",
+      archived: false,
     });
     expect(parseExploreQuery("kind:people q:dungeon")).toEqual({
       kind: "person",
       sort: "score",
       text: "dungeon",
+      archived: false,
     });
     expect(parseExploreQuery("kind:nonsense sort:nonsense")).toEqual({
       kind: "all",
       sort: "score",
       text: "sort:nonsense",
+      archived: false,
     });
+    expect(parseExploreQuery("archived:yes").archived).toBe(true);
+    expect(exploreLine(parseExploreQuery("archived:yes kind:app"))).toBe(
+      "kind:app archived:yes",
+    );
     expect(exploreLine(parseExploreQuery("  sort:ships   kind:app  "))).toBe(
       "kind:app sort:ships",
     );

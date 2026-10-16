@@ -387,7 +387,7 @@ export function needsYouSection(
   const picked = top?.picked ?? new Set<string>();
   const decisions = decisionsFor(
     ctx,
-    listReposVisibleTo(ctx.app.db, user, { limit: 200 }),
+    listReposVisibleTo(ctx.app.db, user, { limit: 200, withoutArchived: true }),
   );
   const needs = forgeNeedsFor(ctx, user);
   const rows = askRows(decisions);

@@ -322,7 +322,13 @@ wave and converging a fork each answer "This repository is archived; wake it to
 start a run."; the API answers 409 `archived`, and the terminal and MCP show
 the same line. The autonomy tick skips it. A run already going finishes, and
 Wake undoes all of it. Clone, push and links keep working, and the repository
-stays in every list.
+page still answers.
+
+An archived repository leaves the web home's apps, the inbox (work assigned to
+you there included, and the terminal's and MCP's asks), the stalled-steps
+reader and the explorer's default view; `/explore` shows it with `archived:yes`
+(the **Show archived** toggle). It stays in `/apps`, search, the palette and
+the repository API (`GET /api/v1/repos`).
 
 ## Health
 

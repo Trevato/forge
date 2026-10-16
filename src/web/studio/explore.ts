@@ -110,6 +110,12 @@ export async function explorePage(ctx: Ctx): Promise<Response> {
           current: query.sort === s.sort,
         })),
       )}
+      <a
+        class="btn btn-sm"
+        href="${href({ ...query, archived: !query.archived })}"
+        aria-pressed="${query.archived ? "true" : "false"}"
+        >Show archived</a
+      >
     </div>
     ${rows.length === 0
       ? empty({

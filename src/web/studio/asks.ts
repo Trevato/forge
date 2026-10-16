@@ -90,7 +90,7 @@ function appsFiltered(
 export function appsOf(ctx: Ctx, user: User | undefined) {
   return appsFiltered(
     ctx,
-    listReposVisibleTo(ctx.app.db, user, { limit: 200 }),
+    listReposVisibleTo(ctx.app.db, user, { limit: 200, withoutArchived: true }),
   );
 }
 
@@ -101,7 +101,10 @@ export function appsOf(ctx: Ctx, user: User | undefined) {
 export function writableAppsOf(ctx: Ctx, user: User | undefined) {
   return appsFiltered(
     ctx,
-    listReposWritableTo(ctx.app.db, user, { limit: 200 }),
+    listReposWritableTo(ctx.app.db, user, {
+      limit: 200,
+      withoutArchived: true,
+    }),
   );
 }
 
@@ -512,7 +515,8 @@ function askCandidatesFor(
   );
   for (const issue of mine) {
     const repo = visible.get(issue.repoId) ?? elsewhere.get(issue.repoId);
-    if (!readable(repo) || !mayView(db, repo, issue, user)) continue;
+    if (!readable(repo) || repo.archivedAt !== null) continue;
+    if (!mayView(db, repo, issue, user)) continue;
     const pull = joinedMine.get(issue.id);
     if (issue.kind === "pull" && pull === undefined) continue;
     out.push({
@@ -766,7 +770,7 @@ function scoredFor(
 
 /** The waves the viewer put aside with Later, oldest first, for the line that brings them back. */
 export function putAsideWaves(db: Database, user: User): Proposal[] {
-  const repos = listReposVisibleTo(db, user, { limit: 200 });
+  const repos = listReposVisibleTo(db, user, { limit: 200, withoutArchived: true });
   const mine = ownerFactRepoIds(db, repos, user);
   return proposalsFor(db, repos.filter((r) => mine.has(r.id)).map((r) => r.id), "later");
 }
@@ -892,7 +896,7 @@ export function recordAskLedger(db: Database, now = new Date()): void {
   for (const { id } of people) {
     const user = getUserById(db, id);
     if (!user) continue;
-    const repos = listReposVisibleTo(db, user, { limit: 200 });
+    const repos = listReposVisibleTo(db, user, { limit: 200, withoutArchived: true });
     const all = scoredFor(db, user, repos, now.getTime());
     const shown = notDismissed(db, user, all);
     const brief = (a: Scored) => ({ id: a.id, repoId: a.repo.id, kind: a.kind });
@@ -992,7 +996,7 @@ export function askLinesFor(
   /** What the row waits for (the weightiest ask's), and on whom. */
   waitingFor: WaitingFor;
 }[] {
-  const repos = listReposVisibleTo(db, user, { limit: 200 });
+  const repos = listReposVisibleTo(db, user, { limit: 200, withoutArchived: true });
   return askRows(waitingOn(db, user, repos, chips)).map((row) => {
     const base = `/${row.repo.ownerName}/${row.repo.name}`;
     const about = {
@@ -1353,7 +1357,7 @@ export function forgeNeedsFor(ctx: Ctx, user: User | undefined): Degraded[] {
  */
 export function askCountFor(ctx: Ctx, user: User | undefined): number {
   if (!user) return 0;
-  const repos = listReposVisibleTo(ctx.app.db, user, { limit: 200 });
+  const repos = listReposVisibleTo(ctx.app.db, user, { limit: 200, withoutArchived: true });
   return (
     askRows(waitingOn(ctx.app.db, user, repos)).length +
     forgeNeedsFor(ctx, user).length
@@ -1440,7 +1444,7 @@ export function askTargetsFor(
   items: readonly string[],
 ): { issueIds: string[]; refused: { item: string; reason: string }[] } {
   const asks = new Map(
-    askCandidatesFor(db, user, listReposVisibleTo(db, user, { limit: 200 })).map(
+    askCandidatesFor(db, user, listReposVisibleTo(db, user, { limit: 200, withoutArchived: true })).map(
       (a) => [a.id, a],
     ),
   );
