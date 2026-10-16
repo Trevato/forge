@@ -1800,6 +1800,8 @@ async function handleHook(app: App, request: Request): Promise<Response> {
 
 export interface Servers {
   readonly url: string;
+  /** Requests the listener still holds: 0 once every one has settled. */
+  readonly inFlight: number;
   readonly port: number;
   /**
    * Stop taking connections and let those in flight finish: what a process
@@ -2003,15 +2005,31 @@ export async function serve(app: App): Promise<Servers> {
     }
   };
 
-  // Behind the floor, and a throw is answered here so it is counted too.
+  // Behind the floor, and a throw is answered here so it is counted too. A
+  // client that goes away settles the request as 499 (nginx's code for it)
+  // instead of leaving a handler parked on a Response that never comes; a
+  // body already on its way is cancelled. Only the client's own abort ends a
+  // request: a git push is never cut by the forge.
   const answered = async (
     owner: App,
+    request: Request,
     run: () => Promise<Response>,
   ): Promise<Response> => {
+    const gone = Promise.withResolvers<"gone">();
+    const onAbort = () => gone.resolve("gone");
+    if (request.signal.aborted) onAbort();
+    else request.signal.addEventListener("abort", onAbort, { once: true });
+    const work = run().then(
+      (response) => securityFloor(response),
+      (error) => failure(owner, error),
+    );
     try {
-      return securityFloor(await run());
-    } catch (error) {
-      return failure(owner, error);
+      const first = await Promise.race([work, gone.promise]);
+      if (first !== "gone") return first;
+      work.then((late) => late.body?.cancel().catch(() => {}));
+      return securityFloor(new Response(null, { status: 499 }));
+    } finally {
+      request.signal.removeEventListener("abort", onAbort);
     }
   };
 
@@ -2061,7 +2079,7 @@ export async function serve(app: App): Promise<Servers> {
           }
           notePeer(request, server.requestIP(request)?.address, trust);
           armClose(request, () => server.timeout(request, 1));
-          const response = await answered(child, () => http.handle(request));
+          const response = await answered(child, request, () => http.handle(request));
           counted(child, request, response);
           logged(key, request, response, started);
           await settleBody(request);
@@ -2078,7 +2096,7 @@ export async function serve(app: App): Promise<Servers> {
       armClose(request, () => server.timeout(request, 1));
       // Everything the forge answers for itself leaves through this one
       // door, so a responder added next year cannot forget the floor.
-      const response = await answered(app, () =>
+      const response = await answered(app, request, () =>
         answer(app, router, apiRouter, limiter, request),
       );
       counted(app, request, response);
@@ -2135,6 +2153,9 @@ export async function serve(app: App): Promise<Servers> {
   return {
     url: `http://localhost:${port}`,
     port,
+    get inFlight() {
+      return web.pendingRequests;
+    },
     async stopAccepting(budgetMs) {
       // Closing the listener leaves the port to the process beside this one;
       // the connections already here are answered to the end.
