@@ -5,7 +5,15 @@
  * (#2038); the rest are test/studio*.test.ts.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -327,17 +335,6 @@ describe("every open pull's preview on the studio page", () => {
       .filter((r) => !isTerminal(r.state))
       .map((r) => `${r.env}:${r.state}`);
 
-  /** Wait until the runtime has no deploy open or queued, so the next case
-   * does not queue behind this one's (concurrency is 1). */
-  async function deploysIdle(): Promise<void> {
-    const deadline = Date.now() + WAIT_MS;
-    while (unfinished().length > 0) {
-      if (Date.now() > deadline)
-        throw new Error(`deploys still open: ${unfinished().join(", ")}`);
-      await Bun.sleep(50);
-    }
-  }
-
   /** Wait for `env` to serve; fail naming the state it reached. */
   async function previewServes(record: AppRecord, env: EnvName): Promise<void> {
     const deadline = Date.now() + WAIT_MS;
@@ -354,7 +351,9 @@ describe("every open pull's preview on the studio page", () => {
     }
   }
 
-  beforeAll(async () => {
+  // A fresh app for each test: one test's open pull would otherwise be the
+  // next's preview, and its deploys queue ahead of the next's (concurrency 1).
+  beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-studio-previews-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
@@ -413,7 +412,7 @@ describe("every open pull's preview on the studio page", () => {
     if (!enabled.ok) throw new Error(String(enabled.error));
   }, 30_000);
 
-  afterAll(async () => {
+  afterEach(async () => {
     await runtime.stop();
     servers.stop();
     app.close();
@@ -451,9 +450,6 @@ describe("every open pull's preview on the studio page", () => {
     const after = await (await get("/alice/widget")).text();
     expect(after).not.toContain("<h2>Previews</h2>");
     expect(after).not.toContain(`pull-${pull.number}/open`);
-    // The merge queues production's deploy and the pull's was cut short;
-    // leave the single deploy slot free for the next case.
-    await deploysIdle();
   }, 120_000);
 
   test("a change's page names its preview's data as its own copy and gives the moment it was taken; production's card does not", async () => {
@@ -1181,7 +1177,9 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
       redirect: "manual",
     });
 
-  beforeAll(async () => {
+  // A fresh app for each test: one test's pull or preview slot would
+  // otherwise show up in the next's head card and previews.
+  beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-studio-state-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
@@ -1225,7 +1223,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     record = getAppByRepo(app.db, repo.id)!;
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });

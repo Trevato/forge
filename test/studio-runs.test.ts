@@ -5,7 +5,16 @@
  * test/studio*.test.ts.
  */
 
-import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  spyOn,
+  test,
+} from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -877,7 +886,9 @@ describe("the app's page tails the deploy that is bringing it alive", () => {
       redirect: "manual",
     });
 
-  beforeAll(async () => {
+  // A fresh app for each test: one test's tell or run would otherwise fill
+  // "Now" for the next, and its production slot stand in for the next's.
+  beforeEach(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-studio-deploy-tail-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
@@ -918,7 +929,7 @@ describe("the app's page tails the deploy that is bringing it alive", () => {
     expect(addToCrew(app, a.value, repo, "scout").ok).toBe(true);
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
@@ -1425,7 +1436,12 @@ describe('a tell nobody on the crew can take is not "quiet"', () => {
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
     const enabled = await enableApp(app, alice, repo, { slug: "pad" });
     if (!enabled.ok) throw new Error(String(enabled.error));
-    // No crew at all — the exact state `tell` cannot route out of.
+    // No crew at all — the exact state `tell` cannot route out of. Every
+    // test below reads the one tell told into it here.
+    const told = await post("/alice/pad/tell", {
+      text: "Add a dark mode toggle.",
+    });
+    if (told.status !== 303) throw new Error(`tell: ${told.status}`);
   });
 
   afterAll(async () => {
@@ -1435,11 +1451,6 @@ describe('a tell nobody on the crew can take is not "quiet"', () => {
   });
 
   test('a crewless tell renders a "Now" row, not the empty state, and links to where a crew member is added', async () => {
-    const told = await post("/alice/pad/tell", {
-      text: "Add a dark mode toggle.",
-    });
-    expect(told.status).toBe(303);
-
     const page = await (await get("/alice/pad")).text();
     expect(page).not.toContain("Nothing yet. Tell the crew something.");
     expect(page).toContain("Add a dark mode toggle.");
@@ -1852,18 +1863,6 @@ describe("a deploy that just landed is news on the front door", () => {
     deployRun =
       finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" }) ??
       deployRun;
-    const servingAt = new Date().toISOString();
-    putEnv(record, "production", {
-      live: {
-        commitOid: "6c99218",
-        handle: { port: 4321 },
-        runId: deployRun.id,
-        since: servingAt,
-        servingAt,
-        createdAt: servingAt,
-        manifest: { tty: null },
-      },
-    });
 
     // A second app, otherwise identical, that never shipped — the control
     // that must keep reading quiet.
@@ -1883,6 +1882,23 @@ describe("a deploy that just landed is news on the front door", () => {
     });
     if (!enabledQuiet.ok) throw new Error(String(enabledQuiet.error));
     quietRepo = madeQuiet.value;
+  });
+
+  // Each test starts from the merge's deploy serving just now; a test that
+  // wants another production slot puts its own.
+  beforeEach(() => {
+    const servingAt = new Date().toISOString();
+    putEnv(record, "production", {
+      live: {
+        commitOid: "6c99218",
+        handle: { port: 4321 },
+        runId: deployRun.id,
+        since: servingAt,
+        servingAt,
+        createdAt: servingAt,
+        manifest: { tty: null },
+      },
+    });
   });
 
   afterAll(async () => {

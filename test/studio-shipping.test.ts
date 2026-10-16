@@ -5,7 +5,14 @@
  * test/studio*.test.ts.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1179,6 +1186,12 @@ describe("previewLatency: the median seconds from push to serving", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  // Each test reads only the deploys it seeds: the window has no upper
+  // bound, so another test's deploys would otherwise land in it.
+  beforeEach(() => {
+    app.db.query("DELETE FROM run WHERE repo_id = ?1").run(repo.id);
+  });
+
   /** A deploy run stamped with a known push instant and, unless null, known started/serving instants. */
   const seedDeploy = (
     createdAt: string,
@@ -1252,7 +1265,7 @@ describe("previewLatency: the median seconds from push to serving", () => {
   });
 
   test("the split between waiting to be picked up and coming up, seeded beside a total", () => {
-    const now = Date.now() + 10_000_000; // clear of the previous test's window
+    const now = Date.now();
     const since = new Date(now - 60_000).toISOString();
 
     // Three deploys with known queue and boot segments: (queue, boot) in seconds.
@@ -1293,7 +1306,7 @@ describe("previewLatency: the median seconds from push to serving", () => {
   });
 
   test("a deploy that finished without ever serving is counted apart, never in the median; one still running is counted as neither", () => {
-    const now = Date.now() + 20_000_000; // clear of the earlier tests' windows
+    const now = Date.now();
     const since = new Date(now - 60_000).toISOString();
 
     // Two served deploys, 4s and 6s.
@@ -1351,7 +1364,7 @@ describe("previewLatency: the median seconds from push to serving", () => {
   });
 
   test("a week with only never-served deploys still reports the failed count, with no median to give", () => {
-    const now = Date.now() + 30_000_000;
+    const now = Date.now();
     const since = new Date(now - 60_000).toISOString();
 
     const failed = createRun(app.db, { repoId: repo.id, kind: "deploy" });
@@ -1369,7 +1382,7 @@ describe("previewLatency: the median seconds from push to serving", () => {
   });
 
   test("a deploy the forge's own restart cancelled is never counted as failed, nor in the total it is 'of' (#255, #274)", () => {
-    const now = Date.now() + 40_000_000;
+    const now = Date.now();
     const since = new Date(now - 60_000).toISOString();
 
     // A real failure: counted.
@@ -1482,11 +1495,39 @@ describe("the studio's own words for how fast a change reaches its preview", () 
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  // Each test reads only the deploys it seeds; the agent run from
+  // beforeAll stays, so the page always has history behind it.
+  beforeEach(() => {
+    app.db
+      .query("DELETE FROM run WHERE repo_id = ?1 AND kind = 'deploy'")
+      .run(repo.id);
+  });
+
   const get = (path: string) =>
     fetch(`${base}${path}`, {
       headers: { cookie: `${ownerCookie}; forge_mode=studio` },
       redirect: "manual",
     });
+
+  /** A deploy run stamped with a known push instant and serving instant, and unless null a known started instant. */
+  const seedDeploy = (
+    createdAt: string,
+    startedAt: string | null,
+    servingAt: string,
+  ): void => {
+    const deploy = createRun(app.db, { repoId: repo.id, kind: "deploy" });
+    app.db
+      .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
+      .run(deploy.id, createdAt);
+    if (startedAt !== null) {
+      app.db
+        .query("UPDATE run SET started_at = ?2 WHERE id = ?1")
+        .run(deploy.id, startedAt);
+    }
+    app.db
+      .query("UPDATE run SET serving_at = ?2 WHERE id = ?1")
+      .run(deploy.id, servingAt);
+  };
 
   test("fewer than three served deploys this week says so plainly rather than a median of one", async () => {
     const before = await (await get("/alice/trickle")).text();
@@ -1506,24 +1547,6 @@ describe("the studio's own words for how fast a change reaches its preview", () 
   });
 
   test("the split reads as the total's explanation, and says when it is drawn from fewer deploys", async () => {
-    const seedDeploy = (
-      createdAt: string,
-      startedAt: string | null,
-      servingAt: string,
-    ): void => {
-      const deploy = createRun(app.db, { repoId: repo.id, kind: "deploy" });
-      app.db
-        .query("UPDATE run SET created_at = ?2 WHERE id = ?1")
-        .run(deploy.id, createdAt);
-      if (startedAt !== null) {
-        app.db
-          .query("UPDATE run SET started_at = ?2 WHERE id = ?1")
-          .run(deploy.id, startedAt);
-      }
-      app.db
-        .query("UPDATE run SET serving_at = ?2 WHERE id = ?1")
-        .run(deploy.id, servingAt);
-    };
     // Three deploys with a known queue and boot each.
     const now = Date.now();
     const segments: readonly (readonly [number, number])[] = [
@@ -1561,6 +1584,15 @@ describe("the studio's own words for how fast a change reaches its preview", () 
   });
 
   test("a deploy that finished without ever serving is counted and worded, and links to the runs list", async () => {
+    // Four served deploys first, so the failed one is the fifth.
+    const now = Date.now();
+    for (let i = 0; i < 4; i++) {
+      seedDeploy(
+        new Date(now + i * 1_000).toISOString(),
+        null,
+        new Date(now + i * 1_000 + 5_000).toISOString(),
+      );
+    }
     const before = await (await get("/alice/trickle")).text();
 
     const failed = createRun(app.db, {

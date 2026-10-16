@@ -62,6 +62,35 @@ describe("the studio", () => {
       redirect: "manual",
     });
 
+  /** An app of alice's with scout on its crew. */
+  const makeApp = async (name: string, description = ""): Promise<Repo> => {
+    const made = await createRepo(app, alice, {
+      name,
+      visibility: "private",
+      description,
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const seeded = await commitToBranch(app, alice, made.value, {
+      message: "Start",
+      files: [
+        {
+          path: "package.json",
+          content: `{"name":"${name}","scripts":{"start":"bun run server.ts"}}\n`,
+        },
+        {
+          path: "server.ts",
+          content:
+            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
+        },
+      ],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    const enabled = await enableApp(app, alice, made.value, { slug: name });
+    if (!enabled.ok) throw new Error(String(enabled.error));
+    expect(addToCrew(app, alice, made.value, "scout").ok).toBe(true);
+    return made.value;
+  };
+
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-studio-"));
     app = createApp({ dataDir, port: 0 });
@@ -87,33 +116,9 @@ describe("the studio", () => {
         })
       ).headers.get("set-cookie") ?? ""
     ).split(";")[0]!;
-    const made = await createRepo(app, alice, {
-      name: "notes",
-      visibility: "private",
-      description: "a place for notes",
-    });
-    if (!made.ok) throw new Error(String(made.error));
-    repo = made.value;
-    const seeded = await commitToBranch(app, alice, repo, {
-      message: "Start",
-      files: [
-        {
-          path: "package.json",
-          content: '{"name":"notes","scripts":{"start":"bun run server.ts"}}\n',
-        },
-        {
-          path: "server.ts",
-          content:
-            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
-        },
-      ],
-    });
-    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    const enabled = await enableApp(app, alice, repo, { slug: "notes" });
-    if (!enabled.ok) throw new Error(String(enabled.error));
     const scout = await createAgent(app, alice, { username: "scout" });
     if (!scout.ok) throw new Error(String(scout.error));
-    expect(addToCrew(app, alice, repo, "scout").ok).toBe(true);
+    repo = await makeApp("notes", "a place for notes");
   });
 
   afterAll(async () => {
@@ -278,6 +283,14 @@ describe("the studio", () => {
   });
 
   test("ship lands a change; say tells the crew", async () => {
+    // Its own app, so the tell it ships is the only one waiting there.
+    const repo = await makeApp("shipnotes");
+    const told = await post("/alice/shipnotes/tell", {
+      text: "Make the notes page faster.",
+    });
+    expect(told.status).toBe(303);
+    const tell = listIssues(app.db, repo.id, { kind: "issue", limit: 5 })[0]!;
+    expect(tell.assigneeName).toBe("scout");
     const branch = await commitToBranch(app, alice, repo, {
       branch: "feature/fast",
       base: "main",
@@ -287,13 +300,13 @@ describe("the studio", () => {
     if (!branch.ok) throw new Error(JSON.stringify(branch.error));
     const opened = await openPull(app, alice, repo, {
       title: "Faster",
-      body: "Closes #1",
+      body: `Closes #${tell.number}`,
       baseBranch: "main",
       headBranch: "feature/fast",
     });
     if (!opened.ok) throw new Error(String(opened.error));
     const pull = opened.value;
-    const said = await post(`/alice/notes/pulls/${pull.number}/say`, {
+    const said = await post(`/alice/shipnotes/pulls/${pull.number}/say`, {
       text: "Keep the images lazy too.",
     });
     expect(said.status).toBe(303);
@@ -310,7 +323,7 @@ describe("the studio", () => {
     // A bare POST — a button with no fields, or a client that sent no body
     // at all — ships too: an empty form is not a bad request.
     const shipped = await fetch(
-      `${base}/alice/notes/pulls/${pull.number}/ship`,
+      `${base}/alice/shipnotes/pulls/${pull.number}/ship`,
       {
         method: "POST",
         headers: { cookie: `${cookie}; forge_mode=studio`, origin: base },
@@ -319,8 +332,8 @@ describe("the studio", () => {
     );
     expect(shipped.status).toBe(303);
     expect(getPull(app.db, repo.id, pull.number)?.mergedAt).not.toBeNull();
-    expect(getIssue(app.db, repo.id, 1)?.state).toBe("closed");
-    const page = await (await get("/alice/notes")).text();
+    expect(getIssue(app.db, repo.id, tell.number)?.state).toBe("closed");
+    const page = await (await get("/alice/shipnotes")).text();
     expect(page).toContain("shipped");
     // What was told and then shipped is not still "waiting" in Now.
     expect(page).not.toContain(">waiting<");
