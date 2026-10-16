@@ -14,12 +14,13 @@ import { createRepo } from "../src/actions/repos.ts";
 import { setCapacity } from "../src/core/capacity.ts";
 import { clearErrors, createLog } from "../src/kernel/log.ts";
 import { recordDecision } from "../src/core/decisions.ts";
-import { addComment, createLabel, labelsFor, listComments, listIssues } from "../src/core/issues.ts";
+import { addComment, createIssue, createLabel, labelsFor, listComments, listIssues } from "../src/core/issues.ts";
 import { addCrew, createAgentRow } from "../src/core/agents.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { recordCap } from "../src/crew/guard.ts";
 import {
   budgetBreaches,
   degradedCauses,
@@ -294,6 +295,42 @@ describe("the guard", () => {
     guard("capped");
     expect(parks()?.title).toContain("parked 20 runs");
     expect(parks()?.evidence.join("\n")).toContain("30 skips");
+  });
+});
+
+describe("a cap", () => {
+  const issueOf = (n: number) => {
+    const r = createIssue(app.db, { repoId: repo.id, authorId: alice.id, title: `capped ${n}` });
+    if (!r.ok) throw new Error("issue");
+    return r.value;
+  };
+
+  test("is recorded once per issue per window, however often it is asked", () => {
+    app.db.query("DELETE FROM decision WHERE kind = 'guard'").run();
+    const issue = issueOf(0);
+    expect(recordCap(app.db, repo, issue, 6)).toBe(true);
+    expect(recordCap(app.db, repo, issue, 6)).toBe(false);
+    const n = () =>
+      app.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM decision WHERE kind = 'guard' AND answer = 'capped'").get()?.n;
+    expect(n()).toBe(1);
+    // A later window is a new park.
+    expect(recordCap(app.db, repo, issue, 6, new Date(Date.now() + 2 * DAY))).toBe(true);
+    expect(n()).toBe(2);
+  });
+
+  test("the parks signal counts distinct issues and names up to five", () => {
+    app.db.query("DELETE FROM decision WHERE kind = 'guard'").run();
+    const issues = Array.from({ length: 20 }, (_, i) => issueOf(i + 1));
+    for (const i of issues) {
+      recordCap(app.db, repo, i, 6);
+      // A second decision for the same issue, as an old clock wrote them.
+      recordDecision(app.db, { kind: "guard", repoId: repo.id, issueId: i.id, state: {}, answer: "capped", p: 1, by: "rule", ms: 0 });
+    }
+    const parks = findFaults(app.db, Date.now()).find((x) => x.key === `parks:${repo.id}`);
+    expect(parks?.title).toContain("parked 20 runs");
+    const line = parks?.evidence.find((e) => e.startsWith("capped issues:")) ?? "";
+    expect(line.split(",").length).toBe(5);
+    expect(line).toContain(`#${issues[0]!.number}`);
   });
 });
 

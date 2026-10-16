@@ -235,20 +235,35 @@ export function ledgerStreaks(db: Database, now: number): Finding[] {
   }
   // A skip is a run the guard saved — nothing new to act on — not a run it
   // refused; only the decisions that parked work are counted.
-  const parks = new Map<string, number>();
+  const parks = new Map<string, Set<string>>();
   const skips = new Map<string, number>();
   for (const d of decisionsSince(db, "guard", new Date(now - DAY_MS).toISOString())) {
-    const into = d.answer === "skipped" ? skips : parks;
-    into.set(d.repoId, (into.get(d.repoId) ?? 0) + 1);
+    if (d.answer === "skipped") {
+      skips.set(d.repoId, (skips.get(d.repoId) ?? 0) + 1);
+      continue;
+    }
+    // A cap is one park per issue however often it was asked again.
+    const set = parks.get(d.repoId) ?? new Set<string>();
+    set.add(d.issueId ?? d.id);
+    parks.set(d.repoId, set);
   }
-  for (const [repoId, n] of parks) {
+  for (const [repoId, issues] of parks) {
+    const n = issues.size;
     if (n < 20) continue;
+    const ids = [...issues];
+    const numbers = db
+      .query<{ number: number }, string[]>(
+        `SELECT number FROM issue WHERE id IN (${ids.map(() => "?").join(",")}) ORDER BY number LIMIT 5`,
+      )
+      .all(...ids)
+      .map((r) => `#${r.number}`);
     const skipped = skips.get(repoId) ?? 0;
     out.push({
       key: `parks:${repoId}`,
       title: `The guard parked ${n} runs in ${repoSlug(db, repoId)} in a day`,
       evidence: [
-        `${n} \`guard\` decisions that parked a run since ${new Date(now - DAY_MS).toISOString()}`,
+        `${n} \`guard\` decisions that parked distinct issues since ${new Date(now - DAY_MS).toISOString()}`,
+        ...(numbers.length > 0 ? [`capped issues: ${numbers.join(", ")}`] : []),
         ...(skipped > 0 ? [`${skipped} skips of a run with nothing new are not counted`] : []),
       ],
       pillar: "Throughput: the crew spends on work, not on being refused",

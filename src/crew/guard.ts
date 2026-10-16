@@ -189,13 +189,25 @@ export function capNoted(
   );
 }
 
-/** Record that `issue` was capped: once per park, beside the note. */
+/**
+ * Record that `issue` was capped: at most once per cap window, however
+ * often the clock asks again. Returns whether a decision was written.
+ */
 export function recordCap(
   db: Database,
   repo: Repo,
   issue: Issue,
   cap: number,
-): void {
+  now = new Date(),
+): boolean {
+  const seen = db
+    .query<{ id: string }, [string, string]>(
+      `SELECT id FROM decision
+        WHERE issue_id = ?1 AND kind = 'guard' AND answer = 'capped'
+          AND created_at >= ?2 LIMIT 1`,
+    )
+    .get(issue.id, capFrom(db, repo, issue, now));
+  if (seen !== null) return false;
   recordDecision(db, {
     kind: "guard",
     repoId: repo.id,
@@ -206,6 +218,7 @@ export function recordCap(
     by: "rule",
     ms: 0,
   });
+  return true;
 }
 
 export interface GuardCounts {
