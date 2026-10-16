@@ -341,6 +341,7 @@ import { readRunLog, subscribeRunLog } from "../runs/log.ts";
 import { blobForRender, commitLog, listRefs, listTree } from "../git/read.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Result } from "../kernel/result.ts";
+import { list as listInviteLinks, mint as mintInviteLink, revoke as revokeInviteLink } from "../actions/invites.ts";
 import { originForRepo, type OriginRepoRow } from "../core/origins.ts";
 import { subscribe as subscribeJob, type MirrorJob } from "../origins/jobs.ts";
 import type { Origin } from "../origins/types.ts";
@@ -1563,6 +1564,37 @@ export function apiRoutes(router: Router<Handler>): void {
         ? "no such quota"
         : "a quota is a positive whole number, or null for no limit",
     );
+  });
+
+  // Invite links (#2335): minted once, listed without tokens, revoked by id.
+  router.add("POST", "/api/v1/admin/invites", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const made = mintInviteLink(ctx.app, ctx.auth.user, input.days);
+    if (!made.ok)
+      return made.error === "invalid_days"
+        ? apiError("invalid", 422, "days is a whole number from 1 to 30")
+        : notFound();
+    const origin = ctx.app.config.url ?? ctx.url.origin;
+    return json(
+      { ...made.value.invite, token: made.value.token, link: `${origin.replace(/\/$/, "")}/signup?invite=${made.value.token}` },
+      201,
+    );
+  });
+
+  router.add("GET", "/api/v1/admin/invites", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const listed = listInviteLinks(ctx.app, ctx.auth.user);
+    return listed.ok ? json({ items: listed.value }) : notFound();
+  });
+
+  router.add("DELETE", "/api/v1/admin/invites/:id", (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const done = revokeInviteLink(ctx.app, ctx.auth.user, ctx.params.id!);
+    return done.ok ? json(done.value) : notFound();
   });
 
   router.add("GET", "/api/v1/admin/accounts", (ctx) => {
