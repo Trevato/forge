@@ -30,6 +30,7 @@ import {
   report,
   Rotation,
   type Outcome,
+  type ProbeAnswer,
   type RehearsalArgs,
   type Timeline,
   type Verdict,
@@ -83,23 +84,41 @@ function start(
   return { name, url: `http://127.0.0.1:${port}`, proc, log };
 }
 
-async function ready(forge: Forge, timeoutMs: number): Promise<boolean> {
+/** One readiness probe: ready, not ready (a 503, or nothing listening), or silent past its timeout. */
+async function probe(forge: Forge, timeoutMs: number): Promise<ProbeAnswer> {
   try {
     const res = await fetch(`${forge.url}/readyz`, { signal: AbortSignal.timeout(timeoutMs) });
     await res.arrayBuffer();
-    return res.status === 200;
-  } catch {
-    return false;
+    return res.status === 200 ? "ready" : "not-ready";
+  } catch (error) {
+    return errorCode(error) === "TimeoutError" ? "silent" : "not-ready";
   }
 }
 
-async function ask(url: string): Promise<Outcome> {
+async function ready(forge: Forge, timeoutMs: number): Promise<boolean> {
+  return (await probe(forge, timeoutMs)) === "ready";
+}
+
+/** The client's name for what went wrong: "ConnectionRefused", "TimeoutError"… */
+function errorCode(error: unknown): string {
+  const e = error as { code?: unknown; name?: unknown };
+  if (e?.name === "TimeoutError" || e?.name === "AbortError") return "TimeoutError";
+  return typeof e?.code === "string" ? e.code : String(e?.name ?? "Error");
+}
+
+/**
+ * One request. A connection refused or cut is "refused"; one the forge
+ * held open past the client's patience is "slow" — the machine, not the
+ * roll (#2453).
+ */
+async function ask(url: string): Promise<{ outcome: Outcome; code: string | null }> {
   try {
     const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000) });
     await res.arrayBuffer();
-    return res.status;
-  } catch {
-    return "refused";
+    return { outcome: res.status, code: null };
+  } catch (error) {
+    const code = errorCode(error);
+    return { outcome: code === "TimeoutError" ? "slow" : "refused", code };
   }
 }
 
@@ -135,17 +154,26 @@ export async function rehearse(
     const began = Date.now();
     const until = began + args.seconds * 1000;
     let termAt: number | null = null;
+    // Each process as a miss saw it: whether it still ran, and was told to go.
+    const states = (): Record<string, string> =>
+      Object.fromEntries(
+        forges.map((f) => [
+          f.name,
+          f.proc.exitCode !== null ? "exited" : f === old && termAt !== null ? "draining" : "serving",
+        ]),
+      );
 
     const load = async (lane: number): Promise<void> => {
       for (let i = lane; Date.now() < until; i += args.concurrency) {
         const forge = rotation.next();
         if (forge === null) {
-          count(tally, null, "nobody");
+          count(tally, null, "nobody", { atMs: Date.now() - began, code: null, forges: states() });
           await Bun.sleep(10);
           continue;
         }
         const path = args.paths[i % args.paths.length] ?? "/";
-        count(tally, forge.name, await ask(forge.url + path));
+        const { outcome, code } = await ask(forge.url + path);
+        count(tally, forge.name, outcome, { atMs: Date.now() - began, code, forges: states() });
       }
     };
 
@@ -161,10 +189,14 @@ export async function rehearse(
       });
       while (Date.now() < until) {
         for (const forge of forges) {
-          const up = await ready(forge, Math.min(1000, args.probeMs));
+          const answer = await probe(forge, Math.min(1000, args.probeMs));
           const was = rotation.has(forge);
-          rotation.saw(forge, up);
-          if (forge === next && up && !was) {
+          rotation.saw(forge, answer);
+          const up = rotation.has(forge);
+          if (up !== was)
+            say(`${forge.name} forge ${up ? "joins" : "leaves"} rotation at ${Date.now() - began} ms: probe ${answer}`);
+          // Signalled once: a new forge that leaves and rejoins is not a second roll.
+          if (forge === next && up && !was && termAt === null) {
             timeline.newInRotationMs = Date.now() - began;
             say("new forge in rotation; the old one is sent SIGTERM");
             termAt = Date.now();

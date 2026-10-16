@@ -111,18 +111,24 @@ It starts the old forge on a copy of `--from` (never the live data
 directory: restore a snapshot first, `docs/RESTORE.md`), sends requests to
 `/`, `/healthz` and `/explore`, starts the new forge beside it on the same
 copy, and moves rotation the way the Service does: a forge joins when its
-`/readyz` says 200 and leaves when it does not, probed every 5 s as the
-chart probes. Once the new forge is in, the old one is sent SIGTERM. A minute
-later it prints its verdict and exits:
+`/readyz` says 200 and leaves when it says 503 or nothing is listening,
+probed every 5 s as the chart probes. A probe that only times out is a busy
+machine, not a forge going away: like the chart's (Kubernetes' default
+failure threshold), it takes three in a row to leave. Once the new forge is
+in, the old one is sent SIGTERM. A minute later it prints its verdict and
+exits:
 
 | exit | means                                                          |
 | ---- | -------------------------------------------------------------- |
 | 0    | zero refused: roll                                             |
-| 1    | a request got a 5xx or no answer, or nothing rolled: do not roll |
+| 1    | a request got a 5xx or a refused connection, or nothing rolled: do not roll |
 | 2    | an argument is wrong, or a forge would not start               |
 
-Exit 1 is a bug in the release, not a reason to ask for a dark roll: the
-logs it names say which forge refused and when. Release checklist: step 1
+Exit 1 is a bug in the release, not a reason to ask for a dark roll: each
+`miss` line says when, which forge was asked, what came back (the client's
+error code with it), and whether each process was serving, draining or gone;
+the logs it names say the rest. A request the client gave up on is counted
+`slow` and listed, but is not a refusal: the forge held its connection. Release checklist: step 1
 exits 0, then this exits 0, then roll. Quote the `zero refused` line in the
 release notes.
 

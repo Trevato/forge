@@ -13,10 +13,12 @@ import {
   emptyTally,
   isRefusal,
   judge,
+  missLine,
   parseArgs,
   refusals,
   report,
   Rotation,
+  SILENT_PROBES_TO_LEAVE,
   type RehearsalArgs,
 } from "../scripts/rehearsal.ts";
 
@@ -70,6 +72,23 @@ describe("rotation", () => {
     r.saw("old", false);
     expect([r.next(), r.next(), r.has("old")]).toEqual(["new", "new", false]);
   });
+
+  test("a silent probe is a busy machine: a member leaves only after three in a row (#2453)", () => {
+    const r = new Rotation<string>();
+    r.saw("old", "ready");
+    for (let i = 1; i < SILENT_PROBES_TO_LEAVE; i++) r.saw("old", "silent");
+    r.saw("old", "ready");
+    for (let i = 1; i < SILENT_PROBES_TO_LEAVE; i++) r.saw("old", "silent");
+    expect(r.has("old")).toBe(true);
+    r.saw("old", "silent");
+    expect(r.has("old")).toBe(false);
+    // Silence never lets anyone in; a not-ready answer sends a member out at once.
+    r.saw("new", "silent");
+    expect(r.has("new")).toBe(false);
+    r.saw("new", "ready");
+    r.saw("new", "not-ready");
+    expect(r.has("new")).toBe(false);
+  });
 });
 
 describe("the verdict", () => {
@@ -78,6 +97,24 @@ describe("the verdict", () => {
   test("a 5xx, a refused connection and nobody in rotation are refusals; a 4xx or redirect is not", () => {
     expect([500, 502, 503, "refused", "nobody"].every((o) => isRefusal(o as never))).toBe(true);
     expect([200, 302, 404].some((o) => isRefusal(o))).toBe(false);
+  });
+
+  test("a slow answer is not a refusal, but every miss is kept with its moment", () => {
+    expect(isRefusal("slow")).toBe(false);
+    const t = emptyTally();
+    const at = { atMs: 1234, code: "TimeoutError", forges: { old: "draining", new: "serving" } };
+    count(t, "old", 200, at);
+    count(t, "new", "slow", at);
+    count(t, null, "nobody", { ...at, code: null });
+    expect(refusals(t)).toBe(1);
+    expect(t.misses.map((m) => [m.forge, m.outcome])).toEqual([
+      ["new", "slow"],
+      [null, "nobody"],
+    ]);
+    expect(missLine(t.misses[0]!)).toBe(
+      "miss       1234 ms new: slow (TimeoutError); old draining, new serving",
+    );
+    expect(report(judge(t, rolled))).toContain("nobody in rotation: nobody; old draining");
   });
 
   test("zero refused over a roll that happened is a pass", () => {
@@ -131,6 +168,8 @@ describe("a real roll of two forge processes on one data directory", () => {
   test("an old forge that lingers past a probe period refuses nobody", async () => {
     const v = await rehearse(short(5));
     expect(v.problem).toBeNull();
+    // Each refusal says when, whom, what came back and where both processes were.
+    expect(v.tally.misses.filter((m) => isRefusal(m.outcome)).map(missLine)).toEqual([]);
     expect(v.refused).toBe(0);
     expect(v.tally.byForge["old"]).toBeGreaterThan(0);
     expect(v.tally.byForge["new"]).toBeGreaterThan(0);

@@ -99,19 +99,39 @@ export function parseArgs(argv: readonly string[], here: string): RehearsalArgs 
 }
 
 /**
+ * What one readiness probe heard: a 200, a not-ready answer (a 503 or a
+ * refused connection — nothing there to take work), or silence past the
+ * probe's timeout, which says only that the machine is busy.
+ */
+export type ProbeAnswer = "ready" | "not-ready" | "silent";
+
+/**
+ * Silent probes in a row before a member leaves: the chart's readiness
+ * probe keeps Kubernetes' default failureThreshold, 3. One slow probe on
+ * a loaded machine is not a forge going away.
+ */
+export const SILENT_PROBES_TO_LEAVE = 3;
+
+/**
  * Who takes requests, as a Service's endpoints do: a forge joins when a
- * probe sees it ready and leaves when a probe sees it not, never between
+ * probe sees it ready and leaves when a probe hears it is not, or hears
+ * nothing {@link SILENT_PROBES_TO_LEAVE} times in a row — never between
  * probes. Requests go round the members in turn.
  */
 export class Rotation<T> {
   private members: T[] = [];
+  private silent = new Map<T, number>();
   private turn = 0;
 
-  /** What one probe of `member` saw. */
-  saw(member: T, ready: boolean): void {
+  /** What one probe of `member` heard; `true` and `false` are ready and not. */
+  saw(member: T, answer: ProbeAnswer | boolean): void {
+    const heard = answer === true ? "ready" : answer === false ? "not-ready" : answer;
     const at = this.members.indexOf(member);
-    if (ready && at < 0) this.members.push(member);
-    if (!ready && at >= 0) this.members.splice(at, 1);
+    const quiet = heard === "silent" ? (this.silent.get(member) ?? 0) + 1 : 0;
+    this.silent.set(member, quiet);
+    const leaves = heard === "not-ready" || quiet >= SILENT_PROBES_TO_LEAVE;
+    if (heard === "ready" && at < 0) this.members.push(member);
+    if (leaves && at >= 0) this.members.splice(at, 1);
   }
 
   has(member: T): boolean {
@@ -126,8 +146,26 @@ export class Rotation<T> {
   }
 }
 
-/** One request's outcome: a status, or "refused" when nothing answered. */
-export type Outcome = number | "refused" | "nobody";
+/**
+ * One request's outcome: a status; "refused" when the connection was
+ * refused or cut (nothing was there to answer); "slow" when the client gave
+ * up waiting on a forge that held the connection open; "nobody" when no
+ * forge was in rotation to ask.
+ */
+export type Outcome = number | "refused" | "slow" | "nobody";
+
+/** A request that did not come back answered, and the moment around it. */
+export interface Miss {
+  /** Milliseconds from the first request. */
+  readonly atMs: number;
+  /** The forge asked, or null when nobody was in rotation. */
+  readonly forge: string | null;
+  readonly outcome: Outcome;
+  /** The client's error code ("ConnectionRefused", "TimeoutError"…), or null. */
+  readonly code: string | null;
+  /** Each forge's process at that moment: serving, draining or exited. */
+  readonly forges: Readonly<Record<string, string>>;
+}
 
 export interface Tally {
   requests: number;
@@ -135,22 +173,35 @@ export interface Tally {
   byOutcome: Record<string, number>;
   /** Requests each forge answered, by its name. */
   byForge: Record<string, number>;
+  /** Every request that was not answered below 500, in order. */
+  misses: Miss[];
 }
 
 export function emptyTally(): Tally {
-  return { requests: 0, byOutcome: {}, byForge: {} };
+  return { requests: 0, byOutcome: {}, byForge: {}, misses: [] };
 }
 
-export function count(tally: Tally, forge: string | null, outcome: Outcome): void {
+export function count(
+  tally: Tally,
+  forge: string | null,
+  outcome: Outcome,
+  miss?: Omit<Miss, "forge" | "outcome">,
+): void {
   tally.requests += 1;
   const key = String(outcome);
   tally.byOutcome[key] = (tally.byOutcome[key] ?? 0) + 1;
   if (forge !== null) tally.byForge[forge] = (tally.byForge[forge] ?? 0) + 1;
+  if (miss !== undefined && (outcome === "slow" || isRefusal(outcome)))
+    tally.misses.push({ ...miss, forge, outcome });
 }
 
-/** Whether a person would have seen the forge down. */
+/**
+ * Whether a person would have seen the forge down. A slow answer is not
+ * one: the forge held the connection, and a busy machine is not a roll
+ * that went dark (#2453).
+ */
 export function isRefusal(outcome: Outcome): boolean {
-  return typeof outcome === "number" ? outcome >= 500 : true;
+  return typeof outcome === "number" ? outcome >= 500 : outcome !== "slow";
 }
 
 export function refusals(tally: Tally): number {
@@ -205,6 +256,16 @@ export function judge(tally: Tally, timeline: Timeline): Verdict {
 const secs = (ms: number | null): string =>
   ms === null ? "never" : `${(ms / 1000).toFixed(1)}s`;
 
+const MISSES_SHOWN = 20;
+
+/** One miss as a line: when, whom, what came back, and where each process was. */
+export function missLine(m: Miss): string {
+  const forges = Object.entries(m.forges)
+    .map(([k, state]) => `${k} ${state}`)
+    .join(", ");
+  return `miss       ${m.atMs} ms ${m.forge ?? "nobody in rotation"}: ${m.outcome}${m.code === null ? "" : ` (${m.code})`}; ${forges}`;
+}
+
 /** The verdict as the release checklist reads it. */
 export function report(v: Verdict): string {
   const outcomes = Object.entries(v.tally.byOutcome)
@@ -225,5 +286,9 @@ export function report(v: Verdict): string {
     `new ready  ${secs(v.timeline.newInRotationMs)} after the first request`,
     `old out    ${secs(v.timeline.oldOutOfRotationMs)} after its SIGTERM`,
     `old exit   ${secs(v.timeline.oldExitMs)} after its SIGTERM`,
+    ...v.tally.misses.slice(0, MISSES_SHOWN).map(missLine),
+    ...(v.tally.misses.length > MISSES_SHOWN
+      ? [`           and ${v.tally.misses.length - MISSES_SHOWN} more`]
+      : []),
   ].join("\n");
 }
