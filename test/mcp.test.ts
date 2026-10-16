@@ -170,6 +170,7 @@ describe("the forge over MCP", () => {
       "asks_act",
       "asks_decide",
       "asks_proposal",
+      "proposal_tokens",
       "asks_undecide",
       "seal",
       "now",

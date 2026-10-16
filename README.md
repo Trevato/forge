@@ -94,8 +94,7 @@ curl -sX POST localhost:3000/api/v1/repos/you/hello/proposal-tokens \
 `childRepo` (optional) a fork of this repository, and deleting it deletes the
 token, as does deleting the repository. The token expires in 30 days. It is
 listed as `proposal:<child>` among your tokens, and revoking it there ends it.
-Minting is API-only for now; a page, a terminal command and an MCP tool are
-part 2 (#2187). Over HTTPS it pushes only `child/<name>/…` branches of this repository (anything
+Over HTTPS it pushes only `child/<name>/…` branches of this repository (anything
 else is refused with one line) and `POST …/pulls` from one of them, with a
 body of at most 64 KiB and 20 requests a minute. Every other request is a
 403, decided in `src/http/proposal_gate.ts` before any handler runs. A proposed pull
@@ -104,6 +103,18 @@ waits for a new approval), and a bare push to `child/…` starts none. A pull
 opened with it says "proposed by child … from …" on every tab of the pull's
 page, in the terminal's pull view, and as `proposal` in the pull's JSON
 (`GET …/pulls/:number`, and MCP's `pull` tool).
+
+Minting, listing and revoking go through one action
+(`src/actions/proposal_tokens.ts`) at every door, and only a writer of the
+repository may; anyone else is told "no such resource here, or it is not
+visible to you", as the API says it. The secret is shown once, on minting.
+
+- **MCP**: the `proposal_tokens` tool with `repo` and a `verb`: `mint`
+  (`child`, `origin`, optionally `childRepo`), `list` (the ones you minted for
+  the repository) or `revoke` (`id`).
+- **Terminal**: `ctrl+k`, **Proposal tokens**, then the repository as
+  `owner/name`. `n` mints (the child's name, then its https address) and shows
+  the secret once on its own screen; `x` revokes the one under the cursor.
 
 ## Live in the terminal
 

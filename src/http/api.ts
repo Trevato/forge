@@ -214,10 +214,10 @@ import {
   withOutdated,
 } from "../core/reviews.ts";
 import { createSession } from "../core/sessions.ts";
+import { mintProposal } from "../actions/proposal_tokens.ts";
 import { listTokens } from "../core/tokens.ts";
 import {
   headInNamespace,
-  mintProposalToken,
   PROPOSAL_BODY_MAX,
   pullProposalOf,
   recordPullProposal,
@@ -3121,24 +3121,13 @@ export function apiRoutes(router: Router<Handler>): void {
       const input = await boundedBody(ctx.request, PROPOSAL_BODY_MAX);
       if (input === "too_large")
         return apiError("too_large", 413, `at most ${PROPOSAL_BODY_MAX} bytes`);
-      let childRepoId: string | undefined;
-      const childSpec = str(input.childRepo);
-      if (childSpec !== "") {
-        const [owner, name, ...rest] = childSpec.split("/");
-        const child =
-          owner && name && rest.length === 0
-            ? getRepo(ctx.app.db, owner, name)
-            : undefined;
-        if (!child || child.forkParentId !== repo.id) return notFound();
-        childRepoId = child.id;
-      }
-      const minted = mintProposalToken(ctx.app.db, ctx.auth.user!.id, repo.id, {
+      const minted = mintProposal(ctx.app, ctx.auth.user, repo, {
         child: str(input.child),
         origin: str(input.origin),
-        ...(childRepoId ? { childRepoId } : {}),
+        childRepo: str(input.childRepo),
       });
       if (!minted.ok)
-        return apiError(minted.error, 422, "child is lowercase words and hyphens; origin is an https address");
+        return minted.error.code === "not_found" ? notFound() : apiError(minted.error.code, 422, minted.error.message);
       return json(minted.value, 201);
     },
   );

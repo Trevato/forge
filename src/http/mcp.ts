@@ -130,6 +130,7 @@ import {
 import { KIND_CHIPS, parseChipArgs } from "../core/feed_chips.ts";
 import { appsOf, asksAnswer } from "../web/studio/asks.ts";
 import { decideAsk, undoDecideAsk } from "../actions/asks_decide.ts";
+import { listProposals, mintProposal, repoByName, revokeProposal } from "../actions/proposal_tokens.ts";
 import { actOnProposal, isProposalVerb, PROPOSAL_VERBS } from "../actions/proposals.ts";
 import { applyAsksBulk, previewAsksBulk } from "../actions/asks_bulk.ts";
 import type { Ctx, Handler } from "./context.ts";
@@ -689,6 +690,42 @@ const TOOLS: readonly Tool[] = [
       const verb = args["verb"];
       if (!isProposalVerb(verb)) return bad("invalid", `verb is ${PROPOSAL_VERBS.join(", ")}`);
       const done = actOnProposal(ctx.app, user, verb, args["id"], args["words"]);
+      return done.ok ? good(done.value ?? { ok: true }) : bad(done.error.code, done.error.message);
+    },
+  },
+  {
+    name: "proposal_tokens",
+    description:
+      "Hand a child (a fork, or a project on another forge) a credential that proposes and nothing more. `mint` (with `child`: lowercase words and hyphens, `origin`: its https address, optionally `childRepo`: owner/name of a fork of this repository) answers with the secret, shown once; the token pushes only `child/<name>/…` branches of this repository and opens pulls from them, and expires in 30 days. `list` shows the ones you minted for this repository; `revoke` (with `id`) ends one. A writer of the repository only; anyone else is told there is no such resource. The same as POST /api/v1/repos/:owner/:name/proposal-tokens.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        verb: { type: "string", enum: ["mint", "list", "revoke"] },
+        child: { type: "string", maxLength: 40 },
+        origin: { type: "string", maxLength: 200 },
+        childRepo: { type: "string", maxLength: 200 },
+        id: { type: "string", maxLength: 80 },
+      },
+      required: ["repo", "verb"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const repo = repoByName(ctx.app, args["repo"]);
+      const verb = args["verb"];
+      const done =
+        verb === "mint"
+          ? mintProposal(ctx.app, user, repo, {
+              child: args["child"],
+              origin: args["origin"],
+              childRepo: args["childRepo"],
+            })
+          : verb === "list"
+            ? listProposals(ctx.app, user, repo)
+            : verb === "revoke"
+              ? revokeProposal(ctx.app, user, repo, args["id"])
+              : undefined;
+      if (done === undefined) return bad("invalid", "verb is mint, list or revoke");
       return done.ok ? good(done.value ?? { ok: true }) : bad(done.error.code, done.error.message);
     },
   },

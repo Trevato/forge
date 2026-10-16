@@ -120,3 +120,62 @@ export function pullProposalOf(
       .get(issueId) ?? undefined
   );
 }
+
+export interface ProposalTokenInfo {
+  readonly id: string;
+  readonly child: string;
+  readonly origin: string;
+  readonly createdAt: string;
+  readonly expiresAt: string | null;
+  readonly lastUsedAt: string | null;
+}
+
+/** The proposal tokens one person minted for one repository, oldest first. */
+export function listProposalTokens(
+  db: Database,
+  userId: string,
+  repoId: string,
+): ProposalTokenInfo[] {
+  return db
+    .query<
+      {
+        id: string;
+        child: string;
+        origin: string;
+        created_at: string;
+        expires_at: string | null;
+        last_used_at: string | null;
+      },
+      [string, string]
+    >(
+      `SELECT t.id, p.child, p.origin, t.created_at, t.expires_at, t.last_used_at
+         FROM proposal_token p JOIN token t ON t.id = p.token_id
+        WHERE t.user_id = ?1 AND p.repo_id = ?2 ORDER BY t.id`,
+    )
+    .all(userId, repoId)
+    .map((r) => ({
+      id: r.id,
+      child: r.child,
+      origin: r.origin,
+      createdAt: r.created_at,
+      expiresAt: r.expires_at,
+      lastUsedAt: r.last_used_at,
+    }));
+}
+
+/** End one proposal token of this person's for this repository. */
+export function deleteProposalToken(
+  db: Database,
+  userId: string,
+  repoId: string,
+  tokenId: string,
+): boolean {
+  return (
+    db
+      .query(
+        `DELETE FROM token WHERE id = ?1 AND user_id = ?2
+           AND id IN (SELECT token_id FROM proposal_token WHERE repo_id = ?3)`,
+      )
+      .run(tokenId, userId, repoId).changes > 0
+  );
+}

@@ -47,6 +47,7 @@ import { accessScreen } from "./screens/access.ts";
 import { flagsScreen } from "./screens/flags.ts";
 import { cloudScreen } from "./screens/cloud.ts";
 import { usageScreen } from "./screens/usage.ts";
+import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { quotasScreen } from "./screens/quotas.ts";
 import { domainsScreen } from "./screens/domains.ts";
 import { ownerScreen } from "./screens/owner.ts";
@@ -358,6 +359,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Usage",
         hint: "every route, unused ones first",
         run: () => ctx.push(usageScreen(session, ctx)),
+      });
+    // Proposal tokens for a repository you write, as the API and MCP have them (#2148).
+    if (session.user !== undefined)
+      commands.push({
+        id: "proposal-tokens",
+        title: "Proposal tokens",
+        hint: "mint, list and revoke what a child proposes with",
+        run: () => ctx.push(proposalTokensPrompt(session, ctx, blank("Proposal tokens"))),
       });
     // Account quotas, as /admin/limits has them: an admin who is not an agent (#2191).
     if (session.user?.isAdmin === true && session.user.kind !== "agent")
