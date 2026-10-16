@@ -13,6 +13,9 @@ interface Row {
   ms: number;
   repositories: number;
   issues: number;
+  users: number;
+  pulls: number;
+  apps: number;
   verdict: "green" | "red";
   failed_step: DrillStep | null;
   reason: string | null;
@@ -20,14 +23,17 @@ interface Row {
 
 export function recordDrill(db: Database, result: DrillResult): void {
   db.query(
-    `INSERT INTO drill (at, snapshot_id, ms, repositories, issues, verdict, failed_step, reason)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO drill (at, snapshot_id, ms, repositories, issues, users, pulls, apps, verdict, failed_step, reason)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     result.at,
     result.snapshotId,
     result.ms,
     result.counts.repositories,
     result.counts.issues,
+    result.counts.users,
+    result.counts.pulls,
+    result.counts.apps,
     result.verdict,
     result.failedStep,
     result.reason,
@@ -45,7 +51,13 @@ export function lastDrill(db: Database): DrillResult | undefined {
         at: row.at,
         snapshotId: row.snapshot_id,
         ms: row.ms,
-        counts: { repositories: row.repositories, issues: row.issues },
+        counts: {
+          repositories: row.repositories,
+          issues: row.issues,
+          users: row.users,
+          pulls: row.pulls,
+          apps: row.apps,
+        },
         // Not stored: green means health read ok; a red one failed at it or never got there.
         health:
           row.verdict === "green" ? "ok" : row.failed_step === "health" ? "failed" : "unreached",

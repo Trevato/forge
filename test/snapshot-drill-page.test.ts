@@ -62,7 +62,7 @@ describe("the drill on the Backups page", () => {
           at: new Date().toISOString(),
           snapshotId: "snap-stub-1",
           ms: 1234,
-          counts: { repositories: 7, issues: 42 },
+          counts: { repositories: 7, issues: 42, users: 0, pulls: 0, apps: 0 },
           health: verdict === "green" ? "ok" : "unreached",
           verdict,
           failedStep: verdict === "green" ? null : "unseal",
@@ -97,7 +97,7 @@ describe("the drill on the Backups page", () => {
     expect(ran).toBe(1);
     const html = await page(cookie);
     expect(html).toContain("snap-stub-1");
-    expect(html).toContain("7 repositories, 42 issues");
+    expect(html).toContain("0 users, 7 repositories, 42 issues, 0 pulls, 0 apps");
     expect(html).toContain("1234 ms");
     expect(app.db.query("SELECT count(*) AS n FROM drill").get()).toEqual({ n: 1 });
   });

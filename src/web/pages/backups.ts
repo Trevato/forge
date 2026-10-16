@@ -98,7 +98,7 @@ function drillLine(ctx: Ctx): Html {
         ? html`<p class="backups-drill">
             ${icon("check")} Last drill ${time(d.at)}: snapshot
             <code>${d.snapshotId ?? ""}</code> restored green in ${d.ms} ms —
-            ${d.counts.repositories} repositories, ${d.counts.issues} issues.
+            ${d.counts.users} users, ${d.counts.repositories} repositories, ${d.counts.issues} issues, ${d.counts.pulls} pulls, ${d.counts.apps} apps.
           </p>`
         : html`<p class="backups-error backups-drill">
             ${icon("alert")} Last drill ${time(d.at)}: snapshot

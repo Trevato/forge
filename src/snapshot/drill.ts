@@ -35,11 +35,19 @@ export interface DrillDeps {
   readonly boot?: typeof bootRestored | undefined;
 }
 
+export interface DrillCounts {
+  readonly repositories: number;
+  readonly issues: number;
+  readonly users: number;
+  readonly pulls: number;
+  readonly apps: number;
+}
+
 export interface DrillResult {
   readonly at: string;
   readonly snapshotId: string | null;
   readonly ms: number;
-  readonly counts: { readonly repositories: number; readonly issues: number };
+  readonly counts: DrillCounts;
   /** The side-booted forge's word; "unreached" when an earlier step failed. */
   readonly health: "ok" | "failed" | "unreached";
   readonly verdict: "green" | "red";
@@ -64,7 +72,7 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
   const at = clock().toISOString();
   const timeoutMs = deps.timeoutMs ?? DRILL_TIMEOUT_MS;
   const restore = deps.restore ?? restoreSnapshot;
-  const counts = { repositories: 0, issues: 0 };
+  const counts = { repositories: 0, issues: 0, users: 0, pulls: 0, apps: 0 };
   let snapshotId: string | null = null;
   let step: DrillStep = "fetch";
   let scratch: string | undefined;
@@ -99,6 +107,9 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
         db.query<{ n: number }, []>(sql).get()?.n ?? 0;
       counts.repositories = n("SELECT count(*) AS n FROM repo");
       counts.issues = n("SELECT count(*) AS n FROM issue");
+      counts.users = n("SELECT count(*) AS n FROM user");
+      counts.pulls = n("SELECT count(*) AS n FROM pull");
+      counts.apps = n("SELECT count(*) AS n FROM app");
 
       step = "unseal";
       const secret = db

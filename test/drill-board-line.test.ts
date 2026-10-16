@@ -23,7 +23,7 @@ const drill = (at: number, red: boolean): DrillResult => ({
   at: new Date(at).toISOString(),
   snapshotId: "snap-1",
   ms: 5,
-  counts: { repositories: 1, issues: 1 },
+  counts: { repositories: 1, issues: 1, users: 0, pulls: 0, apps: 0 },
   health: red ? "failed" : "ok",
   verdict: red ? "red" : "green",
   failedStep: red ? "unseal" : null,

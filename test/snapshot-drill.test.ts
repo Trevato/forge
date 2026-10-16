@@ -98,7 +98,7 @@ describe("the restore drill", () => {
     expect(r.verdict).toBe("green");
     expect(r.failedStep).toBeNull();
     expect(r.snapshotId).toBe("2026-09-22T08-00-00Z");
-    expect(r.counts).toEqual({ repositories: 1, issues: 2 });
+    expect(r.counts).toEqual({ repositories: 1, issues: 2, users: 1, pulls: 0, apps: 1 });
     expect(r.ms).toBeGreaterThanOrEqual(0);
     expect(scratchLeft()).toEqual([]);
   });

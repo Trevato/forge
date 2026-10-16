@@ -62,7 +62,7 @@ test("a nearly full disk says the state's words", () => {
 
 test("a red restore drill says the snapshot store's words", () => {
   recordVerdict(dataDir, {
-    at: new Date().toISOString(), snapshotId: null, ms: 1, counts: { repositories: 0, issues: 0 },
+    at: new Date().toISOString(), snapshotId: null, ms: 1, counts: { repositories: 0, issues: 0, users: 0, pulls: 0, apps: 0 },
     health: "unreached", verdict: "red", failedStep: "fetch", reason: "no bucket",
   });
   for (const s of said("snapshots")) expect(read()).toContain(s);

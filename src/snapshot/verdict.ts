@@ -116,6 +116,9 @@ export function verdictComment(r: DrillResult): string {
     `- health: ${r.health}`,
     `- repositories: ${r.counts.repositories}`,
     `- issues: ${r.counts.issues}`,
+    `- users: ${r.counts.users}`,
+    `- pulls: ${r.counts.pulls}`,
+    `- apps: ${r.counts.apps}`,
     ...(pass || !r.reason ? [] : [`- why: ${r.reason}`]),
   ].join("\n");
 }
