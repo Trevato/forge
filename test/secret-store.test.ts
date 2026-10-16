@@ -117,6 +117,7 @@ describe("forge-level secrets", () => {
   });
 
   test("the narrowest scope wins, and a name nobody set is absent", () => {
+    app.db.query("DELETE FROM secret WHERE name = 'BUCKET_KEY'").run();
     setSecret(app.db, dataDir, "forge", "", "BUCKET_KEY", "forge-key");
     expect(ask(["BUCKET_KEY"], { org: orgId, repo: repoId })).toEqual({
       BUCKET_KEY: "forge-key",
@@ -171,6 +172,7 @@ describe("forge-level secrets", () => {
   });
 
   test("listing is names and timestamps, never a value", async () => {
+    setSecret(app.db, dataDir, "forge", "", "CF_TOKEN", "s3cret-1");
     const listed = listSecretNames(app.db, "forge");
     expect(listed.map((s) => s.name)).toContain("CF_TOKEN");
     expect(JSON.stringify(listed)).not.toContain("s3cret-1");
@@ -185,6 +187,9 @@ describe("forge-level secrets", () => {
   });
 
   test("only a forge admin writes, over the API, at every scope", async () => {
+    setSecret(app.db, dataDir, "forge", "", "CF_TOKEN", "s3cret-1");
+    app.db.query("DELETE FROM secret WHERE scope = 'org'").run();
+    setSecret(app.db, dataDir, "org", orgId, "BUCKET_KEY", "org-key");
     const put = (token: string, path: string, body: unknown) =>
       api(path, { method: "PUT", body: JSON.stringify(body) }, token);
     expect(
@@ -297,6 +302,7 @@ describe("forge-level secrets", () => {
   });
 
   test("the settings pages: forge, org and repo cards, admins only", async () => {
+    setSecret(app.db, dataDir, "forge", "", "CF_TOKEN", "s3cret-1");
     const login = async (username: string): Promise<string> => {
       const res = await fetch(`${servers.url}/signin`, {
         method: "POST",
