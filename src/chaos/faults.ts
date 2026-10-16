@@ -42,6 +42,7 @@ const killMidRun: Fault = {
       for (const line of lines) if (line !== "ready") seen.push(line);
     }
     child.kill("SIGKILL");
+    await reader.cancel().catch(() => {});
     await child.exited;
     // Only ids the victim reported were committed; a line cut by the kill is dropped above.
     for (const id of seen) world.runIds.add(id);

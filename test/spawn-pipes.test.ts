@@ -1,0 +1,89 @@
+/**
+ * No spawn keeps a pipe it never reads (#2149, oven-sh/bun#18265): piped
+ * stdio nobody drains leaks native memory in a long-lived Bun server. Every
+ * Bun.spawn / spawnSync in src/ either ignores its unused streams or is
+ * listed here with the reason it reads each pipe to its end.
+ */
+
+import { expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+/**
+ * file → the streams each piping spawn keeps (sorted), and why they are
+ * drained. Re-piping a stream that was ignored changes a site's entry.
+ */
+const PIPING: Record<string, { sites: string[]; reason: string }> = {
+  "src/apps/contain.ts": { sites: ["stderr"], reason: "stderr awaited with the exit; stdout ignored" },
+  "src/apps/process.ts": { sites: ["stdout+stderr", "stdout+stderr"], reason: "pump() reads stdout and stderr of the app until exit" },
+  "src/chaos/faults.ts": { sites: ["stdout"], reason: "stdout is read until the kill closes it, then cancelled; stderr is ignored" },
+  "src/crew/claude.ts": { sites: ["stdout+stderr", "stdout"], reason: "session pumps stdout and stderr; --version awaits stdout, stderr ignored" },
+  "src/crew/plan.ts": { sites: ["stdout"], reason: "stdout awaited with the exit; stderr ignored" },
+  "src/crew/runner.ts": { sites: ["stdout"], reason: "lsof stdout awaited; stderr ignored" },
+  "src/crew/sandbox.ts": { sites: ["stderr"], reason: "stderr awaited with the exit; stdout ignored" },
+  "src/git/env.ts": { sites: ["stdout+stderr", "stdout+stderr"], reason: "stdout and stderr both read to the end, finally clears the timer" },
+  "src/git/local.ts": { sites: ["stdout+stderr", "stdout+stderr"], reason: "stdout and stderr both read to the end" },
+  "src/git/read.ts": { sites: ["stdout"], reason: "cat-file stdout is read by the long-lived reader; stderr ignored" },
+  "src/git/smart-http.ts": { sites: ["stdout"], reason: "stdout is the response body; stderr ignored" },
+  "src/git/smart-ssh.ts": { sites: ["stdout+stderr"], reason: "pump() drains stdout and stderr into the channel" },
+  "src/kernel/data_home.ts": { sites: ["stdout"], reason: "spawnSync buffers stdout; stderr ignored" },
+  "src/looks/capture.ts": { sites: ["stderr"], reason: "stderr read in a background loop; stdout ignored" },
+  "src/release/checkout.ts": { sites: ["stdout+stderr"], reason: "stdout and stderr both read via Response.text()" },
+  "src/cli/config.ts": { sites: ["stdout"], reason: "stdout awaited with the exit; stderr ignored" },
+};
+
+function files(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory()
+      ? files(join(dir, e.name))
+      : e.name.endsWith(".ts")
+        ? [join(dir, e.name)]
+        : [],
+  );
+}
+
+/** The text of a call's arguments, by paren matching that skips strings. */
+function args(src: string, open: number): string {
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i]!;
+    if (c === '"' || c === "'" || c === "`") {
+      for (i++; i < src.length && src[i] !== c; i++) if (src[i] === "\\") i++;
+    } else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return src.slice(open, i);
+  }
+  return src.slice(open);
+}
+
+/**
+ * Which streams a call keeps piped. A stream not named is taken as piped:
+ * stdout and spawnSync's both default to a pipe, and for stderr that is the
+ * conservative reading (Bun's own default is "inherit") so that dropping the
+ * explicit "ignore" is flagged rather than trusted.
+ */
+function pipes(call: string): string {
+  if (/\bterminal\b/.test(call)) return "";
+  return ["stdout", "stderr"]
+    .filter((stream) => {
+      const m = new RegExp(`\\b${stream}:\\s*"(\\w+)"`).exec(call);
+      return m === null || m[1] === "pipe";
+    })
+    .join("+");
+}
+
+test("every spawn that pipes is listed with the reason it reads the pipe", () => {
+  const found: Record<string, string[]> = {};
+  for (const file of files("src")) {
+    const src = readFileSync(file, "utf8");
+    for (const m of src.matchAll(/\bBun\.spawn(?:Sync)?\(/g)) {
+      const open = m.index! + m[0].length - 1;
+      const kept = pipes(args(src, open));
+      if (kept !== "") (found[file] ??= []).push(kept);
+    }
+  }
+  for (const sites of Object.values(found)) sites.sort();
+  const listed = Object.fromEntries(
+    Object.entries(PIPING).map(([f, v]) => [f, [...v.sites].sort()]),
+  );
+  expect(found).toEqual(listed);
+});

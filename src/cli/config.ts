@@ -71,7 +71,7 @@ async function security(
     const proc = Bun.spawn(["security", ...args], {
       stdin: stdin === undefined ? "ignore" : new Blob([stdin]),
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "ignore",
     });
     const [out, code] = await Promise.all([
       new Response(proc.stdout).text(),

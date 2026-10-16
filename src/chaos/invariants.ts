@@ -63,6 +63,8 @@ const pullsKeepHeads: Invariant = {
       const dir = repoDir(world.app.reposRoot, p.owner, p.name);
       const has = Bun.spawnSync(["git", "cat-file", "-e", `${p.head_oid}^{commit}`], {
         cwd: dir,
+        stdout: "ignore",
+        stderr: "ignore",
       });
       if (has.exitCode !== 0) broken.push(`pull head ${p.head_oid} is gone from ${p.owner}/${p.name}`);
     }

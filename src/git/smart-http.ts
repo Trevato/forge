@@ -127,7 +127,7 @@ async function spawnService(
       env: gitEnv(env),
       stdin: "pipe",
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "ignore",
     });
   let proc: ReturnType<typeof spawn>;
   try {
@@ -174,7 +174,7 @@ async function spawnService(
  * loose in the process.
  */
 async function feedStdin(
-  proc: Bun.Subprocess<"pipe", "pipe", "pipe">,
+  proc: Bun.Subprocess<"pipe", "pipe", "ignore">,
   service: GitService,
   request: Request,
 ): Promise<void> {

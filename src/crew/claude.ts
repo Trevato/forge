@@ -528,7 +528,7 @@ export async function detectClaude(
       env: childEnv({}),
       stdin: "ignore",
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "ignore",
     });
     const timer = setTimeout(() => proc.kill("SIGKILL"), 10_000);
     const [out, code] = await Promise.all([
