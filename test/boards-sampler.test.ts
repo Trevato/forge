@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runQuery } from "../src/boards/query.ts";
-import { COARSE_KEEP_MS, FINE_KEEP_MS, record, rollUp, type Point } from "../src/boards/ring.ts";
+import { COARSE_KEEP_MS, COARSE_MS, FINE_KEEP_MS, FINE_MS, record, rollUp, type Point } from "../src/boards/ring.ts";
 import { gaps, pointsOf, readCounters, startSampler, type Paths } from "../src/boards/sampler.ts";
 import { SOURCES } from "../src/boards/sources.ts";
 import type { CellCounter } from "../src/apps/contain.ts";
@@ -173,6 +173,33 @@ describe("the ring", () => {
     // Every closed 5-min window of the two days was rolled up, and kept.
     const coarse = db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM machine_sample WHERE step = 300").get()!.n;
     expect(coarse).toBe((2 * FINE_KEEP_MS) / 300_000);
+  });
+
+  test("31 days of 15-s points keep at most 30 days of 5-min roll-ups, none past COARSE_KEEP_MS", () => {
+    const db = fresh();
+    const days = 31;
+    const end = T0 + days * 24 * 3_600_000;
+    const started = performance.now();
+    // Real 15-s cadence, handed over one 5-min batch at a time, `now` at the batch's last point.
+    for (let w = T0; w < end; w += COARSE_MS) {
+      const batch: Point[] = [];
+      for (let t = w; t < w + COARSE_MS; t += FINE_MS) {
+        batch.push({ at: t, target: "forge", cpuCores: 1, memoryBytes: 1, load: null });
+      }
+      record(db, batch, w + COARSE_MS - FINE_MS);
+    }
+    const now = end - FINE_MS;
+    expect(performance.now() - started).toBeLessThan(5_000);
+
+    const count = (step: number) =>
+      db.query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM machine_sample WHERE step = ? AND target = 'forge'").get(step)!.n;
+    // 30 × 288 closed windows, plus the one the edge of the window falls in.
+    expect(count(300)).toBeLessThanOrEqual(30 * 288 + 1);
+    expect(count(300)).toBeGreaterThan(29 * 288);
+    expect(count(15)).toBeLessThanOrEqual(FINE_KEEP_MS / FINE_MS + 1);
+    expect(count(15)).toBeGreaterThan(FINE_KEEP_MS / FINE_MS - 20);
+    const oldest = db.query<{ at: string }, []>("SELECT MIN(at) AS at FROM machine_sample WHERE step = 300").get()!.at;
+    expect(Date.parse(oldest)).toBeGreaterThanOrEqual(now - COARSE_KEEP_MS);
   });
 });
 
