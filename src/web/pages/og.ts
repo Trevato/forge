@@ -1,6 +1,6 @@
 /**
  * The social card on the web: GET /og/{repo,app,issue,pull,run,map}/:ref.svg
- * and GET /og/audit.svg.
+ * and GET /og/audit.svg and /og/site.svg (the card of every page without its own).
  * Public by design — it is what a link preview fetches without a session —
  * so it says only what an anonymous reader may already see: a public repo
  * (`owner~name`; any other repo, private or not, is a title and the word
@@ -147,7 +147,14 @@ function waiting(ctx: Ctx, repo: Repo, issue: Issue): string {
   return `waits on ${shown.join(", ")}${more > 0 ? ` +${more}` : ""}`;
 }
 
-export type OgKind = "repo" | "app" | "issue" | "pull" | "run" | "map" | "audit";
+export type OgKind = "repo" | "app" | "issue" | "pull" | "run" | "map" | "audit" | "site";
+
+/** The card for any page without a card of its own: it says only what the forge is. */
+const SITE_CARD: CardInput = {
+  kind: "page",
+  title: "forge",
+  lines: ["Repositories, issues, pulls and the crew that works them."],
+};
 
 /** The audit page's own bound. */
 const AUDIT_LIMIT = 200;
@@ -345,6 +352,7 @@ async function resolve(ctx: Ctx, kind: OgKind, ref: string): Promise<CardInput |
   if (kind === "run") return runInput(ctx, ref);
   if (kind === "map") return mapCardInput(ctx, ref);
   if (kind === "audit") return ref === "" ? auditCardInput(ctx) : undefined;
+  if (kind === "site") return ref === "" ? SITE_CARD : undefined;
   if (kind === "repo") return repoCard(ctx, ref);
   if (!isSlug(ref)) return undefined;
   const record = getAppBySlug(db, ref);

@@ -65,9 +65,9 @@ export interface PageOptions {
   /**
    * This page's link-preview card, a same-origin path such as
    * `/og/audit.png` (`pages/og.ts`). Only for a page whose card answers a
-   * signed-out unfurler; absent, the forge's icon stands in.
+   * signed-out unfurler; absent, the forge's own card (`/og/site.png`) stands in.
    */
-  ogImage?: string;
+  ogImage?: string | undefined;
   /** This page's feed, advertised in the head so a reader can find it. */
   feed?: { href: string; title: string };
   /** Breadcrumb segments rendered in the topbar, e.g. owner / repo. */
@@ -605,21 +605,17 @@ export function page(options: PageOptions, status = 200): Response {
               />`
             : null
         }
-        ${
-          options.ogImage !== undefined && options.ogImage.startsWith("/og/")
-            ? html`<meta
-                  property="og:image"
-                  content="${ctx.url.origin}${options.ogImage}"
-                />
-                <meta property="og:image:width" content="1200" />
-                <meta property="og:image:height" content="630" />
-                <meta name="twitter:card" content="summary_large_image" />`
-            : html`<meta
-                  property="og:image"
-                  content="${ctx.url.origin}/icons/forge-512.png"
-                />
-                <meta name="twitter:card" content="summary" />`
-        }
+        <meta
+          property="og:image"
+          content="${ctx.url.origin}${
+            options.ogImage !== undefined && options.ogImage.startsWith("/og/")
+              ? options.ogImage
+              : "/og/site.png"
+          }"
+        />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:card" content="summary_large_image" />
         <link rel="manifest" href="/manifest.webmanifest" />
         ${links.map(
           (l) =>

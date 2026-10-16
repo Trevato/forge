@@ -1172,6 +1172,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/og/run/:ref.png", ogCard("run", "png"));
   router.add("GET", "/og/map/:ref.png", ogCard("map", "png"));
   router.add("GET", "/og/audit.png", ogCard("audit", "png"));
+  router.add("GET", "/og/site.svg", ogCard("site"));
+  router.add("GET", "/og/site.png", ogCard("site", "png"));
   // The pictures of an environment, read like the repository.
   router.add("GET", "/:owner/:name/looks/:env/:commit/:kind.png", lookImage);
 

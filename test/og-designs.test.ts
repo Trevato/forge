@@ -347,7 +347,7 @@ describe("over HTTP", () => {
     const audit = await (await get("/audit")).text();
     expect(audit).toContain(`content="${base}/og/audit.png"`);
     const home = await (await get("/")).text();
-    expect(home).toContain("/icons/forge-512.png");
-    expect(home).not.toContain("summary_large_image");
+    expect(home).toContain(`content="${base}/og/site.png"`);
+    expect(home).toContain(`content="summary_large_image"`);
   });
 });

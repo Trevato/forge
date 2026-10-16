@@ -8,6 +8,7 @@
  * one closed Details section.
  */
 
+import { cardPath } from "../og/path.ts";
 import { mayEditIssue } from "../../actions/issues.ts";
 import { marksByName } from "../../core/marks.ts";
 import { threadNote } from "../../crew/direct.ts";
@@ -420,6 +421,7 @@ async function studioTell(
   return page({
     ctx,
     title: `${issue.title} · ${repo.name}`,
+    ogImage: cardPath("issue", repo, issue),
     description: threadLine({
       private: repo.visibility === "private" || issue.sealed,
       word: wordInfo?.word ?? (issue.state === "open" ? "open" : "closed"),

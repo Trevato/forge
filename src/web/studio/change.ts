@@ -9,6 +9,7 @@
  * bigger.
  */
 
+import { cardPath } from "../og/path.ts";
 import { pullProposalOf } from "../../core/proposal_token.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { mayEditIssue } from "../../actions/issues.ts";
@@ -622,6 +623,7 @@ async function changeConversation(
   return page({
     ctx,
     title: `${pull.title} · ${repo.name}`,
+    ogImage: cardPath("pull", repo, pull),
     description: threadLine({
       private: repo.visibility === "private",
       word,
