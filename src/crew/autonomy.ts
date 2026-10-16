@@ -1085,6 +1085,14 @@ export async function autonomyTick(
   for (const repo of listAutonomousRepos(app.db)) {
     try {
       void startSweep(app, repo, sweep);
+      // Quick, and before the picks: a pull main moved under is brought up
+      // to date within this tick, not after a landing gate (#2039).
+      await sweepConflicts(app, repo).catch((error) =>
+        log.error("conflict sweep failed", {
+          repo: `${repo.ownerName}/${repo.name}`,
+          error: String(error),
+        }),
+      );
       const current = getRepoById(app.db, repo.id) ?? repo;
       const did = await driveRepo(app, current, now);
       // Every tick says what it did and why, so an app that sits still is
@@ -1218,6 +1226,163 @@ function mergeWhy(error: AccessError | MergePullError): string {
   }
 }
 
+/** Pull id → the tips git last read, and the files in conflict (null: clean). */
+const checked = new Map<
+  string,
+  { head: string; key: string; files: string[] | null }
+>();
+/** Pull id → when the sweep last saw it merge cleanly. */
+const cleanAt = new Map<string, string>();
+
+/**
+ * Where this conflict began counting: a person's last word, or the last
+ * time the pull was seen clean. After a restart nothing is remembered, so a
+ * run that ended well is taken as the end of the episode before it. A
+ * finished run in the episode that left the pull conflicted is a failed
+ * attempt, whatever state it ended in.
+ */
+function conflictEpisodeStart(app: App, issue: Issue, pullId: string): string {
+  const agent = agentFor(app, issue);
+  let start = agent ? lastHumanWord(app, issue, agent) : issue.createdAt;
+  const clean = cleanAt.get(pullId);
+  if (clean !== undefined) {
+    if (clean > start) start = clean;
+  } else {
+    const ended = app.db
+      .query<{ at: string | null }, [string]>(
+        `SELECT MAX(finished_at) AS at FROM run
+          WHERE kind = 'agent' AND reason = 'conflict' AND issue_id = ?1 AND state = 'ok'`,
+      )
+      .get(pullId)?.at;
+    if (ended != null && ended > start) start = ended;
+  }
+  return start;
+}
+
+/** How long a conflicted pull may wait to be brought up to date. */
+const CONFLICT_LIMIT_MS = 24 * 3_600_000;
+
+/**
+ * Close a pull the crew could not bring up to date, and put its issues back
+ * on the map unassigned with the conflict named. Unlike `parkPull` it is
+ * main that moved, not the builder that failed: the note is not a park, so
+ * it is never a strike against the issue or the builder.
+ */
+export function releaseConflicted(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+  why: string,
+  files: readonly string[],
+): boolean {
+  if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
+  if (getHold(app.db, pull.id) !== undefined) return false;
+  const by = getUserById(app.db, repo.autonomyBy);
+  const issue = getIssueById(app.db, pull.id);
+  if (!by || !issue || issue.state !== "open") return false;
+  const named = files.length > 0 ? ` Conflicting files: ${files.join(", ")}.` : "";
+  addComment(app, by, repo, issue, `Closed by the crew: ${why}.${named}`);
+  const closed = setIssueState(app, by, repo, issue, "closed", {
+    reason: "parked",
+  });
+  if (!closed.ok) return false;
+  for (const number of closesFromBody(pull.body)) {
+    const about = getIssue(app.db, repo.id, number);
+    if (!about || about.state !== "open") continue;
+    if (about.assigneeId !== null) assignIssue(app, by, repo, about, null);
+    addComment(
+      app,
+      by,
+      repo,
+      about,
+      `Ready again: pull #${pull.number} was closed because main moved under it and it could not be brought up to date.${named}`,
+    );
+  }
+  log.info("conflicted pull released", {
+    repo: `${repo.ownerName}/${repo.name}`,
+    pull: pull.number,
+    why,
+  });
+  return true;
+}
+
+/**
+ * Every tick, each open crew pull that no longer merges gets a
+ * bring-up-to-date run (one in flight per pull). After two finished
+ * attempts, or 24 h since the first, it is closed and its issue is ready
+ * again. Returns how many pulls were acted on.
+ */
+export async function sweepConflicts(app: App, repo: Repo): Promise<number> {
+  if (repo.autonomy !== "autonomous") return 0;
+  let acted = 0;
+  // Forget pulls that are no longer open: closed, merged or released.
+  for (const id of new Set([...checked.keys(), ...cleanAt.keys()]))
+    if (getIssueById(app.db, id)?.state !== "open") {
+      checked.delete(id);
+      cleanAt.delete(id);
+    }
+  for (const pull of listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 })) {
+    if (!pull.authorIsAgent || pull.mergedAt !== null) continue;
+    if (getHold(app.db, pull.id) !== undefined) continue;
+    const dir = await pullDir(app.db, app.reposRoot, repo, pull);
+    const baseTip = await resolveOid(dir, `refs/heads/${pull.baseBranch}`);
+    if (baseTip === undefined) continue;
+    // Git is asked once per pair of tips; until one moves, the answer stands.
+    const key = `${pull.headOid}:${baseTip}`;
+    let seen = checked.get(pull.id);
+    // The head moved since the last read: the builder pushed (or a person
+    // did), so what was tried before belongs to an earlier episode.
+    if (seen !== undefined && seen.head !== pull.headOid)
+      cleanAt.set(pull.id, new Date().toISOString());
+    if (seen?.key !== key) {
+      const reading = await mergeable(dir, baseTip, pull.headOid);
+      seen = {
+        head: pull.headOid,
+        key,
+        files: reading.ok
+          ? null
+          : reading.error.kind === "conflict"
+            ? reading.error.files
+            : null,
+      };
+      checked.set(pull.id, seen);
+    }
+    if (seen.files === null) {
+      // Merges cleanly: whatever came before was a different episode.
+      cleanAt.set(pull.id, new Date().toISOString());
+      continue;
+    }
+    const files = seen.files;
+    const issue = getIssueById(app.db, pull.id);
+    if (!issue || issue.state !== "open") continue;
+    if (activeRunFor(app.db, "agent", issue.id) !== undefined) continue;
+    const since = conflictEpisodeStart(app, issue, pull.id);
+    const runs = app.db
+      .query<{ n: number; first: string | null }, [string, string]>(
+        `SELECT COUNT(*) AS n, MIN(created_at) AS first FROM run
+          WHERE kind = 'agent' AND reason = 'conflict' AND issue_id = ?1
+            AND created_at > ?2 AND state IN ('ok','failed')`,
+      )
+      .get(pull.id, since);
+    const aged =
+      runs?.first != null &&
+      Date.now() - Date.parse(runs.first) >= CONFLICT_LIMIT_MS;
+    if ((runs?.n ?? 0) >= CHECK_FAILED_LIMIT || aged) {
+      const why = aged
+        ? "main moved under it and the branch was not brought up to date within 24 hours"
+        : `main moved under it and ${runs?.n} attempts to bring the branch up to date failed`;
+      if (releaseConflicted(app, repo, pull, why, files)) {
+        acted++;
+        checked.delete(pull.id);
+        cleanAt.delete(pull.id);
+      }
+      continue;
+    }
+    if (bringUpToDate(app, repo, pull, files, since) !== undefined) acted++;
+  }
+  return acted;
+}
+
 /**
  * Queue one run for the pull's agent to merge main into its branch. One
  * waiting is enough, and the automatic tries since a person last spoke
@@ -1229,6 +1394,7 @@ export function bringUpToDate(
   repo: Repo,
   pull: Pull,
   files: readonly string[],
+  episodeStart = "",
 ): string | undefined {
   const issue = getIssueById(app.db, pull.id);
   if (!issue || issue.state !== "open") return undefined;
@@ -1239,15 +1405,18 @@ export function bringUpToDate(
   const tries = automaticRunsSince(
     app.db,
     issue.id,
-    lastHumanWord(app, issue, agent),
+    episodeStart > lastHumanWord(app, issue, agent)
+      ? episodeStart
+      : lastHumanWord(app, issue, agent),
   );
   if (tries >= CHECK_FAILED_LIMIT) {
-    // Autonomous: parked, never waiting. Assisted: the person's word.
-    parkPull(
+    // Autonomous: closed, never waiting. Assisted: the person's word.
+    releaseConflicted(
       app,
       repo,
       pull,
-      `main moved under it ${tries} times and the branch could not be brought up to date (${files.join(", ")})`,
+      `main moved under it ${tries} times and the branch could not be brought up to date`,
+      files,
     );
     return undefined;
   }

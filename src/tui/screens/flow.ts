@@ -7,6 +7,7 @@
  */
 
 import type { Database } from "bun:sqlite";
+import { conflictedPulls, conflictedSays } from "../../flow/conflicted.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
 import { readThroughput, stageOut, throughputSays } from "../../flow/throughput.ts";
 import type { Ctx, Screen } from "../app/app.ts";
@@ -21,6 +22,7 @@ export function flowLines(db: Database, now = new Date()): string[] {
   const stages = readPipeline(db, now);
   const flow = readThroughput(db, stages.map((s) => s.key), now);
   const inner = WIDTH - 6;
+  const conflicted = conflictedSays(conflictedPulls(db), now.getTime());
   return [
     ...wrap(verdict(stages, now.getTime()), inner),
     "",
@@ -31,6 +33,7 @@ export function flowLines(db: Database, now = new Date()): string[] {
       (s) =>
         `${pad(STAGE_LABEL[s.key], 12)} ${pad(String(s.lastHour), 9, "right")} ${pad(String(s.day), 5, "right")}  ${s.label}`,
     ),
+    ...(conflicted === null ? [] : ["", ...wrap(conflicted, inner)]),
   ];
 }
 

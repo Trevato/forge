@@ -14,6 +14,7 @@
  * items it counted under the table.
  */
 
+import { conflictedPulls, conflictedSays } from "../../flow/conflicted.ts";
 import {
   bottleneck,
   readPipeline,
@@ -99,6 +100,7 @@ export function flowPage(ctx: Ctx): Response {
   const flow = readThroughput(ctx.app.db, stages.map((s) => s.key), new Date(now));
   const out = new Map(flow.stages.map((t) => [t.key, t]));
   const landed = out.get("approved");
+  const conflicted = conflictedSays(conflictedPulls(ctx.app.db), now);
   const listed = asked(ctx.url);
   const shown = listed === null ? undefined : out.get(listed.key);
   const body = html`<div class="page-head">
@@ -114,6 +116,7 @@ export function flowPage(ctx: Ctx): Response {
     <p id="bottleneck" data-stage="${worst?.key ?? ""}">
       <strong>${verdict(stages, now)}</strong>
     </p>
+    ${conflicted === null ? "" : html`<p id="conflicted">${conflicted}</p>`}
     <p id="throughput">
       landed
       <a href="${outHref("approved", 0)}" data-landed-hour>${String(landed?.hours[0] ?? 0)}</a>

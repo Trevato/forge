@@ -21,6 +21,7 @@ import { voteVariant } from "../actions/variants.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { listAccess } from "../actions/access_log.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
+import { conflictedPulls, conflictedSays } from "../flow/conflicted.ts";
 import { readPipeline, verdict } from "../flow/pipeline.ts";
 import { readThroughput, stageOut, throughputSays } from "../flow/throughput.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
@@ -2047,7 +2048,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "flow",
     description:
-      "The forge's pipeline, for a forge admin: ready, building, check queue, checking, review, approved, landed and live, each with how many wait, how many are being worked, when the oldest waiting one entered (oldestWaiting) and what limits it (capacity), and one sentence (says) naming the stage whose oldest has waited longest — the bottleneck. Beside it, throughput: per stage how many left it in the last hour (lastHour), in 24 hours (day) and in each of the last 24 hours (hours, 0 the last), the median ask→live in ms over the last 24 hours, and its own sentence (says). Read-only; the knobs are the `capacity` tool. The same as /flow.",
+      "The forge's pipeline, for a forge admin: ready, building, check queue, checking, review, approved, landed and live, each with how many wait, how many are being worked, when the oldest waiting one entered (oldestWaiting) and what limits it (capacity), and one sentence (says) naming the stage whose oldest has waited longest — the bottleneck. Beside it, throughput: per stage how many left it in the last hour (lastHour), in 24 hours (day) and in each of the last 24 hours (hours, 0 the last), the median ask→live in ms over the last 24 hours, and its own sentence (says). Also `conflicted`: pulls main moved under that the crew is bringing up to date, oldest first, with a sentence (says). Read-only; the knobs are the `capacity` tool. The same as /flow.",
     inputSchema: { type: "object", properties: {} },
     writes: false,
     run(ctx, user) {
@@ -2056,8 +2057,13 @@ const TOOLS: readonly Tool[] = [
       const now = new Date();
       const stages = readPipeline(ctx.app.db, now);
       const flow = readThroughput(ctx.app.db, stages.map((s) => s.key), now);
+      const conflicted = conflictedPulls(ctx.app.db);
       return good({
         says: verdict(stages, now.getTime()),
+        conflicted: {
+          says: conflictedSays(conflicted, now.getTime()),
+          pulls: conflicted,
+        },
         stages,
         throughput: {
           says: throughputSays(flow),
