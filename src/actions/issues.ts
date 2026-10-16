@@ -20,6 +20,7 @@
 
 import { canSeeSealed, mayView, setSealed } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
+import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
 import { crewRole, isCrew } from "../core/agents.ts";
 import { moveBlockersToChildren } from "../core/dependencies.ts";
@@ -294,7 +295,7 @@ export function assignIssue(
   variantGroup?: string,
 ): Result<
   Issue,
-  AccessError | "assignee_cannot_read" | "agent_not_on_crew" | "unverified"
+  AccessError | "assignee_cannot_read" | "agent_not_on_crew" | "unverified" | "not_member"
 > {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
@@ -312,6 +313,9 @@ export function assignIssue(
     // A run costs: only a proven account may start one.
     if (assignee.kind === "agent" && !requireVerified(app, writer.value).ok)
       return err("unverified");
+    // ...and only a member's allowance pays for it.
+    if (assignee.kind === "agent" && !requireAbility(app, writer.value, "run_crew").ok)
+      return err("not_member");
   }
   const updated = setAssignee(app.db, issue.id, assignee?.id ?? null);
   if (!updated) return ok(issue);

@@ -5,6 +5,7 @@
  * came from. The doors only word the answer.
  */
 
+import { NOT_A_MEMBER } from "../core/roles.ts";
 import type { App } from "../app.ts";
 import { DIRECTION_NOTE } from "../crew/direct.ts";
 import { convergeFork, type Converge } from "../crew/converge.ts";
@@ -104,6 +105,8 @@ export function convergeWords(
       };
     case "forbidden":
       return { tone: "danger", message: DIRECTION_NOTE };
+    case "not_member":
+      return { tone: "danger", message: `Not started: ${NOT_A_MEMBER}.` };
     case "ceiling":
       return {
         tone: "danger",

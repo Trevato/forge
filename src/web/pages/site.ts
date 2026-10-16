@@ -8,6 +8,7 @@
  * typed still in it. A dead end that loses input is a bug, not a message.
  */
 
+import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { limitValue } from "../../settings/limits.ts";
 import { signOutHere } from "../../actions/signins.ts";
@@ -740,6 +741,7 @@ export async function newRepoSubmit(ctx: Ctx): Promise<Response> {
     if (created.error === "forbidden_owner" || created.error === "unauthorized")
       return new Response("forbidden", { status: 403 });
     const messages: Record<string, string> = {
+      not_member: `Not made: ${NOT_A_MEMBER}.`,
       repository_limit: `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user)}.`,
       storage_limit: `Not made: ${storageLimitMessage(ctx.app, resolveOwner(ctx.app, ctx.auth.user, values.owner) ?? ctx.auth.user.id)}.`,
       name_taken: "That owner already has a repository by that name.",

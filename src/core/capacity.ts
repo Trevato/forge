@@ -21,7 +21,8 @@ export type CapacityKey =
   | "checks.shards"
   | "children.max"
   | "cells.egress"
-  | "guard_new_accounts";
+  | "guard_new_accounts"
+  | "guard_guests";
 
 interface Definition {
   /** What the settings page and the API call it. */
@@ -79,6 +80,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "choice", values: ["on", "off"] },
     fallback: "off",
     help: "on refuses repository creation and forks for accounts younger than 7 days (agents and admins are exempt); off leaves it to the usual permissions. Takes effect immediately. Replaces the hand-installed database trigger that used to do this with no toggle.",
+  },
+  "guard_guests": {
+    label: "Guest guard",
+    env: "FORGE_GUARD_GUESTS",
+    kind: { type: "choice", values: ["on", "off"] },
+    fallback: "on",
+    help: "on refuses a guest — an account the owner has not made a member — creating a repository, making an app their own, or starting a crew run; off leaves it to the usual permissions. Takes effect immediately.",
   },
 };
 

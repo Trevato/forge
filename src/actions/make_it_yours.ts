@@ -41,6 +41,8 @@ import {
 } from "../core/repos.ts";
 import { isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { requireVerified } from "./verify.ts";
+import { requireAbility } from "./roles.ts";
 import { requireAppRoom, appLimitWords } from "./app_limit.ts";
 import { enableApp } from "./apps.ts";
 import { FORKS_PER_DAY, forkRepo, repositoryLimitMessage } from "./repos.ts";
@@ -67,6 +69,8 @@ export type MakeItYoursError =
   | { readonly kind: "not_found" }
   | { readonly kind: "unauthorized" }
   | { readonly kind: "unverified" }
+  /** A guest: the owner has not made this account a member. */
+  | { readonly kind: "not_member" }
   | { readonly kind: "own" }
   /** Today's copies are made; another may be made from `resetsAt`. */
   | { readonly kind: "limit"; readonly resetsAt: string }
@@ -149,6 +153,10 @@ export async function makeItYours(
       message: "an agent does not make apps its own",
     });
   if (source.ownerId === actor.id) return err({ kind: "own" });
+  // The older refusals have spoken; what is left is the role. An account
+  // that is unverified and a guest is told to verify first.
+  if (!requireAbility(app, actor, "make_it_yours").ok)
+    return err({ kind: requireVerified(app, actor).ok ? "not_member" : "unverified" });
   const dryRun = input.dryRun !== false;
   const name = input.name?.trim() || source.name;
   const visibility = input.visibility ?? "private";
@@ -226,6 +234,8 @@ export async function makeItYours(
         return err({ kind: "unauthorized" });
       case "unverified":
         return err({ kind: "unverified" });
+      case "not_member":
+        return err({ kind: "not_member" });
       case "name_taken":
         return err({
           kind: "invalid",

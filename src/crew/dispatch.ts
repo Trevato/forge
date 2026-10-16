@@ -53,6 +53,7 @@ import {
   type Run,
 } from "../core/runs.ts";
 import { getUserById, type User } from "../core/users.ts";
+import { lacks } from "../core/roles.ts";
 import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
@@ -289,6 +290,10 @@ export function queueAgentRun(
 ): Run | undefined {
   // A suspended or removed owner's repositories run nothing, whoever asks.
   if (!accountActive(app.db, repo.ownerId)) return undefined;
+  // A guest's word starts no run (a comment is still a comment); the
+  // actions that start one by name refuse out loud before they get here.
+  const asker = actorId === undefined ? undefined : getUserById(app.db, actorId);
+  if (asker !== undefined && lacks(app.db, asker, "run_crew")) return undefined;
   // The day's ceiling gates every run the crew starts on its own, not only
   // the picks: a review, a feedback run or a conflict run past the ceiling
   // is money the person did not agree to. A person's own assignment is not

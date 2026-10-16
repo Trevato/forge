@@ -7,6 +7,7 @@
  * of them. Nothing here knows about repos or issues — that is the point.
  */
 
+import { NOT_A_MEMBER } from "../../core/roles.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
 import type { KeyEvent } from "../term/input.ts";
@@ -814,6 +815,7 @@ export function slug(path: string): string {
 // ---- errors and time ----
 
 const MESSAGES: Record<string, string> = {
+  not_member: NOT_A_MEMBER,
   not_found: "not found",
   signup_closed: SIGNUP_CLOSED_MESSAGE,
   human_check: "we could not tell you are a person; sign up on the web page",

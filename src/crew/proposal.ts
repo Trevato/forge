@@ -6,6 +6,7 @@
  * the resolution to the branch and its report becomes the note on the pull.
  */
 
+import { requireAbility } from "../actions/roles.ts";
 import type { App } from "../app.ts";
 import { getIssueById, listComments } from "../core/issues.ts";
 import { pullDir, pullStatus, type Pull } from "../core/pulls.ts";
@@ -25,6 +26,7 @@ export type ProposeError =
   | "no_conflict"
   | "no_agent"
   | "busy"
+  | "not_member"
   | "not_queued";
 
 /** What the brief carries at most: a hand's worth, never a whole history. */
@@ -47,6 +49,7 @@ export async function proposeResolution(
 ): Promise<Result<Run, ProposeError>> {
   if (!canWrite(app.db, repo, actor)) return err("forbidden");
   if (pull.state !== "open") return err("not_open");
+  if (actor !== undefined && !requireAbility(app, actor, "run_crew").ok) return err("not_member");
   const issue = getIssueById(app.db, pull.id);
   const agent = issue === undefined ? undefined : agentFor(app, issue);
   if (issue === undefined || agent === undefined) return err("no_agent");
@@ -214,6 +217,7 @@ export const PROPOSE_WHY: Record<ProposeError, string> = {
   no_conflict: "That pull has no conflicts to resolve.",
   no_agent: "No agent holds this pull, so the crew has no hand to ask.",
   busy: "The crew is already working on this pull.",
+  not_member: "Starting a run is for members: the owner has not made this account a member.",
   not_queued: "The crew could not take it on right now (its ceiling or breaker); try again later.",
 };
 

@@ -6,6 +6,7 @@
 
 import { bodyCapFor, readBounded } from "./limits.ts";
 import { scopeAllows, type TokenScope } from "../core/tokens.ts";
+import { NOT_A_MEMBER } from "../core/roles.ts";
 import { NEW_ACCOUNT_GUARD_MESSAGE } from "../core/capacity.ts";
 import type { User } from "../core/users.ts";
 import { crossOrigin, type Ctx } from "./context.ts";
@@ -154,6 +155,8 @@ export function respondAccess(error: string, status: number): Response {
   // clients see no difference between the trigger and the setting.
   if (error === "refused")
     return json({ error, message: NEW_ACCOUNT_GUARD_MESSAGE }, 403);
+  if (error === "not_member")
+    return json({ error, message: NOT_A_MEMBER }, 403);
   if (error === "unauthorized") return unauthorized();
   if (error === "forbidden") return forbidden();
   return json({ error }, status);

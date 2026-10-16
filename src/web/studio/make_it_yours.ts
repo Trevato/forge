@@ -18,6 +18,7 @@ import { field, readForm } from "../form.ts";
 import { html, when } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
 import { btn, card } from "../ui.ts";
+import { NOT_A_MEMBER } from "../../core/roles.ts";
 
 // GET /:owner/:name/make-it-yours
 export async function makeItYoursPage(ctx: Ctx): Promise<Response> {
@@ -39,7 +40,9 @@ export async function makeItYoursPage(ctx: Ctx): Promise<Response> {
       message:
         plan.error.kind === "invalid"
           ? plan.error.message
-          : "That could not be made yours.",
+          : plan.error.kind === "not_member"
+            ? `Not for this account: ${NOT_A_MEMBER}.`
+            : "That could not be made yours.",
     });
   }
   const p = plan.value;
@@ -130,6 +133,8 @@ export async function makeItYoursSubmit(ctx: Ctx): Promise<Response> {
         ? made.error.message
         : made.error.kind === "repository_limit" || made.error.kind === "storage_limit"
           ? `Not made: ${made.error.message}.`
+        : made.error.kind === "not_member"
+          ? `Not made: ${NOT_A_MEMBER}.`
         : made.error.kind === "own"
           ? "This app is already yours."
           : made.error.kind === "unverified"

@@ -1,15 +1,21 @@
 /**
  * Promote a guest to member, or demote a member, with a starter model
  * allowance on the way up. A forge admin who is a person only; the change is
- * an event on the outbox. Records the role; refuses nothing because of it.
+ * an event on the outbox. `requireAbility` is the one place the other actions
+ * ask what a role may do, after every older refusal has had its say.
  */
 
 import type { App } from "../app.ts";
 import { setModelGrant, validGrant } from "../core/model_grant.ts";
-import { roleOf, setMember } from "../core/roles.ts";
+import { lacks, roleOf, setMember, type Ability } from "../core/roles.ts";
 import { getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireUser } from "./access.ts";
+
+/** `user` unless the table withholds `ability` from their role: then `not_member`. */
+export function requireAbility(app: App, user: User, ability: Ability): Result<User, "not_member"> {
+  return lacks(app.db, user, ability) ? err("not_member") : ok(user);
+}
 
 export type RoleError = "not_found" | "not_allowed" | "invalid_amount";
 

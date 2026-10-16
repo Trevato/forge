@@ -9,7 +9,7 @@
  */
 
 import { setRole } from "../actions/roles.ts";
-import { listPeople } from "../core/roles.ts";
+import { listPeople, NOT_A_MEMBER } from "../core/roles.ts";
 import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
 import { storageLimitMessage } from "../core/storage.ts";
 import { voteVariant } from "../actions/variants.ts";
@@ -2278,7 +2278,7 @@ export function apiRoutes(router: Router<Handler>): void {
             ? 200
             : outcome.kind === "ceiling"
               ? 429
-              : outcome.kind === "nobody" || outcome.kind === "forbidden"
+              : outcome.kind === "nobody" || outcome.kind === "forbidden" || outcome.kind === "not_member"
                 ? 403
                 : 409;
       return json(
@@ -4487,6 +4487,8 @@ export function apiRoutes(router: Router<Handler>): void {
         ? apiError("repository_limit", 403, made.error.message)
         : made.error.kind === "storage_limit"
         ? apiError("storage_limit", 403, made.error.message)
+        : made.error.kind === "not_member"
+        ? apiError("not_member", 403, NOT_A_MEMBER)
         : made.error.kind === "invalid"
         ? apiError("invalid", 422, made.error.message)
         : made.error.kind === "own"

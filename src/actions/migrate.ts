@@ -17,6 +17,7 @@
  * thing: make it run here, adapting rather than rewriting.
  */
 
+import { NOT_A_MEMBER } from "../core/roles.ts";
 import { requireVerified } from "./verify.ts";
 import type { App } from "../app.ts";
 import { getAgentByName } from "../core/agents.ts";
@@ -197,6 +198,8 @@ export function migrateMessage(error: MigrateError, limit = "at the repositories
       return "Verify your email first: follow the link we sent, or ask for another under Settings.";
     case "refused":
       return "New accounts cannot create repositories yet.";
+    case "not_member":
+      return `Not made: ${NOT_A_MEMBER}.`;
     case "repository_limit":
       return `Not made: ${limit}.`;
     case "storage_limit":

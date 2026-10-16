@@ -8,6 +8,7 @@
  * path segment and can never smuggle a path of its own.
  */
 
+import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
 import { canRead, listForks, type Repo } from "../../core/repos.ts";
 import { FORKS_PER_DAY, forkRepo, repositoryLimitMessage } from "../../actions/repos.ts";
@@ -196,6 +197,8 @@ export async function forkSubmit(ctx: Ctx): Promise<Response> {
     const reason =
       forked.error === "name_taken"
         ? "You already have a repository by that name."
+        : forked.error === "not_member"
+        ? `Not made: ${NOT_A_MEMBER}.`
         : forked.error === "repository_limit"
         ? `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user)}.`
         : forked.error === "storage_limit"

@@ -17,6 +17,7 @@
  * no page. `ro` tokens read; `rw` tokens act.
  */
 
+import { NOT_A_MEMBER } from "../core/roles.ts";
 import { voteVariant } from "../actions/variants.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { listAccess } from "../actions/access_log.ts";
@@ -1450,6 +1451,7 @@ const TOOLS: readonly Tool[] = [
         return bad("not_a_fork", "this repository follows nothing");
       const outcome = await convergeFork(ctx.app, repo, parent, user);
       if (outcome.kind === "forbidden") return bad("forbidden", DIRECTION_NOTE);
+      if (outcome.kind === "not_member") return bad("not_member", NOT_A_MEMBER);
       return good({
         kind: outcome.kind,
         issue: "issue" in outcome ? outcome.issue.number : null,
@@ -1702,6 +1704,8 @@ const TOOLS: readonly Tool[] = [
           ? bad("invalid", made.error.message)
           : made.error.kind === "own"
             ? bad("own", "this app is already yours")
+            : made.error.kind === "not_member"
+              ? bad("not_member", NOT_A_MEMBER)
             : made.error.kind === "unverified"
               ? bad("unverified", "prove your email first")
               : bad("not_found", "no such app or repository (owner/name)");
@@ -2342,7 +2346,7 @@ const TOOLS: readonly Tool[] = [
       properties: {
         key: {
           type: "string",
-          enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress", "guard_new_accounts"],
+          enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress", "guard_new_accounts", "guard_guests"],
         },
         value: { type: "string", maxLength: 16 },
         dryRun: { type: "boolean", description: "Plan only (the default). Send false to change it." },

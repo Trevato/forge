@@ -10,6 +10,7 @@
  * to.
  */
 
+import { NOT_A_MEMBER } from "../core/roles.ts";
 import { holdOpen } from "../http/caller.ts";
 import { join } from "node:path";
 import type { App as Forge } from "../app.ts";
@@ -262,6 +263,10 @@ export async function serveGitCommand(
       session.writeStderr(
         `forge: ${storageRefusedText(storageSentence(forge, ownerId) ?? "at the limit")}${CRLF}`,
       );
+      session.exit(1);
+      return;
+    } else if (created.error === "not_member") {
+      session.writeStderr(`forge: Not made: ${NOT_A_MEMBER}${CRLF}`);
       session.exit(1);
       return;
     } else if (created.error === "repository_limit") {

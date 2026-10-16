@@ -10,6 +10,7 @@
 
 import { mayViewId } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
+import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
 import { steerRun } from "../crew/runner.ts";
 import { getIssueById } from "../core/issues.ts";
@@ -200,7 +201,7 @@ export function requeueRepoRun(
   actor: User | undefined,
   repo: Repo,
   runId: string,
-): Result<Run, AccessError | "not_agent" | "not_finished" | "no_task" | "not_queued"> {
+): Result<Run, AccessError | "not_agent" | "not_finished" | "no_task" | "not_queued" | "not_member"> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
   // A run costs money; like assigning, queueing one is a person's call.
@@ -208,6 +209,8 @@ export function requeueRepoRun(
   const run = getRun(app.db, runId);
   if (!run || run.repoId !== repo.id) return err("not_found");
   if (run.kind !== "agent") return err("not_agent");
+  const member = requireAbility(app, writer.value, "run_crew");
+  if (!member.ok) return member;
   if (run.state !== "cancelled" && run.state !== "failed")
     return err("not_finished");
   const task = taskOf(app, run);

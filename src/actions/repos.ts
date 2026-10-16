@@ -5,6 +5,7 @@
  */
 
 import { requireVerified } from "./verify.ts";
+import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
 import { canSeeSealed } from "../core/sealed.ts";
 import { capacityValue } from "../core/capacity.ts";
@@ -72,6 +73,7 @@ export type CreateRepoActionError =
   | "unauthorized"
   | "forbidden_owner"
   | "refused"
+  | "not_member"
   | "repository_limit"
   | "storage_limit";
 
@@ -142,6 +144,8 @@ export async function createRepo(
   if (user.value.kind === "agent") return err("forbidden_owner");
   const guarded = requireNewAccountGuard(app, user.value);
   if (!guarded.ok) return guarded;
+  const member = requireAbility(app, user.value, "make_it_yours");
+  if (!member.ok) return member;
   const ownerId = resolveOwner(app, user.value, input.owner ?? "");
   if (ownerId === undefined) return err("forbidden_owner");
   if (ownerId === user.value.id && repositoryLimitRefusal(app, user.value) !== undefined)
@@ -179,13 +183,15 @@ export async function forkRepo(
   parent: Repo,
   name?: string,
   options: { visibility?: "public" | "private"; now?: number } = {},
-): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified" | "refused" | "repository_limit" | "storage_limit">> {
+): Promise<Result<Repo, ForkRepoError | "not_found" | "unauthorized" | "unverified" | "refused" | "not_member" | "repository_limit" | "storage_limit">> {
   const user = requireParticipant(app, actor, parent);
   if (!user.ok) return user;
   const proven = requireVerified(app, user.value);
   if (!proven.ok) return proven;
   const guarded = requireNewAccountGuard(app, user.value);
   if (!guarded.ok) return guarded;
+  const member = requireAbility(app, user.value, "make_it_yours");
+  if (!member.ok) return member;
   if (repositoryLimitRefusal(app, user.value) !== undefined) return err("repository_limit");
   if ((await storageRefusal(app, user.value, user.value.id)) !== undefined)
     return err("storage_limit");

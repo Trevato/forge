@@ -18,6 +18,8 @@ import { ensureDirectionIssue } from "../crew/autonomy.ts";
 import { queueAgentRun } from "../crew/dispatch.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { MAX_BODY } from "../core/issues.ts";
+import { NOT_A_MEMBER } from "../core/roles.ts";
+import { requireAbility } from "./roles.ts";
 import { assignIssue, addComment } from "./issues.ts";
 import { openPlan, parsePlan, type Planned } from "./plan.ts";
 
@@ -90,6 +92,8 @@ export function redirectProposal(
   const found = mine(app, actor, id, ["pending", "later"]);
   if (!found.ok) return found;
   const { proposal, repo } = found.value;
+  // The run it starts is a member's: refused before anything is written.
+  if (!requireAbility(app, found.value.actor, "run_crew").ok) return fail("forbidden", NOT_A_MEMBER);
   const planner = listCrewRoles(app.db, repo.id).find((c) => c.role === "planner")?.agent;
   if (planner === undefined) return fail("invalid", "no planner on this crew to hand it to");
   const direction = ensureDirectionIssue(app, found.value.actor, repo);

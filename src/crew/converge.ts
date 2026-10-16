@@ -14,6 +14,7 @@
  * Nothing here ever moves the fork's default branch by itself.
  */
 
+import { requireAbility } from "../actions/roles.ts";
 import { mayDirectCrew } from "./direct.ts";
 import type { App } from "../app.ts";
 import { openIssue } from "../actions/issues.ts";
@@ -67,6 +68,8 @@ export type Converge =
   | { kind: "nobody" }
   /** The person asking may not direct the crew here (`direct.ts`). */
   | { kind: "forbidden" }
+  /** A guest: the run is a member's to start, refused before anything is written. */
+  | { kind: "not_member" }
   | { kind: "ceiling" };
 
 /** The fork's open converge issue, if the parent's updates are in hand. */
@@ -144,6 +147,8 @@ export async function convergeFork(
   // fork's own autonomy, which its owner turned on.
   if (actor !== undefined && !mayDirectCrew(app.db, fork, actor))
     return { kind: "forbidden" };
+  if (actor !== undefined && !requireAbility(app, actor, "run_crew").ok)
+    return { kind: "not_member" };
   const relation = await forkRelation(app, fork, parent);
   if (relation === undefined || relation.state !== "diverged" || relation.clean)
     return { kind: "nothing", relation };

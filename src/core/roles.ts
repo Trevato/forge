@@ -2,11 +2,13 @@
  * Roles: an account is a guest, a member or an admin. Admin is the `is_admin`
  * flag, a member is a row in `member`, everyone else is a guest. `CAN` is the
  * one table of what each role may do; `docs/ROLES.md` repeats it and a test
- * fails when they differ. Part 1 records and shows roles — nothing is
- * refused because of one yet. Pure data; who may promote is the action's.
+ * fails when they differ. A guest is refused what the table withholds:
+ * owning a repository, making an app one's own, starting a run
+ * (`requireAbility` in `actions/roles.ts`). Pure data; who may promote is the action's.
  */
 
 import type { Database } from "bun:sqlite";
+import { capacityValue } from "./capacity.ts";
 
 export const ROLES = ["guest", "member", "admin"] as const;
 export type Role = (typeof ROLES)[number];
@@ -42,6 +44,24 @@ export function rolesTable(): string {
     (a) => `| ${ABILITIES[a]} | ${ROLES.map((r) => (can(r, a) ? "yes" : "no")).join(" | ")} |`,
   );
   return [`| Ability | ${ROLES.join(" | ")} |`, `| --- | ${ROLES.map(() => "---").join(" | ")} |`, ...rows].join("\n");
+}
+
+/** The words a guest is refused with, on every surface. */
+export const NOT_A_MEMBER = "the owner has not made this account a member";
+
+/**
+ * Whether the table withholds `ability` from this account. Only a person
+ * can be a guest: agents and organizations are not accounts the owner
+ * promotes, and other rules govern them. The `guard_guests` setting can
+ * turn the refusal off (the test suite boots with it off).
+ */
+export function lacks(
+  db: Database,
+  user: { id: string; isAdmin: boolean; kind: string },
+  ability: Ability,
+): boolean {
+  if (user.kind !== "user" || capacityValue(db, "guard_guests") === "off") return false;
+  return !can(roleOf(db, user), ability);
 }
 
 export function roleOf(db: Database, user: { id: string; isAdmin: boolean }): Role {

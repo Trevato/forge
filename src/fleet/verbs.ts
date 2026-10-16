@@ -10,6 +10,7 @@
  * and append their own events; a verb never touches the database itself.
  */
 
+import { NOT_A_MEMBER } from "../core/roles.ts";
 import type { App } from "../app.ts";
 import {
   addComment,
@@ -108,6 +109,7 @@ export interface Verb {
 /** An action's refusal codes, in words a receipt can show. */
 const WORDS: Record<string, string> = {
   ...dependencyWords,
+  not_member: NOT_A_MEMBER,
   not_found: "not found",
   forbidden: "not allowed",
   unauthorized: "not signed in",
