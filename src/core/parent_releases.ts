@@ -146,6 +146,17 @@ async function fetchDoc(url: string, f: typeof fetch): Promise<unknown> {
 
 const refreshing = new Map<string, Promise<void>>();
 
+/** Resolves when no refresh of this cache is in flight (at once if none is). */
+export async function refreshIdle(dataDir: string): Promise<void> {
+  const file = join(dataDir, "parent-releases.json");
+  for (
+    let job = refreshing.get(file);
+    job !== undefined;
+    job = refreshing.get(file)
+  )
+    await job;
+}
+
 /** Reads the parent now and stores the answer; one refresh at a time per cache. */
 export function refreshParentReleases(
   dataDir: string,

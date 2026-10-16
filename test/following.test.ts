@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parentUrlProblem } from "../src/core/parent_releases.ts";
+import { parentUrlProblem, refreshIdle } from "../src/core/parent_releases.ts";
 import { Session } from "../src/tui/session.ts";
 import { releasesRow } from "../src/tui/screens/about.ts";
 import { createApp, type App } from "../src/app.ts";
@@ -967,15 +967,9 @@ describe("a landed pull moves the forks, like the push it amounts to", () => {
   });
 });
 
-/** Waits for a background refresh to rewrite the cache (or 600 ms for none). */
+/** Waits for any background refresh of the cache to finish. */
 async function settled(dir: string): Promise<void> {
-  const file = Bun.file(join(dir, "parent-releases.json"));
-  const text = async () => ((await file.exists()) ? await file.text() : "");
-  const before = await text();
-  for (let i = 0; i < 24; i++) {
-    await Bun.sleep(25);
-    if ((await text()) !== before) return;
-  }
+  await refreshIdle(dir);
 }
 
 describe("a parent URL", () => {
