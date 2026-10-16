@@ -1346,6 +1346,7 @@ export function forgeNeedsFor(ctx: Ctx, user: User | undefined): Degraded[] {
     db: ctx.app.db,
     dataDir: ctx.app.config.dataDir,
     signals: ctx.app.signals,
+    forgeUrl: ctx.app.config.url ?? `http://localhost:${ctx.app.config.port}`,
     envs,
   }).degraded;
 }

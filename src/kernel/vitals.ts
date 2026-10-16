@@ -23,6 +23,9 @@ import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { BUDGETS } from "./budgets.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
+import { newestDrills } from "../core/domain_drills.ts";
+import { DOMAINS } from "./domains.ts";
+import { domainDrillNeeds } from "./domain_drill.ts";
 import { heldChecks, redSentence } from "../checks/red_main.ts";
 
 /** Free disk under this share of the volume is something to say. */
@@ -95,6 +98,8 @@ export interface VitalsInput {
   /** Every environment the runtime holds, when one is up. */
   readonly envs?: readonly EnvCount[];
   readonly now?: number;
+  /** The address people reach this forge at, named in the drill commands. */
+  readonly forgeUrl?: string;
   /** The free-disk share below which the disk is a need; `DISK_FREE_MIN` unless a test says. */
   readonly diskFreeMin?: number;
   /** One forge's own signals (`App.signals`). */
@@ -318,6 +323,16 @@ export function vitals(input: VitalsInput): Vitals {
   const owed = drillNeed(drill, now, () => drillFirstSeen(input.dataDir));
   if (owed !== undefined)
     need("drill", owed.sentence, owed.since, "/settings/backups");
+
+  // A domain whose drill is red or eight days old is a card with the command that runs it.
+  for (const owed of domainDrillNeeds(
+    newestDrills(input.db),
+    now,
+    drillFirstSeen(input.dataDir),
+    input.forgeUrl ?? "http://localhost",
+    DOMAINS,
+  ))
+    need(owed.cause, owed.sentence, owed.since, "/");
 
   // A snapshot that did not land off the box, or a mirror a day behind, is a card until it does.
   const behind = mirrorNeed(lastMirror(input.dataDir), now);

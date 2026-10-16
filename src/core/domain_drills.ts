@@ -2,7 +2,7 @@
 
 import type { Database } from "bun:sqlite";
 import { id } from "../kernel/id.ts";
-import type { Observed, Verdict } from "../kernel/domain_drill.ts";
+import type { NewestDrill, Observed, Verdict } from "../kernel/domain_drill.ts";
 
 export interface DrillRecord extends Verdict {
   readonly id: string;
@@ -42,4 +42,16 @@ export function lastDrill(db: Database, domain: string): LastDrill | null {
     )
     .get(domain);
   return r === null ? null : { green: r.green === 1, why: r.why, backSeconds: r.back_seconds, at: r.at };
+}
+
+/** The newest drill of every domain, in one query. */
+export function newestDrills(db: Database): NewestDrill[] {
+  return db
+    .query<{ domain: string; green: number; why: string; at: string }, []>(
+      `SELECT d.domain, d.green, d.why, d.at FROM domain_drill d
+       WHERE d.rowid = (SELECT x.rowid FROM domain_drill x WHERE x.domain = d.domain
+                        ORDER BY x.at DESC, x.rowid DESC LIMIT 1)`,
+    )
+    .all()
+    .map((r) => ({ domain: r.domain, green: r.green === 1, why: r.why, at: r.at }));
 }

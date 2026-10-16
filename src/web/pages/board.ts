@@ -334,6 +334,7 @@ function forgeStrip(ctx: Ctx): Html | null {
     db: app.db,
     dataDir: app.config.dataDir,
     signals: app.signals,
+    forgeUrl: app.config.url ?? `http://localhost:${app.config.port}`,
     envs: runtime
       ? listApps(app.db).flatMap((record) => runtime.status(record))
       : [],

@@ -30,6 +30,7 @@ export function readHealth(
     dataDir: app.config.dataDir,
     envs,
     signals: app.signals,
+    forgeUrl: app.config.url ?? `http://localhost:${app.config.port}`,
   });
   return { ...v, ...forge, ok: forge.ok && v.ok };
 }

@@ -446,6 +446,7 @@ const tickAsks = async (): Promise<void> => {
         db: app.db,
         dataDir: app.config.dataDir,
         signals: app.signals,
+        forgeUrl,
       }).degraded,
       Date.now(),
       app.log,
