@@ -18,6 +18,8 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { App } from "../../app.ts";
+import type { Run } from "../../core/runs.ts";
+import { getUserById } from "../../core/users.ts";
 import { getRepoRun } from "../../actions/runs.ts";
 import { appsForRepos, getAppBySlug, isSlug } from "../../core/apps.ts";
 import { audit } from "../../contract/audit.ts";
@@ -32,7 +34,7 @@ import {
   type Repo,
 } from "../../core/repos.ts";
 import { dependenciesOf, repoGraph, readyNow } from "../../core/dependencies.ts";
-import { getIssue, type Issue } from "../../core/issues.ts";
+import { getIssue, getIssueById, type Issue } from "../../core/issues.ts";
 import { getPull, type Pull } from "../../core/pulls.ts";
 import { mayView, mayViewId, sealedScope } from "../../core/sealed.ts";
 import { isSafeName } from "../../git/guard.ts";
@@ -145,17 +147,42 @@ function threadInput(ctx: Ctx, kind: OgKind, ref: string): CardInput | undefined
   };
 }
 
+/** The outcome of an agent run in a word, read from its state and last words. */
+function outcome(run: Run): string {
+  if (run.state === "queued") return "queued";
+  if (run.state === "running") return "working";
+  if (run.state === "cancelled") return "cancelled";
+  if (/opened pull #|updated pull #/.test(run.summary)) return "landed a pull";
+  if (/\bdeclined:/i.test(run.summary)) return "declined";
+  return run.state === "ok" ? "done" : "failed";
+}
+
 function runInput(ctx: Ctx, ref: string): CardInput | undefined {
   const at = threePart(ctx, ref);
   if (!at || !RUN_ID.test(at.rest)) return undefined;
+  // getRepoRun already seals: a run on a sealed thread is the same 404.
   const found = getRepoRun(ctx.app, undefined, at.repo, at.rest);
   if (!found.ok) return undefined;
   const run = found.value;
+  const db = ctx.app.db;
+  const who =
+    run.actorId === null ? undefined : getUserById(db, run.actorId)?.username;
+  const repoName = `${at.repo.ownerName}/${at.repo.name}`;
+  if (run.kind === "agent") {
+    const about = run.issueId === null ? undefined : getIssueById(db, run.issueId);
+    const thread = about ? `#${about.number} ${about.title}` : undefined;
+    return {
+      kind: "run",
+      title: run.summary || "agent run",
+      lines: [repoName, ...(thread ? [thread] : [])],
+      stat: `${who ?? "agent"} · ${outcome(run)} · $${run.costUsd.toFixed(2)}`,
+    };
+  }
   return {
     kind: "run",
     title: run.summary || `${run.kind} run`,
-    lines: [`${at.repo.ownerName}/${at.repo.name}`],
-    stat: `${run.kind} · ${run.state}`,
+    lines: [repoName, ...(who ? [`by ${who}`] : [])],
+    stat: `${run.kind}${run.env ? ` · ${run.env}` : ""} · ${run.state}`,
   };
 }
 

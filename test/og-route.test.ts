@@ -9,7 +9,7 @@ import { createApp } from "../src/core/apps.ts";
 import { addDependency } from "../src/core/dependencies.ts";
 import { getIssue, createIssue } from "../src/core/issues.ts";
 import { createRun } from "../src/core/runs.ts";
-import { createUser } from "../src/core/users.ts";
+import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 describe("og cards", () => {
@@ -205,6 +205,56 @@ describe("og cards", () => {
         // quiet's repo is public but its app is private: the run is not readable.
         expect(res.status).toBe(404);
       }
+    });
+
+    test("an agent run names its agent, thread, cost and outcome", async () => {
+      const repo = getRepo(app.db, "alice", "shown")!;
+      const alice = getUserByName(app.db, "alice")!;
+      const issue = getIssue(app.db, repo.id, 1)!;
+      const r = createRun(app.db, {
+        repoId: repo.id,
+        kind: "agent",
+        issueId: issue.id,
+        actorId: alice.id,
+        summary: "opened pull #2 on alice/shown",
+      });
+      app.db.query("UPDATE run SET state = 'ok', cost_usd = 1.234 WHERE id = ?1").run(r.id);
+      const body = await (await get(`/og/run/alice~shown~${r.id}.svg`)).text();
+      expect(body).toContain("alice");
+      expect(body).toContain("#1 A public issue &lt;b&gt;");
+      expect(body).toContain("$1.23");
+      expect(body).toContain("landed a pull");
+      app.db.query("UPDATE run SET summary = 'declined: too big', state = 'ok' WHERE id = ?1").run(r.id);
+      expect(await (await get(`/og/run/alice~shown~${r.id}.svg`)).text()).toContain("declined ·");
+      app.db.query("UPDATE run SET state = 'failed', summary = 'boom' WHERE id = ?1").run(r.id);
+      expect(await (await get(`/og/run/alice~shown~${r.id}.svg`)).text()).toContain("failed");
+      app.db.query("UPDATE run SET state = 'running' WHERE id = ?1").run(r.id);
+      expect(await (await get(`/og/run/alice~shown~${r.id}.svg`)).text()).toContain("working");
+    });
+
+    test("a deploy run shows its environment and trigger, no cost", async () => {
+      const repo = getRepo(app.db, "alice", "shown")!;
+      const alice = getUserByName(app.db, "alice")!;
+      const r = createRun(app.db, {
+        repoId: repo.id,
+        kind: "deploy",
+        env: "production",
+        actorId: alice.id,
+        summary: "deployed",
+      });
+      const body = await (await get(`/og/run/alice~shown~${r.id}.svg`)).text();
+      expect(body).toContain("production");
+      expect(body).toContain("by alice");
+      expect(body).not.toContain("$");
+    });
+
+    test("a queued or cancelled run says so", async () => {
+      const repo = getRepo(app.db, "alice", "shown")!;
+      const r = createRun(app.db, { repoId: repo.id, kind: "agent", summary: "waiting" });
+      const card = async () => (await get(`/og/run/alice~shown~${r.id}.svg`)).text();
+      expect(await card()).toContain("queued");
+      app.db.query("UPDATE run SET state = 'cancelled' WHERE id = ?1").run(r.id);
+      expect(await card()).toContain("cancelled");
     });
 
     test("the wrong kind, number or shape is 404", async () => {
