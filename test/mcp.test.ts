@@ -194,6 +194,7 @@ describe("the forge over MCP", () => {
       "app_members",
       "explore",
       "feed",
+      "feed_chips",
       "make_it_yours",
       "front_page",
       "map",
@@ -821,5 +822,37 @@ describe("the forge over MCP", () => {
     const doc = (await res.json()) as any;
     expect(doc.openapi).toBe("3.1.0");
     expect(doc.paths["/mcp"].post).toBeDefined();
+  });
+  test("feed_chips reads and switches the chips the feed answers through", async () => {
+    app.bus.append({ kind: "app.serving", repoId: game.id, actorId: alice.id, payload: {} });
+    const kinds = async () => {
+      const r = await tool(rw, "feed", { limit: 50 });
+      return (r.value.items as { kind: string }[]).map((i) => i.kind);
+    };
+    const api = async () => {
+      const res = await fetch(`${base}/api/v1/feed?limit=50`, { headers: { authorization: `Bearer ${rw}` } });
+      return ((await res.json()) as { items: { kind: string }[] }).items.map((i) => i.kind);
+    };
+    expect(await kinds()).toContain("release");
+    expect((await tool(rw, "feed_chips")).value).toEqual({ kinds: [], people: [] });
+
+    const set = await tool(rw, "feed_chips", { kind: "kind", value: "releases", hidden: true });
+    expect(set.value).toEqual({ kinds: ["releases"], people: [] });
+    expect(await kinds()).not.toContain("release");
+    expect(await api()).not.toContain("release");
+    // A read-only token may read the chips, not switch them.
+    expect((await tool(ro, "feed_chips")).value).toEqual({ kinds: ["releases"], people: [] });
+    expect((await tool(ro, "feed_chips", { kind: "kind", value: "releases", hidden: false })).error).toContain("forbidden");
+    expect((await tool(rw, "feed_chips")).value.kinds).toEqual(["releases"]);
+
+    expect((await tool(rw, "feed_chips", { kind: "kind", value: "nope", hidden: true })).error).toBeDefined();
+    expect((await tool(rw, "feed_chips", { kind: "person", value: "nobody", hidden: true })).error).toBeDefined();
+    expect((await tool(rw, "feed_chips", { kind: "kind", value: "crew" })).error).toBeDefined();
+    const person = await tool(rw, "feed_chips", { kind: "person", value: "bob", hidden: true });
+    expect(person.value).toEqual({ kinds: ["releases"], people: ["bob"] });
+    await tool(rw, "feed_chips", { kind: "person", value: "bob", hidden: false });
+    const back = await tool(rw, "feed_chips", { kind: "kind", value: "releases", hidden: false });
+    expect(back.value).toEqual({ kinds: [], people: [] });
+    expect(await kinds()).toContain("release");
   });
 });

@@ -110,6 +110,7 @@ import { plannerDeclines } from "../crew/autonomy.ts";
 import { checkSummary, listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { getUserByName, getUsersByIds, type User } from "../core/users.ts";
+import { chipsOf, isKindChip, setChip } from "../core/feed_chips.ts";
 import { openapi } from "../contract/openapi.ts";
 import { audit } from "../contract/audit.ts";
 import { probeApp } from "../contract/probes.ts";
@@ -204,6 +205,8 @@ interface Tool {
   readonly inputSchema: Record<string, unknown>;
   /** Whether it changes anything: `rw` scope, and said so to the client. */
   readonly writes: boolean;
+  /** With this argument absent the tool only reads, whatever the token. */
+  readonly readsWithout?: string;
   /** A write that only plans (`dryRun` not false) is a read: `ro` may ask. */
   readonly dryByDefault?: true;
   run(ctx: Ctx, user: User, args: Args): Promise<Answer> | Answer;
@@ -1444,7 +1447,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "feed",
     description:
-      "Your home timeline, as the forge's home shows it: tells, replies, runs, changes and looks across the apps you can see, ranked, each with who did it, what it says, why it is there and a link to its thing. Pass `cursor` (next_cursor from the last answer) for the next page. The same items as GET /api/v1/feed. Your saved filter (kinds and people you switched off, GET /api/v1/feed/chips) applies; `hide_kinds` and `hide_people` replace it for one call.",
+      "Your home timeline, as the forge's home shows it: tells, replies, runs, changes and looks across the apps you can see, ranked, each with who did it, what it says, why it is there and a link to its thing. Pass `cursor` (next_cursor from the last answer) for the next page. The same items as GET /api/v1/feed. Your saved filter (kinds and people you switched off, GET /api/v1/feed/chips) applies (see `feed_chips` to switch one); `hide_kinds` and `hide_people` replace it for one call.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1472,6 +1475,43 @@ const TOOLS: readonly Tool[] = [
           ...(cursor === undefined ? {} : { cursor }),
         }),
       );
+    },
+  },
+  {
+    name: "feed_chips",
+    description:
+      "The feed chips you switched off, which `feed` and `asks` leave out: `{kinds, people}` as GET /api/v1/feed/chips. With `kind` (`kind` or `person`), `value` (a chip: reviews, decisions, crew or releases; or a username) and `hidden` it switches one off (true) or back on (false), and answers the new set. Yours alone.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["kind", "person"] },
+        value: { type: "string", maxLength: 100 },
+        hidden: { type: "boolean" },
+      },
+    },
+    writes: true,
+    readsWithout: "kind",
+    run(ctx, user, args) {
+      if (args["kind"] !== undefined) {
+        const value = str(args["value"]);
+        const hidden = args["hidden"];
+        if (typeof hidden !== "boolean") return bad("invalid", "hidden is true or false");
+        if (args["kind"] === "kind") {
+          if (!isKindChip(value)) return bad("invalid", "that kind has no chip");
+          setChip(ctx.app.db, user.id, { kind: "kind", value }, hidden);
+        } else if (args["kind"] === "person") {
+          const who = getUserByName(ctx.app.db, value);
+          if (!who || who.kind === "org") return bad("not_found", "no such person");
+          setChip(ctx.app.db, user.id, { kind: "person", value: who.id }, hidden);
+        } else return bad("invalid", "kind is `kind` or `person`");
+      }
+      const chips = chipsOf(ctx.app.db, user.id);
+      return good({
+        kinds: [...chips.kinds].sort(),
+        people: [...getUsersByIds(ctx.app.db, [...chips.people]).values()]
+          .map((u) => u.username)
+          .sort(),
+      });
     },
   },
   {
@@ -2554,7 +2594,9 @@ function rpcOne(
         typeof params["arguments"] === "object" && params["arguments"] !== null
           ? (params["arguments"] as Args)
           : {};
-      const plansOnly = tool.dryByDefault === true && args["dryRun"] !== false;
+      const plansOnly =
+        (tool.dryByDefault === true && args["dryRun"] !== false) ||
+        (tool.readsWithout !== undefined && args[tool.readsWithout] === undefined);
       if (tool.writes && !plansOnly && !scopeAllows(ctx.auth.scope ?? "ro", "rw"))
         return reply({
           content: [
