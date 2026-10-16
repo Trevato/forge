@@ -8,11 +8,14 @@
  */
 
 import type { App } from "../app.ts";
+import { gatedFetch } from "../cloud/gate.ts";
 import { audit, isProvider, verify, type Fetch, type Provider } from "../cloud/providers.ts";
 import {
   CLOUD_NAME,
   forgetCloudAccount,
+  getCloudAccount,
   recordVerified,
+  renameCloudAccount,
   secretNameOf,
   setWriteAllowed,
 } from "../core/cloud_account.ts";
@@ -40,6 +43,10 @@ function target(
   return ok({ provider, name, secret: secretNameOf(provider, name) });
 }
 
+/** The network, behind the gate: one audit row per request, as the operator. */
+const gated = (app: App, t: { provider: Provider; name: string }, purpose: string): Fetch =>
+  gatedFetch(app.db, { provider: t.provider, account: t.name }, purpose, net.fetch);
+
 /** Verify, then seal. Returns the one-sentence summary. */
 export async function addAccount(
   app: App,
@@ -52,7 +59,7 @@ export async function addAccount(
   if (!who.ok) return who;
   const t = target(provider, name);
   if (!t.ok) return t;
-  const v = await verify(t.value.provider, value, net.fetch);
+  const v = await verify(t.value.provider, value, gated(app, t.value, "verify"));
   if (!v.ok) return v;
   const set = putSecret(app, who.value, "forge", "", t.value.secret, value);
   if (!set.ok) return err("That credential cannot be stored.");
@@ -68,6 +75,52 @@ function open(app: App, actor: User, secret: string, run: string): string | unde
   })[secret];
 }
 
+/** Replace the sealed value of an attached account, after the same check. */
+export async function rotateAccount(
+  app: App,
+  actor: User | undefined,
+  provider: string,
+  name: string,
+  value: string,
+): Promise<Result<string, string>> {
+  const who = admin(actor);
+  if (!who.ok) return who;
+  const t = target(provider, name);
+  if (!t.ok) return t;
+  if (!getCloudAccount(app.db, t.value.provider, t.value.name)) return err("No such credential.");
+  const v = await verify(t.value.provider, value, gated(app, t.value, "verify"));
+  if (!v.ok) return v;
+  const set = putSecret(app, who.value, "forge", "", t.value.secret, value);
+  if (!set.ok) return err("That credential cannot be stored.");
+  recordVerified(app.db, t.value.provider, t.value.name, v.value.summary);
+  return ok(v.value.summary);
+}
+
+/** Give an account a new name; the sealed value and the write switch move with it. */
+export function renameAccount(
+  app: App,
+  actor: User | undefined,
+  provider: string,
+  name: string,
+  to: string,
+): Result<void, string> {
+  const who = admin(actor);
+  if (!who.ok) return who;
+  const from = target(provider, name);
+  if (!from.ok) return from;
+  const dest = target(provider, to);
+  if (!dest.ok) return dest;
+  if (!getCloudAccount(app.db, from.value.provider, from.value.name)) return err("No such credential.");
+  if (getCloudAccount(app.db, dest.value.provider, dest.value.name)) return err("An account has that name already.");
+  const value = open(app, who.value, from.value.secret, `rename:${from.value.provider}`);
+  if (value === undefined) return err("No such credential.");
+  const set = putSecret(app, who.value, "forge", "", dest.value.secret, value);
+  if (!set.ok) return err("That credential cannot be stored.");
+  renameCloudAccount(app.db, from.value.provider, from.value.name, dest.value.name);
+  removeSecret(app, who.value, "forge", "", from.value.secret);
+  return ok();
+}
+
 export async function reverify(
   app: App,
   actor: User | undefined,
@@ -80,7 +133,7 @@ export async function reverify(
   if (!t.ok) return t;
   const value = open(app, who.value, t.value.secret, `verify:${t.value.provider}`);
   if (value === undefined) return err("No such credential.");
-  const v = await verify(t.value.provider, value, net.fetch);
+  const v = await verify(t.value.provider, value, gated(app, t.value, "verify"));
   if (!v.ok) return v;
   recordVerified(app.db, t.value.provider, t.value.name, v.value.summary);
   return ok(v.value.summary);
@@ -141,7 +194,7 @@ export async function auditAccount(
   if (!repo) return err("Name a repository as owner/name to file the findings in.");
   const value = open(app, who.value, t.value.secret, `audit:${t.value.provider}:${id()}`);
   if (value === undefined) return err("No such credential.");
-  const found = await audit(t.value.provider, value, net.fetch);
+  const found = await audit(t.value.provider, value, gated(app, t.value, "audit"));
   if (!found.ok) return found;
   let opened = 0;
   for (const f of found.value) {

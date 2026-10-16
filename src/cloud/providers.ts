@@ -13,6 +13,8 @@
  *                      (client-credentials sign-in), GET management.azure.com
  *                      /subscriptions, /disks, /publicIPAddresses
  *   fly           POST api.fly.io/graphql  — `query` documents only
+ *   github        GET  api.github.com/user
+ *   vercel        GET  api.vercel.com/v2/user
  *   backblaze     GET  api.backblazeb2.com/b2api/v2/b2_authorize_account, then
  *                 GET  <apiUrl>/b2api/v2/b2_list_buckets (apiUrl must be a
  *                      *.backblazeb2.com host)
@@ -22,6 +24,7 @@
  */
 
 import { createHmac, createHash } from "node:crypto";
+import type { CloudVendor } from "../apps/manifest.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 export const PROVIDERS = [
@@ -31,8 +34,26 @@ export const PROVIDERS = [
   "azure",
   "fly",
   "backblaze",
+  "github",
+  "vercel",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
+
+/**
+ * The `cloud.json` vendor each provider's key is declared under. Total, so no
+ * attached key is unreachable: the provider's own name, but AWS and
+ * Backblaze B2 are both `s3`.
+ */
+export const VENDOR_OF: Record<Provider, CloudVendor> = {
+  cloudflare: "cloudflare",
+  digitalocean: "digitalocean",
+  aws: "s3",
+  azure: "azure",
+  fly: "fly",
+  backblaze: "s3",
+  github: "github",
+  vercel: "vercel",
+};
 
 export function isProvider(v: string): v is Provider {
   return (PROVIDERS as readonly string[]).includes(v);
@@ -45,6 +66,8 @@ export const LABEL: Record<Provider, string> = {
   azure: "Azure",
   fly: "Fly.io",
   backblaze: "Backblaze B2",
+  github: "GitHub",
+  vercel: "Vercel",
 };
 
 /** What to paste, per provider, in a sentence. */
@@ -55,6 +78,8 @@ export const shape: Record<Provider, string> = {
   azure: "TENANT_ID:CLIENT_ID:CLIENT_SECRET of a Reader service principal",
   fly: "a deploy or read-only org token",
   backblaze: "KEY_ID:APPLICATION_KEY with read-only capabilities",
+  github: "a fine-grained personal access token with read-only repository access",
+  vercel: "an access token scoped to one team",
 };
 
 export type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
@@ -248,6 +273,22 @@ export async function verify(
           canWrite: null,
         });
       }
+      case "github": {
+        const u = await json(f, "https://api.github.com/user", {
+          headers: { ...bearer(value), accept: "application/vnd.github+json", "user-agent": "forge" },
+        });
+        return ok({
+          summary: `GitHub token belongs to ${String(u.login ?? "?").slice(0, 80)}; GitHub does not say what a fine-grained token may write here.`,
+          canWrite: null,
+        });
+      }
+      case "vercel": {
+        const u = await json(f, "https://api.vercel.com/v2/user", { headers: bearer(value) });
+        return ok({
+          summary: `Vercel token belongs to ${String(u.user?.username ?? "?").slice(0, 80)}; Vercel does not expose a token's scope.`,
+          canWrite: null,
+        });
+      }
       case "backblaze": {
         const c = await b2(f, value);
         if (!c) return err("A Backblaze credential is KEY_ID:APPLICATION_KEY.");
@@ -347,6 +388,10 @@ export async function audit(
               add(`Fly: unattached volume ${v.name} in ${a.name}`, `Volume ${v.name} (${v.sizeGb} GB) of app ${a.name} is attached to no machine.`, v.sizeGb * 0.15);
         break;
       }
+      case "github":
+      case "vercel":
+        // Nothing to audit for cost; the token is only verified.
+        break;
       case "backblaze":
         // Bucket size needs a file listing per bucket; not attempted.
         break;

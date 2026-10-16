@@ -366,7 +366,7 @@ export function parseCheck(
 }
 
 /** The vendors a repository may name in `cloud.json`; a closed set. */
-export const CLOUD_VENDORS = ["cloudflare", "fly", "hetzner", "s3"] as const;
+export const CLOUD_VENDORS = ["cloudflare", "fly", "hetzner", "s3", "github", "vercel", "digitalocean", "azure"] as const;
 /** What a vendor may be used for; a closed set. */
 export const CLOUD_USES = ["compute", "storage", "backup", "dns", "cdn"] as const;
 export type CloudVendor = (typeof CLOUD_VENDORS)[number];

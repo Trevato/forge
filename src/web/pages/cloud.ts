@@ -11,9 +11,13 @@ import {
   allowWrite,
   auditAccount,
   removeAccount,
+  renameAccount,
   reverify,
+  rotateAccount,
 } from "../../actions/cloud.ts";
-import { LABEL, PROVIDERS, shape } from "../../cloud/providers.ts";
+import { LABEL, PROVIDERS, VENDOR_OF, isProvider, shape } from "../../cloud/providers.ts";
+import { HOME, usedFor, usesByVendor, type VendorUse } from "../../cloud/declared.ts";
+import { auditToday } from "../../core/cloud_audit.ts";
 import {
   listCloudAccounts,
   recentCloudReads,
@@ -37,20 +41,20 @@ function requireAdmin(ctx: Ctx): Response | undefined {
 
 /** A run id in a read event, as words: audits and checks name themselves. */
 const runWords = (run: string | null): string =>
-  run === null ? "no run" : run.startsWith("audit:") ? `audit (${run.split(":")[1]})` : run.startsWith("verify:") ? "verify" : `run ${run}`;
+  run === null ? "no run" : run.startsWith("audit:") ? `audit (${run.split(":")[1]})` : run.startsWith("verify:") ? "verify" : run.startsWith("rename:") ? "rename" : `run ${run}`;
 
 const hidden = (provider: string, name: string): Html =>
   html`<input type="hidden" name="provider" value="${provider}" />
     <input type="hidden" name="name" value="${name}" />`;
 
-function accountsCard(reads: CloudRead[], ctx: Ctx): Html {
+function accountsCard(reads: CloudRead[], uses: Map<string, VendorUse[]>, ctx: Ctx): Html {
   const accounts = listCloudAccounts(ctx.app.db);
   const rows = accounts.map((a) => {
     const last = reads.find((r) => r.provider === a.provider && r.name === a.name);
     return row({
       lead: icon("key"),
       title: html`${LABEL[a.provider]} / <span class="mono">${a.name}</span>`,
-      meta: html`${a.summary}<br />verified ${a.verifiedAt ? time(a.verifiedAt) : "never"} ·
+      meta: html`${a.summary}<br />${usedFor(uses.get(VENDOR_OF[a.provider]))}<br />${HOME[a.provider]}<br />verified ${a.verifiedAt ? time(a.verifiedAt) : "never"} ·
         ${last ? html`last used ${time(last.at)} by ${runWords(last.run)}` : "never used"} ·
         ${a.writeAllowed ? "writes allowed" : "read-only"}`,
       trail: html`<div class="row-actions">
@@ -67,6 +71,19 @@ function accountsCard(reads: CloudRead[], ctx: Ctx): Html {
           <input class="input" type="text" name="repo" placeholder="owner/repo for findings"
             aria-label="Repository for audit findings" maxlength="200" required />
           ${btn("Audit", { size: "sm", label: `Audit ${a.name}` })}
+        </form>
+        <form method="post" action="/settings/cloud/rotate" class="row-actions">
+          ${hidden(a.provider, a.name)}
+          <input class="input" type="password" name="value" placeholder="New credential"
+            aria-label="New credential for ${a.name}" autocomplete="off" required />
+          ${btn("Rotate", { size: "sm", label: `Rotate ${a.name}` })}
+        </form>
+        <form method="post" action="/settings/cloud/rename" class="row-actions">
+          ${hidden(a.provider, a.name)}
+          <input class="input mono" type="text" name="to" placeholder="new name"
+            aria-label="New name for ${a.name}" pattern="[a-z][a-z0-9_]{0,31}" maxlength="32"
+            autocomplete="off" spellcheck="false" required />
+          ${btn("Rename", { size: "sm", label: `Rename ${a.name}` })}
         </form>
         <form method="post" action="/settings/cloud/remove">
           ${hidden(a.provider, a.name)}${btn("Remove", { size: "sm", icon: "x", label: `Remove ${a.name}` })}
@@ -124,17 +141,19 @@ function readsCard(reads: CloudRead[]): Html {
 }
 
 // GET /settings/cloud
-export function cloudPage(ctx: Ctx): Response {
+export async function cloudPage(ctx: Ctx): Promise<Response> {
   const denied = requireAdmin(ctx);
   if (denied) return denied;
   const reads = recentCloudReads(ctx.app.db);
+  const uses = await usesByVendor(ctx.app.db, ctx.app.reposRoot, ctx.auth.user!);
   return page({
     ctx,
     title: "Cloud accounts",
     body: html`<div class="page-head"><h1>Cloud accounts</h1></div>
       ${settingsLayout(
         accountSections("cloud", { admin: true }),
-        html`${accountsCard(reads, ctx)}<div class="mt">${readsCard(reads)}</div>`,
+        html`${accountsCard(reads, uses, ctx)}<div class="mt">${readsCard(reads)}</div>
+          <p class="muted small mt"><a href="/settings/cloud/audit">Every vendor call today</a></p>`,
         "Account settings",
       )}`,
   });
@@ -187,6 +206,57 @@ export async function cloudAudit(ctx: Ctx): Promise<Response> {
     r.ok ? `Audit read ${r.value.found} finding(s); opened ${r.value.opened} issue(s). Nothing was changed.` : "",
     r.ok ? undefined : r.error,
   );
+}
+
+// GET /settings/cloud/audit
+export function cloudAuditPage(ctx: Ctx): Response {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const rows = auditToday(ctx.app.db);
+  return page({
+    ctx,
+    title: "Cloud audit",
+    body: html`<div class="page-head"><h1>Cloud audit</h1></div>
+      ${settingsLayout(
+        accountSections("cloud", { admin: true }),
+        card(
+          rows.length === 0
+            ? html`<p class="muted small card-body">No vendor call today. Rows are kept 90 days.</p>`
+            : html`<ul class="list">
+                ${rows.map((r) =>
+                  row({
+                    lead: icon(r.allowed ? "eye" : "x"),
+                    title: html`${r.allowed ? "Allowed" : "Refused"}: ${isProvider(r.provider) ? LABEL[r.provider] : r.provider} /
+                      <span class="mono">${r.account}</span> for ${r.purpose}`,
+                    meta: html`<span class="mono">${r.target}</span> · ${r.bytesOut} bytes out · ${time(r.at)}`,
+                  }),
+                )}
+              </ul>`,
+          { head: html`${icon("eye")}<h2>Today's vendor calls</h2>`, pad: false },
+        ),
+        "Account settings",
+      )}`,
+  });
+}
+
+// POST /settings/cloud/rotate
+export async function cloudRotate(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const r = await rotateAccount(ctx.app, ctx.auth.user, field(form, "provider"), field(form, "name"), field(form, "value").trim());
+  return said(ctx, r, r.ok ? `Rotated. ${r.value}` : "", r.ok ? undefined : r.error);
+}
+
+// POST /settings/cloud/rename
+export async function cloudRename(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const r = renameAccount(ctx.app, ctx.auth.user, field(form, "provider"), field(form, "name"), field(form, "to").trim());
+  return said(ctx, r, "Renamed.", r.ok ? undefined : r.error);
 }
 
 // POST /settings/cloud/remove

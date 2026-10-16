@@ -18,7 +18,7 @@ Beside `forge.json`, at the root of the repository:
 { "uses": [{ "vendor": "s3", "use": "backup", "why": "off-machine copy of the encrypted snapshot" }] }
 ```
 
-- `vendor`: `cloudflare`, `fly`, `hetzner` or `s3`.
+- `vendor`: `cloudflare`, `fly`, `hetzner`, `s3`, `github`, `vercel`, `digitalocean` or `azure`.
 - `use`: `compute`, `storage`, `backup`, `dns` or `cdn`.
 - `why`: one line, up to 300 characters.
 
@@ -30,3 +30,8 @@ No file means no uses. A malformed file is refused with one sentence
 `mayUse(declared, vendor, use)` in `src/apps/cloud.ts` is the only way a
 vendor call is allowed. Later steps call it before every vendor request; it is
 false unless that exact vendor and use are declared.
+
+A key attached under Settings → Cloud accounts is handed to a run only when
+the run's repository declares the key's vendor. A provider's vendor is
+`VENDOR_OF` in `src/cloud/providers.ts`: the provider's own name, except that
+AWS and Backblaze B2 are `s3` (both speak the S3 interface).

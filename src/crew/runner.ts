@@ -63,6 +63,9 @@ import { runGitCapture } from "../git/env.ts";
 import { looksForEnv } from "../core/looks.ts";
 import { aheadCount, resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
+import { bar } from "../cloud/gate.ts";
+import { declarationsOf } from "../cloud/declared.ts";
+import { accountOfSecret } from "../core/cloud_account.ts";
 import { alreadyDoneSummary, namedCommits, onBase } from "./already.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
 import { createLog, redactValues } from "../kernel/log.ts";
@@ -737,10 +740,14 @@ async function work(
     // redaction from this moment, dropped in the `finally` below — a crash
     // included.
     const author = getUserById(app.db, issue.authorId);
-    const declared = parseDeclaration(
+    const asked = parseDeclaration(
       agent.brief,
       author !== undefined && canWrite(app.db, repo, author) ? issue.body : "",
     );
+    // A cloud credential goes to a run only through the gate: the repository's
+    // cloud.json must declare the vendor, and either way a row is audited.
+    const hasCloud = asked.names.some((n) => accountOfSecret(n) !== undefined);
+    const declared = bar(app.db, asked, run.id, hasCloud ? await declarationsOf(app.reposRoot, repo) : []);
     grant = grantSecrets(app.db, app.config.dataDir, app.bus, declared, {
       id: run.id,
       repoId: repo.id,

@@ -121,6 +121,18 @@ export function setWriteAllowed(
   );
 }
 
+export function renameCloudAccount(
+  db: Database,
+  provider: string,
+  name: string,
+  to: string,
+): void {
+  table(db);
+  db.query(
+    "UPDATE cloud_account SET name = ?3 WHERE provider = ?1 AND name = ?2",
+  ).run(provider, name, to);
+}
+
 export function forgetCloudAccount(
   db: Database,
   provider: string,

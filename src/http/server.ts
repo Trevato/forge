@@ -134,6 +134,9 @@ import { releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
   cloudAdd,
   cloudAudit,
+  cloudAuditPage,
+  cloudRename,
+  cloudRotate,
   cloudPage,
   cloudRemove,
   cloudVerify,
@@ -749,6 +752,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/cloud/verify", cloudVerify);
   router.add("POST", "/settings/cloud/write", cloudWrite);
   router.add("POST", "/settings/cloud/audit", cloudAudit);
+  router.add("GET", "/settings/cloud/audit", cloudAuditPage);
+  router.add("POST", "/settings/cloud/rotate", cloudRotate);
+  router.add("POST", "/settings/cloud/rename", cloudRename);
   router.add("POST", "/settings/cloud/remove", cloudRemove);
   router.add("GET", "/settings/access", accessPage);
   router.add("GET", "/settings/resilience", domainsPage);
