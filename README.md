@@ -79,6 +79,15 @@ real address is an opt-in under **Commit email** in `/settings` (or
 `PATCH /api/v1/user` with `{"commitEmail":"account"}`); commits you push
 yourself carry whatever your own git says.
 
+### Attaching the Claude app or Grok (OAuth)
+
+Add a custom connector with the URL `https://<your forge>/mcp`. The client
+registers itself at `/oauth/register` (the Claude app's callback is
+`https://claude.ai/api/mcp/auth_callback`), sends you to `/oauth/authorize`
+to sign in and choose `ro` or `rw` and a token name, then exchanges a
+single-use 60-second code with its PKCE S256 verifier at `/oauth/token` for
+the same token Settings mints; revoke it there. Details in `docs/MCP.md`.
+
 ### Proposal tokens
 
 A writer of a repository can hand a child (a fork, or a project on another

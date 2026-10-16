@@ -9,7 +9,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { listTokens } from "../src/core/tokens.ts";
+import { deleteToken, listTokens } from "../src/core/tokens.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { verifyIdToken } from "../src/core/oidc.ts";
@@ -165,6 +165,24 @@ describe("oauth authorize and token", () => {
     const tell = await mcp(out.access_token, "tell", { repo: "alice/x", text: "hi" });
     expect(tell.error).toBe(true);
     expect(tell.text).toContain("forbidden");
+  });
+
+  test("revoking the minted token in Settings cuts the connector off, and an rw grant may tell", async () => {
+    const ro = (await (await exchange({ code: await codeFrom({ name: "to revoke" }) })).json()) as any;
+    expect((await mcp(ro.access_token, "apps")).error).toBe(false);
+    const listed = listTokens(app.db, alice.id).find((t) => t.name === "to revoke")!;
+    expect(deleteToken(app.db, alice.id, listed.id)).toBe(true);
+    const gone = await fetch(`${base}/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${ro.access_token}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(gone.status).toBe(401);
+
+    const rw = (await (await exchange({ code: await codeFrom({ grant: "rw", name: "can act" }) })).json()) as any;
+    expect(rw.scope).toBe("rw");
+    const kept = await mcp(rw.access_token, "tell", { text: "a thought from a connector" });
+    expect(kept.error).toBe(false);
   });
 
   test("the code is stored hashed, never raw", async () => {
