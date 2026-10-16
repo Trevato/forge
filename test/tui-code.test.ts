@@ -303,14 +303,30 @@ describe("the terminal, around the workspace", () => {
       seen.push(sql);
       return original(sql);
     };
+    const grouped = (): number =>
+      seen.filter((sql) => /FROM issue\b[\s\S]*GROUP BY repo_id/.test(sql))
+        .length;
     const h = boot(forge, asAlice());
     try {
       await h.settle();
-      const issueCountQueries = seen.filter((sql) =>
-        /FROM issue\b[\s\S]*GROUP BY repo_id/.test(sql),
-      );
-      // One grouped counts query for the whole page — not one per repo.
-      expect(issueCountQueries.length).toBeLessThanOrEqual(1);
+      // Each list on the page (repos, asks, the decider's) takes one grouped
+      // query, however many rows it holds: a third repo adds none.
+      const before = grouped();
+      expect(before).toBeGreaterThan(0);
+      const third = await createRepo(forge, alice, {
+        name: "extra",
+        visibility: "public",
+      });
+      if (!third.ok) throw new Error("repo failed");
+      // The new repo reaches the dashboard by bus event too; let that refresh
+      // finish, so only the one `r` refresh is counted.
+      await h.settle();
+      await Bun.sleep(100);
+      await h.settle();
+      seen.length = 0;
+      await h.press("r");
+      await h.settle();
+      expect(grouped()).toBeLessThanOrEqual(before);
       // The glyphs are on the row. `○` open issues, `↳` open pulls.
       expect(h.text()).toContain("○ 2");
       expect(h.text()).toContain("↳ 1");
@@ -363,14 +379,14 @@ describe("the terminal, around the workspace", () => {
     const h = boot(forge, asAlice());
     try {
       await h.settle();
-      expect(h.text()).not.toContain("Realtime beacon");
+      expect(h.text()).not.toContain("Fresh news");
       // Nobody touches the terminal: the outbox is the only input. What is
       // on you is the launcher's live pane.
-      const told = openIssue(forge, alice, repo, { title: "Realtime beacon" });
+      const told = openIssue(forge, alice, repo, { title: "Fresh news" });
       if (!told.ok) throw new Error("open failed");
       expect(assignIssue(forge, alice, repo, told.value, alice).ok).toBe(true);
-      await h.until("Realtime beacon");
-      expect(h.text()).toContain("Realtime beacon");
+      await h.until("Fresh news");
+      expect(h.text()).toContain("Fresh news");
     } finally {
       h.stop();
     }
