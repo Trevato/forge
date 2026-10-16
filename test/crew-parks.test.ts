@@ -41,9 +41,11 @@ import {
   listRuns,
 } from "../src/core/runs.ts";
 import { migrations } from "../src/core/schema.ts";
+import { submitReview } from "../src/core/reviews.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { handedOverPulls } from "../src/crew/guard.ts";
 import { driveRepo, parkedCount, settleAgentRun } from "../src/crew/autonomy.ts";
 import { taskPrompt } from "../src/crew/brief.ts";
 import { breakerTripped } from "../src/crew/breaker.ts";
@@ -594,6 +596,13 @@ describe("an issue parked twice is the planner's", () => {
     const resumed = told({ resuming: true });
     expect(resumed).toContain(`- Parked twice: #${work.number} Scene graph`);
     expect(resumed).not.toContain("not captured in words");
+    // A spent pull reads as a pull, and adds the pull-only instruction.
+    const pulled = told({
+      parkedTwice: [{ number: 9, title: "Spent", reasons: ["a"], byAgent: true, pull: true }],
+    });
+    expect(pulled).toContain("- Three reviews asked for changes, pull #9 Spent (the crew's own)");
+    expect(pulled).toContain("A pull above is not closed by splitting an issue");
+    expect(brief).not.toContain("A pull above is not closed");
     // A builder is never told; a planner handed nothing reads as before.
     expect(told({ role: "builder" })).not.toContain("Parked twice");
     expect(told({ parkedTwice: [] })).not.toContain("Parked twice");
@@ -1147,6 +1156,91 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to
     expect(told).toContain(
       "2. the run ended without a pull: nothing to propose",
     );
+  }, 60_000);
+});
+
+describe("a pull whose review loop is spent is the planner's (#1655)", () => {
+  let e: Engine;
+  let crew: CrewHandle;
+  let promptFile: string;
+
+  beforeAll(async () => {
+    e = await engine("forge-spent-pull-");
+    const seeded = await commitToBranch(e.app, e.alice, e.repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# engine\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    promptFile = join(e.dataDir, "fake.prompt");
+    const fake = join(e.dataDir, "fake-claude");
+    writeFileSync(
+      fake,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+IFS= read -r first; printf '%s\\n' "$first" > "${promptFile}"
+echo '{"type":"system","subtype":"init","session_id":"fake-plan","model":"fake"}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Nothing to add.","total_cost_usd":0.01,"num_turns":1,"session_id":"fake-plan","terminal_reason":"completed"}'
+`,
+    );
+    chmodSync(fake, 0o755);
+    crew = await startCrew(e.app, {
+      forgeUrl: e.servers.url,
+      localUrl: e.servers.url,
+      binary: fake,
+      concurrency: 1,
+      budgetUsd: 1,
+      runTimeoutMs: 60_000,
+    });
+  }, 30_000);
+
+  afterAll(async () => {
+    await crew.stop();
+    await e.close();
+  });
+
+  test("the planner is asked for it and its brief says three reviews asked for changes", async () => {
+    const agent = await createAgent(e.app, e.alice, { username: "sentinel" });
+    if (!agent.ok) throw new Error(String(agent.error));
+    expect(addToCrew(e.app, e.alice, e.fresh(), "sentinel").ok).toBe(true);
+    const sentinel = getUserByName(e.app.db, "sentinel")!;
+    setCrewRole(e.app.db, e.repo.id, sentinel.id, "reviewer");
+    const branch = await commitToBranch(e.app, e.alice, e.fresh(), {
+      branch: "feature/spent",
+      base: "main",
+      message: "spent",
+      files: [{ path: "spent.txt", content: "spent\n" }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(e.app, e.alice, e.fresh(), {
+      title: "Spent loop",
+      baseBranch: "main",
+      headBranch: "feature/spent",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    e.app.db.query("UPDATE issue SET author_id = ?2 WHERE id = ?1").run(pull.id, e.mason.id);
+    for (const n of [1, 2, 3])
+      submitReview(e.app.db, {
+        issueId: pull.id,
+        authorId: sentinel.id,
+        state: "changes_requested",
+        body: `Round ${n}`,
+        commitOid: pull.headOid,
+      });
+    expect(handedOverPulls(e.app.db, e.fresh()).map((h) => h.number)).toEqual([pull.number]);
+    expect(await driveRepo(e.app, e.fresh())).toBe("planned");
+    const direction = e.fresh().directionIssueId!;
+    const deadline = Date.now() + 30_000;
+    const settled = () =>
+      listRuns(e.app.db, e.repo.id, { kind: "agent" }).find(
+        (r) => r.issueId === direction && ["ok", "failed", "cancelled"].includes(r.state),
+      );
+    while (settled() === undefined && Date.now() < deadline) await Bun.sleep(100);
+    expect(existsSync(promptFile)).toBe(true);
+    const told = readFileSync(promptFile, "utf8");
+    expect(told).toContain(`Three reviews asked for changes, pull #${pull.number} Spent loop`);
+    expect(told).toContain("Round 3");
+    expect(told).toContain("A pull above is not closed by splitting an issue");
   }, 60_000);
 });
 

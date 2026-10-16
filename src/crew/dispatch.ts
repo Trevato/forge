@@ -266,7 +266,7 @@ function handOver(
     (c) => c.body.startsWith(HANDOVER_NOTE) && c.createdAt >= over.at,
   );
   if (said) return;
-  addComment(app, by, repo, issue, handoverNote(over));
+  addComment(app, by, repo, issue, handoverNote(over, repo.autonomy === "autonomous"));
   log.info("handed to a person after three reviews", {
     repo: `${repo.ownerName}/${repo.name}`,
     pull: issue.number,

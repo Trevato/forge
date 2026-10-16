@@ -14,7 +14,7 @@ import { addComment, openIssue } from "../src/actions/issues.ts";
 import { commitToBranch } from "../src/actions/repos.ts";
 import { openPull, submitReview } from "../src/actions/pulls.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
-import { HANDOVER_NOTE, handoverOf } from "../src/crew/guard.ts";
+import { HANDOVER_NOTE, handedOverPulls, handoverOf } from "../src/crew/guard.ts";
 import { sendToReview, waitsForPerson } from "../src/crew/review.ts";
 import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
@@ -432,14 +432,38 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
     expect(notes.length).toBe(1);
     expect(notes[0]!.body).toContain("1. sentinel: Round one");
     expect(notes[0]!.body).toContain("3. sentinel: Round three");
-    // Not parked, not closed: it is still open and asks a person.
+    expect(notes[0]!.body).toContain("planner");
+    // Not parked, not closed: still open, and the planner's, not a person's (#1655).
     expect(getIssueById(app.db, pull.id)!.state).toBe("open");
+    expect(askLinesFor(app.db, alice).filter((a) => a.kind === "handover")).toEqual([]);
+    expect(handedOverPulls(app.db, fresh()).map((h) => h.number)).toContain(pull.number);
+    // An assisted repository has no planner: the same hand-over asks a person.
+    const assisted = await updateRepoSettings(app, alice, fresh(), { autonomy: "assisted" });
+    if (!assisted.ok) throw new Error(JSON.stringify(assisted.error));
     const asked = askLinesFor(app.db, alice).filter((a) => a.kind === "handover");
     expect(asked.length).toBe(1);
     expect(asked[0]!.number).toBe(pull.number);
+    expect(handedOverPulls(app.db, fresh())).toEqual([]);
+    const back = await updateRepoSettings(app, alice, fresh(), { autonomy: "autonomous" });
+    if (!back.ok) throw new Error(JSON.stringify(back.error));
     await verdict(pull, "Round four.");
     expect(feedback(pull).length).toBe(2);
     expect(handoverNotes(pull).length).toBe(1);
+  });
+
+  test("a person's own pull with a spent review loop still asks the owner: the planner's list is the crew's pulls only (#1655)", async () => {
+    const pull = await masonPull("person-spent");
+    await verdict(pull, "One.");
+    settleFeedback(pull);
+    await verdict(pull, "Two.");
+    settleFeedback(pull);
+    await verdict(pull, "Three.");
+    expect(handedOverPulls(app.db, fresh()).map((h) => h.number)).toContain(pull.number);
+    app.db.query("UPDATE issue SET author_id = ?2 WHERE id = ?1").run(pull.id, alice.id);
+    expect(handedOverPulls(app.db, fresh()).map((h) => h.number)).not.toContain(pull.number);
+    expect(
+      askLinesFor(app.db, alice).some((a) => a.number === pull.number && a.kind === "handover"),
+    ).toBe(true);
   });
 
   test("a person's comment resets the count", async () => {
@@ -488,6 +512,7 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
     settleFeedback(pull);
     await verdict(pull, "Two.");
     settleFeedback(pull);
+    await updateRepoSettings(app, alice, fresh(), { autonomy: "assisted" });
     await verdict(pull, "Three.");
     expect(ASK_WORDS.handover.options).toEqual(["Tell them what to try", "Close it"]);
     expect(KIND_TIER.handover).toBeDefined();
@@ -541,6 +566,7 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
     settleFeedback(pull);
     await verdict(pull, "Two.");
     settleFeedback(pull);
+    await updateRepoSettings(app, alice, fresh(), { autonomy: "assisted" });
     await verdict(pull, "Three.");
     const first = askLinesFor(app.db, alice)
       .filter((a) => a.kind === "handover")

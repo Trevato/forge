@@ -194,6 +194,8 @@ export interface HandedOver {
   readonly reasons: readonly string[];
   /** Whether an agent wrote it. A person's ask is never dropped. */
   readonly byAgent?: boolean | undefined;
+  /** A pull whose three reviews asked for changes, not a parked issue. */
+  readonly pull?: boolean | undefined;
 }
 
 /**
@@ -474,7 +476,7 @@ function parkedTwiceLines(input: TaskInput): string[] {
   return [
     "The crew tried each of these twice and could not finish it as written. They are yours now, before anything new:",
     ...handed.flatMap((issue) => [
-      `- Parked twice: #${issue.number} ${issue.title} (${issue.byAgent === true ? "the crew's own" : "a person's ask"})`,
+      `- ${issue.pull === true ? "Three reviews asked for changes, pull" : "Parked twice:"} #${issue.number} ${issue.title} (${issue.byAgent === true ? "the crew's own" : "a person's ask"})`,
       ...issue.reasons.map((reason, n) => `    ${n + 1}. ${reason}`),
     ]),
     "Leave every one of them in exactly one of these states, and say which in a comment on it:",
@@ -487,6 +489,11 @@ function parkedTwiceLines(input: TaskInput): string[] {
         ]),
     '- Dropped: only an issue the crew wrote, when the direction no longer needs it — say why on it and close it with {"state":"closed","reason":"dropped"}. A person\'s ask is never yours to drop: split it, replace it or defer it.',
     `If other issues wait for one you close, make them wait for what replaces it: DELETE ${issues}/D/dependencies/N, then POST ${issues}/D/dependencies with {"blockedBy":M}.`,
+    ...(handed.some((h) => h.pull === true)
+      ? [
+          "A pull above is not closed by splitting an issue: comment on it with the reviewer's ask restated as one concrete change so the builder has one more round, or close it and open the smaller issues it should have been.",
+        ]
+      : []),
     "Never leave one as it was: what you leave stays on the owner's board and comes back to you.",
   ];
 }

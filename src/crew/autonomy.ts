@@ -93,6 +93,7 @@ import { pace, type Pace } from "./pacing.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import {
   capReached,
+  handedOverPulls,
   ISSUE_RUN_CAP,
   SKIP_SUMMARY,
   skipsReplan,
@@ -558,7 +559,7 @@ async function planIfThin(
   ready: number,
   now: Date,
 ): Promise<boolean> {
-  const handed = parkedTwice(app.db, [repo]);
+  const handed = [...parkedTwice(app.db, [repo]), ...handedOverPulls(app.db, repo)];
   if (ready >= THIN_MAP && handed.length === 0) return false;
   const planner = crew.find((c) => c.role === "planner")?.agent;
   if (planner === undefined) return notPlanned(repo, "no planner on the crew");

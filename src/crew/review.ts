@@ -301,8 +301,10 @@ export async function sendToReview(
   const history = reviewAttempts(app.db, pull);
   if (history === undefined) return "wait";
   const stage = stageOf(history, now);
-  if (stage === "wait" || stage === "lapsed") return stage;
-  const late = stage === "late";
+  // An autonomous repository sends a pull nobody reviewed whatever its age.
+  const unreviewed = stage === "lapsed" && history.attempts.length === 0 && repo.autonomy === "autonomous";
+  if (stage === "wait" || (stage === "lapsed" && !unreviewed)) return stage;
+  const late = stage === "late" || unreviewed;
   const issue = getIssueById(app.db, pull.id);
   if (!issue) return "wait";
   const { diff } = await pullDiff(

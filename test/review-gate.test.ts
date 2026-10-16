@@ -25,7 +25,8 @@ import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { landIfGreen, settleAgentRun } from "../src/crew/autonomy.ts";
-import { waitsForPerson } from "../src/crew/review.ts";
+import { sendToReview, waitsForPerson } from "../src/crew/review.ts";
+import { askLinesFor } from "../src/web/studio/asks.ts";
 
 describe("the review gate", () => {
   let dataDir: string;
@@ -310,5 +311,116 @@ describe("the review gate", () => {
       }),
     ).toBe(false);
     expect(getPull(app.db, repo.id, moved.number)?.state).toBe("open");
+  });
+});
+
+describe("a pull nobody reviewed, however old (#1655)", () => {
+  let dataDir: string;
+  let app: App;
+  let alice: User;
+  let mason: User;
+  let repo: Repo;
+  const fresh = () => getRepoById(app.db, repo.id)!;
+  const later = new Date(Date.now() + 30 * 24 * 3_600_000);
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-review-old-"));
+    app = createApp({ dataDir, port: 0 });
+    const a = await createUser(app.db, { trusted: true,
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+      adminIfFirst: true,
+    });
+    if (!a.ok) throw new Error(a.error);
+    alice = a.value;
+    const made = await createRepo(app, alice, { name: "engine", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    repo = made.value;
+    const seeded = await commitToBranch(app, alice, repo, {
+      message: "Start",
+      files: [{ path: "README.md", content: "# engine\n" }],
+    });
+    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+    for (const name of ["mason", "quill"]) {
+      const agent = await createAgent(app, alice, { username: name });
+      if (!agent.ok) throw new Error(String(agent.error));
+      expect(addToCrew(app, alice, repo, name).ok).toBe(true);
+    }
+    mason = getUserByName(app.db, "mason")!;
+    setCrewRole(app.db, repo.id, getUserByName(app.db, "quill")!.id, "reviewer");
+  });
+
+  afterAll(async () => {
+    await app.close?.();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  async function greenPull(name: string): Promise<Pull> {
+    const branch = await commitToBranch(app, alice, repo, {
+      branch: `feature/${name}`,
+      base: "main",
+      message: name,
+      files: [{ path: `${name}.ts`, content: `export const n = "${name}";\n` }],
+    });
+    if (!branch.ok) throw new Error(JSON.stringify(branch.error));
+    const opened = await openPull(app, alice, repo, {
+      title: name,
+      baseBranch: "main",
+      headBranch: `feature/${name}`,
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    app.db.query("UPDATE issue SET author_id = ?2 WHERE id = ?1").run(opened.value.id, mason.id);
+    const pull = getPull(app.db, repo.id, opened.value.number)!;
+    const check = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: pull.headOid,
+      reason: "pull",
+    });
+    claimRun(app.db, check.id);
+    finishRun(app.db, check.id, { state: "ok", summary: "check passed" });
+    return pull;
+  }
+
+  const setAutonomy = (mode: "assisted" | "autonomous") =>
+    app.db
+      .query("UPDATE repo SET autonomy = ?2, autonomy_by = ?3 WHERE id = ?1")
+      .run(repo.id, mode, alice.id);
+  const reviewRuns = (pull: Pull) =>
+    listRuns(app.db, repo.id, { issueId: pull.id }).filter((r) => r.reason === "review");
+
+  test("an autonomous repository sends it to review at any age; an assisted one leaves it lapsed", async () => {
+    const pull = await greenPull("ancient");
+    setAutonomy("assisted");
+    expect(await sendToReview(app, fresh(), pull, later)).toBe("lapsed");
+    expect(reviewRuns(pull)).toHaveLength(0);
+    setAutonomy("autonomous");
+    expect(await sendToReview(app, fresh(), pull, later)).toBe("sent");
+    expect(reviewRuns(pull)).toHaveLength(1);
+  });
+
+  test("the lapsed-review ask is the sweep's only while nothing was ever sent, and only when autonomous", async () => {
+    const pull = await greenPull("lapsing");
+    const asking = () =>
+      askLinesFor(app.db, alice).some((r) => r.items.includes(`review:${pull.id}`));
+    // Age the green check: the ask reads the wall clock.
+    app.db.query("UPDATE run SET created_at = ?2, finished_at = ?2 WHERE issue_id = ?1 AND kind = 'check'")
+      .run(pull.id, new Date(Date.now() - 30 * 24 * 3_600_000).toISOString());
+    setAutonomy("assisted");
+    expect(asking()).toBe(false); // assisted repositories ask through "look", not "review"
+    setAutonomy("autonomous");
+    expect(asking()).toBe(false);
+    // Sent once and unanswered, it is lapsed with a history: it asks a person.
+    const old = new Date(Date.now() - 30 * 24 * 3_600_000).toISOString();
+    expect(await sendToReview(app, fresh(), getPull(app.db, repo.id, pull.number)!, later)).toBe("sent");
+    for (const run of reviewRuns(pull).filter((r) => r.state === "queued")) {
+      claimRun(app.db, run.id);
+      finishRun(app.db, run.id, { state: "failed", summary: "reviewed: no verdict was posted" });
+    }
+    app.db.query("UPDATE run SET created_at = ?2, finished_at = ?2 WHERE issue_id = ?1 AND reason = 'review'").run(pull.id, old);
+    expect(asking()).toBe(true);
   });
 });

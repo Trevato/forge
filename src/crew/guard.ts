@@ -19,6 +19,7 @@ import type { Database } from "bun:sqlite";
 import type { Agent } from "../core/agents.ts";
 import { recordDecision } from "../core/decisions.ts";
 import type { Issue } from "../core/issues.ts";
+import { listPulls } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { directorsAmong } from "./direct.ts";
 import { nothingNew, plannerNothingNew } from "./news.ts";
@@ -295,8 +296,53 @@ export function handoverLines(h: Handover): string[] {
   });
 }
 
+/**
+ * The open pulls of an autonomous repository whose review loop is spent:
+ * the planner's to re-scope, split or send one more round with the
+ * reviewer's ask restated, never the owner's. Shaped like a parked issue so
+ * the planner's brief and its once-per-pass clock read both alike.
+ */
+export function handedOverPulls(
+  db: Database,
+  repo: Repo,
+): {
+  issueId: string;
+  repoId: string;
+  number: number;
+  title: string;
+  reasons: string[];
+  byAgent: boolean;
+  at: string;
+  pull: true;
+}[] {
+  if (repo.autonomy !== "autonomous") return [];
+  const out = [];
+  for (const pull of listPulls(db, repo.id, { sealed: true, state: "open", limit: 50 })) {
+    if (!pull.authorIsAgent) continue;
+    const over = handoverOf(db, repo, pull.id);
+    if (over === undefined) continue;
+    out.push({
+      issueId: pull.id,
+      repoId: repo.id,
+      number: pull.number,
+      title: pull.title,
+      reasons: handoverLines(over),
+      byAgent: true,
+      at: over.at,
+      pull: true as const,
+    });
+  }
+  return out;
+}
+
 /** The note the pull's thread keeps of the hand-over. */
-export function handoverNote(h: Handover): string {
+export function handoverNote(h: Handover, toPlanner = false): string {
+  if (toPlanner)
+    return [
+      `${HANDOVER_NOTE} the reviewer asked for changes three times with no approval between, so the planner re-scopes it: split, replaced, or one more round with the reviewer's ask restated.`,
+      "",
+      ...handoverLines(h),
+    ].join("\n");
   return [
     `${HANDOVER_NOTE} the reviewer asked for changes three times with no approval between, so no more feedback runs start here until you say what to try.`,
     "",

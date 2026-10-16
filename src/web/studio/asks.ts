@@ -60,7 +60,7 @@ import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { handoverLines, handoverOf, type Handover } from "../../crew/guard.ts";
 import { conflictsOf, isStalePull, mergesAgainSince } from "../../crew/stale_asks.ts";
-import { waitsForPerson, waitsForReviewer, type ReviewWait } from "../../crew/review.ts";
+import { reviewAttempts, waitsForPerson, waitsForReviewer, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { vitals } from "../../kernel/vitals.ts";
 import { repoBase } from "../chrome.ts";
@@ -333,6 +333,11 @@ function askCandidatesFor(
     // Three reviews without an approval: the crew stopped, and says so
     // before anything about the check (`guard.ts`).
     const over = handoverOf(db, repo, issue.id);
+    // An autonomous repository's spent review loop is the planner's
+    // (`handedOverPulls`), not a question for a person (#1655).
+    // A person's pull has no planner pass to take it, so it still asks.
+    if (over !== undefined && repo.autonomy === "autonomous" && issue.authorIsAgent)
+      continue;
     if (over !== undefined) {
       out.push({
         kind: "handover",
@@ -406,7 +411,11 @@ function askCandidatesFor(
       // an agent's change with no reviewer, or whose review lapsed, waits
       // for a person — and so asks one (#597).
       const wait = waitsForPerson(db, repo.id, pull);
-      if (wait !== undefined)
+      // A review nobody answered is the sweep's to send, whatever its age
+      // (`sendToReview`); every other wait is still a person's.
+      const resent =
+        wait?.why === "lapsed" && reviewAttempts(db, pull)?.attempts.length === 0;
+      if (wait !== undefined && !resent)
         out.push({
           kind: "review",
           id: `review:${pull.id}`,
@@ -447,7 +456,8 @@ function askCandidatesFor(
   )) {
     const issue = getIssueById(db, p.issueId);
     const repo = byId.get(p.repoId);
-    if (issue && repo)
+    // An autonomous repository's parked issue is the planner's (`parkedTwice`).
+    if (issue && repo && repo.autonomy !== "autonomous")
       out.push({
         kind: "parked",
         id: `parked:${issue.id}`,

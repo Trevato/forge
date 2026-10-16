@@ -116,7 +116,7 @@ import { historyHolds, scrubTree } from "./leak.ts";
 import { workdirFor } from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
 import { feedbackSince } from "./news.ts";
-import { SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
+import { handedOverPulls, SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
 import { passportEnv } from "./passport_env.ts";
 
 const log = createLog("crew");
@@ -864,7 +864,7 @@ async function work(
       // A planning run is given what the crew handed over (`parks.ts`).
       ...(brief.role === "planner" && issue.id === repo.directionIssueId
         ? {
-            parkedTwice: parkedTwice(app.db, [repo]),
+            parkedTwice: [...parkedTwice(app.db, [repo]), ...handedOverPulls(app.db, repo)],
             laterGate: laterGate(app.db, repo.id),
           }
         : {}),
