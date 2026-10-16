@@ -11,7 +11,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -460,7 +460,22 @@ describe("apps: production, previews, data, gates", () => {
     // A visit does not wake it.
     expect((await viaHost(`hello.${DOMAIN}`)).status).toBe(503);
     expect(runtime.envStatus(record, "production")?.state).not.toBe("running");
-  }, 60_000);
+
+    // Waking restarts production on the same data directory.
+    const woke = await updateRepoSettings(app, alice, repo, {
+      archived: false,
+    });
+    expect(woke.ok).toBe(true);
+    for (
+      let i = 0;
+      i < 600 && runtime.envStatus(record, "production")?.state !== "running";
+      i++
+    )
+      await Bun.sleep(100);
+    expect(runtime.envStatus(record, "production")?.state).toBe("running");
+    expect(readFileSync(join(data, "archive-marker"), "utf8")).toBe("kept");
+    expect((await viaHost(`hello.${DOMAIN}`)).status).toBe(200);
+  }, 120_000);
 });
 
 describe("a preview whose copied data the build cannot read starts fresh (issue #36)", () => {

@@ -8,6 +8,7 @@ import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
 import { appsRuntime } from "../apps/runtime.ts";
+import { getAppByRepo } from "../core/apps.ts";
 import { canSeeSealed } from "../core/sealed.ts";
 import { capacityValue } from "../core/capacity.ts";
 import { NEW_FOR_MS } from "./accounts.ts";
@@ -316,6 +317,14 @@ export async function updateRepoSettings(
   if (updated.archivedAt !== null && repo.archivedAt === null) {
     const runtime = appsRuntime(app);
     if (runtime !== undefined) await runtime.stopRepo(repo.id);
+  }
+  // Waking brings production back from the default branch on the same data
+  // directory; a preview returns on its pull's next push.
+  if (updated.archivedAt === null && repo.archivedAt !== null) {
+    const runtime = appsRuntime(app);
+    const record = getAppByRepo(app.db, repo.id);
+    if (runtime !== undefined && record !== undefined)
+      await runtime.reconcileApp(record, updated, "wake", "production");
   }
   const changed: string[] = (
     [
