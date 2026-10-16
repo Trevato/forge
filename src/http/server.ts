@@ -1640,6 +1640,13 @@ async function handleHook(app: App, request: Request): Promise<Response> {
 export interface Servers {
   readonly url: string;
   readonly port: number;
+  /**
+   * Stop taking connections and let those in flight finish: what a process
+   * handing its port to a release beside it does at drain start (#2040).
+   * Resolves once no request is in flight, or `budgetMs` has passed; `stop`
+   * then cuts whatever is left.
+   */
+  stopAccepting(budgetMs: number): Promise<void>;
   stop(): void;
 }
 
@@ -1665,6 +1672,9 @@ function withHeader(response: Response, name: string, value: string): Response {
     return copy;
   }
 }
+
+/** How often a draining listener looks whether its last request is answered. */
+const INFLIGHT_POLL_MS = 50;
 
 /** The hook sockets a data directory may hold: this forge's, and others'. */
 const SOCKET_FILE = /^forge(?:-[a-z0-9]+)?\.sock$/;
@@ -1920,6 +1930,14 @@ export async function serve(app: App): Promise<Servers> {
   return {
     url: `http://localhost:${port}`,
     port,
+    async stopAccepting(budgetMs) {
+      // Closing the listener leaves the port to the process beside this one;
+      // the connections already here are answered to the end.
+      web.stop(false).catch(() => {});
+      const deadline = Date.now() + budgetMs;
+      while (web.pendingRequests > 0 && Date.now() < deadline)
+        await Bun.sleep(INFLIGHT_POLL_MS);
+    },
     stop() {
       endOpen();
       clearInterval(sweep);

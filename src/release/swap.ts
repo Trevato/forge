@@ -92,10 +92,39 @@ export async function startRelease(input: SwapInput): Promise<Swapped> {
 }
 
 /**
+ * How long a process that handed its port over keeps answering what it had
+ * already taken — a long push or clone — before it goes (#2040).
+ */
+export const HANDOVER_INFLIGHT_MS = 300_000;
+
+/**
+ * The drain a handover runs (#2040). The release listens on this port too,
+ * so this process stops accepting at once: every new connection is the
+ * release's. What is in flight here is answered to the end (up to
+ * `budgetMs`) beside `rest` — the shutdown's other steps — and only once
+ * both are done does `close` cut what remains. Runs once.
+ */
+export function drainOnHandover(
+  servers: { stopAccepting(budgetMs: number): Promise<void> },
+  rest: () => Promise<unknown>,
+  close: () => void,
+  budgetMs = HANDOVER_INFLIGHT_MS,
+): () => Promise<void> {
+  let done: Promise<void> | undefined;
+  return () =>
+    (done ??= (async () => {
+      const inFlight = servers.stopAccepting(budgetMs);
+      await Promise.all([inFlight, rest()]).catch(() => {});
+      close();
+    })());
+}
+
+/**
  * What the running forge does once the release is well: drain, as a SIGTERM
- * does. Set at boot, with whether this process holds the SSH listener (a new
- * process cannot bind that port while this one does, and a release must not
- * quietly close the terminal).
+ * does, but letting go of the port first (`drainOnHandover`). Set at boot,
+ * with whether this process holds the SSH listener (a new process cannot
+ * bind that port while this one does, and a release must not quietly close
+ * the terminal).
  */
 export const handover: { drain?: () => void; ssh?: boolean; migrate?: boolean } = {};
 

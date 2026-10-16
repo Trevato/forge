@@ -6,7 +6,7 @@
 
 import { startSampler } from "./boards/sampler.ts";
 import { sweepStanding } from "./crew/standing.ts";
-import { handover } from "./release/swap.ts";
+import { drainOnHandover, handover } from "./release/swap.ts";
 import { parentUrlProblem } from "./core/parent_releases.ts";
 import { releaseEnv } from "./release/env.ts";
 import { createApp } from "./app.ts";
@@ -487,8 +487,14 @@ const leaseTimer = setInterval(() => {
   releaseOrphans(app.db);
 }, 30_000);
 
-// A release that read healthy beside this process takes over (#1663).
-handover.drain = () => shutdown("SIGTERM");
+// A release that read healthy beside this process takes over (#1663),
+// and this one lets go of the port before it drains (#2040).
+const handOver = drainOnHandover(servers, () => drain("SIGTERM"), close);
+handover.drain = () => {
+  if (draining) return;
+  draining = true;
+  void handOver();
+};
 handover.ssh = ssh !== undefined;
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
@@ -505,6 +511,11 @@ let draining = false;
 function shutdown(signal: NodeJS.Signals): void {
   if (draining) return;
   draining = true;
+  void drain(signal).finally(close);
+}
+
+/** Everything a leaving process finishes before it goes: `shutdown` above. */
+function drain(signal: NodeJS.Signals): Promise<unknown> {
   const sessions = ssh?.sessions() ?? 0;
   startDraining(app.log, signal, { sshSessions: sessions });
   // Streams end now, with a resume hint: their browsers reconnect to the
@@ -518,7 +529,7 @@ function shutdown(signal: NodeJS.Signals): void {
   // The platform's SIGTERM: the listener stays open while routers learn
   // this process is going. A person's Ctrl-C does not wait for routers.
   const linger = signal === "SIGTERM" ? Bun.sleep(lingerMs ?? 0) : undefined;
-  Promise.all([
+  return Promise.all([
     linger,
     prompts.stop(),
     notifier.stop(),
@@ -538,12 +549,14 @@ function shutdown(signal: NodeJS.Signals): void {
         });
       return ssh?.drain();
     })
-    .catch(() => {})
-    .finally(() => {
-      app.log.info("forge shutting down");
-      ssh?.stop();
-      servers.stop();
-      app.close();
-      process.exit(0);
-    });
+    .catch(() => {});
+}
+
+/** The last step of a drain: cut what is left and exit. */
+function close(): void {
+  app.log.info("forge shutting down");
+  ssh?.stop();
+  servers.stop();
+  app.close();
+  process.exit(0);
 }
