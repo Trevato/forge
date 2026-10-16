@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { createApp, type App } from "../src/app.ts";
+import { setLimit } from "../src/settings/limits.ts";
 import { migrations } from "../src/core/schema.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -35,6 +36,7 @@ describe("verified email", () => {
       },
     });
     servers = await serve(app);
+    setLimit(app.db, "signup.per_source", 1000, "setup");
     base = servers.url;
     // The owner predates verification; the first account is never held back.
     const owner = await signUp(app, {

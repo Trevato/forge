@@ -10,6 +10,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { setLimit } from "../src/settings/limits.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { oauthCallbackUri } from "../src/http/api.ts";
 import { listEvents } from "../src/core/events.ts";
@@ -173,6 +174,7 @@ describe("OAuth code flow: state, PKCE, redirects, and the callback URI", () => 
     fake = serveFakeForge(state);
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
+    setLimit(app.db, "signup.per_source", 1000, "setup");
     base = servers.url;
     caller = callerFor(base);
     await createUsers(base, ["alice", "bob"]);
@@ -477,6 +479,7 @@ describe("OAuth device flow: a flow is private to the user who started it", () =
     fake = serveFakeForge(state);
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
+    setLimit(app.db, "signup.per_source", 1000, "setup");
     api = callerFor(servers.url);
     await createUsers(servers.url, ["alice", "bob"]);
     proveAll(app);
@@ -589,6 +592,7 @@ describe("refresh serialisation and needs_reauth", () => {
     fake = serveFakeForge(state);
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
+    setLimit(app.db, "signup.per_source", 1000, "setup");
     api = callerFor(servers.url);
     await createUsers(servers.url, ["alice"]);
     proveAll(app);

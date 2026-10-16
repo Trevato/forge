@@ -461,7 +461,8 @@ export function signinAllowed(ctx: Ctx, username: string): number | undefined {
  * Sign-ups, throttled the same way, by the socket's peer (`clientAddress`,
  * which reads a forwarding header only from a proxy the operator trusts):
  * a source may make a few accounts a minute and the forge as a whole more.
- * Asked by the signup form only. A refused call is not counted.
+ * Asked by the signup form and the API signup, which share one window; the
+ * passkey door follows (#2322). A refused call is not counted.
  */
 const signupLimits = new WeakMap<Ctx["app"], RateLimiter>();
 

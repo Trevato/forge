@@ -8,6 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { setLimit } from "../src/settings/limits.ts";
 import { setSignup, type SignupMode } from "../src/settings/signup.ts";
 import { signUp, signUpWithPasskey } from "../src/actions/users.ts";
 import { getUserByName } from "../src/core/users.ts";
@@ -26,6 +27,7 @@ describe("closed signup", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-signup-closed-"));
     app = createApp({ dataDir, port: 0, url: "https://forge.example", edgeToken: TOKEN });
     servers = await serve(app);
+    setLimit(app.db, "signup.per_source", 1000, "setup");
     base = servers.url;
   });
   afterAll(async () => {

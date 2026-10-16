@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { setLimit } from "../src/settings/limits.ts";
 import {
   startNotifier,
   setNotifyUrl,
@@ -62,6 +63,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
       edgeToken: EDGE,
     });
     servers = await serve(app);
+    setLimit(app.db, "signup.per_source", 1000, "setup");
     base = servers.url;
     const owner = await signUp(app, {
       username: "olive",

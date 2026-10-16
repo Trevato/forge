@@ -359,7 +359,7 @@ import {
   undoFleetOp,
   type FleetError,
 } from "../actions/fleet.ts";
-import { sessionCookie } from "../web/pages/site.ts";
+import { sessionCookie, signupAllowed } from "../web/pages/site.ts";
 import { cookieValue, crossOrigin, type Ctx, type Handler } from "./context.ts";
 import {
   apiError,
@@ -1193,6 +1193,13 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── accounts ─────────────────────────────────────────────────────────
 
   router.add("POST", "/api/v1/users", async (ctx) => {
+    const wait = signupAllowed(ctx);
+    if (wait !== undefined)
+      return json(
+        { error: "rate_limited", message: "too many sign-ups; wait and send again" },
+        429,
+        { "retry-after": String(wait) },
+      );
     // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
     const input = await boundedBody(ctx.request, STRANGER_MAX);
     if (input === "too_large")

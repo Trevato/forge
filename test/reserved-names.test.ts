@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { setLimit } from "../src/settings/limits.ts";
 import { createOrg } from "../src/actions/orgs.ts";
 import { createOrg as foundOrg } from "../src/core/orgs.ts";
 import { signUp, updateProfile } from "../src/actions/users.ts";
@@ -28,6 +29,7 @@ describe("reserved names", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-reserved-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
+    setLimit(app.db, "signup.per_source", 1000, "setup");
     base = servers.url;
     // The owner is the first account; the crew are agents.
     const owner = await signUp(app, {
