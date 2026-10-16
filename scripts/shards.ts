@@ -10,8 +10,8 @@
 /**
  * No more than this many `bun test` processes at once, whatever the host:
  * a ceiling for a big shared machine, not the check cell's number. The cell
- * (16 CPUs, 8 GiB) is bounded by its CPUs and its memory (#2038); the
- * old ceiling of 8 left half its CPUs idle.
+ * (16 CPUs, 8 GiB) is bounded by its CPUs and its memory (#2038), its CPUs
+ * through {@link workerCpus}; the old ceiling of 8 left half its CPUs idle.
  */
 export const SHARDS_MAX = 32;
 
@@ -25,6 +25,26 @@ export const SHARDS_MAX = 32;
 export const WORKER_MEMORY_BYTES = 512 * 1024 * 1024;
 
 /**
+ * The share of a check cell's declared CPUs the workers are sized to. The
+ * cell's watchdog (`src/apps/contain.ts`) stops a check whose tree averages
+ * more than `check.limits.cpus` cores over 30 s, and a worker is more than
+ * one core at its peaks (Bun's own threads, git children, a booted forge):
+ * one worker per declared CPU averaged 16.1 of 16 and stopped main (#2161).
+ */
+export const CELL_CPU_SHARE = 3 / 4;
+
+/**
+ * The CPUs the gate sizes its workers to: the machine's, held under
+ * {@link CELL_CPU_SHARE} of the cell's CPU limit (`FORGE_CELL_CPUS`) when
+ * there is one, at least one. `availableParallelism()` sees the host, not
+ * the cell: the cell is a watchdog, not a CPU quota the process can read.
+ */
+export function workerCpus(machine: number, declared: number | undefined): number {
+  if (declared === undefined || !Number.isFinite(declared) || declared <= 0) return machine;
+  return Math.max(1, Math.min(machine, Math.floor(declared * CELL_CPU_SHARE)));
+}
+
+/**
  * How many shards: one per CPU the process may use, no more than its
  * memory holds at {@link WORKER_MEMORY_BYTES} each, capped at
  * {@link SHARDS_MAX} and at the number of files, at least one. One per CPU,
@@ -33,10 +53,10 @@ export const WORKER_MEMORY_BYTES = 512 * 1024 * 1024;
  * `FORGE_CHECK_SHARDS` overrides it (still capped at the file count) so a
  * small or busy host can turn it down; that is an explicit operator
  * choice and wins over the cell cap below. `cellCpus` (`FORGE_CELL_CPUS`, the
- * CPU limit of the cell the check runs in) caps the count at one less than
- * the limit, since the runner itself needs a core and the cell's guard
- * kills a check that uses more than its limit; unset or not a whole number
- * from 1 is no limit.
+ * CPU limit of the cell the check runs in) holds the count to
+ * {@link workerCpus} of it, since the runner and each worker's own threads
+ * need room and the cell's guard kills a check that uses more than its
+ * limit; unset or not a whole number from 1 is no limit.
  */
 export function shardCount(
   cpus: number,
@@ -47,7 +67,7 @@ export function shardCount(
 ): { ok: true; value: number } | { ok: false; error: string } {
   let n = Math.min(SHARDS_MAX, Math.floor(cpus));
   if (cellCpus !== undefined && /^[1-9][0-9]{0,3}$/.test(cellCpus.trim()))
-    n = Math.min(n, Number(cellCpus.trim()) - 1);
+    n = workerCpus(n, Number(cellCpus.trim()));
   if (memory !== undefined && Number.isFinite(memory) && memory > 0)
     n = Math.min(n, Math.floor(memory / WORKER_MEMORY_BYTES));
   if (override !== undefined && override.trim() !== "") {

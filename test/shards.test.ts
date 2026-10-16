@@ -11,6 +11,7 @@ import {
   SECONDS_PER_BYTE_DEFAULT,
   SHARDS_MAX,
   WORKER_MEMORY_BYTES,
+  CELL_CPU_SHARE,
   formatTimes,
   heaviestFirst,
   memoryLimit,
@@ -25,6 +26,7 @@ import {
   splitFiles,
   tally,
   weigher,
+  workerCpus,
   type ShardResult,
 } from "../scripts/shards.ts";
 import { parseCheck } from "../src/apps/manifest.ts";
@@ -224,7 +226,8 @@ describe("shardCount", () => {
 
   test("the cell's CPU limit caps the shards below it, whatever the host reports (#2257)", () => {
     expect(shardCount(80, 400, undefined, undefined, "4")).toEqual({ ok: true, value: 3 });
-    expect(shardCount(80, 400, undefined, undefined, "16")).toEqual({ ok: true, value: 15 });
+    // workerCpus of the limit, not one less: 15 workers still peak past 16 cores (#2161).
+    expect(shardCount(80, 400, undefined, undefined, "16")).toEqual({ ok: true, value: 12 });
     expect(shardCount(80, 2, undefined, undefined, "16")).toEqual({ ok: true, value: 2 });
     expect(shardCount(80, 400, undefined, undefined, "1")).toEqual({ ok: true, value: 1 });
     expect(shardCount(2, 400, undefined, undefined, "16")).toEqual({ ok: true, value: 2 });
@@ -251,6 +254,42 @@ describe("shardCount", () => {
     // Memory never raises the count past the CPUs, and the override wins.
     expect(shardCount(4, 400, undefined, 64 * GiB)).toEqual({ ok: true, value: 4 });
     expect(shardCount(16, 400, "20", 4 * GiB)).toEqual({ ok: true, value: 20 });
+  });
+
+  test("the cell's declared CPUs hold the workers under the watchdog's limit (#2161)", () => {
+    const GiB = 1024 * 1024 * 1024;
+    // A 64-core host, the 16-CPU cell: 12 workers, not 16 (which averaged
+    // 16.1 cores and was stopped) and not 32.
+    expect(workerCpus(64, 16)).toBe(12);
+    expect(shardCount(workerCpus(64, 16), 400, undefined, 8 * GiB)).toEqual({ ok: true, value: 12 });
+    // Never more than the machine has, at least one, and no cell is the machine.
+    expect(workerCpus(4, 16)).toBe(4);
+    expect(workerCpus(64, 1)).toBe(1);
+    expect(workerCpus(64, undefined)).toBe(64);
+    expect(workerCpus(64, 0)).toBe(64);
+    expect(CELL_CPU_SHARE).toBeLessThan(1);
+  });
+
+  test("FORGE_CELL_CPUS holds the count to workerCpus of it; the lowest bound wins (#2161)", () => {
+    const GiB = 1024 * 1024 * 1024;
+    const cell = { FORGE_CELL_CPUS: "16" };
+    // The 16-CPU cell on a 64-core host: 12, the cell's share, not 15 or 32.
+    expect(shardCountFromEnv(cell, 64, 400, 8 * GiB)).toEqual({ ok: true, value: workerCpus(64, 16) });
+    expect(workerCpus(64, 16)).toBe(12);
+    // A smaller machine, less memory or fewer files is lower still.
+    expect(shardCountFromEnv(cell, 8, 400, 8 * GiB)).toEqual({ ok: true, value: 8 });
+    expect(shardCountFromEnv(cell, 64, 400, 4 * GiB)).toEqual({ ok: true, value: 8 });
+    expect(shardCountFromEnv(cell, 64, 5, 8 * GiB)).toEqual({ ok: true, value: 5 });
+    // The operator's override still wins over the cell.
+    expect(shardCountFromEnv({ ...cell, FORGE_CHECK_SHARDS: "14" }, 64, 400, 8 * GiB)).toEqual({ ok: true, value: 14 });
+  });
+
+  test("forge.json's check cell runs fewer workers than it has CPUs", () => {
+    const check = parseCheck(readFileSync(new URL("../forge.json", import.meta.url), "utf8"), undefined);
+    if (!check.ok || check.value === undefined) throw new Error("forge.json has no check");
+    const cpus = check.value.limits.cpus;
+    if (cpus === undefined) throw new Error("forge.json's check declares no cpus");
+    expect(workerCpus(1024, cpus)).toBeLessThan(cpus);
   });
 
   test("memoryLimit: the least of the machine and each cgroup limit it can read", () => {

@@ -66,7 +66,7 @@ export type GateSummary = {
   files: number;
   /** `FORGE_CHECK_SHARDS` as it was set, if it was. */
   override: string | undefined;
-  /** The memory `shardCount` was handed: the least of the machine's and the cgroup's. */
+  /** The memory `shardCount` was handed: the least of the machine's, the cgroup's and the cell's. */
   memoryBytes: number;
   /** Room one worker is given (`WORKER_MEMORY_BYTES` in scripts/shards.ts). */
   workerBytes: number;

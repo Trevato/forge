@@ -65,6 +65,7 @@ import { cgroupMemory, summaryLines } from "./gate-summary.ts";
 import { GATE_FILE, executedFiles, formatImpact, gateListAdds, handedImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
 import { fastSet, importsOf, duration } from "../src/checks/tiers.ts";
 import { CHECK_CACHE } from "../src/checks/cache.ts";
+import { parseCheck } from "../src/apps/manifest.ts";
 
 const TIMES = new URL("./test-times.json", import.meta.url).pathname;
 // The forge hands the map over in the checkout (`src/checks/impact-store.ts`):
@@ -339,11 +340,17 @@ const readLimit = (path: string): string | undefined => {
     return undefined;
   }
 };
+// The cell's memory as forge.json declares it: its watchdog stops the
+// check over it, and nothing in /proc or /sys says it. Its CPUs come from
+// FORGE_CELL_CPUS (shardCountFromEnv).
+const cell = parseCheck(readLimit(new URL("../forge.json", import.meta.url).pathname), undefined);
+const declared = cell.ok ? cell.value?.limits : undefined;
 const cpus = availableParallelism();
 const shardsOverride = process.env["FORGE_CHECK_SHARDS"];
 const memory = memoryLimit(totalmem(), [
   readLimit("/sys/fs/cgroup/memory.max"),
   readLimit("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+  declared?.memoryMiB === undefined ? undefined : String(declared.memoryMiB * 1024 * 1024),
 ]);
 const count = shardCountFromEnv(process.env, cpus, files.length, memory);
 if (!count.ok) {

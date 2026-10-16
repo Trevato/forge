@@ -89,9 +89,13 @@ describe("what the open web expects", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/json");
     const doc = (await res.json()) as { releases: unknown[] };
+    expect(doc.releases.length).toBe(releasesFile.releases.length);
     const read = parseReleases(doc, true);
-    // A child reads the newest MAX_RELEASES; the record itself keeps every release.
+    // A child reads the newest MAX_RELEASES; the record itself keeps every release,
+    // and every entry, past those too, is in the child's shape.
     expect(read!.length).toBe(Math.min(doc.releases.length, MAX_RELEASES));
+    const rest = doc.releases.slice(MAX_RELEASES);
+    expect(parseReleases({ releases: rest }, true)!.length).toBe(rest.length);
     expect(read![0]!.name).toBe(releasesFile.releases[0]!.version);
     expect(read![0]!.url).toStartWith(`${base}/releases.json#`);
   });
