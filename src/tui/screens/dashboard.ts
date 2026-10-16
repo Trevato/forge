@@ -17,6 +17,8 @@
 import { protectionNotice } from "../../kernel/protection.ts";
 import { holdWords, plannerHold } from "../../crew/autonomy.ts";
 import { forgeLane, forgeNeeds } from "../../actions/health.ts";
+import { forgeHealth } from "../../kernel/guard.ts";
+import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
 import { clientAppRows } from "../../core/client-apps.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
@@ -183,6 +185,15 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       }),
     );
     forge = forgeNeeds(f.app, f.user);
+    if (forge !== undefined) {
+      const fh = forgeHealth();
+      const verdict = forgeVerdict(fh, Date.now());
+      if (verdict !== undefined)
+        forge = [
+          verdictLine(verdict),
+          ...forge.filter((line) => !coveredByVerdict(line, verdict, fh)),
+        ];
+    }
     lane = forgeLane(f.app, f.user);
     decider = deciderLine(f.app, f.user);
     // "Yours" is ownership plus the orgs you are on a team of; typing in the

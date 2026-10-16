@@ -4,7 +4,7 @@
  * view that was never written (no `checkedAt`) is not stale.
  */
 
-import { GUARD_STALE_MS, type Guard } from "./guard.ts";
+import { GUARD_STALE_MS, rolloutLine, type ForgeHealth, type Guard } from "./guard.ts";
 
 /** Draining longer than this is a release that did not finish. */
 export const DRAIN_LIMIT_MS = 5 * 60_000;
@@ -25,4 +25,27 @@ export function forgeVerdict(view: VerdictView, now: number): string | undefined
   if (view.checkedAt !== null && now - Date.parse(view.checkedAt) > GUARD_STALE_MS)
     return `the platform's view is stale: its last check was ${view.checkedAt}`;
   return undefined;
+}
+
+/**
+ * Whether a strip line says what the verdict already says: the verdict itself,
+ * or the rollout line over the same reason. Shown once, not twice.
+ */
+export function coveredByVerdict(
+  line: string,
+  verdict: string | undefined,
+  h: ForgeHealth,
+): boolean {
+  if (verdict === undefined) return false;
+  if (line === verdict) return true;
+  return (
+    line === rolloutLine(h) &&
+    h.rollout.reason !== "" &&
+    verdict.includes(h.rollout.reason)
+  );
+}
+
+/** The verdict as the strip's first line. */
+export function verdictLine(verdict: string): string {
+  return `needs you: forge ${verdict}`;
 }

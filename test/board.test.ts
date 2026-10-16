@@ -513,12 +513,31 @@ describe("the board's forge strip", () => {
       );
       writeFileSync(join(guard, "checkedAt"), new Date().toISOString());
       const blocked = await board("root");
-      expect(blocked).toContain("rollout blocked: quota refused &lt;i&gt;8Gi&lt;/i&gt;");
+      expect(blocked).toContain("needs you: forge stuck: quota refused &lt;i&gt;8Gi&lt;/i&gt;");
       expect(blocked).not.toContain("<i>8Gi</i>");
-      // One line, and the board beneath it still renders.
+      // One line, said once, and the board beneath it still renders.
       expect(blocked.match(/class="board-forge-need"/g)?.length).toBe(1);
+      expect(blocked).not.toContain("rollout blocked");
       expect(blocked).toContain("board-card board-run");
-      expect(await board("bob")).not.toContain("rollout blocked");
+      expect(await board("bob")).not.toContain("quota refused");
+    } finally {
+      delete process.env["FORGE_GUARD_DIR"];
+      rmSync(guard, { recursive: true, force: true });
+    }
+  });
+
+  test("a held incident reads needs you: forge held: …, and no incident leaves All fine", async () => {
+    const guard = mkdtempSync(join(tmpdir(), "forge-board-guard-"));
+    process.env["FORGE_GUARD_DIR"] = guard;
+    try {
+      writeFileSync(join(guard, "status.json"), JSON.stringify({ incidents: { held: "preflight refused 1.2" } }));
+      writeFileSync(join(guard, "checkedAt"), new Date().toISOString());
+      const held = await board("root");
+      expect(held).toContain("needs you: forge held: preflight refused 1.2");
+      expect(held).toMatch(/data-ok="no"/);
+      expect(held).not.toContain("All fine");
+      writeFileSync(join(guard, "status.json"), JSON.stringify({ incidents: {} }));
+      expect(await board("root")).toContain("All fine");
     } finally {
       delete process.env["FORGE_GUARD_DIR"];
       rmSync(guard, { recursive: true, force: true });

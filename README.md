@@ -319,7 +319,12 @@ since, href}`. `cause` is a stable key (`disk`, `errors`, `internal`,
 evidence (oldest queued run, last heartbeat, oldest error or refused call in
 the hour) or else the first time the forge saw it, and holds until the cause
 clears; `href` is the page to look at. The board's forge strip links each
-entry, and the terminal dashboard prints each with its start.
+entry, and the terminal dashboard prints each with its start. When the guard
+view holds something that needs a person (a held or stuck rollout, an OOM kill,
+or a platform view gone stale), the board's strip and the terminal dashboard
+both lead with one line, `needs you: forge <what>`, and do not repeat it as a
+rollout line. A drain that runs too long is not covered on either: the forge
+keeps no start time for it.
 
 ## Origins
 

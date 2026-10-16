@@ -44,6 +44,7 @@ import { readSpend } from "../../actions/spend.ts";
 import { spendView } from "./spend.ts";
 import type { HandContext } from "../../crew/handover.ts";
 import { forgeHealth, rolloutLine } from "../../kernel/guard.ts";
+import { coveredByVerdict, forgeVerdict, verdictLine } from "../../kernel/guard_verdict.ts";
 import { laneLine, type Vitals } from "../../kernel/vitals.ts";
 import { getIssue, getIssuesByIds, type Issue } from "../../core/issues.ts";
 import { looksForApps } from "../../core/looks.ts";
@@ -328,11 +329,14 @@ function forgeStrip(ctx: Ctx): Html | null {
   if (!ctx.auth.user?.isAdmin) return null;
   const v = forgeVitals(ctx.app);
   const fh = forgeHealth();
+  const verdict = forgeVerdict(fh, Date.now());
+  const said = (line: string) => coveredByVerdict(line, verdict, fh);
   const rollout = rolloutLine(fh);
   const others = fh.incidents.filter(
-    (i) => i.key !== "stuck" && i.key !== "held",
+    (i) =>
+      i.key !== "stuck" && i.key !== "held" && !said(`${i.key}: ${i.message}`),
   );
-  const ok = v.ok && fh.ok;
+  const ok = v.ok && fh.ok && verdict === undefined;
   const lane = laneLine(v.lane);
   return html`<div
     class="board-forge"
@@ -343,7 +347,8 @@ function forgeStrip(ctx: Ctx): Html | null {
     role="status"
   >
     ${sentinelSpan(ctx.app)}
-    ${rollout === null ? "" : html`<span class="board-forge-need">${rollout}</span>`}
+    ${rollout === null || said(rollout) ? "" : html`<span class="board-forge-need">${rollout}</span>`}
+    ${verdict === undefined ? "" : html`<span class="board-forge-need">${verdictLine(verdict)}</span>`}
     ${others.map((i) => html`<span class="board-forge-need">${i.key}: ${i.message}</span>`)}
     ${lane === null ? "" : html`<span class="board-forge-lane">Lane: ${lane}</span>`}
     ${

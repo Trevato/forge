@@ -789,7 +789,8 @@ describe("the forge's health in the terminal", () => {
 
       const admin = boot(forge, as(a.value));
       await admin.settle();
-      expect(admin.text()).toContain("rollout blocked: quota refused");
+      expect(admin.text()).toContain("needs you: forge stuck: quota refused");
+      expect(admin.text()).not.toContain("rollout blocked");
       expect(admin.text()).not.toContain("All fine");
       expect(admin.text()).not.toContain("Lane:");
       admin.stop();
@@ -804,7 +805,7 @@ describe("the forge's health in the terminal", () => {
 
       const other = boot(forge, as(b.value));
       await other.settle();
-      expect(other.text()).not.toContain("rollout blocked");
+      expect(other.text()).not.toContain("quota refused");
       expect(other.text()).not.toContain("Lane:");
       expect(other.text()).not.toContain("All fine");
       other.stop();

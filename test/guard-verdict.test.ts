@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { forgeVerdict } from "../src/kernel/guard_verdict.ts";
+import { forgeHealth } from "../src/kernel/guard.ts";
+import { coveredByVerdict, forgeVerdict } from "../src/kernel/guard_verdict.ts";
 
 const NOW = Date.parse("2026-10-02T12:00:00Z");
 const fresh = "2026-10-02T11:59:00Z";
@@ -30,4 +31,13 @@ test("draining past five minutes gives a text, before that none", () => {
 test("an empty view and a never-written view give undefined", () => {
   expect(forgeVerdict(view({}), NOW)).toBeUndefined();
   expect(forgeVerdict(view({}, null), NOW)).toBeUndefined();
+});
+
+test("the verdict covers the rollout line and its own incident line, and nothing else", () => {
+  const h = forgeHealth(view({ held: "preflight refused", "oom:web": "killed" }), NOW);
+  const verdict = forgeVerdict(h, NOW);
+  expect(coveredByVerdict("rollout held: preflight refused", verdict, h)).toBe(true);
+  expect(coveredByVerdict(verdict!, verdict, h)).toBe(true);
+  expect(coveredByVerdict("oom:web: killed", verdict, h)).toBe(false);
+  expect(coveredByVerdict("rollout held: preflight refused", undefined, h)).toBe(false);
 });
