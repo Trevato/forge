@@ -431,4 +431,29 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrote note
     expect(text).toContain("with `trunk`");
     expect(text).not.toContain("`main`");
   });
+
+  test("a resolve run that ends ok without pushing records no commit and is not the crew's", async () => {
+    // The agent now reports success and pushes nothing; the pull still conflicts.
+    const fake = join(dataDir, "fake-claude");
+    writeFileSync(
+      fake,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "2.1.0 (fake)"; exit 0; fi
+IFS= read -r first
+echo '{"type":"system","subtype":"init","session_id":"fake-2","model":"fake"}'
+echo '{"type":"result","subtype":"success","is_error":false,"result":"Looked, changed nothing.","total_cost_usd":0.01,"num_turns":1,"session_id":"fake-2","terminal_reason":"completed"}'
+`,
+    );
+    const known = new Set(listRuns(app.db, repo.id, { kind: "agent" }).map((r) => r.id));
+    const head = current().headOid;
+    const res = await tap();
+    expect(res.status).toBe(303);
+    const run = await settled((r) => r.reason === "resolve" && !known.has(r.id));
+    expect(run.state).toBe("ok");
+    expect(run.commitOid).toBe("");
+    expect(current().headOid).toBe(head);
+    const page = await resolvePage();
+    expect(page).not.toContain("committed as");
+    expect(page).toContain("the crew did not push a resolution");
+  }, 60_000);
 });

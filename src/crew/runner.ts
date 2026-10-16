@@ -62,6 +62,7 @@ import {
   finishRun,
   lastAgentRun,
   noteRunProgress,
+  setRunBase,
   overranBefore,
   type Run,
 } from "../core/runs.ts";
@@ -294,6 +295,10 @@ export async function executeAgentRun(
   const claimed = claimRun(app.db, run.id);
   if (!claimed) return undefined;
   const lease = holdLease(app.db, run.id);
+  // A resolve run keeps the head it started from, to tell a push from none.
+  const startedAt =
+    run.reason === "resolve" ? await pullHeadOf(app, run, false) : undefined;
+  if (startedAt !== undefined) setRunBase(app.db, run.id, startedAt);
   const controller = new AbortController();
   trackAgentRun(run.id, controller);
   const write = (line: string): void =>
@@ -387,7 +392,7 @@ export async function executeAgentRun(
   // never calls a later push the crew's commit.
   const left =
     run.reason === "resolve" && outcome.state === "ok"
-      ? await headLeftBy(app, run)
+      ? await headLeftBy(app, run, startedAt)
       : undefined;
   const done = finishRun(app.db, run.id, {
     state: outcome.state,
@@ -401,14 +406,29 @@ export async function executeAgentRun(
   return undefined;
 }
 
-/** The head of the run's pull as the run left it. */
-async function headLeftBy(app: App, run: Run): Promise<string | undefined> {
+/** The head the run left, if it moved since `startedAt`; none if it pushed nothing. */
+async function headLeftBy(
+  app: App,
+  run: Run,
+  startedAt: string | undefined,
+): Promise<string | undefined> {
+  const head = await pullHeadOf(app, run, true);
+  return head === startedAt ? undefined : head;
+}
+
+/** The head of the run's pull, fetched fresh when `refresh` is set. */
+async function pullHeadOf(
+  app: App,
+  run: Run,
+  refresh: boolean,
+): Promise<string | undefined> {
   const repo = getRepoById(app.db, run.repoId);
   const issue =
     run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
   if (repo === undefined || issue === undefined || issue.kind !== "pull") return undefined;
   const pull = getPull(app.db, repo.id, issue.number);
   if (pull === undefined) return undefined;
+  if (!refresh) return pull.headOid;
   // A fork's push reaches the pull's row by a fetch; take it now, not later.
   // A push's own follow-up may have taken the head already, after this row
   // was read: ask the row again rather than trust the copy in hand.

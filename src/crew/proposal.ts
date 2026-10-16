@@ -217,6 +217,8 @@ export const PROPOSE_WHY: Record<ProposeError, string> = {
   not_queued: "The crew could not take it on right now (its ceiling or breaker); try again later.",
 };
 
+const NOT_PUSHED = "the crew did not push a resolution";
+
 /**
  * The latest proposal. A landed one is shown only while the pull's head is
  * still the commit that run left: after another push, it is not the crew's.
@@ -239,7 +241,14 @@ export async function proposalOf(
       ? { kind: "none" }
       : { kind: "failed", state: last.state, summary: last.summary };
   }
-  if (last.commitOid === "" || last.commitOid !== pull.headOid) return { kind: "none" };
+  if (last.commitOid === "") {
+    // Ended ok but left no commit: news only while the pull still conflicts.
+    const status = await pullStatus(dir, pull);
+    return status.conflicts.length === 0
+      ? { kind: "none" }
+      : { kind: "failed", state: last.state, summary: NOT_PUSHED };
+  }
+  if (last.commitOid !== pull.headOid) return { kind: "none" };
   const agent = proposerOf(app, pull);
   return {
     kind: "landed",

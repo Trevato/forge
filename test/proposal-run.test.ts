@@ -18,6 +18,8 @@ import type { Repo } from "../src/core/repos.ts";
 import { submitReview as record } from "../src/core/reviews.ts";
 import { listRuns } from "../src/core/runs.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { proposalOf } from "../src/crew/proposal.ts";
+import { pullDir } from "../src/core/pulls.ts";
 import { landIfGreen } from "../src/crew/autonomy.ts";
 import { landsOnItsOwn } from "../src/crew/direct.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -235,5 +237,37 @@ describe("letting a proposed pull run", () => {
     await Bun.sleep(10);
     await approveToRun(app, alice, lib, pull());
     expect(pullMayRun(app.db, lib, pull(), head)).toBe(true);
+  });
+
+  test("an ok resolve run with no commit on a conflicting pull reads failed; one that pushed reads landed", async () => {
+    const theirs = await commitToBranch(app, alice, lib, {
+      branch: "feature/clash",
+      message: "clash",
+      files: [{ path: "clash.md", content: "other\n" }],
+    });
+    if (!theirs.ok) throw new Error(JSON.stringify(theirs.error));
+    await push("main", "clash.md");
+    const opened = await openPull(app, alice, lib, {
+      title: "Clash",
+      baseBranch: "main",
+      headBranch: "feature/clash",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = () => getPull(app.db, lib.id, opened.value.number)!;
+    const dir = await pullDir(app.db, app.reposRoot, lib, pull());
+    const ran = (commitOid?: string) => {
+      const run = createRun(app.db, {
+        repoId: lib.id, kind: "agent", issueId: pull().id, reason: "resolve",
+      });
+      claimRun(app.db, run.id);
+      finishRun(app.db, run.id, { state: "ok", summary: "done", commitOid });
+      return run;
+    };
+    ran();
+    const seen = await proposalOf(app, lib, pull(), dir);
+    expect(seen).toEqual({ kind: "failed", state: "ok", summary: "the crew did not push a resolution" });
+
+    ran(pull().headOid);
+    expect((await proposalOf(app, lib, pull(), dir)).kind).toBe("landed");
   });
 });
