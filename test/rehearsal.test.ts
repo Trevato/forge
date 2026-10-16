@@ -114,7 +114,8 @@ describe("the verdict", () => {
 describe("a real roll of two forge processes on one data directory", () => {
   const short = (lingerS: number): RehearsalArgs => ({
     ...parseArgs([], `${import.meta.dir}/..`),
-    seconds: 20,
+    // Room for a slow boot and a long linger on a busy machine (#2020).
+    seconds: 30,
     probeMs: 300,
     lingerS,
     concurrency: 2,
@@ -128,13 +129,13 @@ describe("a real roll of two forge processes on one data directory", () => {
   }, 60_000);
 
   test("an old forge that lingers past a probe period refuses nobody", async () => {
-    const v = await rehearse(short(2));
+    const v = await rehearse(short(5));
     expect(v.problem).toBeNull();
     expect(v.refused).toBe(0);
     expect(v.tally.byForge["old"]).toBeGreaterThan(0);
     expect(v.tally.byForge["new"]).toBeGreaterThan(0);
     // It lingered: the old forge left rotation before it stopped answering.
-    expect(v.timeline.oldExitMs).toBeGreaterThanOrEqual(2000);
+    expect(v.timeline.oldExitMs).toBeGreaterThanOrEqual(5000);
     expect(v.timeline.oldOutOfRotationMs).toBeLessThan(v.timeline.oldExitMs ?? 0);
   }, 60_000);
 });
