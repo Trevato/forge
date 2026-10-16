@@ -696,7 +696,10 @@ signed-in site admin can answer, whatever they can write: anyone else, and any
 agent, gets `not_found`/`unauthorized` and nothing changes. Keep closes the
 finding and records the value in `sentinel_kept`; Put back goes through the
 capacity page's own door (`changeCapacity`: same validation, record, event and
-reversal) and then closes the finding. Only a person's close keeps a setting.
+reversal). The close is the gate: Put back changes the setting, and Keep records
+the value, only after a finding has closed. If none can (every one is on a
+mirrored repository, or the close is refused), nothing changes and the page and
+the terminal say so (`unclosable`). Only a person's close keeps a setting.
 
 - **Board:** a site admin's forge strip shows the open findings and the last
   hunt; a guest or member sees nothing.

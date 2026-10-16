@@ -13,8 +13,12 @@ import { canWrite, getRepoById } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { recordKept } from "../crew/sentinel.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { isMirror } from "../origins/write-through.ts";
 import { changeCapacity } from "./capacity.ts";
 import { setIssueState } from "./issues.ts";
+
+/** Why an answer is refused when no finding closes; the page and the terminal say it alike. */
+export const UNCLOSABLE_WORDS = "its finding cannot be closed from here, so the setting was left as it is";
 
 export type SettingAnswer = "keep" | "put";
 
@@ -40,31 +44,40 @@ export function answerSetting(
   key: unknown,
   answer: unknown,
   now = new Date(),
-): Result<{ key: string; answer: SettingAnswer }, "unauthorized" | "not_found" | "forbidden" | "invalid"> {
+): Result<{ key: string; answer: SettingAnswer }, "unauthorized" | "not_found" | "forbidden" | "invalid" | "unclosable"> {
   if (!actor || actor.kind === "agent") return err("unauthorized");
   if (!actor.isAdmin) return err("not_found");
   if (typeof key !== "string" || !isCapacityKey(key)) return err("not_found");
   if (answer !== "keep" && answer !== "put") return err("invalid");
   const findings = openFindings(app, actor, key);
   if (findings.length === 0) return err("not_found");
-  if (answer === "put") {
-    const put = changeCapacity(app, actor, key, null);
-    if (!put.ok) return err(put.error === "not_found" ? "forbidden" : "invalid");
-  }
+  // The close is the gate: a setting is put back only when a finding can be
+  // closed, and a mirror's issues are not closed from here.
+  const closable = findings.filter((id) => {
+    const issue = getIssueById(app.db, id);
+    const repo = issue && getRepoById(app.db, issue.repoId);
+    return repo !== undefined && !isMirror(app, repo);
+  });
+  if (closable.length === 0) return err("unclosable");
   const stored = storedCapacity(app.db, key);
   const row = app.db
     .query<{ updated_at: string }, [string]>("SELECT updated_at FROM forge_setting WHERE key = ?1")
     .get(key);
   let closed = 0;
-  for (const id of findings) {
+  for (const id of closable) {
     const issue = getIssueById(app.db, id);
     const repo = issue && getRepoById(app.db, issue.repoId);
     if (issue === undefined || repo === undefined) continue;
     const done = setIssueState(app, actor, repo, issue, "closed", { reason: answer === "keep" ? "dropped" : "done" });
     if (done.ok) closed++;
   }
-  // A kept value is recorded only when a close went through; otherwise the finding is still open.
-  if (closed === 0) return err("forbidden");
+  // The close is the gate: a setting is put back, or a kept value recorded,
+  // only when a finding closed; otherwise nothing has changed.
+  if (closed === 0) return err("unclosable");
+  if (answer === "put") {
+    const put = changeCapacity(app, actor, key, null);
+    if (!put.ok) return err(put.error === "not_found" ? "forbidden" : "invalid");
+  }
   if (answer === "keep" && stored !== undefined && row !== null)
     recordKept(app.db, `setting:${key}`, stored, row.updated_at, now.toISOString());
   return ok({ key, answer });

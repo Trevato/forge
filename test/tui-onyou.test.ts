@@ -17,6 +17,8 @@ import { chipsOf, setChip } from "../src/core/feed_chips.ts";
 import { getIssue } from "../src/core/issues.ts";
 import { mutedRepos, recordInteraction } from "../src/core/interactions.ts";
 import { setCapacity, storedCapacity } from "../src/core/capacity.ts";
+import { UNCLOSABLE_WORDS } from "../src/actions/setting_ask.ts";
+import { createOrigin } from "../src/core/origins.ts";
 import { hunt } from "../src/crew/sentinel.ts";
 import { markVerified } from "../src/core/verify.ts";
 import type { Repo } from "../src/core/repos.ts";
@@ -248,6 +250,35 @@ describe("terminal On you: mutes and many in one move", () => {
     expect(storedCapacity(forge.db, "cells.egress")).toBe("report");
     expect(h.text()).not.toContain("setting cells.egress");
     h.stop();
+  });
+
+  test("a setting whose finding is on a mirror is refused in the same words as the page", async () => {
+    setCapacity(forge.db, "cells.egress", "report", alice.id);
+    forge.db
+      .query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'cells.egress'")
+      .run(new Date(Date.now() - 9 * 86_400_000).toISOString());
+    forge.db.query("DELETE FROM sentinel_kept").run();
+    forge.db.query("DELETE FROM sentinel_finding").run();
+    hunt(forge, "alice/lamp", Date.now() + 6 * 3_600_000);
+    const made = createOrigin(forge.db, dir, {
+      userId: alice.id,
+      kind: "github",
+      apiUrl: "https://api.example.test",
+      webUrl: "https://example.test",
+      login: "alice",
+      token: "t",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    forge.db
+      .query("UPDATE repo SET origin_id = ?1, origin_full_name = 'alice/lamp' WHERE id = ?2")
+      .run(made.value.id, lamp.id);
+    const h = await boot();
+    for (let i = 0; i < 20; i++) await h.press("j");
+    await h.press("B");
+    expect(storedCapacity(forge.db, "cells.egress")).toBe("report");
+    expect(h.text()).toContain(UNCLOSABLE_WORDS);
+    h.stop();
+    forge.db.query("UPDATE repo SET origin_id = NULL, origin_full_name = NULL WHERE id = ?1").run(lamp.id);
   });
 
   test("B with no wave put aside and no setting under the cursor does nothing", async () => {

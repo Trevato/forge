@@ -22,6 +22,8 @@ import type { Ctx } from "../src/http/context.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { setCapacity, storedCapacity, capacityChanges, capacityDefault } from "../src/core/capacity.ts";
 import { listEvents } from "../src/core/events.ts";
+import { createOrigin } from "../src/core/origins.ts";
+import { answerSetting, UNCLOSABLE_WORDS } from "../src/actions/setting_ask.ts";
 import { hunt } from "../src/crew/sentinel.ts";
 import { ASK_WORDS, decisionsFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -345,6 +347,52 @@ describe("the asks page", () => {
       await post(alice, { key: "cells.egress", answer: "put" }, "https://evil.example");
       expect(storedCapacity(app.db, "cells.egress")).toBe("report");
       expect(settingCards()).toEqual(["setting:cells.egress"]);
+      reset();
+    });
+
+    test("Put back changes nothing when no finding can be closed, and says why", async () => {
+      reset();
+      away("cells.egress", "report");
+      hunt(app, "alice/garden");
+      const alice0 = getUserByName(app.db, "alice")!;
+      const made = createOrigin(app.db, dataDir, {
+        userId: alice0.id,
+        kind: "github",
+        apiUrl: "https://api.example.test",
+        webUrl: "https://example.test",
+        login: "alice",
+        token: "t",
+      });
+      if (!made.ok) throw new Error(String(made.error));
+      app.db
+        .query("UPDATE repo SET origin_id = ?1, origin_full_name = 'alice/garden' WHERE id = ?2")
+        .run(made.value.id, repo.id);
+      for (const answer of ["put", "keep"]) {
+        const done = answerSetting(app, alice0, "cells.egress", answer);
+        expect(done).toEqual({ ok: false, error: "unclosable" });
+      }
+      expect(storedCapacity(app.db, "cells.egress")).toBe("report");
+      expect(app.db.query("SELECT COUNT(*) AS n FROM sentinel_kept").get()).toEqual({ n: 0 });
+      const page = await (await post(alice, { key: "cells.egress", answer: "put" })).text();
+      expect(page).toContain(UNCLOSABLE_WORDS);
+      expect(page).not.toContain("only a forge admin");
+      expect(storedCapacity(app.db, "cells.egress")).toBe("report");
+      app.db.query("UPDATE repo SET origin_id = NULL, origin_full_name = NULL WHERE id = ?1").run(repo.id);
+      reset();
+    });
+
+    test("Put back changes nothing when the close is refused for a reason other than a mirror", () => {
+      reset();
+      away("cells.egress", "report");
+      hunt(app, "alice/garden");
+      // a pull cannot be closed with an issue's reason, so setIssueState refuses
+      app.db.query("UPDATE issue SET kind = 'pull' WHERE title LIKE 'Sentinel: Setting cells.egress %'").run();
+      const alice0 = getUserByName(app.db, "alice")!;
+      const changes = capacityChanges(app.db).length;
+      expect(answerSetting(app, alice0, "cells.egress", "put")).toEqual({ ok: false, error: "unclosable" });
+      expect(storedCapacity(app.db, "cells.egress")).toBe("report");
+      expect(capacityChanges(app.db).length).toBe(changes);
+      app.db.query("UPDATE issue SET kind = 'issue' WHERE title LIKE 'Sentinel: Setting cells.egress %'").run();
       reset();
     });
 

@@ -30,7 +30,7 @@ import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import { actOnProposal, type ProposalVerb } from "../../actions/proposals.ts";
 import { putAsideWaves } from "../../web/studio/asks.ts";
 import type { Proposal } from "../../core/proposals.ts";
-import { answerSetting, openFindings } from "../../actions/setting_ask.ts";
+import { answerSetting, openFindings, UNCLOSABLE_WORDS } from "../../actions/setting_ask.ts";
 import {
   applyAsksBulk,
   latestUndoable,
@@ -457,7 +457,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     const done = answerSetting(f.app, f.user, here.setting, answer);
     reload();
     ctx.toast(
-      done.ok ? (answer === "keep" ? "kept" : "put back") : `refused: ${done.error}`,
+      done.ok ? (answer === "keep" ? "kept" : "put back") : `refused: ${done.error === "unclosable" ? UNCLOSABLE_WORDS : done.error}`,
       done.ok ? "success" : "danger",
     );
   };

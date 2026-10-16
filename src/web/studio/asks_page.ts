@@ -8,7 +8,7 @@
  */
 
 import type { WaitingFor } from "../../core/waiting_for.ts";
-import { answerSetting } from "../../actions/setting_ask.ts";
+import { answerSetting, UNCLOSABLE_WORDS } from "../../actions/setting_ask.ts";
 import {
   applyAsksBulk,
   BULK_MAX,
@@ -714,6 +714,7 @@ export async function asksSetting(ctx: Ctx): Promise<Response> {
   if (!done.ok) {
     const why: Record<string, string> = {
       forbidden: "only a forge admin puts a setting back",
+      unclosable: UNCLOSABLE_WORDS,
       invalid: "that answer was not Keep or Put back",
     };
     return await asksScreen(ctx, nothingDone(why[done.error] ?? "it no longer asks you"));
