@@ -461,7 +461,7 @@ export function signinAllowed(ctx: Ctx, username: string): number | undefined {
  * Sign-ups, throttled the same way, by the socket's peer (`clientAddress`,
  * which reads a forwarding header only from a proxy the operator trusts):
  * a source may make a few accounts a minute and the forge as a whole more.
- * Not yet asked by any signup door. A refused call is not counted.
+ * Asked by the signup form only. A refused call is not counted.
  */
 const signupLimits = new WeakMap<Ctx["app"], RateLimiter>();
 
@@ -560,6 +560,26 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const username = field(form, "username");
   const email = field(form, "email");
+  const wait = signupAllowed(ctx);
+  if (wait !== undefined) {
+    const response = page(
+      {
+        ctx,
+        title: "Sign up",
+        body: authForm(ctx, "signup", {
+          values: { username, email },
+          errors: {
+            username: `Too many sign-ups from here; try again in ${wait === 1 ? "a second" : `${wait} seconds`}.`,
+          },
+        }),
+        turnstile: siteKey(ctx) !== undefined,
+        ...(ctx.app.config.passkeyOnlySignup === true ? { scriptJs: passkeyJs } : {}),
+      },
+      429,
+    );
+    response.headers.set("retry-after", String(wait));
+    return response;
+  }
   const created = await signUp(
     ctx.app,
     {
