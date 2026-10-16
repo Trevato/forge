@@ -502,6 +502,64 @@ describe("the forge over MCP", () => {
     ).toBe(false);
   });
 
+  test("pull says checkStale in the MCP and the API when its check was on an older base (#2237)", async () => {
+    const branched = await commitToBranch(app, alice, game, {
+      branch: "stale-feat",
+      message: "another change",
+      files: [{ path: "c.txt", content: "c\n" }],
+    });
+    if (!branched.ok) throw new Error(JSON.stringify(branched.error));
+    const opened = await openPull(app, alice, game, {
+      title: "Stale",
+      baseBranch: "main",
+      headBranch: "stale-feat",
+    });
+    if (!opened.ok) throw new Error(String(opened.error));
+    const pull = opened.value;
+    const viaApi = async () =>
+      (await (
+        await fetch(`${base}/api/v1/repos/alice/game/pulls/${pull.number}`, {
+          headers: { authorization: `Bearer ${ro}` },
+        })
+      ).json()) as any;
+    const viaMcp = async () =>
+      (await tool(ro, "pull", { repo: "alice/game", number: pull.number })).value;
+    // No check, or one that recorded no base: not stale.
+    expect((await viaMcp()).checkStale).toBe(false);
+    expect((await viaApi()).checkStale).toBe(false);
+    const run = createRun(app.db, {
+      repoId: game.id,
+      kind: "check",
+      issueId: pull.id,
+      env: `pull-${pull.number}`,
+      commitOid: branched.value.commitOid,
+    });
+    expect((await viaMcp()).checkStale).toBe(false);
+    // Checked on the base's tip: not stale.
+    const tip: string = (await viaApi()).status.baseOid;
+    setRunBase(app.db, run.id, tip);
+    expect((await viaMcp()).checkStale).toBe(false);
+    expect((await viaApi()).checkStale).toBe(false);
+    // The base moves on: the green is from an older main.
+    const moved = await commitToBranch(app, alice, game, {
+      message: "main moves",
+      files: [{ path: "d.txt", content: "d\n" }],
+    });
+    if (!moved.ok) throw new Error(JSON.stringify(moved.error));
+    expect((await viaMcp()).checkStale).toBe(true);
+    expect((await viaApi()).checkStale).toBe(true);
+    // A new check on the new tip is current again.
+    setRunBase(app.db, run.id, moved.value.commitOid);
+    expect((await viaMcp()).checkStale).toBe(false);
+    expect((await viaApi()).checkStale).toBe(false);
+    // Stale again, then closed: a pull that cannot land reads false, not noise.
+    setRunBase(app.db, run.id, tip);
+    expect((await viaApi()).checkStale).toBe(true);
+    app.db.run("UPDATE issue SET state = 'closed' WHERE id = ?", [pull.id]);
+    expect((await viaMcp()).checkStale).toBe(false);
+    expect((await viaApi()).checkStale).toBe(false);
+  });
+
   test("stop takes a run id from now, and refuses a stale or foreign one", async () => {
     const run = createRun(app.db, {
       repoId: game.id,

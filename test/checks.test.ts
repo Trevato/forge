@@ -475,6 +475,13 @@ describe("checks", () => {
     // The terminal says the same words (#1810).
     expect(checksText(seen, false, true, "main")).toContain(` · ${said}`);
     expect(checksText(seen, false, true)).not.toContain("checked against");
+    // A green on an older base is not an unqualified pass in the terminal (#2237).
+    const green = { ...seen, state: "ok" as const };
+    expect(checksText(green, false, true, "main", true)).toContain(
+      "checks: passed against an older main",
+    );
+    expect(checksText(green, false, true, "main", false)).toContain("checks: passed");
+    expect(checksText(green, false, true, "main", false)).not.toContain("older");
     expect(
       checksForHead(app.db, pull.id, branched.value.commitOid)[0]?.id,
     ).toBe(failed.id);
