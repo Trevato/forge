@@ -11,6 +11,7 @@ import { unsealReleased } from "../actions/sealed.ts";
 import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { flowPage } from "../web/pages/flow.ts";
+import { resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet } from "../web/pages/admin-limits.ts";
 import { boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost } from "../web/pages/boards-edit.ts";
@@ -642,6 +643,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/map", globalMapPage);
   // The pipeline's stages and its bottleneck, for a forge admin (#1554); literal, above /:owner.
   router.add("GET", "/flow", flowPage);
+  // Each THREATS.md protection against the last gate; literal, above /:owner.
+  router.add("GET", "/resilience", resiliencePage);
   // A selection's spend and runs over time; literal, above /:owner.
   router.add("GET", "/fleet/graph", fleetGraphPage);
   router.add("GET", "/fleet/graph/live", fleetGraphLive);

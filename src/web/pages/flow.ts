@@ -107,7 +107,8 @@ export function flowPage(ctx: Ctx): Response {
         From a ready issue to a live deploy: what is in each stage now, how
         long its oldest has waited, and what limits it. The limits are set on
         <a href="/settings/capacity">Capacity</a> and in each repository's
-        autonomy settings.
+        autonomy settings. How the forge stands against its threats is on
+        <a href="/resilience">Resilience</a>.
       </p>
     </div>
     <p id="bottleneck" data-stage="${worst?.key ?? ""}">

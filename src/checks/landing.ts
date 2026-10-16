@@ -27,6 +27,7 @@ import type { Repo } from "../core/repos.ts";
 import { runGit } from "../git/env.ts";
 import { writeMergeTree } from "../git/merge.ts";
 import { failuresOf } from "./failures.ts";
+import { keepForgeGate } from "./gate_last.ts";
 import { addLearned } from "./learned.ts";
 import { checksFor } from "./service.ts";
 import { landVerdict, type LandVerdict } from "./tiers.ts";
@@ -67,6 +68,7 @@ export async function gateOnLand(
   );
   if (!commit.ok) return { lands: true };
   const done = await checks.gate(repo, pull, commit.value.trim());
+  keepForgeGate(app.config.dataDir, app.config.forgeRepo, `${repo.ownerName}/${repo.name}`, done.lines);
   const failed = failuresOf(done.lines);
   const verdict = landVerdict(done.ok, failed.tests, failed.files);
   if (!verdict.lands) addLearned(app.config.dataDir, pull.id, verdict.learn);

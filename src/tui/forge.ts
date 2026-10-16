@@ -38,6 +38,7 @@ import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
 import { accessScreen } from "./screens/access.ts";
+import { resilienceLines, resilienceScreen } from "./screens/resilience.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
 import { stalledScreen } from "./screens/stalled.ts";
 import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
@@ -222,6 +223,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Flow",
         hint: "the pipeline's bottleneck and throughput",
         run: () => ctx.push(flowScreen(ctx, flowLines(session.db))),
+      });
+    // Each THREATS.md protection's standing, as /resilience says it: a site admin's.
+    if (session.user?.isAdmin === true)
+      commands.push({
+        id: "resilience",
+        title: "Resilience",
+        hint: "each protection green, red or untested",
+        run: () => ctx.push(resilienceScreen(ctx, resilienceLines(session.app.config.dataDir))),
       });
     // Stalled flow steps the viewer can unblock, as the home's cards show them (#1807).
     if (session.signedIn)
