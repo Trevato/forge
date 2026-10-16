@@ -1,8 +1,8 @@
 /**
  * A conflicted pull's blocks in the terminal, the page's twin: a cursor over
  * the blocks, `o`/`t`/`b` to take ours, theirs or both, `e` for your own
- * text, and per file "N of M resolved" with the merged file beneath. Nothing
- * is written to git; the choices live in this screen only.
+ * text, and per file "N of M resolved" with the merged file beneath. The choices
+ * live in this screen only until `f` finishes them: the caller commits them.
  */
 
 import type { PullConflicts } from "../../actions/conflicts.ts";
@@ -22,7 +22,17 @@ type Line = { text: string; style: ReturnType<typeof style> }[];
 
 const NAMES = { ours: "Ours", theirs: "Theirs", both: "Both", text: "Mine" };
 
-export function conflictScreen(ctx: Ctx, read: PullConflicts): Screen {
+/** Commit one file's choices; the answer is what to tell the person. */
+export type Finish = (
+  path: string,
+  choices: readonly (Choice | undefined)[],
+) => Promise<{ ok: boolean; message: string }>;
+
+export function conflictScreen(
+  ctx: Ctx,
+  read: PullConflicts,
+  finish?: Finish,
+): Screen {
   const scroll = new Scroll();
   const composer = new Composer();
   /** choices[file][block] */
@@ -48,7 +58,7 @@ export function conflictScreen(ctx: Ctx, read: PullConflicts): Screen {
     };
     const total = flat.length;
     say(`${plural(total, "conflict block")} in ${plural(read.files.length, "file")}`);
-    say("n/p block · o ours · t theirs · b both · e your own text · nothing is written to git", muted);
+    say("n/p block · o ours · t theirs · b both · e your own text · f finish (commit to the branch)", muted);
     let n = 0;
     read.files.forEach((file, fi) => {
       const mine = choices[fi]!;
@@ -104,6 +114,7 @@ export function conflictScreen(ctx: Ctx, read: PullConflicts): Screen {
       binding(["n", "p"], "block"),
       binding(["o", "t", "b"], "ours / theirs / both"),
       binding(["e"], "your text"),
+      binding(["f"], "finish"),
       binding(["j", "k"], "scroll"),
       binding(["esc", "q"], "back"),
     ],
@@ -128,6 +139,14 @@ export function conflictScreen(ctx: Ctx, read: PullConflicts): Screen {
       }
       if (e.key === "esc" || e.key === "q") {
         ctx.pop();
+        return true;
+      }
+      if (!e.ctrl && !e.alt && e.key === "f" && finish && read.files[0]) {
+        const path = read.files[0].path;
+        void finish(path, choices[0]!).then((done) => {
+          ctx.toast(done.message, done.ok ? "success" : "danger");
+          if (done.ok) ctx.pop();
+        });
         return true;
       }
       if (!e.ctrl && !e.alt && flat.length > 0) {

@@ -22,6 +22,9 @@ export interface PullConflicts {
   /** The base branch's side, and the pull branch's. */
   readonly ours: string;
   readonly theirs: string;
+  /** The commits these blocks were read at, for Finish to check. */
+  readonly headOid: string;
+  readonly baseOid: string;
   readonly files: readonly ConflictedFile[];
 }
 
@@ -40,5 +43,11 @@ export async function pullConflicts(
     const parsed = parseConflicts(texts.get(path) ?? "");
     files.push({ path, blocks: parsed.blocks, parsed });
   }
-  return ok({ ours: pull.baseBranch, theirs: pull.headBranch, files });
+  return ok({
+    ours: pull.baseBranch,
+    theirs: pull.headBranch,
+    headOid: status.headOid,
+    baseOid: status.baseOid,
+    files,
+  });
 }

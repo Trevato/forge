@@ -26,7 +26,26 @@ export async function readConflictedFiles(
   paths: readonly string[],
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  if (!isSafeOid(ours) || !isSafeOid(theirs) || paths.length === 0) return out;
+  if (paths.length === 0) return out;
+  const tree = await conflictedTree(dir, ours, theirs);
+  if (tree === undefined) return out;
+  for (const path of paths) {
+    if (!isSafeTreePath(path)) continue;
+    const blob = await runGitCapture(["cat-file", "blob", `${tree}:${path}`], {
+      cwd: dir,
+    });
+    if (blob.code === 0 && blob.stdout.length <= MAX_BYTES) out.set(path, blob.stdout);
+  }
+  return out;
+}
+
+/** The tree `merge-tree` writes for a conflicted merge, markers and all. */
+export async function conflictedTree(
+  dir: string,
+  ours: string,
+  theirs: string,
+): Promise<string | undefined> {
+  if (!isSafeOid(ours) || !isSafeOid(theirs)) return undefined;
   const merged = await runGitCapture(
     [
       "-c",
@@ -39,15 +58,7 @@ export async function readConflictedFiles(
     ],
     { cwd: dir, timeoutMs: 60_000 },
   );
-  if (merged.code !== 1) return out;
+  if (merged.code !== 1) return undefined;
   const tree = merged.stdout.split("\n")[0]!.trim();
-  if (!isSafeOid(tree)) return out;
-  for (const path of paths) {
-    if (!isSafeTreePath(path)) continue;
-    const blob = await runGitCapture(["cat-file", "blob", `${tree}:${path}`], {
-      cwd: dir,
-    });
-    if (blob.code === 0 && blob.stdout.length <= MAX_BYTES) out.set(path, blob.stdout);
-  }
-  return out;
+  return isSafeOid(tree) ? tree : undefined;
 }

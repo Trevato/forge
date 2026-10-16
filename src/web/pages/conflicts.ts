@@ -18,8 +18,10 @@ import {
 } from "../../git/conflicts.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, notFoundPage, repoBase, repoPalette, repoHeader } from "../chrome.ts";
+import { FINISH_REFUSALS, finishConflicts } from "../../actions/finish-conflicts.ts";
+import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
-import { page } from "../layout.ts";
+import { flashTo, page } from "../layout.ts";
 import { btn, card, icon } from "../ui.ts";
 import { changeHead, changeTabs, pullContext } from "../studio/change.ts";
 
@@ -148,7 +150,7 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
     <p class="muted small mt">
       <a href="${back}">← Files</a> · <span class="mono">${file}</span> ·
       <strong id="rs-count">${done} of ${total} resolved</strong>
-      · nothing is written to git
+      · nothing is written until you finish
     </p>
     ${files.length > 1
       ? html`<p class="small">
@@ -166,8 +168,13 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
         )
       : html`<form method="get" action="${here}">
           <input type="hidden" name="file" value="${file}" />
+          <input type="hidden" name="head" value="${status.headOid}" />
+          <input type="hidden" name="base" value="${status.baseOid}" />
           <div class="rs-list">${cards}</div>
-          <p class="mt">${btn("Update the merged file", { icon: "check" })}</p>
+          <p class="mt">${btn("Update the merged file", { icon: "check", variant: "ghost" })}
+            ${files.length === 1
+              ? html`<button type="submit" formmethod="post" class="btn" data-variant="primary">Finish: commit this to ${pull.headBranch}</button>`
+              : html`<span class="muted small">Finish needs every conflicted file on this page; this pull has ${files.length}. Resolve it in your own checkout.</span>`}</p>
         </form>`}
     <h2 class="mt">Merged file</h2>
     <pre class="rs-merged" aria-label="Merged ${file}">${merged}</pre>`;
@@ -179,5 +186,45 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
     palette: repoPalette(ctx, repo),
     body,
     styleCss: CSS,
+  });
+}
+
+// POST /:owner/:name/pulls/:number/resolve
+export async function conflictsFinish(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  const { repo, pull } = found;
+  if (!ctx.auth.user || !canWrite(ctx.app.db, repo, ctx.auth.user))
+    return new Response("forbidden", { status: 403 });
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(repo)}/pulls/${pull.number}`;
+  const params = new URLSearchParams();
+  for (const [k, v] of form.entries())
+    if (typeof v === "string" && /^[bt]\d{1,4}$/.test(k)) params.set(k, v);
+  const head = field(form, "head");
+  const baseOid = field(form, "base");
+  const path = field(form, "file");
+  const dir = await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull);
+  // Count the blocks the same way the page did, so choices line up.
+  const status = await pullStatus(dir, pull);
+  const text =
+    status.conflicts.includes(path) && head === status.headOid
+      ? await readConflictedFile(dir, status.baseOid, status.headOid, path)
+      : undefined;
+  const total = parseConflicts(text ?? "").blocks.length;
+  const done = await finishConflicts(ctx.app, ctx.auth.user, repo, pull, {
+    headOid: head,
+    baseOid,
+    path,
+    choices: choicesFrom(params, total),
+  });
+  if (!done.ok)
+    return flashTo(ctx, `${dest}/resolve`, {
+      tone: "danger",
+      message: FINISH_REFUSALS[done.error],
+    });
+  return flashTo(ctx, dest, {
+    message: "Conflicts resolved: the choices are committed to the branch.",
   });
 }

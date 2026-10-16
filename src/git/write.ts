@@ -18,6 +18,8 @@ export interface FileWrite {
   readonly path: string;
   /** The new bytes, or `null` to delete the path from the tree. */
   readonly content: string | Uint8Array | null;
+  /** The file mode. @default "100644" */
+  readonly mode?: "100644" | "100755";
 }
 
 export type CommitFilesError =
@@ -49,6 +51,14 @@ export async function commitFiles(
     startPoint?: string;
     message: string;
     files: readonly FileWrite[];
+    /**
+     * Start from this tree instead of the parent's (a merge's result), and
+     * name the parents after the tip: the commit is then a merge.
+     */
+    seedTree?: string;
+    mergeParents?: readonly string[];
+    /** Refuse, writing nothing, unless the branch is at this commit now. */
+    expectTip?: string;
     author: { name: string; email: string };
     /**
      * Called with the sealed commit *before* the local ref moves. An error
@@ -87,9 +97,12 @@ export async function commitFiles(
         ? await resolveOid(dir, `refs/heads/${input.startPoint}`)
         : undefined);
 
+    if (input.expectTip !== undefined && tip !== input.expectTip)
+      return err({ kind: "branch_moved" });
+
     // Seed the index from the parent's tree, or empty for a first commit.
-    const seed = parent
-      ? await runGit(["read-tree", `${parent}^{tree}`], { cwd: dir, env })
+    const seed = parent || input.seedTree
+      ? await runGit(["read-tree", input.seedTree ?? `${parent}^{tree}`], { cwd: dir, env })
       : await runGit(["read-tree", "--empty"], { cwd: dir, env });
     if (!seed.ok) return err({ kind: "git", message: seed.error.stderr });
 
@@ -119,7 +132,7 @@ export async function commitFiles(
           "update-index",
           "--add",
           "--cacheinfo",
-          `100644,${hashed.value.trim()},${file.path}`,
+          `${file.mode ?? "100644"},${hashed.value.trim()},${file.path}`,
         ],
         { cwd: dir, env },
       );
@@ -146,7 +159,10 @@ export async function commitFiles(
       GIT_COMMITTER_NAME: input.author.name,
       GIT_COMMITTER_EMAIL: input.author.email,
     };
-    const parents = parent ? ["-p", parent] : [];
+    const parents = [
+      ...(parent ? ["-p", parent] : []),
+      ...(input.mergeParents ?? []).flatMap((p) => ["-p", p]),
+    ];
     const commit = await runGit(
       ["commit-tree", tree.value.trim(), ...parents, "-m", input.message],
       { cwd: dir, env: commitEnv },

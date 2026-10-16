@@ -6,8 +6,10 @@ import { openPull } from "../src/actions/pulls.ts";
 import { pullConflicts } from "../src/actions/conflicts.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
-import { getPull, type Pull } from "../src/core/pulls.ts";
+import { getPull, pullStatus, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
+import { runGit } from "../src/git/env.ts";
+import { repoDir } from "../src/git/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { pullScreen } from "../src/tui/screens/pull.ts";
@@ -134,5 +136,31 @@ describe("the terminal reads a conflicted pull's blocks", () => {
     expect(after).not.toContain("<<<<<<<");
     expect(after.indexOf("quiet line", after.indexOf("Merged file"))).toBeGreaterThan(-1);
     expect(after.indexOf("loud line", after.indexOf("Merged file"))).toBeGreaterThan(-1);
+  }, 60_000);
+
+  test("f finishes: the head branch gets a merge commit with both lines; a stale head is refused", async () => {
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const tip = async (ref: string) =>
+      (await runGit(["rev-parse", ref], { cwd: dir })).ok
+        ? ((await runGit(["rev-parse", ref], { cwd: dir })) as { ok: true; value: string }).value.trim()
+        : "";
+    const was = await tip("refs/heads/loud");
+    const out = await pressV(alice, ["b", "f"]);
+    expect(out).not.toContain("<<<<<<<");
+    // The commit lands off the key's own turn: wait for the branch to move.
+    for (let i = 0; i < 100 && (await tip("refs/heads/loud")) === was; i++) await Bun.sleep(50);
+    const now = await tip("refs/heads/loud");
+    expect(now).not.toBe(was);
+    const parents = await runGit(["rev-list", "--parents", "-n", "1", now], { cwd: dir });
+    expect(parents.ok && parents.value.trim().split(" ")).toEqual([
+      now,
+      was,
+      await tip("refs/heads/main"),
+    ]);
+    const file = await runGit(["show", `${now}:code.txt`], { cwd: dir });
+    expect(file.ok && file.value).toBe("top\nquiet line\nloud line\nend");
+    // The pull no longer conflicts, so there is nothing left to finish.
+    const fresh = getPull(app.db, repo.id, pull.number)!;
+    expect((await pullStatus(dir, fresh)).mergeable).toBe(true);
   }, 60_000);
 });

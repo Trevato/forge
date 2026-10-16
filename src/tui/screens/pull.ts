@@ -103,6 +103,7 @@ import { assignPicker, assignedText } from "./assign.ts";
 import { DiffView, type DiffAnchor, type DiffNote } from "./commits.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
 import { pullConflicts } from "../../actions/conflicts.ts";
+import { FINISH_REFUSALS, finishConflicts } from "../../actions/finish-conflicts.ts";
 import { conflictScreen } from "./conflicts.ts";
 import { reviewScreen } from "./review.ts";
 import { RunList, openRunLog, runTone } from "./runlist.ts";
@@ -649,7 +650,21 @@ export function pullScreen(
         ctx.toast(errorText(read.error), "danger");
         return;
       }
-      ctx.push(conflictScreen(ctx, read.value));
+      const seen = read.value;
+      ctx.push(
+        conflictScreen(ctx, seen, async (path, choices) => {
+          const fresh = getPull(f.db, target.id, number) ?? row;
+          const done = await finishConflicts(f.app, f.user, target, fresh, {
+            headOid: seen.headOid,
+            baseOid: seen.baseOid,
+            path,
+            choices,
+          });
+          return done.ok
+            ? { ok: true, message: "Conflicts resolved: committed to the branch." }
+            : { ok: false, message: FINISH_REFUSALS[done.error] };
+        }),
+      );
     });
   };
 

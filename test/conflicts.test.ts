@@ -6,6 +6,8 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { applyChoices, parseConflicts } from "../src/git/conflicts.ts";
 import { choicesFrom } from "../src/web/pages/conflicts.ts";
+import { runGit } from "../src/git/env.ts";
+import { repoDir } from "../src/git/repos.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 
 const labels = { ours: "main", theirs: "loud" };
@@ -177,5 +179,148 @@ describe("the Resolve page", () => {
   test("the merge box offers Resolve to a writer", async () => {
     const files = await (await fetch(`${base}/dev/app/pulls/1/files`, { headers })).text();
     expect(files).toContain('href="/dev/app/pulls/1/resolve"');
+  });
+
+  const tipOf = async (branch: string): Promise<string> => {
+    const out = await runGit(["rev-parse", `refs/heads/${branch}`], {
+      cwd: repoDir(app.reposRoot, "dev", "app"),
+    });
+    return out.ok ? out.value.trim() : "";
+  };
+  const drawnFields = async (n: number, file: string) => {
+    const drawn = await (
+      await fetch(`${base}/dev/app/pulls/${n}/resolve?file=${file}`, { headers })
+    ).text();
+    const oid = (name: string) =>
+      new RegExp(`name="${name}" value="([0-9a-f]{40})"`).exec(drawn)![1]!;
+    return { file, head: oid("head"), base: oid("base") };
+  };
+  const finishPost = (n: number, auth: Record<string, string>, origin: string | null, body: Record<string, string>) =>
+    fetch(`${base}/dev/app/pulls/${n}/resolve`, {
+      method: "POST",
+      headers: {
+        ...auth,
+        "content-type": "application/x-www-form-urlencoded",
+        ...(origin === null ? {} : { origin }),
+      },
+      body: new URLSearchParams(body),
+      redirect: "manual",
+    });
+
+  test("Finish refuses a reader, a stranger, a read token and a foreign origin, and writes nothing", async () => {
+    const form = { ...(await drawnFields(1, "code.txt")), b0: "both", b1: "ours" };
+    const tip = await tipOf("loud");
+    const mint = async (user: string, scope: string) => {
+      await fetch(`${base}/signup`, {
+        method: "POST",
+        body: new URLSearchParams({ username: user, email: `${user}@f.dev`, password: "conflicts-pass-123" }),
+        redirect: "manual",
+      });
+      const j = (await (
+        await fetch(`${base}/api/v1/tokens`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ adminConfirm: true, username: user, password: "conflicts-pass-123", name: "t", scope }),
+        })
+      ).json()) as { token: string };
+      return { authorization: `Bearer ${j.token}` };
+    };
+    const reader = await mint("eve", "rw");
+    const attempts: [string, Response][] = [
+      ["reader", await finishPost(1, reader, base, form)],
+      ["stranger", await finishPost(1, {}, base, form)],
+      ["read token", await finishPost(1, await mint("dev2", "ro"), base, form)],
+      ["foreign origin", await finishPost(1, { authorization: headers["authorization"]! }, "http://evil.example", form)],
+    ];
+    for (const [who, res] of attempts) {
+      expect([who, [403, 404].includes(res.status)]).toEqual([who, true]);
+    }
+    // dev's own read-scoped token is the real case: same user, wrong scope.
+    const devRo = await (
+      await fetch(`${base}/api/v1/tokens`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ adminConfirm: true, username: "dev", password: "conflicts-pass-123", name: "ro", scope: "ro" }),
+      })
+    ).json() as { token: string };
+    const ro = await finishPost(1, { authorization: `Bearer ${devRo.token}` }, base, form);
+    expect(ro.status).toBe(403);
+    expect(await tipOf("loud")).toBe(tip);
+  });
+
+  test("Finish refuses a pull with two conflicted files and writes nothing", async () => {
+    await git(["checkout", "main"]);
+    await Bun.write(join(dir, "a.txt"), "a\n");
+    await Bun.write(join(dir, "b.txt"), "b\n");
+    await git(["add", "."]);
+    await git(["commit", "-m", "two files"]);
+    await git(["push", "origin", "main"]);
+    await git(["checkout", "-b", "two"]);
+    await Bun.write(join(dir, "a.txt"), "a-two\n");
+    await Bun.write(join(dir, "b.txt"), "b-two\n");
+    await git(["commit", "-am", "two"]);
+    await git(["push", "origin", "two"]);
+    await fetch(`${base}/api/v1/repos/dev/app/pulls`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ base: "main", head: "two", title: "Two" }),
+    });
+    await git(["checkout", "main"]);
+    await Bun.write(join(dir, "a.txt"), "a-main\n");
+    await Bun.write(join(dir, "b.txt"), "b-main\n");
+    await git(["commit", "-am", "main again"]);
+    await git(["push", "origin", "main"]);
+
+    const form = { ...(await drawnFields(2, "a.txt")), b0: "both" };
+    const tip = await tipOf("two");
+    const res = await finishPost(2, { authorization: headers["authorization"]! }, base, form);
+    expect(res.status).toBe(303);
+    const cookie = res.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
+    const back = await (
+      await fetch(new URL(res.headers.get("location")!, base), { headers: { ...headers, cookie } })
+    ).text();
+    expect(back).toContain("Finish handles a pull with one conflicted text file");
+    expect(await tipOf("two")).toBe(tip);
+  });
+
+  test("Finish commits the choices onto the head branch and the pull merges", async () => {
+    const url = `${base}/dev/app/pulls/1/resolve`;
+    const drawn = await (await fetch(`${url}?file=code.txt`, { headers })).text();
+    const hidden = (name: string) =>
+      new RegExp(`name="${name}" value="([0-9a-f]{40})"`).exec(drawn)![1]!;
+    const post = (fields: Record<string, string>) =>
+      fetch(url, {
+        method: "POST",
+        headers: {
+          authorization: headers["authorization"]!,
+          "content-type": "application/x-www-form-urlencoded",
+          origin: base,
+        },
+        body: new URLSearchParams({ file: "code.txt", head: hidden("head"), base: hidden("base"), ...fields }),
+        redirect: "manual",
+      });
+    const flash = async (res: Response) => (
+        await fetch(new URL(res.headers.get("location")!, base), {
+          headers: { ...headers, cookie: res.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ") },
+        })
+      ).text();
+
+    // A head that moved since the page was drawn is refused; nothing is written.
+    const stale = await post({ head: "0".repeat(40), b0: "both", b1: "ours" });
+    expect(stale.status).toBe(303);
+    expect(await flash(stale)).toContain("branch moved since this page was drawn");
+
+    // A block with no choice is refused.
+    const open = await post({ b0: "both" });
+    expect(await flash(open)).toContain("Every block needs a choice");
+
+    const done = await post({ b0: "both", b1: "text", t1: "mine\n" });
+    expect(done.headers.get("location")).toBe("/dev/app/pulls/1");
+    const pull = await (await fetch(`${base}/api/v1/repos/dev/app/pulls/1`, { headers })).json() as { mergeable?: boolean };
+    expect(pull.mergeable).toBe(true);
+    const raw = await (await fetch(`${base}/dev/app/raw/loud/code.txt`, { headers })).text();
+    expect(raw).toBe("x\nA-main\nA-loud\nm1\nm2\nm3\nm4\nm5\nm6\nmine\ny\n");
+    const log = await (await fetch(`${base}/api/v1/repos/dev/app/pulls/1`, { headers })).text();
+    expect(log).not.toContain("<<<<<<<");
   });
 });
