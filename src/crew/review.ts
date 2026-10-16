@@ -284,13 +284,17 @@ export function waitsForReviewer(
  * there is nothing to wait for — no reviewer on the crew — and `done`
  * when a verdict is on the head. A run the pull's builder still has open
  * does not stop a send — the review queues behind it. `held` when a person
- * holds the pull: nothing is sent, whoever asks.
+ * holds the pull: nothing is sent, whoever asks. A head pushed over a
+ * stale "changes requested" (`stale`) is owed its review however long it
+ * has been green: one that was never sent is sent, as in an autonomous
+ * repository (#2172).
  */
 export async function sendToReview(
   app: App,
   repo: Repo,
   pull: Pull,
   now = new Date(),
+  { stale = false }: { readonly stale?: boolean } = {},
 ): Promise<"none" | "done" | "sent" | "wait" | "lapsed" | "held"> {
   if (getHold(app.db, pull.id) !== undefined) return "held";
   const reviewers = reviewersOf(app.db, repo.id);
@@ -301,8 +305,12 @@ export async function sendToReview(
   const history = reviewAttempts(app.db, pull);
   if (history === undefined) return "wait";
   const stage = stageOf(history, now);
-  // An autonomous repository sends a pull nobody reviewed whatever its age.
-  const unreviewed = stage === "lapsed" && history.attempts.length === 0 && repo.autonomy === "autonomous";
+  // An autonomous repository sends a pull nobody reviewed whatever its age,
+  // and so does any repository whose reviewer's verdict this head answers.
+  const unreviewed =
+    stage === "lapsed" &&
+    history.attempts.length === 0 &&
+    (repo.autonomy === "autonomous" || stale);
   if (stage === "wait" || (stage === "lapsed" && !unreviewed)) return stage;
   const late = stage === "late" || unreviewed;
   const issue = getIssueById(app.db, pull.id);

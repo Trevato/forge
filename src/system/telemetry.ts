@@ -10,6 +10,7 @@ import { SOURCES } from "../boards/sources.ts";
 import { conflictedPulls, conflictedSays } from "../flow/conflicted.ts";
 import { readPipeline, verdict } from "../flow/pipeline.ts";
 import { readQueues } from "../flow/queue.ts";
+import { requestedSays, requestedWaits } from "../flow/requested.ts";
 import { readThroughput, stageOut, throughputSays } from "../flow/throughput.ts";
 import type { Reader } from "../actions/telemetry.ts";
 import { agentView, live } from "./live.ts";
@@ -25,9 +26,15 @@ export function flowFor(app: App, reader: Reader, now = new Date()) {
   const flow = readThroughput(app.db, stages.map((s) => s.key), now);
   const dup = systemFor(app, reader).duplicates;
   const conflicted = conflictedPulls(app.db, reader.kind === "agent");
+  const requested = requestedWaits(app.db, reader.kind === "agent");
   return {
     says: verdict(stages, now.getTime()),
     conflicted: { says: conflictedSays(conflicted, now.getTime()), pulls: conflicted },
+    // Pulls with changes requested, by whom they wait on (#2172).
+    requested: {
+      builder: { says: requestedSays(requested.builder, "builder", now.getTime()), pulls: requested.builder },
+      reviewer: { says: requestedSays(requested.reviewer, "reviewer", now.getTime()), pulls: requested.reviewer },
+    },
     stages,
     throughput: {
       says: throughputSays(flow),

@@ -17,11 +17,16 @@
  * next candidate, what the candidate at the gate carries, and what landed
  * in the last hour — `flow/queue.ts`'s numbers, which the terminal's Flow
  * command and the MCP `flow` tool read too.
+ *
+ * Beside the conflicted pulls, the pulls with changes requested (#2172):
+ * those waiting on a builder apart from those waiting on a reviewer, by
+ * age — `flow/requested.ts`'s, the rows the tick moves.
  */
 
 import { noteRead, telemetryReader } from "../../actions/telemetry.ts";
 import { queuesFor, systemFor } from "../../system/telemetry.ts";
 import { conflictedPulls, conflictedSays } from "../../flow/conflicted.ts";
+import { requestedSays, requestedWaits } from "../../flow/requested.ts";
 import {
   bottleneck,
   readPipeline,
@@ -113,6 +118,9 @@ export function flowPage(ctx: Ctx): Response {
   const landed = out.get("approved");
   const dups = systemFor(ctx.app, reader).duplicates;
   const conflicted = conflictedSays(conflictedPulls(ctx.app.db, reader.kind === "agent"), now);
+  const requested = requestedWaits(ctx.app.db, reader.kind === "agent");
+  const onBuilder = requestedSays(requested.builder, "builder", now);
+  const onReviewer = requestedSays(requested.reviewer, "reviewer", now);
   const listed = asked(ctx.url);
   const shown = listed === null ? undefined : out.get(listed.key);
   const body = html`<div class="page-head">
@@ -130,6 +138,8 @@ export function flowPage(ctx: Ctx): Response {
       <strong>${verdict(stages, now)}</strong>
     </p>
     ${conflicted === null ? "" : html`<p id="conflicted">${conflicted}</p>`}
+    ${onBuilder === null ? "" : html`<p id="requested-builder">${onBuilder}</p>`}
+    ${onReviewer === null ? "" : html`<p id="requested-reviewer">${onReviewer}</p>`}
     <p id="throughput">
       landed
       <a href="${outHref("approved", 0)}" data-landed-hour>${String(landed?.hours[0] ?? 0)}</a>

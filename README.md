@@ -541,6 +541,16 @@ card ends when the pull is approved, closed or merged. Hand-overs can be
 closed in bulk like the other pull asks. The terminal's On you card lists
 them as "handed over" rows: `enter` opens the pull, `x` closes it.
 
+**A request for changes always moves.** Every tick, a crew pull whose
+reviewer last asked for changes is moved on. If the builder has pushed since
+and the new head is green, the reviewer is asked again: a verdict on old
+code never blocks. If the verdict is on the current head and no run is in
+flight, one feedback run is queued to the pull's builder, and a builder is
+assigned when the pull has none. That run takes a builder slot like any
+other. The tick log names each pull it moved, or why it did not, and
+`/flow`, the terminal's Flow dialog and the MCP `flow` tool list the pulls
+waiting on a builder and those waiting on a reviewer, oldest first.
+
 **Already done.** A builder that finds its issue already built on the base
 branch declines with `DECLINED: already done on main in <commit>`, naming the
 full or abbreviated id of each commit that did it (at most five). The forge

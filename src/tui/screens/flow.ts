@@ -4,7 +4,9 @@
  * stage of what left it in the last hour and in 24 hours — the numbers of
  * `flow/pipeline.ts` and `flow/throughput.ts`, the same the page and the
  * MCP `flow` tool read. Under them, each repository's merge queue (#2036):
- * queued, gating, landed in the last hour (`flow/queue.ts`). Read-only;
+ * queued, gating, landed in the last hour (`flow/queue.ts`); then the
+ * conflicted pulls, and the pulls with changes requested waiting on a
+ * builder and on a reviewer (`flow/requested.ts`, #2172). Read-only;
  * Enter, Esc or q closes it.
  */
 
@@ -12,6 +14,7 @@ import type { Database } from "bun:sqlite";
 import { conflictedPulls, conflictedSays } from "../../flow/conflicted.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
 import { readQueues } from "../../flow/queue.ts";
+import { requestedSays, requestedWaits } from "../../flow/requested.ts";
 import { readThroughput, stageOut, throughputSays } from "../../flow/throughput.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -27,7 +30,7 @@ export function flowLines(
   db: Database,
   now = new Date(),
   dups = live().read().duplicates,
-  /** What an agent reader may see: its queue lines and conflicted pulls come already cut to public. */
+  /** What an agent reader may see: its queue lines, conflicted pulls and changes-requested waits come already cut to public. */
   agent?: { queues: ReturnType<typeof readQueues> },
 ): string[] {
   const stages = readPipeline(db, now);
@@ -35,6 +38,11 @@ export function flowLines(
   const inner = WIDTH - 6;
   const queues = agent?.queues ?? readQueues(db, now);
   const conflicted = conflictedSays(conflictedPulls(db, agent !== undefined), now.getTime());
+  const requested = requestedWaits(db, agent !== undefined);
+  const waits = [
+    requestedSays(requested.builder, "builder", now.getTime()),
+    requestedSays(requested.reviewer, "reviewer", now.getTime()),
+  ].flatMap((says) => (says === null ? [] : ["", ...wrap(says, inner)]));
   return [
     ...wrap(verdict(stages, now.getTime()), inner),
     "",
@@ -54,6 +62,7 @@ export function flowLines(
             `${pad(truncate(q.repo, 30), 30)} ${pad(String(q.queued), 6, "right")} ${pad(String(q.gating), 6, "right")} ${pad(String(q.landedHour), 9, "right")}`,
         )),
     ...(conflicted === null ? [] : ["", ...wrap(conflicted, inner)]),
+    ...waits,
     "",
     ...duplicateLines(dups, inner),
   ];

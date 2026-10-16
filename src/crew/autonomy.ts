@@ -119,6 +119,7 @@ import {
   speaksForCrew,
 } from "./direct.ts";
 import { crewOffInPreview } from "./preview.ts";
+import { moveRequested } from "./requested.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
 
 const log = createLog("autonomy");
@@ -328,6 +329,13 @@ export function repoPace(app: App, repo: Repo, now = new Date()): Pace {
     },
   );
   return pace(accounts, repo.autonomySlots, meanRunUsd(app.db, repo.id), now);
+}
+
+/** The builder slots free now: none while paused, else the paced slots less what is slotted. */
+function freeSlots(app: App, repo: Repo, now: Date): number {
+  if (autonomyStatus(app, repo, now).paused !== null) return 0;
+  const slotted = slottedRuns(activeRuns(app, repo.id), listCrewRoles(app.db, repo.id));
+  return Math.max(0, repoPace(app, repo, now).slots - slotted.length);
 }
 
 export type Drove = "off" | "paused" | "waiting" | "full" | "picked" | "planned" | "idle";
@@ -1131,6 +1139,9 @@ export async function autonomyTick(
         }),
       );
       const current = getRepoById(app.db, repo.id) ?? repo;
+      // Before the picks: a pull a reviewer answered is finished before new
+      // work takes the slots it needs (#2172).
+      const requested = await moveRequested(app, current, freeSlots(app, current, now), now);
       const did = await driveRepo(app, current, now);
       // Every tick says what it did and why, so an app that sits still is
       // never a mystery: the numbers behind "idle" are on the line.
@@ -1151,6 +1162,11 @@ export async function autonomyTick(
         ).length,
         active: status.active,
         slots: status.slots,
+        ...(requested.length === 0
+          ? {}
+          : {
+              requested: `${requested.filter((m) => m.did !== "not moved").length}/${requested.length} moved`,
+            }),
         spent: `${status.spentTodayUsd.toFixed(2)}/${status.ceilingUsd}`,
         ...(status.paused === null ? {} : { paused: status.paused }),
       });
