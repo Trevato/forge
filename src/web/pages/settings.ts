@@ -8,6 +8,7 @@
  * same-origin POST and every one of them says what happened.
  */
 
+import { appLimitWords } from "../../actions/app_limit.ts";
 import {
   deleteAppEnvVar,
   disableApp,
@@ -874,7 +875,9 @@ export async function appSettingsUpdate(ctx: Ctx): Promise<Response> {
         repo,
         record,
         values,
-        APP_ERRORS[saved.error] ?? "Those settings could not be saved.",
+        saved.error === "app_limit"
+          ? appLimitWords(ctx.app, repo.ownerId)
+          : (APP_ERRORS[saved.error] ?? "Those settings could not be saved."),
       ),
       undefined,
       422,

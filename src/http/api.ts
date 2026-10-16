@@ -219,6 +219,8 @@ import { isPinned } from "../core/pins.ts";
 import { listWebhooks } from "../core/webhooks.ts";
 import { diffCommit } from "../git/diff.ts";
 import { runGit } from "../git/env.ts";
+import { appLimitWords, appsOwnedBy } from "../actions/app_limit.ts";
+import { getQuota } from "../settings/quotas.ts";
 import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { listBranches } from "../git/branches.ts";
 import {
@@ -1055,6 +1057,21 @@ const pullDirOf = (ctx: Ctx, repo: Repo, pull: Pull): Promise<string> =>
 function positiveInt(raw: string | undefined): number | undefined {
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 ? n : undefined;
+}
+
+/** 403 naming the limit and the count, for an account at its app limit. */
+function appLimitResponse(ctx: Ctx, ownerName: string): Response {
+  const owner = getUserByName(ctx.app.db, ownerName);
+  const limit = getQuota(ctx.app.db, "apps");
+  return json(
+    {
+      error: "app_limit",
+      message: owner ? appLimitWords(ctx.app, owner.id) : "App limit reached.",
+      limit,
+      count: owner ? appsOwnedBy(ctx.app, owner.id) : null,
+    },
+    403,
+  );
 }
 
 // ---- resolution ----
@@ -4353,7 +4370,16 @@ export function apiRoutes(router: Router<Handler>): void {
         : {}),
       ...(typeof input.agent === "string" ? { agent: input.agent } : {}),
     });
-    if (!made.ok) return respondAccess(made.error, 422);
+    if (!made.ok) {
+      if (made.error === "app_limit")
+        return appLimitResponse(
+          ctx,
+          (typeof input.owner === "string" && input.owner) ||
+            ctx.auth.user?.username ||
+            "",
+        );
+      return respondAccess(made.error, 422);
+    }
     return json(
       {
         repo: repoJson(ctx, made.value.repo),
@@ -4463,7 +4489,11 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const input = await body(ctx.request);
     const enabled = enableApp(ctx.app, ctx.auth.user, repo, appPatch(input));
-    if (!enabled.ok) return respondAccess(enabled.error, 422);
+    if (!enabled.ok) {
+      if (enabled.error === "app_limit")
+        return appLimitResponse(ctx, repo.ownerName);
+      return respondAccess(enabled.error, 422);
+    }
     return json(
       appJson(ctx, enabled.value, repo, appsRuntime(ctx.app)),
       201,

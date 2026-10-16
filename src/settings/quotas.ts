@@ -2,8 +2,8 @@
  * Per-account quotas — how much one account may own. Stored in
  * `forge_setting` under `quota.<key>`, and every change is kept in
  * `forge_setting_change` (who, when, from what to what). The default for
- * each is no limit (`null`), and this part enforces nothing: no create path
- * asks yet. Room for more keys is the `QUOTA_KEYS` list.
+ * each is no limit (`null`), and creating an app asks the apps limit
+ * (`actions/app_limit.ts`); repositories are not enforced yet. Room for more keys is the `QUOTA_KEYS` list.
  */
 
 import type { Database } from "bun:sqlite";

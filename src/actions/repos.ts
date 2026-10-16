@@ -88,7 +88,7 @@ function requireNewAccountGuard(
 }
 
 /** Resolve the owner id for a new repo: the actor, or an org they can write to. */
-function resolveOwner(
+export function resolveOwner(
   app: App,
   actor: User,
   owner: string,

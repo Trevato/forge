@@ -11,6 +11,11 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { getQuotas, quotaChanges } from "../src/settings/quotas.ts";
 import { createToken } from "../src/core/tokens.ts";
+import { newApp } from "../src/actions/apps.ts";
+import { createRepo } from "../src/actions/repos.ts";
+import { makeItYours } from "../src/actions/make_it_yours.ts";
+import { getRepo } from "../src/core/repos.ts";
+import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -176,5 +181,139 @@ describe("quotas", () => {
     expect(text).toContain('name="repositories"');
     expect(text).toContain("alice");
     expect(text).toContain("no limit");
+  });
+
+  test("with the apps limit at 1, a fresh account's second app is refused, the owner's is not", async () => {
+    const admin = createToken(app.db, alice.id, "t", "admin").token;
+    const bobT = createToken(app.db, bob.id, "t", "admin").token;
+    const create = (token: string, name: string) =>
+      fetch(`${servers.url}/api/v1/apps`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+    // No limit set: nothing changes.
+    expect((await create(bobT, "free-one")).status).toBe(201);
+    expect((await create(bobT, "free-two")).status).toBe(201);
+    app.db.run("DELETE FROM app WHERE repo_id IN (SELECT id FROM repo WHERE owner_id = ?1)", [bob.id]);
+
+    await api(admin, "PATCH", { quotas: { apps: 1 } });
+    try {
+      expect((await create(bobT, "first")).status).toBe(201);
+      const second = await create(bobT, "second");
+      expect(second.status).toBe(403);
+      const refusal = (await second.json()) as any;
+      expect(refusal).toMatchObject({ error: "app_limit", limit: 1, count: 1 });
+      expect(refusal.message).toContain("1 of 1 apps");
+
+      // The same sentence on the page.
+      const signin = await fetch(`${servers.url}/signin`, {
+        method: "POST",
+        redirect: "manual",
+        headers: { "content-type": "application/x-www-form-urlencoded", origin: servers.url },
+        body: new URLSearchParams({ username: "bob", password: "a-good-passphrase" }),
+      });
+      const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+      const form = await fetch(`${servers.url}/apps/new`, {
+        method: "POST",
+        redirect: "manual",
+        headers: {
+          cookie,
+          "content-type": "application/x-www-form-urlencoded",
+          origin: servers.url,
+        },
+        body: new URLSearchParams({ name: "third", visibility: "private" }),
+      });
+      expect(form.status).toBe(422);
+      expect(await form.text()).toContain("1 of 1 apps");
+
+      // The owner is never limited.
+      expect((await create(admin, "owner-one")).status).toBe(201);
+      expect((await create(admin, "owner-two")).status).toBe(201);
+    } finally {
+      await api(admin, "PATCH", { quotas: { apps: null } });
+    }
+  });
+
+  test("at the limit, make-it-yours, the repo app endpoint and the settings form refuse the same way", async () => {
+    const admin = createToken(app.db, alice.id, "t", "admin").token;
+    const made = await createUser(app.db, {
+      trusted: true,
+      username: "carol",
+      email: "carol@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!made.ok) throw new Error(made.error);
+    const carol = made.value;
+    const source = await newApp(app, alice, { name: "seed", visibility: "public" });
+    if (!source.ok) throw new Error(String(source.error));
+    await api(admin, "PATCH", { quotas: { apps: 1 } });
+    try {
+      expect((await newApp(app, carol, { name: "mine", visibility: "private" })).ok).toBe(true);
+      const bare = await createRepo(app, carol, { name: "bare" });
+      if (!bare.ok) throw new Error(String(bare.error));
+
+      // Make it yours: refused before the fork, no repository left behind.
+      for (const dryRun of [true, false]) {
+        const copied = await makeItYours(app, carol, source.value.repo, { dryRun });
+        expect(copied.ok).toBe(false);
+        if (!copied.ok) {
+          expect(copied.error.kind).toBe("invalid");
+          expect(JSON.stringify(copied.error)).toContain("1 of 1 apps");
+        }
+      }
+      expect(getRepo(app.db, "carol", "seed")).toBeUndefined();
+
+      // POST /api/v1/repos/:owner/:name/app
+      const carolT = createToken(app.db, carol.id, "t", "admin").token;
+      const enable = await fetch(`${servers.url}/api/v1/repos/carol/bare/app`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${carolT}`, "content-type": "application/json" },
+        body: "{}",
+      });
+      expect(enable.status).toBe(403);
+      const refusal = (await enable.json()) as any;
+      expect(refusal).toMatchObject({ error: "app_limit", limit: 1, count: 1 });
+      expect(refusal.message).toContain("1 of 1 apps");
+
+      // The app settings form.
+      const cookie = `forge_session=${createSession(app.db, carol.id).token}`;
+      const form = await fetch(`${servers.url}/carol/bare/settings/app`, {
+        method: "POST",
+        redirect: "manual",
+        headers: {
+          cookie,
+          "content-type": "application/x-www-form-urlencoded",
+          origin: servers.url,
+        },
+        body: new URLSearchParams({ slug: "bare", access: "private", previewData: "copy" }),
+      });
+      expect(form.status).toBe(422);
+      expect(await form.text()).toContain("1 of 1 apps");
+    } finally {
+      await api(admin, "PATCH", { quotas: { apps: null } });
+    }
+  });
+
+  test("a stranger naming an account at its limit is told forbidden_owner, never its count", async () => {
+    const admin = createToken(app.db, alice.id, "t", "admin").token;
+    const bobT = createToken(app.db, bob.id, "t", "admin").token;
+    const owned = await newApp(app, alice, { name: "alices-one", visibility: "private" });
+    if (!owned.ok) throw new Error(String(owned.error));
+    await api(admin, "PATCH", { quotas: { apps: 1 } });
+    try {
+      const res = await fetch(`${servers.url}/api/v1/apps`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${bobT}`, "content-type": "application/json" },
+        body: JSON.stringify({ name: "x", owner: "alice" }),
+      });
+      expect(res.status).toBe(422);
+      const body = (await res.json()) as any;
+      expect(body.error).toBe("forbidden_owner");
+      expect(body).not.toHaveProperty("count");
+      expect(JSON.stringify(body)).not.toContain("apps");
+    } finally {
+      await api(admin, "PATCH", { quotas: { apps: null } });
+    }
   });
 });

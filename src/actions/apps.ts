@@ -10,6 +10,7 @@ import { pullDir } from "../core/pulls.ts";
 import { getIssue } from "../core/issues.ts";
 import { mayView } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
+import { requireAppRoom } from "./app_limit.ts";
 import type { App } from "../app.ts";
 import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
 import { grantUrl, originFor } from "../apps/proxy.ts";
@@ -48,7 +49,7 @@ import type { Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
 import { canEnterApp, canWrite, getRepo, type Repo } from "../core/repos.ts";
 import type { Run } from "../core/runs.ts";
-import type { User } from "../core/users.ts";
+import { getUserByName, type User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -64,6 +65,7 @@ import {
   commitToBranch,
   createRepo,
   deleteRepo,
+  resolveOwner,
   type CreateRepoActionError,
 } from "./repos.ts";
 
@@ -79,11 +81,13 @@ export function enableApp(
   actor: User | undefined,
   repo: Repo,
   input: AppSettingsInput = {},
-): Result<AppRecord, "not_found" | CreateAppError | "unverified"> {
+): Result<AppRecord, "not_found" | CreateAppError | "unverified" | "app_limit"> {
   const admin = requireRepoAdmin(app, actor, repo);
   if (!admin.ok) return admin;
   const proven = requireVerified(app, admin.value);
   if (!proven.ok) return proven;
+  const room = requireAppRoom(app, admin.value, repo.ownerId);
+  if (!room.ok) return room;
   const created = insertApp(app.db, {
     repoId: repo.id,
     slug: input.slug ?? slugFor(repo.name),
@@ -271,7 +275,8 @@ export type NewAppError =
   | CreateRepoActionError
   | CreateAppError
   | "scaffold_failed"
-  | "no_such_agent";
+  | "no_such_agent"
+  | "app_limit";
 
 /**
  * The golden path's first step, as one call: a repository with a working
@@ -292,6 +297,14 @@ export async function newApp(
       ? undefined
       : getAgentByName(app.db, input.agent);
   if (input.agent && !agent) return err("no_such_agent");
+
+  // Refuse at the limit before a repository exists to take back.
+  // The owner is resolved with the actor's rights, as createRepo does, so
+  // the count of an account they may not create under is never told.
+  const ownerId = resolveOwner(app, user.value, input.owner ?? "");
+  if (ownerId === undefined) return err("forbidden_owner");
+  const room = requireAppRoom(app, user.value, ownerId);
+  if (!room.ok) return room;
 
   // Refuse a taken slug before anything exists to take back.
   // A name the owner already has stays `name_taken`, which createRepo says.

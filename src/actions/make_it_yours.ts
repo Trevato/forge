@@ -40,6 +40,7 @@ import {
 } from "../core/repos.ts";
 import { isActive, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { requireAppRoom, appLimitWords } from "./app_limit.ts";
 import { enableApp } from "./apps.ts";
 import { FORKS_PER_DAY, forkRepo } from "./repos.ts";
 
@@ -184,10 +185,17 @@ export async function makeItYours(
         ? err({ kind: "unverified" })
         : err({
             kind: "invalid",
-            message: `the app could not be registered: ${enabled.error}`,
+            message:
+              enabled.error === "app_limit"
+                ? appLimitWords(app, actor.id)
+                : `the app could not be registered: ${enabled.error}`,
           });
     return ok({ ...plan, made: { repo: copy, app: enabled.value } });
   }
+  // The copy is an app of the actor's: no room, no copy (before the fork,
+  // so no repository is left behind), in the plan as in the making.
+  if (!requireAppRoom(app, actor, actor.id).ok)
+    return err({ kind: "invalid", message: appLimitWords(app, actor.id) });
   const slug = freeSlug(app, { name }, actor.username);
   const plan = {
     dryRun,

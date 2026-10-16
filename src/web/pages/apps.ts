@@ -12,6 +12,8 @@
  * 404 for everyone.
  */
 
+import { appLimitWords } from "../../actions/app_limit.ts";
+import { getUserByName } from "../../core/users.ts";
 import {
   appView,
   newApp,
@@ -406,6 +408,10 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
   if (!made.ok) {
     if (made.error === "forbidden_owner" || made.error === "unauthorized")
       return new Response("forbidden", { status: 403 });
+    const ownerId = getUserByName(
+      ctx.app.db,
+      values.owner || ctx.auth.user.username,
+    )?.id;
     return page(
       {
         ctx,
@@ -413,7 +419,9 @@ export async function newAppSubmit(ctx: Ctx): Promise<Response> {
         body: newAppForm(
           ctx,
           values,
-          NEW_APP_ERRORS[made.error] ?? "That app could not be created.",
+          made.error === "app_limit" && ownerId !== undefined
+            ? appLimitWords(ctx.app, ownerId)
+            : (NEW_APP_ERRORS[made.error] ?? "That app could not be created."),
         ),
         scriptJs: appNameJs,
       },
