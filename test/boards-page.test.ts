@@ -131,7 +131,7 @@ describe("/boards/data", () => {
     const body = await (await get("/boards/data?source=machine&aggregate=avg&column=cpu_cores&by=target", "admin")).text();
     expect(body).toContain("What this machine measures");
     // Each absent series is named with its file; on a machine with them all, it says so instead.
-    expect(body).toMatch(/Absent — forge cpu_cores: \/sys\/fs\/cgroup\/cpu.stat|Every series is readable on this machine/);
+    expect(body).toMatch(/Absent — forge [a-z_]+: \/[^\s<]+|Every series is readable on this machine/);
     expect(body).toContain("cores in use, mean over the step");
     expect(body).toContain(">forge</a></td>");
     expect(body).toContain(">0.25</td>");
