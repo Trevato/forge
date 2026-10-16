@@ -73,6 +73,7 @@ export type AccountSection =
   | "password"
   | "tokens"
   | "keys"
+  | "model"
   | "passkeys"
   | "origins"
   | "usage"
@@ -187,6 +188,12 @@ export function accountSections(
       href: "/settings",
       icon: "user",
       current: current === "profile",
+    },
+    {
+      label: "Model",
+      href: "/settings/model",
+      icon: "key",
+      current: current === "model",
     },
     {
       label: "Password",

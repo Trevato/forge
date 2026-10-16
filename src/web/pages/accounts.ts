@@ -42,6 +42,7 @@ import {
   userLink,
 } from "../ui.ts";
 import { sessionsCard } from "./account.ts";
+import { grantCard } from "./model.ts";
 import { accountSections } from "./origins.ts";
 import { markOf } from "../../core/marks.ts";
 
@@ -298,6 +299,7 @@ export function personSignInsPage(ctx: Ctx): Response {
           <h3>Access tokens</h3>`,
       },
     )}
+    ${grantCard(ctx, user, at)}
     ${sessionsCard(sessions, at)}`,
   );
 }

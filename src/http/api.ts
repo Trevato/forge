@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { setAccountGrant } from "../actions/model_grant.ts";
 import { storageLimitMessage } from "../core/storage.ts";
 import { voteVariant } from "../actions/variants.ts";
 import { parentForgeFor } from "../core/parent_releases.ts";
@@ -1584,6 +1585,23 @@ export function apiRoutes(router: Router<Handler>): void {
       );
     }
     return done.ok ? json({ username: done.value.username, suspendedAt: done.value.suspendedAt }) : accountError(done.error);
+  });
+
+  // A capped model grant, dollars a month; null (or 0) takes it back.
+  router.add("POST", "/api/v1/admin/accounts/:username/model-grant", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const raw = input.usdPerMonth;
+    if (raw !== null && (typeof raw !== "number" || !Number.isFinite(raw)))
+      return apiError("invalid", 422, "usdPerMonth is a number of dollars, or null to take the grant back");
+    const done = setAccountGrant(ctx.app, ctx.auth.user, ctx.params.username!, raw === 0 ? null : raw);
+    if (done.ok) return json(done.value);
+    return done.error === "invalid_amount"
+      ? apiError("invalid", 422, "usdPerMonth is from 0.01 to 10000 dollars")
+      : done.error === "not_allowed"
+        ? apiError("not_allowed", 422, "a grant is for a person who is not an admin")
+        : notFound();
   });
 
   router.add("POST", "/api/v1/admin/accounts/:username/unsuspend", (ctx) => {

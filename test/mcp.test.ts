@@ -177,6 +177,7 @@ describe("the forge over MCP", () => {
       "stop",
       "health",
       "audit",
+      "model_grant",
       "outsiders",
       "decisions_by",
       "probe",

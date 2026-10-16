@@ -111,9 +111,11 @@ import { parkedTwice } from "./parks.ts";
 import { heldNow, stuckOf } from "./held.ts";
 import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
+import { grantLeft } from "../core/model_grant.ts";
 import {
   credentialEnvOf,
   hostOfApiBase,
+  MIN_RUN_USD,
   pickSubscription,
   PLATFORM,
   restSubscription,
@@ -313,6 +315,7 @@ export async function executeAgentRun(
     subscriptionId: null,
     kind: usageKind(app, claimed),
     reportedAt: 0,
+    stop: () => controller.abort(),
   };
   let outcome: Outcome;
   try {
@@ -537,6 +540,12 @@ interface Meter {
   kind: UsageKind;
   /** When a `running` line was last written (epoch ms); 0 for never. */
   reportedAt: number;
+  /** Ends the run. */
+  stop: () => void;
+  /** Set when the run spends an owner's capped grant: whose. */
+  grantOwner?: string;
+  /** Why the run was stopped by its grant's cap, when it was. */
+  stoppedFor?: string;
 }
 
 /** What a run is for, as the ledger sums it: its reason, or its agent's role. */
@@ -553,6 +562,10 @@ function usageKind(app: App, run: Run): UsageKind {
 
 /** How often a running session's spend is written and announced, at most. */
 const LIVE_MS = 2_000;
+
+/** Said on a run stopped at its grant's cap. */
+const GRANT_SPENT =
+  "This month's model grant is spent: the run stopped at the cap; an admin can raise it";
 
 /**
  * A running session's spend so far, as its `running` line in the ledger,
@@ -587,6 +600,14 @@ function meterLive(
       outcome: "running",
       at: new Date(now).toISOString(),
     });
+    // The cap is checked on each spend tick, not only at the start.
+    if (meter.grantOwner !== undefined && meter.stoppedFor === undefined) {
+      const left = grantLeft(app.db, meter.grantOwner, new Date(now));
+      if (left !== undefined && left <= 0) {
+        meter.stoppedFor = GRANT_SPENT;
+        meter.stop();
+      }
+    }
     app.bus.append({
       kind: "usage.delta",
       repoId: run.repoId,
@@ -976,9 +997,17 @@ async function work(
     }
     // The forge's own token is for admin-owned repositories only; anyone
     // else's run waits for a grant rather than spend what is not theirs.
-    if (picked.kind === "none") {
+    // The owner's capped monthly grant (`core/model_grant.ts`) is the one
+    // way past it: the forge's token, up to what is left of the month.
+    const grantCap =
+      picked.kind === "none"
+        ? grantLeft(app.db, repo.ownerId, new Date())
+        : undefined;
+    if (picked.kind === "none" && (grantCap === undefined || grantCap < MIN_RUN_USD)) {
       const said =
-        "This repository has no model account: ask an admin to grant one";
+        grantCap === undefined
+          ? "This repository has no model account: ask an admin to grant one"
+          : "This month's model grant is spent: an admin can raise it";
       write(said);
       return { state: "failed", summary: said };
     }
@@ -989,6 +1018,10 @@ async function work(
       });
       meter.subscriptionId = picked.subscription.id;
     } else {
+      if (grantCap !== undefined) {
+        meter.grantOwner = repo.ownerId;
+        write(`model grant: $${grantCap.toFixed(2)} left this month`);
+      }
       write("subscription: platform (env)");
       noteRunProgress(app.db, run.id, { subscriptionId: PLATFORM });
       meter.subscriptionId = PLATFORM;
@@ -1015,7 +1048,9 @@ async function work(
     const budget =
       picked.kind === "ready" && picked.capUsd !== undefined
         ? Math.min(ownBudget, picked.capUsd)
-        : ownBudget;
+        : grantCap !== undefined
+          ? Math.min(ownBudget, grantCap)
+          : ownBudget;
     const reserve = wrapUpReserve(budget);
     // Asked again for every invocation (`crew/sandbox.ts`): an agent made
     // since the last one is denied from this one on.
@@ -1327,7 +1362,7 @@ async function work(
     if (signal.aborted)
       return {
         state: "failed",
-        summary: "cancelled",
+        summary: meter.stoppedFor ?? "cancelled",
         sessionId: result.sessionId,
         costUsd: result.costUsd,
         turns: result.turns,

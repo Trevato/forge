@@ -122,6 +122,16 @@ n=0; while [ ! -f "${dataDir}/release" ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n
 echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"the tool crashed","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-6","terminal_reason":"tool_error"}'
 exit 0
 fi
+if grep -q GRANT-TICK "${promptFile}"; then
+echo '{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"Working."}],"usage":{"input_tokens":10,"output_tokens":10}}}'
+sleep 1
+touch "${dataDir}/ticked"
+n=0; while [ ! -f "${dataDir}/spent" ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n+1)); done
+sleep 2.2
+echo '{"type":"assistant","message":{"id":"m2","content":[{"type":"text","text":"Still working."}],"usage":{"input_tokens":20,"output_tokens":20}}}'
+sleep 30
+exit 0
+fi
 if grep -q DECLINE-ME "${promptFile}"; then
 echo "half-done edit" > SHOULD-NOT-LAND.md
 echo '{"type":"result","subtype":"success","is_error":false,"result":"DECLINED: this is out of scope for me.","total_cost_usd":0.005,"num_turns":1,"session_id":"fake-2","terminal_reason":"completed"}'

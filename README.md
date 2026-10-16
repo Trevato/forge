@@ -690,6 +690,7 @@ Subscriptions, sealed, and grants each to a repository (Settings → Crew) or
 an organization (its page), down to one crew member: a work plan pays for
 the work repositories and nothing else. Two on one grant take turns, and
 one the provider rests hands its runs to the other until the reset.
+**Model budget.** A new account has none: its repositories' crew does not run, spends nothing, and says "This repository has no model account". A person adds their own subscription at Settings → Model (or the terminal's **Model budget** command, `a`); it is sealed, granted to their own repositories only, and one per account. A forge admin who is a person gives an account a capped grant, in dollars a month spent on the forge's own credential, from the account's page, the terminal's **Model grant** command, `POST /api/v1/admin/accounts/:name/model-grant` (`{"usdPerMonth": 20}`, `null` takes it back) or the MCP `model_grant` tool; each change is in the audit. The cap is the UTC month's spend in the usage ledger, checked when a run starts and on every spend tick: a run past it stops, and its page says the grant is spent. Two runs that start together each begin with the whole remainder; the tick check ends both once the sum crosses the cap, so the overshoot is at most what they spend between ticks.
 **Sandbox.** An agent's shell is held to a policy — the network is the forge
 and the package registry, writes stay in the clone, the forge's data and the
 operator's credentials are unreadable — by bubblewrap and socat on Linux

@@ -61,6 +61,7 @@ import {
   CARD_URI,
   cardFor,
 } from "../web/studio/cards.ts";
+import { setAccountGrant } from "../actions/model_grant.ts";
 import { keepThought } from "../actions/thought.ts";
 import {
   FROM_WORDS,
@@ -952,6 +953,47 @@ const TOOLS: readonly Tool[] = [
               : {}),
         })),
       );
+    },
+  },
+  {
+    name: "model_grant",
+    description:
+      "Give a person's account a capped model grant — dollars a month, spent on the forge's own credential; a run past the cap stops and says why — or take it back (`usdPerMonth` 0). A new account has none. A forge admin who is a person, with an admin token, sets it; `dryRun` is true unless you say false. Each change is recorded in the audit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        username: { type: "string" },
+        usdPerMonth: { type: "number", description: "0.01 to 10000; 0 takes it back." },
+        dryRun: { type: "boolean", description: "Plan only (the default). Send false to set it." },
+      },
+      required: ["username", "usdPerMonth"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const usd = args["usdPerMonth"];
+      const username = args["username"];
+      if (typeof username !== "string" || typeof usd !== "number" || !Number.isFinite(usd))
+        return bad("invalid", "send a username and usdPerMonth in dollars");
+      if (!mayBoards(user)) return bad("forbidden", "a model grant is a forge admin's to give");
+      const dryRun = args["dryRun"] !== false;
+      if (dryRun)
+        return good({
+          username,
+          usdPerMonth: usd === 0 ? null : usd,
+          says: "This is the plan; nothing changed. Send dryRun: false to set it.",
+        });
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "a model grant needs an admin token");
+      const set = setAccountGrant(ctx.app, user, username, usd === 0 ? null : usd);
+      if (!set.ok)
+        return bad(
+          set.error === "invalid_amount" ? "invalid" : "forbidden",
+          set.error === "invalid_amount"
+            ? "usdPerMonth is from 0.01 to 10000 dollars"
+            : "no such person, or not one a grant is for",
+        );
+      return good(set.value);
     },
   },
   {

@@ -47,6 +47,7 @@ import { accessScreen } from "./screens/access.ts";
 import { flagsScreen } from "./screens/flags.ts";
 import { cloudScreen } from "./screens/cloud.ts";
 import { usageScreen } from "./screens/usage.ts";
+import { modelGrantPrompt, modelScreen } from "./screens/model.ts";
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { quotasScreen } from "./screens/quotas.ts";
 import { domainsScreen } from "./screens/domains.ts";
@@ -369,6 +370,22 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Proposal tokens",
         hint: "mint, list and revoke what a child proposes with",
         run: () => ctx.push(proposalTokensPrompt(session, ctx, blank("Proposal tokens"))),
+      });
+    // Settings → Model: a person's own budget and subscription, as the page has them (#1145).
+    if (session.user?.kind === "user")
+      commands.push({
+        id: "model",
+        title: "Model budget",
+        hint: "what your crew may spend, and add your own subscription",
+        run: () => ctx.push(modelScreen(session, ctx)),
+      });
+    // A capped monthly grant to an account: a forge admin who is a person (#1145).
+    if (session.user?.isAdmin === true && session.user.kind === "user")
+      commands.push({
+        id: "model-grant",
+        title: "Model grant",
+        hint: "give an account dollars a month, or take it back",
+        run: () => ctx.push(modelGrantPrompt(session, ctx, blank("Model grant"))),
       });
     // Account quotas, as /admin/limits has them: an admin who is not an agent (#2191).
     if (session.user?.isAdmin === true && session.user.kind !== "agent")
