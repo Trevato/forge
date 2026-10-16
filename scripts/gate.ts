@@ -203,6 +203,7 @@ export const GATE: readonly string[] = [
   "test/git-trust.test.ts",
   "test/helpers.test.ts",
   "test/shards.test.ts",
+  "test/gate-summary.test.ts",
   "test/snapshot-drill.test.ts",
   "test/drill-verdict.test.ts",
   "test/drill-board-line.test.ts",

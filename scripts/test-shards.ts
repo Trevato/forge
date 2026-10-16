@@ -49,6 +49,8 @@ import {
   refreshTimes,
   parseShardSpec,
   parseTimes,
+  SHARDS_MAX,
+  WORKER_MEMORY_BYTES,
   shardCount,
   sliceFiles,
   splitArgs,
@@ -58,6 +60,7 @@ import {
   type ShardResult,
 } from "./shards.ts";
 import { GATE, gateRefusal, presentTests } from "./gate.ts";
+import { cgroupMemory, summaryLines } from "./gate-summary.ts";
 import { GATE_FILE, executedFiles, formatImpact, gateListAdds, handedImpact, mergeImpact, parseImpact } from "../src/checks/impact.ts";
 import { fastSet, importsOf, duration } from "../src/checks/tiers.ts";
 import { CHECK_CACHE } from "../src/checks/cache.ts";
@@ -334,15 +337,13 @@ const readLimit = (path: string): string | undefined => {
     return undefined;
   }
 };
-const count = shardCount(
-  availableParallelism(),
-  files.length,
-  process.env["FORGE_CHECK_SHARDS"],
-  memoryLimit(totalmem(), [
-    readLimit("/sys/fs/cgroup/memory.max"),
-    readLimit("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
-  ]),
-);
+const cpus = availableParallelism();
+const shardsOverride = process.env["FORGE_CHECK_SHARDS"];
+const memory = memoryLimit(totalmem(), [
+  readLimit("/sys/fs/cgroup/memory.max"),
+  readLimit("/sys/fs/cgroup/memory/memory.limit_in_bytes"),
+]);
+const count = shardCount(cpus, files.length, shardsOverride, memory);
 if (!count.ok) {
   console.error(`test-shards: ${count.error}`);
   process.exit(2);
@@ -535,7 +536,8 @@ if (results.length < slices.length) {
     `test-shards: fail-fast — skipped ${skipped} remaining shard${skipped === 1 ? "" : "s"} after a red exit`,
   );
 }
-const ending = tally(results, (performance.now() - started) / 1000);
+const wall = (performance.now() - started) / 1000;
+const ending = tally(results, wall);
 const spread = results.map((result) => result.seconds);
 console.log(`\n${ending.lines.join("\n")}`);
 if (!record && !timed && results.length > 1)
@@ -584,4 +586,21 @@ if (measure) {
     console.log(`test-shards: wrote ${measured.size} test impacts to ${IMPACT_NAME}`);
   }
 }
+// The timed full gate is the check on the cell itself: its log ends with
+// what the cell did, so nobody has to measure it by hand (#2065).
+if (timed)
+  console.log(
+    `\n${summaryLines({
+      shards: count.value,
+      cpus,
+      shardsMax: SHARDS_MAX,
+      files: files.length,
+      override: shardsOverride,
+      memoryBytes: memory,
+      workerBytes: WORKER_MEMORY_BYTES,
+      memory: cgroupMemory(readLimit),
+      wallSeconds: wall,
+      times: results.map((result) => ({ file: result.files[0]!, seconds: result.seconds })),
+    }).join("\n")}`,
+  );
 process.exit(ending.code);
