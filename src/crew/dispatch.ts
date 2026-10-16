@@ -64,8 +64,8 @@ import {
   handoverNote,
   handoverOf,
   type Handover,
-  ISSUE_RUN_CAP,
   recordCap,
+  runCapOf,
   skipsFeedback,
 } from "./guard.ts";
 import { noteProtection } from "../kernel/protection.ts";
@@ -309,8 +309,9 @@ export function queueAgentRun(
   }
   // A day's share of runs on one issue without a person's word: a loop,
   // parked once and asked about once (`guard.ts`). A run carrying on after
-  // a pause or a restart is the same start, never a new one.
-  const cap = app.config.issueRunCap ?? ISSUE_RUN_CAP;
+  // a pause or a restart is the same start, never a new one. The direction
+  // issue has its own, larger share (`runCapOf`).
+  const cap = runCapOf(repo, issue, app.config);
   if (again === undefined && capReached(app.db, repo, issue, cap)) {
     if (
       !capNoted(app.db, repo, issue) &&

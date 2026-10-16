@@ -94,7 +94,7 @@ import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
 import {
   capReached,
   handedOverPulls,
-  ISSUE_RUN_CAP,
+  runCapOf,
   SKIP_SUMMARY,
   skipsReplan,
 } from "./guard.ts";
@@ -351,30 +351,12 @@ export async function driveRepo(
   const builders = crew.filter((c) => c.role === "builder").map((c) => c.agent);
   const planner = crew.find((c) => c.role === "planner")?.agent;
   const active = activeRuns(app, repo.id);
-  // An issue a planner or a reviewer holds is theirs, not a builder's.
-  const planners = new Set(
-    crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
-  );
   const slotted = slottedRuns(active, crew);
   // Slots follow the subscriptions' remaining windows, never past the
   // operator's; at a wall nothing new starts until the reset.
   const paced = repoPace(app, repo, now);
   if (paced.slots === 0 && slotted.length === 0) return "waiting";
-  const busyIssues = new Set(active.map((r) => r.issueId));
-  const graph = repoGraph(app.db, repo.id, { sealed: true });
-  const proposed = proposedWork(app.db, repo);
-  const ready = readyNow(graph).filter(
-    (r) =>
-      r.issue.id !== repo.directionIssueId &&
-      !busyIssues.has(r.issue.id) &&
-      !proposed.has(r.issue.number) &&
-      (r.issue.assigneeId === null || !planners.has(r.issue.assigneeId)) &&
-      !stalled(app, repo, r.issue) &&
-      !atRunCap(app, repo, r.issue) &&
-      parkedCount(app, repo, r.issue.id) < PARK_STRIKES &&
-      !coveredByRedFix(app.db, repo.id, r.issue) &&
-      !isSettingFinding(app.db, r.issue.id),
-  );
+  const ready = startable(app, repo, readyNow(repoGraph(app.db, repo.id, { sealed: true })), crew, active);
   if (slotted.length >= paced.slots) {
     // The builders are busy; the planner can still refill the map, when
     // it is thin — counted, never assumed: a full crew with a full map is
@@ -426,6 +408,39 @@ export async function driveRepo(
   // REPLAN_AFTER_MS.
   if (await planIfThin(app, repo, by, crew, active, 0, now)) return "planned";
   return "idle";
+}
+
+/**
+ * The ready issues a builder may start now: not the direction, not in
+ * flight, not already proposed in an open pull, not held by the planner or
+ * a reviewer, not stalled, capped, parked, covered by a red fix, or a
+ * setting's finding. The tick log counts these beside the raw ready list.
+ */
+export function startable(
+  app: App,
+  repo: Repo,
+  ready: readonly Ranked[],
+  crew: readonly { agent: Agent; role: CrewRole }[],
+  active: readonly Run[],
+): Ranked[] {
+  const busyIssues = new Set(active.map((r) => r.issueId));
+  const proposed = proposedWork(app.db, repo);
+  // An issue a planner or a reviewer holds is theirs, not a builder's.
+  const planners = new Set(
+    crew.filter((c) => c.role !== "builder").map((c) => c.agent.user.id),
+  );
+  return ready.filter(
+    (r) =>
+      r.issue.id !== repo.directionIssueId &&
+      !busyIssues.has(r.issue.id) &&
+      !proposed.has(r.issue.number) &&
+      (r.issue.assigneeId === null || !planners.has(r.issue.assigneeId)) &&
+      !stalled(app, repo, r.issue) &&
+      !atRunCap(app, repo, r.issue) &&
+      parkedCount(app, repo, r.issue.id) < PARK_STRIKES &&
+      !coveredByRedFix(app.db, repo.id, r.issue) &&
+      !isSettingFinding(app.db, r.issue.id),
+  );
 }
 
 /** The map is thin below this many ready issues; the planner refills it. */
@@ -581,8 +596,10 @@ async function planIfThin(
   const seen = lastPlan?.created_at ?? "";
   const owed = handed.filter((issue) => issue.at > seen);
   if (ready >= THIN_MAP && owed.length === 0) return false;
+  // The direction is the planner's standing issue, not one issue retried:
+  // it is held to its own day's share, never the builders' cap (#2143).
   if (atRunCap(app, repo, direction))
-    return notPlanned(repo, "parked: the direction is at its run cap");
+    return notPlanned(repo, "parked: the direction is at its day's planning cap");
   // An issue the crew handed over is owed its pass whatever the hold: the
   // planner splitting it is how work starts landing again.
   const hold = owed.length === 0 ? plannerHold(app, repo, now) : null;
@@ -776,7 +793,7 @@ export function parkForBreaker(
 
 /** Whether `issue` is at its run cap (`guard.ts`): the clock neither picks nor plans it. */
 export function atRunCap(app: App, repo: Repo, issue: Issue): boolean {
-  return capReached(app.db, repo, issue, app.config.issueRunCap ?? ISSUE_RUN_CAP);
+  return capReached(app.db, repo, issue, runCapOf(repo, issue, app.config));
 }
 
 /** How many times the crew has parked this issue since a person who directs it last spoke (`parks.ts`). */
@@ -1118,11 +1135,20 @@ export async function autonomyTick(
       // Every tick says what it did and why, so an app that sits still is
       // never a mystery: the numbers behind "idle" are on the line.
       const status = autonomyStatus(app, current, now);
-      const graph = repoGraph(app.db, current.id, { sealed: true });
+      const ready = readyNow(repoGraph(app.db, current.id, { sealed: true }));
       log.info("tick", {
         repo: `${repo.ownerName}/${repo.name}`,
         did,
-        ready: readyNow(graph).length,
+        ready: ready.length,
+        // What the builders could start after the filters: 47 ready with 0
+        // startable is every one in a pull, stalled or capped (#2143).
+        startable: startable(
+          app,
+          current,
+          ready,
+          listCrewRoles(app.db, current.id),
+          activeRuns(app, current.id),
+        ).length,
         active: status.active,
         slots: status.slots,
         spent: `${status.spentTodayUsd.toFixed(2)}/${status.ceilingUsd}`,
