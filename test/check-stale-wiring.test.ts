@@ -83,7 +83,7 @@ describe("a green from an older main says so where people read it", () => {
     const res = await fetch(`${servers.url}/alice/lib/pulls/${pull.number}/files`);
     const page = await res.text();
     expect(page).toContain("Checked against an older main");
-    expect(page).not.toContain("Checks passed");
+    expect(page).not.toContain("Check passed");
   });
 
   test("the terminal's pull screen says passed against an older main", async () => {

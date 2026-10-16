@@ -51,6 +51,8 @@ import { getIssue, type Issue } from "../../core/issues.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
 import { askCheck } from "../../checks/again.ts";
 import { checkStale, checksHold } from "../../checks/stale.ts";
+import { checkWords } from "../../checks/summary.ts";
+import { oneLine } from "../../checks/words.ts";
 import { resolveOid } from "../../git/merge.ts";
 import { getPull, pullDir, variantSiblings, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
@@ -1242,28 +1244,35 @@ export function checksText(
         ? "checks: no deploy of this head yet"
         : "";
   const run = check.run;
-  const summary = `${
-    run === null || run.summary === "" ? "" : ` · ${run.summary}`
-  }${
+  const against =
     run !== null && run.baseOid !== "" && baseBranch !== ""
       ? ` · checked against ${baseBranch} at ${run.baseOid.slice(0, 7)}`
-      : ""
-  }`;
+      : "";
+  const summary = `${
+    run === null || run.summary === "" ? "" : ` · ${run.summary}`
+  }${against}`;
+  const isCheck = run !== null && run.kind === "check";
+  const words = run === null ? undefined : checkWords({ ...run, state: check.state });
+  const ofRun = `${run === null ? "" : ` · run ${run.id}`}${against}`;
   switch (check.state) {
     case "ok":
       return stale
         ? `checks: passed against an older ${baseBranch || "base"}${summary}`
-        : `checks: passed${summary}`;
+        : words !== undefined
+          ? `${words}${ofRun}`
+          : `checks: passed${summary}`;
     case "failed":
-      return `checks: failed${summary}`;
+      return words !== undefined
+        ? `${words}${ofRun}`
+        : `checks: failed${summary}`;
     case "running":
-      return "checks: deploying this head";
+      return words !== undefined ? `${words}${ofRun}` : "checks: deploying this head";
     case "queued":
-      return `checks: a deploy of this head is queued${
+      return `checks: a ${isCheck ? "check" : "deploy"} of this head is queued${
         run === null ? "" : ` (queued ${relTime(run.createdAt)})`
       }`;
     case "cancelled":
-      return `checks: the deploy was cancelled${summary}`;
+      return `checks: the ${isCheck ? "check" : "deploy"} was cancelled${summary}`;
   }
 }
 
@@ -1273,10 +1282,10 @@ export function checksRefusal(check: CheckSummary, old = false): string {
     return "checked against an older base; press C to check again";
   switch (check.state) {
     case "failed":
-      return `the deploy of this head failed${check.run?.summary ? `: ${check.run.summary}` : ""}`;
+      return `the ${check.run?.kind === "check" ? "check" : "deploy"} of this head failed${check.run?.summary ? `: ${oneLine(check.run.summary)}` : ""}`;
     case "running":
     case "queued":
-      return "wait for the deploy of this head to pass";
+      return `wait for the ${check.run?.kind === "check" ? "check" : "deploy"} of this head to pass`;
     default:
       return errorText("checks_required");
   }

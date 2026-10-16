@@ -249,19 +249,19 @@ export function checksLine(
           >${icon("clock")}Checked against an older ${baseBranch || "base"}</span
         >${link}`
     : check.state === "ok"
-      ? html`<span class="ok">${icon("check")}${words ?? "Checks passed"}</span>${link}`
+      ? html`<span class="ok">${icon("check")}${words ?? "Check passed"}</span>${link}`
       : check.state === "failed"
-        ? html`<span class="bad">${icon("x")}${words ?? "Checks failed"}</span>${link}`
+        ? html`<span class="bad">${icon("x")}${words ?? "Check failed"}</span>${link}`
         : check.state === "queued"
           ? html`<span class="now"
-              >${icon("loader")}Checks
+              >${icon("loader")}Check
               ${run ? queuedPhrase(run.createdAt) : "queued"}</span
             >${link}`
           : check.state === "running"
-            ? html`<span class="now">${icon("loader")}${words ?? "Checks running"}</span
+            ? html`<span class="now">${icon("loader")}${words ?? "Check running"}</span
                 >${link}`
             : check.state === "cancelled"
-              ? html`<span>${icon("ban")}Checks cancelled</span>${link}`
+              ? html`<span>${icon("ban")}Check cancelled</span>${link}`
               : waiting
                 ? html`<span>${icon("lock")}${WAITING_WORDS}</span>`
                 : html`<span>${icon("clock")}No checks on this head yet</span>`;

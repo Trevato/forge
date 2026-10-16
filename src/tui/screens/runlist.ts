@@ -58,6 +58,10 @@ export function runTitle(
   names: ReadonlyMap<string, { username: string }>,
   set: IconSet = "plain",
 ): string {
+  if (run.kind === "check") {
+    const pull = run.env.startsWith("pull-") ? Number(run.env.slice(5)) : undefined;
+    return `Check of ${run.commitOid.slice(0, 7)}${pull === undefined ? "" : ` for #${pull}`}`;
+  }
   if (run.kind === "deploy") return `deploy ${envLabel(run.env)}`;
   const who =
     run.actorId === null

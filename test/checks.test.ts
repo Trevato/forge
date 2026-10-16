@@ -480,7 +480,7 @@ describe("checks", () => {
     expect(checksText(green, false, true, "main", true)).toContain(
       "checks: passed against an older main",
     );
-    expect(checksText(green, false, true, "main", false)).toContain("checks: passed");
+    expect(checksText(green, false, true, "main", false)).toContain("Check passed");
     expect(checksText(green, false, true, "main", false)).not.toContain("older");
     expect(
       checksForHead(app.db, pull.id, branched.value.commitOid)[0]?.id,

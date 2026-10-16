@@ -21,7 +21,7 @@ test("the pull page says so in place of green", () => {
   const stale = checksLine("/a/b", ok, false, true, false, "", "", 0, "main", true).text;
   expect(stale).toContain("Checked against an older main");
   expect(stale).not.toContain('class="ok"');
-  expect(checksLine("/a/b", ok, false, true, false, "", "", 0, "main", false).text).toContain("Checks passed");
+  expect(checksLine("/a/b", ok, false, true, false, "", "", 0, "main", false).text).toContain("Check passed");
 });
 
 test("the terminal says the green is against an older main", async () => {

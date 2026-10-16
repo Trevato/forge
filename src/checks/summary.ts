@@ -9,6 +9,7 @@
 
 import type { CheckDetail, Run } from "../core/runs.ts";
 import { parseBunTestFailure } from "./bun-test.ts";
+import { oneLine } from "./words.ts";
 
 /**
  * The first line of the block a timed full gate ends its log with
@@ -104,7 +105,7 @@ export function checkWords(
       : `Check passed in ${spanWords(Date.parse(run.finishedAt) - began)}`;
   if (run.state === "failed") {
     const first = run.checkDetail?.names[0] ?? run.summary;
-    return first === "" ? "Check failed" : `Check failed: ${first}`;
+    return first === "" ? "Check failed" : `Check failed: ${oneLine(first)}`;
   }
   return undefined;
 }
