@@ -8,6 +8,7 @@
 import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
+import { parentCallback, parentStart } from "./rp.ts";
 import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { flowPage } from "../web/pages/flow.ts";
@@ -633,6 +634,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/front", frontUpdate);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
+  router.add("GET", "/signin/parent", parentStart);
+  router.add("GET", "/signin/parent/callback", parentCallback);
   router.add("GET", "/signup", signupPage);
   router.add("GET", "/verify", verifyPage);
   router.add("POST", "/signup", signupSubmit);

@@ -163,6 +163,8 @@ export interface AuthRequest {
   /** `openid` and the OIDC scopes asked with it; empty for a plain OAuth grant. */
   readonly oidcScopes: readonly string[];
   readonly nonce: string;
+  /** OpenID scopes and no `ro`/`rw`: the person is signed in, no API token is granted. */
+  readonly signInOnly: boolean;
 }
 
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
@@ -206,6 +208,7 @@ export function parseAuthRequest(
     scope: asked ?? "ro",
     oidcScopes: openid ? oidc : [],
     nonce: openid ? nonce : "",
+    signInOnly: openid && asked === undefined,
   });
 }
 
@@ -234,10 +237,11 @@ export function issueCode(
   request: AuthRequest,
   grant: { scope: OAuthScope; name: string; lifetimeS: number | null },
 ): string {
+  const signInOnly = request.signInOnly ? 1 : 0;
   const code = secret();
   db.query(
-    `INSERT INTO oauth_code (code_hash, client_id, user_id, redirect_uri, challenge, scope, name, lifetime_s, expires_at, oidc_scopes, nonce)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
+    `INSERT INTO oauth_code (code_hash, client_id, user_id, redirect_uri, challenge, scope, name, lifetime_s, expires_at, oidc_scopes, nonce, signin_only)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
   ).run(
     sha256(code),
     request.client.id,
@@ -250,6 +254,7 @@ export function issueCode(
     new Date(Date.now() + CODE_TTL_MS).toISOString(),
     request.oidcScopes.join(" "),
     request.nonce,
+    signInOnly,
   );
   db.query("DELETE FROM oauth_code WHERE expires_at <= ?1").run(
     new Date().toISOString(),
@@ -258,7 +263,8 @@ export function issueCode(
 }
 
 export interface Minted {
-  readonly token: string;
+  /** Absent for a sign-in-only grant: no credential is left behind. */
+  readonly token?: string;
   readonly scope: OAuthScope;
   /** Seconds the token lives, or null for one that does not expire. */
   readonly expiresIn: number | null;
@@ -295,6 +301,7 @@ export async function redeemCode(
         expires_at: string;
         oidc_scopes: string;
         nonce: string;
+        signin_only: number;
       },
       [string]
     >("DELETE FROM oauth_code WHERE code_hash = ?1 RETURNING *")
@@ -310,6 +317,16 @@ export async function redeemCode(
   if (digest !== row.challenge) return err("invalid_grant");
   const user = getUserById(db, row.user_id);
   if (user === null || user === undefined || !isActive(user)) return err("invalid_grant");
+  if (row.signin_only === 1) {
+    const idToken = await signIdToken(db, dataDir, {
+      issuer: input.issuer,
+      clientId: row.client_id,
+      user,
+      scopes: row.oidc_scopes.split(" "),
+      nonce: row.nonce,
+    });
+    return ok({ scope: row.scope, expiresIn: null, idToken });
+  }
   const minted = createToken(db, row.user_id, row.name, row.scope, {
     ...(row.lifetime_s === null
       ? {}

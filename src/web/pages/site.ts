@@ -46,6 +46,7 @@ import {
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hasAdmin } from "../../spawn/claim.ts";
+import { parentIssuerOf } from "../../core/federation.ts";
 
 export function sessionCookie(
   value: string,
@@ -369,6 +370,15 @@ function authForm(
         <a class="small" href="/recover">Lost your device?</a>
       </p>`,
     )}
+    ${when(
+      kind === "signin" ? parentIssuerOf(ctx.app.config) : undefined,
+      (parent) => html`<p class="mt">
+        ${btn(`Continue with ${new URL(parent).host}`, {
+          href: "/signin/parent",
+          variant: "outline",
+        })}
+      </p>`,
+    )}
     ${claimable
       ? html`<p class="muted small mt" id="claim-door">
           Was this forge made for you? <a href="/claim">Claim it with your code</a>.
@@ -426,10 +436,11 @@ export function signinAllowed(ctx: Ctx, username: string): number | undefined {
     adminPerMinute: limitValue(ctx.app.db, "signin.per_forge"),
     enabled: true,
   });
-  const whole = limiter.take("forge", "admin");
-  if (!whole.allowed) return whole.retryAfter;
+  // The one key first: a key already refused must not spend the forge's budget.
   const one = limiter.take(`account:${username.toLowerCase()}`, "ro");
-  return one.allowed ? undefined : one.retryAfter;
+  if (!one.allowed) return one.retryAfter;
+  const whole = limiter.take("forge", "admin");
+  return whole.allowed ? undefined : whole.retryAfter;
 }
 
 export async function signinSubmit(ctx: Ctx): Promise<Response> {

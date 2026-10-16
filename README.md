@@ -173,6 +173,23 @@ The relying party is the address the browser used (or
 `FORGE_URL`), so a passkey does not follow a forge to another hostname.
 Sign-up is a username, an email address and a passkey (`/signup`, `src/web/pages/signup-passkey.ts`); the running server refuses a password-only sign-up on the form, `POST /api/v1/users` and the terminal (`passkeyOnlySignup`, set in `main.ts`). Accounts that already have a password still sign in. The owner claim of a spawned forge (`/claim`, `web/pages/claim.ts`) and an admin's everyday account (`web/pages/everyday.ts`) make their account with a passkey too (`web/passkey-ceremony.ts`, challenges from `POST /claim/options` and `POST /settings/everyday/options`); neither reads a password, and without JavaScript the page says a passkey needs it. A claim post with no passkey is refused and does not spend the link.
 
+A forge with a parent (`FORGE_PARENT_URL`, or the `upstream` in a spawned
+forge's `parent.json`) offers "Continue with <parent>" on `/signin`. The forge
+registers itself once at the parent's `/oauth/register` (the client id is kept
+in `rp_client`), sends the person through the parent's authorize page with
+PKCE, and on return checks state (also bound to the browser by an HttpOnly
+cookie), nonce, `iss`, `aud`, `exp` and the ES256 signature against the
+parent's JWKS (`kernel/jwt.ts`; keys are cached ten minutes and an unknown
+`kid` refetches them once a minute at most). The parent's `sub` — never the
+username — maps to a local account made on first sight with no password
+(`core/federation.ts`; `http/rp.ts` has the two routes). No dependency added.
+The parent's answers are read by bytes and refused past 16 KiB (64 KiB for the
+key set), and starting a sign-in is throttled like a password attempt.
+An account made this way has no password, so the terminal's username-and-password
+door (`s`) cannot let that person in. They add an SSH key under Settings → Keys
+once signed in on the web; after that the terminal signs them straight in as
+that account, as for anyone with a key.
+
 Your SSH key is your identity. A key the forge knows signs you straight in; any
 other key browses public repos as a guest and can press `s` to sign in with a
 username and password — which links that key to your account, so the next

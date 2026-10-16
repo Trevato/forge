@@ -279,7 +279,7 @@ describe("oauth authorize and token", () => {
   const b64 = (part: string) => JSON.parse(Buffer.from(part, "base64url").toString());
 
   test("scope=openid with a nonce returns a verifiable id_token beside the access token, and userinfo answers", async () => {
-    const q = query({ scope: "openid profile email", nonce: "n-0S6_WzA2Mj" });
+    const q = query({ scope: "openid profile email ro", nonce: "n-0S6_WzA2Mj" });
     const code = new URL((await consent(q)).headers.get("location")!).searchParams.get("code")!;
     const res = await exchange({ code });
     expect(res.status).toBe(200);

@@ -93,7 +93,29 @@ const identity = (request: AuthRequest): Html | "" =>
         </ul>
       </fieldset>`;
 
+function signInConsent(request: AuthRequest, values: Params): Html {
+  const host = new URL(request.redirectUri).host;
+  return html`<div class="narrow">
+    ${pageHead(`Sign in to ${host}`)}
+    ${card(
+      html`<p class="mb">
+          Sign in to <strong>${host}</strong> as you. It learns only what is
+          listed below, and gets no access to this forge.
+        </p>
+        <form method="post" action="/oauth/authorize">
+          ${PARAMS.map((name) => hidden(name, values[name]))}
+          ${identity(request)}
+          <div class="form-actions">
+            ${btn("Sign in", { variant: "primary", name: "decision", value: "allow" })}
+            ${btn("Deny", { name: "decision", value: "deny" })}
+          </div>
+        </form>`,
+    )}
+  </div>`;
+}
+
 function consent(ctx: Ctx, request: AuthRequest, values: Params): Html {
+  if (request.signInOnly) return signInConsent(request, values);
   const host = new URL(request.redirectUri).host;
   return html`<div class="narrow">
     ${pageHead(`Connect ${request.client.name}`)}
@@ -179,6 +201,14 @@ export async function authorizeSubmit(ctx: Ctx): Promise<Response> {
     return guard(
       redirect(redirectWith(redirectUri, { error: "access_denied", state })),
     );
+  if (request.value.signInOnly) {
+    const code = issueCode(ctx.app.db, ctx.auth.user.id, request.value, {
+      scope: "ro",
+      name: request.value.client.name,
+      lifetimeS: null,
+    });
+    return guard(redirect(redirectWith(redirectUri, { code, state })));
+  }
   const grant = field(form, "grant");
   const lifetime = LIFETIMES[field(form, "lifetime")];
   if (!isOAuthScope(grant) || lifetime === undefined)

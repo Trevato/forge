@@ -82,9 +82,9 @@ export function oauthRoutes(router: Router<Handler>): void {
     if (!minted.ok) return grantError(minted.error);
     return json(
       {
-        access_token: minted.value.token,
+        ...(minted.value.token === undefined ? {} : { access_token: minted.value.token }),
         token_type: "Bearer",
-        scope: minted.value.scope,
+        ...(minted.value.token === undefined ? {} : { scope: minted.value.scope }),
         ...(minted.value.idToken === undefined ? {} : { id_token: minted.value.idToken }),
         ...(minted.value.expiresIn === null
           ? {}
