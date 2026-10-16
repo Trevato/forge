@@ -496,7 +496,33 @@ describe("review states, and the merge they gate", () => {
 
   // ---- the outbox ----
 
-  test("every verdict and resolution reaches the event outbox", () => {
+  test("every verdict and resolution reaches the event outbox", async () => {
+    // Produce its own verdict and resolution rather than read what an
+    // earlier test happened to leave behind.
+    const number = await proposeFrom("bob", "outbox", "outbox\n", "outbox");
+    const pull = `/api/v1/repos/acme/lib/pulls/${number}`;
+    expect(
+      (await as("ada", "POST", `${pull}/review-states`, { state: "approved" }))
+        .status,
+    ).toBe(201);
+    expect(
+      (
+        await as("ada", "POST", `${pull}/reviews`, {
+          body: "why?",
+          path: "a.txt",
+          line: 1,
+          side: "new",
+        })
+      ).status,
+    ).toBe(201);
+    const [first] = await read<{ anchor: string }[]>(
+      await as("ada", "GET", `${pull}/reviews`),
+    );
+    expect(
+      (await as("ada", "POST", `${pull}/threads/${first!.anchor}/resolve`, {}))
+        .status,
+    ).toBe(200);
+
     const kinds = listEvents(app.db, { limit: 500 }).map((e) => e.kind);
     expect(kinds).toContain("pull.reviewed");
     expect(kinds).toContain("pull.thread_resolved");

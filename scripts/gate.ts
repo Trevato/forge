@@ -61,11 +61,6 @@ export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/prompts.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/public-url.test.ts", reason: "not yet admitted", issue: 261 },
   {
-    file: "test/reviews-states.test.ts",
-    reason: "red in random order: every verdict and resolution reaches the event outbox",
-    issue: 2107,
-  },
-  {
     file: "test/reviews.test.ts",
     reason: "red in random order: a posted review comment appears inline, anchored to its line",
     issue: 2106,
