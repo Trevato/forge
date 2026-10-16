@@ -19,6 +19,7 @@ import { createApp, type App as Forge } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { readPlan } from "../src/core/milestones.ts";
+import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -117,6 +118,15 @@ describe("raise and lower a limb in the terminal", () => {
       if (r === repo) {
         trust = a;
         feed = b;
+        const run = createRun(forge.db, {
+          repoId: r.id,
+          kind: "agent",
+          issueId: leafA.id,
+          actorId: alice.id,
+          reason: "assigned",
+        });
+        claimRun(forge.db, run.id);
+        finishRun(forge.db, run.id, { state: "ok", summary: "x", costUsd: 2.5 });
       }
     }
   }, 60_000);
@@ -191,6 +201,28 @@ describe("raise and lower a limb in the terminal", () => {
     expect(moved()).toHaveLength(before);
     expect(top().slice(0, 2)).toEqual([trust.number, feed.number]);
     h.stop();
+  });
+
+  test("an owner sees what the limb under the cursor cost and landed; a reader and a guest see none", async () => {
+    const h = boot(alice);
+    await h.toMilestones("alice/order");
+    expect(h.text()).toContain("Cost and landed: $2.50 spent · 0 changes landed");
+    expect(h.text()).toContain("Costliest: #");
+    expect(h.text()).toContain("$2.50");
+    // The Feed limb cost nothing.
+    await h.press("j");
+    expect(h.text()).toContain("Cost and landed: $0.00 spent");
+    expect(h.text()).toContain("Nothing has cost anything yet.");
+    h.stop();
+
+    for (const who of [bob, undefined]) {
+      const r = boot(who);
+      await r.toMilestones("alice/order");
+      expect(r.text()).toContain("Trust");
+      expect(r.text()).not.toContain("Cost and landed");
+      expect(r.text()).not.toContain("$2.50");
+      r.stop();
+    }
   });
 
   test("a guest sees a public order, never a private one, and moves nothing", async () => {

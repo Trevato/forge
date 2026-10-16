@@ -373,6 +373,14 @@ describe("milestones", () => {
     expect(one).toContain(`href="/alice/engine/issues/${network.number}"`);
     expect(one).toContain(`href="/alice/engine/pulls/${landed}"`);
     expect(one).toContain("$1.50");
+    // What it cost and landed, with its costliest: the shell, $1.50, one change.
+    const spend = one.slice(
+      one.indexOf('id="ms-spend"'),
+      one.indexOf("</section>", one.indexOf('id="ms-spend"')),
+    );
+    expect(spend).toMatch(/<b>\$1\.50<\/b> spent/);
+    expect(spend).toMatch(/<b>1<\/b> change\s+landed/);
+    expect(spend).toContain("Sandbox the shell");
     // Each issue once: the network is under Building now and the disk under
     // Blocked, so Issues lists neither again, only what closed.
     const issues = one.slice(
@@ -390,6 +398,7 @@ describe("milestones", () => {
     ).text();
     expect(theirs).toMatch(/<b>1<\/b> of 3 done/);
     expect(theirs).not.toContain("$1.50");
+    expect(theirs).not.toContain('id="ms-spend"');
     expect(theirs).not.toContain("mason");
     expect(theirs).toMatch(/the crew · since/);
 
@@ -484,6 +493,12 @@ describe("milestones", () => {
       })
     ).json()) as Record<string, any>;
     expect("spentUsd" in theirs).toBe(false);
+    expect("spend" in theirs).toBe(false);
+    expect(one["spend"]).toMatchObject({
+      usd: 1.5,
+      landed: 1,
+      costliest: [{ number: shell.number, usd: 1.5 }],
+    });
     expect(theirs["buildingNow"][0].who).toBe("the crew");
     expect(theirs["done"]).toBe(1);
   });
@@ -514,5 +529,44 @@ describe("milestones", () => {
     ).text();
     expect(page).toMatch(/<b>0<\/b> of 2 done/);
     expect(page).toContain("A profit slider");
+  });
+
+  test("a milestone's spend adds up: its dollars are its issues' dollars, the three dearest are named, and a reader sees none", () => {
+    const top = issue(plain, "Cost 1.0");
+    const parts = [0.5, 3, 1, 2.25].map((usd, n) => {
+      const part = issue(plain, `Costed ${n + 1}`);
+      link(plain, top, part);
+      const run = createRun(app.db, {
+        repoId: plain.id,
+        kind: "agent",
+        issueId: part.id,
+        actorId: mason.id,
+        reason: "assigned",
+      });
+      claimRun(app.db, run.id);
+      finishRun(app.db, run.id, { state: "ok", summary: "x", costUsd: usd });
+      return part;
+    });
+    const free = issue(plain, "Costed nothing");
+    link(plain, top, free);
+    const m = readPlan(app.db, fresh(plain), { spend: true }).milestone(
+      top.number,
+    )!;
+    expect(m.spend!.usd).toBe(6.75);
+    expect(m.spend!.usd).toBe(m.weight.spentUsd!);
+    expect(m.spend!.landed).toBe(0);
+    expect(m.spend!.costliest.map((c) => [c.issue.number, c.usd])).toEqual([
+      [parts[1]!.number, 3],
+      [parts[3]!.number, 2.25],
+      [parts[2]!.number, 1],
+    ]);
+    // The three named are never more than the whole.
+    expect(m.spend!.costliest.reduce((sum, c) => sum + c.usd, 0)).toBeLessThanOrEqual(
+      m.spend!.usd,
+    );
+    const reader = readPlan(app.db, fresh(plain), { spend: false }).milestone(
+      top.number,
+    )!;
+    expect(reader.spend).toBeUndefined();
   });
 });

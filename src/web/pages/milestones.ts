@@ -376,6 +376,31 @@ function milestoneBody(
           )}
         </section>`,
     )}
+    ${when(
+      m.spend,
+      (spend) =>
+        html`<section class="ms-section" id="ms-spend">
+          <h2>Cost and landed</h2>
+          <p class="ms-figures">
+            <span><b>${dollars(spend.usd)}</b> spent</span>
+            <span
+              ><b>${spend.landed}</b> change${spend.landed === 1 ? "" : "s"}
+              landed</span
+            >
+          </p>
+          ${spend.costliest.length === 0
+            ? html`<p class="muted small">Nothing has cost anything yet.</p>`
+            : html`<ol class="ms-rows">
+                ${spend.costliest.map(
+                  (c) =>
+                    html`<li>
+                      ${issue(c.issue.number, c.issue.title)}
+                      <span class="ms-state small">${dollars(c.usd)}</span>
+                    </li>`,
+                )}
+              </ol>`}
+        </section>`,
+    )}
     <section class="ms-section" id="ms-merged">
       <h2>Merged in ${PILLAR_DAYS} days</h2>
       ${m.merged.length === 0
@@ -601,6 +626,7 @@ export const milestonesCss = /* css */ `
 .ms-section h2 { font-size: 13px; margin: 0 0 6px; }
 .ms-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 14px; }
 .ms-rows li > span { margin-left: 6px; }
+.ms-figures { display: flex; flex-wrap: wrap; gap: 4px 20px; margin: 0 0 8px; font-variant-numeric: tabular-nums; }
 .ms-state { color: var(--muted-fg); }
 .ms-rows li[data-state="building"] .ms-state { color: var(--accent); }
 .ms-rows li[data-state="blocked"] .ms-state { color: var(--attn); }

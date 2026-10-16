@@ -40,6 +40,9 @@ import { getUsersByIds } from "./users.ts";
 /** A limb with this many open issues beneath it and nobody building is one to look at. */
 export const TRIM_OPEN = 8;
 
+/** How many issues a milestone's spend names. */
+export const COSTLIEST = 3;
+
 /** How heavy a limb is: what is beneath it, and whether it moves. */
 export interface Weight {
   /** The work beneath it: what is open, and what closed as done. */
@@ -100,6 +103,17 @@ export interface Milestone extends Limb {
     readonly title: string;
     readonly at: string;
   }[];
+  /**
+   * What the limb cost and landed, ever: owner facts only, so nothing for a
+   * viewer who may not see them. `costliest` is at most `COSTLIEST` issues
+   * beneath it, dearest first; an issue that cost nothing is not listed.
+   */
+  readonly spend?: {
+    readonly usd: number;
+    /** Pulls merged, ever, for the issues beneath it. */
+    readonly landed: number;
+    readonly costliest: readonly { readonly issue: Issue; readonly usd: number }[];
+  };
   /** A plain sentence: when it lands at this week's pace, or why nobody can say. */
   readonly estimate: string;
   /** What it waits for directly that has a tree of its own. */
@@ -269,6 +283,18 @@ export function readPlan(
         cost.set(issueId, (cost.get(issueId) ?? 0) + row.usd);
     }
   }
+
+  // Every pull ever merged, by the issues it closes: what a limb landed.
+  // One query that parses each merged pull's body; owner reads only.
+  const everMerged: (readonly number[])[] = options.spend
+    ? db
+        .query<{ body: string }, [string]>(
+          `SELECT i.body FROM pull p JOIN issue i ON i.id = p.issue_id
+            WHERE i.repo_id = ?1 AND p.merged_at IS NOT NULL`,
+        )
+        .all(repo.id)
+        .map((row) => closesFromBody(row.body))
+    : [];
 
   const stateOf = (issue: Issue): LeafState => {
     if (issue.state === "closed") return counted(issue) ? "done" : "gone";
@@ -504,6 +530,21 @@ export function readPlan(
         merged: merged
           .filter((pull) => pull.closes.some((n) => numbers.has(n)))
           .map(({ number: n, title, at }) => ({ number: n, title, at })),
+        ...(options.spend
+          ? {
+              spend: {
+                usd: limb.weight.spentUsd ?? 0,
+                landed: everMerged.filter((closes) =>
+                  closes.some((n) => numbers.has(n)),
+                ).length,
+                costliest: under
+                  .filter((i) => (cost.get(i.id) ?? 0) > 0)
+                  .map((i) => ({ issue: i, usd: cost.get(i.id)! }))
+                  .sort((a, b) => b.usd - a.usd || a.issue.number - b.issue.number)
+                  .slice(0, COSTLIEST),
+              },
+            }
+          : {}),
         estimate,
         limbs: arranged(issue.id, [...limbIds]).map(limbOf),
         leaves: children
@@ -576,6 +617,18 @@ export function milestoneJson(
       on: b.on.map(brief),
     })),
     merged: milestone.merged,
+    ...(milestone.spend === undefined
+      ? {}
+      : {
+          spend: {
+            usd: milestone.spend.usd,
+            landed: milestone.spend.landed,
+            costliest: milestone.spend.costliest.map((c) => ({
+              ...brief(c.issue),
+              usd: c.usd,
+            })),
+          },
+        }),
     limbs: milestone.limbs.map(limbJson),
     leaves: milestone.leaves.map((leaf) => ({
       ...brief(leaf.issue),

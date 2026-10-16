@@ -131,7 +131,12 @@ and of the top of the ready list first, then `enter` to apply (`esc` backs
 out), then `u` to undo the last move. It is the same fleet operation the web
 milestones page uses, and a move is heard by that page when it is open.
 Anyone else sees the order and no keys to change it; a guest sees only what
-the web shows them.
+the web shows them. Whoever may see owner facts also gets two lines under
+the list for the limb under the cursor: **Cost and landed** (dollars spent,
+changes landed) and its costliest three issues; a reader or guest sees none.
+The web page has the same *Cost and landed* section on a milestone, and the
+milestones API and MCP carry it as `spend` (`usd`, `landed`, `costliest`),
+owner only.
 
 Working on the UI itself? `bun run src/tui/main.ts --user alice` runs it over
 stdio against your local data directory. That `--user` flag is a development

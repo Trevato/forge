@@ -8,7 +8,9 @@
  * verb `place`. What the screen decides is only what to draw and which keys
  * exist; the action decides who may. A reader sees the order and no keys to
  * change it, an agent likewise, and a guest sees what `canRead` lets the web
- * show — the plan is read without the owner's spend.
+ * show — the plan is read without the owner's spend. Whoever may see owner
+ * facts (`canSeeOwnerFacts`, as on the page) also gets, under the list, what
+ * the limb under the cursor cost and landed, and its costliest issues.
  *
  * `enter` on a limb that has limbs of its own opens them, so a milestone's
  * sub-limbs can be moved among themselves (the `under` of the action).
@@ -18,8 +20,8 @@
 
 import { undoFleetOp } from "../../actions/fleet.ts";
 import { applyLimb, previewLimb, type LimbPreview } from "../../actions/limbs.ts";
-import { canAdmin, canRead, type Repo } from "../../core/repos.ts";
-import { readPlan, type Limb } from "../../core/milestones.ts";
+import { canAdmin, canRead, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { readPlan, type Limb, type Milestone } from "../../core/milestones.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { fill, len, split } from "../ui/layout.ts";
@@ -49,6 +51,15 @@ function limbsOf(f: Session, repo: Repo, group: string): Limb[] | undefined {
   if (group === "top") return [...plan.limbs];
   const milestone = plan.milestone(Number(group));
   return milestone === undefined ? undefined : [...milestone.limbs];
+}
+
+/** What a limb cost and landed, as the two lines under the list. */
+export function spendLines(spend: NonNullable<Milestone["spend"]>): string[] {
+  const dear = spend.costliest.map((c) => `#${c.issue.number} $${c.usd.toFixed(2)}`);
+  return [
+    `Cost and landed: $${spend.usd.toFixed(2)} spent · ${plural(spend.landed, "change")} landed`,
+    dear.length === 0 ? "Nothing has cost anything yet." : `Costliest: ${dear.join(" · ")}`,
+  ];
 }
 
 const line = (n: number, title: string): string => `#${n} ${title}`;
@@ -89,6 +100,8 @@ export function limbsScreen(
   const state = new ListState();
   let limbs: Limb[] = [];
   let loaded = false;
+  /** What each limb here cost and landed, by issue number; empty unless owner facts. */
+  let spends = new Map<number, NonNullable<Milestone["spend"]>>();
   /** The receipt of the last move made here, which `u` reverses once. */
   let last: string | undefined;
   // Read at use, not at open: a repository's admin can change under a session.
@@ -98,11 +111,20 @@ export function limbsScreen(
   const reload = (follow?: number): void => {
     if (!canRead(f.db, repo, f.user)) {
       limbs = [];
+      spends = new Map();
       loaded = true;
       ctx.invalidate();
       return;
     }
     limbs = limbsOf(f, repo, group) ?? [];
+    spends = new Map();
+    if (canSeeOwnerFacts(f.db, repo, f.user)) {
+      const plan = readPlan(f.db, repo, { spend: true });
+      for (const l of limbs) {
+        const spend = plan.milestone(l.issue.number)?.spend;
+        if (spend !== undefined) spends.set(l.issue.number, spend);
+      }
+    }
     loaded = true;
     if (follow !== undefined) {
       const at = limbs.findIndex((l) => l.issue.number === follow);
@@ -203,7 +225,8 @@ export function limbsScreen(
     },
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, list] = split(area, "v", [len(1), fill(1)]);
+      const spend = current() === undefined ? undefined : spends.get(current()!.issue.number);
+      const [head, list, foot] = split(area, "v", [len(1), fill(1), len(spend ? 2 : 0)]);
       const note = !loaded
         ? "Loading…"
         : limbs.length === 0
@@ -211,6 +234,10 @@ export function limbsScreen(
           : `${plural(limbs.length, "limb")} in the order the crew takes ready work${may() ? "" : " · you can read this order, not change it"}`;
       s.text(head!.x, head!.y, truncate(note, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       drawList(s, list!, c, state, rows());
+      if (spend !== undefined)
+        spendLines(spend).forEach((text, n) =>
+          s.text(foot!.x, foot!.y + n, truncate(text, foot!.w), style(c.mutedFg, c.bg), foot!.x + foot!.w),
+        );
       hitList(ctx, list!, state, limbs.length, { open });
     },
     key(e) {
