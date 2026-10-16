@@ -14,6 +14,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type { App } from "../app.ts";
 import {
   accountFor,
+  knownIdentity,
   clientFor,
   keepClient,
   parentIssuerOf,
@@ -24,7 +25,7 @@ import {
 } from "../core/federation.ts";
 import { readCapped } from "../origins/providers/http.ts";
 import { clientAddress } from "./peer.ts";
-import { signinAllowed } from "../web/pages/site.ts";
+import { signinAllowed, signupAllowed } from "../web/pages/site.ts";
 import { createSession } from "../core/sessions.ts";
 import { verifyJwt } from "../kernel/jwt.ts";
 import { html } from "../web/html.ts";
@@ -207,6 +208,16 @@ export async function parentCallback(ctx: Ctx): Promise<Response> {
     if (typeof sub !== "string" || !SUB.test(sub))
       return refuse("The parent forge's answer did not verify.", 502);
     const name = clean(verified.value["preferred_username"], 64);
+    // A returning person is a sign-in; first sight of a sub makes an account,
+    // and that is a sign-up, held to the sign-up limit before it is made.
+    if (!knownIdentity(ctx.app.db, login.issuer, sub)) {
+      const wait = signupAllowed(ctx);
+      if (wait !== undefined) {
+        const slow = refuse(`Too many new accounts from here. Try again in ${wait}s.`, 429);
+        slow.headers.set("retry-after", String(wait));
+        return slow;
+      }
+    }
     const user = await accountFor(ctx.app.db, login.issuer, sub, name);
     if (user === undefined) return refuse("An account for you could not be made or is not allowed in.", 403);
     const session = createSession(ctx.app.db, user.id);

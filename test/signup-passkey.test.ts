@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createUser } from "../src/core/users.ts";
+import { setLimit } from "../src/settings/limits.ts";
 import { errorText } from "../src/tui/screens/common.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { device } from "./helpers/passkey.ts";
@@ -31,12 +32,16 @@ describe("passkey sign-up", () => {
     return post("/signup/passkey", { username, email, challenge: o.challenge, ...(await d.create(o.challenge)) });
   }
 
+  const getOlive = async () => app.db.query<{ id: string }, []>("SELECT id FROM user WHERE username = 'olive'").get()!.id;
+
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-signup-passkey-"));
     app = createApp({ dataDir, port: 0, passkeyOnlySignup: true });
     servers = await serve(app);
     base = servers.url;
     await createUser(app.db, { username: "olive", email: "olive@f.dev", password: "olive-password-1", trusted: true });
+    // This suite signs up more than five times a minute from one source.
+    setLimit(app.db, "signup.per_source", 100, (await getOlive()));
   });
 
   afterAll(async () => {

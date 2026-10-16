@@ -460,8 +460,8 @@ export function signinAllowed(ctx: Ctx, username: string): number | undefined {
 
 /**
  * Sign-ups by the socket's peer (`actions/signup-window.ts`), asked by the
- * signup form, the API signup and the terminal's create screen, which share
- * one window; the passkey door follows (#2322).
+ * signup form, the API signup, the terminal's create screen, the passkey door
+ * and the parent sign-in's first sight of a person, which share one window.
  */
 export function signupAllowed(ctx: Ctx): number | undefined {
   return signupWindow(ctx.app, clientAddress(ctx.request));

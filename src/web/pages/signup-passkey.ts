@@ -16,7 +16,7 @@ import { STRANGER_MAX } from "../../http/limits.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
 import { relying, store } from "./passkeys.ts";
-import { safeNext, sessionCookie, signinAllowed } from "./site.ts";
+import { safeNext, sessionCookie, signinAllowed, signupAllowed } from "./site.ts";
 
 const refuse = (status: number, message: string) =>
   json({ error: "refused", message }, status);
@@ -41,12 +41,14 @@ function problem(ctx: Ctx, username: string, email: string): string | undefined 
   return undefined;
 }
 
+function tooMany(wait: number): Response {
+  return json({ error: "rate_limited", message: `Too many attempts. Try again in ${wait}s.` }, 429, { "retry-after": String(wait) });
+}
+
 function guard(ctx: Ctx): Response | undefined {
   if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
   const wait = signinAllowed(ctx, `signup:${clientAddress(ctx.request)}`);
-  if (wait !== undefined)
-    return json({ error: "rate_limited", message: `Too many attempts. Try again in ${wait}s.` }, 429, { "retry-after": String(wait) });
-  return undefined;
+  return wait === undefined ? undefined : tooMany(wait);
 }
 
 // POST /signup/passkey/options — a challenge, once the name and address pass.
@@ -88,6 +90,11 @@ export async function signupPasskey(ctx: Ctx): Promise<Response> {
     { challenge, ...relying(ctx) },
   );
   if (!made.ok) return refuse(400, "That passkey was not accepted.");
+  // The slot is taken once the key is proven, before the account is tried:
+  // a taken name or a closed door found there still spends it. Cheap
+  // validation above has already refused what it can.
+  const wait = signupAllowed(ctx);
+  if (wait !== undefined) return tooMany(wait);
   const created = await signUpWithPasskey(
     ctx.app,
     { username, email, passkey: made, passkeyName: "Passkey", humanToken: str(data.humanToken) },

@@ -88,6 +88,17 @@ async function makeAccount(db: Database, sub: string, preferred: string): Promis
 
 const making = new Map<string, Promise<User | undefined>>();
 
+/** Whether this issuer's `sub` already has a local account: a return, not a first sight. */
+export function knownIdentity(db: Database, issuer: string, sub: string): boolean {
+  return (
+    db
+      .query<{ user_id: string }, [string, string]>(
+        "SELECT user_id FROM federated_identity WHERE issuer = ?1 AND sub = ?2",
+      )
+      .get(issuer, sub) !== null
+  );
+}
+
 /**
  * The local account for an issuer's `sub`, made on first sight with no
  * password. Two returns of the same person at once make one account.
