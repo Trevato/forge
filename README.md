@@ -98,8 +98,8 @@ Over HTTPS it pushes only `child/<name>/…` branches of this repository (anythi
 else is refused with one line) and `POST …/pulls` from one of them, with a
 body of at most 64 KiB and 20 requests a minute. Every other request is a
 403, decided in `src/http/proposal_gate.ts` before any handler runs. A proposed pull
-runs no check and no preview until a writer approves its head (a new push
-waits for a new approval), and a bare push to `child/…` starts none. A pull
+runs no check and no preview until a writer approves its head or lets it run
+(**Let it run here**, which is not a review; a new push waits again), and a bare push to `child/…` starts none. A pull
 opened with it says "proposed by child … from …" on every tab of the pull's
 page, in the terminal's pull view, and as `proposal` in the pull's JSON
 (`GET …/pulls/:number`, and MCP's `pull` tool).
@@ -302,6 +302,13 @@ on the pull page, **Approve to run here**; in the terminal, `A` on the pull
 /api/v1/repos/:o/:n/pulls/:n/approve-here`. It is a local record — a review
 written through to, or imported from, the origin never counts — and a new push
 waits for a new approval.
+
+A pull a child forge proposed upstream waits the same way, and the writer who
+minted the child's token may let it run: **Let it run here** on the pull page,
+`A` in the terminal, or the same `POST …/approve-here`, which answers
+`{granted: true, commitOid}`. That grant is recorded apart from reviews: it
+never counts toward `require_review` or the merge gate, a new push needs a new
+grant, and a proposed pull never lands on its own, even on an autonomous repo.
 
 Connect one at **Settings → Origins** (or `A` then `o` in the terminal). Which
 way in you get is a property of the forge, not a preference:

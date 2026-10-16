@@ -55,6 +55,8 @@ import {
   type Side,
   type ThreadState,
 } from "../core/reviews.ts";
+import { isProposed } from "../core/pull_trust.ts";
+import { grantRun } from "../core/run_grant.ts";
 import { commitIdentity } from "../core/commit_identity.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
 import type { MergeStrategy } from "../git/merge.ts";
@@ -752,3 +754,49 @@ export async function approveHere(
   });
   return recorded;
 }
+
+/**
+ * A writer — the one who minted the proposal token included — lets a
+ * proposed pull's exact head run. Recorded apart from reviews: it never
+ * counts toward `require_review` or the merge gate, and a new head waits.
+ */
+export async function letRun(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  pull: Pull,
+): Promise<Result<{ commitOid: string }, ApproveHereError>> {
+  const writer = requireWriter(app, actor, repo);
+  if (!writer.ok) return writer;
+  const user = writer.value;
+  if (user.kind !== "user") return err("forbidden");
+  if (pull.repoId !== repo.id) return err("not_found");
+  if (!isProposed(app.db, pull)) return err("not_foreign");
+  if (pull.state !== "open" || pull.mergedAt !== null) return err("not_open");
+  const status = await pullStatus(
+    await pullDir(app.db, app.reposRoot, repo, pull),
+    pull,
+  );
+  if (status.headOid === "") return err("not_found");
+  grantRun(app.db, pull.id, status.headOid, user.id);
+  // Not a review event: it wakes the check and the preview, and nothing that
+  // lands pulls.
+  app.bus.append({
+    kind: "pull.run_granted",
+    repoId: repo.id,
+    actorId: user.id,
+    payload: { number: pull.number, commit: status.headOid },
+  });
+  return ok({ commitOid: status.headOid });
+}
+
+/** The one door every surface calls: let a pull that waits for a writer run. */
+export const approveToRun = (
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  pull: Pull,
+): Promise<Result<{ commitOid: string }, ApproveHereError>> =>
+  isProposed(app.db, pull)
+    ? letRun(app, actor, repo, pull)
+    : approveHere(app, actor, repo, pull);

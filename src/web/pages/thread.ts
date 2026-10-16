@@ -149,6 +149,11 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
       verb: "reviewed a line",
     },
     "issue.edited": { icon: "pencil", tone: "default", verb: "edited this" },
+    "pull.run_granted": {
+      icon: "check",
+      tone: "default",
+      verb: "let this head run",
+    },
     "pull.edited": { icon: "pencil", tone: "default", verb: "edited this" },
   };
 

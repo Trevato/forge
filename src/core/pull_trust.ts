@@ -21,10 +21,16 @@ import { pullProposalOf } from "./proposal_token.ts";
 import { getIssueById, getPull, type Pull } from "./pulls.ts";
 import { canWrite, getRepoById, onCrew, type Repo } from "./repos.ts";
 import { listReviews } from "./reviews.ts";
+import { runGrantedAt } from "./run_grant.ts";
 import { getUserById, type User } from "./users.ts";
 
 const trusted = (db: Database, repo: Repo, user: User | undefined): boolean =>
   canWrite(db, repo, user) || onCrew(db, repo, user);
+
+/** Whether `pull` came in through a child's proposal. */
+export const isProposed = (db: Database, pull: Pull): boolean =>
+  pull.headBranch.startsWith("child/") ||
+  pullProposalOf(db, pull.id) !== undefined;
 
 /** Whether `pull`'s code at `headOid` may run here. */
 export function pullMayRun(
@@ -33,9 +39,7 @@ export function pullMayRun(
   pull: Pull,
   headOid: string,
 ): boolean {
-  const proposed =
-    pull.headBranch.startsWith("child/") ||
-    pullProposalOf(db, pull.id) !== undefined;
+  const proposed = isProposed(db, pull);
   if (!proposed && !pull.crossRepo && pull.originHeadRepo === null) return true;
   if (!proposed && pull.crossRepo && pull.originHeadRepo === null) {
     const author = getUserById(db, pull.authorId);
@@ -48,7 +52,38 @@ export function pullMayRun(
     )
       return true;
   }
+  if (proposed && grantStands(db, repo, pull, headOid)) return true;
   return approvedAt(db, repo, pull, headOid);
+}
+
+/**
+ * A grant stands until a person who can write the repository asks for
+ * changes to that head after it: the latest word on the head decides, as it
+ * does for an approval. A grant again, later, stands again.
+ */
+function grantStands(
+  db: Database,
+  repo: Repo,
+  pull: Pull,
+  headOid: string,
+): boolean {
+  const at = runGrantedAt(db, pull.id, headOid);
+  if (at === undefined) return false;
+  return !listReviews(db, pull.id).some((review) => {
+    if (
+      review.commitOid !== headOid ||
+      review.state !== "changes_requested" ||
+      review.originAuthor !== null ||
+      review.createdAt < at
+    )
+      return false;
+    const reviewer = getUserById(db, review.authorId);
+    return (
+      reviewer !== undefined &&
+      reviewer.kind === "user" &&
+      canWrite(db, repo, reviewer)
+    );
+  });
 }
 
 /**

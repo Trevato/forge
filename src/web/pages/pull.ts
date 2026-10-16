@@ -17,7 +17,7 @@ import {
   pullThreads,
   resolveReviewThread,
   submitReview,
-  approveHere,
+  approveToRun,
 } from "../../actions/pulls.ts";
 import { readFileAt } from "../../apps/checkout.ts";
 import { parseCheck } from "../../apps/manifest.ts";
@@ -33,7 +33,7 @@ import {
   type PullReviewStatus,
   type PullStatus,
 } from "../../core/pulls.ts";
-import { pullMayRun } from "../../core/pull_trust.ts";
+import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import {
   anchorKey,
@@ -1003,21 +1003,22 @@ export function approveHereCard(
   if (
     user === undefined ||
     user.kind !== "user" ||
-    pull.originHeadRepo === null ||
+    (pull.originHeadRepo === null && !isProposed(ctx.app.db, pull)) ||
     pull.state !== "open" ||
     pull.mergedAt !== null ||
     !canWrite(ctx.app.db, repo, user) ||
     pullMayRun(ctx.app.db, repo, pull, headOid)
   )
     return html``;
+  const proposed = isProposed(ctx.app.db, pull);
   return card(
     html`<form method="post" action="${action}">
       <p>
-        This head is from a fork on the origin, so its check and preview wait
-        for you. Approving lets them run this exact code here, holding the
-        repository owner's app token. A new push waits again.
+        ${proposed
+          ? "A child forge proposed this head, so its check and preview wait for you. Letting it run is not a review and does not count toward one; it runs this exact code here, holding the repository owner's app token. A new push waits again."
+          : "This head is from a fork on the origin, so its check and preview wait for you. Approving lets them run this exact code here, holding the repository owner's app token. A new push waits again."}
       </p>
-      ${btn("Approve to run here", { size: "sm", icon: "check" })}
+      ${btn(proposed ? "Let it run here" : "Approve to run here", { size: "sm", icon: "check" })}
     </form>`,
     {
       extra: "mb",
@@ -1035,7 +1036,7 @@ export async function pullApproveHereSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const dest = `${repoBase(found.repo)}/pulls/${found.pull.number}`;
-  const done = await approveHere(
+  const done = await approveToRun(
     ctx.app,
     ctx.auth.user,
     found.repo,
@@ -1056,7 +1057,9 @@ export async function pullApproveHereSubmit(ctx: Ctx): Promise<Response> {
                 : "That pull request is no longer here.",
     });
   return flashTo(ctx, dest, {
-    message: "Approved to run here: its check and preview are starting.",
+    message: isProposed(ctx.app.db, found.pull)
+      ? "Let run here: its check and preview are starting. This is not a review."
+      : "Approved to run here: its check and preview are starting.",
   });
 }
 

@@ -987,9 +987,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         return;
       }
       // An approval is what lets a reader's pull run: check its head now.
+      case "pull.run_granted":
       case "pull.reviewed": {
         const number = event.payload["number"];
-        if (typeof number !== "number" || event.payload["state"] !== "approved")
+        if (typeof number !== "number") return;
+        if (
+          event.kind === "pull.reviewed" &&
+          event.payload["state"] !== "approved"
+        )
           return;
         const pull = getPull(app.db, repo.id, number);
         if (!pull || pull.state !== "open") return;

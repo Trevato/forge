@@ -18,6 +18,7 @@ import type { Database } from "bun:sqlite";
 import { crewRole } from "../core/agents.ts";
 import { canRead, canWrite, type Repo } from "../core/repos.ts";
 import type { Issue } from "../core/issues.ts";
+import { isProposed } from "../core/pull_trust.ts";
 import { openPullsClosing, type Pull } from "../core/pulls.ts";
 import { getUserById, getUserByName, type User } from "../core/users.ts";
 
@@ -224,6 +225,9 @@ export function unadoptedAmong(
  */
 export function landsOnItsOwn(db: Database, repo: Repo, pull: Pull): boolean {
   if (pull.originAuthor !== null) return false;
+  // A child's code, whoever holds its token: a grant lets it run, a person's
+  // review lands it.
+  if (isProposed(db, pull)) return false;
   const author = getUserById(db, pull.authorId);
   if (author === undefined) return false;
   if (author.kind === "agent")

@@ -118,7 +118,7 @@ import {
   refreshPullHead,
   resolveReviewThread,
   submitReview,
-  approveHere,
+  approveToRun,
   MAX_REVIEW_LINES,
   type ReviewInput,
 } from "../actions/pulls.ts";
@@ -3611,7 +3611,7 @@ export function apiRoutes(router: Router<Handler>): void {
       if (denied) return denied;
       const found = loadPull(ctx);
       if ("error" in found) return found.error;
-      const done = await approveHere(
+      const done = await approveToRun(
         ctx.app,
         ctx.auth.user,
         found.repo,
@@ -3634,7 +3634,10 @@ export function apiRoutes(router: Router<Handler>): void {
           return apiError("not_open", 422, "this pull is closed");
         return respondAccess(done.error, 422);
       }
-      return json(done.value, 201);
+      return json(
+        "id" in done.value ? done.value : { granted: true, ...done.value },
+        201,
+      );
     },
   );
 

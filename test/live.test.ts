@@ -11,6 +11,7 @@ import { openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
+import { liveClientJs } from "../src/web/live.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
 async function readEvents(
@@ -131,5 +132,28 @@ describe("the viewer's stream", () => {
     expect(page).toContain('id="live-apps"');
     expect(page).toContain('id="live-apps"');
     expect(page).toContain("new EventSource('/events')");
+  });
+
+  test("a grant to run a pull reaches a page watching that pull", async () => {
+    const made = await createRepo(app, alice, {
+      name: "grants",
+      visibility: "public",
+    });
+    if (!made.ok) throw new Error(String(made.error));
+    const mine = await fetch(`${servers.url}/events`, {
+      headers: { cookie },
+    });
+    app.bus.append({
+      kind: "pull.run_granted",
+      repoId: made.value.id,
+      actorId: alice.id,
+      payload: { number: 7, commit: "abc" },
+    });
+    const [got] = await readEvents(mine, 1, 2_000);
+    expect(got?.data.kind).toBe("pull.run_granted");
+    expect((got?.data.payload as { number: number }).number).toBe(7);
+    // The page subscribes to the kind by name, or the stream's event never
+    // reaches its handler.
+    expect(liveClientJs).toContain("'pull.run_granted'");
   });
 });

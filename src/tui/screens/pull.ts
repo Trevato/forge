@@ -32,7 +32,7 @@ import {
 } from "../../actions/issues.ts";
 import {
   addReview,
-  approveHere,
+  approveToRun as letItRun,
   mergePull,
   pullThreads,
   resolveReviewThread,
@@ -48,7 +48,7 @@ import {
 import { proposedByText } from "../../core/proposal_token.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
-import { pullMayRun } from "../../core/pull_trust.ts";
+import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
 import { getPull, pullDir, variantSiblings, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
@@ -615,7 +615,7 @@ export function pullScreen(
     return (
       f.user.kind === "user" &&
       row !== undefined &&
-      row.originHeadRepo !== null &&
+      (row.originHeadRepo !== null || isProposed(f.db, row)) &&
       row.state === "open" &&
       row.mergedAt === null &&
       (facts?.headOid ?? "") !== "" &&
@@ -630,13 +630,18 @@ export function pullScreen(
     const row = getPull(f.db, target.id, number);
     if (row === undefined) return;
     runAsync(ctx, async () => {
-      const done = await approveHere(f.app, f.user, target, row);
+      const done = await letItRun(f.app, f.user, target, row);
       if (!done.ok) {
         ctx.toast(errorText(String(done.error)), "danger");
         return;
       }
       await reload();
-      ctx.toast("approved to run here: its check and preview start", "success");
+      ctx.toast(
+        isProposed(f.db, row)
+          ? "let run here (not a review): its check and preview start"
+          : "approved to run here: its check and preview start",
+        "success",
+      );
     });
   };
 
@@ -710,7 +715,14 @@ export function pullScreen(
               binding(["R"], "review"),
               ...(mayVote() ? [binding(["+", "-"], "like/dislike a variant")] : []),
               ...(mayApproveHere()
-                ? [binding(["A"], "approve to run here")]
+                ? [
+                    binding(
+                      ["A"],
+                      isProposed(f.db, getPull(f.db, repo!.id, number)!)
+                        ? "let it run here"
+                        : "approve to run here",
+                    ),
+                  ]
                 : []),
               binding(["a"], "assign"),
               ...(state() === "conflicts"

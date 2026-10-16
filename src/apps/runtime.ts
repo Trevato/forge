@@ -844,11 +844,15 @@ export class AppsRuntime {
         return;
       }
       // An approval is what lets a reader's pull run: deploy its head now.
+      case "pull.run_granted":
       case "pull.reviewed": {
         // A writer asking for changes may withdraw what let the preview run:
         // if the code it serves may no longer run, it stops now, not at its
         // next sleep or restart.
-        if (event.payload["state"] === "changes_requested") {
+        if (
+          event.kind === "pull.reviewed" &&
+          event.payload["state"] === "changes_requested"
+        ) {
           const pull = this.pullFromEvent(repo, event);
           if (!pull) return;
           const env = previewEnv(pull.number);
@@ -861,7 +865,11 @@ export class AppsRuntime {
             await this.teardown(record, env);
           return;
         }
-        if (event.payload["state"] !== "approved") return;
+        if (
+          event.kind === "pull.reviewed" &&
+          event.payload["state"] !== "approved"
+        )
+          return;
         const pull = this.pullFromEvent(repo, event);
         if (!pull || pull.state !== "open") return;
         const head = await this.pullHead(repo, pull);
