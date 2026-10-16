@@ -48,7 +48,7 @@ import {
 } from "./limits.ts";
 import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
-import { createRepo } from "../actions/repos.ts";
+import { createRepo, repositoryLimitMessage, resolveOwner } from "../actions/repos.ts";
 import { sessionOf } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
 import { forgeHost } from "../core/commit_identity.ts";
@@ -62,6 +62,7 @@ import { edgeIdentity } from "./edge.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { runGit } from "../git/env.ts";
 import { noteRefusedInternal } from "../kernel/internal_refused.ts";
+import { pushCap, storageChanged, storageRefusal, storageRefusedText } from "../core/storage.ts";
 import { hookEnv, ZERO_OID, type HookRequest } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import {
@@ -940,14 +941,17 @@ export function buildRouter(): Router<Handler> {
     ),
   );
   router.add("POST", "/:owner/:name.git/git-receive-pack", (ctx) =>
-    withGitAccess(ctx, "git-receive-pack", (dir, repoId) =>
+    withGitAccess(ctx, "git-receive-pack", (dir, repoId, cap) =>
       serviceRpc(dir, "git-receive-pack", ctx.request, {
-        env: hookEnv({
-          socketPath: ctx.app.hookAddress.current,
-          secret: ctx.app.hookSecret,
-          repoId,
-          actorId: ctx.auth.user?.id ?? "",
-        }),
+        env: {
+          ...hookEnv({
+            socketPath: ctx.app.hookAddress.current,
+            secret: ctx.app.hookSecret,
+            repoId,
+            actorId: ctx.auth.user?.id ?? "",
+          }),
+          ...cap,
+        },
       }),
     ),
   );
@@ -1297,7 +1301,11 @@ export function buildApiRouter(): Router<Handler> {
 async function withGitAccess(
   ctx: Ctx,
   service: GitService,
-  serve: (dir: string, repoId: string) => Response | Promise<Response>,
+  serve: (
+    dir: string,
+    repoId: string,
+    cap: Record<string, string>,
+  ) => Response | Promise<Response>,
 ): Promise<Response> {
   let repo = getRepo(ctx.app.db, ctx.params.owner!, ctx.params.name!);
   const write = service === "git-receive-pack";
@@ -1316,6 +1324,11 @@ async function withGitAccess(
       visibility: "private",
     });
     if (created.ok) repo = created.value;
+    else if (created.error === "repository_limit")
+      return gitRefused(
+        ctx,
+        `Not made: ${repositoryLimitMessage(ctx.app, ctx.auth.user, resolveOwner(ctx.app, ctx.auth.user, ctx.params.owner!) ?? ctx.auth.user.id)}`,
+      );
   }
 
   // Anonymous callers get a challenge wherever credentials could help;
@@ -1333,7 +1346,63 @@ async function withGitAccess(
     if (!canRead(ctx.app.db, repo, ctx.auth.user))
       return ctx.auth.user ? notFound() : gitChallenge();
   }
-  return serve(repoDir(ctx.app.reposRoot, repo.ownerName, repo.name), repo.id);
+  const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
+  if (!write) return serve(dir, repo.id, {});
+  // The storage limit (#919): refused before git is spawned, as a git error
+  // the client prints, and a push that would pass it is capped inside git.
+  const user = ctx.auth.user!;
+  const refused = await storageRefusal(ctx.app, user, repo.ownerId);
+  if (refused !== undefined) return gitRefused(ctx, storageRefusedText(refused));
+  const cap = await pushCap(ctx.app, user, repo.ownerId);
+  const served = await serve(dir, repo.id, cap);
+  return ctx.request.method === "POST" && served.body !== null
+    ? new Response(afterBody(served.body, () => storageChanged(ctx.app, repo.ownerId)), served)
+    : served;
+}
+
+/** `body`, unchanged, then `done` once it has ended or been given up. */
+function afterBody(body: ReadableStream<Uint8Array>, done: () => void): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  return new ReadableStream({
+    async pull(controller) {
+      try {
+        const { done: ended, value } = await reader.read();
+        if (ended) {
+          controller.close();
+          done();
+        } else controller.enqueue(value);
+      } catch (error) {
+        done();
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      done();
+      return reader.cancel(reason);
+    },
+  });
+}
+
+/**
+ * The refusal as a git client shows it: on the advertisement an `ERR` packet
+ * ("fatal: remote error: …"), on the push itself a 403 with the words.
+ */
+function gitRefused(ctx: Ctx, message: string): Response {
+  if (ctx.request.method === "GET") {
+    const err = `ERR ${message}\n`;
+    const service = "# service=git-receive-pack\n";
+    const pkt = (text: string): string => (text.length + 4).toString(16).padStart(4, "0") + text;
+    return new Response(`${pkt(service)}0000${pkt(err)}`, {
+      headers: {
+        "content-type": "application/x-git-receive-pack-advertisement",
+        "cache-control": "no-cache",
+      },
+    });
+  }
+  return new Response(`${message}\n`, {
+    status: 403,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
 }
 
 // ---- limits and replays ----

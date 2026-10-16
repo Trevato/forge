@@ -16,9 +16,10 @@ import type { App as Forge } from "../app.ts";
 import { findKeyByFingerprint, touchKey } from "../core/keys.ts";
 import { canRead, canWrite, getRepo } from "../core/repos.ts";
 import { getUserById, isActive, type User } from "../core/users.ts";
-import { createRepo } from "../actions/repos.ts";
+import { createRepo, repositoryLimitMessage, resolveOwner } from "../actions/repos.ts";
 import { hookEnv } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
+import { pushCap, storageChanged, storageRefusal, storageRefusedText } from "../core/storage.ts";
 import { parseGitCommand, runGitService } from "../git/smart-ssh.ts";
 import { serveSsh, type SshServer, type SshSession } from "../ssh/server.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -230,7 +231,7 @@ export function forgeSshSession(forge: Forge): (session: SshSession) => void {
  *                  private repo when the target does not exist yet.
  * A repo you cannot see is "not found", the same answer a missing one gets.
  */
-async function serveGitCommand(
+export async function serveGitCommand(
   forge: Forge,
   session: SshSession,
   user: User | undefined,
@@ -256,6 +257,13 @@ async function serveGitCommand(
       visibility: "private",
     });
     if (created.ok) repo = created.value;
+    else if (created.error === "repository_limit") {
+      session.writeStderr(
+        `forge: Not made: ${repositoryLimitMessage(forge, user, resolveOwner(forge, user, parsed.owner) ?? user.id)}${CRLF}`,
+      );
+      session.exit(1);
+      return;
+    }
   }
 
   const allowed =
@@ -272,13 +280,26 @@ async function serveGitCommand(
   }
 
   const dir = repoDir(forge.reposRoot, repo.ownerName, repo.name);
+  // The storage limit: a git error before anything is written (#919).
+  const refused =
+    write && user ? await storageRefusal(forge, user, repo.ownerId) : undefined;
+  if (refused !== undefined) {
+    session.writeStderr(
+      `forge: ${storageRefusedText(refused)}${CRLF}`,
+    );
+    session.exit(1);
+    return;
+  }
   const env: Record<string, string> = write
-    ? hookEnv({
-        socketPath: forge.hookAddress.current,
-        secret: forge.hookSecret,
-        repoId: repo.id,
-        actorId: user?.id ?? "",
-      })
+    ? {
+        ...hookEnv({
+          socketPath: forge.hookAddress.current,
+          secret: forge.hookSecret,
+          repoId: repo.id,
+          actorId: user?.id ?? "",
+        }),
+        ...(user ? await pushCap(forge, user, repo.ownerId) : {}),
+      }
     : {};
   // The client asks for protocol v2 by sending GIT_PROTOCOL through the
   // channel's `env` requests; forward it inside git's own grammar only.
@@ -287,6 +308,7 @@ async function serveGitCommand(
     env.GIT_PROTOCOL = protocol;
 
   await runGitService(dir, parsed.service, session, { env });
+  if (write) storageChanged(forge, repo.ownerId);
 }
 
 export interface ForgeSshOptions {

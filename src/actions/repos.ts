@@ -10,6 +10,7 @@ import { canSeeSealed } from "../core/sealed.ts";
 import { capacityValue } from "../core/capacity.ts";
 import { NEW_FOR_MS } from "./accounts.ts";
 import { repositoryLimitSentence } from "../settings/quotas.ts";
+import { storageChanged, storageRefusal, storageSentence } from "../core/storage.ts";
 import {
   createLabel as insertLabel,
   deleteLabel as removeLabel,
@@ -89,7 +90,11 @@ export function repositoryLimitRefusal(app: App, user: User, ownerId = user.id):
  * between the refusal and now, it still says the limit was the reason.
  */
 export function repositoryLimitMessage(app: App, user: User, ownerId = user.id): string {
-  return repositoryLimitRefusal(app, user, ownerId) ?? "at the repositories limit";
+  return (
+    repositoryLimitRefusal(app, user, ownerId) ??
+    storageSentence(app, ownerId) ??
+    "at the repositories limit"
+  );
 }
 
 /**
@@ -140,6 +145,7 @@ export async function createRepo(
   if (ownerId === undefined) return err("forbidden_owner");
   if (ownerId === user.value.id && repositoryLimitRefusal(app, user.value) !== undefined)
     return err("repository_limit");
+  if ((await storageRefusal(app, user.value, ownerId)) !== undefined) return err("repository_limit");
   const created = await initRepo(app.db, app.reposRoot, {
     ownerId,
     name: input.name,
@@ -147,6 +153,7 @@ export async function createRepo(
     description: input.description ?? "",
   });
   if (!created.ok) return created;
+  storageChanged(app, ownerId);
   app.bus.append({
     kind: "repo.created",
     repoId: created.value.id,
@@ -179,6 +186,8 @@ export async function forkRepo(
   const guarded = requireNewAccountGuard(app, user.value);
   if (!guarded.ok) return guarded;
   if (repositoryLimitRefusal(app, user.value) !== undefined) return err("repository_limit");
+  if ((await storageRefusal(app, user.value, user.value.id)) !== undefined)
+    return err("repository_limit");
   const forked = await cloneRepo(
     app.db,
     app.reposRoot,
@@ -193,6 +202,7 @@ export async function forkRepo(
     },
   );
   if (!forked.ok) return forked;
+  storageChanged(app, user.value.id);
   app.bus.append({
     kind: "repo.forked",
     repoId: forked.value.id,
@@ -397,6 +407,7 @@ export async function deleteRepo(
   if (!admin.ok) return admin;
   const deleted = await destroyRepo(app.db, app.reposRoot, repo);
   if (!deleted.ok) return deleted;
+  storageChanged(app, repo.ownerId);
   // The row is gone (events cascade with it), so this event carries no repo.
   app.bus.append({ kind: "repo.deleted", actorId: admin.value.id });
   return ok();

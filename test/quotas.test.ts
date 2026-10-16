@@ -64,7 +64,7 @@ describe("quotas", () => {
 
   test("limits start unset, an admin sets one and clears it, each change is kept", async () => {
     const t = createToken(app.db, alice.id, "t", "admin").token;
-    expect(getQuotas(app.db)).toEqual({ repositories: null, apps: null });
+    expect(getQuotas(app.db)).toEqual({ repositories: null, apps: null, storage: null });
     expect(await (await api(t, "GET")).json()).toMatchObject({
       quotas: { repositories: null, apps: null },
       changes: [],
@@ -72,11 +72,11 @@ describe("quotas", () => {
 
     const set = await api(t, "PATCH", { quotas: { repositories: 5, apps: "3" } });
     expect(set.status).toBe(200);
-    expect(getQuotas(app.db)).toEqual({ repositories: 5, apps: 3 });
+    expect(getQuotas(app.db)).toEqual({ repositories: 5, apps: 3, storage: null });
 
     const cleared = await api(t, "PATCH", { quotas: { repositories: null, apps: "" } });
     expect(cleared.status).toBe(200);
-    expect(getQuotas(app.db)).toEqual({ repositories: null, apps: null });
+    expect(getQuotas(app.db)).toEqual({ repositories: null, apps: null, storage: null });
 
     const changes = app.db
       .query<{ n: number }, []>(
@@ -122,7 +122,7 @@ describe("quotas", () => {
     const bobAdmin = createToken(app.db, bob.id, "t", "admin").token;
     expect((await rpc(bobAdmin, "quotas")).error).toContain("no such tool");
 
-    expect((await rpc(ro, "quotas")).value.quotas).toEqual({ repositories: null, apps: null });
+    expect((await rpc(ro, "quotas")).value.quotas).toEqual({ repositories: null, apps: null, storage: null });
     const dry = await rpc(admin, "quotas", { key: "apps", value: "9" });
     expect(dry.value.says).toContain("Would set");
     expect(getQuotas(app.db).apps).toBeNull();
@@ -157,7 +157,7 @@ describe("quotas", () => {
     }
     expect((await api(t, "PATCH", { quotas: { nope: 1 } })).status).toBe(422);
     expect((await api(t, "PATCH", {})).status).toBe(422);
-    expect(getQuotas(app.db)).toEqual({ repositories: null, apps: null });
+    expect(getQuotas(app.db)).toEqual({ repositories: null, apps: null, storage: null });
   });
 
   test("the admin page form sets a quota and refuses a bad one", async () => {
@@ -180,9 +180,9 @@ describe("quotas", () => {
         body: new URLSearchParams(form),
       });
     await post({ repositories: "7", apps: "" });
-    expect(getQuotas(app.db)).toEqual({ repositories: 7, apps: null });
+    expect(getQuotas(app.db)).toEqual({ repositories: 7, apps: null, storage: null });
     await post({ repositories: "0", apps: "2" });
-    expect(getQuotas(app.db)).toEqual({ repositories: 7, apps: null });
+    expect(getQuotas(app.db)).toEqual({ repositories: 7, apps: null, storage: null });
     const page = await fetch(`${servers.url}/admin/limits`, { headers: { cookie } });
     const text = await page.text();
     expect(text).toContain('name="repositories"');

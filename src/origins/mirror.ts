@@ -18,6 +18,7 @@ import {
   rememberOriginRepo,
   type Origin,
 } from "../core/origins.ts";
+import { storageChanged, storageRefusal } from "../core/storage.ts";
 import { createRepo, getRepoById, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { isSafeName, isSafeRef } from "../git/guard.ts";
@@ -124,6 +125,7 @@ export async function mirrorRepo(
   // A mirror is a repository the account owns: the repositories limit asks
   // here as it does at create and fork (#2093).
   if (repositoryLimitRefusal(app, actor) !== undefined) return err("repository_limit");
+  if ((await storageRefusal(app, actor, actor.id)) !== undefined) return err("repository_limit");
 
   const created = await createRepo(app.db, app.reposRoot, {
     ownerId: actor.id,
@@ -133,6 +135,7 @@ export async function mirrorRepo(
     defaultBranch,
   });
   if (!created.ok) return err(created.error);
+  storageChanged(app, actor.id);
 
   linkRepoToOrigin(app.db, created.value.id, {
     originId: origin.id,

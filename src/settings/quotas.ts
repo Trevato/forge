@@ -4,14 +4,16 @@
  * `forge_setting_change` (who, when, from what to what). The default for
  * each is no limit (`null`), and creating an app asks the apps limit
  * (`actions/app_limit.ts`); creating, forking and copying a repository ask the
- * repositories limit first (`actions/repos.ts`). Room for more keys is the `QUOTA_KEYS` list.
+ * repositories limit first (`actions/repos.ts`). `storage` is megabytes
+ * of repositories plus app data (`core/storage.ts`), asked on a push, create
+ * and fork. Room for more keys is the `QUOTA_KEYS` list.
  */
 
 import type { Database } from "bun:sqlite";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { writeSetting } from "./limits.ts";
 
-export const QUOTA_KEYS = ["repositories", "apps"] as const;
+export const QUOTA_KEYS = ["repositories", "apps", "storage"] as const;
 export type QuotaKey = (typeof QUOTA_KEYS)[number];
 export type Quotas = Record<QuotaKey, number | null>;
 
@@ -46,7 +48,11 @@ export function getQuota(db: Database, key: QuotaKey): number | null {
 }
 
 export function getQuotas(db: Database): Quotas {
-  return { repositories: getQuota(db, "repositories"), apps: getQuota(db, "apps") };
+  return {
+    repositories: getQuota(db, "repositories"),
+    apps: getQuota(db, "apps"),
+    storage: getQuota(db, "storage"),
+  };
 }
 
 /** Repositories an account owns, a sealed fork (nobody's to count) aside. */
