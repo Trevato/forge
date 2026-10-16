@@ -26,6 +26,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { firstBoot } from "../src/spawn/first-boot.ts";
 import { hostedPlacement } from "../src/spawn/placement.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { passkeyFields } from "./helpers/passkey.ts";
 
 quietLogs();
 
@@ -143,14 +144,13 @@ describe("the first login to a spawned forge", () => {
     servers = await serve(child);
     const link = spawned.value.claimUrl!;
     const token = link.split("/claim#")[1]!;
+    const who = { token, username: "maria", email: "maria@bakery.test" };
     const claimed = await fetch(url("/claim"), {
       method: "POST",
       headers: { origin: servers.url },
       body: new URLSearchParams({
-        token,
-        username: "maria",
-        email: "maria@bakery.test",
-        password: PASSWORD,
+        ...who,
+        ...(await passkeyFields(servers.url, "/claim/options", who)),
       }),
       redirect: "manual",
     });
@@ -215,10 +215,10 @@ describe("the first login to a spawned forge", () => {
   });
 
   test("the everyday account, made first, joins the client's org and sees the card part-way, every step one it can do", async () => {
+    const who = { username: "maria-me", email: "me@bakery.test" };
     const res = await post(owner, "/settings/everyday", {
-      username: "maria-me",
-      email: "me@bakery.test",
-      password: PASSWORD,
+      ...who,
+      ...(await passkeyFields(servers.url, "/settings/everyday/options", who, { headers: { cookie: owner } })),
     });
     expect(res.status).toBe(303);
     daily = (res.headers.get("set-cookie") ?? "").split(";")[0]!;

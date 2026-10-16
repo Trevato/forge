@@ -28,6 +28,7 @@ import { firstBoot } from "../src/spawn/first-boot.ts";
 import { hostedPlacement } from "../src/spawn/placement.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { emailVerified } from "../src/core/verify.ts";
+import { passkeyFields } from "./helpers/passkey.ts";
 
 quietLogs();
 
@@ -131,14 +132,13 @@ describe("a spawned child's apps", () => {
     await firstBoot(child);
     servers = await serve(child);
     const token = spawned.value.claimUrl!.split("/claim#")[1]!;
+    const who = { token, username: "maria", email: "maria@bakery.test" };
     const claimed = await fetch(`${servers.url}/claim`, {
       method: "POST",
       headers: { origin: servers.url },
       body: new URLSearchParams({
-        token,
-        username: "maria",
-        email: "maria@bakery.test",
-        password: "a-long-bakery-passphrase",
+        ...who,
+        ...(await passkeyFields(servers.url, "/claim/options", who)),
       }),
       redirect: "manual",
     });

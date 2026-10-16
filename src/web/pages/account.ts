@@ -53,6 +53,7 @@ import {
   field as uiField,
 } from "../ui.ts";
 import { everydayLine } from "./everyday.ts";
+import { passkeyJs } from "../passkey-client.ts";
 
 type Section = "profile" | "password" | "tokens" | "keys" | "passkeys";
 
@@ -222,11 +223,15 @@ function profileView(ctx: Ctx, values: ProfileForm): Html {
 // GET /settings
 export function accountPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
+  const pair = everydayLine(ctx, ctx.auth.user);
   return accountShell(
     ctx,
     "profile",
     "Settings",
-    html`${everydayLine(ctx, ctx.auth.user)}${profileView(ctx, currentProfile(ctx.auth.user))}${notifyView(ctx)}`,
+    html`${pair}${profileView(ctx, currentProfile(ctx.auth.user))}${notifyView(ctx)}`,
+    200,
+    // The everyday form makes its account with a passkey (#1890).
+    pair ? passkeyJs : undefined,
   );
 }
 

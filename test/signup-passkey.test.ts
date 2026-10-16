@@ -9,56 +9,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
-import { b64u } from "../src/auth/webauthn.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createUser } from "../src/core/users.ts";
 import { errorText } from "../src/tui/screens/common.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-
-const te = new TextEncoder();
-const sha = async (d: Uint8Array<ArrayBuffer>) => new Uint8Array(await crypto.subtle.digest("SHA-256", d));
-const cat = (...p: Uint8Array[]): Uint8Array<ArrayBuffer> => { const o: Uint8Array<ArrayBuffer> = new Uint8Array(p.reduce((n, a) => n + a.length, 0)); let i = 0; for (const a of p) { o.set(a, i); i += a.length; } return o; };
-function head(major: number, n: number): Uint8Array {
-  if (n < 24) return Uint8Array.of((major << 5) | n);
-  if (n < 256) return Uint8Array.of((major << 5) | 24, n);
-  return Uint8Array.of((major << 5) | 25, n >> 8, n & 255);
-}
-type V = number | string | Uint8Array | [V, V][];
-function enc(v: V): Uint8Array {
-  if (typeof v === "number") return v >= 0 ? head(0, v) : head(1, -1 - v);
-  if (typeof v === "string") { const b = te.encode(v); return cat(head(3, b.length), b); }
-  if (v instanceof Uint8Array) return cat(head(2, v.length), v);
-  return cat(head(5, v.length), ...v.flatMap(([k, x]) => [enc(k), enc(x)]));
-}
-function rawToDer(raw: Uint8Array): Uint8Array<ArrayBuffer> {
-  const int = (b: Uint8Array) => { let i = 0; while (i < b.length - 1 && b[i] === 0) i++; b = b.subarray(i); if (b[0]! & 0x80) b = cat(Uint8Array.of(0), b); return cat(Uint8Array.of(2, b.length), b); };
-  const body = cat(int(raw.subarray(0, 32)), int(raw.subarray(32)));
-  return cat(Uint8Array.of(0x30, body.length), body);
-}
-
-async function device(origin: string, rp: string) {
-  const pair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign"])) as CryptoKeyPair;
-  const jwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
-  const unb = (s: string) => new Uint8Array(Buffer.from(s, "base64url"));
-  const cose: [number, V][] = [[1, 2], [3, -7], [-1, 1], [-2, unb(jwk.x!)], [-3, unb(jwk.y!)]];
-  const id = crypto.getRandomValues(new Uint8Array(32));
-  let count = 0;
-  const cd = (type: string, challenge: string) => te.encode(JSON.stringify({ type, challenge, origin }));
-  const counter = (n: number) => Uint8Array.of(n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
-  return {
-    credId: b64u(id),
-    async create(challenge: string) {
-      const authData = cat(await sha(te.encode(rp)), Uint8Array.of(0x45), counter(0), new Uint8Array(16), Uint8Array.of(0, id.length), id, enc(cose as V));
-      return { clientDataJSON: b64u(cd("webauthn.create", challenge)), attestationObject: b64u(enc([["fmt", "none"], ["attStmt", []], ["authData", authData]])) };
-    },
-    async get(challenge: string) {
-      const clientData = cd("webauthn.get", challenge);
-      const authData = cat(await sha(te.encode(rp)), Uint8Array.of(0x05), counter(++count));
-      const sig = rawToDer(new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, pair.privateKey, cat(authData, await sha(clientData)))));
-      return { id: b64u(id), clientDataJSON: b64u(clientData), authenticatorData: b64u(authData), signature: b64u(sig) };
-    },
-  };
-}
+import { device } from "./helpers/passkey.ts";
 
 describe("passkey sign-up", () => {
   let dataDir: string;

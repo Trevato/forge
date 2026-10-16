@@ -130,7 +130,8 @@ fieldset.field > .check + .check { margin-top: 8px; }
 .field-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
 .field-row .field { flex: 1; min-width: 160px; margin-bottom: 0; }
 .form-actions { margin-top: 16px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.error-note {
+/* A passkey ceremony's note slot looks like an error only once it says one. */
+.error-note, .passkey-note:not(:empty) {
   display: block; color: var(--danger); font-size: 13px; font-weight: 500;
   padding: 8px 12px; margin: 0 0 12px;
   border: 1px solid color-mix(in srgb, var(--danger) 32%, transparent);

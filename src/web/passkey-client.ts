@@ -1,6 +1,6 @@
 /**
- * The browser half of passkeys: two small ceremonies, inlined (nonce'd) on
- * the two pages that need them. A page without script still works; it just
+ * The browser half of passkeys: small ceremonies, inlined (nonce'd) on the
+ * pages that need them. A page without script still works; it just
  * has no passkey button. Binary travels as base64url, as the server expects.
  */
 export const passkeyJs = /* js */ `
@@ -119,6 +119,30 @@ export const passkeyJs = /* js */ `
         });
       });
     }).then(function (r) { location.href = r.next; });
+  });
+  // A form that makes an account (the claim link, the everyday account):
+  // the key goes into its hidden fields and the form posts as it always did.
+  wire('passkey-make', function () {
+    var el = doc.getElementById('passkey-make'), form = el.form;
+    function val(n) { var f = form.elements[n]; return f ? f.value : ''; }
+    if (form.reportValidity && !form.reportValidity()) { el.disabled = false; return Promise.resolve(); }
+    var who = { token: val('token'), username: val('username'), email: val('email') };
+    return post(el.getAttribute('data-options'), who).then(function (o) {
+      return navigator.credentials.create({ publicKey: {
+        challenge: bytes(o.challenge),
+        rp: { id: o.rpId, name: o.rpName },
+        user: { id: bytes(o.user.id), name: o.user.name, displayName: o.user.displayName },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
+        attestation: 'none',
+        timeout: 120000
+      } }).then(function (cred) {
+        form.elements.challenge.value = o.challenge;
+        form.elements.clientDataJSON.value = text(cred.response.clientDataJSON);
+        form.elements.attestationObject.value = text(cred.response.attestationObject);
+        form.submit();
+      });
+    });
   });
   wire('passkey-signin', function () {
     return post('/signin/passkey/options').then(function (o) {

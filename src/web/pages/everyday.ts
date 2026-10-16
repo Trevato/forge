@@ -19,17 +19,20 @@ import {
 import { spawnedOrg } from "../../spawn/claim.ts";
 import { requireVerified } from "../../actions/verify.ts";
 import { createSession } from "../../core/sessions.ts";
-import { createUser, getUserByName, type User } from "../../core/users.ts";
-import { cookieValue, type Ctx } from "../../http/context.ts";
+import { createUser, discardFreshUser, getUserByName, type User } from "../../core/users.ts";
+import { addPasskey } from "../../core/passkeys.ts";
+import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
+import { STRANGER_MAX } from "../../http/limits.ts";
+import { boundedBody, json, str } from "../../http/respond.ts";
 import { signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, redirect } from "../layout.ts";
+import { makeOptions, PASSKEY_WORDS, passkeyFields, readPasskey } from "../passkey-ceremony.ts";
 import { btn, card, field as formField } from "../ui.ts";
 import { signOutHere } from "../../actions/signins.ts";
 import { sessionCookie } from "./site.ts";
 
-const MIN_PASSWORD = 10;
 const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
 
 /** The everyday name offered first: the admin's, with `-me`, if it is free. */
@@ -100,17 +103,15 @@ function everydayFields(ctx: Ctx, user: User, offerKeep: boolean): Html {
           autocomplete: "email",
           required: true,
         })}
-        ${formField({
-          label: "Password",
-          name: "password",
-          type: "password",
-          autocomplete: "new-password",
-          required: true,
-          minlength: MIN_PASSWORD,
-          hint: "At least 10 characters.",
-        })}
+        ${passkeyFields()}
+        <p class="muted small">
+          It signs in with a passkey of its own: a fingerprint, face or
+          device PIN. There is no password.
+        </p>
+        <p class="passkey-note" id="passkey-make-note" role="alert"></p>
+        <noscript><p class="muted small">Making the passkey needs JavaScript.</p></noscript>
         <div class="form-actions">
-          ${btn("Make it", { variant: "primary" })}
+          <button type="submit" id="passkey-make" class="btn" data-variant="primary" data-options="/settings/everyday/options">Make it with a passkey</button>
           <span class="spacer"></span>
           ${offerKeep ? btn("Keep using admin", {
             form: "everyday-keep",
@@ -127,6 +128,33 @@ function everydayFields(ctx: Ctx, user: User, offerKeep: boolean): Html {
       ></form>`;
 }
 
+/** Why `username` cannot be the everyday account's name, or undefined. */
+function nameProblem(ctx: Ctx, username: string): string | undefined {
+  if (!USERNAME.test(username)) return "Usernames are letters, digits, dots, dashes.";
+  if (getUserByName(ctx.app.db, username)) return "That username is taken.";
+  return undefined;
+}
+
+// POST /settings/everyday/options — a passkey challenge for the everyday
+// account, for a signed-in admin without one. Nothing is written.
+export async function everydayOptions(ctx: Ctx): Promise<Response> {
+  const refuse = (status: number, message: string) =>
+    json({ error: "refused", message }, status);
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  const admin = ctx.auth.user;
+  if (!admin) return refuse(401, "Sign in first.");
+  if (ctx.auth.via !== "session") return refuse(403, "Passkeys are made from a signed-in browser.");
+  if (!admin.isAdmin) return refuse(403, "forbidden");
+  if (everydayOf(ctx.app.db, admin) !== undefined)
+    return refuse(409, "You already have an everyday account.");
+  const data = await boundedBody(ctx.request, STRANGER_MAX);
+  if (data === "too_large") return refuse(413, "payload too large");
+  const username = str(data.username).trim();
+  const bad = nameProblem(ctx, username) ?? (str(data.email).includes("@") ? undefined : "An email address, please.");
+  if (bad !== undefined) return refuse(422, bad);
+  return json(makeOptions(ctx, "everyday", username));
+}
+
 // POST /settings/everyday — make the everyday account, link it, sign in as it.
 export async function everydayCreate(ctx: Ctx): Promise<Response> {
   const admin = ctx.auth.user;
@@ -141,13 +169,13 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
     });
   const username = field(form, "username");
   const email = field(form, "email");
-  const password = field(form, "password");
   const say = (message: string) =>
     flashTo(ctx, "/", { tone: "danger", message });
-  if (!USERNAME.test(username))
-    return say("Usernames are letters, digits, dots, dashes.");
-  if (password.length < MIN_PASSWORD)
-    return say("Passwords need at least 10 characters.");
+  const bad = nameProblem(ctx, username);
+  if (bad !== undefined) return say(bad);
+  // The key, or nothing: a password in the form is not read at all.
+  const key = await readPasskey(ctx, "everyday", form);
+  if (!key.ok) return say(PASSKEY_WORDS[key.error]);
   // The same names a sign-up may not take (a crew member's, a page's,
   // another admin's), held where accounts are made; the admin's own handle
   // may appear in their everyday name ("ada-me"). A proven admin vouches for their own second account, as a claim
@@ -155,7 +183,6 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
   const made = await createUser(ctx.app.db, {
     username,
     email,
-    password,
     reservedSelf: admin.id,
     trusted: requireVerified(ctx.app, admin).ok,
   });
@@ -169,6 +196,10 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
             ? "That name is taken by the forge itself; pick another."
             : "That account could not be made.",
     );
+  if (!addPasskey(ctx.app.db, made.value.id, "Passkey", key.value).ok) {
+    discardFreshUser(ctx.app.db, made.value.id);
+    return say(PASSKEY_WORDS.taken);
+  }
   linkEveryday(ctx.app.db, admin, made.value);
   // On a spawned forge the apps are the client's org's: the everyday
   // account writes to it, or it could not open or tell the crew anything.

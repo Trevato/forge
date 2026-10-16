@@ -36,10 +36,10 @@ import { accountShell } from "./account.ts";
 import { safeNext, sessionCookie, signinAllowed } from "./site.ts";
 
 /** One-time challenges, one store per ceremony per forge. */
-const stores = new WeakMap<App, { add: ReturnType<typeof challenges>; signin: ReturnType<typeof challenges>; recover: ReturnType<typeof challenges>; signup: ReturnType<typeof challenges> }>();
+const stores = new WeakMap<App, { add: ReturnType<typeof challenges>; signin: ReturnType<typeof challenges>; recover: ReturnType<typeof challenges>; signup: ReturnType<typeof challenges>; claim: ReturnType<typeof challenges>; everyday: ReturnType<typeof challenges> }>();
 export function store(app: App) {
   let s = stores.get(app);
-  if (!s) stores.set(app, (s = { add: challenges(), signin: challenges(), recover: challenges(), signup: challenges() }));
+  if (!s) stores.set(app, (s = { add: challenges(), signin: challenges(), recover: challenges(), signup: challenges(), claim: challenges(), everyday: challenges() }));
   return s;
 }
 

@@ -25,6 +25,7 @@ import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { passkeyFields } from "./helpers/passkey.ts";
 
 quietLogs();
 
@@ -136,10 +137,8 @@ describe("a client's first screen", () => {
       method: "POST",
       headers: { origin: servers.url },
       body: new URLSearchParams({
-        token,
-        username: "maria",
-        email: "maria@bakery.test",
-        password: PASSWORD,
+        ...{ token, username: "maria", email: "maria@bakery.test" },
+        ...(await passkeyFields(servers.url, "/claim/options", { token, username: "maria", email: "maria@bakery.test" })),
       }),
       redirect: "manual",
     });

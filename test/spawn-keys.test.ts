@@ -36,6 +36,7 @@ import { loadKey, open } from "../src/kernel/secret.ts";
 import { firstBoot } from "../src/spawn/first-boot.ts";
 import { loadOrCreateHostKey } from "../src/ssh/keys.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { passkeyFields } from "./helpers/passkey.ts";
 
 quietLogs();
 
@@ -391,10 +392,8 @@ describe("a spawned child's own keys and domain", () => {
         method: "POST",
         headers: { origin: childServers.url },
         body: new URLSearchParams({
-          token,
-          username: "maria-owner",
-          email: "m@x.test",
-          password: "a-long-maria-passphrase",
+          ...{ token, username: "maria-owner", email: "m@x.test" },
+          ...(await passkeyFields(childServers.url, "/claim/options", { token, username: "maria-owner", email: "m@x.test" })),
         }),
         redirect: "manual",
       });

@@ -212,8 +212,8 @@ import {
   composerSubmit,
   tellSubmit,
 } from "../web/studio/actions.ts";
-import { everydayCreate, everydayKeep, everydaySwitch } from "../web/pages/everyday.ts";
-import { claimFragmentPage, claimSubmit } from "../web/pages/claim.ts";
+import { everydayCreate, everydayKeep, everydayOptions, everydaySwitch } from "../web/pages/everyday.ts";
+import { claimFragmentPage, claimOptions, claimSubmit } from "../web/pages/claim.ts";
 import { familyPage } from "../web/pages/family.ts";
 import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
@@ -595,6 +595,7 @@ export function buildRouter(): Router<Handler> {
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
   router.add("GET", "/claim", claimFragmentPage);
   router.add("POST", "/claim", claimSubmit);
+  router.add("POST", "/claim/options", claimOptions);
   // "+ New forge": the spawn door as a page, any signed-in person (spawn/door.ts).
   router.add("GET", "/forges", forgesPage);
   router.add("GET", "/family", familyPage);
@@ -697,6 +698,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/password", passwordUpdate);
   // The everyday account: an admin's daily account, apart from admin (#596).
   router.add("POST", "/settings/everyday", everydayCreate);
+  router.add("POST", "/settings/everyday/options", everydayOptions);
   router.add("POST", "/settings/everyday/switch", everydaySwitch);
   router.add("POST", "/settings/everyday/keep", everydayKeep);
   router.add("GET", "/settings/tokens", tokensPage);

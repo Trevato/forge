@@ -54,6 +54,7 @@ import { everydayCard } from "../pages/everyday.ts";
 import { nextStepsCard, nextStepsOf } from "../pages/next-steps.ts";
 import { spawnedOrg } from "../../spawn/claim.ts";
 import { clientApps } from "./client_home.ts";
+import { passkeyJs } from "../passkey-client.ts";
 
 /** The events that can change what is on you. */
 const ON_YOU_LIVE =
@@ -212,10 +213,13 @@ export async function studioHome(
       ctx,
       title: "Home",
       body: lean,
+      // The everyday step makes its account with a passkey (#1890).
+      ...(firstSteps ? { scriptJs: passkeyJs } : {}),
     });
   }
+  const ask = firstSteps ?? everydayCard(ctx, user);
   const body = html`<h1 class="sr-only">Home</h1>
-    ${firstSteps ?? everydayCard(ctx, user)} ${address} ${liveLine(ctx)}
+    ${ask} ${address} ${liveLine(ctx)}
     ${when(
       steps,
       () => html`<p class="small muted" id="lean-home">
@@ -250,7 +254,7 @@ export async function studioHome(
     ctx,
     title: "Home",
     body,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}\n${needsYou.scriptJs}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}\n${needsYou.scriptJs}${ask ? `\n${passkeyJs}` : ""}`,
   });
 }
 

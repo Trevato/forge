@@ -36,6 +36,7 @@ import { firstBoot } from "../src/spawn/first-boot.ts";
 import { hostedPlacement } from "../src/spawn/placement.ts";
 import type { SpawnSource } from "../src/spawn/plan.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { passkeyFields } from "./helpers/passkey.ts";
 
 quietLogs();
 
@@ -65,13 +66,15 @@ describe("a spawned child's first boot", () => {
       body: new URLSearchParams({ token: t, ...form }),
       redirect: "manual",
     });
+  /** What the page does: a passkey from `/claim/options`, then the form. */
+  const claimWithKey = async (t: string, form: Record<string, string>) =>
+    claim(t, { ...form, ...(await passkeyFields(servers.url, "/claim/options", { token: t, ...form })) });
   /** The link is still good: nothing claimed it yet. */
   const unspent = (t: string) =>
     readClaim(child.db, getOrg(child.db, "bakery")!.id, t).state === "ok";
   const maria = {
     username: "maria",
     email: "maria@bakery.test",
-    password: "a-long-bakery-passphrase",
   };
 
   beforeAll(async () => {
@@ -293,15 +296,16 @@ describe("a spawned child's first boot", () => {
     expect(unspent(token)).toBe(true);
   });
 
-  test("a weak password is refused, and the link is not spent on it", async () => {
-    const res = await claim(token, { ...maria, password: "short" });
+  test("a password and no passkey is refused, and the link is not spent on it", async () => {
+    const res = await claim(token, { ...maria, password: "a-long-bakery-passphrase" });
     expect(res.status).toBe(422);
+    expect(await res.text()).toContain("Passwords are not taken here.");
     expect(getUserByName(child.db, "maria")).toBeUndefined();
     expect(unspent(token)).toBe(true);
   });
 
   test("claiming makes the person the child's admin and an owner of its organisation, signed in", async () => {
-    const res = await claim(token, maria);
+    const res = await claimWithKey(token, maria);
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/");
     const cookie = res.headers.get("set-cookie") ?? "";
@@ -411,7 +415,7 @@ describe("claims are bound to a spawned forge, and the link is shown once", () =
     const res = await fetch(`${servers.url}/claim`, {
       method: "POST",
       headers: { origin: "https://forge.test" },
-      body: new URLSearchParams({ token: crafted, username: "mallory", email: "m@evil.test", password: "a-long-mallory-passphrase" }),
+      body: new URLSearchParams({ token: crafted, username: "mallory", email: "m@evil.test" }),
       redirect: "manual",
     });
     expect(res.status).toBe(404);
@@ -449,10 +453,11 @@ describe("claims are bound to a spawned forge, and the link is shown once", () =
     try {
       const page = (await (await fetch(`${kidServers.url}/claim`)).text()).replace(/\s+/g, " ");
       expect(page).toContain("alice keeps owner access to this forge; you can remove it in your organisation");
+      const who = { token, username: "kai-owner", email: "kai@x.test" };
       const res = await fetch(`${kidServers.url}/claim`, {
         method: "POST",
         headers: { origin: kidServers.url },
-        body: new URLSearchParams({ token, username: "kai-owner", email: "kai@x.test", password: "a-long-kai-passphrase" }),
+        body: new URLSearchParams({ ...who, ...(await passkeyFields(kidServers.url, "/claim/options", who)) }),
         redirect: "manual",
       });
       expect(res.status).toBe(303);
@@ -465,7 +470,7 @@ describe("claims are bound to a spawned forge, and the link is shown once", () =
       const crafted = await fetch(`${kidServers.url}/claim`, {
         method: "POST",
         headers: { origin: kidServers.url },
-        body: new URLSearchParams({ token: other, username: "mallory", email: "m@evil.test", password: "a-long-mallory-passphrase" }),
+        body: new URLSearchParams({ token: other, username: "mallory", email: "m@evil.test" }),
         redirect: "manual",
       });
       expect(crafted.status).toBe(404);

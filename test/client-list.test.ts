@@ -22,6 +22,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { useChildFetch } from "../src/spawn/clients.ts";
 import { firstBoot } from "../src/spawn/first-boot.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { passkeyFields } from "./helpers/passkey.ts";
 
 quietLogs();
 
@@ -225,14 +226,13 @@ describe("the client list", () => {
   });
 
   test("once claimed, the row says so, and the MCP tool answers the same rows", async () => {
+    const who = { token: claimUrl.split("#")[1]!, username: "mara", email: "m@bakery.test" };
     const claimed = await fetch(`${childServers.url}/claim`, {
       method: "POST",
       headers: { origin: childServers.url },
       body: new URLSearchParams({
-        token: claimUrl.split("#")[1]!,
-        username: "mara",
-        email: "m@bakery.test",
-        password: PASSWORD,
+        ...who,
+        ...(await passkeyFields(childServers.url, "/claim/options", who)),
       }),
       redirect: "manual",
     });

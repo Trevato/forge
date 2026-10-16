@@ -2,8 +2,9 @@
  * `/claim`: the page a spawned child's link opens (`spawn/claim.ts`).
  * The link is `/claim#<token>`, so the secret never leaves the browser in a
  * request line. The path: the person a forge was made for opens the link they were sent,
- * reads who will be able to see it, makes their account, and lands in
- * their forge as its admin. The GET only shows the form — a link unfurled
+ * reads who will be able to see it, makes their account with a passkey
+ * (`passkey-ceremony.ts`; there is no password), and lands in their forge
+ * as its admin. The GET only shows the form — a link unfurled
  * in a chat app must not spend itself — and the POST, same-origin, makes
  * the account and burns the link in one step. A link that is used, expired
  * or made up says which, plainly; a forge that was not spawned has no
@@ -15,7 +16,11 @@
  * so before anyone submits, and where to remove it.
  */
 
-import type { Ctx } from "../../http/context.ts";
+import { crossOrigin, type Ctx } from "../../http/context.ts";
+import { STRANGER_MAX } from "../../http/limits.ts";
+import { clientAddress } from "../../http/peer.ts";
+import { boundedBody, json, str } from "../../http/respond.ts";
+import { addPasskey } from "../../core/passkeys.ts";
 import {
   addTeamMember,
   listTeamMembers,
@@ -25,7 +30,7 @@ import {
   type Team,
 } from "../../core/orgs.ts";
 import { createSession } from "../../core/sessions.ts";
-import { createUser, getUserByName, type User } from "../../core/users.ts";
+import { createUser, discardFreshUser, getUserByName, type User } from "../../core/users.ts";
 import {
   burnClaim,
   readClaim,
@@ -38,10 +43,11 @@ import { pageHead } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
+import { makeOptions, PASSKEY_WORDS, passkeyFields, readPasskey } from "../passkey-ceremony.ts";
+import { passkeyJs } from "../passkey-client.ts";
 import { btn, card, field as formField } from "../ui.ts";
-import { sessionCookie } from "./site.ts";
+import { sessionCookie, signinAllowed } from "./site.ts";
 
-const MIN_PASSWORD = 10;
 const USERNAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
 
 interface Values {
@@ -50,7 +56,7 @@ interface Values {
   /** The claim code, from the form's body. */
   readonly token?: string;
 }
-type Errors = Partial<Record<"username" | "email" | "password", string>>;
+type Errors = Partial<Record<"username" | "email" | "passkey", string>>;
 
 function dead(ctx: Ctx, state: Exclude<ClaimState["state"], "ok">): Response {
   const says = {
@@ -164,18 +170,15 @@ function claimForm(
             required: true,
             ...(errors.email ? { error: errors.email } : {}),
           })}
-          ${formField({
-            label: "Password",
-            name: "password",
-            type: "password",
-            autocomplete: "new-password",
-            required: true,
-            minlength: MIN_PASSWORD,
-            hint: "At least 10 characters.",
-            ...(errors.password ? { error: errors.password } : {}),
-          })}
+          ${passkeyFields()}
+          <p class="muted small mb">
+            You sign in with a passkey: a fingerprint, face or device PIN.
+            There is no password to remember.
+          </p>
+          <p class="passkey-note mb" id="passkey-make-note" role="alert">${errors.passkey ?? ""}</p>
+          <noscript><p class="muted small">Making the passkey needs JavaScript.</p></noscript>
           <div class="form-actions">
-            ${btn("Claim this forge", { variant: "primary" })}
+            <button type="submit" id="passkey-make" class="btn" data-variant="primary" data-options="/claim/options">Claim this forge with a passkey</button>
           </div>
         </form>`,
     )}
@@ -210,8 +213,42 @@ export async function claimFragmentPage(ctx: Ctx): Promise<Response> {
     ctx,
     title: "This forge is yours",
     body: claimForm(ctx, spawned, owners(ctx, spawned).spawner, {}, {}),
-    scriptJs: fragmentJs,
+    scriptJs: fragmentJs + passkeyJs,
   });
+}
+
+/** Whether a name and address are fit for the first admin; else the words. */
+function problems(ctx: Ctx, username: string, email: string): Errors {
+  const errors: Errors = {};
+  if (!USERNAME.test(username))
+    errors.username = "Usernames are letters, digits, dots, dashes.";
+  else if (getUserByName(ctx.app.db, username))
+    errors.username = "That username is taken.";
+  if (!email.includes("@")) errors.email = "An email address, please.";
+  return errors;
+}
+
+// POST /claim/options — a passkey challenge, for a live link and a fit name.
+// Nothing is spent: the link burns only when the key comes back.
+export async function claimOptions(ctx: Ctx): Promise<Response> {
+  const refuse = (status: number, message: string) =>
+    json({ error: "refused", message }, status);
+  if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return refuse(403, "forbidden");
+  const wait = signinAllowed(ctx, `claim:${clientAddress(ctx.request)}`);
+  if (wait !== undefined)
+    return json({ error: "rate_limited", message: `Too many attempts. Try again in ${wait}s.` }, 429, { "retry-after": String(wait) });
+  const data = await boundedBody(ctx.request, STRANGER_MAX);
+  if (data === "too_large") return refuse(413, "payload too large");
+  const spawned = await spawnedOrg(ctx.app);
+  if (spawned === undefined) return refuse(404, "This is not a claim link.");
+  const state = readClaim(ctx.app.db, spawned.org.id, str(data.token)).state;
+  if (state !== "ok")
+    return refuse(state === "unknown" ? 404 : 410, state === "unknown" ? "This is not a claim link." : `This link is ${state === "owned" ? "already claimed" : state}.`);
+  const username = str(data.username).trim();
+  const bad = problems(ctx, username, str(data.email).trim());
+  const first = bad.username ?? bad.email;
+  if (first !== undefined) return refuse(422, first);
+  return json(makeOptions(ctx, "claim", username));
 }
 
 // POST /claim — make the account, burn the link, sign the person in.
@@ -233,25 +270,21 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     email: field(form, "email"),
     token,
   };
-  const password = field(form, "password");
-  const errors: Errors = {};
-  if (!USERNAME.test(values.username))
-    errors.username = "Usernames are letters, digits, dots, dashes.";
-  else if (getUserByName(ctx.app.db, values.username))
-    errors.username = "That username is taken.";
-  if (!values.email.includes("@")) errors.email = "An email address, please.";
-  if (password.length < MIN_PASSWORD)
-    errors.password = "Passwords need at least 10 characters.";
   const again = (e: Errors) =>
     page(
       {
         ctx,
         title: "This forge is yours",
         body: claimForm(ctx, spawned, spawner, values, e),
+        scriptJs: passkeyJs,
       },
       422,
     );
+  const errors = problems(ctx, values.username, values.email);
   if (Object.keys(errors).length > 0) return again(errors);
+  // The key, or nothing: a password in the form is not read at all.
+  const key = await readPasskey(ctx, "claim", form);
+  if (!key.ok) return again({ passkey: PASSKEY_WORDS[key.error] });
 
   // Spent first, in one statement: of two people on one link, one wins.
   const spent = burnClaim(ctx.app.db, orgId, token);
@@ -259,7 +292,6 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
   const made = await createUser(ctx.app.db, {
     username: values.username,
     email: values.email,
-    password,
     isAdmin: true,
     // The one-time claim link the owner handed out is the proof.
     trusted: true,
@@ -273,6 +305,11 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
           ? { username: "That name is reserved." }
           : { username: "That username is taken." },
     );
+  }
+  if (!addPasskey(ctx.app.db, made.value.id, "Passkey", key.value).ok) {
+    discardFreshUser(ctx.app.db, made.value.id);
+    unburnClaim(ctx.app.db, orgId, token);
+    return again({ passkey: PASSKEY_WORDS.taken });
   }
   if (team) {
     addTeamMember(ctx.app.db, team, made.value.id);

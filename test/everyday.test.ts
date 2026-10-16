@@ -1,7 +1,8 @@
 /**
  * The everyday account (#596): a forge's admin is asked once, kindly, to
  * make an account apart from admin for daily work; making it signs them in
- * as it, keeping admin is recorded; both account pages name the pair. A
+ * as it, keeping admin is recorded; both account pages name the pair. The
+ * everyday account is made with a passkey and never a password (#1890). A
  * token for an admin is minted only on purpose, and an MCP client holding
  * one is told it acts as admin.
  */
@@ -26,9 +27,11 @@ import {
   orgAccessByOrg,
 } from "../src/core/orgs.ts";
 import { createToken } from "../src/core/tokens.ts";
+import { listPasskeys } from "../src/core/passkeys.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { passkeyFields } from "./helpers/passkey.ts";
 
 quietLogs();
 
@@ -66,6 +69,14 @@ describe("the everyday account", () => {
       body: new URLSearchParams(form),
       redirect: "manual",
     });
+  /** What the page does: a passkey from the options route, then the form. */
+  const make = async (cookie: string, form: Record<string, string>) =>
+    post(cookie, "/settings/everyday", {
+      ...form,
+      ...(await passkeyFields(servers.url, "/settings/everyday/options", form, { headers: { cookie } })),
+    });
+  const hasPassword = (username: string) =>
+    (app.db.query("SELECT password_hash AS h FROM user WHERE username = ?1").get(username) as { h: string }).h !== "";
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-everyday-"));
@@ -109,14 +120,19 @@ describe("the everyday account", () => {
     const refused = await post(kim, "/settings/everyday", {
       username: "kim-me",
       email: "kim-me@x.test",
-      password: PASSWORD,
     });
     expect(refused.status).toBe(403);
+    const asked = await fetch(url("/settings/everyday/options"), {
+      method: "POST",
+      headers: { cookie: kim, origin: servers.url, "content-type": "application/json" },
+      body: JSON.stringify({ username: "kim-me", email: "kim-me@x.test" }),
+    });
+    expect(asked.status).toBe(403);
     const root = await signIn("ada");
     const crossed = await post(
       root,
       "/settings/everyday",
-      { username: "x-me", email: "x@x.test", password: PASSWORD },
+      { username: "x-me", email: "x@x.test" },
       "https://evil.test",
     );
     expect(crossed.status).toBe(403);
@@ -124,18 +140,24 @@ describe("the everyday account", () => {
     expect(getUserByName(app.db, "x-me")).toBeUndefined();
   });
 
-  test("a weak password or a taken name makes nothing", async () => {
+  test("a password and no passkey, or a taken name, makes nothing", async () => {
     const root = await signIn("ada");
-    await post(root, "/settings/everyday", {
+    const refused = await post(root, "/settings/everyday", {
       username: "ada-me",
-      email: "me@x.test",
-      password: "short",
-    });
-    await post(root, "/settings/everyday", {
-      username: "kim",
       email: "me@x.test",
       password: PASSWORD,
     });
+    expect(refused.status).toBe(303);
+    const flash = (refused.headers.get("set-cookie") ?? "").split(";")[0]!;
+    expect(await page(`${root}; ${flash}`, "/")).toContain("Passwords are not taken here.");
+    // A taken name is refused before any key is made.
+    const asked = await fetch(url("/settings/everyday/options"), {
+      method: "POST",
+      headers: { cookie: root, origin: servers.url, "content-type": "application/json" },
+      body: JSON.stringify({ username: "kim", email: "me@x.test" }),
+    });
+    expect(asked.status).toBe(422);
+    expect(await asked.text()).toContain("That username is taken.");
     expect(getUserByName(app.db, "ada-me")).toBeUndefined();
     expect(everydayOf(app.db, getUserByName(app.db, "ada")!)).toBeUndefined();
   });
@@ -143,10 +165,9 @@ describe("the everyday account", () => {
   test("a reserved name makes nothing (#720): a page's, or another admin's; the admin's own stays theirs", async () => {
     const root = await signIn("ada");
     for (const username of ["settings", "bea-me"]) {
-      const res = await post(root, "/settings/everyday", {
+      const res = await make(root, {
         username,
         email: `${username}@x.test`,
-        password: PASSWORD,
       });
       expect(res.status).toBe(303);
       expect(getUserByName(app.db, username)).toBeUndefined();
@@ -156,10 +177,12 @@ describe("the everyday account", () => {
 
   test("Make it: an ordinary account, linked both ways, and the person is signed in as it", async () => {
     const root = await signIn("ada");
-    const res = await post(root, "/settings/everyday", {
+    const home = await page(root, "/");
+    expect(home).toContain('id="passkey-make"');
+    expect(home).not.toContain('name="password"');
+    const res = await make(root, {
       username: "ada-me",
       email: "me@x.test",
-      password: PASSWORD,
     });
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/");
@@ -167,6 +190,8 @@ describe("the everyday account", () => {
     expect(cookie).toContain("forge_session=");
     const daily = getUserByName(app.db, "ada-me")!;
     expect(daily.isAdmin).toBe(false);
+    expect(listPasskeys(app.db, daily.id)).toHaveLength(1);
+    expect(hasPassword("ada-me")).toBe(false);
     const admin = getUserByName(app.db, "ada")!;
     expect(everydayOf(app.db, admin)?.username).toBe("ada-me");
     expect(adminOf(app.db, daily)?.username).toBe("ada");
@@ -287,7 +312,7 @@ describe("the everyday account", () => {
 
   test("an admin who already has one is shown the way to it: asked again, and on their settings, a sign-in as it", async () => {
     const ada = await signIn("ada");
-    const again = await post(ada, "/settings/everyday", { username: "ada-two", email: "two@x.test", password: PASSWORD });
+    const again = await post(ada, "/settings/everyday", { username: "ada-two", email: "two@x.test" });
     expect(again.status).toBe(303);
     const flash = (again.headers.get("set-cookie") ?? "").split(";")[0]!;
     const settings = await page(`${ada}; ${flash}`, again.headers.get("location")!);
@@ -307,7 +332,7 @@ describe("the everyday account", () => {
 
   test("an everyday account may not take a name the forge reserves", async () => {
     const boss = await signIn("bea");
-    await post(boss, "/settings/everyday", { username: "settings", email: "s@x.test", password: PASSWORD });
+    await make(boss, { username: "settings", email: "s@x.test" });
     expect(getUserByName(app.db, "settings")).toBeUndefined();
   });
 
@@ -351,7 +376,7 @@ describe("the everyday account", () => {
     if (!cyd.ok) throw new Error("cyd");
     await Bun.write(join(dataDir, "parent.json"), JSON.stringify({ org: "stalls" }));
     const admin = await signIn("cyd");
-    const res = await post(admin, "/settings/everyday", { username: "cyd-me", email: "cyd-me@x.test", password: PASSWORD });
+    const res = await make(admin, { username: "cyd-me", email: "cyd-me@x.test" });
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toContain("/stalls#teams");
     // No session for the new account: the admin is still the one signed in.
