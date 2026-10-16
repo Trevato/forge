@@ -8,7 +8,7 @@ import { createRepo } from "../src/actions/repos.ts";
 import { createApp } from "../src/core/apps.ts";
 import { addDependency } from "../src/core/dependencies.ts";
 import { getIssue, createIssue } from "../src/core/issues.ts";
-import { cancelRun, claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { cancelRun, claimRun, createRun, finishRun, markServing } from "../src/core/runs.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
@@ -356,6 +356,53 @@ describe("og cards", () => {
         getRepo(app.db, "alice", "shown")!.id,
       );
       expect(await tag()).not.toBe(before);
+    });
+  });
+  describe("app live state", () => {
+    const mkApp = async (name: string, slug: string) => {
+      const alice = getUserByName(app.db, "alice")!;
+      const made = await createRepo(app, alice, { name, visibility: "public" });
+      if (!made.ok) throw new Error(String(made.error));
+      const rec = createApp(app.db, { repoId: made.value.id, slug, access: "public" });
+      if (!rec.ok) throw new Error(rec.error);
+      return { repoId: made.value.id, alice };
+    };
+
+    test("an up app with a crew run in progress says so", async () => {
+      const { repoId, alice } = await mkApp("livey", "livey-app");
+      const deploy = createRun(app.db, { repoId, kind: "deploy", env: "production" });
+      claimRun(app.db, deploy.id);
+      markServing(app.db, deploy.id);
+      finishRun(app.db, deploy.id, { state: "ok", summary: "running" });
+      createRun(app.db, { repoId, kind: "agent", actorId: alice.id });
+      const body = await (await get("/og/app/livey-app.svg")).text();
+      expect(body).toContain("up · deployed ");
+      expect(body).toContain("crew: alice");
+    });
+
+    test("a down app with no crew says so", async () => {
+      await mkApp("darky", "darky-app");
+      const body = await (await get("/og/app/darky-app.svg")).text();
+      expect(body).toContain("down");
+      expect(body).not.toContain("deployed");
+      expect(body).toContain("crew: idle");
+    });
+
+    test("an open production deploy is deploying, and a sealed run names no one", async () => {
+      const { repoId, alice } = await mkApp("busy", "busy-app");
+      createRun(app.db, { repoId, kind: "deploy", env: "production" });
+      const sealed = createIssue(app.db, {
+        repoId,
+        authorId: alice.id,
+        title: "secret",
+        kind: "issue",
+        sealed: true,
+      });
+      if (!sealed.ok) throw new Error(String(sealed.error));
+      createRun(app.db, { repoId, kind: "agent", actorId: alice.id, issueId: sealed.value.id });
+      const body = await (await get("/og/app/busy-app.svg")).text();
+      expect(body).toContain("deploying");
+      expect(body).toContain("crew: idle");
     });
   });
 });

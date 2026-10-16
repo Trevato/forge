@@ -54,6 +54,45 @@ function publicRepo(ctx: Ctx, repo: Repo | undefined): Repo | undefined {
   return canRead(ctx.app.db, repo, undefined) ? repo : undefined;
 }
 
+/** At most this many crew members are named on an app card. */
+const NAMED_CREW = 3;
+
+/**
+ * The app as stored runs say it is, never probed: "deploying" while a
+ * production deploy is open and not yet swapped in, "up" once one has
+ * served, "down" otherwise; and when production last started serving.
+ */
+function liveState(
+  ctx: Ctx,
+  repo: Repo,
+): { state: "up" | "down" | "deploying"; since: string | null } {
+  const row = ctx.app.db
+    .query<{ open: number; since: string | null }, [string]>(
+      `SELECT EXISTS (SELECT 1 FROM run WHERE repo_id = ?1 AND kind = 'deploy'
+                       AND env = 'production' AND state IN ('queued','running')
+                       AND serving_at IS NULL) AS open,
+              (SELECT MAX(serving_at) FROM run WHERE repo_id = ?1 AND kind = 'deploy'
+                AND env = 'production') AS since`,
+    )
+    .get(repo.id);
+  const since = row?.since ?? null;
+  return { state: row?.open ? "deploying" : since ? "up" : "down", since };
+}
+
+/** Who has an agent run going on the repo now, visible runs only, at most three. */
+function crewNow(ctx: Ctx, repo: Repo): string {
+  const db = ctx.app.db;
+  const names: string[] = [];
+  for (const run of listActiveRuns(db, [repo.id])) {
+    if (!mayViewId(db, repo, run.issueId, undefined)) continue;
+    const who = run.actorId === null ? undefined : getUserById(db, run.actorId)?.username;
+    if (who && !names.includes(who)) names.push(who);
+  }
+  if (names.length === 0) return "crew: idle";
+  const more = names.length - NAMED_CREW;
+  return `crew: ${names.slice(0, NAMED_CREW).join(", ")}${more > 0 ? ` +${more}` : ""}`;
+}
+
 function repoInput(ctx: Ctx, repo: Repo, kind: "repo" | "app"): CardInput {
   const n = countsForRepos(ctx.app.db, [repo.id]).get(repo.id);
   return {
@@ -282,7 +321,18 @@ async function resolve(ctx: Ctx, kind: OgKind, ref: string): Promise<CardInput |
   const record = getAppBySlug(db, ref);
   if (!record || record.access !== "public") return undefined;
   const repo = publicRepo(ctx, getRepoById(db, record.repoId));
-  return repo && { ...repoInput(ctx, repo, "app"), title: record.slug };
+  if (!repo) return undefined;
+  const live = liveState(ctx, repo);
+  const base = repoInput(ctx, repo, "app");
+  return {
+    ...base,
+    title: record.slug,
+    lines: [
+      ...(base.lines ?? []),
+      `${live.state}${live.since ? ` · deployed ${live.since.slice(0, 10)}` : ""}`,
+      crewNow(ctx, repo),
+    ],
+  };
 }
 
 const caches = new WeakMap<App, PngCache>();
