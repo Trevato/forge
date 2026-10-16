@@ -6,7 +6,8 @@
 import type { Database } from "bun:sqlite";
 import { SOURCES, type ColumnType } from "./sources.ts";
 
-const OPS = { eq: "=", ne: "<>", lt: "<", lte: "<=", gt: ">", gte: ">=" } as const;
+/** `starts` is a prefix match on a text or time column (`target` starts `cpu:`); the rest compare. */
+const OPS = { eq: "=", ne: "<>", lt: "<", lte: "<=", gt: ">", gte: ">=", starts: null } as const;
 const BUCKETS = {
   minute: "%Y-%m-%dT%H:%M:00Z",
   hour: "%Y-%m-%dT%H:00:00Z",
@@ -95,8 +96,11 @@ export function runQuery(db: Database, q: unknown, scope: Scope): Answer {
     if (typeof column !== "string" || !has(cols, column)) return refuse(`unknown column: ${JSON.stringify(column)}`);
     if (typeof op !== "string" || !has(OPS, op)) return refuse(`unknown op: ${JSON.stringify(op)}`);
     if (!valueFits(cols[column]!, value)) return refuse(`bad value for column ${column}`);
+    const sqlOp = OPS[op as Op];
+    if (sqlOp === null && cols[column] === "number") return refuse(`column ${column} is numeric: starts needs text`);
     params.push(value as string | number);
-    where.push(`${ident(column)} ${OPS[op as Op]} ?`);
+    // instr(), not LIKE: a % or _ in the value is a character, never a wildcard.
+    where.push(sqlOp === null ? `instr(${ident(column)}, ?) = 1` : `${ident(column)} ${sqlOp} ?`);
   }
 
   const agg = query.aggregate;

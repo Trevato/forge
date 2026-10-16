@@ -137,6 +137,29 @@ describe("/boards/data", () => {
     expect(body).toContain(">0.25</td>");
     expect(await (await get("/boards/data?source=runs", "admin")).text()).not.toContain("What this machine measures");
   });
+
+  test("the machine card links per-core CPU and temperature, and the link draws the cores alone", async () => {
+    const at = new Date(Date.now() - 60_000).toISOString();
+    const put = app.db.prepare("INSERT INTO machine_sample (at, step, target, cpu_cores, celsius) VALUES (?, 15, ?, ?, ?)");
+    put.run(at, "cpu:000", 0.75, 71);
+    put.run(at, "cpu:001", 0.5, 82);
+    put.run(at, "node", 1.25, null);
+    const body = await (await get("/boards/data?source=machine&aggregate=count&by=target", "admin")).text();
+    const href = (label: string) => {
+      const m = new RegExp(`<a href="([^"]+)">${label}</a>`).exec(body);
+      expect(m).not.toBeNull();
+      return m![1]!.replaceAll("&amp;", "&");
+    };
+    const cpu = await (await get(href("CPU per core, last hour"), "admin")).text();
+    expect(cpu).toContain(">cpu:000</a></td>");
+    expect(cpu).toContain(">0.75</td>");
+    expect(cpu).toContain(">cpu:001</a></td>");
+    // The filter is `target starts cpu:`: the node is not a core.
+    expect(cpu).not.toContain(">node</a></td>");
+    const temp = await (await get(href("Temperature per core, last hour \\(max °C\\)"), "admin")).text();
+    expect(temp).toContain(">71</td>");
+    expect(temp).toContain(">82</td>");
+  });
 });
 
 describe("every chart type from one seeded query", () => {

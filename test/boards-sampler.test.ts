@@ -23,10 +23,10 @@ let paths: Paths;
 const T0 = Date.parse("2026-10-15T12:00:00.000Z");
 
 /** Write one moment of the fake machine. */
-function machine(m: { usage: number; memory: number; stat: string; avail: number; load: string }) {
+function machine(m: { usage: number; memory: number; stat: string; avail: number; load: string; cpu0?: string }) {
   writeFileSync(join(paths.cgroup, "cpu.stat"), `usage_usec ${m.usage}\nuser_usec 1\nsystem_usec 2\n`);
   writeFileSync(join(paths.cgroup, "memory.current"), `${m.memory}\n`);
-  writeFileSync(join(paths.proc, "stat"), `${m.stat}\ncpu0 1 2 3 4 5 6 7 8 0 0\nintr 9\n`);
+  writeFileSync(join(paths.proc, "stat"), `${m.stat}\ncpu0 ${m.cpu0 ?? "1 2 3 4 5 6 7 8 0 0"}\nintr 9\n`);
   writeFileSync(join(paths.proc, "meminfo"), `MemTotal:        8000000 kB\nMemFree:  1 kB\nMemAvailable:    ${m.avail} kB\n`);
   writeFileSync(join(paths.proc, "loadavg"), `${m.load} 0.80 0.40 2/300 1234\n`);
 }
@@ -35,9 +35,21 @@ const fresh = () => openDb(":memory:", migrations);
 
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), "forge-sampler-"));
-  paths = { cgroup: join(root, "sys/fs/cgroup"), proc: join(root, "proc") };
+  paths = { cgroup: join(root, "sys/fs/cgroup"), proc: join(root, "proc"), sys: join(root, "sys") };
   mkdirSync(paths.cgroup, { recursive: true });
   mkdirSync(paths.proc, { recursive: true });
+  // cpu0 is core 0 of package 0, and coretemp says that core is at 61 °C.
+  const topo = join(paths.sys, "devices/system/cpu/cpu0/topology");
+  mkdirSync(topo, { recursive: true });
+  writeFileSync(join(topo, "physical_package_id"), "0\n");
+  writeFileSync(join(topo, "core_id"), "0\n");
+  const chip = join(paths.sys, "class/hwmon/hwmon0");
+  mkdirSync(chip, { recursive: true });
+  writeFileSync(join(chip, "name"), "coretemp\n");
+  writeFileSync(join(chip, "temp1_label"), "Package id 0\n");
+  writeFileSync(join(chip, "temp1_input"), "64000\n");
+  writeFileSync(join(chip, "temp2_label"), "Core 0\n");
+  writeFileSync(join(chip, "temp2_input"), "61000\n");
 });
 
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -88,12 +100,14 @@ describe("rates from a fake cgroup and /proc", () => {
   });
 
   test("no cgroup and no /proc: those series are absent and named, never zero", () => {
-    const none: Paths = { cgroup: join(root, "nowhere/cgroup"), proc: join(root, "nowhere/proc") };
+    const none: Paths = { cgroup: join(root, "nowhere/cgroup"), proc: join(root, "nowhere/proc"), sys: join(root, "nowhere/sys") };
     const c = readCounters(none, [], T0);
     expect(pointsOf(c, { ...c, at: T0 + 15_000 })).toEqual([]);
     const missing = gaps(none);
-    expect(missing).toHaveLength(5);
+    expect(missing).toHaveLength(7);
     expect(missing[0]).toBe(`forge cpu_cores: ${join(none.cgroup, "cpu.stat")} is not readable here`);
+    expect(missing[5]).toBe(`cpu:<n> cpu_cores: ${join(none.proc, "stat")} has no per-CPU lines here`);
+    expect(missing[6]).toBe(`celsius: ${join(none.sys, "class/hwmon")} has no readable temperature here`);
     expect(gaps(paths)).toEqual([]);
   });
 });
@@ -109,8 +123,8 @@ describe("the 5-min roll-up", () => {
     pts.push({ at: T0 + 315_000, target: "forge", cpuCores: null, memoryBytes: 42, load: null });
     expect(rollUp(pts)).toEqual([
       // (0 + 1 + … + 19) / 4 / 20 = 190 / 80 = 2.375; max 19 / 4 = 4.75
-      { at: T0, target: "forge", cpuCores: 2.375, cpuCoresMax: 4.75, memoryBytes: 9500, memoryBytesMax: 19000, load: null },
-      { at: T0 + 300_000, target: "forge", cpuCores: 7, cpuCoresMax: 7, memoryBytes: 42, memoryBytesMax: 42, load: null },
+      { at: T0, target: "forge", cpuCores: 2.375, cpuCoresMax: 4.75, memoryBytes: 9500, memoryBytesMax: 19000, load: null, celsius: null, celsiusMax: null },
+      { at: T0 + 300_000, target: "forge", cpuCores: 7, cpuCoresMax: 7, memoryBytes: 42, memoryBytesMax: 42, load: null, celsius: null, celsiusMax: null },
     ]);
   });
 
@@ -206,20 +220,23 @@ describe("startSampler", () => {
     let usec = 0;
     const s = startSampler(app, { paths, everyMs: 3_600_000, cells: () => [{ key: 9, label: "app:x/production", cpuUsec: (usec += 3_000_000), memoryBytes: 5 }] });
     try {
-      machine({ usage: 0, memory: 7, stat: "cpu  0 0 0 0 0 0 0 0", avail: 7_000_000, load: "0.10" });
+      machine({ usage: 0, memory: 7, stat: "cpu  0 0 0 0 0 0 0 0", avail: 7_000_000, load: "0.10", cpu0: "0 0 0 0 0 0 0 0" });
       s.tick(T0);
-      machine({ usage: 15_000_000, memory: 7, stat: "cpu  1500 0 0 0 0 0 0 0", avail: 7_000_000, load: "0.10" });
+      machine({ usage: 15_000_000, memory: 7, stat: "cpu  1500 0 0 0 0 0 0 0", avail: 7_000_000, load: "0.10", cpu0: "500 0 250 0 0 0 0 0" });
       s.tick(T0 + 15_000);
     } finally {
       s.stop();
     }
-    const rows = db.query("SELECT target, cpu_cores FROM machine_sample WHERE at = ? ORDER BY target")
+    const rows = db.query("SELECT target, cpu_cores, celsius FROM machine_sample WHERE at = ? ORDER BY target")
       .all(new Date(T0 + 15_000).toISOString());
-    // forge: 15 s of CPU in 15 s = 1 core; node: 1500 ticks / 100 / 15 = 1 core; cell: 3 s / 15 s = 0.2
+    // forge: 15 s of CPU in 15 s = 1 core; node: 1500 ticks / 100 / 15 = 1 core; cell: 3 s / 15 s = 0.2;
+    // cpu0: (500 + 250) ticks / 100 / 15 s = 0.5 core, on core 0 at 61 °C; package 0 at 64 °C
     expect(rows).toEqual([
-      { target: "app:x/production", cpu_cores: 0.2 },
-      { target: "forge", cpu_cores: 1 },
-      { target: "node", cpu_cores: 1 },
+      { target: "app:x/production", cpu_cores: 0.2, celsius: null },
+      { target: "cpu:000", cpu_cores: 0.5, celsius: 61 },
+      { target: "forge", cpu_cores: 1, celsius: null },
+      { target: "node", cpu_cores: 1, celsius: null },
+      { target: "package:0", cpu_cores: null, celsius: 64 },
     ]);
     expect(warnings).toEqual([]);
   });

@@ -21,7 +21,7 @@ import { btn, card, empty } from "../ui.ts";
 
 const BUCKET_MS = { minute: 60_000, hour: 3_600_000, day: 86_400_000 } as const;
 const AGGREGATES = ["count", "sum", "avg", "max"] as const;
-const OPS = ["eq", "ne", "lt", "lte", "gt", "gte"] as const;
+const OPS = ["eq", "ne", "lt", "lte", "gt", "gte", "starts"] as const;
 const MAX_PARAM = 256;
 /** The fields a panel is made from: its chart and its query. */
 export const PANEL_FIELDS = ["chart", "source", "aggregate", "column", "by", "series", "from", "to", "fcolumn", "fop", "fvalue"] as const;
@@ -126,6 +126,25 @@ function behind(p: Params, row: Row): string | null {
     from: start.toISOString(), to: new Date(start.getTime() + BUCKET_MS[p.by]).toISOString(),
     ...(row.series === undefined ? {} : { gcolumn: p.series, gvalue: String(row.series) }),
   });
+}
+
+/**
+ * Ready-made queries over the machine's cores and thermometers, from `now`:
+ * the last hour per CPU, and twelve hours of hourly heat — 12 × the CPUs
+ * stays under the 1000-row cap up to 83 CPUs.
+ */
+export function machineLinks(now: number): { label: string; href: string }[] {
+  const ago = (h: number) => new Date(Math.floor(now / 60_000) * 60_000 - h * 3_600_000).toISOString();
+  const base = { ...readParams(new URLSearchParams()), source: "machine", by: "target", fcolumn: "target", fop: "starts", fvalue: "cpu:" };
+  return [
+    { label: "CPU per core, last hour", href: link({ ...base, chart: "bar", aggregate: "avg", column: "cpu_cores", from: ago(1) }) },
+    { label: "Temperature per core, last hour (max °C)", href: link({ ...base, chart: "bar", aggregate: "max", column: "celsius", from: ago(1) }) },
+    { label: "CPU per core, last 12 h", href: link({ ...base, chart: "heat", aggregate: "avg", column: "cpu_cores", by: "hour", series: "target", from: ago(12) }) },
+    {
+      label: "Every thermometer, last hour (max °C)",
+      href: link({ ...base, chart: "bar", aggregate: "max", column: "celsius", fcolumn: "celsius", fop: "gt", fvalue: "-273.15", from: ago(1) }),
+    },
+  ];
 }
 
 const option = (value: string, label: string, selected: boolean) =>
@@ -276,7 +295,8 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
     p.source !== "machine"
       ? null
       : card(
-          html`<p class="muted small">Sampled every 15 s: the forge's pod from its cgroup, each check and app cell from its process tree, the node from /proc.</p>
+          html`<p class="muted small">Sampled every 15 s: the forge's pod from its cgroup, each check and app cell from its process tree, the node and each of its CPUs (<code>cpu:&lt;nnn&gt;</code>) from /proc, and temperatures in °C from /sys/class/hwmon.</p>
+          <ul class="small">${machineLinks(Date.now()).map((l) => html`<li><a href="${l.href}">${l.label}</a></li>`)}</ul>
           ${missing.length === 0
             ? html`<p class="small">Every series is readable on this machine.</p>`
             : html`<ul class="small">${missing.map((g) => html`<li>Absent — ${g}</li>`)}</ul>`}`,

@@ -112,16 +112,21 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       target: "text", at: "time", step: "number",
       cpu_cores: "number", cpu_cores_max: "number",
       memory_bytes: "number", memory_bytes_max: "number", load: "number",
+      celsius: "number", celsius_max: "number",
     },
     docs: {
-      target: "forge (the pod), check:<run id>, app:<slug>/<env>, or node",
+      target:
+        "forge (the pod), check:<run id>, app:<slug>/<env>, node, cpu:<nnn> (one logical CPU, zero-padded), " +
+        "package:<id> or sensor:<chip>/<label> (a thermometer)",
       at: "when the point was read (15 s) or its window began (5 min), UTC",
       step: "seconds the point covers: 15, or 300 for a 5-min roll-up",
-      cpu_cores: "cores in use, mean over the step (CPU seconds per second)",
+      cpu_cores: "cores in use, mean over the step (CPU seconds per second); at most 1 for a cpu:<nnn>",
       cpu_cores_max: "cores, the highest 15-s point in the step",
       memory_bytes: "bytes resident, mean over the step",
       memory_bytes_max: "bytes, the highest 15-s point in the step",
       load: "node only: the 1-min load average, runnable tasks",
+      celsius: "°C, mean over the step: a cpu:<nnn>'s core, a package or a sensor; null for the rest",
+      celsius_max: "°C, the highest 15-s point in the step",
     },
   },
 };

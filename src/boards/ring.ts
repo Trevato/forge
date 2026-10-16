@@ -22,6 +22,8 @@ export type Point = {
   memoryBytes: number | null;
   /** The node's 1-min load average, runnable tasks; null for every other target. */
   load: number | null;
+  /** °C, for a CPU or a sensor with a thermometer (`boards/thermal.ts`); absent for every other target. */
+  celsius?: number;
 };
 
 /** One target over one 5-min window, `at` its start. */
@@ -33,6 +35,8 @@ export type Rolled = {
   memoryBytes: number | null;
   memoryBytesMax: number | null;
   load: number | null;
+  celsius: number | null;
+  celsiusMax: number | null;
 };
 
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -58,27 +62,32 @@ export function rollUp(points: readonly Point[]): Rolled[] {
     .map(({ at, target, ps }) => {
       const cpu = stats(ps.map((p) => p.cpuCores));
       const mem = stats(ps.map((p) => p.memoryBytes));
+      const temp = stats(ps.map((p) => p.celsius ?? null));
       return {
         at, target,
         cpuCores: cpu.mean, cpuCoresMax: cpu.max,
         memoryBytes: mem.mean, memoryBytesMax: mem.max,
         load: stats(ps.map((p) => p.load)).mean,
+        celsius: temp.mean, celsiusMax: temp.max,
       };
     });
 }
 
-type FineRow = { at: string; target: string; cpu_cores: number | null; memory_bytes: number | null; load: number | null };
+type FineRow = {
+  at: string; target: string; cpu_cores: number | null; memory_bytes: number | null; load: number | null; celsius: number | null;
+};
 
 /** Keep `points` (taken at `now`), roll up the windows that closed, drop what is past its window. One transaction. */
 export function record(db: Database, points: readonly Point[], now: number): void {
   const put = db.query(
     `INSERT OR REPLACE INTO machine_sample
-       (at, step, target, cpu_cores, cpu_cores_max, memory_bytes, memory_bytes_max, load)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (at, step, target, cpu_cores, cpu_cores_max, memory_bytes, memory_bytes_max, load, celsius, celsius_max)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   db.transaction(() => {
     for (const p of points) {
-      put.run(iso(p.at), 15, p.target, p.cpuCores, p.cpuCores, p.memoryBytes, p.memoryBytes, p.load);
+      const c = p.celsius ?? null;
+      put.run(iso(p.at), 15, p.target, p.cpuCores, p.cpuCores, p.memoryBytes, p.memoryBytes, p.load, c, c);
     }
     // Every window that ended by now and is not rolled yet: after the last rolled one.
     const last = db.query<{ at: string | null }, []>(
@@ -87,13 +96,17 @@ export function record(db: Database, points: readonly Point[], now: number): voi
     const from = last == null ? "" : iso(Date.parse(last) + COARSE_MS);
     const to = iso(Math.floor(now / COARSE_MS) * COARSE_MS);
     const fine = db.query<FineRow, [string, string]>(
-      `SELECT at, target, cpu_cores, memory_bytes, load FROM machine_sample
+      `SELECT at, target, cpu_cores, memory_bytes, load, celsius FROM machine_sample
         WHERE step = 15 AND at >= ? AND at < ?`,
     ).all(from, to);
     for (const r of rollUp(fine.map((f) => ({
       at: Date.parse(f.at), target: f.target, cpuCores: f.cpu_cores, memoryBytes: f.memory_bytes, load: f.load,
+      ...(f.celsius === null ? {} : { celsius: f.celsius }),
     })))) {
-      put.run(iso(r.at), 300, r.target, r.cpuCores, r.cpuCoresMax, r.memoryBytes, r.memoryBytesMax, r.load);
+      put.run(
+        iso(r.at), 300, r.target, r.cpuCores, r.cpuCoresMax, r.memoryBytes, r.memoryBytesMax, r.load,
+        r.celsius, r.celsiusMax,
+      );
     }
     db.query("DELETE FROM machine_sample WHERE step = 15 AND at < ?").run(iso(now - FINE_KEEP_MS));
     db.query("DELETE FROM machine_sample WHERE step = 300 AND at < ?").run(iso(now - COARSE_KEEP_MS));

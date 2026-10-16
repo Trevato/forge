@@ -10,6 +10,11 @@
  *   from `/proc`: user + system CPU as a rate, and resident memory.
  * - `node`: `/proc/stat` busy time as a rate, `MemTotal − MemAvailable`
  *   from `/proc/meminfo`, and the 1-min load from `/proc/loadavg`.
+ * - `cpu:<n>` (n zero-padded to three digits, so they sort): each logical
+ *   CPU's `cpu<n>` line of `/proc/stat` as a rate — at most 1 core — and
+ *   its core's temperature in °C (`boards/thermal.ts`).
+ * - `package:<P>` and `sensor:<chip>/<label>`: every other thermometer
+ *   under `/sys/class/hwmon`, °C only.
  *
  * A file that is missing or unreadable (not Linux, no cgroup v2) leaves its
  * series null — never a guess — and `gaps` names it for the page.
@@ -19,9 +24,10 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { cellCounters, type CellCounter } from "../apps/contain.ts";
 import { FINE_MS, record, type Point } from "./ring.ts";
+import { readHwmon, readTopology, temperatures } from "./thermal.ts";
 
-export type Paths = { cgroup: string; proc: string };
-export const SYSTEM: Paths = { cgroup: "/sys/fs/cgroup", proc: "/proc" };
+export type Paths = { cgroup: string; proc: string; sys: string };
+export const SYSTEM: Paths = { cgroup: "/sys/fs/cgroup", proc: "/proc", sys: "/sys" };
 
 /** `/proc/stat` counts in USER_HZ, 100 a second on every Linux the forge runs on. */
 const USER_HZ = 100;
@@ -33,6 +39,10 @@ export type Counters = {
   forge: { cpuUsec: number | null; memoryBytes: number | null };
   node: { cpuUsec: number | null; memoryBytes: number | null; load: number | null };
   cells: readonly CellCounter[];
+  /** Each logical CPU: busy µs since boot, and its core's °C when a thermometer maps to it. */
+  cpus: readonly { id: number; busyUsec: number; celsius: number | null }[];
+  /** Every thermometer no CPU took, °C. */
+  sensors: readonly { target: string; celsius: number }[];
 };
 
 function read(path: string): string | null {
@@ -51,15 +61,32 @@ export function parseCpuStat(text: string | null): number | null {
   return m ? finite(Number(m[1])) : null;
 }
 
-/** Busy CPU time of the whole node from `/proc/stat`'s `cpu` line, µs: user nice system irq softirq steal (guest is inside user). */
-export function parseProcStat(text: string | null): number | null {
-  const m = text === null ? null : /^cpu +(.*)$/m.exec(text);
-  if (!m) return null;
-  const f = m[1]!.trim().split(/\s+/).map(Number);
+/** Busy µs from one `/proc/stat` line's tick fields: user nice system irq softirq steal (guest is inside user). */
+function busyUsec(fields: string): number | null {
+  const f = fields.trim().split(/\s+/).map(Number);
   if (f.length < 4 || f.some((n) => !Number.isFinite(n))) return null;
   const busy = f[0]! + f[1]! + f[2]! + (f[5] ?? 0) + (f[6] ?? 0) + (f[7] ?? 0);
   return (busy * 1_000_000) / USER_HZ;
 }
+
+/** Busy CPU time of the whole node from `/proc/stat`'s `cpu` line, µs. */
+export function parseProcStat(text: string | null): number | null {
+  const m = text === null ? null : /^cpu +(.*)$/m.exec(text);
+  return m ? busyUsec(m[1]!) : null;
+}
+
+/** Busy time of each logical CPU from `/proc/stat`'s `cpu<n>` lines, µs, in CPU order. */
+export function parseProcStatCpus(text: string | null): { id: number; busyUsec: number }[] {
+  const out: { id: number; busyUsec: number }[] = [];
+  for (const m of text?.matchAll(/^cpu(\d+) +(.*)$/gm) ?? []) {
+    const busy = busyUsec(m[2]!);
+    if (busy !== null) out.push({ id: Number(m[1]), busyUsec: busy });
+  }
+  return out.sort((a, b) => a.id - b.id);
+}
+
+/** A logical CPU's target: `cpu:` and its number, zero-padded to three digits so a board lists them in order. */
+export const cpuTarget = (id: number) => `cpu:${String(id).padStart(3, "0")}`;
 
 /** Memory in use on the node, bytes: `MemTotal − MemAvailable` (kB × 1024). */
 export function parseMeminfo(text: string | null): number | null {
@@ -78,6 +105,9 @@ export function parseLoadavg(text: string | null): number | null {
 /** Read every counter now. */
 export function readCounters(paths: Paths, cells: readonly CellCounter[], at: number): Counters {
   const mem = read(join(paths.cgroup, "memory.current"));
+  const stat = read(join(paths.proc, "stat"));
+  const perCpu = parseProcStatCpus(stat);
+  const temps = temperatures(readHwmon(paths.sys), readTopology(paths.sys, perCpu.map((c) => c.id)));
   return {
     at,
     forge: {
@@ -85,11 +115,13 @@ export function readCounters(paths: Paths, cells: readonly CellCounter[], at: nu
       memoryBytes: mem === null || !/^\d+\s*$/.test(mem) ? null : Number(mem),
     },
     node: {
-      cpuUsec: parseProcStat(read(join(paths.proc, "stat"))),
+      cpuUsec: parseProcStat(stat),
       memoryBytes: parseMeminfo(read(join(paths.proc, "meminfo"))),
       load: parseLoadavg(read(join(paths.proc, "loadavg"))),
     },
     cells,
+    cpus: perCpu.map((c) => ({ ...c, celsius: temps.perCpu.get(c.id) ?? null })),
+    sensors: temps.sensors,
   };
 }
 
@@ -109,7 +141,7 @@ export function pointsOf(prev: Counters | undefined, next: Counters): Point[] {
   const seconds = prev === undefined ? 0 : (next.at - prev.at) / 1000;
   const out: Point[] = [];
   const push = (p: Point) => {
-    if (p.cpuCores !== null || p.memoryBytes !== null || p.load !== null) out.push(p);
+    if (p.cpuCores !== null || p.memoryBytes !== null || p.load !== null || p.celsius != null) out.push(p);
   };
   push({
     at: next.at, target: "forge",
@@ -131,6 +163,18 @@ export function pointsOf(prev: Counters | undefined, next: Counters): Point[] {
     cpuCores: cores(prev?.node.cpuUsec, next.node.cpuUsec, seconds),
     memoryBytes: next.node.memoryBytes, load: next.node.load,
   });
+  const busyBefore = new Map((prev?.cpus ?? []).map((c) => [c.id, c.busyUsec]));
+  for (const c of next.cpus) {
+    const p: Point = {
+      at: next.at, target: cpuTarget(c.id),
+      cpuCores: cores(busyBefore.get(c.id), c.busyUsec, seconds), memoryBytes: null, load: null,
+    };
+    if (c.celsius !== null) p.celsius = c.celsius;
+    push(p);
+  }
+  for (const s of next.sensors) {
+    push({ at: next.at, target: s.target, cpuCores: null, memoryBytes: null, load: null, celsius: s.celsius });
+  }
   return out;
 }
 
@@ -144,6 +188,15 @@ export function gaps(paths: Paths): string[] {
   if (missing(join(paths.proc, "stat"))) out.push(say("node cpu_cores", join(paths.proc, "stat")));
   if (missing(join(paths.proc, "meminfo"))) out.push(say("node memory_bytes", join(paths.proc, "meminfo")));
   if (missing(join(paths.proc, "loadavg"))) out.push(say("node load", join(paths.proc, "loadavg")));
+  const cpus = parseProcStatCpus(read(join(paths.proc, "stat"))).map((c) => c.id);
+  if (cpus.length === 0) out.push(`cpu:<n> cpu_cores: ${join(paths.proc, "stat")} has no per-CPU lines here`);
+  const hwmon = join(paths.sys, "class", "hwmon");
+  const temps = temperatures(readHwmon(paths.sys), readTopology(paths.sys, cpus));
+  if (temps.perCpu.size === 0 && temps.sensors.length === 0) {
+    out.push(`celsius: ${hwmon} has no readable temperature here`);
+  } else if (cpus.length > 0 && temps.perCpu.size === 0) {
+    out.push(`cpu:<n> celsius: no coretemp chip under ${hwmon} maps a temperature to each core here`);
+  }
   return out;
 }
 

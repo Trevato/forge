@@ -1152,7 +1152,8 @@ a column holding a secret or free text is never listed).
 - `source`: a name from the list; `aggregate`: `count`, `sum`, `avg` or `max`
   (the last three need a numeric `column`).
 - `from` (inclusive) and `to` (exclusive): dates, applied to the source's time column.
-- `filter`: up to 16 of `{column, op, value}`, `op` one of `eq ne lt lte gt gte`.
+- `filter`: up to 16 of `{column, op, value}`, `op` one of `eq ne lt lte gt gte`,
+  or `starts` (a prefix of a text or time column, matched literally).
 - `groupBy`: a column, or `{"bucket": "minute" | "hour" | "day"}`.
 
 It answers `{"rows": [{"group", "value"}]}`, at most 1000 rows. A query the
@@ -1163,7 +1164,17 @@ The `machine` source is what the machine itself used (`boards/sampler.ts`):
 every 15 s the forge reads its pod's cgroup v2 (`cpu.stat` `usage_usec` as a
 rate, `memory.current`), each labelled check and app cell's process tree
 (`check:<run id>`, `app:<slug>/<env>`), and the node (`/proc/stat`,
-`/proc/meminfo`, `/proc/loadavg`). `boards/ring.ts` keeps it in
+`/proc/meminfo`, `/proc/loadavg`). Each logical CPU is a target of its own,
+`cpu:<nnn>` (zero-padded, so they sort): its `/proc/stat` line as a rate, at
+most 1 core, and in `celsius` the temperature of the core it runs on — the
+`coretemp` chip's `Core <K>` input under `/sys/class/hwmon`, matched by the
+CPU's `topology/physical_package_id` and `core_id`. Every other thermometer
+(a `coretemp` package, `k10temp`, `acpitz`, a disk) is `package:<id>` or
+`sensor:<chip>/<label>`, °C only. A board picks the cores with the filter
+`target starts cpu:`; the machine card on `/boards/data?source=machine`
+links a per-core CPU and a per-core temperature query. On an 80-CPU node
+that is 80 more targets, about 1.2 M rows at most (~80 MB) in the ring.
+`boards/ring.ts` keeps it in
 `machine_sample`: 15-s points for 24 h and 5-min mean and max for 30 days,
 dropping what leaves its window on every write. A file this machine lacks
 leaves its series absent, never zero, and `/boards/data?source=machine`
