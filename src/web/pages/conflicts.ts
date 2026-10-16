@@ -7,8 +7,16 @@
  * Writers only.
  */
 
-import { canWrite } from "../../core/repos.ts";
-import { pullDir, pullStatus } from "../../core/pulls.ts";
+import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import { pullDir, pullStatus, type Pull } from "../../core/pulls.ts";
+import { activeRunFor } from "../../core/runs.ts";
+import { getIssueById } from "../../core/issues.ts";
+import {
+  PROPOSE_WHY,
+  proposalOf,
+  proposerOf,
+  proposeResolution,
+} from "../../crew/proposal.ts";
 import { readConflictedFile } from "../../git/conflict-file.ts";
 import {
   applyChoices,
@@ -22,6 +30,7 @@ import { FINISH_REFUSALS, finishConflicts } from "../../actions/finish-conflicts
 import { field, readForm } from "../form.ts";
 import { html, type Html } from "../html.ts";
 import { flashTo, page } from "../layout.ts";
+import { renderMarkdown } from "../markdown.ts";
 import { btn, card, icon } from "../ui.ts";
 import { changeHead, changeTabs, pullContext } from "../studio/change.ts";
 
@@ -55,6 +64,67 @@ export function choicesFrom(
     } else out.push(undefined);
   }
   return out;
+}
+
+/** POST /:owner/:name/pulls/:number/resolve/propose — have the crew propose a resolution. */
+export async function proposeSubmit(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return found;
+  const { repo, pull } = found;
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(repo)}/pulls/${pull.number}/resolve`;
+  const made = await proposeResolution(ctx.app, ctx.auth.user, repo, pull);
+  if (!made.ok) return flashTo(ctx, dest, { tone: "danger", message: PROPOSE_WHY[made.error] });
+  return flashTo(ctx, dest, {
+    message: "Asked: the crew is resolving it on the pull's own branch.",
+  });
+}
+
+/**
+ * The crew's proposal: the tap to ask for one while the pull conflicts and
+ * the last run is not still working, and what the last run did — its note,
+ * its commit, and the files to edit by hand.
+ */
+async function proposalCard(
+  ctx: Ctx,
+  repo: Repo,
+  pull: Pull,
+  dir: string,
+  conflicted: boolean,
+): Promise<Html> {
+  const { app } = ctx;
+  const here = `${repoBase(repo)}/pulls/${pull.number}/resolve`;
+  const agent = proposerOf(app, pull);
+  const issue = getIssueById(app.db, pull.id);
+  const working = issue !== undefined && activeRunFor(app.db, "agent", issue.id) !== undefined;
+  const seen = await proposalOf(app, repo, pull, dir);
+  const parts: Html[] = [];
+  if (seen.kind === "working")
+    parts.push(html`<p>The crew is working on a proposal (${seen.state}). This card updates by itself.</p>`);
+  else if (seen.kind === "landed") {
+    const head = getRepoById(app.db, pull.headRepoId) ?? repo;
+    parts.push(html`<p><strong>The crew proposed a resolution</strong>, committed as
+      <a class="mono" href="${repoBase(repo)}/commit/${seen.oid}">${seen.oid.slice(0, 7)}</a>
+      on <span class="mono">${seen.branch}</span>.</p>
+      ${seen.note === undefined ? "" : html`<div class="md">${renderMarkdown(seen.note)}</div>`}
+      ${seen.files.length === 0
+        ? ""
+        : html`<p class="small">Edit by hand: ${seen.files.map(
+            (f) => html`<a class="mono" href="/${head.ownerName}/${head.name}/edit/${encodeURIComponent(pull.headBranch)}/${f.split("/").map(encodeURIComponent).join("/")}">${f}</a> `,
+          )}</p>`}`);
+  } else if (seen.kind === "failed")
+    parts.push(html`<p>The last proposal did not land (${seen.state}): ${seen.summary}</p>`);
+  if (conflicted && agent !== undefined && working && seen.kind !== "working")
+    parts.push(html`<p class="muted">${PROPOSE_WHY.busy}</p>`);
+  if (conflicted && agent !== undefined && !working)
+    parts.push(html`<form method="post" action="${here}/propose">
+      <p>${btn("Have the crew propose", { icon: "check" })}
+      <span class="muted small">${"@" + agent} merges the base into this branch and commits a resolution.</span></p>
+    </form>`);
+  if (parts.length === 0) return html``;
+  // A live region: the run's events re-read the card, so nobody reloads.
+  return html`<div id="crew-proposal" data-live="run.*,pull.*,comment.*">${card(html`${parts}`, { head: html`<h2>The crew</h2>` })}</div>`;
 }
 
 const CSS = `
@@ -99,7 +169,8 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
               ? "Nothing to resolve there: that file is not one of the conflicted files."
               : "Nothing to resolve: this pull has no conflicts."}
             <a href="${back}">Back to the files</a>.</p>`,
-        )}`,
+        )}
+        ${await proposalCard(ctx, repo, pull, dir, false)}`,
     });
   }
 
@@ -161,6 +232,7 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
           )}
         </p>`
       : ""}
+    ${await proposalCard(ctx, repo, pull, dir, true)}
     ${total === 0
       ? card(
           html`<p>This file has no text blocks to choose between (it may be

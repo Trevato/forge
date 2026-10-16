@@ -282,11 +282,14 @@ export function finishRun(
     turns?: number | undefined;
     /** A failed check's own detail, when its output was recognised. */
     checkDetail?: CheckDetail | undefined;
+    /** For an agent run: the head it left the branch at, when that is worth keeping. */
+    commitOid?: string | undefined;
   },
 ): Run | undefined {
   const changes = db
     .query(
       `UPDATE run SET state = ?2, summary = ?3,
+         commit_oid = COALESCE(?8, commit_oid),
          session_id = COALESCE(?4, session_id), cost_usd = COALESCE(?5, cost_usd),
          turns = COALESCE(?6, turns), check_detail = ?7,
          finished_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -300,6 +303,7 @@ export function finishRun(
       outcome.costUsd ?? null,
       outcome.turns ?? null,
       outcome.checkDetail ? JSON.stringify(outcome.checkDetail) : "",
+      outcome.commitOid ?? null,
     ).changes;
   return changes > 0 ? getRun(db, runId) : undefined;
 }

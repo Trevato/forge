@@ -25,6 +25,7 @@ export type RunReason =
   | "feedback"
   | "check_failed"
   | "conflict"
+  | "resolve"
   | "converge"
   | "review";
 
@@ -170,6 +171,8 @@ export interface TaskInput extends BriefInput {
   readonly checkKind?: "deploy" | "check" | undefined;
   /** For `conflict` and `converge`: the files both sides changed. */
   readonly conflictFiles?: readonly string[] | undefined;
+  /** For `resolve`: the conflict itself — both sides, the blocks, the tests. */
+  readonly resolution?: string | undefined;
   /** For `converge`: the parent this repository follows, and its branch. */
   readonly following?:
     | { readonly parent: string; readonly branch: string }
@@ -359,6 +362,20 @@ function taskBody(input: TaskInput): string {
       `Your pull #${issue.number} is green, but \`main\` moved and the branch no longer merges cleanly${files.length > 0 ? `: ${files.join(", ")}` : "."}`,
       "",
       `Merge \`main\` into \`${input.branch}\`, resolve the conflicts keeping what both sides meant, make sure the tests pass, and push again.`,
+    );
+    return out.join("\n");
+  }
+
+  if (input.reason === "resolve") {
+    const base = input.pull?.baseBranch ?? input.repo.defaultBranch;
+    out.push(
+      `A person asked the crew to propose how pull #${issue.number} should be resolved: \`${input.branch}\` no longer merges cleanly with \`${base}\`.`,
+      "",
+      input.resolution ?? "",
+      "",
+      `On the branch \`${input.branch}\`: merge \`${base}\` into it, resolve each conflict keeping what both sides meant, run the tests above until they pass, and push the merge commit. Where they cannot both be kept, say which you kept and why. Do not rewrite or force-push the branch.`,
+      "",
+      "Your report becomes the note on the pull: say, per file, what you chose and why, in a few sentences. A person reads it next to your commit and may edit the result.",
     );
     return out.join("\n");
   }

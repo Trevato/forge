@@ -310,7 +310,7 @@ import {
   pullThreadFragment,
   threadResolveSubmit,
 } from "../web/pages/pull.ts";
-import { conflictsFinish, conflictsPage } from "../web/pages/conflicts.ts";
+import { conflictsFinish, conflictsPage, proposeSubmit } from "../web/pages/conflicts.ts";
 import {
   appDisable,
   appMembersUpdate,
@@ -1029,6 +1029,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/pulls/:number/files", pullFilesPage);
   router.add("GET", "/:owner/:name/pulls/:number/resolve", conflictsPage);
   router.add("POST", "/:owner/:name/pulls/:number/resolve", conflictsFinish);
+  router.add("POST", "/:owner/:name/pulls/:number/resolve/propose", proposeSubmit);
   router.add("GET", "/:owner/:name/pulls/:number/thread", pullThreadFragment);
   router.add("GET", "/:owner/:name/pulls/:number/state", pullStateFragment);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);

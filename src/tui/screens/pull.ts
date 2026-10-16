@@ -48,7 +48,7 @@ import {
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { pullMayRun } from "../../core/pull_trust.ts";
-import { getPull, variantSiblings, type Pull } from "../../core/pulls.ts";
+import { getPull, pullDir, variantSiblings, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
@@ -104,6 +104,7 @@ import { DiffView, type DiffAnchor, type DiffNote } from "./commits.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
 import { pullConflicts } from "../../actions/conflicts.ts";
 import { FINISH_REFUSALS, finishConflicts } from "../../actions/finish-conflicts.ts";
+import { PROPOSE_WHY, proposalOf, proposeResolution } from "../../crew/proposal.ts";
 import { conflictScreen } from "./conflicts.ts";
 import { reviewScreen } from "./review.ts";
 import { RunList, openRunLog, runTone } from "./runlist.ts";
@@ -663,6 +664,19 @@ export function pullScreen(
           return done.ok
             ? { ok: true, message: "Conflicts resolved: committed to the branch." }
             : { ok: false, message: FINISH_REFUSALS[done.error] };
+        }, {
+          proposal: async () => {
+            const fresh = getPull(f.db, target.id, number) ?? row;
+            const dir = await pullDir(f.app.db, f.app.reposRoot, target, fresh);
+            return proposalOf(f.app, target, fresh, dir);
+          },
+          propose: async () => {
+            const fresh = getPull(f.db, target.id, number) ?? row;
+            const made = await proposeResolution(f.app, f.user, target, fresh);
+            return made.ok
+              ? { ok: true, message: "Asked: the crew is resolving it on the pull's own branch." }
+              : { ok: false, message: PROPOSE_WHY[made.error] };
+          },
         }),
       );
     });

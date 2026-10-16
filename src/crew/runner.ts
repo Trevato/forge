@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { addComment } from "../actions/issues.ts";
+import { resolutionBrief } from "./proposal.ts";
 import { openPull } from "../actions/pulls.ts";
 import { forkRepo, sealedForkFor } from "../actions/repos.ts";
 import { announceRun } from "../actions/runs.ts";
@@ -30,6 +31,7 @@ import {
   listComments,
   type Issue,
 } from "../core/issues.ts";
+import { refreshPullHead } from "../core/following.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import {
   canWrite,
@@ -364,15 +366,40 @@ export async function executeAgentRun(
       ? interruptedSummary(outcome.summary, outcome.resumesAt)
       : outcome.summary;
   write(outcome.state === "ok" ? `done: ${summary}` : `failed: ${summary}`);
+  // A proposed resolution is the head it left the pull at: kept, so the page
+  // never calls a later push the crew's commit.
+  const left =
+    run.reason === "resolve" && outcome.state === "ok"
+      ? await headLeftBy(app, run)
+      : undefined;
   const done = finishRun(app.db, run.id, {
     state: outcome.state,
     summary,
     sessionId: outcome.sessionId,
     costUsd: outcome.costUsd,
     turns: outcome.turns,
+    commitOid: left,
   });
   if (done) announceRun(app, done);
   return undefined;
+}
+
+/** The head of the run's pull as the run left it. */
+async function headLeftBy(app: App, run: Run): Promise<string | undefined> {
+  const repo = getRepoById(app.db, run.repoId);
+  const issue =
+    run.issueId === null ? undefined : getIssueById(app.db, run.issueId);
+  if (repo === undefined || issue === undefined || issue.kind !== "pull") return undefined;
+  const pull = getPull(app.db, repo.id, issue.number);
+  if (pull === undefined) return undefined;
+  // A fork's push reaches the pull's row by a fetch; take it now, not later.
+  // A push's own follow-up may have taken the head already, after this row
+  // was read: ask the row again rather than trust the copy in hand.
+  return (
+    (await refreshPullHead(app, repo, pull)) ??
+    getPull(app.db, repo.id, issue.number)?.headOid ??
+    pull.headOid
+  );
 }
 
 /** Whether a queued follow-up would find nothing new (`news.ts`): recorded as a skip. */
@@ -829,6 +856,10 @@ async function work(
       ),
       since,
       checkSummary: failedCheck?.run?.summary,
+      resolution:
+        reason === "resolve" && pull
+          ? await resolutionBrief(app, repo, pull)
+          : undefined,
       conflictFiles:
         reason === "conflict" || reason === "converge"
           ? run.summary

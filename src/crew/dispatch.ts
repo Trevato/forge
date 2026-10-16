@@ -1048,6 +1048,7 @@ export function taskOf(
     run.reason === "feedback" ||
     run.reason === "check_failed" ||
     run.reason === "conflict" ||
+    run.reason === "resolve" ||
     run.reason === "converge" ||
     run.reason === "review"
       ? run.reason

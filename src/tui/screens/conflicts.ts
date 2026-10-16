@@ -12,6 +12,7 @@ import {
   type Choice,
 } from "../../git/conflicts.ts";
 import type { Ctx, Screen } from "../app/app.ts";
+import type { Proposal } from "../../crew/proposal.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
 import { fill, len, split } from "../ui/layout.ts";
@@ -28,11 +29,40 @@ export type Finish = (
   choices: readonly (Choice | undefined)[],
 ) => Promise<{ ok: boolean; message: string }>;
 
+/** The crew's door: what its latest proposal is, and the ask for another. */
+export interface CrewDoor {
+  proposal: () => Promise<Proposal>;
+  propose: () => Promise<{ ok: boolean; message: string }>;
+}
+
+/** A proposal in the words the page uses, one row each. */
+function proposalRows(seen: Proposal | undefined): string[] {
+  if (seen === undefined || seen.kind === "none") return [];
+  if (seen.kind === "working")
+    return [`The crew is working on a proposal (${seen.state}). Press r to look again.`];
+  if (seen.kind === "failed")
+    return [`The last proposal did not land (${seen.state}): ${seen.summary}`];
+  return [
+    `The crew proposed a resolution, committed as ${seen.oid.slice(0, 7)} on ${seen.branch}.`,
+    ...(seen.note === undefined ? [] : seen.note.split("\n")),
+    ...(seen.files.length === 0 ? [] : [`Edit by hand: ${seen.files.join(", ")}`]),
+  ];
+}
+
 export function conflictScreen(
   ctx: Ctx,
   read: PullConflicts,
   finish?: Finish,
+  crew?: CrewDoor,
 ): Screen {
+  /** The crew's latest proposal, read when the screen opens and after each ask. */
+  let seen: Proposal | undefined;
+  const look = (): Promise<void> =>
+    crew === undefined
+      ? Promise.resolve()
+      : crew.proposal().then((p) => {
+          seen = p;
+        });
   const scroll = new Scroll();
   const composer = new Composer();
   /** choices[file][block] */
@@ -58,7 +88,13 @@ export function conflictScreen(
     };
     const total = flat.length;
     say(`${plural(total, "conflict block")} in ${plural(read.files.length, "file")}`);
-    say("n/p block · o ours · t theirs · b both · e your own text · f finish (commit to the branch)", muted);
+    say(`n/p block · o ours · t theirs · b both · e your own text · f finish (commit to the branch)${crew ? " · c have the crew propose" : ""}`, muted);
+    const crewRows = proposalRows(seen);
+    if (crewRows.length > 0) {
+      say("");
+      say("The crew");
+      for (const row of crewRows) say(`  ${row}`, muted);
+    }
     let n = 0;
     read.files.forEach((file, fi) => {
       const mine = choices[fi]!;
@@ -115,10 +151,11 @@ export function conflictScreen(
       binding(["o", "t", "b"], "ours / theirs / both"),
       binding(["e"], "your text"),
       binding(["f"], "finish"),
+      ...(crew ? [binding(["c"], "have the crew propose"), binding(["r"], "look at the crew's proposal")] : []),
       binding(["j", "k"], "scroll"),
       binding(["esc", "q"], "back"),
     ],
-    load: () => Promise.resolve(),
+    load: look,
     render(area, s) {
       const [body, comp] = split(area, "v", [fill(1), len(composer.height())]);
       const all = lines();
@@ -147,6 +184,21 @@ export function conflictScreen(
           ctx.toast(done.message, done.ok ? "success" : "danger");
           if (done.ok) ctx.pop();
         });
+        return true;
+      }
+      // Looking costs nothing and never asks; `c` is the only key that spends.
+      if (!e.ctrl && !e.alt && e.key === "r" && crew) {
+        void look().catch(() => ctx.toast("the crew's proposal could not be read", "danger"));
+        return true;
+      }
+      if (!e.ctrl && !e.alt && e.key === "c" && crew) {
+        void crew
+          .propose()
+          .then(async (done) => {
+            ctx.toast(done.message, done.ok ? "success" : "danger");
+            await look();
+          })
+          .catch(() => ctx.toast("the crew could not be asked", "danger"));
         return true;
       }
       if (!e.ctrl && !e.alt && flat.length > 0) {
