@@ -67,6 +67,24 @@ Delete the old ones from the bucket if the bucket is not trusted.
 - Given neither, no snapshots are taken, and the Backups page says so
   instead of showing an empty list that looks like a clean bill.
 
+## The off-box mirror
+
+A second S3-compatible bucket (Backblaze B2, say) that every snapshot is
+copied to, so the snapshots do not die with the machine. Seal it on the
+Backups page (`SNAPSHOT_MIRROR_S3_*`, write-only like the destination) or
+give `FORGE_MIRROR_S3_ENDPOINT`, `_BUCKET`, `_ACCESS_KEY`, `_SECRET_KEY` and
+optionally `_REGION`. A pass runs right after each snapshot, thirty seconds
+after boot and every hour: it copies the newest fourteen snapshots the mirror
+lacks (manifest last, so a half copy is never listed; objects already there
+are skipped), then prunes the mirror to fourteen. What it found is kept in
+`mirror/state.json` under the data directory. The Backups page shows the
+mirror's reachability, its newest snapshot and when it was last confirmed
+level. A pass that fails (store unreachable, or a snapshot that did not land)
+or a mirror not confirmed level for a day is one card on the board
+(`mirror`) and one push to the admin, the path the drill uses. Not done: the
+mirror is copied from the primary store, not written in parallel, so a snapshot
+that never landed on the primary is not seen by it.
+
 The store is `Bun.S3Client` or a directory behind one small interface
 (`src/snapshot/store.ts`): put, get, list, delete. Nothing else.
 

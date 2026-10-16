@@ -21,6 +21,7 @@ import {
 } from "../core/runs.ts";
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { BUDGETS } from "./budgets.ts";
+import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { heldChecks, redSentence } from "../checks/red_main.ts";
 
@@ -317,6 +318,10 @@ export function vitals(input: VitalsInput): Vitals {
   const owed = drillNeed(drill, now, () => drillFirstSeen(input.dataDir));
   if (owed !== undefined)
     need("drill", owed.sentence, owed.since, "/settings/backups");
+
+  // A snapshot that did not land off the box, or a mirror a day behind, is a card until it does.
+  const behind = mirrorNeed(lastMirror(input.dataDir), now);
+  if (behind !== undefined) need("mirror", behind.sentence, behind.since, "/settings/backups");
 
   const apps = { serving: 0, asleep: 0, previews: 0 };
   for (const e of input.envs ?? []) {

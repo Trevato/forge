@@ -114,6 +114,9 @@ import {
   backupsClear,
   backupsDestination,
   backupsDrill,
+  backupsMirror,
+  backupsMirrorClear,
+  backupsMirrorNow,
   backupsNow,
   backupsPage,
   backupsTest,
@@ -730,6 +733,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/backups/destination", backupsDestination);
   router.add("POST", "/settings/backups/test", backupsTest);
   router.add("POST", "/settings/backups/clear", backupsClear);
+  router.add("POST", "/settings/backups/mirror", backupsMirror);
+  router.add("POST", "/settings/backups/mirror/clear", backupsMirrorClear);
+  router.add("POST", "/settings/backups/mirror/now", backupsMirrorNow);
   router.add("GET", "/settings/accounts", accountsPage);
   router.add("GET", "/settings/accounts/:username", personSignInsPage);
   router.add(

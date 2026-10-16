@@ -31,6 +31,7 @@ import { startLooks } from "./looks/service.ts";
 import { startProbes } from "./contract/probes.ts";
 import { startSnapshots } from "./snapshot/service.ts";
 import { resolveDestination } from "./snapshot/destination.ts";
+import { resolveMirror } from "./snapshot/mirror.ts";
 import { releaseOrphans } from "./core/run_secret.ts";
 import { failAbandonedRuns } from "./core/runs.ts";
 import { DRAIN_LINGER_MAX_S, drainLingerMs, startDraining } from "./http/health.ts";
@@ -327,6 +328,8 @@ const snapshots = startSnapshots(
     })?.store,
   {
     version: running().version,
+    mirror: () =>
+      resolveMirror({ db: app.db, dataDir: app.config.dataDir, bus: app.bus })?.store,
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
   },
 );

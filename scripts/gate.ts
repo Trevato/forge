@@ -193,6 +193,8 @@ export const GATE: readonly string[] = [
   "test/drill-board-line.test.ts",
   "test/snapshot-drill-page.test.ts",
   "test/snapshot-store.test.ts",
+  "test/snapshot-mirror.test.ts",
+  "test/snapshot-mirror-page.test.ts",
   "test/migrate.test.ts",
   "test/schema-additive.test.ts",
   "test/schema-migrations.test.ts",

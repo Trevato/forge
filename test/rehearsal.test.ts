@@ -114,7 +114,7 @@ describe("the verdict", () => {
 describe("a real roll of two forge processes on one data directory", () => {
   const short = (lingerS: number): RehearsalArgs => ({
     ...parseArgs([], `${import.meta.dir}/..`),
-    seconds: 8,
+    seconds: 20,
     probeMs: 300,
     lingerS,
     concurrency: 2,

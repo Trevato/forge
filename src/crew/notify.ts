@@ -30,6 +30,7 @@ import { getUserSetting, setUserSetting } from "../core/settings.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { landedLines } from "../core/watches.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { drillNeed, firstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { askLinesFor } from "../web/studio/asks.ts";
 
@@ -167,6 +168,19 @@ export function drillLines(
   return [{ id, line: need.sentence, items: [id] }];
 }
 
+/** The admin hears of a snapshot that did not land off the box, or a stale mirror, once per cause. */
+export function mirrorLines(
+  app: App,
+  user: User,
+  now = Date.now(),
+): { id: string; line: string; items: readonly string[] }[] {
+  if (!user.isAdmin || user.kind !== "user") return [];
+  const need = mirrorNeed(lastMirror(app.config.dataDir), now);
+  if (need === undefined) return [];
+  const id = `mirror:${need.key}`;
+  return [{ id, line: need.sentence, items: [id] }];
+}
+
 export interface Notifier {
   /** Resolves when the work queued so far is done. For tests and shutdown. */
   settled(): Promise<void>;
@@ -222,6 +236,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       ...landedLines(app.db, user, now()),
       ...mailCeilingLines(app, user, now()),
       ...drillLines(app, user, now()),
+      ...mirrorLines(app, user, now()),
     ];
     const before = seen.get(userId);
     // What is gone may ask again later, and then it is new again. Seen by

@@ -14,6 +14,8 @@ import {
   testDestination,
   type DestinationInput,
 } from "../../actions/destination.ts";
+import { forgetMirror, saveMirror } from "../../actions/mirror.ts";
+import { mirrorSealedSet, mirrorNeed, MIRROR_SEALED } from "../../snapshot/mirror.ts";
 import { resolveDestination, sealedSet } from "../../snapshot/destination.ts";
 import { keyOf } from "../../snapshot/snapshot.ts";
 import { lastDrill } from "../../snapshot/drills.ts";
@@ -115,7 +117,7 @@ export async function backupsPage(ctx: Ctx): Promise<Response> {
   const denied = requireAdmin(ctx);
   if (denied) return denied;
   const svc = snapshotsOf(ctx.app);
-  const form = destinationCard(ctx);
+  const form = html`${destinationCard(ctx)}${mirrorCard(ctx)}`;
   if (svc === undefined || svc.store === undefined)
     return shell(
       ctx,
@@ -314,6 +316,61 @@ function destinationCard(ctx: Ctx): Html {
   );
 }
 
+/** The mirror: its age and reachability from the last pass, and the write-only form that seals it. */
+function mirrorCard(ctx: Ctx): Html {
+  const svc = snapshotsOf(ctx.app);
+  const state = svc?.mirrored();
+  const configured = svc?.mirror !== undefined;
+  const need = mirrorNeed(state, Date.now());
+  const set = mirrorSealedSet(ctx.app.db);
+  const field_ = (name: string, label: string, sealed: string, type = "text"): Html =>
+    html`<label class="field"
+      ><span>${label}</span
+      ><input
+        name="${name}"
+        type="${type}"
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="${set.includes(sealed) ? "set — leave blank to keep" : ""}"
+    /></label>`;
+  const status = !configured
+    ? html`<p>No off-box mirror: snapshots live only where the destination is.
+        Seal a second bucket below (or set <code>FORGE_MIRROR_S3_*</code>) and
+        every snapshot is copied there within the hour.</p>`
+    : state === undefined
+      ? html`<p>Mirroring to <code>${svc!.mirror!.where}</code>; the first pass has not run yet.</p>`
+      : html`<p class="${need ? "backups-error" : ""}">
+          ${icon(need ? "alert" : "check")} <code>${state.where}</code> is
+          ${state.reachable ? "reachable" : "unreachable"} (checked
+          ${time(state.attemptAt)}).
+          ${state.newest
+            ? html`It holds <code>${state.newest}</code>, taken
+              ${time(state.newestAt ?? "")}; confirmed level ${time(state.syncedAt ?? "")}.`
+            : html`It holds no snapshot yet.`}
+          ${need ? html`<br />${need.sentence}` : ""}
+        </p>`;
+  return card(
+    html`${status}
+      <form method="post" action="/settings/backups/mirror" class="stack">
+        ${field_("endpoint", "Endpoint", MIRROR_SEALED.endpoint)}
+        ${field_("bucket", "Bucket", MIRROR_SEALED.bucket)}
+        ${field_("region", "Region (optional)", MIRROR_SEALED.region)}
+        ${field_("access_key", "Access key", MIRROR_SEALED.accessKey)}
+        ${field_("secret_key", "Secret key", MIRROR_SEALED.secretKey, "password")}
+        <div class="row-actions">
+          ${btn("Seal mirror", { type: "submit", variant: "primary", icon: "lock" })}
+          <button class="btn" type="submit" formaction="/settings/backups/mirror/now" formnovalidate>
+            Mirror now
+          </button>
+          <button class="btn" type="submit" formaction="/settings/backups/mirror/clear" formnovalidate>
+            Clear sealed mirror
+          </button>
+        </div>
+      </form>`,
+    { head: html`${icon("download")}<h2>Off-box mirror</h2>` },
+  );
+}
+
 function destinationInput(form: Form): DestinationInput {
   return {
     endpoint: field(form, "endpoint").trim(),
@@ -426,4 +483,51 @@ export async function backupsDrill(ctx: Ctx): Promise<Response> {
       message: `The drill could not run: ${String(error)}`,
     });
   }
+}
+
+/** POST /settings/backups/mirror — seal the mirror. */
+export async function backupsMirror(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const saved = saveMirror(ctx.app, ctx.auth.user, destinationInput(form));
+  return flashTo(
+    ctx,
+    "/settings/backups",
+    saved.ok ? { message: saved.value } : { tone: "danger", message: saved.error },
+  );
+}
+
+/** POST /settings/backups/mirror/clear — forget the sealed mirror. */
+export async function backupsMirrorClear(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  forgetMirror(ctx.app, ctx.auth.user);
+  return flashTo(ctx, "/settings/backups", { message: "The sealed mirror is cleared." });
+}
+
+/** POST /settings/backups/mirror/now — bring the mirror level, and say what came of it. */
+export async function backupsMirrorNow(ctx: Ctx): Promise<Response> {
+  const denied = requireAdmin(ctx);
+  if (denied) return denied;
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const state = await snapshotsOf(ctx.app)?.mirrorNow();
+  if (state === undefined)
+    return flashTo(ctx, "/settings/backups", { tone: "danger", message: "This forge has no mirror to bring level." });
+  if (state.sourceError !== undefined)
+    return flashTo(ctx, "/settings/backups", {
+      tone: "danger",
+      message: `The snapshots could not be read from the destination, so the mirror was not touched: ${state.sourceError}`,
+    });
+  return flashTo(
+    ctx,
+    "/settings/backups",
+    state.failingSince === undefined
+      ? { message: `The mirror is level${state.newest ? ` at ${state.newest}` : ""}.` }
+      : { tone: "danger", message: `The mirror is not level: ${state.error ?? "unknown reason"}` },
+  );
 }

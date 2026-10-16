@@ -21,6 +21,7 @@ import {
 } from "./snapshot.ts";
 import { runDrill, type DrillDeps, type DrillResult } from "./drill.ts";
 import { recordDrill } from "./drills.ts";
+import { lastMirror, mirrorPass, MIRROR_EVERY_MS, recordMirror, type MirrorState } from "./mirror.ts";
 import type { Store } from "./store.ts";
 
 const log = createLog("snapshots");
@@ -43,6 +44,14 @@ export interface SnapshotsHandle {
   readonly last: () => { manifest?: Manifest; error?: string; at?: string };
   /** Drill the newest snapshot now and keep the result; waits for any snapshot in flight. */
   readonly drill: () => Promise<DrillResult>;
+  /** The off-box mirror's store; undefined when the forge has none. */
+  readonly mirror: Store | undefined;
+  /** Bring the mirror level now; waits for any snapshot in flight. Undefined when there is no mirror. */
+  readonly mirrorNow: () => Promise<MirrorState | undefined>;
+  /** Like `mirrorNow`, but after any pass already in flight has ended, so it sees the mirror as it now is. */
+  readonly mirrorFresh: () => Promise<MirrorState | undefined>;
+  /** What the last mirror pass found. */
+  readonly mirrored: () => MirrorState | undefined;
   /** Forget the resolved store; the next use resolves again (a new destination was saved). */
   readonly forget: () => void;
   readonly stop: () => Promise<void>;
@@ -76,6 +85,10 @@ export function startSnapshots(
   destination: Store | (() => Store | undefined),
   options: {
     readonly version: string;
+    /** The off-box mirror, resolved like the destination. */
+    readonly mirror?: Store | (() => Store | undefined) | undefined;
+    /** Test seam: how often the mirror is looked at. */
+    readonly mirrorEveryMs?: number | undefined;
     readonly nightly?: boolean;
     readonly passphrase?: string | undefined;
     /** Test seam: the drill itself. */
@@ -91,6 +104,13 @@ export function startSnapshots(
     if (typeof destination !== "function") return destination;
     resolved ??= { store: destination() };
     return resolved.store;
+  };
+  let resolvedMirror: { store: Store | undefined } | undefined;
+  const currentMirror = (): Store | undefined => {
+    const m = options.mirror;
+    if (typeof m !== "function") return m;
+    resolvedMirror ??= { store: m() };
+    return resolvedMirror.store;
   };
   let stopped = false;
   let inFlight: Promise<Manifest> | undefined;
@@ -123,6 +143,9 @@ export function startSnapshots(
       await pruneSnapshots(store, KEEP);
       return manifest;
     });
+    // The mirror hears of every snapshot at once; a failure there is its own
+    // line on the board and never the snapshot's.
+    run.then(() => mirrorNow()).catch(() => {});
     inFlight = run.then(
       (m) => {
         last = { manifest: m, at: m.finishedAt };
@@ -135,6 +158,37 @@ export function startSnapshots(
       },
     );
     return inFlight;
+  };
+
+  // Single-flight: two passes at once would copy the same objects twice.
+  let mirroring: Promise<MirrorState | undefined> | undefined;
+  const mirrorNow = (): Promise<MirrorState | undefined> => {
+    mirroring ??= (async () => {
+      await (inFlight ?? Promise.resolve()).catch(() => {});
+      const dst = currentMirror();
+      const src = current();
+      if (dst === undefined || src === undefined) {
+        try {
+          recordMirror(app.config.dataDir, undefined);
+        } catch (error) {
+          log.warn("mirror: state not cleared", { error: String(error) });
+        }
+        return undefined;
+      }
+      const state = await mirrorPass(app.config.dataDir, src, dst);
+      if (state.sourceError !== undefined) log.error("mirror: primary unreadable", { error: state.sourceError });
+      else if (state.failingSince === undefined) log.info("mirror level", { where: state.where, newest: state.newest ?? "none" });
+      else log.error("mirror failed", { where: state.where, reachable: state.reachable, error: state.error ?? "" });
+      return state;
+    })().finally(() => {
+      mirroring = undefined;
+    });
+    return mirroring;
+  };
+
+  const mirrorFresh = async (): Promise<MirrorState | undefined> => {
+    while (mirroring !== undefined) await mirroring.catch(() => {});
+    return mirrorNow();
   };
 
   // Single-flight: a restore of every repository is heavy, so a second call
@@ -192,6 +246,19 @@ export function startSnapshots(
   };
   scheduleDrill();
 
+  // Within the hour: look for snapshots the mirror lacks, soon after boot and then hourly.
+  let mirrorTimer: ReturnType<typeof setTimeout> | undefined;
+  const everyMs = options.mirrorEveryMs ?? MIRROR_EVERY_MS;
+  const scheduleMirror = (first: boolean): void => {
+    if (options.nightly === false || stopped) return;
+    mirrorTimer = setTimeout(() => {
+      mirrorNow()
+        .catch(() => {})
+        .finally(() => scheduleMirror(false));
+    }, first ? Math.min(30_000, everyMs) : everyMs);
+  };
+  scheduleMirror(true);
+
   const handle: SnapshotsHandle = {
     get store() {
       return current();
@@ -205,13 +272,22 @@ export function startSnapshots(
     },
     last: () => last,
     progress: () => running,
+    get mirror() {
+      return currentMirror();
+    },
+    mirrorNow,
+    mirrorFresh,
+    mirrored: () => lastMirror(app.config.dataDir),
     forget: () => {
       resolved = undefined;
+      resolvedMirror = undefined;
     },
     stop: async () => {
       stopped = true;
       if (timer !== undefined) clearTimeout(timer);
       if (drillTimer !== undefined) clearTimeout(drillTimer);
+      if (mirrorTimer !== undefined) clearTimeout(mirrorTimer);
+      if (mirroring !== undefined) await mirroring.catch(() => {});
       if (inFlight !== undefined) await inFlight.catch(() => {});
       if (handles.get(app) === handle) handles.delete(app);
     },
