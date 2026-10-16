@@ -27,8 +27,15 @@ export interface DrillRun {
 const SEEN_MAX = 8_000;
 const DEFAULT_CEILING_MS = 3_600_000;
 
+/** C0 and C1 control characters out (tab stays): the forge's words never drive the terminal. */
+export const clean = (s: string): string => s.replace(/[\x00-\x08\x0a-\x1f\x7f-\x9f]/g, "");
+
 /** Every string in a JSON value, or the text's own lines when it is not JSON. */
 function linesOf(text: string, contentType: string): string[] {
+  return rawLinesOf(text, contentType).map(clean).filter((l) => l.trim() !== "");
+}
+
+function rawLinesOf(text: string, contentType: string): string[] {
   if (contentType.includes("json")) {
     try {
       const out: string[] = [];
@@ -159,21 +166,50 @@ export async function runDrill(run: DrillRun): Promise<number> {
   return 0;
 }
 
+export interface DrillArgs {
+  domain: string;
+  forge: string;
+  token: string;
+}
+
+const USAGE = "usage: FORGE_TOKEN=… bun scripts/drills/run.ts <domain> --forge <url> [--insecure]";
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/** The options, or the one plain line to print before exiting 2. */
+export function checkArgs(
+  argv: string[],
+  env: Record<string, string | undefined>,
+  isTTY: boolean,
+): { ok: true; args: DrillArgs } | { ok: false; error: string } {
+  const at = argv.indexOf("--forge");
+  const forge = at >= 0 ? argv[at + 1] : undefined;
+  const insecure = argv.includes("--insecure");
+  const domain = argv.find((a, i) => !a.startsWith("--") && i !== at + 1);
+  if (!domain) return { ok: false, error: `a domain is required; ${USAGE}` };
+  if (!forge) return { ok: false, error: `--forge <url> is required; ${USAGE}` };
+  let url: URL;
+  try { url = new URL(forge); } catch { return { ok: false, error: `--forge must be an http(s) URL; ${USAGE}` }; }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return { ok: false, error: `--forge must be an http(s) URL; ${USAGE}` };
+  }
+  const token = env.FORGE_TOKEN ?? "";
+  if (token === "") return { ok: false, error: `FORGE_TOKEN is empty; ${USAGE}` };
+  if (!isTTY) return { ok: false, error: "stdin is not a terminal; run the drill from an interactive shell" };
+  if (url.protocol === "http:" && !LOOPBACK.has(url.hostname) && !insecure) {
+    return { ok: false, error: `refusing to send the admin token over plain http to ${url.hostname}; use https, or pass --insecure` };
+  }
+  return { ok: true, args: { domain, forge: forge.replace(/\/+$/, ""), token } };
+}
+
 if (import.meta.main) {
-  const args = process.argv.slice(2);
-  const at = args.indexOf("--forge");
-  const forge = at >= 0 ? args[at + 1] : undefined;
-  const domain = args.find((a, i) => !a.startsWith("--") && i !== at + 1);
-  const token = process.env.FORGE_TOKEN ?? "";
-  if (!domain || !forge || !/^https?:\/\//.test(forge) || token === "") {
-    console.error("usage: FORGE_TOKEN=… bun scripts/drills/run.ts <domain> --forge <url>");
+  const checked = checkArgs(process.argv.slice(2), process.env, process.stdin.isTTY === true);
+  if (!checked.ok) {
+    console.error(checked.error);
     process.exit(2);
   }
   const code = await runDrill({
-    domain,
-    forge: forge.replace(/\/+$/, ""),
-    token,
-    say: (l) => console.log(l),
+    ...checked.args,
+    say: (l) => console.log(clean(l)),
     enter: async () => {
       for await (const _ of console) break;
     },
