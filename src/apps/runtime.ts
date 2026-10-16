@@ -931,8 +931,13 @@ export class AppsRuntime {
     reason: string,
     actorId?: string,
   ): Run | undefined {
-    // A suspended or removed owner's app does not deploy.
-    if (this.stopped || !accountActive(this.app.db, repo.ownerId))
+    // A suspended or removed owner's app does not deploy, nor does an
+    // archived repository's: it is put away, its data kept.
+    if (
+      this.stopped ||
+      repo.archivedAt !== null ||
+      !accountActive(this.app.db, repo.ownerId)
+    )
       return undefined;
     if (!this.mayRun(record, repo, env, commitOid)) return undefined;
     const state = this.envFor(record, env);

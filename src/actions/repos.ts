@@ -7,6 +7,7 @@
 import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
 import type { App } from "../app.ts";
+import { appsRuntime } from "../apps/runtime.ts";
 import { canSeeSealed } from "../core/sealed.ts";
 import { capacityValue } from "../core/capacity.ts";
 import { NEW_FOR_MS } from "./accounts.ts";
@@ -310,6 +311,12 @@ export async function updateRepoSettings(
     if (!moved.ok) return err("unknown_branch");
   }
   const updated = writeSettings(app.db, repo, settings);
+  // Archiving puts the app away: production and every preview stop through
+  // the runtime's ordinary stop; their data stays where it is.
+  if (updated.archivedAt !== null && repo.archivedAt === null) {
+    const runtime = appsRuntime(app);
+    if (runtime !== undefined) await runtime.stopRepo(repo.id);
+  }
   const changed: string[] = (
     [
       "visibility",

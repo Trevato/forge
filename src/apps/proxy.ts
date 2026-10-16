@@ -453,6 +453,10 @@ function admit(
       return err(new Response("not found", { status: 404 }));
     }
   }
+  // An archived repository's app is put away: stopped, its data kept, and
+  // never woken by a visit.
+  const repo = getRepoById(runtime.app.db, target.app.repoId);
+  if (repo?.archivedAt != null) return err(archivedPage(target));
   // A preview stopped for want of attention is asked for: it deploys again
   // the ordinary way, and this request sees "starting" until it answers.
   if (runtime.envStatus(target.app, target.env)?.dormant !== undefined)
@@ -1083,6 +1087,35 @@ ${report ? '<p><a href="/__forge/report">Report a problem</a> to the people who 
       "cache-control": "no-store",
       ...(deploying ? { "retry-after": "3" } : {}),
       ...(report ? { link: REPORT_LINK } : {}),
+    },
+  });
+}
+
+/** The short page an archived repository's app answers with: 503, not a 502. */
+function archivedPage(target: AppTarget): Response {
+  const name = escape(target.app.slug);
+  const html = `<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${name} — archived</title>
+<style>
+  :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+  body { max-width: 34rem; margin: 20vh auto; padding: 0 1.5rem; }
+  h1 { font-size: 1.25rem; margin: 0 0 .5rem; }
+  p { margin: .5rem 0; opacity: .85; }
+</style>
+<h1>${name} is archived</h1>
+<p>Its people have put it away. It is not running, and its data is kept.</p>
+`;
+  return new Response(html, {
+    status: 503,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+      "referrer-policy": "same-origin",
+      "content-security-policy":
+        "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
     },
   });
 }

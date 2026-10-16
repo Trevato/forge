@@ -437,6 +437,30 @@ describe("apps: production, previews, data, gates", () => {
     expect(merged.ok).toBe(true);
   }, 120_000);
 
+  test("archiving stops the app, keeps its data, and its URL says it is archived", async () => {
+    expect(runtime.envStatus(record, "production")?.state).toBe("running");
+    const data = envDataDir(dataDir, record.id, "production");
+    writeFileSync(join(data, "archive-marker"), "kept");
+
+    const archived = await updateRepoSettings(app, alice, repo, {
+      archived: true,
+    });
+    expect(archived.ok).toBe(true);
+
+    expect(runtime.envStatus(record, "production")?.state).not.toBe("running");
+    expect(existsSync(join(data, "archive-marker"))).toBe(true);
+    const page = await viaHost(`hello.${DOMAIN}`);
+    expect(page.status).toBe(503);
+    expect(await page.text()).toContain("hello is archived");
+    expect(page.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(page.headers.get("referrer-policy")).toBe("same-origin");
+    expect(page.headers.get("content-security-policy")).toContain(
+      "default-src 'none'",
+    );
+    // A visit does not wake it.
+    expect((await viaHost(`hello.${DOMAIN}`)).status).toBe(503);
+    expect(runtime.envStatus(record, "production")?.state).not.toBe("running");
+  }, 60_000);
 });
 
 describe("a preview whose copied data the build cannot read starts fresh (issue #36)", () => {
