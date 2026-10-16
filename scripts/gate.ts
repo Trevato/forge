@@ -354,6 +354,12 @@ export const GATE: readonly string[] = [
   "test/apps-report.test.ts",
   "test/apps-toolbar.test.ts",
   "test/private-app.test.ts",
+  "test/view-source.test.ts",
+  "test/web-browse.test.ts",
+  "test/web-editor.test.ts",
+  "test/web-phone.test.ts",
+  "test/web-workflows.test.ts",
+  "test/webhooks.test.ts",
   "test/actions.test.ts",
   "test/app-env.test.ts",
   "test/apps-ssh.test.ts",
@@ -476,16 +482,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     reason: "not yet admitted",
     issue: 261,
   },
-  { file: "test/view-source.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/web-browse.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/web-editor.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/web-phone.test.ts", reason: "not yet admitted", issue: 261 },
-  {
-    file: "test/web-workflows.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
-  },
-  { file: "test/webhooks.test.ts", reason: "not yet admitted", issue: 261 },
 ];
 
 /**
