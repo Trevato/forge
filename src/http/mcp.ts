@@ -22,6 +22,10 @@ import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { listAccess } from "../actions/access_log.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
+import { addAccount, allowWrite, auditAccount, removeAccount, renameAccount, reverify, rotateAccount } from "../actions/cloud.ts";
+import { usesByVendor, type VendorUse } from "../cloud/declared.ts";
+import { cloudOverview } from "../cloud/overview.ts";
+import { PROVIDERS } from "../cloud/providers.ts";
 import { changeQuotas, readQuotas } from "../actions/quotas.ts";
 import { changeSignup, readSignup } from "../actions/signup.ts";
 import { SIGNUP_MODES } from "../settings/signup.ts";
@@ -2142,6 +2146,77 @@ const TOOLS: readonly Tool[] = [
         says: `${key}: ${changed.value.from} → ${changed.value.to}, from the next use on.`,
         ...changed.value,
       });
+    },
+  },
+  {
+    name: "cloud_accounts",
+    description:
+      "Cloud accounts, for a forge admin: each attached provider token (github, cloudflare, vercel) with what it is used for, when it was verified and last used, whether runs may write with it, and today's vendor calls (UTC day) — then every audit row of today, newest first. Never a token value. Needs a write-scope token. The same as Settings → Cloud accounts.",
+    inputSchema: { type: "object", properties: {} },
+    // A read, but marked a write so a `ro` token never lists the accounts; it
+    // is a forge admin's and the audit rows name every vendor call.
+    writes: true,
+    async run(ctx, user) {
+      if (!user.isAdmin) return bad("not_found", "no such tool here");
+      const uses = await usesByVendor(ctx.app.db, ctx.app.reposRoot, user).catch(() => new Map<string, VendorUse[]>());
+      const seen = cloudOverview(ctx.app, user, uses);
+      if (!seen.ok) return bad("not_found", "no such tool here");
+      return good(seen.value);
+    },
+  },
+  {
+    name: "cloud_account",
+    description:
+      "Change a cloud account, as a forge admin with an admin-scope token. `verb` is attach (checks `value` with the provider's read-only calls, then seals it), verify (re-checks the sealed token), rotate (checks a new `value`, then replaces it), rename (to `to`; refused when the account or the secret CLOUD_<PROVIDER>_<NAME> already exists), remove, allow_writes (`allowed` true or false: whether a run that declares writes may hold the token) or audit (a read-only vendor audit, one issue per finding in `repo`). `provider` is github, cloudflare or vercel; `name` is lowercase letters, digits and underscores. The answer never contains the token. The same as Settings → Cloud accounts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        verb: { type: "string", enum: ["attach", "verify", "rotate", "rename", "remove", "allow_writes", "audit"] },
+        provider: { type: "string", enum: [...PROVIDERS] },
+        name: { type: "string", maxLength: 32 },
+        value: { type: "string", maxLength: 4096, description: "The token, for attach and rotate." },
+        to: { type: "string", maxLength: 32, description: "The new name, for rename." },
+        allowed: { type: "boolean", description: "For allow_writes: whether runs that declare writes may hold the token." },
+        repo: { type: "string", maxLength: 200, description: "For audit: owner/name, where the findings are filed as issues." },
+      },
+      required: ["verb", "provider", "name"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      if (!user.isAdmin) return bad("not_found", "no such tool here");
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing cloud accounts needs an admin-scope token");
+      const verb = str(args["verb"]);
+      const [provider, name] = [str(args["provider"]), str(args["name"])];
+      const value = str(args["value"]);
+      if (str(args["verb"]) === "allow_writes" && typeof args["allowed"] !== "boolean")
+        return bad("bad_args", "allow_writes needs allowed: true or false");
+      const done =
+        verb === "attach"
+          ? await addAccount(ctx.app, user, provider, name, value)
+          : verb === "rotate"
+            ? await rotateAccount(ctx.app, user, provider, name, value)
+            : verb === "verify"
+              ? await reverify(ctx.app, user, provider, name)
+              : verb === "rename"
+                ? renameAccount(ctx.app, user, provider, name, str(args["to"]))
+                : verb === "remove"
+                  ? removeAccount(ctx.app, user, provider, name)
+                  : verb === "allow_writes"
+                    ? allowWrite(ctx.app, user, provider, name, args["allowed"] === true)
+                    : verb === "audit"
+                      ? await auditAccount(ctx.app, user, provider, name, str(args["repo"]))
+                      : undefined;
+      if (done === undefined) return bad("bad_verb", "verb is attach, verify, rotate, rename, remove, allow_writes or audit");
+      if (!done.ok) return bad("refused", done.error);
+      const v = done.value as unknown;
+      const said =
+        typeof v === "string"
+          ? v
+          : verb === "audit"
+            ? `${(v as { opened: number }).opened} issue(s) opened, ${(v as { found: number }).found} found`
+            : "done";
+      return good({ says: `${verb} ${provider}/${name}: ${said}.` });
     },
   },
   {

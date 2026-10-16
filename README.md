@@ -799,7 +799,7 @@ purpose, host and path, bytes out, when, allowed or refused — no token, no
 query) is listed at **Settings → Cloud accounts → Every vendor call today**.
 Rows are pruned past 90 days on every write; `at` is indexed. Left out: one
 token per vendor is not enforced (several names per vendor stay allowed), and
-an agent's own vendor calls beyond the hand-out are not metered. Cloud accounts have no terminal or MCP door yet.
+an agent's own vendor calls beyond the hand-out are not metered. A forge admin reaches the same accounts in the terminal (`:` → Cloud accounts: each account with what it is used for, verified / last used and today's vendor calls; `a` attach, `v` verify, `r` rotate, `n` rename, `x` remove, `w` flip the write switch, `A` audit into an `owner/repo`, `c` every vendor call today (purpose, host and path, bytes out, allowed or refused), the token typed masked) and over MCP (`cloud_accounts` lists them with today's audit rows; `cloud_account` with `verb` attach, verify, rotate, rename, remove, `allow_writes` (with `allowed`) or `audit` (with `repo`) needs an admin-scope token). Both call `actions/cloud.ts`, neither ever shows a token, and anyone else is refused. A rename is refused when the account or the secret `CLOUD_<PROVIDER>_<NAME>` already exists.
 
 ## Share to the forge
 

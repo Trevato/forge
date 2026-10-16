@@ -21,7 +21,7 @@ import {
 } from "../core/cloud_account.ts";
 import { createIssue } from "../core/issues.ts";
 import { getRepo } from "../core/repos.ts";
-import { resolveSecrets } from "../core/secret_store.ts";
+import { listSecretNames, resolveSecrets } from "../core/secret_store.ts";
 import type { User } from "../core/users.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -111,7 +111,11 @@ export function renameAccount(
   const dest = target(provider, to);
   if (!dest.ok) return dest;
   if (!getCloudAccount(app.db, from.value.provider, from.value.name)) return err("No such credential.");
-  if (getCloudAccount(app.db, dest.value.provider, dest.value.name)) return err("An account has that name already.");
+  if (
+    getCloudAccount(app.db, dest.value.provider, dest.value.name) ||
+    listSecretNames(app.db, "forge").some((s) => s.name === dest.value.secret)
+  )
+    return err("An account has that name already.");
   const value = open(app, who.value, from.value.secret, `rename:${from.value.provider}`);
   if (value === undefined) return err("No such credential.");
   const set = putSecret(app, who.value, "forge", "", dest.value.secret, value);

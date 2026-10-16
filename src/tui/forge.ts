@@ -42,6 +42,7 @@ import { dashboardScreen } from "./screens/dashboard.ts";
 import { mayManageFlags } from "../core/flags.ts";
 import { accessScreen } from "./screens/access.ts";
 import { flagsScreen } from "./screens/flags.ts";
+import { cloudScreen } from "./screens/cloud.ts";
 import { usageScreen } from "./screens/usage.ts";
 import { quotasScreen } from "./screens/quotas.ts";
 import { domainsScreen } from "./screens/domains.ts";
@@ -361,6 +362,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Account quotas",
         hint: "what one account may own, and who changed it",
         run: () => ctx.push(quotasScreen(session, ctx)),
+      });
+    // Cloud accounts, as Settings → Cloud accounts has them: a forge admin (#2199).
+    if (session.user?.isAdmin === true)
+      commands.push({
+        id: "cloud",
+        title: "Cloud accounts",
+        hint: "provider tokens, what they are used for, today's calls",
+        run: () => ctx.push(cloudScreen(session, ctx)),
       });
     // Each failure domain and its last drill, as Settings → Failure domains says it (#1945).
     if (session.user?.isAdmin === true && session.user.kind !== "agent")
