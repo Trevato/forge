@@ -424,7 +424,9 @@ function mergeBox(
                 >${status.conflicts.slice(0, 3).join(", ")}</span
               >${status.conflicts.length > 3 ? "…" : ""}. Merge
               <span class="mono">${pull.baseBranch}</span> into the branch and
-              push again.`
+              push again.${mayMerge
+                ? html` <a href="${thread}/resolve">Resolve</a> it here.`
+                : ""}`
           : html`This branch cannot be applied automatically.`;
     return card(
       html`${icon("alert")}

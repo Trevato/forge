@@ -295,6 +295,7 @@ import {
   pullThreadFragment,
   threadResolveSubmit,
 } from "../web/pages/pull.ts";
+import { conflictsPage } from "../web/pages/conflicts.ts";
 import {
   appDisable,
   appMembersUpdate,
@@ -988,6 +989,7 @@ export function buildRouter(): Router<Handler> {
   // The change's Files step: the diff, the review threads and the merge
   // box, one tab under the change itself.
   router.add("GET", "/:owner/:name/pulls/:number/files", pullFilesPage);
+  router.add("GET", "/:owner/:name/pulls/:number/resolve", conflictsPage);
   router.add("GET", "/:owner/:name/pulls/:number/thread", pullThreadFragment);
   router.add("GET", "/:owner/:name/pulls/:number/state", pullStateFragment);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);

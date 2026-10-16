@@ -102,6 +102,8 @@ import {
 import { assignPicker, assignedText } from "./assign.ts";
 import { DiffView, type DiffAnchor, type DiffNote } from "./commits.ts";
 import { liveBindings, liveKey } from "./mirror.ts";
+import { pullConflicts } from "../../actions/conflicts.ts";
+import { conflictScreen } from "./conflicts.ts";
 import { reviewScreen } from "./review.ts";
 import { RunList, openRunLog, runTone } from "./runlist.ts";
 import { Composer, threadLines, type ThreadEntry } from "./thread.ts";
@@ -635,6 +637,22 @@ export function pullScreen(
     });
   };
 
+  /** `v` — the conflict blocks, read; `pullConflicts` holds the writer gate. */
+  const seeConflicts = (): void => {
+    if (repo === undefined) return;
+    const target = repo;
+    const row = getPull(f.db, target.id, number);
+    if (row === undefined) return;
+    runAsync(ctx, async () => {
+      const read = await pullConflicts(f.app, f.user, target, row);
+      if (!read.ok) {
+        ctx.toast(errorText(read.error), "danger");
+        return;
+      }
+      ctx.push(conflictScreen(ctx, read.value));
+    });
+  };
+
   const mirrored = (): boolean => repo === undefined || repo.origin !== null;
   const state = (): MergeState =>
     mergeState(detail?.issue, facts, mirrored(), gated(), checksGated());
@@ -665,6 +683,9 @@ export function pullScreen(
                 ? [binding(["A"], "approve to run here")]
                 : []),
               binding(["a"], "assign"),
+              ...(state() === "conflicts"
+                ? [binding(["v"], "see the conflict blocks")]
+                : []),
               binding(["m"], "merge", { disabled: state() !== "ready" }),
               ...(tab === 1 && view.threadHere() !== null
                 ? [
@@ -876,6 +897,10 @@ export function pullScreen(
       }
       if (e.key === "a" && mayWrite()) {
         assign();
+        return true;
+      }
+      if (e.key === "v" && mayWrite() && state() === "conflicts") {
+        seeConflicts();
         return true;
       }
       // The crew tab is a list: the cursor moves, enter opens the run.

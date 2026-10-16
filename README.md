@@ -218,6 +218,8 @@ git objects; anything you then do here is **written through** to the origin
 first and reflected locally after it succeeds. For a mirror the origin is
 truth, exactly as git is truth for a native repo.
 
+**Resolving a conflicted pull.** When a pull conflicts with its base, a writer sees **Resolve** in the "Can't merge" box, which opens `/:owner/:name/pulls/:n/resolve`: one file at a time, each conflict block a card with the two sides named by their branch and the taps **Ours**, **Theirs**, **Both** and **Mine** (words typed in the box count as Mine), a running "2 of 3 resolved", and the merged file beneath. The choices ride in the query string; nothing is written to git yet (committing the result is a later part). In the terminal, `v` on a conflicted pull does the same: `n`/`p` move over the blocks, `o`/`t`/`b` take ours, theirs or both, `e` opens a box for your own text, and each file shows "N of M resolved" with its merged file beneath. Readers and guests get neither.
+
 A pull from an outsider's fork on the origin is someone else's code, so its
 check and preview wait. A person with write access lets that exact head run:
 on the pull page, **Approve to run here**; in the terminal, `A` on the pull
