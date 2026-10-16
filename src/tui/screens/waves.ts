@@ -2,11 +2,12 @@
  * A repository's waves: the same rows, in the same order, as the web page,
  * read through `story/waves.ts`. Local repositories only — a live browse of
  * another forge has no `waves/` we can read here, and says so. Enter on a row
- * opens its file in the workspace viewer on the default branch.
+ * opens that wave as plain text.
  */
 
 import { canRead } from "../../core/repos.ts";
-import { readWaves, type WaveEntry } from "../../story/waves.ts";
+import { VERSION } from "../../story/wave.ts";
+import { readWave, readWaves, type WaveEntry } from "../../story/waves.ts";
 import type { RepoSource } from "../../view/source.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -15,8 +16,7 @@ import { truncate } from "../term/width.ts";
 import { fill, len, split } from "../ui/layout.ts";
 import { emptyState } from "../ui/widgets.ts";
 import type { Session } from "../session.ts";
-import { ListState, drawList, hitList, plural, runAsync } from "./common.ts";
-import { blobScreen } from "./workspace.ts";
+import { ListState, Scroll, drawList, drawLines, hitList, plural, runAsync } from "./common.ts";
 import { localRepo, sourceName, whereRows, whereStrip } from "./where.ts";
 
 /** One line per wave, as the screen draws it. */
@@ -32,6 +32,47 @@ export function waveRows(entries: WaveEntry[]) {
   );
 }
 
+/** Wave text is someone's prose: no escape, control or newline survives into the terminal. */
+const plain = (s: string): string =>
+  // eslint-disable-next-line no-control-regex
+  s.replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]+/g, " ");
+
+/** One wave as lines of plain text: headline, version and date, highlights with why, pulls as title and URL. */
+export function waveLines(entry: WaveEntry): string[] {
+  if (!entry.ok) return [plain(entry.file), "", `Not a wave: ${plain(entry.reason)}`];
+  const w = entry.wave;
+  return [
+    plain(w.headline),
+    `${plain(w.version)}  ${plain(w.date)}`,
+    "",
+    "Highlights",
+    ...w.highlights.map((h) => `  ${plain(h.title)} - ${plain(h.why)}`),
+    "",
+    "Pulls",
+    ...w.pulls.flatMap((p) => [`  ${plain(p.title)}`, `    ${plain(p.url)}`]),
+  ];
+}
+
+function waveScreen(ctx: Ctx, entry: WaveEntry): Screen {
+  const lines = waveLines(entry);
+  const scroll = new Scroll();
+  return {
+    title: entry.ok ? entry.wave.version : entry.file,
+    keys: [binding(["j", "k"], "scroll"), binding(["esc"], "back")],
+    render(area, s) {
+      const c = ctx.theme.c;
+      drawLines(
+        s,
+        area,
+        c,
+        scroll,
+        lines.map((text) => [{ text, style: style(c.fg, c.bg) }]),
+      );
+    },
+    key: (e) => scroll.key(e, lines.length),
+  };
+}
+
 export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
   const repo = localRepo(src);
   let entries: WaveEntry[] = [];
@@ -41,9 +82,15 @@ export function wavesScreen(f: Session, ctx: Ctx, src: RepoSource): Screen {
   const openAt = (i: number): void => {
     const entry = entries[i];
     if (entry === undefined || repo === undefined) return;
-    ctx.push(
-      blobScreen(f, ctx, src, repo.defaultBranch, `waves/${entry.file}`),
-    );
+    runAsync(ctx, async () => {
+      // Same gate as the list, re-checked: the screen outlives a change of access.
+      if (!canRead(f.db, repo, f.user)) return;
+      const version = entry.file.slice(0, -3);
+      const one = VERSION.test(version)
+        ? await readWave(f.dir(repo), repo.defaultBranch, version)
+        : entry;
+      if (one) ctx.push(waveScreen(ctx, one));
+    });
   };
 
   const reload = async (): Promise<void> => {

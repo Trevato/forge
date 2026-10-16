@@ -40,7 +40,8 @@ export type WaveResult<T> =
 export const MIN_HIGHLIGHTS = 3;
 export const MAX_HIGHLIGHTS = 5;
 
-const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+/** The shape of a wave's version, and of its file name before `.md`. */
+export const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const SEP = " — ";
 

@@ -8,6 +8,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { webUrl } from "../src/web/pages/waves.ts";
 import { writeWave, type Wave } from "../src/story/wave.ts";
 
 const PASSWORD = "a-good-passphrase";
@@ -68,6 +69,9 @@ describe("waves page", () => {
       { path: "waves/0.9.0.md", content: text(wave("0.9.0", "2026-01-01", "Ninth")) },
       { path: "waves/0.10.0.md", content: text(wave("0.10.0", "2026-02-01", "Tenth")) },
       { path: "waves/0.2.0.md", content: text(wave("0.2.0", "2025-12-01", "<script>alert(1)</script> & Zeta")) },
+      { path: "waves/0.3.0.md", content: text({ ...wave("0.3.0", "2025-12-15", "Evil <b>links</b>"), highlights: [{ title: "T<i>1</i>", why: "why <u>one</u>" }, { title: "Two", why: "w" }, { title: "Three", why: "w" }] }) },
+      { path: "waves/0.5.0.md", content: text(wave("0.5.0", "2025-12-16", "Js")).replace("https://forge.example/o/r/pulls/1", "javascript:alert(1)") },
+      { path: "waves/0.4.0.md", content: "no front matter here\n" },
       { path: "waves/broken.md", content: "no front matter here\n" },
     ]);
     await put(priv, [
@@ -91,7 +95,7 @@ describe("waves page", () => {
     expect(at("Ninth")).toBeLessThan(at("Zeta"));
     expect(body).toContain("0.10.0");
     expect(body).toContain("2026-02-01");
-    expect(body).toContain("/alice/pub/blob/main/waves/0.10.0.md");
+    expect(body).toContain('href="/alice/pub/waves/0.10.0"');
   });
 
   test("a headline with markup comes out inert", async () => {
@@ -126,5 +130,43 @@ describe("waves page", () => {
     expect(await waves.text()).not.toContain("Secret launch");
     const owner = await get("/alice/priv/waves");
     expect(await owner.text()).toContain("Secret launch");
+  });
+
+  test("one wave renders headline, date, highlights with why, pulls as links", async () => {
+    const res = await get("/alice/pub/waves/0.10.0");
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("Tenth");
+    expect(body).toContain("2026-02-01");
+    expect(body).toContain("Thing 1");
+    expect(body).toContain("because");
+    expect(body).toContain('href="https://forge.example/o/r/pulls/1"');
+  });
+
+  test("values are escaped and a javascript: pull is not a link", async () => {
+    const body = await (await get("/alice/pub/waves/0.3.0")).text();
+    expect(body).toContain("Evil &lt;b&gt;links&lt;/b&gt;");
+    expect(body).toContain("why &lt;u&gt;one&lt;/u&gt;");
+    expect(body).not.toContain("<b>links");
+    const js = await (await get("/alice/pub/waves/0.5.0")).text();
+    expect(js).not.toContain('href="javascript:');
+    expect(webUrl("javascript:alert(1)")).toBe(false);
+    expect(webUrl("https://x.example/p/1")).toBe(true);
+  });
+
+  test("an unknown or malformed version is a 404; an unparsable file shows its reason", async () => {
+    expect((await get("/alice/pub/waves/9.9.9")).status).toBe(404);
+    expect((await get("/alice/pub/waves/nope")).status).toBe(404);
+    expect((await get("/alice/pub/waves/..%2Fx")).status).toBe(404);
+    const bad = await get("/alice/pub/waves/0.4.0");
+    expect(bad.status).toBe(200);
+    expect(await bad.text()).toContain("missing front matter");
+  });
+
+  test("a private repository's wave is refused to an outsider", async () => {
+    const out = await get("/alice/priv/waves/1.0.0", false);
+    expect(out.status).toBe(404);
+    expect(await out.text()).not.toContain("Secret launch");
+    expect(await (await get("/alice/priv/waves/1.0.0")).text()).toContain("Secret launch");
   });
 });

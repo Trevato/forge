@@ -9,7 +9,7 @@ import type { Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
 import { writeWave, type Wave } from "../src/story/wave.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
-import { wavesScreen } from "../src/tui/screens/waves.ts";
+import { waveLines, wavesScreen } from "../src/tui/screens/waves.ts";
 import type { RepoSource } from "../src/view/source.ts";
 import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -95,8 +95,9 @@ describe("waves in the terminal", () => {
   const open = async (
     user: User,
     repo: Repo,
+    keys: string[] = [],
     remote = false,
-  ): Promise<{ text: string; stop(): void; app: ReturnType<typeof createForgeApp>["app"] }> => {
+  ): Promise<{ text: string; stop(): void }> => {
     const terminal = headlessTerminal(120, 40);
     const { app, session } = createForgeApp(
       forge,
@@ -109,7 +110,11 @@ describe("waves in the terminal", () => {
     const src = remote ? remoteOf(here) : here;
     app.push(wavesScreen(session, app.ctx, src));
     await settleApp(app);
-    return { text: app.screen.toText(), stop: () => app.stop(), app };
+    for (const k of keys) {
+      terminal.feed(k === "enter" ? "\r" : k);
+      await settleApp(app);
+    }
+    return { text: app.screen.toText(), stop: () => app.stop() };
   };
 
   test("lists the web page's rows in the same order, bad files last", async () => {
@@ -129,17 +134,40 @@ describe("waves in the terminal", () => {
     expect(h.text).toContain("No waves yet");
   });
 
-  test("Enter on a wave row opens its file in the viewer", async () => {
-    const h = await open(alice, pub);
-    h.app.dispatch({ type: "key", key: "enter", ctrl: false, alt: false, shift: false });
-    await settleApp(h.app);
-    const after = h.app.screen.toText();
+  test("enter opens one wave: headline, version, date, highlights with why, pulls", async () => {
+    const h = await open(alice, pub, ["enter"]);
     h.stop();
-    expect(after).toContain("0.10.0.md");
+    expect(h.text).toContain("Tenth");
+    expect(h.text).toContain("0.10.0  2026-02-01");
+    expect(h.text).toContain("Thing 1 - because");
+    expect(h.text).toContain("#1 A pull");
+    expect(h.text).toContain("https://forge.example/o/r/pulls/1");
+  });
+
+  test("enter on an unparsable row shows its reason", async () => {
+    const h = await open(alice, pub, ["j", "j", "enter"]);
+    h.stop();
+    expect(h.text).toContain("broken.md");
+    expect(h.text).toContain("Not a wave:");
+  });
+
+  test("wave text carries no escape or control characters", () => {
+    const lines = waveLines({
+      ok: true,
+      file: "1.0.0.md",
+      wave: {
+        version: "1.0.0",
+        date: "2026-01-01",
+        headline: "Hi\u001b[31m red\u0007\u202e",
+        highlights: [{ title: "T\u001b]0;x\u0007", why: "w\nz" }],
+        pulls: [{ title: "P", url: "https://x.example/\u001b[2J" }],
+      },
+    });
+    expect(lines.join("\n")).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/);
   });
 
   test("a live browse says waves are only read on this forge", async () => {
-    const h = await open(alice, pub, true);
+    const h = await open(alice, pub, [], true);
     h.stop();
     expect(h.text).toContain("only read on this forge");
     expect(h.text).not.toContain("no waves/ directory");

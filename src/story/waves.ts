@@ -6,7 +6,7 @@
  */
 
 import { readerFor, listTree } from "../git/read.ts";
-import { parseWave, type Wave } from "./wave.ts";
+import { parseWave, VERSION as WAVE_VERSION, type Wave } from "./wave.ts";
 
 /** A page, not an archive: more files than this are not read. */
 const MAX_FILES = 300;
@@ -60,6 +60,28 @@ export function byVersionDesc(a: string, b: string): number {
     if (d !== 0) return d;
   }
   return y.pre.length - x.pre.length;
+}
+
+/** One wave file by version, or null when the version is malformed or absent. */
+export async function readWave(
+  dir: string,
+  branch: string,
+  version: string,
+): Promise<WaveEntry | null> {
+  if (!WAVE_VERSION.test(version)) return null;
+  const file = `${version}.md`;
+  const path = `waves/${file}`;
+  const tree = await listTree(dir, branch, "waves");
+  if (!tree.ok) return null;
+  const f = tree.value.find((e) => e.type === "blob" && e.name === file);
+  if (!f) return null;
+  if (f.size > MAX_BYTES) return { ok: false, file, reason: `${path}: file is too large` };
+  const obj = await readerFor(dir).object(f.oid);
+  if (!obj.ok) return { ok: false, file, reason: `${path}: unreadable` };
+  const parsed = parseWave(path, new TextDecoder().decode(obj.value.body));
+  return parsed.ok
+    ? { ok: true, file, wave: parsed.value }
+    : { ok: false, file, reason: parsed.error.message };
 }
 
 /** Every wave file on `branch`, parsed; good ones newest first, then the bad. */
