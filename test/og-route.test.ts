@@ -141,7 +141,11 @@ describe("og cards", () => {
       });
 
       test("a private repo is 404", async () => {
-        expect((await get(`/og/${kind}/${private_}.svg`)).status).toBe(404);
+        // An app's card is refused; a repo's is only its title and "private"
+        // (test/og-private.test.ts).
+        expect((await get(`/og/${kind}/${private_}.svg`)).status).toBe(
+          kind === "app" ? 404 : 200,
+        );
       });
 
       test("a private app on a public repo is 404", async () => {
@@ -153,7 +157,14 @@ describe("og cards", () => {
       });
 
       test("an unknown or malformed ref is 404", async () => {
-        for (const ref of ["nobody~nothing", "nothing", "a~b~c", "..%2Fx", "A_B"])
+        // A well-formed repo ref that is not readable is the private card.
+        for (const ref of [
+          ...(kind === "app" ? ["nobody~nothing"] : []),
+          "nothing",
+          "a~b~c",
+          "..%2Fx",
+          "A_B",
+        ])
           expect((await get(`/og/${kind}/${ref}.svg`)).status).toBe(404);
       });
     });

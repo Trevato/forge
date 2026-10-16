@@ -989,6 +989,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
       ctx,
       title: repo.name,
       description: repo.description,
+      ogImage: `/og/repo/${repo.ownerName}~${repo.name}.png`,
       feed: {
         href: `${repoBase(repo)}/activity.atom`,
         title: `${repo.ownerName}/${repo.name} activity`,
@@ -1036,6 +1037,7 @@ async function codeHome(ctx: Ctx, repo: Repo): Promise<Response> {
     ctx,
     title: repo.name,
     description: repo.description,
+    ogImage: `/og/repo/${repo.ownerName}~${repo.name}.png`,
     feed: {
       href: `${repoBase(repo)}/activity.atom`,
       title: `${repo.ownerName}/${repo.name} activity`,

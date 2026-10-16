@@ -172,7 +172,9 @@ describe("what the open web expects", () => {
     expect(html).toContain(
       'rel="apple-touch-icon" href="/icons/forge-180.png"',
     );
-    expect(html).toContain('name="twitter:card" content="summary"');
+    // A repository page carries its own card (/og/repo), not the icon.
+    expect(html).toContain(`content="${base}/og/repo/alice~open.png"`);
+    expect(html).toContain('name="twitter:card" content="summary_large_image"');
     expect(html).toContain("viewport-fit=cover");
   });
 

@@ -72,8 +72,8 @@ describe("og png", () => {
     expect(again.status).toBe(304);
   });
 
-  test("private and malformed refs are the same 404", async () => {
-    expect((await fetch(`${base}/og/repo/alice~hidden.png`)).status).toBe(404);
+  test("malformed refs are 404; a private repo's card is only its title and 'private'", async () => {
+    expect((await fetch(`${base}/og/repo/alice~hidden.png`)).status).toBe(200);
     expect((await fetch(`${base}/og/repo/..%2F..~x.png`)).status).toBe(404);
   });
 

@@ -3,7 +3,8 @@
  * and GET /og/audit.svg.
  * Public by design — it is what a link preview fetches without a session —
  * so it says only what an anonymous reader may already see: a public repo
- * (`owner~name`), the public app of one (its slug), or an issue, pull or run
+ * (`owner~name`; any other repo, private or not, is a title and the word
+ * "private", and a signed-in reader who may read it gets the full card), the public app of one (its slug), or an issue, pull or run
  * of a public repo (`owner~name~number`, `owner~name~runid`) that an
  * anonymous reader could open (not sealed, runs readable); a public repo's
  * map (`owner~name`) drawn from only the issues and runs it may see; or the
@@ -313,16 +314,38 @@ async function auditCardInput(ctx: Ctx): Promise<CardInput> {
   return auditInput(rows);
 }
 
+/**
+ * A repository's card. The public repo, or one the signed-in viewer may read,
+ * gets the full card; any other well-formed ref gets a card of its title and
+ * the word "private" — the same for a private repo and a name nobody has
+ * taken, so the card cannot be used to find out which exist.
+ */
+function repoCard(ctx: Ctx, ref: string): CardInput | undefined {
+  const [owner, name, extra] = ref.split("~");
+  if (extra !== undefined || !owner || !name) return undefined;
+  if (!isSafeName(owner) || !isSafeName(name)) return undefined;
+  const repo = getRepo(ctx.app.db, owner, name);
+  if (repo && canRead(ctx.app.db, repo, ctx.auth.user))
+    return repoInput(ctx, repo, "repo");
+  return { kind: "repo", title: `${owner}/${name}`, stat: "private" };
+}
+
+/** Whether this response is for the signed-in viewer alone, not for a shared cache. */
+function personal(ctx: Ctx, kind: OgKind, ref: string): boolean {
+  if (kind !== "repo" || ctx.auth.user === undefined) return false;
+  const [owner, name] = ref.split("~");
+  if (!owner || !name || !isSafeName(owner) || !isSafeName(name)) return false;
+  const repo = getRepo(ctx.app.db, owner, name);
+  return repo !== undefined && repo.visibility !== "public";
+}
+
 async function resolve(ctx: Ctx, kind: OgKind, ref: string): Promise<CardInput | undefined> {
   const db = ctx.app.db;
   if (kind === "issue" || kind === "pull") return threadInput(ctx, kind, ref);
   if (kind === "run") return runInput(ctx, ref);
   if (kind === "map") return mapCardInput(ctx, ref);
   if (kind === "audit") return ref === "" ? auditCardInput(ctx) : undefined;
-  if (kind === "repo") {
-    const repo = twoPart(ctx, ref);
-    return repo && repoInput(ctx, repo, "repo");
-  }
+  if (kind === "repo") return repoCard(ctx, ref);
   if (!isSlug(ref)) return undefined;
   const record = getAppBySlug(db, ref);
   if (!record || record.access !== "public") return undefined;
@@ -365,7 +388,10 @@ export function ogCard(kind: OgKind, format: "svg" | "png" = "svg") {
     const etag = `"${createHash("sha256").update(signature(input)).digest("hex")}${format === "png" ? "-png" : ""}"`;
     const headers = {
       etag,
-      "cache-control": "public, max-age=300",
+      "cache-control": personal(ctx, kind, ctx.params.ref ?? "")
+        ? "private, max-age=300"
+        : "public, max-age=300",
+      ...(kind === "repo" ? { vary: "cookie" } : {}),
       "content-type": format === "png" ? "image/png" : "image/svg+xml; charset=utf-8",
     };
     if (ctx.request.headers.get("if-none-match") === etag)
