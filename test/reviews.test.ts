@@ -49,6 +49,23 @@ describe("review comments on diff lines", () => {
       redirect: "manual",
     });
 
+  // Each test that reads or rewrites a branch opens its own pull on its own
+  // branch, so no test depends on what another left behind.
+  async function openPr(branch: string): Promise<string> {
+    const dir = join(work, "app");
+    await gitOk(["checkout", "-B", branch, "main"], dir);
+    await Bun.write(join(dir, "code.txt"), "alpha\nBETA\ngamma\ndelta\n");
+    await gitOk(["commit", "-am", "change"], dir);
+    await gitOk(["push", "origin", branch], dir);
+    const res = await post("/rev/app/pulls/new", {
+      base: "main",
+      head: branch,
+      title: "PR",
+      body: "",
+    });
+    return res.headers.get("location")!.replace(/\/files$/, "");
+  }
+
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-rev-"));
     work = await mkdtemp(join(tmpdir(), "forge-rev-work-"));
@@ -139,8 +156,9 @@ describe("review comments on diff lines", () => {
   });
 
   test("a posted review comment appears inline, anchored to its line", async () => {
+    const pull = await openPr("topic-a");
     // "BETA" is the new-side content of line 2; anchor to it.
-    const res = await post("/rev/app/pulls/1/review", {
+    const res = await post(`${pull}/review`, {
       path: "code.txt",
       side: "new",
       line: "2",
@@ -149,29 +167,41 @@ describe("review comments on diff lines", () => {
     });
     expect(res.status).toBe(303);
     const pr = await (
-      await fetch(`${base}/rev/app/pulls/1/files`, { headers: { cookie } })
+      await fetch(`${base}${pull}/files`, { headers: { cookie } })
     ).text();
     expect(pr).toContain("why so loud?");
     expect(pr).not.toContain("outdated"); // hash matches the current line
   });
 
   test("a comment whose line content changed is marked outdated, not misplaced", async () => {
+    const pull = await openPr("topic-b");
     // Anchor a comment to line 3 ("gamma"), then rewrite that line on the
     // branch. The server hashed the content it saw, so the comment must now
     // read as outdated — never silently re-land on the new text.
-    const posted = await post("/rev/app/pulls/1/review", {
+    const kept = await post(`${pull}/review`, {
+      path: "code.txt",
+      side: "new",
+      line: "2",
+      body: "why so loud?",
+    });
+    expect(kept.status).toBe(303);
+    const posted = await post(`${pull}/review`, {
       path: "code.txt",
       side: "new",
       line: "3",
       body: "stale anchor",
     });
     expect(posted.status).toBe(303);
+    const before = await (
+      await fetch(`${base}${pull}/files`, { headers: { cookie } })
+    ).text();
+    expect(before).not.toContain("outdated");
     const dir = join(work, "app");
     await Bun.write(join(dir, "code.txt"), "alpha\nBETA\nGAMMA\ndelta\n");
     await gitOk(["commit", "-am", "rewrite line 3"], dir);
-    await gitOk(["push", "origin", "feature"], dir);
+    await gitOk(["push", "origin", "topic-b"], dir);
     const pr = await (
-      await fetch(`${base}/rev/app/pulls/1/files`, { headers: { cookie } })
+      await fetch(`${base}${pull}/files`, { headers: { cookie } })
     ).text();
     expect(pr).toContain("stale anchor");
     expect(pr).toContain("outdated"); // content hash no longer matches
