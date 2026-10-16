@@ -12,6 +12,11 @@
  * same ones the MCP `flow` tool and the terminal's Flow command read. Every
  * count links back here with `?out=<what>[&hour=<0–23>]`, which lists the
  * items it counted under the table.
+ *
+ * Under it, the merge queue (#2036): per repository, what is queued for the
+ * next candidate, what the candidate at the gate carries, and what landed
+ * in the last hour — `flow/queue.ts`'s numbers, which the terminal's Flow
+ * command and the MCP `flow` tool read too.
  */
 
 import { conflictedPulls, conflictedSays } from "../../flow/conflicted.ts";
@@ -34,6 +39,7 @@ import {
   stageOf,
   type StageThroughput,
 } from "../../flow/throughput.ts";
+import { readQueues, type QueueRow } from "../../flow/queue.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
@@ -163,8 +169,46 @@ export function flowPage(ctx: Ctx): Response {
       </div>`,
       { pad: false },
     )}
+    ${queueCard(readQueues(ctx.app.db, new Date(now)))}
     ${listed === null || shown === undefined ? null : outList(shown, listed.hour, now)}`;
   return page({ ctx, title: "Flow", body, styleCss: css });
+}
+
+/** The merge queue, one row per repository with something in it or landed. */
+function queueCard(rows: readonly QueueRow[]): Html {
+  return card(
+    html`<h2>Merge queue</h2>
+      <p class="muted small">
+        Green, approved pulls join their repository's queue; each candidate
+        is gated once and lands whole, or is bisected to the red one.
+      </p>
+      ${rows.length === 0
+        ? html`<p class="muted">Nothing queued, gating or landed in the last hour.</p>`
+        : html`<div class="table-scroll">
+            <table class="table" aria-label="Merge queue">
+              <thead>
+                <tr>
+                  <th scope="col">Repository</th>
+                  <th scope="col">Queued</th>
+                  <th scope="col">Gating</th>
+                  <th scope="col">Landed, last hour</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows.map(
+                  (r) =>
+                    html`<tr data-queue="${r.repo}">
+                      <th scope="row"><a href="/${r.repo}/pulls">${r.repo}</a></th>
+                      <td class="mono" data-queued>${String(r.queued)}</td>
+                      <td class="mono" data-gating>${String(r.gating)}</td>
+                      <td class="mono" data-landed>${String(r.landedHour)}</td>
+                    </tr>`,
+                )}
+              </tbody>
+            </table>
+          </div>`}`,
+    { id: "queue" },
+  );
 }
 
 /** The items one count counted, newest first, each linked to where it lives. */

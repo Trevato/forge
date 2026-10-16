@@ -10,9 +10,9 @@ import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { askCheck } from "../src/checks/again.ts";
 import { failuresOf } from "../src/checks/failures.ts";
 import { addLearned, readLearned } from "../src/checks/learned.ts";
-import { gateOnLand } from "../src/checks/landing.ts";
+import { gateCandidate } from "../src/checks/landing.ts";
 import { repoDir } from "../src/git/repos.ts";
-import { resolveOid } from "../src/git/merge.ts";
+import { mergeable, resolveOid } from "../src/git/merge.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { listRuns, type Run } from "../src/core/runs.ts";
 import { listPulls } from "../src/core/pulls.ts";
@@ -528,8 +528,11 @@ describe("the tiers in the forge's own checks service", () => {
     expect(readLearned(dataDir, pull.id)).toEqual(["test/x.test.ts"]);
   });
 
-  test("landing runs the full gate on the merge with its base; red is told and taught", async () => {
-    const pull0 = listPulls(app.db, repo.id, { state: "open", limit: 5 })[0]!;
+  test("landing runs the full gate on the merge with its base; red names its tests", async () => {
+    // What the merge queue gates (#2036): a commit that is the pull on its
+    // base. Handing the red back, and teaching the pull, is the queue's
+    // (test/merge-queue.test.ts).
+    const pull = listPulls(app.db, repo.id, { state: "open", limit: 5 })[0]!;
     const pushed = await commitToBranch(app, alice, repo, {
       message: "Main goes red on land",
       files: [
@@ -542,21 +545,27 @@ describe("the tiers in the forge's own checks service", () => {
       ],
     });
     if (!pushed.ok) throw new Error(JSON.stringify(pushed.error));
-    const pull = pull0;
-    const base = (await resolveOid(
-      repoDir(app.reposRoot, repo.ownerName, repo.name),
-      "refs/heads/main",
-    ))!;
-    const verdict = await gateOnLand(
-      app,
-      repo,
-      pull,
-      repoDir(app.reposRoot, repo.ownerName, repo.name),
-      base,
-    );
+    const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+    const base = (await resolveOid(dir, "refs/heads/main"))!;
+    const merged = await mergeable(dir, base, pull.headOid);
+    if (!merged.ok) throw new Error("expected the pull to merge with its base");
+    const commit = Bun.spawnSync(
+      ["git", "commit-tree", merged.value.treeOid, "-p", base, "-p", pull.headOid, "-m", "candidate"],
+      {
+        cwd: dir,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "forge",
+          GIT_AUTHOR_EMAIL: "forge@localhost",
+          GIT_COMMITTER_NAME: "forge",
+          GIT_COMMITTER_EMAIL: "forge@localhost",
+        },
+      },
+    ).stdout.toString().trim();
+    const verdict = await gateCandidate(app, repo, pull, dir, commit);
     if (verdict.lands) throw new Error("expected the full gate to be red");
     expect(verdict.comment).toContain("- lands red");
-    expect(readLearned(dataDir, pull.id)).toContain("test/y.test.ts");
+    expect(verdict.learn).toContain("test/y.test.ts");
   });
 
   const finished = async (pullId: string, oid: string): Promise<Run> => {

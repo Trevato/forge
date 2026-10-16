@@ -554,6 +554,20 @@ the mark. Only the crew parks: the API and the page refuse `reason: "parked"`.
 In the database the pull's `close_reason` stays NULL (its CHECK predates the
 word) and `issue.parked = 1` carries it, so raw SQL never reads it as done.
 
+**The merge queue.** A green, approved pull in an autonomous repository joins
+its repository's queue (`src/checks/queue.ts`). The queue builds one
+candidate: main, then each queued pull's squash on top of the one before, in
+queue order, leaving out any pull that conflicts or has nothing left to land.
+The full gate runs once on that candidate. Green lands every pull in order,
+and each landing is refused unless main is still where the candidate was
+built and the squash writes the tree that was gated, so main ends at the
+gated tree. Red bisects: the front half is gated by itself, a green half
+lands, and the red pull is handed back with the failing tests named. Pulls
+that turn green while a candidate is gating wait for the next one. Each
+queue's numbers — how many pulls are queued, how many are gating, and how
+many landed in the last hour — show in three places: the /flow page, the
+terminal's Flow command, and the MCP `flow` tool's `queue` field.
+
 An autonomous app's planner is **held** while nothing is landing or the plate
 is full: no pull has merged in 48 h while one was closed unmerged, or more than
 `slots × 3` ready, unassigned issues are waiting. The tick log says which

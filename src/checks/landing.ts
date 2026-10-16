@@ -24,55 +24,37 @@ import { running } from "../kernel/version.ts";
 import { recordRelease, type Release } from "../release/record.ts";
 import type { Pull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
-import { runGit } from "../git/env.ts";
-import { writeMergeTree } from "../git/merge.ts";
 import { failuresOf } from "./failures.ts";
 import { keepForgeGate } from "./gate_last.ts";
-import { addLearned } from "./learned.ts";
 import { checksFor } from "./service.ts";
 import { landVerdict, type LandVerdict } from "./tiers.ts";
 
-const IDENTITY = {
-  GIT_AUTHOR_NAME: "forge",
-  GIT_AUTHOR_EMAIL: "forge@localhost",
-  GIT_COMMITTER_NAME: "forge",
-  GIT_COMMITTER_EMAIL: "forge@localhost",
-};
-
 /**
- * `dir` is where the pull's objects are (`pullDir`). A repository whose
- * check has no fast tier already ran its whole check on this head, and a
- * forge with no checks service has nothing to run: both land.
+ * The full gate, once, on a commit that is what main would become — one
+ * pull with its base, or the merge queue's candidate of several (#2036).
+ * `pull` is the one the gate is asked for: where the objects are and which
+ * base branch's check is run. The manifest is the candidate's own.
  */
-export async function gateOnLand(
+export async function gateCandidate(
   app: App,
   repo: Repo,
   pull: Pull,
   dir: string,
-  baseTip: string,
+  commitOid: string,
 ): Promise<LandVerdict> {
   const checks = checksFor(app);
-  if (checks === undefined || baseTip === "") return { lands: true };
+  if (checks === undefined) return { lands: true };
   const [forgeJson, packageJson] = await Promise.all([
-    readFileAt(dir, pull.headOid, "forge.json"),
-    readFileAt(dir, pull.headOid, "package.json"),
+    readFileAt(dir, commitOid, "forge.json"),
+    readFileAt(dir, commitOid, "package.json"),
   ]);
   const declared = parseCheck(forgeJson, packageJson);
   if (!declared.ok || declared.value === undefined || declared.value.fast === null)
     return { lands: true };
-  const tree = await writeMergeTree(dir, baseTip, pull.headOid);
-  if (!tree.ok) return { lands: true };
-  const commit = await runGit(
-    ["commit-tree", tree.value.treeOid, "-p", baseTip, "-p", pull.headOid, "-m", "full gate on land"],
-    { cwd: dir, env: IDENTITY },
-  );
-  if (!commit.ok) return { lands: true };
-  const done = await checks.gate(repo, pull, commit.value.trim());
+  const done = await checks.gate(repo, pull, commitOid);
   keepForgeGate(app.config.dataDir, app.config.forgeRepo, `${repo.ownerName}/${repo.name}`, done.lines);
   const failed = failuresOf(done.lines);
-  const verdict = landVerdict(done.ok, failed.tests, failed.files);
-  if (!verdict.lands) addLearned(app.config.dataDir, pull.id, verdict.learn);
-  return verdict;
+  return landVerdict(done.ok, failed.tests, failed.files);
 }
 
 /**

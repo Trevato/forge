@@ -21,7 +21,9 @@ import {
   setIssueState,
 } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
-import { gateOnLand, releaseOnLand } from "../checks/landing.ts";
+import { gateCandidate, releaseOnLand } from "../checks/landing.ts";
+import { addLearned } from "../checks/learned.ts";
+import { enqueue, type GateCandidate, type Queued } from "../checks/queue.ts";
 import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { mergePull } from "../actions/pulls.ts";
@@ -998,10 +1000,17 @@ export function parkPull(
  */
 export async function sweepGreen(app: App, repo: Repo): Promise<number> {
   if (repo.autonomy !== "autonomous") return 0;
-  let landed = 0;
-  for (const pull of listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 }))
-    if (await landIfGreen(app, repo, pull)) landed++;
-  return landed;
+  // Admitted one by one, queued together, oldest first: the green pulls of
+  // one sweep are one candidate and one gate (#2036).
+  const open = listPulls(app.db, repo.id, { sealed: true, state: "open", limit: 50 });
+  const entries: Queued[] = [];
+  for (const pull of open.sort((a, b) => a.number - b.number)) {
+    const entry = await admit(app, repo, pull);
+    if (entry !== undefined) entries.push(entry);
+  }
+  if (entries.length === 0) return 0;
+  const landed = await enqueue(repo.id, entries, gateFor(app, repo));
+  return landed.filter(Boolean).length;
 }
 
 /** The sweep each repository has in flight, by repository id. */
@@ -1472,35 +1481,53 @@ export async function landIfGreen(
   repo: Repo,
   pull: Pull,
 ): Promise<boolean> {
-  if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
-  if (pull.state !== "open" || pull.mergedAt !== null) return false;
+  const entry = await admit(app, repo, pull);
+  if (entry === undefined) return false;
+  const [landed] = await enqueue(repo.id, [entry], gateFor(app, repo));
+  return landed === true;
+}
+
+/**
+ * Everything a green pull must be before it joins the merge queue
+ * (#2036): autonomous, open, unheld, green on its head, clear of the wall,
+ * reviewed, and not already told red on this head and base. The queue
+ * entry, or undefined when it does not join (and why is already done:
+ * a conflict sent to the crew, a pull closed as carried, a wall card).
+ */
+async function admit(
+  app: App,
+  repo: Repo,
+  pull: Pull,
+): Promise<Queued | undefined> {
+  if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return undefined;
+  if (pull.state !== "open" || pull.mergedAt !== null) return undefined;
   // The caller's copy may predate a landing: the row says whether it is
   // still open (#2017).
   const row = getPull(app.db, repo.id, pull.number);
   if (row === undefined || row.state !== "open" || row.mergedAt !== null)
-    return false;
+    return undefined;
   // A person said "not this one yet": nothing below happens until it is
   // released — no landing, no review sent, no run to bring the branch up
   // to date (`core/holds.ts`).
-  if (getHold(app.db, pull.id) !== undefined) return false;
+  if (getHold(app.db, pull.id) !== undefined) return undefined;
   // Only work the crew wrote, or a writer's, lands on green by itself: a
   // reader's pull — from a fork, say — waits for a person, outsiders
   // switch or not, and is never sent to the crew's reviewer (#619).
-  if (!landsOnItsOwn(app.db, repo, pull)) return false;
+  if (!landsOnItsOwn(app.db, repo, pull)) return undefined;
   const by = getUserById(app.db, repo.autonomyBy);
-  if (!by) return false;
+  if (!by) return undefined;
   // The newest run of each kind is what the head says: a red that a re-run
   // on the same commit has since turned green is history.
   const checks = verdictForHead(app.db, pull.id, pull.headOid);
-  if (checks.length === 0) return false;
-  if (checks.some((c) => c.state !== "ok")) return false;
+  if (checks.length === 0) return undefined;
+  if (checks.some((c) => c.state !== "ok")) return undefined;
   // A stop the crew took on a red check ends with the green after it; a
   // person's stop waits for a person.
   const greenAt = checks
     .map((c) => c.finishedAt ?? "")
     .reduce((a, b) => (a > b ? a : b), "");
   if (stopStands(latestDecision(app.db, pull.id, "retry"), greenAt))
-    return false;
+    return undefined;
   // Conflicts first: a pull that no longer merges is the crew's to bring
   // up to date, before anyone is asked whether it should land. A conflict
   // is remembered by the two tips it was between: until one of them moves
@@ -1510,7 +1537,7 @@ export async function landIfGreen(
   const baseTip =
     (await resolveOid(dir, `refs/heads/${pull.baseBranch}`)) ?? "";
   const between = `${pull.headOid}:${baseTip}`;
-  if (conflicted.get(pull.id) === between) return false;
+  if (conflicted.get(pull.id) === between) return undefined;
   if (baseTip !== "") {
     const clean = await mergeable(dir, baseTip, pull.headOid);
     if (!clean.ok) {
@@ -1518,7 +1545,7 @@ export async function landIfGreen(
         conflicted.set(pull.id, between);
         bringUpToDate(app, repo, pull, clean.error.files);
       }
-      return false;
+      return undefined;
     }
     // Nothing the base does not already hold: no gate and no review, for
     // there is nothing to land. The merge closes the pull as merged into
@@ -1530,7 +1557,7 @@ export async function landIfGreen(
         pull: pull.number,
         closed: closed.ok,
       });
-      return false;
+      return undefined;
     }
   }
   // A pull that loosens the contract is a change of policy, which is a
@@ -1572,7 +1599,7 @@ export async function landIfGreen(
         cells: cells.join("; "),
       });
     }
-    return false;
+    return undefined;
   }
   // One gate for every pull, whoever wrote it: when the crew has a
   // reviewer, a green head is queued for review and waits for an approval
@@ -1582,33 +1609,70 @@ export async function landIfGreen(
   // (#597). Only a person's own pull lands without a reviewer, or after a
   // review lapsed.
   const review = await reviewed(app, repo, pull);
-  if (review === "hold") return false;
-  // The full tier, once, on the merge with its base (#1198). Red is told to
-  // the pull once per head and base, and the pull waits for a push.
-  const red = latestDecision(app.db, pull.id, "land");
+  if (review === "hold") return undefined;
+  // The full tier, once, on the queue's candidate (#1198, #2036). Red is
+  // told to the pull once per head and base, and the pull waits for a push.
+  const told = latestDecision(app.db, pull.id, "land");
   const gatedAt = `${pull.headOid}:${baseTip}`;
   if (
-    red?.answer === "red" &&
-    typeof red.state === "object" &&
-    red.state !== null &&
-    (red.state as { at?: unknown }).at === gatedAt
+    told?.answer === "red" &&
+    typeof told.state === "object" &&
+    told.state !== null &&
+    (told.state as { at?: unknown }).at === gatedAt
   )
-    return false;
-  const verdict = await gateOnLand(app, repo, pull, dir, baseTip);
-  if (!verdict.lands) {
-    recordDecision(app.db, {
-      kind: "land",
-      repoId: repo.id,
-      issueId: pull.id,
-      state: { head: pull.headOid, at: gatedAt },
-      answer: "red",
-      p: 1,
-      by: "rule",
-      ms: 0,
-    });
-    addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, verdict.comment);
-    return false;
-  }
+    return undefined;
+  return {
+    pull,
+    dir,
+    land: (expect) => landGated(app, repo, by, pull, review, expect),
+    // On the forge's own code, the landed tree is checked out and
+    // preflighted off to the side; the landing does not wait on it
+    // (#1662). Once per candidate, at the last step that landed: that is
+    // the tree main is at.
+    release: (tip) =>
+      void releaseOnLand(app, by, repo, pull, tip).catch((error) =>
+        log.warn("release checkout failed", {
+          pull: pull.number,
+          why: error instanceof Error ? error.message : String(error),
+        }),
+      ),
+    handBack: (red, baseOid) => {
+      // Told on the base it was found red on: a new base is a new try.
+      recordDecision(app.db, {
+        kind: "land",
+        repoId: repo.id,
+        issueId: pull.id,
+        state: { head: pull.headOid, at: `${pull.headOid}:${baseOid}` },
+        answer: "red",
+        p: 1,
+        by: "rule",
+        ms: 0,
+      });
+      addLearned(app.config.dataDir, pull.id, red.learn);
+      addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, red.comment);
+    },
+  };
+}
+
+/** The queue's gate: the full tier on the candidate's tip, asked as its first pull. */
+function gateFor(app: App, repo: Repo): GateCandidate {
+  return (candidate) =>
+    gateCandidate(app, repo, candidate.steps[0]!.entry.pull, candidate.dir, candidate.tipOid);
+}
+
+/**
+ * Land one gated step of the queue's candidate: only onto the base it was
+ * built on, and only as the tree that was gated (`expect`). The new tip of
+ * the base, or undefined when it did not land.
+ */
+async function landGated(
+  app: App,
+  repo: Repo,
+  by: User,
+  pull: Pull,
+  review: "pass" | "lapsed",
+  expect: { baseOid: string; treeOid: string },
+): Promise<string | undefined> {
   // The gate took minutes: the pull it was run on must still be the one
   // here — open, unmerged, at the same head — or another landing, or a
   // push, came first and this verdict is about nothing.
@@ -1619,7 +1683,7 @@ export async function landIfGreen(
     still.mergedAt !== null ||
     still.headOid !== pull.headOid
   )
-    return false;
+    return undefined;
   // Green and clear of the wall lands. An autonomous repository does not
   // wait on a person; the ledger keeps the landing as the rule it is, once
   // per head, so the week's numbers still add up.
@@ -1645,7 +1709,7 @@ export async function landIfGreen(
       by: "rule",
       ms: 0,
     });
-  const merged = await mergePull(app, by, repo, pull, "squash");
+  const merged = await mergePull(app, by, repo, pull, "squash", expect);
   if (!merged.ok) {
     const why = mergeWhy(merged.error);
     log.info("green but not landed", {
@@ -1656,24 +1720,16 @@ export async function landIfGreen(
     // Main moved under a green pull: that is the agent's to fix, once per
     // move, and never past the same limit a red check gets.
     if (typeof merged.error !== "string" && merged.error.kind === "conflict") {
-      conflicted.set(pull.id, between);
+      conflicted.set(pull.id, `${pull.headOid}:${expect.baseOid}`);
       bringUpToDate(app, repo, pull, merged.error.files);
     }
-    return false;
+    return undefined;
   }
   conflicted.delete(pull.id);
   // Closed as merged into what already carried it: main did not move, so
   // there is no release to cut and nothing new was landed.
-  if (merged.value.carried) return false;
+  if (merged.value.carried) return undefined;
   resolveOpen(app.db, pull.id, "land", "shipped");
-  // On the forge's own code, the landed tree is checked out and preflighted
-  // off to the side; the landing does not wait on it (#1662).
-  void releaseOnLand(app, by, repo, pull, merged.value.mergeOid).catch((error) =>
-    log.warn("release checkout failed", {
-      pull: pull.number,
-      why: error instanceof Error ? error.message : String(error),
-    }),
-  );
   // Said once it has landed, so the note wakes no builder: the review was
   // asked for and never came.
   if (review === "lapsed") {
@@ -1695,7 +1751,7 @@ export async function landIfGreen(
     repo: `${repo.ownerName}/${repo.name}`,
     pull: pull.number,
   });
-  return true;
+  return merged.value.mergeOid;
 }
 
 export { pickBuilder };

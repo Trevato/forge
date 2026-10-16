@@ -26,6 +26,7 @@ import {
   pullDiff,
   pullStatus,
   type CreatePullError,
+  type LandingExpect,
   type MergePullError,
   type Pull,
   pullDir,
@@ -358,6 +359,8 @@ export async function mergePull(
   repo: Repo,
   pull: Pull,
   strategy: MergeStrategy,
+  /** The merge queue's guard: land only onto this base, as this tree (#2036). */
+  expect?: LandingExpect,
 ): Promise<
   Result<{ mergeOid: string; carried: boolean }, AccessError | MergePullError>
 > {
@@ -407,6 +410,7 @@ export async function mergePull(
         requireChecks: repo.requireChecks,
       },
       strategy,
+      ...(expect === undefined ? {} : { expect }),
       message: `${
         strategy === "squash"
           ? `${pull.title} (#${pull.number})`

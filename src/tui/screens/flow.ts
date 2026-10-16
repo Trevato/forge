@@ -3,16 +3,19 @@
  * /flow leads with, the throughput headline under it, then one line per
  * stage of what left it in the last hour and in 24 hours — the numbers of
  * `flow/pipeline.ts` and `flow/throughput.ts`, the same the page and the
- * MCP `flow` tool read. Read-only; Enter, Esc or q closes it.
+ * MCP `flow` tool read. Under them, each repository's merge queue (#2036):
+ * queued, gating, landed in the last hour (`flow/queue.ts`). Read-only;
+ * Enter, Esc or q closes it.
  */
 
 import type { Database } from "bun:sqlite";
 import { conflictedPulls, conflictedSays } from "../../flow/conflicted.ts";
 import { readPipeline, STAGE_LABEL, verdict } from "../../flow/pipeline.ts";
+import { readQueues } from "../../flow/queue.ts";
 import { readThroughput, stageOut, throughputSays } from "../../flow/throughput.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
-import { pad, wrap } from "../term/width.ts";
+import { pad, truncate, wrap } from "../term/width.ts";
 import { dialog } from "../ui/widgets.ts";
 
 const WIDTH = 64;
@@ -22,6 +25,7 @@ export function flowLines(db: Database, now = new Date()): string[] {
   const stages = readPipeline(db, now);
   const flow = readThroughput(db, stages.map((s) => s.key), now);
   const inner = WIDTH - 6;
+  const queues = readQueues(db, now);
   const conflicted = conflictedSays(conflictedPulls(db), now.getTime());
   return [
     ...wrap(verdict(stages, now.getTime()), inner),
@@ -33,6 +37,14 @@ export function flowLines(db: Database, now = new Date()): string[] {
       (s) =>
         `${pad(STAGE_LABEL[s.key], 12)} ${pad(String(s.lastHour), 9, "right")} ${pad(String(s.day), 5, "right")}  ${s.label}`,
     ),
+    "",
+    `${pad("Merge queue", 30)} ${pad("queued", 6, "right")} ${pad("gating", 6, "right")} ${pad("landed 1h", 9, "right")}`,
+    ...(queues.length === 0
+      ? ["Nothing queued, gating or landed in the last hour."]
+      : queues.map(
+          (q) =>
+            `${pad(truncate(q.repo, 30), 30)} ${pad(String(q.queued), 6, "right")} ${pad(String(q.gating), 6, "right")} ${pad(String(q.landedHour), 9, "right")}`,
+        )),
     ...(conflicted === null ? [] : ["", ...wrap(conflicted, inner)]),
   ];
 }

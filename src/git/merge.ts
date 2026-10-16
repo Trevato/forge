@@ -214,6 +214,12 @@ export async function merge(
     author: MergeIdentity;
     /** Who commits it, when that is not the author. */
     committer?: MergeIdentity;
+    /**
+     * The tree the merge must write, when one was already judged (the merge
+     * queue's gated candidate, #2036): any other tree is `base_moved`, and
+     * nothing is committed.
+     */
+    treeOid?: string;
   },
 ): Promise<Result<MergeResult, MergeError>> {
   if (
@@ -226,6 +232,8 @@ export async function merge(
 
   const tree = await mergeable(dir, input.baseOid, input.headOid);
   if (!tree.ok) return tree;
+  if (input.treeOid !== undefined && tree.value.treeOid !== input.treeOid)
+    return err({ kind: "base_moved" });
 
   // A squash keeps only the base as parent; a merge records both.
   const parents =

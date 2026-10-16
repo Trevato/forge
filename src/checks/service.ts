@@ -231,6 +231,11 @@ const handles = new WeakMap<App, ChecksHandle>();
 export const checksFor = (app: App): ChecksHandle | undefined =>
   handles.get(app);
 
+/** A test's stand-in checks service: what `checksFor` answers for this app. */
+export function provideChecksForTest(app: App, handle: ChecksHandle): void {
+  handles.set(app, handle);
+}
+
 export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   // Read on every pick (`core/capacity.ts`): an admin's change is honoured
   // by the next check, not the next boot. `concurrency` is the boot default.

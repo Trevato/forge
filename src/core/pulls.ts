@@ -809,6 +809,12 @@ export type MergePullError =
   /** The repo requires a passing deploy of this head, and there is none yet. */
   | "checks_required";
 
+/** The base a landing must find, and the tree it must write (#2036). */
+export interface LandingExpect {
+  readonly baseOid: string;
+  readonly treeOid: string;
+}
+
 export async function mergePull(
   db: Database,
   dir: string,
@@ -827,6 +833,11 @@ export async function mergePull(
      * brought into the base only to land — never before it may.
      */
     sealedFrom?: string;
+    /**
+     * What was judged (#2036): the base must still be at `baseOid` and the
+     * merge must write `treeOid`, or nothing lands (`base_moved`).
+     */
+    expect?: LandingExpect;
   },
 ): Promise<Result<{ mergeOid: string; carried: boolean }, MergePullError>> {
   // The row, not the caller's copy: a landing reads its pull, runs a gate
@@ -866,6 +877,8 @@ export async function mergePull(
   // caller: a check computed a request earlier and handed down is a check
   // that can be skipped.
   const status = await pullStatus(dir, pull, input.gate);
+  if (input.expect !== undefined && status.baseOid !== input.expect.baseOid)
+    return err({ kind: "base_moved" });
   // What the pull proposes is already on the base: there is nothing to
   // land, so nothing is committed — the pull closes as merged into the
   // commit that carried it, and the base does not move.
@@ -896,6 +909,7 @@ export async function mergePull(
     message: input.message,
     author: input.author,
     ...(input.committer === undefined ? {} : { committer: input.committer }),
+    ...(input.expect === undefined ? {} : { treeOid: input.expect.treeOid }),
   });
   if (!landed.ok) return landed;
 
