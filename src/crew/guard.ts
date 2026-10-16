@@ -90,17 +90,11 @@ export function skipsReplan(
 }
 
 /**
- * Whether `issue` has started `cap` runs inside the window since a person
- * who may direct the crew last spoke on it. A run a restart or the
- * provider cut short, a resumed run and a skipped one are not new starts.
+ * Where the cap's count starts on `issue`: a day ago, or the last word of a
+ * person who may direct the crew if that is later. The park note itself is
+ * no one's word, whoever's name it carries.
  */
-export function capReached(
-  db: Database,
-  repo: Repo,
-  issue: Issue,
-  cap: number,
-  now = new Date(),
-): boolean {
+function capFrom(db: Database, repo: Repo, issue: Issue, now: Date): string {
   const from = new Date(now.getTime() - CAP_WINDOW_MS).toISOString();
   const spoke = db
     .query<{ id: string; at: string }, [string, string]>(
@@ -117,20 +111,58 @@ export function capReached(
       spoke.map((s) => s.id),
     ),
   );
-  const since = spoke
+  return spoke
     .filter((s) => directors.has(s.id))
     .map((s) => s.at)
     .reduce((a, b) => (a > b ? a : b), from);
+}
+
+/**
+ * Whether `issue` has started `cap` runs inside the window since a person
+ * who may direct the crew last spoke on it. A run a restart or the
+ * provider cut short, a resumed run and a skipped one are not new starts;
+ * nor is a reviewer's run on a pull, which only answers a push the counted
+ * runs made and is bounded by the hand-over (`HANDOVER_ROUNDS`).
+ */
+export function capReached(
+  db: Database,
+  repo: Repo,
+  issue: Issue,
+  cap: number,
+  now = new Date(),
+): boolean {
   const row = db
     .query<{ n: number }, [string, string]>(
       `SELECT COUNT(*) AS n FROM run
         WHERE issue_id = ?1 AND kind = 'agent' AND created_at > ?2
           AND attempt = 0
+          AND reason != 'review'
           AND summary NOT LIKE 'interrupted: %'
           AND summary NOT LIKE 'skipped: %'`,
     )
-    .get(issue.id, since);
+    .get(issue.id, capFrom(db, repo, issue, now));
   return (row?.n ?? 0) >= cap;
+}
+
+/**
+ * Whether `issue` already carries the cap's note inside the cap's window:
+ * parked, and asked about, once. Words after the note — a review, a reader —
+ * do not make it a second park; only a director's word starts a new window.
+ */
+export function capNoted(
+  db: Database,
+  repo: Repo,
+  issue: Issue,
+  now = new Date(),
+): boolean {
+  return (
+    db
+      .query<{ id: string }, [string, string, string]>(
+        `SELECT id FROM comment
+          WHERE issue_id = ?1 AND body = ?2 AND created_at >= ?3 LIMIT 1`,
+      )
+      .get(issue.id, CAP_NOTE, capFrom(db, repo, issue, now)) !== null
+  );
 }
 
 /** Record that `issue` was capped: once per park, beside the note. */

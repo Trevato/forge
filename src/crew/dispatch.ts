@@ -58,6 +58,7 @@ import { followDivergence, settleAll, settleOnPush } from "./converge.ts";
 import { breakerTripped } from "./breaker.ts";
 import {
   CAP_NOTE,
+  capNoted,
   capReached,
   HANDOVER_NOTE,
   handoverNote,
@@ -310,7 +311,10 @@ export function queueAgentRun(
   // a pause or a restart is the same start, never a new one.
   const cap = app.config.issueRunCap ?? ISSUE_RUN_CAP;
   if (again === undefined && capReached(app.db, repo, issue, cap)) {
-    if (parkForBreaker(app, repo, issue, agent, CAP_NOTE))
+    if (
+      !capNoted(app.db, repo, issue) &&
+      parkForBreaker(app, repo, issue, agent, CAP_NOTE)
+    )
       recordCap(app.db, repo, issue, cap);
     return undefined;
   }

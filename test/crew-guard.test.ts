@@ -86,13 +86,18 @@ const guards = (answer: string) =>
   ).length;
 
 /** A finished run of the bot on `issue`; its reply, when given, is posted after it. */
-function ran(issue: Issue, reply?: string, state: "ok" | "failed" = "ok") {
+function ran(
+  issue: Issue,
+  reply?: string,
+  state: "ok" | "failed" = "ok",
+  reason = "assigned",
+) {
   const run = createRun(app.db, {
     repoId: repo.id,
     kind: "agent",
     issueId: issue.id,
     actorId: bot.user.id,
-    reason: "assigned",
+    reason,
   });
   claimRun(app.db, run.id);
   finishRun(app.db, run.id, {
@@ -310,13 +315,28 @@ describe("an issue cannot loop", () => {
       breakerParked(app.db, [repo.id]).filter((p) => p.issueId === issue.id),
     ).toHaveLength(1);
 
-    // A reader speaks: still capped.
+    // A reader speaks: still capped, and still the one park.
     ok(addComment(app, mallory, repo, issue, "Try again!"));
     expect(
       queueAgentRun(app, fresh(), issue, bot, "assigned", alice.id),
     ).toBeUndefined();
+    expect(
+      listComments(app.db, issue.id).filter((c) => c.body === CAP_NOTE),
+    ).toHaveLength(1);
+    expect(guards("capped")).toBe(before + 1);
     // A person who may direct the crew speaks: it runs again.
     ok(addComment(app, alice, repo, issue, "Smaller radius."));
+    expect(
+      queueAgentRun(app, fresh(), issue, bot, "assigned", alice.id)?.state,
+    ).toBe("queued");
+  });
+
+  test("a reviewer's runs on a pull are not the loop the cap counts", () => {
+    const issue = held("Sharper icons");
+    for (let n = 0; n < ISSUE_RUN_CAP - 1; n++) {
+      ran(issue);
+      ran(issue, undefined, "ok", "review");
+    }
     expect(
       queueAgentRun(app, fresh(), issue, bot, "assigned", alice.id)?.state,
     ).toBe("queued");
