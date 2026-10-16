@@ -15,6 +15,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { readFeed } from "../src/feed/feed.ts";
 import { feedCard } from "../src/web/studio/feed.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("the feed on the home page", () => {
   let dataDir: string;
@@ -43,6 +44,7 @@ describe("the feed on the home page", () => {
         adminIfFirst: first,
       });
       if (!r.ok) throw new Error(r.error);
+      promote(app.db, r.value);
       return r.value;
     };
     await mk("root", true);

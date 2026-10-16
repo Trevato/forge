@@ -21,6 +21,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { holdOpen, sweepStanding } from "../src/http/caller.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { forgeSshSession } from "../src/tui/ssh.ts";
+import { promote } from "./helpers/members.ts";
 
 const KEY_LINE =
   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIB2S7bF0R4NmuTUvVJXPPjdI1AF8XHXeYSNfr8DJ5eDo sam";
@@ -46,6 +47,7 @@ describe("a suspension holds in every process serving the forge", () => {
       adminIfFirst,
     });
     if (!made.ok) throw new Error(made.error);
+    promote(fresh.db, made.value);
     return made.value;
   };
   /** Resolves true once `p` settles, false if it has not within `ms`. */

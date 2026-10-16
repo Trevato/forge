@@ -43,6 +43,7 @@ import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { prefill } from "../src/web/pages/migrate-prefill.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -112,6 +113,7 @@ describe("migrate", () => {
       adminIfFirst,
     });
     if (!made.ok) throw new Error(String(made.error));
+    promote(app.db, made.value);
     return made.value;
   };
 

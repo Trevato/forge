@@ -25,6 +25,7 @@ import {
   updateAgent,
 } from "../core/agents.ts";
 import { createOrg, getOrg } from "../core/orgs.ts";
+import { setMember } from "../core/roles.ts";
 import {
   canRead,
   createRepo,
@@ -308,6 +309,9 @@ async function copyInto(
         return made.ok ? made.value : undefined;
       })());
     if (!founder) return err("could not make the child's founder");
+    // A member, not a guest: the child's first boot acts as the founder to
+    // open the direction and hand it to the planner, which starts a run.
+    setMember(child.db, founder.id, true, founder.id, new Date());
 
     let org = getOrg(child.db, plan.org);
     if (!org) {

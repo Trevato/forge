@@ -43,6 +43,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { startLooks } from "../src/looks/service.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -235,6 +236,7 @@ describe("the front page", () => {
         adminIfFirst: true,
       });
       if (!made.ok) throw new Error(made.error);
+      promote(app.db, made.value);
       return made.value;
     };
     admin = await user("owner");
@@ -637,6 +639,7 @@ describe("the front page", () => {
     });
     if (!sus.ok) throw new Error(sus.error);
     proveAll(app);
+    promote(app.db, sus.value);
     await make(sus.value, "sus-app");
     expect((await put(adminToken, { pinned: ["suspended-maker/sus-app"], hidden: [] })).status).toBe(200);
     forgetFrontScores(app);
@@ -714,6 +717,7 @@ describe("the front page", () => {
     const forked = await make(other, "weighed-forks");
     const forkerA = await createUser(app.db, { trusted: true, username: "forker-a", email: "fa@forge.local", password: "a-good-passphrase" });
     if (!forkerA.ok) throw new Error(forkerA.error);
+    promote(app.db, forkerA.value);
     const forkA = await createRepo(app, forkerA.value, { name: "my-weighed", visibility: "public" });
     if (!forkA.ok) throw new Error(String(forkA.error));
     app.db.query(`UPDATE repo SET fork_parent_id = ?1 WHERE id = ?2`).run(forked.repo.id, forkA.value.id);

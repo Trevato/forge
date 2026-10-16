@@ -17,6 +17,7 @@ import { askedLines, askedScreen } from "../src/tui/screens/asked.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -69,6 +70,7 @@ beforeAll(async () => {
       password: "a-good-passphrase", adminIfFirst: first,
     });
     if (!r.ok) throw new Error(r.error);
+    promote(app.db, r.value);
     return r.value;
   };
   carol = await mk("carol", true);

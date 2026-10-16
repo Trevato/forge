@@ -19,6 +19,7 @@ import { commitFiles } from "../src/git/write.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 /**
  * The invariants, one line each (the old file proved them through git over
@@ -91,6 +92,7 @@ describe("forks", () => {
         adminIfFirst: name === "alice",
       });
       users[name] = must(made);
+      promote(app.db, users[name]!);
       cookies[name] =
         `forge_session=${createSession(app.db, users[name]!.id).token}; forge_mode=dev`;
     }

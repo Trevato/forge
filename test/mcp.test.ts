@@ -25,6 +25,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { savePlacement } from "../src/core/placements.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { limitChanges, limitValue } from "../src/settings/limits.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("the forge over MCP", () => {
   let dataDir: string;
@@ -89,6 +90,7 @@ describe("the forge over MCP", () => {
     });
     if (!b.ok) throw new Error(b.error);
     bob = b.value;
+    promote(app.db, bob);
     rw = createToken(app.db, alice.id, "rw", "rw").token;
     ro = createToken(app.db, alice.id, "ro", "ro").token;
     bobRw = createToken(app.db, bob.id, "rw", "rw").token;
@@ -934,6 +936,7 @@ describe("the forge over MCP", () => {
   });
 
   test("whoami_can: the caller's role and its row, for a guest, a member and an admin", async () => {
+    setMember(app.db, bob.id, false, alice.id, new Date());
     const guest = (await tool(bobRw, "whoami_can")).value;
     expect(guest.role).toBe("guest");
     expect(guest.can).toEqual({ read: true, comment: true, make_it_yours: false, run_crew: false, administer: false });
@@ -941,7 +944,6 @@ describe("the forge over MCP", () => {
     const member = (await tool(bobRw, "whoami_can")).value;
     expect(member.role).toBe("member");
     expect(member.can).toEqual({ read: true, comment: true, make_it_yours: true, run_crew: true, administer: false });
-    setMember(app.db, bob.id, false, alice.id, new Date());
     const admin = (await tool(ro, "whoami_can")).value;
     expect(admin.role).toBe("admin");
     expect(admin.can.administer).toBe(true);

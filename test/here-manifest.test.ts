@@ -19,6 +19,7 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("the manifest: what you can do here, as who you are", () => {
   let dataDir: string;
@@ -50,6 +51,7 @@ describe("the manifest: what you can do here, as who you are", () => {
       if (!made.ok) throw new Error(made.error);
       users[name] = made.value;
     }
+    promote(app.db, ...Object.values(users));
     const alice = users["alice"]!;
     const org = createOrg(app.db, "acme", alice.id);
     if (!org.ok) throw new Error(org.error);

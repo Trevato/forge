@@ -15,6 +15,7 @@ import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { share } from "../src/feed/share.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 let dataDir: string;
 let app: App;
@@ -42,6 +43,7 @@ test("composer, timeline, a tell, a crew member's run and pull, a share, the app
       adminIfFirst: first,
     });
     if (!r.ok) throw new Error(r.error);
+    promote(app.db, r.value);
     return r.value;
   };
   const root = await mk("keeper", true);

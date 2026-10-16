@@ -33,6 +33,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { parseQuery } from "../src/fleet/selection.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("fleet operations", () => {
   let dataDir: string;
@@ -56,6 +57,7 @@ describe("fleet operations", () => {
       adminIfFirst,
     });
     if (!made.ok) throw new Error(made.error);
+    promote(app.db, made.value);
     return made.value;
   };
   const repoOf = async (owner: User, name: string, visibility: "public" | "private") => {

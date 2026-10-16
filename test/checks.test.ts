@@ -47,6 +47,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
+import { promote } from "./helpers/members.ts";
 
 const checkJson = (run: string, extra = ""): string =>
   `{"check": {"run": ${JSON.stringify(run)}, "install": ""${extra}}}\n`;
@@ -351,6 +352,7 @@ describe("checks", () => {
     });
     if (!b.ok) throw new Error(b.error);
     bob = b.value;
+    promote(app.db, bob);
     const made = await createRepo(app, alice, {
       name: "lib",
       visibility: "public",

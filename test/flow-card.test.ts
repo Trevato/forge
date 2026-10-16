@@ -29,6 +29,7 @@ import { stalledRows } from "../src/tui/screens/stalled.ts";
 import { feedJs } from "../src/web/studio/feed.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -98,6 +99,7 @@ describe("stalled steps on the home", () => {
         adminIfFirst: first,
       });
       if (!r.ok) throw new Error(r.error);
+      promote(app.db, r.value);
       return r.value;
     };
     await mk("keeper", true);

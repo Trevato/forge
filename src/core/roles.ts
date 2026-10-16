@@ -8,7 +8,6 @@
  */
 
 import type { Database } from "bun:sqlite";
-import { capacityValue } from "./capacity.ts";
 
 export const ROLES = ["guest", "member", "admin"] as const;
 export type Role = (typeof ROLES)[number];
@@ -52,17 +51,27 @@ export const NOT_A_MEMBER = "the owner has not made this account a member";
 /**
  * Whether the table withholds `ability` from this account. Only a person
  * can be a guest: agents and organizations are not accounts the owner
- * promotes, and other rules govern them. The `guard_guests` setting can
- * turn the refusal off (the test suite boots with it off).
+ * promotes, and other rules govern them. Nothing switches it off.
  */
 export function lacks(
   db: Database,
   user: { id: string; isAdmin: boolean; kind: string },
   ability: Ability,
 ): boolean {
-  if (user.kind !== "user" || capacityValue(db, "guard_guests") === "off") return false;
+  if (user.kind !== "user") return false;
   return !can(roleOf(db, user), ability);
 }
+
+/**
+ * `lacks(…, "run_crew")` as SQL, for a query that must not spend a row on
+ * a guest: true when `userId` (a column or subquery, never input) names a
+ * person who is neither an admin nor a member. Kept beside `roleOf` so the
+ * two say the same thing.
+ */
+export const guestSql = (userId: string): string =>
+  `EXISTS (SELECT 1 FROM user g WHERE g.id = ${userId}
+     AND g.kind = 'user' AND g.is_agent = 0 AND g.is_admin = 0
+     AND NOT EXISTS (SELECT 1 FROM member m WHERE m.user_id = g.id))`;
 
 export function roleOf(db: Database, user: { id: string; isAdmin: boolean }): Role {
   if (user.isAdmin) return "admin";

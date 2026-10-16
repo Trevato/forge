@@ -18,6 +18,7 @@ import {
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("a repository's feed", () => {
   let dataDir: string;
@@ -47,6 +48,7 @@ describe("a repository's feed", () => {
     });
     if (!b.ok) throw new Error(b.error);
     bob = b.value;
+    promote(app.db, bob);
     const made = await createRepo(app, alice, {
       name: "game",
       visibility: "public",

@@ -28,6 +28,7 @@ import { startCrew } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { readRunLog } from "../src/runs/log.ts";
 import { QUOTA_KEYS, getQuota, runningLimitSentence, setQuota } from "../src/settings/quotas.ts";
+import { promote } from "./helpers/members.ts";
 
 async function until<T>(read: () => T | undefined, ms = 60_000): Promise<T> {
   const deadline = Date.now() + ms;
@@ -52,6 +53,7 @@ async function twoUsers(app: App): Promise<{ alice: User; bob: User }> {
     if (!made.ok) throw new Error(made.error);
     users.push(made.value);
   }
+  promote(app.db, ...users);
   return { alice: users[0]!, bob: users[1]! };
 }
 

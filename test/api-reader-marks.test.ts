@@ -32,6 +32,7 @@ import {
 import { READER } from "../src/crew/direct.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -90,6 +91,7 @@ beforeAll(async () => {
       password: "a-good-passphrase",
     }),
   );
+  promote(app.db, mallory);
   bot = ok(await createAgent(app, alice, { username: "bot" }));
   repo = ok(
     await createRepo(app, alice, { name: "square", visibility: "public" }),

@@ -32,6 +32,7 @@ import { settleApp } from "./helpers/tui.ts";
 import { proposalLimiter } from "../src/http/proposal_gate.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -165,6 +166,7 @@ describe("over HTTP", () => {
       people.push(made.value);
     }
     [alice, carol] = people as [User, User];
+    promote(app.db, carol);
     const made = await createRepo(app, alice, { name: "lib", visibility: "public" });
     if (!made.ok) throw new Error(String(made.error));
     lib = made.value;

@@ -13,6 +13,7 @@ import { listReposOwnedBy } from "../src/core/repos.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("accounts: the confirm page for removing an organization too", () => {
   let dataDir: string;
@@ -181,6 +182,7 @@ describe("accounts: the confirm page for removing an organization too", () => {
   test("a person's own repository is named, and the lead no longer says only the account", async () => {
     await mkUser("rh");
     proveAll(app);
+    promote(app.db, getUserByName(app.db, "rh")!);
     const made = await createRepo(app, getUserByName(app.db, "rh")!, { name: "notes" });
     if (!made.ok) throw new Error(made.error);
     const res = await fetch(`${base}/settings/accounts/rh/retire`, { headers: admin });

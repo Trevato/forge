@@ -38,6 +38,7 @@ import { convergeFork } from "../src/crew/converge.ts";
 import { mayDirectCrew, readersAmong } from "../src/crew/direct.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 let dataDir: string;
 let app: App;
@@ -115,6 +116,7 @@ fi
   });
   if (!m.ok) throw new Error(m.error);
   mallory = m.value;
+  promote(app.db, mallory);
   const b = await createAgent(app, alice, { username: "bot", brief: "Be brief." });
   if (!b.ok) throw new Error(String(b.error));
   bot = b.value;
@@ -445,6 +447,7 @@ describe("every other door that queues a run", () => {
     });
     if (!u.ok) throw new Error(u.error);
     const uma = u.value;
+    promote(app.db, uma);
     // Her own repository, with the bot on its crew: a writer in every way
     // but a verified address.
     const own = await createRepoRow(app.db, app.reposRoot, {

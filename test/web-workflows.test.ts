@@ -41,6 +41,7 @@ import { clearViewCache } from "../src/view/cache.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -122,6 +123,7 @@ describe("fork at the origin, and propose a change through it", () => {
       redirect: "manual",
     });
     proveAll(app);
+    promote(app.db);
     return (response.headers.get("set-cookie") ?? "").split(";")[0]!;
   };
 
@@ -137,6 +139,7 @@ describe("fork at the origin, and propose a change through it", () => {
       }),
     });
     proveAll(upApp);
+    promote(upApp.db);
     const made = await fetch(`${upServers.url}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -573,6 +576,7 @@ describe("verdicts, threads, and the gate they open", () => {
     });
     cookies[username] = (signed.headers.get("set-cookie") ?? "").split(";")[0]!;
     proveAll(app);
+    promote(app.db);
     const token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },

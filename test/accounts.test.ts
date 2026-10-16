@@ -28,6 +28,7 @@ import { createUser as insertAgent, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { forgeSshSession, identityFor } from "../src/tui/ssh.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { promote } from "./helpers/members.ts";
 
 const EDGE = "edge-secret-for-accounts";
 const KEY_LINE =
@@ -105,6 +106,8 @@ describe("accounts: the owner sees, suspends and removes", () => {
     // This suite is about standing, not email: its outsiders are proven.
     proveAll(app);
     const user = getUserByName(app.db, name)!;
+    // Nor about roles: its outsiders are members (`test/guests.test.ts`).
+    promote(app.db, user);
     return { user, token: createToken(app.db, user.id, "o", "admin").token };
   };
 
@@ -624,6 +627,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
       password: "outsider-passphrase",
     });
     if (!made.ok) throw new Error(made.error);
+    promote(app.db, made.value);
     const token = createToken(app.db, made.value.id, "t", "admin").token;
     const create = () =>
       api("/api/v1/repos", { method: "POST", token, body: JSON.stringify({ name: "first" }) });

@@ -37,6 +37,7 @@ import {
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { serving } from "./helpers/studio.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("finding things in the studio: /search", () => {
   let dataDir: string;
@@ -61,6 +62,7 @@ describe("finding things in the studio: /search", () => {
       password: "a-good-passphrase",
     });
     if (!a.ok) throw new Error(a.error);
+    promote(app.db, a.value);
     alice = a.value;
     aliceCookie = (
       (
@@ -121,6 +123,7 @@ describe("finding things in the studio: /search", () => {
       password: "a-good-passphrase",
     });
     if (!bob.ok) throw new Error(bob.error);
+    promote(app.db, bob.value);
     const secret = await createRepo(app, bob.value, {
       name: "secret",
       visibility: "private",
@@ -266,6 +269,7 @@ describe("finding things in the studio: /search", () => {
       password: "a-good-passphrase",
     });
     if (!carol.ok) throw new Error(carol.error);
+    promote(app.db, carol.value);
     const carolCookie = (
       (
         await fetch(`${base}/signin`, {
@@ -362,6 +366,7 @@ describe("the studio home says what the crew cost you today", () => {
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
+    promote(app.db, a.value);
     alice = a.value;
     const c = await createUser(app.db, { trusted: true,
       username: "carol",
@@ -369,6 +374,7 @@ describe("the studio home says what the crew cost you today", () => {
       password: "a-good-passphrase",
     });
     if (!c.ok) throw new Error(c.error);
+    promote(app.db, c.value);
     aliceCookie = await signIn("alice");
     carolCookie = await signIn("carol");
 
@@ -508,6 +514,7 @@ describe("every studio page's headings form one outline", () => {
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
+    promote(app.db, a.value);
     alice = a.value;
     cookie = (
       (
@@ -707,6 +714,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
+    promote(app.db, a.value);
     cookie = (
       (
         await fetch(`${base}/signin`, {
@@ -1024,6 +1032,7 @@ describe("the studio names a person on the app's page, and the crew only for the
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
+    promote(app.db, a.value);
     alice = a.value;
     ownerCookie = await signIn("ivy");
 
@@ -1192,6 +1201,7 @@ describe("the studio's empty lists", () => {
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
+    promote(app.db, a.value);
     alice = a.value;
     cookie = (
       (
@@ -1302,12 +1312,14 @@ describe("the studio can change what an app says it is (#230)", () => {
       adminIfFirst: true,
     });
     if (!alice.ok) throw new Error(alice.error);
+    promote(app.db, alice.value);
     const carol = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
     });
     if (!carol.ok) throw new Error(carol.error);
+    promote(app.db, carol.value);
     ownerCookie = await signIn("alice");
     readerCookie = await signIn("carol");
     const made = await createRepo(app, alice.value, {

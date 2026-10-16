@@ -20,6 +20,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -66,6 +67,7 @@ describe("explore", () => {
     });
     if (!made.ok) throw new Error(made.error);
     proveAll(app);
+    promote(app.db, made.value);
     return made.value;
   };
   const appOf = async (

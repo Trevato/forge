@@ -16,6 +16,7 @@ import { serve } from "../src/http/server.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 const DAY = 24 * 60 * 60 * 1000;
@@ -37,6 +38,7 @@ describe("thought stream", () => {
         password: "a-good-passphrase", adminIfFirst: first,
       });
       if (!u.ok) throw new Error(u.error);
+      promote(app.db, u.value);
       return u.value;
     };
     // The first account is the forge's admin, who reads everything: not the viewer.

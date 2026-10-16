@@ -48,6 +48,7 @@ import { liveClientJs } from "../src/web/live.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { serving } from "./helpers/studio.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("an owner's page lists an app once, not once in each vocabulary (#221)", () => {
   let dataDir: string;
@@ -90,6 +91,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
       adminIfFirst: true,
     });
     if (!dan.ok) throw new Error(dan.error);
+    promote(app.db, dan.value);
     const cookie = await signIn("dan", "a-good-passphrase");
 
     const madeApp = await createRepo(app, dan.value, {
@@ -149,6 +151,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
       password: "a-good-passphrase",
     });
     if (!gus.ok) throw new Error(gus.error);
+    promote(app.db, gus.value);
     const plainOnly = await createRepo(app, gus.value, {
       name: "notebook",
       visibility: "public",
@@ -173,6 +176,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
       password: "a-good-passphrase",
     });
     if (!eve.ok) throw new Error(eve.error);
+    promote(app.db, eve.value);
     const cookie = await signIn("eve", "a-good-passphrase");
 
     const madeApp = await createRepo(app, eve.value, {
@@ -208,6 +212,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
       password: "a-good-passphrase",
     });
     if (!hal.ok) throw new Error(hal.error);
+    promote(app.db, hal.value);
     const ownerCookie = await signIn("hal", "a-good-passphrase");
     const made = await createRepo(app, hal.value, {
       name: "ledger",
@@ -231,6 +236,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
       password: "a-good-passphrase",
     });
     if (!ivy.ok) throw new Error(ivy.error);
+    promote(app.db, ivy.value);
     const strangerCookie = await signIn("ivy", "a-good-passphrase");
 
     const visit = (cookie?: string) =>
@@ -257,6 +263,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
       password: "a-good-passphrase",
     });
     if (!fay.ok) throw new Error(fay.error);
+    promote(app.db, fay.value);
     const cookie = await signIn("fay", "a-good-passphrase");
 
     const org = await createOrg(app, fay.value, "vega");
@@ -373,6 +380,7 @@ describe("every open pull's preview on the studio page", () => {
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
+    promote(app.db, a.value);
     cookie = (
       (
         await fetch(`${base}/signin`, {
@@ -528,6 +536,7 @@ describe("the studio home keeps itself current", () => {
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
+    promote(app.db, a.value);
     alice = a.value;
     cookie = (
       (
@@ -778,12 +787,14 @@ describe("the studio head says why the app is not up", () => {
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
+    promote(app.db, a.value);
     const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
     });
     if (!b.ok) throw new Error(b.error);
+    promote(app.db, b.value);
     writer = await signIn("alice");
     reader = await signIn("bob");
     const made = await createRepo(app, a.value, {
@@ -1043,12 +1054,14 @@ describe("the studio app page's terminal", () => {
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
+    promote(app.db, a.value);
     const b = await createUser(app.db, { trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
     });
     if (!b.ok) throw new Error(b.error);
+    promote(app.db, b.value);
     writer = await signIn("alice");
     reader = await signIn("bob");
     const made = await createRepo(app, a.value, {
@@ -1198,12 +1211,14 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
+    promote(app.db, a.value);
     const c = await createUser(app.db, { trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
     });
     if (!c.ok) throw new Error(c.error);
+    promote(app.db, c.value);
     owner = await signIn("alice");
     stranger = await signIn("carol");
     const made = await createRepo(app, a.value, {

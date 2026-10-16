@@ -23,6 +23,7 @@ import { listRuns } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("a converge issue whose parent tip the fork already holds", () => {
   let dataDir: string;
@@ -59,6 +60,7 @@ describe("a converge issue whose parent tip the fork already holds", () => {
     if (!a.ok || !b.ok) throw new Error("users");
     alice = a.value;
     bob = b.value;
+    promote(app.db, bob);
     const made = await createRepo(app, alice, { name: "game", visibility: "public" });
     if (!made.ok) throw new Error(String(made.error));
     parent = made.value;

@@ -20,6 +20,7 @@ import {
   stopStandInCrew,
   type StandInCrew,
 } from "./helpers/crew-standin.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("the crew, with a stand-in Claude Code: no credential reaches the repository", () => {
   let standIn: StandInCrew;
@@ -37,6 +38,7 @@ describe("the crew, with a stand-in Claude Code: no credential reaches the repos
 
   test("a non-admin owner's run fails with a person-worded line, before any agent starts", async () => {
     app.db.query("UPDATE user SET is_admin = 0 WHERE id = ?1").run(alice.id);
+    promote(app.db, alice);
     process.env.ANTHROPIC_API_KEY = "sk-forge-own-token";
     try {
       const issue = openIssue(app, alice, repo, {
@@ -78,6 +80,7 @@ describe("the crew, with a stand-in Claude Code: no credential reaches the repos
       });
       if (!o.ok) throw new Error(o.error);
       const otto = o.value;
+      promote(app.db, otto);
       const made = await createRepo(app, otto, {
         name: "yard",
         visibility: "private",

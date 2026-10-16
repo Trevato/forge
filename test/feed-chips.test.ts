@@ -19,6 +19,7 @@ import { chipHides } from "../src/feed/chips.ts";
 import type { FeedKind } from "../src/feed/items.ts";
 import { readFeed } from "../src/feed/feed.ts";
 import { feedJs } from "../src/web/studio/feed.ts";
+import { promote } from "./helpers/members.ts";
 
 const ALL: FeedKind[] = [
   "run", "ask", "pull", "decision", "map", "cost", "tell", "reply", "look", "milestone", "choose", "release",
@@ -79,6 +80,7 @@ describe("the chips of a forge", () => {
         adminIfFirst: first,
       });
       if (!r.ok) throw new Error(r.error);
+      promote(app.db, r.value);
       return r.value;
     };
     await mk("root", true);

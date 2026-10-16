@@ -27,6 +27,7 @@ import { setQuota } from "../src/settings/quotas.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("storage quota", () => {
   let dataDir: string;
@@ -50,6 +51,7 @@ describe("storage quota", () => {
     carolId = carol.value.id;
     carolToken = createToken(app.db, carolId, "t", "admin").token;
     proveAll(app);
+    promote(app.db);
     expect(ada.value.isAdmin).toBe(true);
     expect(bob.value.isAdmin).toBe(false);
     adaId = ada.value.id;
@@ -240,6 +242,7 @@ describe("storage quota", () => {
     const dave = await signUp(app, { username: "dave", email: "dave@f.dev", password: "dave-passphrase" });
     if (!dave.ok) throw new Error("signup");
     proveAll(app);
+    promote(app.db);
     const daveToken = createToken(app.db, dave.value.id, "t", "admin").token;
     const state = newFakeState("forgejo", "someone", "tok");
     state.repos.push({
@@ -282,6 +285,7 @@ describe("storage quota", () => {
     const gina = await signUp(app, { username: "gina", email: "gina@f.dev", password: "gina-passphrase" });
     if (!gina.ok) throw new Error("signup");
     proveAll(app);
+    promote(app.db);
     const token = createToken(app.db, gina.value.id, "t", "admin").token;
     const state = newFakeState("forgejo", "someone", "tok");
     state.repos.push({
@@ -320,6 +324,7 @@ describe("storage quota", () => {
     const made = await signUp(app, { username, email: `${username}@f.dev`, password: `${username}-passphrase` });
     if (!made.ok) throw new Error("signup");
     proveAll(app);
+    promote(app.db);
     setQuota(app.db, "storage", 2, adaId);
     const token = createToken(app.db, made.value.id, "t", "admin").token;
     expect((await push(username, token, "data", 1_500_000)).code).toBe(0);
@@ -363,6 +368,7 @@ describe("storage quota", () => {
     const gwen = await signUp(app, { username: "gwen", email: "gwen@f.dev", password: "gwen-passphrase" });
     if (!gwen.ok) throw new Error("signup");
     proveAll(app);
+    promote(app.db);
     const org = createOrg(app.db, "guild", gwen.value.id);
     if (!org.ok) throw new Error("org");
     setQuota(app.db, "storage", 2, adaId);

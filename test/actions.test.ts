@@ -33,6 +33,7 @@ import { getOrg, listTeams, OWNERS_TEAM } from "../src/core/orgs.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
+import { promote } from "./helpers/members.ts";
 
 /** Event kinds in chronological order (listEvents returns newest first). */
 const kinds = (app: App, repoId?: string) =>
@@ -64,6 +65,7 @@ describe("actions own authorization and events", () => {
     if (!a.ok || !b.ok) throw new Error("signup failed");
     alice = a.value;
     bob = b.value;
+    promote(app.db, alice, bob);
     const s = await createRepo(app, alice, { name: "secret" });
     const o = await createRepo(app, alice, {
       name: "open",

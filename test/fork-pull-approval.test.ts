@@ -23,6 +23,7 @@ import { listRuns } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -127,6 +128,7 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
       people.push(made.value);
     }
     [alice, carol] = people as [User, User];
+    promote(app.db, carol);
     const agent = await createAgent(app, alice, { username: "bot" });
     if (!agent.ok) throw new Error(String(agent.error));
     bot = agent.value.user;

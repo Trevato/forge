@@ -15,9 +15,13 @@ verify, a suspended one is refused, an agent and a stranger to a private
 repository meet their own reasons first. A comment from a guest is still a
 comment; it just starts no run. Agents and organizations are not guests.
 
-The Capacity setting `guard_guests` (`FORGE_GUARD_GUESTS`, default `on`) is the
-switch: `off` leaves the usual permissions. The test suite boots with it `off`
-and `test/guests.test.ts` turns it on.
+Nothing switches the refusal off: the test suite runs with it everywhere, and
+a suite whose people make things promotes them first (`promote` in
+`test/helpers/members.ts`). The crew's wake-up sweep, which starts a run on an
+agent-assigned issue that never had one, skips an issue whose last assigner is
+a guest, so an assignment made before the guard starts nothing either. A
+spawned forge's founder is made a member, so its first boot can hand the
+direction to the planner.
 
 On `/settings/people` an admin promotes a guest to member, with a starter
 model allowance (dollars a month, default none, through the grant of #1145),

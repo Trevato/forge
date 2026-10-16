@@ -12,6 +12,7 @@ import { createSession } from "../src/core/sessions.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 // A suspended account's repositories are kept, and hidden: a stranger and
 // a signed-in reader find them in no list, page or route; the forge's owner
@@ -36,6 +37,7 @@ describe("a suspended account's repositories leave every list", () => {
       adminIfFirst,
     });
     if (!made.ok) throw new Error(made.error);
+    promote(app.db, made.value);
     return made.value;
   };
   const get = (path: string, cookie?: string, mode?: "dev") => {

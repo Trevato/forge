@@ -21,6 +21,7 @@ import { lineageOf } from "../src/core/following.ts";
 import { canRead, type Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("fork counts hold only the forks the viewer may read", () => {
   let dataDir: string;
@@ -55,6 +56,7 @@ describe("fork counts hold only the forks the viewer may read", () => {
     }
     bob = users["bob"]!;
     carol = users["carol"]!;
+    promote(app.db, bob, carol);
     const made = await createRepo(app, users["alice"]!, {
       name: "lib",
       visibility: "public",

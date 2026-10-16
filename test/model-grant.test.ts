@@ -24,6 +24,7 @@ import {
   stopStandInCrew,
   type StandInCrew,
 } from "./helpers/crew-standin.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("model budget: zero, an own subscription, a capped grant", () => {
   let standIn: StandInCrew;
@@ -54,6 +55,7 @@ describe("model budget: zero, an own subscription, a capped grant", () => {
     });
     if (!made.ok) throw new Error(made.error);
     const user = made.value;
+    promote(app.db, user);
     const r = await createRepo(app, user, { name: "yard", visibility: "private" });
     if (!r.ok) throw new Error(String(r.error));
     const seeded = await commitToBranch(app, user, r.value, {

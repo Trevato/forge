@@ -21,6 +21,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { readFeed } from "../src/feed/feed.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("home is the feed", () => {
   let dataDir: string;
@@ -52,6 +53,7 @@ describe("home is the feed", () => {
         adminIfFirst: first,
       });
       if (!r.ok) throw new Error(r.error);
+      promote(app.db, r.value);
       return r.value;
     };
     await mk("keeper", true);

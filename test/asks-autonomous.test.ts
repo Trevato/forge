@@ -15,6 +15,7 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { BREAKER_NOTE } from "../src/crew/breaker.ts";
 import { askLinesFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -35,6 +36,7 @@ describe("autonomous repositories ask no one about the crew's own stalls", () =>
     });
     if (!made.ok) throw new Error("no alice");
     alice = getUserByName(app.db, "alice")!;
+    promote(app.db, alice);
     const r = await createRepo(app, alice, { name: "shelf", visibility: "public" });
     if (!r.ok) throw new Error(String(r.error));
     repo = r.value;

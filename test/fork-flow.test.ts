@@ -15,6 +15,7 @@ import {
   type FakeState,
 } from "./fake-origin.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { promote } from "./helpers/members.ts";
 
 /**
  * The fork flow: grab a repository you cannot push to, branch, edit, and
@@ -165,6 +166,7 @@ describe("the fork flow", () => {
     await mkAccount(originServers, UPSTREAM_OWNER);
     originToken = await mkAccount(originServers, ORIGIN_LOGIN);
     proveAll(originApp);
+    promote(originApp.db);
 
     await seedUpstream("gears");
     await seedUpstream("widgets");
@@ -232,6 +234,7 @@ describe("the fork flow", () => {
     aliceToken = await mkAccount(servers, "alice");
     bobToken = await mkAccount(servers, "bob");
     proveAll(app);
+    promote(app.db);
 
     forgejoOrigin = await connect(forgejo);
     githubOrigin = await connect(github, "github");

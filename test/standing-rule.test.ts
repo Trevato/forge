@@ -26,6 +26,7 @@ import { sweepStanding } from "../src/crew/standing.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { askLinesFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -82,6 +83,7 @@ describe("a standing rule per repository", () => {
     });
     cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
     alice = getUserByName(app.db, "alice")!;
+    promote(app.db, alice);
     const r = await createRepo(app, alice, { name: "shelf", visibility: "public" });
     if (!r.ok) throw new Error(String(r.error));
     repo = r.value;

@@ -19,6 +19,7 @@ import { Affinity, affinityFor } from "../src/feed/affinity.ts";
 import type { Candidate } from "../src/feed/items.ts";
 import { readFeed } from "../src/feed/feed.ts";
 import { rank } from "../src/feed/rank.ts";
+import { promote } from "./helpers/members.ts";
 
 const NOW = Date.parse("2026-10-02T12:00:00Z");
 const HOUR = 3600_000;
@@ -141,6 +142,7 @@ describe("the feed of a forge", () => {
         adminIfFirst: first,
       });
       if (!r.ok) throw new Error(r.error);
+      promote(app.db, r.value);
       return r.value;
     };
     // The first account is a site admin, who sees everything; neither of
@@ -293,6 +295,7 @@ describe("affinity", () => {
     });
     if (!u.ok) throw new Error(u.error);
     user = u.value;
+    promote(app.db, user);
     const r = await createRepo(app, user, { name: "mine", visibility: "public" });
     if (!r.ok) throw new Error("repo");
     repo = r.value;

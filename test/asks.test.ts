@@ -27,6 +27,7 @@ import { answerSetting, UNCLOSABLE_WORDS } from "../src/actions/setting_ask.ts";
 import { hunt } from "../src/crew/sentinel.ts";
 import { ASK_WORDS, decisionsFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -401,6 +402,7 @@ describe("the asks page", () => {
       const carol = await signUp("carol");
       const carolUser = getUserByName(app.db, "carol")!;
       markVerified(app.db, carolUser.id, new Date().toISOString());
+      promote(app.db, carolUser);
       const plot = await createRepo(app, carolUser, { name: "plot", visibility: "public" });
       if (!plot.ok) throw new Error(String(plot.error));
       away("cells.egress", "report");

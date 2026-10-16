@@ -29,6 +29,7 @@ import {
 } from "../src/core/users.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("commitIdentity", () => {
   const person = {
@@ -148,6 +149,7 @@ describe("commits the forge makes for a person", () => {
     const opted = updateProfile(app, c.value, { commitEmail: "account" });
     if (!opted.ok) throw new Error(opted.error);
     carol = opted.value;
+    promote(app.db, carol);
     repo = await madeRepo(alice, "app");
     carols = await madeRepo(carol, "notes");
     dir = dirOf(repo);

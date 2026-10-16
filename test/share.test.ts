@@ -23,6 +23,7 @@ import { readFeed } from "../src/feed/feed.ts";
 import { share } from "../src/feed/share.ts";
 import { parseTargets } from "../src/http/feed.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 const HOUR = 3600_000;
 const DAILY_BUDGET = LIMITS["share.daily_max"].default;
@@ -61,6 +62,7 @@ describe("share", () => {
         adminIfFirst: first,
       });
       if (!r.ok) throw new Error(r.error);
+      promote(app.db, r.value);
       return r.value;
     };
     const root = await mk("root", true);

@@ -24,6 +24,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserById, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -62,6 +63,7 @@ describe("make it yours", () => {
         adminIfFirst: first,
       });
       if (!r.ok) throw new Error(r.error);
+      promote(app.db, r.value);
       return r.value;
     };
     alice = await mk("alice", true);
@@ -258,6 +260,7 @@ describe("make it yours", () => {
         password: "a-good-passphrase",
       });
       if (!r.ok) throw new Error(r.error);
+      promote(app.db, r.value);
       return r.value;
     };
     // A private repository, and a public one whose app is private.
@@ -332,6 +335,7 @@ describe("make it yours", () => {
       password: "a-good-passphrase",
     });
     if (!frank.ok) throw new Error(frank.error);
+    promote(app.db, frank.value);
     const plan = await makeItYours(app, frank.value, garden, { dryRun: true });
     expect(plan.ok && plan.value.visibility).toBe("private");
     const made = await makeItYours(app, frank.value, garden, { dryRun: false });
@@ -365,6 +369,7 @@ describe("make it yours", () => {
       password: "a-good-passphrase",
     });
     if (!gina.ok) throw new Error(gina.error);
+    promote(app.db, gina.value);
     const token = createToken(app.db, gina.value.id, "rw", "rw").token;
     for (let n = 0; n < COPIES_PER_DAY; n++) {
       const src = await newApp(app, alice, { name: `bed-${n}`, visibility: "public" });
@@ -403,6 +408,7 @@ describe("make it yours", () => {
         password: "a-good-passphrase",
       });
       if (!r.ok) throw new Error(r.error);
+      promote(app.db, r.value);
       return r.value;
     };
     const source = async (name: string) => {

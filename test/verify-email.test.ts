@@ -14,6 +14,7 @@ import { emailVerified } from "../src/core/verify.ts";
 import { missing } from "./helpers/tools.ts";
 import { sendMail, type Mail } from "../src/kernel/mail.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 // A fresh outsider signs up and, until the link in its email is followed,
 // can read but cannot make or cost anything.
@@ -128,6 +129,7 @@ describe("verified email", () => {
 
   test("following the link verifies, and the account can create at once", async () => {
     const { user, token, link } = await join_("grace");
+    promote(app.db, user);
     expect(emailVerified(app.db, user.id)).toBe(false);
     const before = await api("/api/v1/repos", token, {
       method: "POST",

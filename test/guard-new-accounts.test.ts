@@ -23,6 +23,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { NEW_FOR_MS } from "../src/actions/accounts.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("guard_new_accounts", () => {
   let dataDir: string;
@@ -54,6 +55,7 @@ describe("guard_new_accounts", () => {
         ...(opts.adminIfFirst === true ? { adminIfFirst: true as const } : {}),
       });
       if (!made.ok) throw new Error(made.error);
+      promote(app.db, made.value);
       if (opts.backdate)
         app.db
           .query("UPDATE user SET created_at = ?1 WHERE id = ?2")

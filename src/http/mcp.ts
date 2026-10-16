@@ -2368,7 +2368,7 @@ const TOOLS: readonly Tool[] = [
       properties: {
         key: {
           type: "string",
-          enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress", "guard_new_accounts", "guard_guests"],
+          enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress", "guard_new_accounts"],
         },
         value: { type: "string", maxLength: 16 },
         dryRun: { type: "boolean", description: "Plan only (the default). Send false to change it." },

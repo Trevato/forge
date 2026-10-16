@@ -31,6 +31,7 @@ import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { settleApp } from "./helpers/tui.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -101,6 +102,7 @@ describe("let the decider answer a hand-over", () => {
     });
     cookie = `${(signin.headers.get("set-cookie") ?? "").split(";")[0]!}; forge_mode=studio`;
     alice = getUserByName(app.db, "alice")!;
+    promote(app.db, alice);
     const r = await createRepo(app, alice, { name: "shelf", visibility: "public" });
     if (!r.ok) throw new Error(String(r.error));
     repo = r.value;

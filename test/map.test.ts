@@ -32,6 +32,7 @@ import {
   wrapTitle,
   type Layout,
 } from "../src/web/pages/map.ts";
+import { promote } from "./helpers/members.ts";
 
 // ---- the layout, on paper ----
 
@@ -197,6 +198,7 @@ describe("the map, per app and across the forge", () => {
       adminIfFirst: admin,
     });
     if (!made.ok) throw new Error(made.error);
+    promote(app.db, made.value);
     return made.value;
   };
   const repoOf = async (

@@ -13,6 +13,7 @@ import { createSession } from "../src/core/sessions.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { liveClientJs } from "../src/web/live.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 async function readEvents(
   res: Response,
@@ -67,6 +68,7 @@ describe("the viewer's stream", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
+    promote(app.db, alice);
     const session = createSession(app.db, alice.id);
     cookie = `forge_session=${session.token}`;
   });

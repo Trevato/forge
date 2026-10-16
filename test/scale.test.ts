@@ -53,6 +53,7 @@ import {
 } from "../src/git/read.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import type { User } from "../src/core/users.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -91,6 +92,7 @@ describe("the index carries the hot queries", () => {
     if (!a.ok || !b.ok) throw new Error("seed users");
     alice = a.value;
     bob = b.value;
+    promote(app.db, bob);
 
     const made = await createRepo(app, alice, {
       name: "public-one",
@@ -422,6 +424,7 @@ describe("visibility is enforced in SQL, not after the fact", () => {
     if (!a.ok || !b.ok) throw new Error("seed");
     alice = a.value;
     bob = b.value;
+    promote(app.db, bob);
     const one = await createRepo(app, bob, {
       name: "open-book",
       visibility: "public",

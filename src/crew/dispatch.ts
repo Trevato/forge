@@ -53,7 +53,7 @@ import {
   type Run,
 } from "../core/runs.ts";
 import { getUserById, type User } from "../core/users.ts";
-import { lacks } from "../core/roles.ts";
+import { guestSql, lacks } from "../core/roles.ts";
 import { createLog } from "../kernel/log.ts";
 import { issueOfBranch, type RunReason } from "./brief.ts";
 import { detectClaude } from "./claude.ts";
@@ -216,7 +216,7 @@ export async function startCrew(
     pump(app, ready, inFlight);
   }, TICK_MS);
   requeueInterrupted(app);
-  sweep(app);
+  sweepAssigned(app);
   pump(app, ready, inFlight);
 
   const handle: CrewHandle = {
@@ -1074,9 +1074,18 @@ export function taskOf(
 
 /**
  * The sweep behind the wake-up: an open issue assigned to an agent that
- * has never had a run (assigned while the crew was off) gets one now.
+ * has never had a run (assigned while the crew was off) gets one now —
+ * unless the person who last assigned it is a guest. The assignment is
+ * theirs to pay for, and an issue a guest assigned before the guard existed
+ * would otherwise start the run the guard refuses them. An assignment with
+ * no event (made by the crew itself) is the crew's, as before.
  */
-function sweep(app: App): void {
+export function sweepAssigned(app: App): void {
+  // Who last assigned it: the newest `issue.assigned` or `pull.assigned`.
+  const assigner = `(SELECT e.actor_id FROM event e
+                WHERE e.repo_id = issue.repo_id AND e.kind = issue.kind || '.assigned'
+                  AND json_extract(e.payload, '$.number') = issue.number
+                ORDER BY e.id DESC LIMIT 1)`;
   const rows = app.db
     .query<{ id: string; repo_id: string }, []>(
       `SELECT issue.id, issue.repo_id FROM issue
@@ -1086,6 +1095,9 @@ function sweep(app: App): void {
          -- work landing, not a task waiting for a run.
          AND NOT (issue.kind = 'pull' AND issue.author_id = issue.assignee_id)
          AND NOT EXISTS (SELECT 1 FROM run WHERE run.issue_id = issue.id AND run.kind = 'agent')
+         -- In the query, not after it: a guest's issues never take one of
+         -- the hundred places, however many of them wait.
+         AND NOT ${guestSql(assigner)}
        ORDER BY issue.id LIMIT 100`,
     )
     .all();

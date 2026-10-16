@@ -28,6 +28,7 @@ import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { forgeHttp, type ForgeHttp } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -99,6 +100,7 @@ describe("a local writer approval lets an origin fork's pull run", () => {
       people.push(made.value);
     }
     [alice, carol] = people as [User, User];
+    promote(app.db, carol);
     const made = await createRepo(app, alice, {
       name: "lib",
       visibility: "public",

@@ -10,6 +10,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
+import { proposePlan } from "../src/actions/plan.ts";
+import { redirectProposal } from "../src/actions/proposals.ts";
+import { setCrewRole } from "../src/core/agents.ts";
+import { getProposal } from "../src/core/proposals.ts";
+import { listComments } from "../src/core/issues.ts";
+import { ensureDirectionIssue } from "../src/crew/autonomy.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { assignIssue, openIssue } from "../src/actions/issues.ts";
 import { newApp } from "../src/actions/apps.ts";
@@ -24,7 +30,7 @@ import { cancelRun, createRun, listRuns } from "../src/core/runs.ts";
 import { addComment } from "../src/actions/issues.ts";
 import { requeueRepoRun } from "../src/actions/runs.ts";
 import { proposeResolution } from "../src/crew/proposal.ts";
-import { agentFor, queueAgentRun } from "../src/crew/dispatch.ts";
+import { agentFor, queueAgentRun, sweepAssigned } from "../src/crew/dispatch.ts";
 import { getIssueById } from "../src/core/issues.ts";
 import { convergeFork } from "../src/crew/converge.ts";
 import { convergeWords } from "../src/actions/follow.ts";
@@ -95,8 +101,6 @@ describe("a guest cannot own, copy or run", () => {
     helper = agent.value.user;
     const crewed = addToCrew(app, bob, lab, "helper");
     if (!crewed.ok) throw new Error(crewed.error);
-    // The suite boots with the guard off; this one turns it on.
-    expect(changeCapacity(app, alice, "guard_guests", "on").ok).toBe(true);
   }, 60_000);
 
   afterAll(async () => {
@@ -183,11 +187,12 @@ describe("a guest cannot own, copy or run", () => {
     expect(hidden.status).toBe(404);
   });
 
-  test("an admin is never a guest, and the guard can be turned off", async () => {
+  test("an admin is never a guest, and no setting turns the guard off", async () => {
     expect((await api("/api/v1/repos", alice, { name: "admins" })).status).toBe(201);
-    expect(changeCapacity(app, alice, "guard_guests", "off").ok).toBe(true);
-    expect((await api("/api/v1/repos", bob, { name: "open-door" })).status).toBe(201);
-    expect(changeCapacity(app, alice, "guard_guests", "on").ok).toBe(true);
+    expect(changeCapacity(app, alice, "guard_guests" as never, "off").ok).toBe(false);
+    const capacity = await mcpTool(servers.url, createToken(app.db, alice.id, "admin", "admin").token, "capacity", {});
+    expect(JSON.stringify(capacity)).not.toContain("guard_guests");
+    expect((await api("/api/v1/repos", bob, { name: "open-door" })).status).toBe(403);
   });
 
   test("push-to-create: a guest's push to a new repository is refused with the words; a member's is not", async () => {
@@ -256,5 +261,61 @@ describe("a guest cannot own, copy or run", () => {
       .query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM issue WHERE repo_id = ?1 AND assignee_id IS NOT NULL AND title LIKE 'Take updates%'")
       .get(lab.id)!.n;
     expect(assigned).toBe(0);
+  });
+  test("redirecting a wave: a guest's own pending proposal is refused before anything is written", async () => {
+    setCrewRole(app.db, lab.id, helper.id, "planner");
+    const direction = ensureDirectionIssue(app, alice, lab)!;
+    const proposed = proposePlan(app, alice, lab, [{ key: "a", title: "Weed", body: "", blockedBy: [] }], {
+      title: "Spring",
+    });
+    if (!proposed.ok) throw new Error(JSON.stringify(proposed.error));
+    const id = proposed.value.id;
+    const comments = listComments(app.db, direction.id).length;
+
+    expect(redirectProposal(app, bob, id, "Roses first")).toEqual({
+      ok: false,
+      error: { code: "forbidden", message: NOT_A_MEMBER },
+    });
+    expect(getProposal(app.db, id)!.state).toBe("pending");
+    expect(listComments(app.db, direction.id)).toHaveLength(comments);
+    expect(getIssueById(app.db, direction.id)!.assigneeId).toBe(direction.assigneeId);
+    expect(listRuns(app.db, lab.id, { kind: "agent", limit: 50 }).some((r) => r.issueId === direction.id)).toBe(false);
+
+    // Promoted, the same words go through.
+    setMember(app.db, bob.id, true, alice.id, new Date());
+    expect(redirectProposal(app, bob, id, "Roses first").ok).toBe(true);
+    setMember(app.db, bob.id, false, alice.id, new Date());
+    expect(getProposal(app.db, id)!.state).toBe("redirected");
+  });
+
+  test("the wake-up sweep starts no run on an issue a guest assigned, and a hundred of them do not hold back a member's", async () => {
+    // As an assignment made before the guard (or by a member since demoted):
+    // the agent set, the event kept.
+    const assignedBy = (who: User, title: string) => {
+      const opened = openIssue(app, alice, lab, { title, body: "" });
+      if (!opened.ok) throw new Error(String(opened.error));
+      app.db.query("UPDATE issue SET assignee_id = ?1 WHERE id = ?2").run(helper.id, opened.value.id);
+      app.bus.append({
+        kind: "issue.assigned",
+        repoId: lab.id,
+        actorId: who.id,
+        payload: { number: opened.value.number, assignee: helper.username, agent: true },
+      });
+      return opened.value;
+    };
+    const runsOn = (id: string) => listRuns(app.db, lab.id, { kind: "agent", limit: 500 }).filter((r) => r.issueId === id);
+    // More than the sweep takes at once, all older than the member's.
+    const guests = Array.from({ length: 101 }, (_, n) => assignedBy(bob, `a guest's old assignment ${n}`));
+    const admins = assignedBy(alice, "an admin's assignment");
+
+    sweepAssigned(app);
+    expect(guests.filter((g) => runsOn(g.id).length > 0)).toHaveLength(0);
+    expect(runsOn(admins.id)).toHaveLength(1);
+
+    // The same assignment, once its assigner is a member, is picked up.
+    setMember(app.db, bob.id, true, alice.id, new Date());
+    sweepAssigned(app);
+    setMember(app.db, bob.id, false, alice.id, new Date());
+    expect(runsOn(guests[0]!.id)).toHaveLength(1);
   });
 });

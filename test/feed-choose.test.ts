@@ -14,6 +14,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { readFeed } from "../src/feed/feed.ts";
 import { chooseCandidates } from "../src/feed/choose.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("the feed's choose item", () => {
   let dataDir: string;
@@ -36,6 +37,7 @@ describe("the feed's choose item", () => {
         adminIfFirst: first,
       });
       if (!r.ok) throw new Error(r.error);
+      promote(app.db, r.value);
       return r.value;
     };
     await mk("root", true);

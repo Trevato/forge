@@ -27,6 +27,7 @@ import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -86,6 +87,7 @@ describe("terminal On you: mutes and many in one move", () => {
     alice = a.value;
     bob = b.value;
     markVerified(forge.db, bob.id, new Date().toISOString());
+    promote(forge.db, bob);
     const mk = async (name: string) => {
       const r = await createRepo(forge, alice, { name, visibility: "public" });
       if (!r.ok) throw new Error("repo failed");

@@ -31,6 +31,7 @@ import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { PNG, serving } from "./helpers/studio.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("the studio, continued", () => {
   let dataDir: string;
@@ -66,6 +67,7 @@ describe("the studio, continued", () => {
       adminIfFirst: true,
     });
     if (!a.ok) throw new Error(a.error);
+    promote(app.db, a.value);
     alice = a.value;
     cookie = (
       (
@@ -589,6 +591,7 @@ describe("the studio, continued", () => {
       password: "a-good-passphrase",
     });
     if (!stranger.ok) throw new Error(stranger.error);
+    promote(app.db, stranger.value);
     const strangerCookie = (
       (
         await fetch(`${base}/signin`, {
@@ -812,6 +815,7 @@ describe("the studio, continued", () => {
       password: "a-good-passphrase",
     });
     if (!bob.ok) throw new Error(bob.error);
+    promote(app.db, bob.value);
     const hidden = await createRepo(app, bob.value, {
       name: "hidden",
       visibility: "private",
@@ -901,6 +905,7 @@ describe("the studio, continued", () => {
       password: "a-good-passphrase",
     });
     if (!carol.ok) throw new Error(carol.error);
+    promote(app.db, carol.value);
     const carolCookie = (
       (
         await fetch(`${base}/signin`, {
@@ -1120,6 +1125,7 @@ describe("the studio, continued", () => {
       password: "a-good-passphrase",
     });
     if (!erin.ok) throw new Error(erin.error);
+    promote(app.db, erin.value);
     const erinCookie = (
       (
         await fetch(`${base}/signin`, {
@@ -1176,6 +1182,7 @@ describe("the studio, continued", () => {
         password: "a-good-passphrase",
       });
       if (!owner.ok) throw new Error(owner.error);
+      promote(app2.db, owner.value);
       const plain = await createRepo(app2, owner.value, {
         name: "just-code",
         visibility: "public",
@@ -1222,6 +1229,7 @@ describe("the studio, continued", () => {
         password: "a-good-passphrase",
       });
       if (!made.ok) throw new Error(made.error);
+      promote(app2.db, made.value);
       const pia = made.value;
       const appOf = async (name: string) => {
         const created = await createRepo(app2, pia, {

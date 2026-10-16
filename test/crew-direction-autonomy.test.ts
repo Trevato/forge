@@ -64,6 +64,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { mapJson, marksFor } from "../src/web/pages/map.ts";
 import { listEvents } from "../src/core/events.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { promote } from "./helpers/members.ts";
 
 quietLogs();
 
@@ -154,6 +155,7 @@ beforeAll(async () => {
       password: "a-good-passphrase",
     }),
   );
+  promote(app.db, mallory);
   for (const name of ["mason", "atlas", "judge"])
     ok(await createAgent(app, alice, { username: name }));
   mason = getUserByName(app.db, "mason")!;

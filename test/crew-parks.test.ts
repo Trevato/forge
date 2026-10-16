@@ -70,6 +70,7 @@ import {
   parkReason,
   struckOut,
 } from "../src/crew/parks.ts";
+import { promote } from "./helpers/members.ts";
 
 /**
  * One forge with alice's `engine` on its own: atlas plans, mason builds.
@@ -467,6 +468,7 @@ describe("an issue parked twice is the planner's", () => {
     });
     if (!b.ok) throw new Error(b.error);
     bob = b.value;
+    promote(app.db, bob);
     for (const name of ["alice", "bob"]) cookies[name] = await signIn(name);
   }, 30_000);
 

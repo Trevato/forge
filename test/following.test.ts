@@ -45,6 +45,7 @@ import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { resolveOid } from "../src/git/merge.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("a fork that follows its parent", () => {
   let dataDir: string;
@@ -104,6 +105,7 @@ describe("a fork that follows its parent", () => {
     });
     if (!b.ok) throw new Error(b.error);
     bob = b.value;
+    promote(app.db, bob);
     bobToken = createToken(app.db, bob.id, "t", "rw").token;
     const made = await createRepo(app, alice, {
       name: "game",
@@ -432,6 +434,7 @@ describe("a fork that follows its parent", () => {
       password: "a-good-passphrase",
     });
     if (!c.ok) throw new Error(c.error);
+    promote(app.db, c.value);
     const forked = await forkRepo(app, c.value, fresh(parent), "game-carol");
     if (!forked.ok) throw new Error(String(forked.error));
     const carols = forked.value;
@@ -470,6 +473,7 @@ describe("a fork that follows its parent", () => {
       password: "a-good-passphrase",
     });
     if (!d.ok) throw new Error(d.error);
+    promote(app.db, d.value);
     const forked = await forkRepo(app, d.value, fresh(parent), "game-dan");
     if (!forked.ok) throw new Error(String(forked.error));
     const dans = forked.value;
@@ -699,6 +703,7 @@ describe("a fork that follows its parent", () => {
       password: "a-good-passphrase",
     });
     if (!f.ok) throw new Error(f.error);
+    promote(app.db, f.value);
     const grand = await forkRepo(app, f.value, fresh(fork), "game-fay");
     if (!grand.ok) throw new Error(String(grand.error));
 
@@ -921,6 +926,7 @@ describe("a landed pull moves the forks, like the push it amounts to", () => {
       people.push(made.value);
     }
     [alice, bob, carol] = people as [User, User, User];
+    promote(app.db, bob, carol);
     const made = await createRepo(app, alice, {
       name: "engine",
       visibility: "public",

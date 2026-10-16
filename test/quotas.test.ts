@@ -25,6 +25,7 @@ import { createForgeApp } from "../src/tui/forge.ts";
 import { forkScreen, newRepoScreen } from "../src/tui/screens/newrepo.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { promote } from "./helpers/members.ts";
 
 const NONE = { repositories: null, apps: null, storage: null, previews: null, runs: null, checks: null };
 
@@ -48,6 +49,7 @@ describe("quotas", () => {
         adminIfFirst: username === "alice",
       });
       if (!made.ok) throw new Error(made.error);
+      promote(app.db, made.value);
       if (username === "alice") alice = made.value;
       else bob = made.value;
     }
@@ -254,6 +256,7 @@ describe("quotas", () => {
     });
     if (!made.ok) throw new Error(made.error);
     const carol = made.value;
+    promote(app.db, carol);
     const source = await newApp(app, alice, { name: "seed", visibility: "public" });
     if (!source.ok) throw new Error(String(source.error));
     await api(admin, "PATCH", { quotas: { apps: 1 } });
@@ -352,6 +355,7 @@ describe("the repositories limit", () => {
       if (!made.ok) throw new Error(made.error);
       users.push(made.value);
     }
+    promote(app.db, ...users);
     freshUser = users[1]!;
     boss = users[0]!;
     admin = createToken(app.db, users[0]!.id, "t", "admin").token;
@@ -454,6 +458,7 @@ describe("the repositories limit", () => {
     });
     if (!made.ok) throw new Error(made.error);
     const exact = made.value;
+    promote(app.db, exact);
     expect((await setLimit(2)).status).toBe(200);
     for (const name of ["x1", "x2"]) expect((await createRepo(app, exact, { name })).ok).toBe(true);
 
@@ -503,6 +508,7 @@ describe("the repositories limit", () => {
     });
     if (!made.ok) throw new Error(made.error);
     const doors = made.value;
+    promote(app.db, doors);
     const source = await newApp(app, boss, { name: "doorsrc", visibility: "public" });
     if (!source.ok) throw new Error(String(source.error));
     expect((await setLimit(2)).status).toBe(200);

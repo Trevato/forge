@@ -14,6 +14,7 @@ import { addCrew } from "../src/core/agents.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
 
 const BRIEF = "Q7BRIEFWORDS look after the parser";
 
@@ -54,6 +55,7 @@ describe("a crew agent's brief is the owner's configuration", () => {
     olive = await person("olive", true);
     rita = await person("rita");
     wren = await person("wren");
+    promote(app.db, wren);
     const made = await createAgent(app, olive, {
       username: "scout",
       brief: BRIEF,

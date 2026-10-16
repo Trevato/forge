@@ -25,6 +25,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { niceCeiling, windowSvg } from "../src/web/fleet-graph.ts";
 import { fleetGraphCsvText } from "../src/web/pages/fleet-graph.ts";
+import { promote } from "./helpers/members.ts";
 
 describe("the windows", () => {
   const now = new Date("2026-10-02T14:37:12.345Z");
@@ -147,6 +148,7 @@ describe("the graph", () => {
     if (!a.ok || !b.ok) throw new Error("users");
     alice = a.value;
     bob = b.value;
+    promote(app.db, alice, bob);
     for (const name of ["one", "two"]) {
       const r = await createRepo(app, alice, { name, visibility: "private" });
       if (!r.ok) throw new Error("repo");
