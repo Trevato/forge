@@ -6,7 +6,8 @@ import { createApp as createForge, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp } from "../src/core/apps.ts";
-import { createIssue } from "../src/core/issues.ts";
+import { addDependency } from "../src/core/dependencies.ts";
+import { getIssue, createIssue } from "../src/core/issues.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -82,6 +83,14 @@ describe("og cards", () => {
     app.db
       .query("UPDATE issue SET state = 'closed' WHERE repo_id = ?1 AND number = 4")
       .run(idOf("shown").id);
+    mk("shown", "Waits on two", "issue"); // #5
+    mk("shown", "Sealed blocker", "issue", true); // #6
+    mk("shown", "Waits on sealed", "issue"); // #7
+    const sh = idOf("shown").id;
+    const at = (n: number) => getIssue(app.db, sh, n)!;
+    addDependency(app.db, at(5), at(1), undefined);
+    addDependency(app.db, at(5), at(3), undefined);
+    addDependency(app.db, at(7), at(6), undefined);
     mk("hidden", "A private issue", "issue"); // #1
     const run = (repo: string) =>
       createRun(app.db, { repoId: idOf(repo).id, kind: "agent", summary: "did a thing" }).id;
@@ -211,6 +220,39 @@ describe("og cards", () => {
         `run/alice~shown~${privateRunId}`, // another repo's run
       ])
         expect((await get(`/og/${path}.svg`)).status).toBe(404);
+    });
+  });
+
+  describe("standing", () => {
+    const text = async (path: string) => await (await get(path)).text();
+
+    test("a ready issue says ready", async () => {
+      expect(await text("/og/issue/alice~shown~1.svg")).toContain("ready");
+    });
+
+    test("a blocked issue names visible blockers only, never a sealed one", async () => {
+      const body = await text("/og/issue/alice~shown~5.svg");
+      expect(body).toContain("waits on #1 +1");
+      expect(body).not.toContain(">#3<");
+      expect(body).not.toContain("#3,");
+      expect(body).not.toContain("#3 ");
+      expect(body).not.toContain("Sealed");
+      expect(await text("/og/issue/alice~shown~7.svg")).toContain("waits on 1 hidden");
+    });
+
+    test("a repo says how many are ready and how many blocked", async () => {
+      // open issues: #1 ready, #5 and #7 blocked, #3 and #6 sealed (unseen).
+      expect(await text("/og/repo/alice~shown.svg")).toContain("1 ready now · 2 blocked");
+    });
+
+    test("the etag moves when a shown value does, and only then", async () => {
+      const tag = async () => (await get("/og/issue/alice~shown~5.svg")).headers.get("etag");
+      const before = await tag();
+      expect(await tag()).toBe(before);
+      app.db.query("UPDATE issue SET state = 'closed' WHERE repo_id = ?1 AND number = 1").run(
+        getRepo(app.db, "alice", "shown")!.id,
+      );
+      expect(await tag()).not.toBe(before);
     });
   });
 });

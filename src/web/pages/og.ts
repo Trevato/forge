@@ -24,6 +24,7 @@ import {
   getRepoById,
   type Repo,
 } from "../../core/repos.ts";
+import { dependenciesOf, repoGraph, readyNow } from "../../core/dependencies.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { getPull, type Pull } from "../../core/pulls.ts";
 import { mayView } from "../../core/sealed.ts";
@@ -45,9 +46,51 @@ function repoInput(ctx: Ctx, repo: Repo, kind: "repo" | "app"): CardInput {
   return {
     kind,
     title: `${repo.ownerName}/${repo.name}`,
-    lines: repo.description ? [repo.description] : [],
     stat: `${n?.openIssues ?? 0} issues · ${n?.openPulls ?? 0} pulls`,
+    lines: [
+      ...(repo.description ? [repo.description] : []),
+      ...(kind === "repo" ? [standing(ctx, repo)] : []),
+    ],
   };
+}
+
+/**
+ * How the open issues an anonymous reader sees stand: how many are ready,
+ * how many wait on an open issue. Readiness is judged on the whole graph,
+ * sealed issues included, so a sealed blocker still holds its dependent;
+ * only the visible issues are counted.
+ */
+function standing(ctx: Ctx, repo: Repo): string {
+  const graph = repoGraph(ctx.app.db, repo.id, { sealed: true });
+  const visible = new Set(
+    graph.issues.filter((i) => i.state === "open" && !i.sealed).map((i) => i.id),
+  );
+  const open = new Set(
+    graph.issues.filter((i) => i.state === "open").map((i) => i.id),
+  );
+  const ready = readyNow(graph).filter((r) => visible.has(r.issue.id)).length;
+  const blocked = new Set<string>();
+  for (const e of graph.edges)
+    if (visible.has(e.issueId) && open.has(e.blockedById)) blocked.add(e.issueId);
+  for (const h of graph.held) if (visible.has(h.issueId)) blocked.add(h.issueId);
+  return `${ready} ready now · ${blocked.size} blocked`;
+}
+
+/** At most this many blockers are named on an issue card. */
+const NAMED_BLOCKERS = 3;
+
+/** "ready", or "waits on #A, #B, #C +N": sealed blockers are only counted. */
+function waiting(ctx: Ctx, repo: Repo, issue: Issue): string {
+  const db = ctx.app.db;
+  const open = dependenciesOf(db, issue.id).blockedBy.filter(
+    (b) => b.state === "open",
+  );
+  if (open.length === 0) return "ready";
+  const named = open.filter((b) => mayView(db, repo, b, undefined));
+  const shown = named.slice(0, NAMED_BLOCKERS).map((b) => `#${b.number}`);
+  const more = open.length - shown.length;
+  if (shown.length === 0) return `waits on ${more} hidden`;
+  return `waits on ${shown.join(", ")}${more > 0 ? ` +${more}` : ""}`;
 }
 
 export type OgKind = "repo" | "app" | "issue" | "pull" | "run";
@@ -79,7 +122,12 @@ function threadInput(ctx: Ctx, kind: OgKind, ref: string): CardInput | undefined
   return {
     kind,
     title: item.title,
-    lines: [`${at.repo.ownerName}/${at.repo.name}`],
+    lines: [
+      `${at.repo.ownerName}/${at.repo.name}`,
+      ...(kind === "issue" && item.state === "open"
+        ? [waiting(ctx, at.repo, item)]
+        : []),
+    ],
     stat: `#${item.number} · ${item.state}${merged ? " · merged" : ""}`,
   };
 }
