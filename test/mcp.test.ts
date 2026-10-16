@@ -208,6 +208,9 @@ describe("the forge over MCP", () => {
       "capacity",
       "flow",
       "limits",
+      "boards",
+      "board_write",
+      "board_delete",
       "report",
     ]);
     const byName = new Map<string, any>(
@@ -619,6 +622,39 @@ describe("the forge over MCP", () => {
     expect(done.value).toMatchObject({ key, from: before, to: 13 });
     expect(limitValue(app.db, key)).toBe(13);
     expect(limitChanges(app.db)[0]).toMatchObject({ key });
+  });
+
+  test("boards: list, read, write and delete for an admin person; an agent and a non-admin are refused", async () => {
+    const board = { title: "Runs", range: "24h", refresh: "off", panels: [{ title: "Failed", chart: "number", query: { source: "runs", aggregate: "count" }, w: 1, h: 1 }] };
+    const made = await createAgent(app, alice, { username: "boardbot", brief: "x" });
+    if (!made.ok) throw new Error(String(made.error));
+    app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(made.value.user.id);
+    const botToken = createToken(app.db, made.value.user.id, "bot", "rw").token;
+    for (const who of [bobRw, botToken]) {
+      expect((await tool(who, "boards")).error).toContain("forbidden");
+      expect((await tool(who, "board_write", { slug: "runs", board })).error).toContain("forbidden");
+      expect((await tool(who, "board_delete", { slug: "runs" })).error).toContain("forbidden");
+    }
+
+    // A read-only token may not write.
+    expect((await tool(ro, "board_write", { slug: "runs", board })).error).toContain("forbidden");
+    expect((await tool(rw, "boards")).value.boards).toEqual([]);
+
+    const wrote = await tool(rw, "board_write", { slug: "runs", board });
+    expect(wrote.value).toMatchObject({ slug: "runs", title: "Runs" });
+    expect((await tool(rw, "boards")).value.boards.map((b: any) => b.slug)).toEqual(["runs"]);
+    expect((await tool(ro, "boards", { slug: "runs" })).value.panels[0].title).toBe("Failed");
+    expect((await tool(rw, "boards", { slug: "nope" })).error).toContain("not_found");
+
+    // A panel that cannot run, or a board that does not validate, is refused.
+    const broken = { ...board, panels: [{ ...board.panels[0], query: { source: "nothing" } }] };
+    expect((await tool(rw, "board_write", { slug: "broken", board: broken })).error).toContain("refused");
+    expect((await tool(rw, "board_write", { slug: "Bad Slug", board })).error).toContain("invalid");
+
+    expect((await tool(ro, "board_delete", { slug: "runs" })).error).toContain("forbidden");
+    expect((await tool(rw, "board_delete", { slug: "runs" })).value).toEqual({ deleted: "runs" });
+    expect((await tool(rw, "boards")).value.boards).toEqual([]);
+    expect((await tool(rw, "board_delete", { slug: "runs" })).error).toContain("not_found");
   });
 
   test("ui:// card resources are listed, read, and tied to their tools", async () => {

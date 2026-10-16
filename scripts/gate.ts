@@ -419,6 +419,7 @@ export const EXCLUDED: readonly Exclusion[] = [
   },
   { file: "test/tui-app.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/tui-asked.test.ts", reason: "not yet admitted", issue: 261 },
+  { file: "test/tui-boards.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/tui-apps.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/tui-code.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/tui-editor.test.ts", reason: "not yet admitted", issue: 261 },

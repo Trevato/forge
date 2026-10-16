@@ -151,6 +151,7 @@ import type { Router } from "./router.ts";
 import { mayReadRuns } from "../actions/runs.ts";
 import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
+import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
 import { placementWords } from "../checks/placement.ts";
@@ -251,6 +252,15 @@ function issueArg(ctx: Ctx, repo: Repo, args: Args, key: string) {
 }
 
 const isAnswer = (v: Repo | Answer): v is Answer => "ok" in v;
+
+/** Boards are a forge admin's who is a person, as the API gates them: anyone else is forbidden, not told what is there. */
+const boardRefused = (): Answer => bad("forbidden", "boards are for a forge admin who is a person");
+const mayBoards = (user: User): boolean => user.isAdmin && user.kind !== "agent";
+function boardFailed(e: BoardError): Answer {
+  if (e === "not_found") return bad("not_found", "no such board");
+  if (typeof e === "object") return bad("refused", e.refused);
+  return bad(e, "that board could not be saved");
+}
 
 const TOOLS: readonly Tool[] = [
   {
@@ -2075,6 +2085,62 @@ const TOOLS: readonly Tool[] = [
         says: `${key}: ${changed.value.from} → ${changed.value.to}, from the next use on.`,
         ...changed.value,
       });
+    },
+  },
+  {
+    name: "boards",
+    description:
+      "The forge's boards, for a forge admin who is a person (an agent is refused): each board's slug, title, range, refresh and panels. The same as /boards and GET /api/v1/boards. With `slug`, that one board.",
+    inputSchema: {
+      type: "object",
+      properties: { slug: { type: "string", maxLength: 40, description: "One board, by slug." } },
+    },
+    writes: false,
+    async run(ctx, user, args) {
+      if (!mayBoards(user)) return boardRefused();
+      if (args["slug"] === undefined) {
+        const listed = await listAllBoards(ctx.app, user);
+        return listed.ok
+          ? good({ boards: listed.value.map((b) => ({ slug: b.slug, ...b.board })) })
+          : boardFailed(listed.error);
+      }
+      const shown = await showBoard(ctx.app, user, str(args["slug"]));
+      return shown.ok ? good({ slug: str(args["slug"]), ...shown.value }) : boardFailed(shown.error);
+    },
+  },
+  {
+    name: "board_write",
+    description:
+      "Write a whole board under a slug (a-z, 0-9 and -): made if new, replaced if there. `board` is {title, range: 1h|24h|7d|30d|all, refresh: off|10s|1m, panels: [{title, chart: line|bar|area|number|table|heat, query, w, h}]}. A panel whose query cannot run is refused. For a forge admin who is a person; an agent is refused. The same as PUT /api/v1/boards/:slug.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", maxLength: 40 },
+        board: { type: "object", description: "The whole board." },
+      },
+      required: ["slug", "board"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      if (!mayBoards(user)) return boardRefused();
+      const done = await writeBoard(ctx.app, user, str(args["slug"]), args["board"]);
+      return done.ok ? good({ slug: str(args["slug"]), ...done.value }) : boardFailed(done.error);
+    },
+  },
+  {
+    name: "board_delete",
+    description:
+      "Delete a board by slug (the commit stays in the boards repo's history). For a forge admin who is a person; an agent is refused. The same as DELETE /api/v1/boards/:slug.",
+    inputSchema: {
+      type: "object",
+      properties: { slug: { type: "string", maxLength: 40 } },
+      required: ["slug"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      if (!mayBoards(user)) return boardRefused();
+      const done = await deleteBoard(ctx.app, user, str(args["slug"]));
+      return done.ok ? good({ deleted: str(args["slug"]) }) : boardFailed(done.error);
     },
   },
 ];

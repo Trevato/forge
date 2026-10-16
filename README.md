@@ -859,7 +859,7 @@ work here.
   default branches (force-push and deletion refused, honest fast-forwards
   allowed).
 - **Boards** — `/boards/data`, for a forge admin who is a person (anyone else
-  gets a 404): the query is the URL (`?source=runs&aggregate=count&by=day&fcolumn=state&fvalue=failed`),
+  gets a 404 on the page): the query is the URL (`?source=runs&aggregate=count&by=day&fcolumn=state&fvalue=failed`),
   drawn server-side as the chart chosen beside it (`chart=line|bar|area|number|table|heat`)
   with its points in a table; a point opens the rows behind it, keeping your filter.
   `series=<column>` splits each group by a second column: stacked area draws one band per
@@ -873,7 +873,7 @@ work here.
   duplicate, delete, add/edit/remove/reorder panels, or pin the query on `/boards/data`.
   A board with a refresh redraws its grid on that beat through the live-region swap
   (`/boards/:slug/live`, etag'd). The same doors are in the API: `GET /api/v1/boards`, `GET|PUT|DELETE /api/v1/boards/:slug`
-  (an agent is 403, anyone but an admin 404; a panel whose query cannot run is refused with 422). No dependency was added.
+  (an agent or anyone but an admin is 403; a panel whose query cannot run is refused with 422). The same four doors are MCP tools (`boards`, `board_write`, `board_delete`; `boards` with a `slug` reads one) and, for the same person, a **Boards** screen in the terminal that lists boards and shows a board's panels as text. No dependency was added.
 - **Issues** — labels, threaded comments, close/reopen, markdown.
 - **Pull requests** — open from a branch, a **beautiful diff viewer** (syntax
   highlighting composed with intra-line word highlighting, mobile-first,

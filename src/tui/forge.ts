@@ -28,6 +28,7 @@ import {
   openOnWeb,
   runAsync,
 } from "./screens/common.ts";
+import { boardsScreen } from "./screens/boards.ts";
 import { askedScreen } from "./screens/asked.ts";
 import { familyScreen } from "./screens/family.ts";
 import { familyLines, familyView } from "../spawn/family.ts";
@@ -197,6 +198,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
             sentinelSummary(session.db) ?? "The sentinel has not hunted yet",
             "default",
           ),
+      });
+    // The boards, as the page gates them: a site admin who is a person, never an agent (#1817).
+    if (session.user?.isAdmin === true && session.user.kind !== "agent")
+      commands.push({
+        id: "boards",
+        title: "Boards",
+        hint: "the forge's boards and their panels",
+        run: () => ctx.push(boardsScreen(session, ctx)),
       });
     // The pipeline's bottleneck and throughput, as /flow says them: a site admin's (#1554, #1786).
     if (session.user?.isAdmin === true)
