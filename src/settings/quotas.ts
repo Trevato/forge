@@ -3,7 +3,8 @@
  * `forge_setting` under `quota.<key>`, and every change is kept in
  * `forge_setting_change` (who, when, from what to what). The default for
  * each is no limit (`null`), and creating an app asks the apps limit
- * (`actions/app_limit.ts`); repositories are not enforced yet. Room for more keys is the `QUOTA_KEYS` list.
+ * (`actions/app_limit.ts`); repositories are not enforced yet. Room for more
+ * keys is the `QUOTA_KEYS` list.
  */
 
 import type { Database } from "bun:sqlite";
