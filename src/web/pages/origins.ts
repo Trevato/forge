@@ -84,6 +84,7 @@ export type AccountSection =
   | "access"
   | "resilience"
   | "limits"
+  | "flags"
   | "cloud";
 
 /**
@@ -152,6 +153,12 @@ export function accountSections(
             href: "/admin/limits",
             icon: "activity" as const,
             current: current === "limits",
+          },
+          {
+            label: "Flags",
+            href: "/settings/flags",
+            icon: "activity" as const,
+            current: current === "flags",
           },
           {
             label: "Backups",

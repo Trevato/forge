@@ -108,6 +108,51 @@ export function evaluate(
   return value.forge ?? def;
 }
 
+export type FlagInput = {
+  /** "" leaves `forge` unset; "on"/"off" set it. */
+  forge: string;
+  users: string;
+  roles: string;
+  percent: string;
+};
+
+const ID = /^[A-Za-z0-9_-]{1,64}$/;
+const ROLE = /^[a-z][a-z0-9_-]{0,31}$/;
+const MAX_LIST = 200;
+
+function list(text: string, shape: RegExp, what: string) {
+  const items = [...new Set(text.split(/[\s,]+/).filter((x) => x !== ""))];
+  if (items.length > MAX_LIST) return `Too many ${what}.`;
+  const bad = items.find((x) => !shape.test(x));
+  return bad === undefined ? items : `"${bad.slice(0, 40)}" is not a valid ${what.replace(/s$/, "")}.`;
+}
+
+/**
+ * Check form text against the declared type of a flag value (see `FlagValue`)
+ * and build it. `undefined` means nothing is set: clear the row.
+ */
+export function checkInput(
+  input: FlagInput,
+): { ok: true; value: FlagValue | undefined } | { ok: false; message: string } {
+  const out: FlagValue = {};
+  if (input.forge === "on") out.forge = true;
+  else if (input.forge === "off") out.forge = false;
+  else if (input.forge !== "") return { ok: false, message: "forge must be on, off or unset." };
+  const users = list(input.users, ID, "user ids");
+  if (typeof users === "string") return { ok: false, message: users };
+  if (users.length > 0) out.users = users;
+  const roles = list(input.roles, ROLE, "roles");
+  if (typeof roles === "string") return { ok: false, message: roles };
+  if (roles.length > 0) out.roles = roles;
+  const pct = input.percent.trim();
+  if (pct !== "") {
+    if (!/^\d{1,3}$/.test(pct) || Number(pct) > 100)
+      return { ok: false, message: "percent is a whole number from 0 to 100." };
+    out.percent = Number(pct);
+  }
+  return { ok: true, value: Object.keys(out).length === 0 ? undefined : out };
+}
+
 /** Declared names that no source reads as `flag("name"` (or `'name'`). */
 export function unreadFlags(
   names: readonly string[],
@@ -145,6 +190,45 @@ export function makeFlags<const D extends Record<string, FlagDecl>>(decls: D) {
         values = new Map();
       }
     },
+    decls,
+    /** The live value of `name`, if one is set. */
+    value(name: keyof D & string): FlagValue | undefined {
+      return values.get(name);
+    },
+    /**
+     * Store `value` for a declared flag (`undefined` clears it), keep the
+     * change in `forge_setting_change`, and reload so it is live at once.
+     */
+    set(
+      db: Database,
+      name: string,
+      value: FlagValue | undefined,
+      actorId: string,
+    ): boolean {
+      if (!Object.hasOwn(decls, name)) return false;
+      const key = KEY_PREFIX + name;
+      const at = new Date().toISOString();
+      const show = (v: string | null | undefined) => v ?? "default";
+      db.transaction(() => {
+        const from = db
+          .query<{ value: string }, [string]>("SELECT value FROM forge_setting WHERE key = ?1")
+          .get(key)?.value;
+        const to = value === undefined ? undefined : JSON.stringify(value);
+        if (to === undefined) db.query("DELETE FROM forge_setting WHERE key = ?1").run(key);
+        else
+          db.query(
+            `INSERT INTO forge_setting (key, value, updated_by, updated_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (key) DO UPDATE SET value = excluded.value,
+               updated_by = excluded.updated_by, updated_at = excluded.updated_at`,
+          ).run(key, to, actorId, at);
+        db.query(
+          `INSERT INTO forge_setting_change (key, from_value, to_value, actor_id, at)
+           VALUES (?1, ?2, ?3, ?4, ?5)`,
+        ).run(key, show(from), show(to), actorId, at);
+      })();
+      this.load(db);
+      return true;
+    },
     flag(name: keyof D & string, viewer?: Viewer): boolean {
       return evaluate(name, decls[name]!.default, values.get(name), viewer);
     },
@@ -158,3 +242,24 @@ export const loadFlags = forgeFlags.load;
 
 /** Whether `name` is on for `viewer` (none: signed out). */
 export const flag = forgeFlags.flag;
+
+/** The forge's registry, for the settings page. */
+export const forgeRegistry = forgeFlags;
+
+type Registry = typeof forgeRegistry;
+let active: Registry = forgeRegistry;
+
+/** The registry the settings page and the terminal screen read and set. */
+export function flagRegistry(): Registry {
+  return active;
+}
+
+/** Tests swap the registry for one with declared flags; the forge never does. */
+export function useFlagRegistry(next: Registry | undefined): void {
+  active = next ?? forgeRegistry;
+}
+
+/** Whether `user` may see and set flags: an admin who is not an agent. */
+export function mayManageFlags(user: { isAdmin: boolean; kind: string } | undefined): boolean {
+  return user !== undefined && user.isAdmin && user.kind !== "agent";
+}

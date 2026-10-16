@@ -1111,6 +1111,10 @@ In the forge itself: a pull's check runs `fast` when the manifest has one, in a 
 
 While the default branch's own last check is red, the forge holds its pulls' checks queued rather than fail each one on the same test (`src/checks/red_main.ts`): the vitals carry one card naming the failing test and how many checks wait, and main going green releases them. A check a person asks for again runs at once, and no check is held more than 20 minutes, so the pull that fixes main can always show green.
 
+## Flags
+
+A forge admin sees every declared flag at `/settings/flags` (Settings → Flags): why it exists, its default, the owner issue and its live value. Set it for the whole forge, for listed user ids or roles, or for a percentage of people; Clear returns it to the default. A change is validated, kept in the change record and live on the next request, with no restart. In the terminal the same admin opens the command palette (`ctrl+k`), picks Flags, and presses enter to set a flag from a line such as `forge=on users=u1,u2 roles=admin percent=30` or `x` to clear it; an agent is never an admin there either.
+
 ## Limits
 
 Every limit the owner can hit is declared in `src/settings/limits.ts` with its default, bounds and reason, and changed live by a forge admin at `/admin/limits`, `PUT /api/v1/admin/limits/:key` or the `limits` MCP tool (never by an agent). Each change is kept with who made it.

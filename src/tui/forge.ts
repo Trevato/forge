@@ -37,7 +37,9 @@ import { issueScreen } from "./screens/issue.ts";
 import { pullScreen } from "./screens/pull.ts";
 import { blobScreen } from "./screens/repo.ts";
 import { dashboardScreen } from "./screens/dashboard.ts";
+import { mayManageFlags } from "../core/flags.ts";
 import { accessScreen } from "./screens/access.ts";
+import { flagsScreen } from "./screens/flags.ts";
 import { domainsScreen } from "./screens/domains.ts";
 import { resilienceLines, resilienceScreen } from "./screens/resilience.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
@@ -267,6 +269,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Access",
         hint: "what outside agents tried",
         run: () => ctx.push(accessScreen(session, ctx)),
+      });
+    // Settings → Flags, as the page has it: an admin who is not an agent (#1970).
+    if (mayManageFlags(session.user))
+      commands.push({
+        id: "flags",
+        title: "Flags",
+        hint: "declared flags and their live values",
+        run: () => ctx.push(flagsScreen(session, ctx)),
       });
     // Each failure domain and its last drill, as Settings → Failure domains says it (#1945).
     if (session.user?.isAdmin === true && session.user.kind !== "agent")

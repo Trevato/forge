@@ -11,6 +11,7 @@ import { unsealReleased } from "../actions/sealed.ts";
 import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { flowPage } from "../web/pages/flow.ts";
+import { flagsPage, flagsSet } from "../web/pages/flags.ts";
 import { domainsPage } from "../web/pages/domains.ts";
 import { resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet } from "../web/pages/admin-limits.ts";
@@ -750,6 +751,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/boards/:slug", boardShow);
   router.add("GET", "/boards/:slug/live", boardLive);
   router.add("POST", "/boards/:slug/:op", boardPost);
+  router.add("GET", "/settings/flags", flagsPage);
+  router.add("POST", "/settings/flags", flagsSet);
   router.add("GET", "/admin/limits", limitsPage);
   router.add("POST", "/admin/limits", limitsSet);
   router.add("POST", "/admin/quotas", quotasSet);
