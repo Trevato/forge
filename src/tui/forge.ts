@@ -42,6 +42,7 @@ import { dashboardScreen } from "./screens/dashboard.ts";
 import { mayManageFlags } from "../core/flags.ts";
 import { accessScreen } from "./screens/access.ts";
 import { flagsScreen } from "./screens/flags.ts";
+import { quotasScreen } from "./screens/quotas.ts";
 import { domainsScreen } from "./screens/domains.ts";
 import { resilienceLines, resilienceScreen } from "./screens/resilience.ts";
 import { flowLines, flowScreen } from "./screens/flow.ts";
@@ -343,6 +344,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Flags",
         hint: "declared flags and their live values",
         run: () => ctx.push(flagsScreen(session, ctx)),
+      });
+    // Account quotas, as /admin/limits has them: an admin who is not an agent (#2191).
+    if (session.user?.isAdmin === true && session.user.kind !== "agent")
+      commands.push({
+        id: "quotas",
+        title: "Account quotas",
+        hint: "what one account may own, and who changed it",
+        run: () => ctx.push(quotasScreen(session, ctx)),
       });
     // Each failure domain and its last drill, as Settings → Failure domains says it (#1945).
     if (session.user?.isAdmin === true && session.user.kind !== "agent")
