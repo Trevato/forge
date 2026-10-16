@@ -358,7 +358,9 @@ export async function mergePull(
   repo: Repo,
   pull: Pull,
   strategy: MergeStrategy,
-): Promise<Result<{ mergeOid: string }, AccessError | MergePullError>> {
+): Promise<
+  Result<{ mergeOid: string; carried: boolean }, AccessError | MergePullError>
+> {
   const writer = requireWriter(app, actor, repo);
   if (!writer.ok) return writer;
   if (pull.repoId !== repo.id) return err("not_found");

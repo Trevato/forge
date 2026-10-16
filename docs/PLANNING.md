@@ -524,6 +524,10 @@ Where it decides today:
   lands by rule, once its base merges cleanly and it does not cross the
   wall (`docs/CONTRACT.md`). Nobody is asked; the ledger keeps the landing
   as a `ship` by the rule, once per head, so the week's numbers add up.
+  A pull lands once: the merge reads the pull's row, not the caller's
+  copy, and a squash whose tree is the base's own commits nothing — the
+  pull closes as merged into the commit that carried it, and main does
+  not move (#2017).
 - **Whose fault, and try again or stop** (`crew/dispatch.ts`,
   `judgeFailedCheck`): a failed check gets another automatic run by rule,
   up to the limit. The decider reads the failure, the log's tail and the

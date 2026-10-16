@@ -22,7 +22,7 @@ import {
 } from "../actions/issues.ts";
 import type { AccessError } from "../actions/access.ts";
 import { gateOnLand, releaseOnLand } from "../checks/landing.ts";
-import { mergeable, resolveOid } from "../git/merge.ts";
+import { mergeable, resolveOid, treeOf } from "../git/merge.ts";
 import { repoDir } from "../git/repos.ts";
 import { mergePull } from "../actions/pulls.ts";
 import {
@@ -1303,6 +1303,11 @@ export async function landIfGreen(
 ): Promise<boolean> {
   if (repo.autonomy !== "autonomous" || repo.autonomyBy === null) return false;
   if (pull.state !== "open" || pull.mergedAt !== null) return false;
+  // The caller's copy may predate a landing: the row says whether it is
+  // still open (#2017).
+  const row = getPull(app.db, repo.id, pull.number);
+  if (row === undefined || row.state !== "open" || row.mergedAt !== null)
+    return false;
   // A person said "not this one yet": nothing below happens until it is
   // released — no landing, no review sent, no run to bring the branch up
   // to date (`core/holds.ts`).
@@ -1342,6 +1347,18 @@ export async function landIfGreen(
         conflicted.set(pull.id, between);
         bringUpToDate(app, repo, pull, clean.error.files);
       }
+      return false;
+    }
+    // Nothing the base does not already hold: no gate and no review, for
+    // there is nothing to land. The merge closes the pull as merged into
+    // the commit that carried it, and main does not move (#2017).
+    if (clean.value.treeOid === (await treeOf(dir, baseTip))) {
+      const closed = await mergePull(app, by, repo, pull, "squash");
+      log.info("already on the base, not landed again", {
+        repo: `${repo.ownerName}/${repo.name}`,
+        pull: pull.number,
+        closed: closed.ok,
+      });
       return false;
     }
   }
@@ -1421,6 +1438,17 @@ export async function landIfGreen(
     addComment(app, by, repo, getIssueById(app.db, pull.id) ?? pull, verdict.comment);
     return false;
   }
+  // The gate took minutes: the pull it was run on must still be the one
+  // here — open, unmerged, at the same head — or another landing, or a
+  // push, came first and this verdict is about nothing.
+  const still = getPull(app.db, repo.id, pull.number);
+  if (
+    still === undefined ||
+    still.state !== "open" ||
+    still.mergedAt !== null ||
+    still.headOid !== pull.headOid
+  )
+    return false;
   // Green and clear of the wall lands. An autonomous repository does not
   // wait on a person; the ledger keeps the landing as the rule it is, once
   // per head, so the week's numbers still add up.
@@ -1463,6 +1491,9 @@ export async function landIfGreen(
     return false;
   }
   conflicted.delete(pull.id);
+  // Closed as merged into what already carried it: main did not move, so
+  // there is no release to cut and nothing new was landed.
+  if (merged.value.carried) return false;
   resolveOpen(app.db, pull.id, "land", "shipped");
   // On the forge's own code, the landed tree is checked out and preflighted
   // off to the side; the landing does not wait on it (#1662).

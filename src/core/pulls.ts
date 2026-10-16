@@ -20,6 +20,7 @@ import {
   mergeBase,
   mergeable,
   resolveOid,
+  treeOf,
   writeRef,
   type MergeError,
   type MergeStrategy,
@@ -827,9 +828,14 @@ export async function mergePull(
      */
     sealedFrom?: string;
   },
-): Promise<Result<{ mergeOid: string }, MergePullError>> {
-  if (pull.mergedAt !== null) return err("already_merged");
-  if (pull.state === "closed") return err("closed");
+): Promise<Result<{ mergeOid: string; carried: boolean }, MergePullError>> {
+  // The row, not the caller's copy: a landing reads its pull, runs a gate
+  // for minutes, then merges — and the pull may have landed meanwhile. A
+  // stale copy merged again is an empty commit on the base (#2017).
+  const issue = getIssueById(db, pull.id);
+  const live = (issue?.kind === "pull" ? join(db, issue) : undefined) ?? pull;
+  if (live.mergedAt !== null) return err("already_merged");
+  if (live.state === "closed") return err("closed");
 
   if (input.sealedFrom !== undefined) {
     const there = await pullStatus(input.sealedFrom, pull, input.gate);
@@ -860,6 +866,19 @@ export async function mergePull(
   // caller: a check computed a request earlier and handed down is a check
   // that can be skipped.
   const status = await pullStatus(dir, pull, input.gate);
+  // What the pull proposes is already on the base: there is nothing to
+  // land, so nothing is committed — the pull closes as merged into the
+  // commit that carried it, and the base does not move.
+  const carrier = await carriedBy(dir, pull, status, input.strategy);
+  if (carrier !== undefined) {
+    closeAsMerged(db, pull.id, {
+      mergeOid: carrier,
+      actorId: input.actorId,
+      baseOid: status.baseOid,
+      headOid: status.headOid,
+    });
+    return ok({ mergeOid: carrier, carried: true });
+  }
   if (status.reviews !== null && !status.reviews.mergeable)
     return err("review_required");
   // The check is the latest deploy run of *this* head. Read here, not
@@ -880,24 +899,67 @@ export async function mergePull(
   });
   if (!landed.ok) return landed;
 
-  const now = new Date().toISOString();
-  transact(db, () => {
-    db.query(
-      "UPDATE pull SET merged_at = ?1, merged_oid = ?2, merged_by = ?3, base_oid = ?4, head_oid = ?5 WHERE issue_id = ?6",
-    ).run(
-      now,
-      landed.value.mergeOid,
-      input.actorId,
-      status.baseOid,
-      status.headOid,
-      pull.id,
-    );
-    setIssueState(db, pull.id, "closed");
+  closeAsMerged(db, pull.id, {
+    mergeOid: landed.value.mergeOid,
+    actorId: input.actorId,
+    baseOid: status.baseOid,
+    headOid: status.headOid,
   });
 
   // The merge commit is kept reachable forever, independent of the base branch.
   await writeRef(dir, `refs/pull/${pull.number}/merged`, landed.value.mergeOid);
-  return ok({ mergeOid: landed.value.mergeOid });
+  return ok({ mergeOid: landed.value.mergeOid, carried: false });
+}
+
+/**
+ * The commit on the base that already carries a squash of this pull, when
+ * squashing it again would commit the base's own tree: the pull's own
+ * landing if the base still holds it, else the base's tip. Undefined when
+ * the squash would change something — or is not a squash, or does not
+ * merge cleanly, which the merge itself reports.
+ */
+async function carriedBy(
+  dir: string,
+  pull: Pull,
+  status: { baseOid: string; headOid: string; ahead: number; mergeable: boolean },
+  strategy: MergeStrategy,
+): Promise<string | undefined> {
+  if (strategy !== "squash" || status.ahead === 0 || !status.mergeable)
+    return undefined;
+  const merged = await mergeable(dir, status.baseOid, status.headOid);
+  if (!merged.ok) return undefined;
+  if (merged.value.treeOid !== (await treeOf(dir, status.baseOid)))
+    return undefined;
+  const landing = await resolveOid(dir, `refs/pull/${pull.number}/merged`);
+  if (
+    landing !== undefined &&
+    (await mergeBase(dir, landing, status.baseOid)) === landing
+  )
+    return landing;
+  return status.baseOid;
+}
+
+/** Record the landing on the row and close the pull — once: a pull already
+ * merged keeps the commit it first landed as. */
+function closeAsMerged(
+  db: Database,
+  pullId: string,
+  landed: { mergeOid: string; actorId: string; baseOid: string; headOid: string },
+): void {
+  const now = new Date().toISOString();
+  transact(db, () => {
+    db.query(
+      "UPDATE pull SET merged_at = ?1, merged_oid = ?2, merged_by = ?3, base_oid = ?4, head_oid = ?5 WHERE issue_id = ?6 AND merged_at IS NULL",
+    ).run(
+      now,
+      landed.mergeOid,
+      landed.actorId,
+      landed.baseOid,
+      landed.headOid,
+      pullId,
+    );
+    setIssueState(db, pullId, "closed");
+  });
 }
 
 export { getIssueById };

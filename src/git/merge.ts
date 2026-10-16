@@ -268,6 +268,18 @@ export async function resolveOid(
   return result.ok ? result.value.trim() : undefined;
 }
 
+/** The tree a commit records: two commits with one tree change nothing. */
+export async function treeOf(
+  dir: string,
+  oid: string,
+): Promise<string | undefined> {
+  if (!isSafeOid(oid)) return undefined;
+  const result = await runGit(["rev-parse", "--verify", `${oid}^{tree}`], {
+    cwd: dir,
+  });
+  return result.ok ? result.value.trim() : undefined;
+}
+
 /** The merge base of two commits — the fork point a PR diff is measured from. */
 export async function mergeBase(
   dir: string,
