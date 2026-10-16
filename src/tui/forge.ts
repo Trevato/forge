@@ -28,7 +28,9 @@ import {
   openOnWeb,
   runAsync,
 } from "./screens/common.ts";
+import { canSeeMemory } from "../boards/memory.ts";
 import { boardsScreen } from "./screens/boards.ts";
+import { systemScreen } from "./screens/system.ts";
 import { askedScreen } from "./screens/asked.ts";
 import { deciderScreen } from "./screens/decider.ts";
 import { familyScreen } from "./screens/family.ts";
@@ -229,6 +231,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Boards",
         hint: "the forge's boards and their panels",
         run: () => ctx.push(boardsScreen(session, ctx)),
+      });
+    // The forge's RSS beside its JS heap, as /system gates it (#2151).
+    if (canSeeMemory(session.user))
+      commands.push({
+        id: "system",
+        title: "System memory",
+        hint: "RSS beside the JS heap, hourly for 24 h",
+        run: () => ctx.push(systemScreen(session, ctx)),
       });
     // The pipeline's bottleneck and throughput, as /flow says them: a site admin's (#1554, #1786).
     if (session.user?.isAdmin === true)

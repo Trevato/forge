@@ -383,6 +383,8 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
 .bp-h2 .chart-box.is-table { height: 400px; }
 .bp-h3 .chart-box.is-table { height: 540px; }
 .boards-result .table { margin-top: 12px; }
+.sys-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.sys-pair .chart-box { max-width: none; }
 .bgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
 .bp-w2 { grid-column: span 2; }
 .bp-w3 { grid-column: span 3; }

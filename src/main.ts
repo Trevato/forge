@@ -4,6 +4,7 @@
  * environment-only — a handful of variables, all with sane defaults.
  */
 
+import { startMemorySampler } from "./boards/memory.ts";
 import { startSampler } from "./boards/sampler.ts";
 import { sweepStanding } from "./crew/standing.ts";
 import { drainOnHandover, handover } from "./release/swap.ts";
@@ -344,6 +345,7 @@ const snapshots = startSnapshots(
 // What the machine uses (boards/sampler.ts): the pod, each cell and the
 // node, every 15 s into a ring the `machine` board source reads.
 const sampler = startSampler(app);
+const memorySampler = startMemorySampler(app);
 const crewHeldOff = crewOffInPreview();
 if (appsOn && crewHeldOff)
   app.log.info(CREW_OFF_IN_PREVIEW, {
@@ -548,6 +550,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     probes?.stop(),
     snapshots.stop(),
     sampler.stop(),
+    memorySampler.stop(),
   ])
     .catch(() => {})
     .then(() => {

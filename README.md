@@ -1007,6 +1007,7 @@ work here.
   commit history) with README rendering and **syntax highlighting**, protected
   default branches (force-push and deletion refused, honest fast-forwards
   allowed).
+- **System memory** — `/system`, for a forge admin who is a person (anyone else gets 403): the forge's RSS beside its JS heap (`heapStats()` from bun:jsc), hourly mean and max for the last 24 h, drawn on the server. Sampled once a minute into `memory_hour` in `app.db` (a week kept). RSS rising while the heap stays flat is native memory growth.  In the terminal the same admin has a **System memory** command in the palette: the last 24 hours as text rows (hour, RSS mean/max, heap mean/max in MiB), read-only. The account menu links `/system` for that admin.
 - **Boards** — `/boards/data`, for a forge admin who is a person (anyone else
   gets a 404 on the page): the query is the URL (`?source=runs&aggregate=count&by=day&fcolumn=state&fvalue=failed`),
   drawn server-side as the chart chosen beside it (`chart=line|bar|area|number|table|heat`)
