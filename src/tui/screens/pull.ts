@@ -45,6 +45,7 @@ import {
   appsRuntime,
   type EnvState,
   type EnvStatus, envsFor } from "../../apps/runtime.ts";
+import { proposedByText } from "../../core/proposal_token.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { pullMayRun } from "../../core/pull_trust.ts";
@@ -789,7 +790,7 @@ export function pullScreen(
         x1,
         head!.y + 1,
         truncate(
-          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}`,
+          ` ${facts?.mergedAt != null ? "merged" : issue.state} · opened by ${who(issue.authorName, issue.originAuthor)} ${ago(issue.createdAt)}${assignedText(issueRow, ctx.icons)}${facts?.proposal ? ` · ${proposedByText(facts.proposal)}` : ""}`,
           Math.max(0, edge - x1),
         ),
         style(c.mutedFg, c.bg),

@@ -8,9 +8,16 @@
  * itself (only a writer could push it there), and a fork's pull opened by a
  * writer or the crew from a fork that same person owns. A pull whose head
  * lives in a fork on another forge (a mirror's) is someone else's code and
- * waits like a reader's.
+ * waits like a reader's. So does a proposal (`core/proposal_token.ts`): its
+ * branch is in the repository itself, but the one who pushed it holds a
+ * child's token, not a writer's hand — a pull with a proposal row, or any
+ * head under `child/`, waits for approval whoever opened it. (The head test
+ * covers the moment before the row is written.) A push to such a branch
+ * with no pull starts nothing: only the default branch and an open pull's
+ * branch are ever checked or previewed.
  */
 import type { Database } from "bun:sqlite";
+import { pullProposalOf } from "./proposal_token.ts";
 import { getIssueById, getPull, type Pull } from "./pulls.ts";
 import { canWrite, getRepoById, onCrew, type Repo } from "./repos.ts";
 import { listReviews } from "./reviews.ts";
@@ -26,8 +33,11 @@ export function pullMayRun(
   pull: Pull,
   headOid: string,
 ): boolean {
-  if (!pull.crossRepo && pull.originHeadRepo === null) return true;
-  if (pull.crossRepo && pull.originHeadRepo === null) {
+  const proposed =
+    pull.headBranch.startsWith("child/") ||
+    pullProposalOf(db, pull.id) !== undefined;
+  if (!proposed && !pull.crossRepo && pull.originHeadRepo === null) return true;
+  if (!proposed && pull.crossRepo && pull.originHeadRepo === null) {
     const author = getUserById(db, pull.authorId);
     const head = getRepoById(db, pull.headRepoId);
     if (

@@ -566,6 +566,9 @@ export async function submitReview(
     return stored ? ok(stored) : err("origin_refused");
   }
 
+  // A proposal is opened under the minting writer's name, so that writer
+  // approving it is self-review like any other: only someone else's
+  // approval satisfies a required review.
   if (input.state === "approved" && pull.authorId === user.id)
     return err("self_review");
 

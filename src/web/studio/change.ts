@@ -9,6 +9,7 @@
  * bigger.
  */
 
+import { pullProposalOf } from "../../core/proposal_token.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { mayEditIssue } from "../../actions/issues.ts";
 import { marksByName, type Mark } from "../../core/marks.ts";
@@ -211,7 +212,14 @@ export function changeHead(ctx: Ctx, repo: Repo, pull: Pull): Html {
             >${icon("external")}view on origin</a
           >`,
       )}
-      ${workSpent(ctx, repo, pull.id)}
+      ${workSpent(ctx, repo, pull.id)}${when(
+        pullProposalOf(ctx.app.db, pull.id),
+        (p) =>
+          html`<span class="proposed-by"
+            >proposed by child <span class="mono">${p.child}</span> from
+            <span class="mono">${p.origin}</span></span
+          >`,
+      )}
     </div>
   </div>`;
 }

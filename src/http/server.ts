@@ -420,6 +420,8 @@ import { pushThrough } from "../origins/push-through.ts";
 import { notFoundPage } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
+import { inNamespace } from "../core/proposal_token.ts";
+import { proposalGate } from "./proposal_gate.ts";
 import { feedRoutes } from "./feed.ts";
 import type { Database } from "bun:sqlite";
 import { mcpRoutes } from "./mcp.ts";
@@ -523,6 +525,7 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
         user: verified.value.user,
         scope: verified.value.scope,
         via: "token",
+        ...(verified.value.proposal ? { proposal: verified.value.proposal } : {}),
       };
     }
     return NO_AUTH;
@@ -545,6 +548,9 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
           user: verified.value.user,
           scope: verified.value.scope,
           via: "token",
+          ...(verified.value.proposal
+            ? { proposal: verified.value.proposal }
+            : {}),
         };
       }
       return NO_AUTH;
@@ -952,6 +958,7 @@ export function buildRouter(): Router<Handler> {
             secret: ctx.app.hookSecret,
             repoId,
             actorId: ctx.auth.user?.id ?? "",
+            ...(ctx.auth.proposal ? { proposalChild: ctx.auth.proposal.child } : {}),
           }),
           ...cap,
         },
@@ -1651,6 +1658,18 @@ async function handleHook(app: App, request: Request): Promise<Response> {
       ? getUserById(app.db, input.actorId)
       : undefined;
     for (const update of input.updates) {
+      // A proposal token pushes inside its child's namespace and nowhere
+      // else: checked first, for every update, so nothing below can let a
+      // ref through that this refused.
+      if (
+        input.proposalChild !== undefined &&
+        !inNamespace(update.ref, input.proposalChild)
+      ) {
+        return new Response(
+          `${update.ref}: a proposal token pushes only child/${input.proposalChild}/… branches`,
+          { status: 403 },
+        );
+      }
       // The pull namespace belongs to the forge, never to pushers.
       if (update.ref.startsWith("refs/pull/")) {
         return new Response(`${update.ref}: refs/pull/* is reserved`, {
@@ -2214,6 +2233,11 @@ async function answerGet(
     noteSignedIn(request);
     noteCaller(request, app.db, auth.user.id, auth.sessionId);
   }
+
+  // A proposal token reaches nothing but what its gate names; every other
+  // request it makes ends here, before the limiter or any handler.
+  const proposalRefusal = proposalGate(app, request, url, auth);
+  if (proposalRefusal !== undefined) return proposalRefusal;
 
   // The two things standing between one runaway agent and everybody
   // else's latency, applied before a handler runs and after auth is

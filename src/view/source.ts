@@ -181,6 +181,8 @@ export interface PullFacts {
   readonly conflicts: readonly string[];
   /** Every verdict, newest last. Empty when nobody has reviewed. */
   readonly reviews: readonly ReviewFact[];
+  /** The child and origin a proposal token opened this pull for, if one did. */
+  readonly proposal: { readonly child: string; readonly origin: string } | null;
 }
 
 export interface IssueDetail {

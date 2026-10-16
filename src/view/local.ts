@@ -8,6 +8,7 @@
  * `canRead`; what is left is shape.
  */
 
+import { pullProposalOf } from "../core/proposal_token.ts";
 import { mayView, sealedScope } from "../core/sealed.ts";
 import type { App } from "../app.ts";
 import {
@@ -306,6 +307,7 @@ export function localSource(
             diff,
             mergeable: status.mergeable,
             conflicts: status.conflicts,
+            proposal: pullProposalOf(app.db, row.id) ?? null,
             reviews: listReviews(app.db, row.id).map((review) => ({
               author: review.originAuthor ?? review.authorName,
               state: review.state,

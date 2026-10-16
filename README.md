@@ -77,6 +77,32 @@ real address is an opt-in under **Commit email** in `/settings` (or
 `PATCH /api/v1/user` with `{"commitEmail":"account"}`); commits you push
 yourself carry whatever your own git says.
 
+### Proposal tokens
+
+A writer of a repository can hand a child (a fork, or a project on another
+forge) a credential that proposes and nothing more:
+
+```sh
+curl -sX POST localhost:3000/api/v1/repos/you/hello/proposal-tokens \
+  -H "authorization: Bearer $TOKEN" \
+  -d '{"child":"kid","origin":"https://kid.example.com/","childRepo":"kid/hello"}'
+```
+
+`child` is lowercase words and hyphens; `origin` an https address;
+`childRepo` (optional) a fork of this repository, and deleting it deletes the
+token, as does deleting the repository. The token expires in 30 days. It is
+listed as `proposal:<child>` among your tokens, and revoking it there ends it.
+Minting is API-only for now; a page, a terminal command and an MCP tool are
+part 2 (#2187). Over HTTPS it pushes only `child/<name>/…` branches of this repository (anything
+else is refused with one line) and `POST …/pulls` from one of them, with a
+body of at most 64 KiB and 20 requests a minute. Every other request is a
+403, decided in `src/http/proposal_gate.ts` before any handler runs. A proposed pull
+runs no check and no preview until a writer approves its head (a new push
+waits for a new approval), and a bare push to `child/…` starts none. A pull
+opened with it says "proposed by child … from …" on every tab of the pull's
+page, in the terminal's pull view, and as `proposal` in the pull's JSON
+(`GET …/pulls/:number`, and MCP's `pull` tool).
+
 ## Live in the terminal
 
 `ssh` into the forge and you get the whole thing — repositories, code, issues,

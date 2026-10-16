@@ -1,0 +1,122 @@
+/**
+ * Proposal tokens: a credential a writer of a parent repository hands to
+ * one named child. It is a `rw` token for the writer that minted it, but
+ * the gate in `http/proposal_gate.ts` lets it do exactly two things — push
+ * branches under `child/<name>/` and open a pull from one. This module is
+ * the data and the rules about names; it decides nothing about requests.
+ */
+
+import type { Database } from "bun:sqlite";
+import { isSafeRef } from "../git/guard.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
+import { createToken } from "./tokens.ts";
+
+export interface Proposal {
+  readonly tokenId: string;
+  readonly repoId: string;
+  readonly child: string;
+  readonly origin: string;
+}
+
+/** How long a proposal token lives: a child re-mints rather than keeps one. */
+export const PROPOSAL_TTL_MS = 30 * 24 * 3600_000;
+/** The most a proposal request may carry as a body. */
+export const PROPOSAL_BODY_MAX = 64 * 1024;
+
+/** A child's name: lowercase words joined by hyphens, short. */
+export const isChildName = (name: string): boolean =>
+  /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(name);
+
+/** Where a child lives: an https address with no credentials, no controls. */
+export function parseOrigin(raw: string): string | undefined {
+  if (raw.length === 0 || raw.length > 200) return undefined;
+  if (/[\x00-\x20\x7f\\]/.test(raw)) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "")
+    return undefined;
+  if (url.hash !== "" || url.search !== "") return undefined;
+  return url.href;
+}
+
+/**
+ * Whether `ref` (full `refs/heads/…`) is a branch inside the child's
+ * namespace, `child/<name>/…`, with nothing in it git or a path could read
+ * as a way out: every segment plain, no dots-only, no control characters.
+ */
+export function inNamespace(ref: string, child: string): boolean {
+  const prefix = `refs/heads/child/${child}/`;
+  if (!ref.startsWith(prefix) || ref.length > 200) return false;
+  if (!isSafeRef(ref)) return false;
+  const rest = ref.slice(prefix.length).split("/");
+  return rest.every(
+    (part) => /^[A-Za-z0-9._-]+$/.test(part) && !/^\.+$/.test(part),
+  );
+}
+
+/** A pull's head, as the API names it (no `refs/heads/`), in the namespace. */
+export const headInNamespace = (head: string, child: string): boolean =>
+  inNamespace(`refs/heads/${head}`, child);
+
+export function mintProposalToken(
+  db: Database,
+  userId: string,
+  repoId: string,
+  input: { child: string; origin: string; childRepoId?: string },
+  now: number = Date.now(),
+): Result<{ id: string; token: string }, "invalid_child" | "invalid_origin"> {
+  if (!isChildName(input.child)) return err("invalid_child");
+  const origin = parseOrigin(input.origin);
+  if (origin === undefined) return err("invalid_origin");
+  const minted = createToken(db, userId, `proposal:${input.child}`, "rw", {
+    expiresAt: new Date(now + PROPOSAL_TTL_MS).toISOString(),
+  });
+  db.query(
+    "INSERT INTO proposal_token (token_id, repo_id, child, child_repo_id, origin) VALUES (?1, ?2, ?3, ?4, ?5)",
+  ).run(minted.id, repoId, input.child, input.childRepoId ?? null, origin);
+  return ok(minted);
+}
+
+/** What a token is limited to, or undefined for an ordinary token. */
+export function proposalOf(db: Database, tokenId: string): Proposal | undefined {
+  const row = db
+    .query<
+      { token_id: string; repo_id: string; child: string; origin: string },
+      [string]
+    >("SELECT token_id, repo_id, child, origin FROM proposal_token WHERE token_id = ?1")
+    .get(tokenId);
+  return row
+    ? { tokenId: row.token_id, repoId: row.repo_id, child: row.child, origin: row.origin }
+    : undefined;
+}
+
+/** The one line every surface says of a proposed pull. */
+export const proposedByText = (p: { child: string; origin: string }): string =>
+  `proposed by child ${p.child} from ${p.origin}`;
+
+export function recordPullProposal(
+  db: Database,
+  issueId: string,
+  p: Pick<Proposal, "child" | "origin">,
+): void {
+  db.query(
+    "INSERT OR REPLACE INTO pull_proposal (issue_id, child, origin) VALUES (?1, ?2, ?3)",
+  ).run(issueId, p.child, p.origin);
+}
+
+export function pullProposalOf(
+  db: Database,
+  issueId: string,
+): { child: string; origin: string } | undefined {
+  return (
+    db
+      .query<{ child: string; origin: string }, [string]>(
+        "SELECT child, origin FROM pull_proposal WHERE issue_id = ?1",
+      )
+      .get(issueId) ?? undefined
+  );
+}

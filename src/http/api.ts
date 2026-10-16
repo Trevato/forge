@@ -216,6 +216,13 @@ import {
 import { createSession } from "../core/sessions.ts";
 import { listTokens } from "../core/tokens.ts";
 import {
+  headInNamespace,
+  mintProposalToken,
+  PROPOSAL_BODY_MAX,
+  pullProposalOf,
+  recordPullProposal,
+} from "../core/proposal_token.ts";
+import {
   getUserByName,
   hiddenFrom,
   verifyPassword,
@@ -3101,12 +3108,68 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(paged(items, query.limit, (p) => p.number));
   });
 
+  // A writer hands a child its own narrow credential for this repository
+  // (`core/proposal_token.ts`); the secret is shown once, as for any token.
+  router.add(
+    "POST",
+    "/api/v1/repos/:owner/:name/proposal-tokens",
+    async (ctx) => {
+      const denied = requireScope(ctx, "rw");
+      if (denied) return denied;
+      const repo = loadRepo(ctx);
+      if (!repo || !canWrite(ctx.app.db, repo, ctx.auth.user)) return notFound();
+      const input = await boundedBody(ctx.request, PROPOSAL_BODY_MAX);
+      if (input === "too_large")
+        return apiError("too_large", 413, `at most ${PROPOSAL_BODY_MAX} bytes`);
+      let childRepoId: string | undefined;
+      const childSpec = str(input.childRepo);
+      if (childSpec !== "") {
+        const [owner, name, ...rest] = childSpec.split("/");
+        const child =
+          owner && name && rest.length === 0
+            ? getRepo(ctx.app.db, owner, name)
+            : undefined;
+        if (!child || child.forkParentId !== repo.id) return notFound();
+        childRepoId = child.id;
+      }
+      const minted = mintProposalToken(ctx.app.db, ctx.auth.user!.id, repo.id, {
+        child: str(input.child),
+        origin: str(input.origin),
+        ...(childRepoId ? { childRepoId } : {}),
+      });
+      if (!minted.ok)
+        return apiError(minted.error, 422, "child is lowercase words and hyphens; origin is an https address");
+      return json(minted.value, 201);
+    },
+  );
+
   router.add("POST", "/api/v1/repos/:owner/:name/pulls", async (ctx) => {
     const denied = requireScope(ctx, "rw");
     if (denied) return denied;
     const repo = loadRepo(ctx);
     if (!repo) return notFound();
-    const input = await body(ctx.request);
+    // A proposal token's body is small, and its pull comes from a branch of
+    // its own child's namespace in this repository, never from another one.
+    const proposal = ctx.auth.proposal;
+    // The gate already pins a proposal token to its repository; this
+    // repeats it so the handler is safe on its own (defense in depth).
+    if (proposal !== undefined && proposal.repoId !== repo.id) return forbidden();
+    const input =
+      proposal === undefined
+        ? await body(ctx.request)
+        : await boundedBody(ctx.request, PROPOSAL_BODY_MAX);
+    if (input === "too_large")
+      return apiError("too_large", 413, `at most ${PROPOSAL_BODY_MAX} bytes`);
+    if (
+      proposal !== undefined &&
+      (str(input.headRepo) !== "" ||
+        !headInNamespace(str(input.head), proposal.child))
+    )
+      return apiError(
+        "invalid_head",
+        422,
+        `a proposal pull comes from a child/${proposal.child}/… branch of this repository`,
+      );
     // `headRepo: "owner/name"` proposes a fork's branch into this base.
     let headRepo: Repo | undefined;
     const headSpec = str(input.headRepo);
@@ -3139,10 +3202,13 @@ export function apiRoutes(router: Router<Handler>): void {
         created.error === "origin_unreachable"
         ? originAware(created.error)
         : respondAccess(created.error, 422);
+    if (proposal !== undefined)
+      recordPullProposal(ctx.app.db, created.value.id, proposal);
     return json(
       {
         ...withLabels(ctx, created.value),
         variantSiblings: variantSiblings(ctx.app.db, [created.value])[0] ?? [],
+        ...(proposal ? { proposal: { child: proposal.child, origin: proposal.origin } } : {}),
       },
       201,
     );
@@ -3169,6 +3235,7 @@ export function apiRoutes(router: Router<Handler>): void {
       ...(found.pull.state === "open" && found.pull.mergedAt === null
         ? { mergeable: status.mergeable, conflicts: status.conflicts }
         : {}),
+      proposal: pullProposalOf(ctx.app.db, found.pull.id) ?? null,
       status,
       diff,
       hold: hold === undefined ? null : holdJson(hold),

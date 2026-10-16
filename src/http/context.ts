@@ -3,6 +3,7 @@
  * route params, and authentication resolved once as plain data.
  */
 
+import type { Proposal } from "../core/proposal_token.ts";
 import type { App } from "../app.ts";
 import type { TokenScope } from "../core/tokens.ts";
 import type { User } from "../core/users.ts";
@@ -18,6 +19,8 @@ export interface Auth {
   readonly via: "session" | "edge" | "token" | "password" | "none";
   /** Which signed-in browser asked, when `via` is `session`. */
   readonly sessionId?: string;
+  /** Set for a proposal token: all it may do (`http/proposal_gate.ts`). */
+  readonly proposal?: Proposal;
 }
 
 export interface Ctx {

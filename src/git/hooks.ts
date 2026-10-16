@@ -60,6 +60,8 @@ export function hookEnv(input: {
   secret: string;
   repoId: string;
   actorId: string;
+  /** Set for a proposal token: the one namespace its push may touch. */
+  proposalChild?: string;
 }): Record<string, string> {
   const self = selfInvocation();
   const env: Record<string, string> = {
@@ -69,6 +71,8 @@ export function hookEnv(input: {
     FORGE_REPO_ID: input.repoId,
     FORGE_ACTOR_ID: input.actorId,
   };
+  if (input.proposalChild !== undefined)
+    env.FORGE_PROPOSAL_CHILD = input.proposalChild;
   if (self.entry !== undefined) env.FORGE_ENTRY = self.entry;
   return env;
 }
@@ -120,6 +124,9 @@ export async function runHookClient(hook: HookName): Promise<never> {
         hook,
         repoId: process.env.FORGE_REPO_ID ?? "",
         actorId: process.env.FORGE_ACTOR_ID ?? "",
+        ...(process.env.FORGE_PROPOSAL_CHILD !== undefined
+          ? { proposalChild: process.env.FORGE_PROPOSAL_CHILD }
+          : {}),
         updates: parseHookStdin(stdin),
         gitEnv,
       }),

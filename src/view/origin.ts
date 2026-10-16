@@ -404,6 +404,7 @@ function build(
           // in a form worth rendering. Null is the honest answer.
           mergeable: null,
           conflicts: [],
+          proposal: null,
           reviews: verdicts.ok
             ? verdicts.value.map((review) => ({
                 author: review.author,

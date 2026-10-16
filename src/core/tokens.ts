@@ -8,6 +8,7 @@ import type { Database } from "bun:sqlite";
 import { sha256 } from "../kernel/hash.ts";
 import { id, secret } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import type { Proposal } from "./proposal_token.ts";
 import { getUserById, isActive, type User } from "./users.ts";
 
 export type TokenScope = "ro" | "rw" | "admin";
@@ -65,7 +66,10 @@ const TOUCH_EVERY_MS = 60_000;
 export function verifyToken(
   db: Database,
   presented: string,
-): Result<{ user: User; scope: TokenScope }, "invalid_token"> {
+): Result<
+  { user: User; scope: TokenScope; proposal?: Proposal },
+  "invalid_token"
+> {
   const row = db
     .query<
       {
@@ -74,10 +78,16 @@ export function verifyToken(
         scope: TokenScope;
         last_used_at: string | null;
         expires_at: string | null;
+        p_repo: string | null;
+        p_child: string | null;
+        p_origin: string | null;
       },
       [string]
     >(
-      "SELECT id, user_id, scope, last_used_at, expires_at FROM token WHERE token_hash = ?1",
+      `SELECT t.id, t.user_id, t.scope, t.last_used_at, t.expires_at,
+              p.repo_id AS p_repo, p.child AS p_child, p.origin AS p_origin
+         FROM token t LEFT JOIN proposal_token p ON p.token_id = t.id
+        WHERE t.token_hash = ?1`,
     )
     .get(sha256(presented));
   if (!row) return err("invalid_token");
@@ -96,6 +106,19 @@ export function verifyToken(
       row.id,
     );
   }
+  // A token with a proposal row is limited to it; the gate in
+  // `http/proposal_gate.ts` reads this on every request it makes.
+  if (row.p_repo !== null)
+    return ok({
+      user,
+      scope: row.scope,
+      proposal: {
+        tokenId: row.id,
+        repoId: row.p_repo,
+        child: row.p_child!,
+        origin: row.p_origin!,
+      },
+    });
   return ok({ user, scope: row.scope });
 }
 

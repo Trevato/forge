@@ -15,6 +15,8 @@ export interface HookRequest {
   readonly hook: "pre-receive" | "post-receive";
   readonly repoId: string;
   readonly actorId: string;
+  /** A proposal token's child: every ref must be inside `child/<name>/`. */
+  readonly proposalChild?: string;
   readonly updates: readonly RefUpdate[];
   /**
    * Quarantine environment forwarded from the hook process. Any git command
