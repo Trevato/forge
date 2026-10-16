@@ -53,7 +53,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 261,
   },
   { file: "test/parity.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/policy.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/probe.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/probes.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/prompts.test.ts", reason: "not yet admitted", issue: 261 },
