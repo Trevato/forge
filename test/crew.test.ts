@@ -242,4 +242,38 @@ describe("the crew, with a stand-in Claude Code", () => {
     expect(run).toBeDefined();
     cancelRepoRun(app, alice, woken, run!.id);
   });
+
+  test("a run queued before Archive is cancelled with the archived line, never started; Wake does not revive it", async () => {
+    const issue = openIssue(app, alice, repo, { title: "Rake", body: "The leaves." });
+    expect(issue.ok).toBe(true);
+    if (!issue.ok) return;
+    const agent = getAgentByName(app.db, "bot")!;
+    const queued = queueAgentRun(app, repo, issue.value, agent, "assigned");
+    expect(queued).toBeDefined();
+    // A run carrying on after a restart, queued in the same breath on another issue.
+    const other = openIssue(app, alice, repo, { title: "Weed", body: "The beds." });
+    if (!other.ok) throw new Error("issue");
+    const again = { notBefore: new Date().toISOString(), attempt: 1, summary: "carries on" };
+    const carrying = queueAgentRun(app, repo, other.value, agent, "assigned", undefined, again);
+    expect(carrying).toBeDefined();
+    // Archived at once, before the crew's next pick.
+    const archived = updateRepoSettings(app.db, repo, { archived: true });
+    const done = await settled((r) => r.id === queued!.id, 60_000);
+    expect(done.state).toBe("cancelled");
+    expect(done.summary).toBe(ARCHIVED_WHY);
+    expect(readRunLog(dataDir, done.id).lines.join("\n")).toContain(ARCHIVED_WHY);
+    // The carry-on run is not cancelled for the archive.
+    const kept = await settled((r) => r.id === carrying!.id, 60_000);
+    expect(kept.summary).not.toBe(ARCHIVED_WHY);
+    expect(kept.state).not.toBe("cancelled");
+    // The fresh run spawned nothing: its whole log is the one archived line.
+    expect(readRunLog(dataDir, done.id).lines.filter((l) => l.trim() !== "").length).toBe(1);
+    // Wake leaves it cancelled; a new assignment starts normally.
+    const woken = updateRepoSettings(app.db, archived, { archived: false });
+    await Bun.sleep(6_000);
+    expect(listRuns(app.db, repo.id, { issueId: issue.value.id }).find((r) => r.id === queued!.id)!.state).toBe("cancelled");
+    const next = queueAgentRun(app, woken, issue.value, agent, "assigned");
+    expect(next).toBeDefined();
+    await settled((r) => r.id === next!.id, 60_000);
+  }, 120_000);
 });

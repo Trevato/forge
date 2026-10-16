@@ -33,7 +33,7 @@ import { accountActive } from "../core/accounts.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { decideAndRecord } from "./ledger.ts";
-import { getRepoById, type Repo } from "../core/repos.ts";
+import { ARCHIVED_WHY, getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
 import {
   greenHead,
@@ -1139,10 +1139,22 @@ function pump(
   const noted = notedBy.get(app) ?? new Set<string>();
   notedBy.set(app, noted);
   for (const queued of listQueued(app.db, "agent", 50)) {
-    if (slots <= 0) break;
     if (queued.issueId !== null && runningIssues.has(queued.issueId)) continue;
     const fresh = getRun(app.db, queued.id);
     if (!fresh || fresh.state !== "queued") continue;
+    // A fresh run queued before Archive is cancelled, not started, and
+    // stays cancelled through Wake. One carrying on after a pause or a
+    // restart (attempt > 0) is already going, and finishes.
+    const home = getRepoById(app.db, fresh.repoId);
+    if (fresh.attempt === 0 && home !== undefined && home.archivedAt !== null) {
+      const cancelled = cancelRun(app.db, fresh.id, ARCHIVED_WHY);
+      if (cancelled) {
+        appendRunLog(app.config.dataDir, fresh.id, ARCHIVED_WHY);
+        announceRun(app, cancelled);
+      }
+      continue;
+    }
+    if (slots <= 0) break;
     // An account at its concurrent-runs limit keeps this run queued, with
     // the count in its log once, until one of its runs ends.
     const owner = getRepoById(app.db, fresh.repoId)?.ownerId;
