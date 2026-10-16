@@ -543,6 +543,8 @@ function listGrantPlaceRows(
 export type Pick =
   /** No grant reaches this run: the forge's own token, `PLATFORM`, from its environment. */
   | { readonly kind: "env" }
+  /** No grant reaches this run and its owner is not a forge admin: the forge's token is not theirs to spend. */
+  | { readonly kind: "none" }
   | {
       readonly kind: "ready";
       readonly subscription: Subscription;
@@ -602,7 +604,12 @@ export function pickSubscription(
     )
     .all(scope.repoId, scope.ownerId, scope.agentId, reserve?.runId ?? "");
   const first = rows[0];
-  if (first === undefined) return { kind: "env" };
+  if (first === undefined) {
+    const owner = db
+      .query<{ is_admin: number }, [string]>("SELECT is_admin FROM user WHERE id = ?1")
+      .get(scope.ownerId);
+    return owner?.is_admin === 1 ? { kind: "env" } : { kind: "none" };
+  }
   const grant = rows.filter(
     (r) => r.scope_id === first.scope_id && r.agent_id === first.agent_id,
   );

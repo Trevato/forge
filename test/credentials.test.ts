@@ -166,6 +166,27 @@ describe("a subscription's scope", () => {
   });
 });
 
+describe("a repository whose owner is not a forge admin", () => {
+  test("gets none without a grant and the subscription once granted; an admin's still gets env", async () => {
+    const b = await createUser(app.db, {
+      trusted: true,
+      username: "bob",
+      email: "bob@forge.local",
+      password: "a-good-passphrase",
+    });
+    if (!b.ok) throw new Error("user");
+    const espo = listSubscriptions(app.db)[0]!;
+    const outsider = { repoId: "bobs-repo", ownerId: b.value.id, agentId: bot.id };
+    expect(pickSubscription(app.db, dataDir, outsider, new Date()).kind).toBe("none");
+    setGrants(app.db, "bobs-repo", EVERYONE, [espo.id]);
+    const picked = pickSubscription(app.db, dataDir, outsider, new Date());
+    expect(picked.kind === "ready" && picked.subscription.id).toBe(espo.id);
+    setGrants(app.db, "bobs-repo", EVERYONE, []);
+    const admin = { repoId: "admins-repo", ownerId: alice.id, agentId: bot.id };
+    expect(pickSubscription(app.db, dataDir, admin, new Date()).kind).toBe("env");
+  });
+});
+
 describe("a crew run on the platform's token", () => {
   test("is counted under platform (env), moving while it runs", async () => {
     writeFileSync(join(gateDir, "hold"), "");

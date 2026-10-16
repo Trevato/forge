@@ -919,6 +919,14 @@ async function work(
         resumesAt: new Date(picked.until),
       };
     }
+    // The forge's own token is for admin-owned repositories only; anyone
+    // else's run waits for a grant rather than spend what is not theirs.
+    if (picked.kind === "none") {
+      const said =
+        "no model credential reaches this repository; ask an admin to grant one";
+      write(said);
+      return { state: "failed", summary: said };
+    }
     if (picked.kind === "ready") {
       write(`subscription: ${picked.subscription.name}`);
       noteRunProgress(app.db, run.id, {

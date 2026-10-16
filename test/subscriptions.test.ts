@@ -153,9 +153,9 @@ describe("the pool", () => {
     const scope = { repoId: "repo-1", ownerId: "org-1", agentId: "bot-1" };
     const now = new Date("2026-09-28T12:00:00Z");
 
-    // Nothing granted anywhere: the forge's own token.
+    // Nothing granted anywhere, and "org-1" is no forge admin: none.
     expect(pickSubscription(app.db, dataDir, scope, now)).toEqual({
-      kind: "env",
+      kind: "none",
     });
 
     // The organization's grant reaches every repository under it.
