@@ -38,6 +38,7 @@ import {
   type ListIssuesOptions,
 } from "./issues.ts";
 import { reviewSummary } from "./reviews.ts";
+import { checkStale, checksHold } from "../checks/stale.ts";
 import { checkSummary } from "./runs.ts";
 
 export interface Pull extends Issue {
@@ -896,11 +897,17 @@ export async function mergePull(
     return err("review_required");
   // The check is the latest deploy run of *this* head. Read here, not
   // handed in, for the same reason as the review verdict above.
-  if (
-    input.gate?.requireChecks === true &&
-    checkSummary(input.gate.db, pull.id, status.headOid).state !== "ok"
-  )
-    return err("checks_required");
+  if (input.gate !== undefined) {
+    const check = checkSummary(input.gate.db, pull.id, status.headOid);
+    if (
+      checksHold(
+        input.gate.requireChecks === true,
+        check.state,
+        checkStale(check.run, status.baseOid),
+      )
+    )
+      return err("checks_required");
+  }
   const landed = await merge(dir, {
     baseBranch: pull.baseBranch,
     baseOid: status.baseOid,
