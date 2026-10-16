@@ -100,6 +100,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "tell",
   "theme",
   "verify",
+  "recover",
   "www",
   "asked",
   "claim",

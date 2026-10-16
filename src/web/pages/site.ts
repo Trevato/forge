@@ -365,6 +365,7 @@ function authForm(
       () => html`<p class="mt">
         <button type="button" id="passkey-signin" class="btn" data-variant="outline">Sign in with a passkey</button>
         <span class="error-note small" id="passkey-signin-note" role="status"></span>
+        <a class="small" href="/recover">Lost your device?</a>
       </p>`,
     )}
     ${claimable

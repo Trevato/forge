@@ -122,10 +122,72 @@ export function consumeLink(
     .query<
       { user_id: string; expires_at: string | null },
       [string]
-    >("SELECT user_id, expires_at FROM email_check WHERE token_hash = ?1")
+    >("SELECT user_id, expires_at FROM email_check WHERE token_hash = ?1 AND verified_at IS NULL")
     .get(sha256(token));
   if (row === null || row.expires_at === null) return undefined;
   if (Date.parse(row.expires_at) <= now) return undefined;
   markVerified(db, row.user_id, new Date(now).toISOString());
   return row.user_id;
+}
+
+/** How long a recovery link works. */
+export const RECOVERY_TTL_MS = 30 * 60_000;
+
+/**
+ * Mint a recovery link for an account whose email is proven: the same
+ * `email_check` slot a verification link uses, so there is one token store.
+ * A proven account holds no verification link, so nothing is overwritten.
+ * Undefined for an account that is not proven.
+ */
+export function issueRecovery(
+  db: Database,
+  userId: string,
+  now: number,
+): string | undefined {
+  const token = secret();
+  const changed = db
+    .query(
+      `UPDATE email_check SET token_hash = ?2, expires_at = ?3
+       WHERE user_id = ?1 AND verified_at IS NOT NULL`,
+    )
+    .run(userId, sha256(token), new Date(now + RECOVERY_TTL_MS).toISOString());
+  return changed.changes > 0 ? token : undefined;
+}
+
+/**
+ * Whose recovery link this is, without spending it. Only a proven account's
+ * link counts, so a pending verification link opens nothing here.
+ */
+export function recoveryOwner(
+  db: Database,
+  token: string,
+  now: number,
+): string | undefined {
+  if (token === "") return undefined;
+  return (
+    db
+      .query<{ user_id: string }, [string, string]>(
+        `SELECT user_id FROM email_check
+         WHERE token_hash = ?1 AND verified_at IS NOT NULL AND expires_at > ?2`,
+      )
+      .get(sha256(token), new Date(now).toISOString())?.user_id ?? undefined
+  );
+}
+
+/** Spend a recovery link: the account it was for, once; undefined after. */
+export function spendRecovery(
+  db: Database,
+  token: string,
+  now: number,
+): string | undefined {
+  if (token === "") return undefined;
+  return (
+    db
+      .query<{ user_id: string }, [string, string]>(
+        `UPDATE email_check SET token_hash = NULL, expires_at = NULL
+         WHERE token_hash = ?1 AND verified_at IS NOT NULL AND expires_at > ?2
+         RETURNING user_id`,
+      )
+      .get(sha256(token), new Date(now).toISOString())?.user_id ?? undefined
+  );
 }

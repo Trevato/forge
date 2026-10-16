@@ -101,6 +101,10 @@ import {
   passkeyDelete,
   passkeyOptions,
   passkeysPage,
+  recoverFinish,
+  recoverOptions,
+  recoverPage,
+  recoverRequest,
   signinOptions,
   signinPasskey,
 } from "../web/pages/passkeys.ts";
@@ -693,6 +697,10 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/passkeys/:id/delete", passkeyDelete);
   router.add("POST", "/signin/passkey/options", signinOptions);
   router.add("POST", "/signin/passkey", signinPasskey);
+  router.add("GET", "/recover", recoverPage);
+  router.add("POST", "/recover", recoverRequest);
+  router.add("POST", "/recover/options", recoverOptions);
+  router.add("POST", "/recover/passkey", recoverFinish);
   router.add("POST", "/signup/passkey/options", signupOptions);
   router.add("POST", "/signup/passkey", signupPasskey);
   // The crew: a forge admin's section, hidden from everyone else.

@@ -55,6 +55,24 @@ export function passkeyIds(db: Database, userId: string): string[] {
     .map((r) => r.credential_id);
 }
 
+/** Whether `addPasskey` would accept this credential, without adding it. */
+export function passkeyRoom(
+  db: Database,
+  userId: string,
+  credentialId: string,
+): Result<true, "too_many" | "duplicate"> {
+  const count = db
+    .query<{ n: number }, [string]>(
+      "SELECT count(*) AS n FROM passkey WHERE user_id = ?1",
+    )
+    .get(userId)!.n;
+  if (count >= PASSKEY_MAX) return err("too_many");
+  const taken = db
+    .query("SELECT 1 FROM passkey WHERE credential_id = ?1")
+    .get(credentialId);
+  return taken === null ? ok(true) : err("duplicate");
+}
+
 export function addPasskey(
   db: Database,
   userId: string,

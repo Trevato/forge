@@ -116,7 +116,10 @@ running — bakery asleep").
 Passkeys: Settings → Passkeys lists, adds and removes them (several per
 account; `src/auth/webauthn.ts` verifies, no dependency, `none` attestation).
 The sign-in page's "Sign in with a passkey" gives the same HttpOnly session a
-password does. The relying party is the address the browser used (or
+password does. Lost your device? "Lost your device?" on the sign-in page leads
+to `/recover`: give the email on your account and, if it is verified, a link
+that lasts 30 minutes and works once registers a new passkey and signs you in.
+The relying party is the address the browser used (or
 `FORGE_URL`), so a passkey does not follow a forge to another hostname.
 Sign-up is a username, an email address and a passkey (`/signup`, `src/web/pages/signup-passkey.ts`); the running server refuses a password-only sign-up on the form, `POST /api/v1/users` and the terminal (`passkeyOnlySignup`, set in `main.ts`). Accounts that already have a password still sign in. Two paths still make an account without a passkey and are the next step: the owner claim of a spawned forge (`web/pages/claim.ts`) and an admin's everyday account (`web/pages/everyday.ts`).
 

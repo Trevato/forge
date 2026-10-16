@@ -12,11 +12,14 @@ import {
   consumeLink,
   emailVerified,
   issueLink,
+  issueRecovery,
+  recoveryOwner,
+  spendRecovery,
   markVerified,
   resetVerification,
 } from "../core/verify.ts";
 import { listSecretNames, resolveSecrets } from "../core/secret_store.ts";
-import { getUserById, type User } from "../core/users.ts";
+import { getUserById, isActive, type User } from "../core/users.ts";
 import { sendMail, type Mailer } from "../kernel/mail.ts";
 import { mayMail, sendCapped } from "./mail.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -164,4 +167,64 @@ export async function resendVerification(
   if (emailVerified(app.db, user.value.id)) return ok("already");
   const outcome = await sendVerification(app, user.value);
   return outcome === "sent" ? ok("sent") : err(outcome);
+}
+
+function recoveryUrl(app: App, token: string): string {
+  const base = app.config.url ?? `http://localhost:${app.config.port}`;
+  return `${new URL("/recover", base).toString()}?token=${token}`;
+}
+
+/**
+ * Someone who cannot sign in asks for a way back by address. Nothing here
+ * tells an address with an account from one without: the caller answers the
+ * same either way. A link goes only to a person whose email is proven, is
+ * not suspended or removed, and only when the forge can send mail. The send
+ * is not waited for, so the answer takes as long for a stranger as for a
+ * member.
+ */
+export function requestRecovery(
+  app: App,
+  email: string,
+  now: number = Date.now(),
+): void {
+  const row = app.db
+    .query<{ id: string }, [string]>(
+      "SELECT id FROM user WHERE email = ?1 COLLATE NOCASE AND kind = 'user' AND is_agent = 0",
+    )
+    .get(email.trim());
+  const user = row === null ? undefined : getUserById(app.db, row.id);
+  if (user === undefined || !isActive(user)) return;
+  const mailer = mailerOf(app, user);
+  if (mailer === undefined || !mayMail(app, user.email, now)) return;
+  const token = issueRecovery(app.db, user.id, now);
+  if (token === undefined) return;
+  void sendCapped(app, mailer, {
+    to: user.email,
+    subject: "Get back into your forge account",
+    text: [
+      `Hello ${user.username},`,
+      "",
+      "Follow this link to register a new passkey and sign in. It works once, for 30 minutes:",
+      "",
+      recoveryUrl(app, token),
+      "",
+      "If you did not ask for this, ignore this message.",
+    ].join("\n"),
+  }, now).catch(() => undefined);
+}
+
+/** The account a recovery link is for, if it still works; nothing is spent. */
+export function recoveryAccount(app: App, token: string): User | undefined {
+  const id = recoveryOwner(app.db, token, Date.now());
+  const user = id === undefined ? undefined : getUserById(app.db, id);
+  return user !== undefined && isActive(user) ? user : undefined;
+}
+
+/** Spend the link: the account to sign in, or `invalid` for a used or stale one. */
+export function spendRecoveryLink(app: App, token: string): Result<User, "invalid"> {
+  const id = spendRecovery(app.db, token, Date.now());
+  const user = id === undefined ? undefined : getUserById(app.db, id);
+  if (user === undefined || !isActive(user)) return err("invalid");
+  app.bus.append({ kind: "account.recovered", actorId: user.id });
+  return ok(user);
 }
