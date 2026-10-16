@@ -332,10 +332,7 @@ function forgeStrip(ctx: Ctx): Html | null {
   const verdict = forgeVerdict(fh, Date.now());
   const said = (line: string) => coveredByVerdict(line, verdict, fh);
   const rollout = rolloutLine(fh);
-  const others = fh.incidents.filter(
-    (i) =>
-      i.key !== "stuck" && i.key !== "held" && !said(`${i.key}: ${i.message}`),
-  );
+  const others = fh.incidents.filter((i) => !said(`${i.key}: ${i.message}`));
   const ok = v.ok && fh.ok && verdict === undefined;
   const lane = laneLine(v.lane);
   return html`<div

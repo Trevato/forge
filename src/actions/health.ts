@@ -73,9 +73,7 @@ export function forgeNeeds(app: App, actor: User | undefined): string[] | undefi
   const rollout = rolloutLine(h);
   return [
     ...(rollout === null ? [] : [rollout]),
-    ...h.incidents
-      .filter((i) => i.key !== "stuck" && i.key !== "held")
-      .map((i) => `${i.key}: ${i.message}`),
+    ...h.incidents.map((i) => `${i.key}: ${i.message}`),
     ...h.degraded.map(needLine),
   ];
 }

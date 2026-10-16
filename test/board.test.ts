@@ -11,6 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { forgeNeeds } from "../src/actions/health.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
@@ -536,6 +537,8 @@ describe("the board's forge strip", () => {
       expect(held).toContain("needs you: forge held: preflight refused 1.2");
       expect(held).toMatch(/data-ok="no"/);
       expect(held).not.toContain("All fine");
+      expect(held.split("held: preflight refused 1.2").length - 1).toBe(1);
+      expect(forgeNeeds(app, admin)).toContain("held: preflight refused 1.2");
       writeFileSync(join(guard, "status.json"), JSON.stringify({ incidents: {} }));
       expect(await board("root")).toContain("All fine");
     } finally {
