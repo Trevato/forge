@@ -75,9 +75,9 @@ export function parseRegistration(
       );
   }
   const rawName = input["client_name"];
-  if (rawName !== undefined && typeof rawName !== "string")
-    return refuse("invalid_client_metadata", "client_name must be a string");
-  const name = (rawName ?? "").trim();
+  if (typeof rawName !== "string" || rawName.trim() === "")
+    return refuse("invalid_client_metadata", "client_name is required");
+  const name = rawName.trim();
   if (name.length > NAME_MAX)
     return refuse(
       "invalid_client_metadata",
@@ -93,7 +93,7 @@ export function parseRegistration(
       'only token_endpoint_auth_method "none" (a public client with PKCE) is offered',
     );
   return ok({
-    name: name === "" ? "MCP client" : name,
+    name,
     redirectUris: [...new Set(uris as string[])],
   });
 }
