@@ -290,6 +290,15 @@ describe("+ New forge", () => {
     }
   });
 
+  test("the page promises no update that does not happen", async () => {
+    const html = (await (await get(admin, "/forges/new")).text()).replace(/\s+/g, " ");
+    expect(html).toContain("Recorded for now: tell me");
+    expect(html).toContain("Recorded for now: take updates");
+    expect(html).toContain("nothing acts on it yet");
+    expect(html).not.toContain("when this forge changes");
+    expect(html).not.toMatch(/as long as its own changes merge/);
+  });
+
   test("a forge at its depth limit shows no door, and its page says why", async () => {
     usePlacement(app, hostedPlacement({ host: "forge.test", depth: 2 }));
     expect(await (await get(admin, "/")).text()).not.toContain('href="/forges/new"');

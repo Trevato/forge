@@ -82,6 +82,17 @@ describe("the new forge screen", () => {
     expect(ids()).not.toContain("new-forge");
   });
 
+  test("the screen and its plan promise no update that does not happen", () =>
+    withScreen(admin, async ({ tui, terminal }) => {
+      const form = tui.screen.toText();
+      expect(form).toContain("Recorded for now");
+      terminal.feed("kai\x10");
+      await settleApp(tui);
+      const text = form + tui.screen.toText();
+      expect(tui.screen.toText()).toContain("Recorded for now, not acted on");
+      expect(text).not.toMatch(/keeps? (itself )?up to date|updates itself|automatically/i);
+    }));
+
   test("the plan is shown first and makes nothing; enter spawns and shows the claim link once", () =>
     withScreen(admin, async ({ tui, terminal }) => {
       const before = await children();

@@ -18,7 +18,7 @@ import { btn, card } from "../ui.ts";
 /** The events that change what the chain page says. */
 export const CHAIN_LIVE = "forge.severed";
 
-const MODE_WORDS = { "tell-me": "tells when the parent moves", "take-updates": "takes updates" } as const;
+const MODE_WORDS = { "tell-me": "recorded: tell me (nothing tells it yet)", "take-updates": "recorded: take updates (nothing acts on it yet)" } as const;
 
 function lineRow(l: ChainLine): Html {
   const where = l.host === "" ? "" : ` on ${l.host}`;

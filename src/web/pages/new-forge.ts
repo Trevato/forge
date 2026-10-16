@@ -188,7 +188,7 @@ function formView(
               ${values.followMode !== "take-updates" ? html`checked` : null}
             />
             <span
-              >Tell me <span class="muted small">is recorded as your choice; nothing tells you yet.</span></span
+              >Recorded for now: tell me <span class="muted small">your choice is kept; nothing tells you yet.</span></span
             >
           </label>
           <label class="check">
@@ -199,7 +199,7 @@ function formView(
               ${values.followMode === "take-updates" ? html`checked` : null}
             />
             <span
-              >Take updates <span class="muted small">is recorded as your choice; nothing takes updates automatically yet.</span></span
+              >Recorded for now: take updates <span class="muted small">your choice is kept; nothing acts on it yet.</span></span
             >
           </label>
           ${errors["followMode"]

@@ -135,8 +135,8 @@ describe("the chain of forges", () => {
     const page = (await (await fetch(`${servers.url}/tot/forge/following`, { headers: { cookie } })).text()).replace(/\s+/g, " ");
     expect(page).toContain("alice/forge-code");
     expect(page).toContain("kid/forge");
-    expect(page).toContain("takes updates");
-    expect(page).toContain("tells when the parent moves");
+    expect(page).toContain("recorded: take updates");
+    expect(page).toContain("recorded: tell me");
     expect(page).toContain("1 of its own");
   });
 

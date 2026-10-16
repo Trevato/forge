@@ -33,7 +33,7 @@ const SPECS: readonly Spec[] = [
   { key: "modelKey", label: "Model key", hint: "Sealed in the child, never shown again. Optional.", secret: true },
   { key: "modelEndpoint", label: "API base URL", hint: "A gateway for the key; empty for Anthropic. Optional." },
   { key: "budgetUsd", label: "Budget in dollars", hint: `${MIN_BUDGET_USD}–${MAX_BUDGET_USD}, for the key's whole life. Needed with a key.` },
-  { key: "followMode", label: "Follows this forge's code", hint: "tell-me (default) or take-updates. Recorded only; nothing acts on it yet." },
+  { key: "followMode", label: "Follows this forge's code", hint: "tell-me (default) or take-updates. Recorded for now: nothing tells you or takes updates yet." },
 ];
 
 /** The door's "field: reason" refusal, as the field it names and the reason. */
