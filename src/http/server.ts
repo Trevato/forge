@@ -415,7 +415,10 @@ import { notFoundPage } from "../web/chrome.ts";
 import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { feedRoutes } from "./feed.ts";
+import type { Database } from "bun:sqlite";
 import { mcpRoutes } from "./mcp.ts";
+import { createUsageCounter, type UsageCounter } from "../core/usage_count.ts";
+import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
 import { oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
 import { carryPeer, clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
@@ -1698,6 +1701,20 @@ function refusedByDatabase(error: unknown): string | undefined {
   return code === "SQLITE_CONSTRAINT_TRIGGER" ? error.message : undefined;
 }
 
+/**
+ * What a thrown handler is answered with: the guard's own words and a 403
+ * when a database trigger refused, else a 500 that says nothing of the fault.
+ */
+function failure(app: App, error: unknown): Response {
+  const refused = refusedByDatabase(error);
+  if (refused !== undefined) {
+    app.log.warn("refused by the database", { reason: refused });
+    return securityFloor(json({ error: "refused", message: refused }, 403));
+  }
+  app.log.error("unhandled request error", { error: String(error) });
+  return securityFloor(json({ error: "internal" }, 500));
+}
+
 /** A response with one header set, copying it when its headers are frozen. */
 function withHeader(response: Response, name: string, value: string): Response {
   try {
@@ -1842,6 +1859,41 @@ export async function serve(app: App): Promise<Servers> {
       client: clientAddress(request),
     });
 
+  // One counter per database: a hosted child counts in its own. `count` is a
+  // map increment; a refused event would be a programming error, not worth a 500.
+  const counters = new Map<Database, UsageCounter>();
+  const counted = (owner: App, request: Request, response: Response): void => {
+    const tag = takeUsage(request);
+    try {
+      let counter = counters.get(owner.db);
+      if (counter === undefined) {
+        counter = createUsageCounter(owner.db);
+        counters.set(owner.db, counter);
+      }
+      counter.count({
+        pattern: tag.pattern,
+        method: methodOf(request.method),
+        status: response.status,
+        role: tag.role,
+        surface: surfaceOf(new URL(request.url).pathname),
+      });
+    } catch (error) {
+      owner.log.warn("could not count a request", { error: String(error) });
+    }
+  };
+
+  // Behind the floor, and a throw is answered here so it is counted too.
+  const answered = async (
+    owner: App,
+    run: () => Promise<Response>,
+  ): Promise<Response> => {
+    try {
+      return securityFloor(await run());
+    } catch (error) {
+      return failure(owner, error);
+    }
+  };
+
   const handle = async (
     request: Request,
     server: Bun.Server<AppSocket>,
@@ -1888,7 +1940,8 @@ export async function serve(app: App): Promise<Servers> {
           }
           notePeer(request, server.requestIP(request)?.address, trust);
           armClose(request, () => server.timeout(request, 1));
-          const response = securityFloor(await http.handle(request));
+          const response = await answered(child, () => http.handle(request));
+          counted(child, request, response);
           logged(key, request, response, started);
           await settleBody(request);
           if (!mustClose(request)) return response;
@@ -1904,9 +1957,10 @@ export async function serve(app: App): Promise<Servers> {
       armClose(request, () => server.timeout(request, 1));
       // Everything the forge answers for itself leaves through this one
       // door, so a responder added next year cannot forget the floor.
-      const response = securityFloor(
-        await answer(app, router, apiRouter, limiter, request),
+      const response = await answered(app, () =>
+        answer(app, router, apiRouter, limiter, request),
       );
+      counted(app, request, response);
       logged(app.config.dataDir, request, response, started);
       await settleBody(request);
       if (!mustClose(request)) return response;
@@ -1928,15 +1982,8 @@ export async function serve(app: App): Promise<Servers> {
     // proxy; its own live surfaces are SSE (`sse.ts`) and stay so.
     websocket: appWebSocket,
     fetch: handle,
-    error(error) {
-      const refused = refusedByDatabase(error);
-      if (refused !== undefined) {
-        app.log.warn("refused by the database", { reason: refused });
-        return securityFloor(json({ error: "refused", message: refused }, 403));
-      }
-      app.log.error("unhandled request error", { error: String(error) });
-      return securityFloor(json({ error: "internal" }, 500));
-    },
+    // A last resort: `handle` answers a throw itself, so it is counted.
+    error: (error) => failure(app, error),
   });
 
   const onPort = portInsteadOfSocket();
@@ -1978,6 +2025,15 @@ export async function serve(app: App): Promise<Servers> {
     stop() {
       endOpen();
       clearInterval(sweep);
+      // Counts first: a hosted child's database closes with its app.
+      for (const counter of counters.values()) {
+        try {
+          counter.stop();
+        } catch (error) {
+          app.log.warn("could not flush request counts", { error: String(error) });
+        }
+      }
+      counters.clear();
       for (const http of childHttps.values()) http.close();
       childHttps.clear();
       closeHostedChildren(app);
@@ -2022,9 +2078,14 @@ async function answerGet(
   request: Request,
 ): Promise<Response> {
   const url = publicUrl(request, app.config.url);
-  if (url.pathname === "/healthz")
+  if (url.pathname === "/healthz") {
+    noteUsage(request, { pattern: "/healthz", role: "anon" });
     return liveResponse(() => app.db.query("select 1").get(), app.log);
-  if (url.pathname === "/readyz") return readyResponse();
+  }
+  if (url.pathname === "/readyz") {
+    noteUsage(request, { pattern: "/readyz", role: "anon" });
+    return readyResponse();
+  }
   const routeMethod = request.method === "HEAD" ? "GET" : request.method;
   // The one place a path decides its own shape of miss: anything under
   // `/api` matches only against the API's own routes, so a studio route as
@@ -2059,6 +2120,7 @@ async function answerGet(
     return noRoute(request.method, url.pathname);
   }
   const auth = await resolveAuth(app, request);
+  noteUsage(request, { pattern: matched.pattern, role: roleOf(auth) });
   // From here a body's cap depends on who is asking (`http/limits.ts`), and
   // a stream this request opens is the account's, to end with it.
   if (auth.user !== undefined) {

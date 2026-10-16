@@ -25,6 +25,7 @@ export const METHODS = [
   "PATCH",
   "DELETE",
   "OPTIONS",
+  "OTHER",
 ] as const;
 
 export type UsageRole = (typeof ROLES)[number];
