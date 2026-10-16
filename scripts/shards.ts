@@ -468,3 +468,30 @@ export function parseShardSpec(
     };
   return { ok: true, index, total };
 }
+
+/**
+ * Which of a shard's failing files were red only beside others. `alone` maps
+ * a file to whether it passed when run by itself: true moves it to
+ * `besideOthers`; false, or no entry (never retried), keeps it red. Only the
+ * first `cap` files of the shard may be cleared, so a shard that is red
+ * across the board stays red. `line` names the cleared files and the files
+ * that stayed red beside them, or is null when nothing was cleared.
+ */
+export function besideOthers(
+  red: readonly string[],
+  alone: Readonly<Record<string, boolean>> | ReadonlyMap<string, boolean>,
+  cap = 3,
+): { red: string[]; besideOthers: string[]; line: string | null } {
+  const results = alone instanceof Map ? alone : new Map(Object.entries(alone));
+  const limit = Math.max(0, cap);
+  const stillRed: string[] = [];
+  const cleared: string[] = [];
+  red.forEach((file, i) => {
+    if (i < limit && results.get(file) === true) cleared.push(file);
+    else stillRed.push(file);
+  });
+  if (cleared.length === 0) return { red: stillRed, besideOthers: [], line: null };
+  const mates = stillRed.length > 0 ? stillRed.join(", ") : "none";
+  const line = `fails only beside others: ${cleared.join(", ")} (shard-mates: ${mates})`;
+  return { red: stillRed, besideOthers: cleared, line };
+}

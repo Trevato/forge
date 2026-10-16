@@ -10,6 +10,7 @@ import { join } from "node:path";
 import {
   SECONDS_PER_BYTE_DEFAULT,
   SHARDS_MAX,
+  besideOthers,
   WORKER_MEMORY_BYTES,
   CELL_CPU_SHARE,
   FILES_PER_PROCESS,
@@ -705,5 +706,51 @@ describe("one file per worker, timed", () => {
     expect(formatTimes(fresh)).toBe(
       '{\n  "test/a.test.ts": 5,\n  "test/b.test.ts": 2,\n  "test/new.test.ts": 3\n}\n',
     );
+  });
+});
+
+describe("besideOthers", () => {
+  test("a file that passed alone is cleared and named with its shard-mates", () => {
+    const r = besideOthers(["a", "b"], { a: true, b: false });
+    expect(r).toEqual({
+      red: ["b"],
+      besideOthers: ["a"],
+      line: "fails only beside others: a (shard-mates: b)",
+    });
+  });
+
+  test("a file that failed alone, or was never retried, stays red", () => {
+    const r = besideOthers(["a", "b"], { a: false });
+    expect(r).toEqual({ red: ["a", "b"], besideOthers: [], line: null });
+  });
+
+  test("only the first cap files of a shard may be cleared", () => {
+    const alone = { a: true, b: true, c: true, d: true, e: true };
+    const r = besideOthers(["a", "b", "c", "d", "e"], alone, 3);
+    expect(r.besideOthers).toEqual(["a", "b", "c"]);
+    expect(r.red).toEqual(["d", "e"]);
+    expect(besideOthers(["a", "b", "c", "d"], { a: true, b: true, c: true, d: true }).red).toEqual(["d"]);
+  });
+
+  test("an empty input clears nothing", () => {
+    expect(besideOthers([], {})).toEqual({ red: [], besideOthers: [], line: null });
+  });
+
+  test("a Map of results is read the same as an object", () => {
+    const r = besideOthers(["a", "b"], new Map([["a", true]]));
+    expect(r).toEqual({
+      red: ["b"],
+      besideOthers: ["a"],
+      line: "fails only beside others: a (shard-mates: b)",
+    });
+  });
+
+  test("when every failing file is cleared the shard-mates are none", () => {
+    const r = besideOthers(["a", "b"], { a: true, b: true });
+    expect(r).toEqual({
+      red: [],
+      besideOthers: ["a", "b"],
+      line: "fails only beside others: a, b (shard-mates: none)",
+    });
   });
 });
