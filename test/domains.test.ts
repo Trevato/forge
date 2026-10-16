@@ -12,6 +12,8 @@ import { DOMAINS, domainRow } from "../src/kernel/domains.ts";
 import { vitals } from "../src/kernel/vitals.ts";
 import { recordVerdict } from "../src/snapshot/verdict.ts";
 
+/** A disk with room: no verdict here depends on the machine's volume. */
+const roomy = () => ({ freeBytes: 95, totalBytes: 100 });
 let dataDir: string;
 let app: App;
 let repoId = "";
@@ -36,7 +38,7 @@ const said = (key: string): string[] => {
   return [...d.says];
 };
 const read = (now = Date.now()) =>
-  vitals({ db: app.db, signals: app.signals, dataDir, now }).needs.join("\n");
+  vitals({ db: app.db, signals: app.signals, dataDir, now, disk: roomy }).needs.join("\n");
 
 test("seven domains, each complete", () => {
   expect(DOMAINS.map((d) => d.key)).toEqual([
@@ -56,7 +58,7 @@ test("the doc's table is the data", () => {
 });
 
 test("a nearly full disk says the state's words", () => {
-  const v = vitals({ db: app.db, signals: app.signals, dataDir, diskFreeMin: 1.1 });
+  const v = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, diskFreeMin: 1.1 });
   for (const s of said("state")) expect(v.needs.join("\n")).toContain(s);
 });
 

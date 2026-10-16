@@ -446,6 +446,7 @@ const tickAsks = async (): Promise<void> => {
       vitals({
         db: app.db,
         dataDir: app.config.dataDir,
+        ...(app.config.disk ? { disk: app.config.disk } : {}),
         signals: app.signals,
         forgeUrl,
         snapshots: snapshotPlace(app),

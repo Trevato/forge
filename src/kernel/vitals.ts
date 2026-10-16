@@ -95,6 +95,21 @@ export interface Vitals {
   readonly at: string;
 }
 
+/** What a volume holds and has free. */
+export interface DiskReading {
+  readonly freeBytes: number;
+  readonly totalBytes: number;
+}
+
+/** The volume under `dir`, as the operating system reports it. */
+export function statDisk(dir: string): DiskReading {
+  const fs = statfsSync(dir);
+  return {
+    freeBytes: Number(fs.bavail) * Number(fs.bsize),
+    totalBytes: Number(fs.blocks) * Number(fs.bsize),
+  };
+}
+
 export interface VitalsInput {
   readonly db: Database;
   /** The directory holding the forge's data: its volume is the one measured. */
@@ -104,6 +119,8 @@ export interface VitalsInput {
   readonly now?: number;
   /** The address people reach this forge at, named in the drill commands. */
   readonly forgeUrl?: string;
+  /** Reads the disk under `dataDir`; `statDisk` unless a test gives it a reading. */
+  readonly disk?: (dir: string) => DiskReading;
   /** The free-disk share below which the disk is a need; `DISK_FREE_MIN` unless a test says. */
   readonly diskFreeMin?: number;
   /** One forge's own signals (`App.signals`). */
@@ -260,11 +277,7 @@ export function vitals(input: VitalsInput): Vitals {
     degraded.push({ cause, sentence, since, href });
   };
 
-  const fs = statfsSync(input.dataDir);
-  const disk = {
-    freeBytes: Number(fs.bavail) * Number(fs.bsize),
-    totalBytes: Number(fs.blocks) * Number(fs.bsize),
-  };
+  const disk = (input.disk ?? statDisk)(input.dataDir);
   if (disk.totalBytes > 0 && disk.freeBytes / disk.totalBytes < (input.diskFreeMin ?? DISK_FREE_MIN))
     need(
       "disk",

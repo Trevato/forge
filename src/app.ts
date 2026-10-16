@@ -31,6 +31,8 @@ import { closeReadersUnder } from "./git/read.ts";
 export interface ForgeConfig {
   /** Everything lives here: index db, bare repos, the internal socket. */
   dataDir: string;
+  /** The disk probe vitals reads; the volume under `dataDir` when unset. Tests give it a reading. */
+  disk?: (dir: string) => { freeBytes: number; totalBytes: number };
   /** @default 3000 */
   port?: number;
   /** The hostname clone URLs are built from. @default "localhost" */

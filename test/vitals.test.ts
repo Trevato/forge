@@ -38,6 +38,8 @@ const mint = async (username: string, scope: string) =>
       })
     ).json()) as { token: string }
   ).token;
+/** A disk with room: no test but the disk's own depends on the machine's volume. */
+const roomy = () => ({ freeBytes: 95, totalBytes: 100 });
 const health = (token?: string) =>
   fetch(servers.url + "/api/v1/health", {
     headers: token ? { authorization: `Bearer ${token}` } : {},
@@ -45,7 +47,7 @@ const health = (token?: string) =>
 
 beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-vitals-"));
-  app = createApp({ dataDir, port: 0 });
+  app = createApp({ dataDir, port: 0, disk: roomy });
   servers = await serve(app);
   for (const username of ["alice", "bob"])
     await post("/api/v1/users", {
@@ -107,11 +109,11 @@ test("a full queue shows in queue, and an old one in needs", async () => {
   app.db.query("DELETE FROM run").run();
   const old = Date.now() - 3_600_000;
   for (let i = 0; i < 3; i++) createRun(app.db, { repoId, kind: "agent" });
-  const v = vitals({ db: app.db, signals: app.signals, dataDir });
+  const v = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy });
   expect(v.queue).toEqual({ agent: 3 });
   // Process-wide signals (errors, refused calls) from other suites may speak too.
   expect(v.needs.join(" ")).not.toContain("queue");
-  const later = vitals({ db: app.db, signals: app.signals, dataDir, now: old + 2 * 3_600_000 + 3_600_000 });
+  const later = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now: old + 2 * 3_600_000 + 3_600_000 });
   expect(later.ok).toBe(false);
   expect(later.needs.join(" ")).toContain("agent queue");
 });
@@ -132,7 +134,7 @@ test("a running run with a lapsed lease is stuck, and needs says so", async () =
   app.db
     .query("UPDATE run SET heartbeat_at=?2 WHERE id=?1")
     .run(run.id, new Date().toISOString());
-  expect(vitals({ db: app.db, signals: app.signals, dataDir }).stuck).toEqual([]);
+  expect(vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy }).stuck).toEqual([]);
 });
 
 test("the number of queries does not grow with runs", () => {
@@ -145,7 +147,7 @@ test("the number of queries does not grow with runs", () => {
         return typeof v === "function" ? v.bind(t) : v;
       },
     });
-    vitals({ db: counting, signals: app.signals, dataDir });
+    vitals({ db: counting, signals: app.signals, dataDir, disk: roomy });
     return n;
   };
   const before = count();
@@ -182,8 +184,8 @@ test("errors are counted, bounded, redacted, and a burst is said", async () => {
     expect(seen.latest.length).toBe(ERROR_RING);
     expect(seen.lastHour).toBe(ERROR_RING + 51);
     expect(seen.lastHour).toBeGreaterThanOrEqual(ERROR_BURST);
-    expect(vitals({ db: app.db, signals: app.signals, dataDir }).needs.some((n) => n.includes("errors in the last hour"))).toBe(true);
-    expect(vitals({ db: app.db, signals: app.signals, dataDir, now: Date.now() + 2 * 3_600_000 }).errors.lastHour).toBe(0);
+    expect(vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy }).needs.some((n) => n.includes("errors in the last hour"))).toBe(true);
+    expect(vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now: Date.now() + 2 * 3_600_000 }).errors.lastHour).toBe(0);
   } finally {
     console.error = orig;
     clearErrors();
@@ -196,10 +198,10 @@ test("the lane: depth, the running check and its age, the median of the last fin
   const now = Date.now();
   const iso = (ms: number) => new Date(ms).toISOString();
   // Empty lane: no line.
-  expect(vitals({ db: app.db, signals: app.signals, dataDir, now }).lane).toEqual({
+  expect(vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now }).lane).toEqual({
     queued: 0, running: null, medianMinutes: null, clearsInMinutes: null,
   });
-  expect(laneLine(vitals({ db: app.db, signals: app.signals, dataDir, now }).lane, now)).toBeNull();
+  expect(laneLine(vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now }).lane, now)).toBeNull();
   // Three finished checks of 10, 20 and 30 minutes: the median is 20.
   for (const min of [10, 20, 30]) {
     const r = createRun(app.db, { repoId, kind: "check" });
@@ -212,7 +214,7 @@ test("the lane: depth, the running check and its age, the median of the last fin
     .query("UPDATE run SET state='running', started_at=?2, heartbeat_at=?3 WHERE id=?1")
     .run(live.id, iso(now - 6 * 60_000), iso(now));
   for (let i = 0; i < 6; i++) createRun(app.db, { repoId, kind: "check" });
-  const lane = vitals({ db: app.db, signals: app.signals, dataDir, now }).lane;
+  const lane = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now }).lane;
   expect(lane.queued).toBe(6);
   expect(lane.running?.since).toBe(iso(now - 6 * 60_000));
   expect(lane.medianMinutes).toBe(20);
@@ -225,7 +227,7 @@ test("the lane: depth, the running check and its age, the median of the last fin
   expect(body.lane.queued).toBe(6);
   expect(body.lane.medianMinutes).toBe(20);
   // Waiting past thirty minutes names the cause, not only the symptom.
-  const later = vitals({ db: app.db, signals: app.signals, dataDir, now: now + 3_600_000 });
+  const later = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now: now + 3_600_000 });
   const cause = later.needs.find((n) => n.includes("one lane"));
   expect(cause).toMatch(/^6 checks wait behind one lane; the oldest since \d\d:\d\d; the lane runs nothing\.$/);
   expect(cause).not.toContain("Lane:");
@@ -234,7 +236,7 @@ test("the lane: depth, the running check and its age, the median of the last fin
 test("an unauthenticated internal call is refused, logged and flagged; the probe is not", async () => {
   app.signals.refused.clear();
   const flagged = () =>
-    vitals({ db: app.db, signals: app.signals, dataDir: app.config.dataDir }).needs.filter((n) =>
+    vitals({ db: app.db, signals: app.signals, dataDir: app.config.dataDir, disk: roomy }).needs.filter((n) =>
       n.includes("internal call"),
     );
   const call = (path: string) =>
@@ -258,10 +260,10 @@ test("two forges in one process keep their own error and refusal signals", async
   (await import("../src/kernel/log.ts")).clearErrors();
   app.signals.refused.clear();
   const dirB = await mkdtemp(join(tmpdir(), "forge-vitals-b-"));
-  const other = createApp({ dataDir: dirB, port: 0 });
+  const other = createApp({ dataDir: dirB, port: 0, disk: roomy });
   try {
     const needs = (a: App) =>
-      vitals({ db: a.db, dataDir: a.config.dataDir, signals: a.signals }).needs;
+      vitals({ db: a.db, dataDir: a.config.dataDir, signals: a.signals, disk: roomy }).needs;
     expect(needs(app)).toEqual([]);
     expect(needs(other)).toEqual([]);
     for (let i = 0; i < ERROR_BURST; i++) other.log.error("boom");
@@ -275,7 +277,7 @@ test("two forges in one process keep their own error and refusal signals", async
     expect(needs(app).join(" ")).toContain("errors in the last hour");
     // A forge born later starts clean.
     const dirC = await mkdtemp(join(tmpdir(), "forge-vitals-c-"));
-    const later = createApp({ dataDir: dirC, port: 0 });
+    const later = createApp({ dataDir: dirC, port: 0, disk: roomy });
     expect(needs(later)).toEqual([]);
     later.close();
     await rm(dirC, { recursive: true, force: true });
@@ -294,7 +296,7 @@ test("degraded names each cause, stable, with when it began", async () => {
   try {
     clearErrors();
     app.signals.refused.clear();
-    const base = vitals({ db: app.db, signals: app.signals, dataDir });
+    const base = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy });
     expect(base.degraded.map((d) => d.cause)).not.toContain("errors");
 
     // queue: since is the oldest queued run's createdAt.
@@ -304,7 +306,7 @@ test("degraded names each cause, stable, with when it began", async () => {
       app.db.query("SELECT MIN(created_at) AS m FROM run WHERE state='queued' AND kind='agent'").get() as { m: string }
     ).m;
     const later = Date.now() + 2 * QUEUE_WAIT_MAX_MS;
-    const q = vitals({ db: app.db, signals: app.signals, dataDir, now: later }).degraded.find((d) => d.cause === "queue:agent");
+    const q = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now: later }).degraded.find((d) => d.cause === "queue:agent");
     expect(q?.since).toBe(new Date(oldest).toISOString());
     expect(q?.href).toBe("/settings/capacity");
 
@@ -314,7 +316,7 @@ test("degraded names each cause, stable, with when it began", async () => {
     app.db
       .query("UPDATE run SET state='running', started_at=?2, heartbeat_at=?2 WHERE id=?1")
       .run(run.id, moved);
-    const s = vitals({ db: app.db, signals: app.signals, dataDir });
+    const s = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy });
     const entry = s.degraded.find((d) => d.cause === `stuck:${run.id}`);
     expect(entry?.since).toBe(moved);
     expect(entry?.href).toBe(`/alice/r/runs/${run.id}`);
@@ -324,37 +326,37 @@ test("degraded names each cause, stable, with when it began", async () => {
     // errors: no recorded start, so since is at; the cause is stable across calls.
     const log = createLog("probe");
     for (let i = 0; i < ERROR_BURST; i++) log.error(`boom ${i}`);
-    const a = vitals({ db: app.db, signals: app.signals, dataDir });
+    const a = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy });
     const e = a.degraded.find((d) => d.cause === "errors");
-    const later2 = vitals({ db: app.db, signals: app.signals, dataDir, now: Date.now() + 5000 });
+    const later2 = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now: Date.now() + 5000 });
     expect(e?.since).toBe(app.signals.errors.recent(100).oldest!);
     expect(later2.degraded.find((d) => d.cause === "errors")?.since).toBe(e!.since);
     expect(e?.href).toBe("/settings/capacity#errors");
 
     // internal: refused calls.
     await fetchInternal(app.hookAddress.current, "/internal/hook", { method: "POST" });
-    const i = vitals({ db: app.db, signals: app.signals, dataDir }).degraded.find((d) => d.cause === "internal");
+    const i = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy }).degraded.find((d) => d.cause === "internal");
     expect(i?.href).toBe("/settings/capacity#internal");
-    const i2 = vitals({ db: app.db, signals: app.signals, dataDir, now: Date.now() + 5000 }).degraded.find((d) => d.cause === "internal");
+    const i2 = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now: Date.now() + 5000 }).degraded.find((d) => d.cause === "internal");
     expect(i2?.since).toBe(i!.since);
     expect(i!.since).toBe(app.signals.refused.recent().oldest!);
 
     // a cause that clears is forgotten: when it returns it began again.
     const first = e!.since;
     clearErrors();
-    expect(vitals({ db: app.db, signals: app.signals, dataDir }).degraded.some((d) => d.cause === "errors")).toBe(false);
+    expect(vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy }).degraded.some((d) => d.cause === "errors")).toBe(false);
     for (let k = 0; k < ERROR_BURST; k++) log.error(`again ${k}`);
-    const again = vitals({ db: app.db, signals: app.signals, dataDir }).degraded.find((d) => d.cause === "errors");
+    const again = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy }).degraded.find((d) => d.cause === "errors");
     expect(again?.since).toBe(app.signals.errors.recent(100).oldest!);
     expect(again!.since > first).toBe(true);
 
     // a caller's `now` never moves a fallback start: it is the real clock's.
-    const early = vitals({ db: app.db, signals: app.signals, dataDir, diskFreeMin: 2, now: 1_000 });
+    const early = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, diskFreeMin: 2, now: 1_000 });
     const d0 = early.degraded.find((d) => d.cause === "disk")!;
     expect(Date.parse(d0.since)).toBeGreaterThan(Date.parse("2020-01-01"));
 
     // every need has one matching sentence in degraded.
-    const all = vitals({ db: app.db, signals: app.signals, dataDir });
+    const all = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy });
     expect(new Set(all.degraded.map((d) => d.sentence))).toEqual(new Set(all.needs));
 
     // the health API carries the same list.
@@ -368,17 +370,17 @@ test("degraded names each cause, stable, with when it began", async () => {
 });
 
 test("disk: since rests on first sight, holds across calls, resets after clearing", async () => {
-  expect(vitals({ db: app.db, signals: app.signals, dataDir }).degraded.some((d) => d.cause === "disk")).toBe(false);
-  const a = vitals({ db: app.db, signals: app.signals, dataDir, diskFreeMin: 2 }).degraded.find((d) => d.cause === "disk");
+  expect(vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy }).degraded.some((d) => d.cause === "disk")).toBe(false);
+  const a = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, diskFreeMin: 2 }).degraded.find((d) => d.cause === "disk");
   expect(a?.href).toBe("/settings/capacity");
   await Bun.sleep(5);
-  const b = vitals({ db: app.db, signals: app.signals, dataDir, diskFreeMin: 2 }).degraded.find((d) => d.cause === "disk");
+  const b = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, diskFreeMin: 2 }).degraded.find((d) => d.cause === "disk");
   expect(b?.since).toBe(a!.since);
-  expect(vitals({ db: app.db, signals: app.signals, dataDir }).degraded.some((d) => d.cause === "disk")).toBe(false);
+  expect(vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy }).degraded.some((d) => d.cause === "disk")).toBe(false);
   await Bun.sleep(5);
-  const c = vitals({ db: app.db, signals: app.signals, dataDir, diskFreeMin: 2 }).degraded.find((d) => d.cause === "disk");
+  const c = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, diskFreeMin: 2 }).degraded.find((d) => d.cause === "disk");
   expect(c!.since > a!.since).toBe(true);
-  vitals({ db: app.db, signals: app.signals, dataDir });
+  vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy });
 });
 
 test("since is said as a person would", async () => {
@@ -395,10 +397,10 @@ test("since is said as a person would", async () => {
 
 test("since is kept per forge: one forge's cause neither lends nor loses its start to another", async () => {
   const dirB = await mkdtemp(join(tmpdir(), "forge-vitals-since-"));
-  const other = createApp({ dataDir: dirB, port: 0 });
+  const other = createApp({ dataDir: dirB, port: 0, disk: roomy });
   try {
     const disk = (a: App, diskFreeMin: number) =>
-      vitals({ db: a.db, dataDir: a.config.dataDir, signals: a.signals, diskFreeMin })
+      vitals({ db: a.db, dataDir: a.config.dataDir, signals: a.signals, diskFreeMin, disk: roomy })
         .degraded.find((d) => d.cause === "disk");
     const first = disk(app, 2)!;
     expect(first).toBeDefined();
@@ -428,7 +430,7 @@ test("a lane older than its budget is degraded with its cause; a silent run is s
     app.db.query("UPDATE run SET created_at=?2 WHERE id=?1").run(r.id, iso(now - (9 + i * 2) * 60_000));
   }
   // The oldest has waited 13 minutes: past the lane's ten.
-  const v = vitals({ db: app.db, signals: app.signals, dataDir, now });
+  const v = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now });
   const lane = v.degraded.find((d) => d.cause === "queue:check");
   expect(lane?.sentence).toMatch(
     /^3 checks wait behind one lane; the oldest since \d\d:\d\d; the lane runs a check for 31 min \(limit 60\)\.$/,
@@ -436,10 +438,18 @@ test("a lane older than its budget is degraded with its cause; a silent run is s
   expect(v.ok).toBe(false);
   // Five minutes in, the oldest is under its budget: nothing to say.
   app.db.query("UPDATE run SET created_at=?1 WHERE state='queued'").run(iso(now - 5 * 60_000));
-  expect(vitals({ db: app.db, signals: app.signals, dataDir, now }).degraded.map((d) => d.cause)).toEqual([]);
+  expect(vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now }).degraded.map((d) => d.cause)).toEqual([]);
   // A run whose heart stopped four minutes ago is stuck, in words of the budget.
   app.db.query("UPDATE run SET heartbeat_at=?2 WHERE id=?1").run(live.id, iso(now - 4 * 60_000));
-  const stuck = vitals({ db: app.db, signals: app.signals, dataDir, now }).degraded.find((d) => d.cause === `stuck:${live.id}`);
+  const stuck = vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy, now }).degraded.find((d) => d.cause === `stuck:${live.id}`);
   expect(stuck?.sentence).toBe(`Run ${live.id} is stuck: no heartbeat for 4 min (limit 3).`);
   app.db.query("DELETE FROM run").run();
+});
+
+test("only the disk need sees the disk: a 5% reading raises it, and nothing else does", () => {
+  const low = () => ({ freeBytes: 5, totalBytes: 100 });
+  const v = vitals({ db: app.db, signals: app.signals, dataDir, disk: low });
+  expect(v.degraded.map((d) => d.cause)).toEqual(["disk"]);
+  expect(v.needs).toEqual(["Disk is nearly full: 5% free."]);
+  expect(vitals({ db: app.db, signals: app.signals, dataDir, disk: roomy }).needs).toEqual([]);
 });

@@ -43,6 +43,7 @@ export function forgeVitals(app: App): Vitals {
   return vitals({
     db: app.db,
     dataDir: app.config.dataDir,
+    ...(app.config.disk ? { disk: app.config.disk } : {}),
     envs,
     signals: app.signals,
     forgeUrl: app.config.url ?? `http://localhost:${app.config.port}`,

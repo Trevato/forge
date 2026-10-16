@@ -126,6 +126,9 @@ function boot(
   };
 }
 
+/** A disk with room: the verdict must not depend on the machine's volume. */
+const roomy = () => ({ freeBytes: 95, totalBytes: 100 });
+
 describe("the terminal UI, against a real forge", () => {
   let dataDir: string;
   let forge: Forge;
@@ -148,7 +151,7 @@ describe("the terminal UI, against a real forge", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-"));
-    forge = createApp({ dataDir, port: 0 });
+    forge = createApp({ dataDir, port: 0, disk: roomy });
     const a = await signUp(forge, {
       username: "alice",
       email: "alice@forge.test",
@@ -587,7 +590,7 @@ describe("a forge with no accounts", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-first-"));
-    forge = createApp({ dataDir, port: 0 });
+    forge = createApp({ dataDir, port: 0, disk: roomy });
   });
 
   afterAll(async () => {
@@ -730,7 +733,7 @@ describe("the forge's health in the terminal", () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-tui-health-"));
     const guard = await mkdtemp(join(tmpdir(), "forge-tui-guard-"));
     process.env["FORGE_GUARD_DIR"] = guard;
-    const forge = createApp({ dataDir, port: 0 });
+    const forge = createApp({ dataDir, port: 0, disk: roomy });
     try {
       const a = await signUp(forge, {
         username: "chief",
@@ -796,7 +799,7 @@ describe("the forge's health in the terminal", () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-tui-snapvol-"));
     const guard = await mkdtemp(join(tmpdir(), "forge-tui-guard-"));
     process.env["FORGE_GUARD_DIR"] = guard;
-    const forge = createApp({ dataDir, port: 0 });
+    const forge = createApp({ dataDir, port: 0, disk: roomy });
     const store = dirStore(join(dataDir, "snapshots"));
     let svc = startSnapshots(forge, store, { version: "t", nightly: false });
     try {
