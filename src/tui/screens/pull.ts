@@ -49,6 +49,7 @@ import { proposedByText } from "../../core/proposal_token.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
+import { runningProgress } from "../../checks/progress.ts";
 import { askCheck } from "../../checks/again.ts";
 import { checkStale, checksHold } from "../../checks/stale.ts";
 import { checkWords } from "../../checks/summary.ts";
@@ -192,6 +193,9 @@ const VERDICT_WORDS: Record<ReviewFact["state"], string> = {
   commented: "commented",
 };
 
+/** How often a pull's screen re-reads while its check is queued or running. */
+const CHECK_TICK_MS = 5000;
+
 export function pullScreen(
   f: Session,
   ctx: Ctx,
@@ -232,6 +236,7 @@ export function pullScreen(
   let check: CheckSummary = NO_CHECK;
   /** The pull's base branch, to name what the check was merged with. */
   let checkBase = "";
+  let checkProgress = "";
   /** The check's green was against a base that has since moved. */
   let checkOld = false;
   /** Agent runs about this pull, newest first. */
@@ -282,6 +287,7 @@ export function pullScreen(
         ? NO_CHECK
         : checkSummary(f.db, row.id, row.headOid || (facts?.headOid ?? ""));
     checkBase = row?.baseBranch ?? facts?.baseBranch ?? "";
+    checkProgress = runningProgress(f.app.config.dataDir, check);
     checkOld =
       repo !== undefined &&
       row !== undefined &&
@@ -767,6 +773,13 @@ export function pullScreen(
     load(signal) {
       if (repo !== undefined)
         live(f, signal, { repoId: repo.id }, () => runAsync(ctx, reload));
+      // A run emits no event when a shard finishes, so while a check is
+      // queued or running the screen re-reads on a slow tick of its own.
+      const tick = setInterval(() => {
+        if (check.state === "queued" || check.state === "running")
+          runAsync(ctx, reload);
+      }, CHECK_TICK_MS);
+      signal.addEventListener("abort", () => clearInterval(tick));
       return reload();
     },
     render(area, s) {
@@ -777,7 +790,7 @@ export function pullScreen(
       // The box is exactly as tall as what is in it: the state, then a row
       // for the verdicts when there are any, then a row for the checks when
       // a deploy has run or the gate demands one.
-      const checksLine = checksText(check, requireChecks, isApp, checkBase, checkOld);
+      const checksLine = checksText(check, requireChecks, isApp, checkBase, checkOld, checkProgress);
       const boxH =
         3 +
         (standingText(standing(), requireReview) === "" ? 0 : 1) +
@@ -1236,6 +1249,8 @@ export function checksText(
   isApp: boolean,
   baseBranch = "",
   stale = false,
+  /** `runningProgress` of the check's log; empty when none is known. */
+  progress = "",
 ): string {
   if (check.state === "none")
     return required
@@ -1252,7 +1267,7 @@ export function checksText(
     run === null || run.summary === "" ? "" : ` · ${run.summary}`
   }${against}`;
   const isCheck = run !== null && run.kind === "check";
-  const words = run === null ? undefined : checkWords({ ...run, state: check.state });
+  const words = run === null ? undefined : checkWords({ ...run, state: check.state }, Date.now(), progress);
   const ofRun = `${run === null ? "" : ` · run ${run.id}`}${against}`;
   switch (check.state) {
     case "ok":

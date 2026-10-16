@@ -318,6 +318,7 @@ import { variantsPage, variantVoteSubmit } from "../web/pages/variants.ts";
 import {
   pullCommentSubmit,
   pullFilesPage,
+  pullChecksFragment,
   pullMergeSubmit,
   pullChecksSubmit,
   pullReviewStateSubmit,
@@ -1085,6 +1086,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/pulls/:number/resolve/propose", proposeSubmit);
   router.add("GET", "/:owner/:name/pulls/:number/thread", pullThreadFragment);
   router.add("GET", "/:owner/:name/pulls/:number/state", pullStateFragment);
+  router.add("GET", "/:owner/:name/pulls/:number/checks-line", pullChecksFragment);
   router.add("POST", "/:owner/:name/pulls/:number/comments", pullCommentSubmit);
   router.add("POST", "/:owner/:name/pulls/:number/review", pullReviewSubmit);
   // The verdict on the change as a whole, and the threads it settles.

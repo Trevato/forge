@@ -63,7 +63,8 @@ import {
 } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
-import { approveHereCard } from "../pages/pull.ts";
+import { approveHereCard, pullChecksLineFor } from "../pages/pull.ts";
+import { liveRegionsJs } from "../client.ts";
 import { pullState } from "../pages/pulls.ts";
 import { workSpent } from "../pages/runs.ts";
 import {
@@ -418,6 +419,12 @@ async function changeConversation(
 ): Promise<Response> {
   const { record, db, base, thread, wordCtx, word, status, conflicted, note, checkLine, preview } =
     await pullPanels(ctx, repo, pull);
+  // The check's own line, live, with a running check's counts: the one the
+  // Files step draws (`pullChecksLineFor`), for an open change.
+  const runLine =
+    status === undefined
+      ? undefined
+      : await pullChecksLineFor(ctx, repo, pull, status, wordCtx.dir);
   // A change that loosens the policy is a person's call: said here, above
   // the decision, as well as on the Files step beside the merge box.
   const wall =
@@ -578,7 +585,8 @@ async function changeConversation(
         >
       </p>`,
     )}
-    <div id="pull-check">${checkLine}</div> ${holdCard(ctx, repo, pull, { act: true })}
+    <div id="pull-check">${checkLine}</div>
+    ${when(runLine, (l) => l)} ${holdCard(ctx, repo, pull, { act: true })}
     ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
     ${when(wall, (w) => wallCard(w))} ${decisionSection}
     ${takeBackSection}
@@ -623,6 +631,6 @@ async function changeConversation(
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    scriptJs: liveClientJs,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
   });
 }

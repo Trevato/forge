@@ -28,6 +28,7 @@ import { marksByName } from "../../core/marks.ts";
 import {
   pullDiff,
   pullDir,
+  pullStatus,
   type MergePullError,
   type Pull,
   type PullReviewStatus,
@@ -35,6 +36,7 @@ import {
 } from "../../core/pulls.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
 import { checkWords } from "../../checks/summary.ts";
+import { runningProgress } from "../../checks/progress.ts";
 import { checkStale, checksHold } from "../../checks/stale.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import {
@@ -70,7 +72,8 @@ import {
 } from "../diff-view.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, when, type Html } from "../html.ts";
-import { flashTo, page, redirect } from "../layout.ts";
+import { flashTo, fragment, page, redirect } from "../layout.ts";
+import { liveRegionsJs } from "../client.ts";
 import { liveClientJs, liveMount } from "../live.ts";
 import {
   avatar,
@@ -220,6 +223,10 @@ export function checksLine(
   baseBranch = "",
   /** The green was checked against a base that has since moved. */
   stale = false,
+  /** `progressWords` of a running check's log; empty when none is known. */
+  progress = "",
+  /** Where this line answers for itself (`data-live-src`); empty for none. */
+  liveSrc = "",
 ): Html {
   if (!isApp && !required && check.state === "none" && !waiting && again === "")
     return html``;
@@ -231,7 +238,7 @@ export function checksLine(
           ><a href="${base}/runs/${run.id}"
             >${run.kind === "check" ? "Check of" : "deploy"} ${run.commitOid.slice(0, 7)}</a
           >`;
-  const words = run === null ? undefined : checkWords(run);
+  const words = run === null ? undefined : checkWords(run, Date.now(), progress);
   const against =
     run !== null && run.baseOid !== "" && baseBranch !== ""
       ? html`<span class="where-sep" aria-hidden="true">·</span
@@ -265,7 +272,16 @@ export function checksLine(
               : waiting
                 ? html`<span>${icon("lock")}${WAITING_WORDS}</span>`
                 : html`<span>${icon("clock")}No checks on this head yet</span>`;
-  return html`<p class="checks-line">
+  // Its own address: an event or the beat fetches this line, not the page.
+  // While a check runs there is no event for a finished shard, so it also
+  // asks on a beat.
+  const live =
+    liveSrc === ""
+      ? null
+      : html`id="live-checks" data-live="run.*" data-live-src="${liveSrc}"${
+          check.state === "running" || check.state === "queued" ? html` data-live-every="5"` : null
+        }`;
+  return html`<p class="checks-line" ${live}>
     ${body}${against}${when(
       tier !== "",
       () =>
@@ -316,6 +332,43 @@ async function tierOf(
 // ---- the merge box ----
 
 /**
+ * The checks line of a pull, as the merge box shows it and as its live
+ * address answers it: one function, so the two never disagree. A running
+ * check's counts come from its own log, read here and nowhere else.
+ */
+function pullChecksLine(
+  ctx: Ctx,
+  repo: Repo,
+  pull: Pull,
+  status: PullStatus,
+  check: CheckSummary,
+  isApp: boolean,
+  tier = "",
+  stale = false,
+): Html {
+  const thread = `${repoBase(repo)}/pulls/${pull.number}`;
+  const progress = runningProgress(ctx.app.config.dataDir, check);
+  return checksLine(
+    repoBase(repo),
+    check,
+    repo.requireChecks,
+    isApp,
+    !pullMayRun(ctx.app.db, repo, pull, status.headOid),
+    tier,
+    pull.state === "open" && canWrite(ctx.app.db, repo, ctx.auth.user)
+      ? html`<form method="post" action="${thread}/checks" class="inline-form">
+          ${btn("Check again", { size: "sm", icon: "loader" })}
+        </form>`
+      : "",
+    status.conflicts.length,
+    pull.baseBranch,
+    stale,
+    progress,
+    `${thread}/checks-line`,
+  );
+}
+
+/**
  * Six states, six cards. Every one names the situation, gives the reason,
  * and offers exactly the actions that are actually available.
  */
@@ -334,22 +387,7 @@ function mergeBox(
   const thread = `${repoBase(repo)}/pulls/${pull.number}`;
   // A reader's head runs nothing until a writer approves it; say so rather
   // than leave "no checks yet" waiting for something that will not come.
-  const checks = checksLine(
-    repoBase(repo),
-    check,
-    repo.requireChecks,
-    isApp,
-    !pullMayRun(ctx.app.db, repo, pull, status.headOid),
-    tier,
-    pull.state === "open" && canWrite(ctx.app.db, repo, ctx.auth.user)
-      ? html`<form method="post" action="${thread}/checks" class="inline-form">
-          ${btn("Check again", { size: "sm", icon: "loader" })}
-        </form>`
-      : "",
-    status.conflicts.length,
-    pull.baseBranch,
-    stale,
-  );
+  const checks = pullChecksLine(ctx, repo, pull, status, check, isApp, tier, stale);
   const reopen = html`<form method="post" action="${thread}/state">
     <input type="hidden" name="state" value="open" />
     ${btn("Reopen", { size: "sm", icon: "pull" })}
@@ -876,7 +914,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     palette: repoPalette(ctx, repo),
     body,
     styleCss: labelCss([...allLabels, ...applied]),
-    scriptJs: liveClientJs,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}`,
   });
 }
 
@@ -1228,4 +1266,66 @@ export async function pullMergeSubmit(ctx: Ctx): Promise<Response> {
     });
   }
   return flashTo(ctx, dest, { message: "Pull request merged." });
+}
+
+/**
+ * GET /:owner/:name/pulls/:number/checks-line — the checks line alone, for
+ * the region that shows it. Authorized as the page is: a viewer who cannot
+ * read the pull gets the same 404.
+ */
+export async function pullChecksFragment(ctx: Ctx): Promise<Response> {
+  const found = pullContext(ctx);
+  if (found instanceof Response) return fragment(html``, { status: 404 });
+  const { repo, pull } = found;
+  const dir = await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull);
+  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  // The beat asks every 5 seconds while a check runs: answer from the stored
+  // head without the merge reading or the base tip, which a running line
+  // does not show. Anything else takes the full road below.
+  const quick = checkSummary(ctx.app.db, pull.id, pull.headOid);
+  if (quick.state === "running" || quick.state === "queued") {
+    const status: PullStatus = {
+      baseOid: pull.baseOid,
+      headOid: pull.headOid,
+      ahead: 0,
+      mergeable: false,
+      conflicts: [],
+      reviews: null,
+    };
+    const tier = await tierOf(dir, pull.headOid, quick);
+    return fragment(
+      html`<div>${pullChecksLine(ctx, repo, pull, status, quick, isApp, tier)}</div>`,
+      { request: ctx.request },
+    );
+  }
+  const status = await pullStatus(dir, pull, {
+    db: ctx.app.db,
+    requireReview: repo.requireReview,
+  });
+  return fragment(
+    html`<div>${await pullChecksLineFor(ctx, repo, pull, status, dir)}</div>`,
+    { request: ctx.request },
+  );
+}
+
+/**
+ * The checks line with everything the page and the route both derive for it
+ * (the check, the tier words, an older base), so a page that draws it at first
+ * paint and the route that refreshes it say the same thing.
+ */
+export async function pullChecksLineFor(
+  ctx: Ctx,
+  repo: Repo,
+  pull: Pull,
+  status: PullStatus,
+  dir: string,
+): Promise<Html> {
+  const check = checkSummary(ctx.app.db, pull.id, status.headOid);
+  const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
+  const tier = await tierOf(dir, status.headOid, check);
+  const stale =
+    pull.state === "open" && pull.mergedAt === null
+      ? checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`))
+      : false;
+  return pullChecksLine(ctx, repo, pull, status, check, isApp, tier, stale);
 }

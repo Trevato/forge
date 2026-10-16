@@ -94,11 +94,13 @@ export function checkWords(
     "kind" | "state" | "createdAt" | "startedAt" | "finishedAt" | "summary" | "checkDetail"
   >,
   now = Date.now(),
+  /** `progressWords` of the run's log, when it has any. */
+  progress = "",
 ): string | undefined {
   if (run.kind !== "check") return undefined;
   const began = Date.parse(run.startedAt ?? run.createdAt);
   if (run.state === "running")
-    return `Check running · ${spanWords(now - began)}`;
+    return `Check running · ${spanWords(now - began)}${progress === "" ? "" : ` · ${progress}`}`;
   if (run.state === "ok")
     return run.finishedAt === null
       ? "Check passed"
