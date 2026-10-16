@@ -190,6 +190,7 @@ describe("the forge over MCP", () => {
       "model_ceiling",
       "outsiders",
       "decisions_by",
+      "archive",
       "probe",
       "following",
       "spawn",

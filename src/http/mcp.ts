@@ -127,7 +127,7 @@ import {
   directionNote,
   OUTSIDERS_NOTE,
 } from "../crew/direct.ts";
-import { setCrewOutsiders, setDecisionsBy } from "../actions/repos.ts";
+import { setArchived, setCrewOutsiders, setDecisionsBy } from "../actions/repos.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
 import { undoFleetOp } from "../actions/fleet.ts";
 import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
@@ -1202,6 +1202,47 @@ const TOOLS: readonly Tool[] = [
         says: dryRun
           ? `This is the plan; nothing changed. Decisions go by "${set.value.was}" now; send dryRun: false to make it "${set.value.by}".`
           : `Decisions here now go by "${set.value.by}".`,
+      });
+    },
+  },
+  {
+    name: "archive",
+    description:
+      "Put a repository away (archive) or bring it back (wake), by name: nothing is deleted. Without `archived`, says which way it is. With `archived` (true to archive, false to wake), it plans — `dryRun` is true unless you say false — and only an admin of the repository, with an admin token and never as an agent, does it. Each change is recorded in the repository's activity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        archived: { type: "boolean" },
+        dryRun: {
+          type: "boolean",
+          description: "Plan only (the default). Send false to do it.",
+        },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    dryByDefault: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const archived = args["archived"];
+      if (archived === undefined) return good({ archived: repo.archivedAt !== null });
+      if (typeof archived !== "boolean")
+        return bad("invalid", "`archived` is true or false");
+      const dryRun = args["dryRun"] !== false;
+      if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "archiving or waking needs an admin token");
+      const set = await setArchived(ctx.app, user, repo, archived, dryRun);
+      if (!set.ok)
+        return bad("forbidden", "only an admin of this repository archives or wakes it");
+      return good({
+        ...set.value,
+        says: dryRun
+          ? `This is the plan; nothing changed. It is ${set.value.was ? "archived" : "awake"} now; send dryRun: false to ${set.value.archived ? "archive" : "wake"} it.`
+          : set.value.archived
+            ? "Archived: put away, not deleted."
+            : "Awake again.",
       });
     },
   },

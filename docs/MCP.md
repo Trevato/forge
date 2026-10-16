@@ -39,6 +39,7 @@ for a tunnel and a forge that sleeps.
 | `audit`        | who can do what, per app, read from its contract.json in git: yes, own or no per door, and whether outsiders may direct its crew (`crewOutsiders`) |        |
 | `outsiders`    | `{ repo, on?, dryRun? }`: whether people who cannot write may direct the crew; with `on`, planned first (`dryRun` is true unless `false`); set only by the app's admin with an admin token, never an agent | yes    |
 | `decisions_by` | `{ repo, by?, dryRun? }`: the standing rule for a repository's hand-overs (`me`, `decider`, `decider_tell`); with `by`, planned first (`dryRun` is true unless `false`); set only by the app's admin with an admin token, never an agent | yes    |
+| `archive`      | `{ repo, archived?, dryRun? }`: archive (true) or wake (false) a repository, by name; planned first (`dryRun` is true unless `false`); only the repository's admin with an admin token, never an agent | yes    |
 | `probe`        | knock on a running app's doors as nobody, a user and an admin; the ones that disobey its contract |        |
 | `following`    | where a fork stands against what it follows, and what the crew is doing about it                  |        |
 | `spawn`        | `{ name, apps?, crew?, dryRun? }`: a child forge, planned first (`dryRun` is true unless `false`); an admin's, and an `ro` token may plan but not make | yes    |

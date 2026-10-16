@@ -412,6 +412,36 @@ export async function setDecisionsBy(
   return ok({ by: updated.value.decisionsBy, was: repo.decisionsBy, dryRun });
 }
 
+export interface ArchiveAnswer {
+  /** Whether the repository is archived, after this call. */
+  readonly archived: boolean;
+  /** Whether it was before. */
+  readonly was: boolean;
+  /** Nothing changed: this was the plan. */
+  readonly dryRun: boolean;
+}
+
+/**
+ * Archive (true) or wake (false) a repository, for the MCP: the same
+ * `updateRepoSettings` the API's PATCH goes through. A repository admin's,
+ * never an agent's; a dry run answers what would change and changes nothing.
+ */
+export async function setArchived(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  archived: boolean,
+  dryRun: boolean,
+): Promise<Result<ArchiveAnswer, "not_found">> {
+  const admin = requireRepoAdmin(app, actor, repo);
+  if (!admin.ok || admin.value.kind === "agent") return err("not_found");
+  const was = repo.archivedAt !== null;
+  if (dryRun) return ok({ archived, was, dryRun });
+  const updated = await updateRepoSettings(app, actor, repo, { archived });
+  if (!updated.ok) return err("not_found");
+  return ok({ archived: updated.value.archivedAt !== null, was, dryRun });
+}
+
 export async function deleteRepo(
   app: App,
   actor: User | undefined,
