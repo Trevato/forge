@@ -154,6 +154,8 @@ describe("the crew, with a stand-in Claude Code: network errors", () => {
       .run(MAX_PAUSES, new Date().toISOString(), next.id);
     const ended = await waitFor((r) => r.id === next.id && r.state === "failed");
     expect(ended.summary).not.toStartWith("paused");
+    expect(ended.summary).toContain("network unreachable");
+    expect(ended.summary).not.toContain("no changes pushed");
     rmSync(join(standIn.dataDir, "down"));
   }, 60_000);
 });

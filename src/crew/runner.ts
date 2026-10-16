@@ -1325,9 +1325,14 @@ async function work(
       Object.values(grant.env),
       run.variantGroup,
     );
+    // An outage that outlasted every pause is named as one, not as a push
+    // that found nothing: the board and the sentinel read the difference.
+    const outage = !landed.pushed && isNetworkError(result);
     return {
       state: result.ok || landed.pushed ? "ok" : "failed",
-      summary: landed.summary + (result.ok ? "" : ` (${result.reason})`),
+      summary: outage
+        ? `network unreachable after ${MAX_PAUSES} pauses; nothing to land (${result.reason})`
+        : landed.summary + (result.ok ? "" : ` (${result.reason})`),
       resumesAt: limitLifts,
       sessionId: result.sessionId,
       costUsd: result.costUsd,
