@@ -1495,6 +1495,10 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
     ctx,
     title: `Map · ${repo.name}`,
     crumbs: crumbsFor(repo),
+    // The card shows what a signed-out reader sees: only a public repo has one.
+    ...(repo.visibility === "public"
+      ? { ogImage: `/og/map/${repo.ownerName}~${repo.name}.png` }
+      : {}),
     palette: repoPalette(ctx, repo),
     body,
     styleCss: mapCss,

@@ -76,6 +76,7 @@ export const GATE: readonly string[] = [
   "test/og-card.test.ts",
   "test/og-route.test.ts",
   "test/og-png.test.ts",
+  "test/og-designs.test.ts",
   "test/router.test.ts",
   "test/health.test.ts",
   "test/client-address.test.ts",

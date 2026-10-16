@@ -3,6 +3,10 @@
  * 1200×630 SVG string in the studio's dark theme tokens. No I/O, no
  * dependencies: the OG route and the OG designs fill this in.
  *
+ * A card may carry a figure — the map's graph (`graph.ts`) or the audit's
+ * score (`score.ts`) — drawn in a box on the right; the words then keep to
+ * the left column, a little smaller, so the two never overlap.
+ *
  * Every text is stripped of characters XML cannot carry, clamped to the
  * card's width by an estimated advance (system fonts are unmeasurable here,
  * so the estimate is deliberately wide), ended with an ellipsis, and only
@@ -10,18 +14,26 @@
  */
 
 import { THEMES } from "../../design/themes.ts";
+import { graphSvg, type GraphFigure } from "./graph.ts";
+import { clean, escapeXml, fit } from "./xml.ts";
+import { scoreSvg, type ScoreFigure } from "./score.ts";
 
 export const CARD_WIDTH = 1200;
 export const CARD_HEIGHT = 630;
 
-export const CARD_KINDS = ["repo", "issue", "pull", "run", "app", "page"] as const;
+export const CARD_KINDS = ["repo", "issue", "pull", "run", "app", "map", "audit", "page"] as const;
 export type CardKind = (typeof CARD_KINDS)[number];
+
+export type Figure = GraphFigure | ScoreFigure;
+
+export { escapeXml, fit };
 
 export interface CardInput {
   kind: CardKind;
   title: string;
   lines?: readonly string[];
   stat?: string;
+  figure?: Figure;
 }
 
 const T = THEMES.dark.tokens;
@@ -30,10 +42,12 @@ const MONO = `ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monos
 
 const PAD = 80;
 const INNER = CARD_WIDTH - PAD * 2;
+/** With a figure: the words' column, and the figure's box to its right. */
+const COLUMN = 620;
+export const FIGURE_BOX = { x: 760, y: 150, w: 360, h: 330 } as const;
 const MAX_LINES = 3;
 const TITLE_LINES = 2;
-/** Widest average glyph advance, in em, for the sans stack (bold is wider). */
-const EM = 0.62;
+/** Widest average glyph advance, in em, for the bold sans: wider than the regular face. */
 const EM_BOLD = 0.68;
 const EM_MONO = 0.62;
 
@@ -43,37 +57,14 @@ const KIND_COLOR: Record<CardKind, string> = {
   pull: T.merged,
   run: T.primary,
   app: T.attn,
+  map: T.accent,
+  audit: T.success,
   page: T.primary,
 };
 
-/** Drop what XML 1.0 forbids (controls, lone surrogates); fold whitespace. */
-function clean(s: unknown): string {
-  return String(s ?? "")
-    .replace(/\s+/g, " ")
-    .replace(/[^\u0009\u000A\u000D -\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/gu, "")
-    .trim();
-}
-
-export function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-/** Clamp to `width` px at `size` px type; exported for the tests. */
-export function fit(text: string, size: number, width: number, em = EM): string {
-  const max = Math.max(1, Math.floor(width / (size * em)));
-  const chars = Array.from(clean(text));
-  if (chars.length <= max) return chars.join("");
-  return chars.slice(0, max - 1).join("").trimEnd() + "…";
-}
-
 /** Break a title into at most `n` lines of `max` chars; the last is clamped. */
-function wrap(text: string, size: number, n: number, em: number): string[] {
-  const max = Math.max(1, Math.floor(INNER / (size * em)));
+function wrap(text: string, size: number, n: number, em: number, width = INNER): string[] {
+  const max = Math.max(1, Math.floor(width / (size * em)));
   const words = clean(text).split(" ").filter(Boolean);
   const rows: string[] = [];
   let cur = "";
@@ -98,10 +89,10 @@ function wrap(text: string, size: number, n: number, em: number): string[] {
   const rest = i < words.length || rows.join(" ").length < clean(text).length;
   if (rest && rows.length) {
     const last = rows.length - 1;
-    rows[last] = fit(rows[last]! + "…", size, INNER, em);
+    rows[last] = fit(rows[last]! + "…", size, width, em);
     if (!rows[last]!.endsWith("…")) rows[last] += "…";
   }
-  return rows.map((r) => fit(r, size, INNER, em));
+  return rows.map((r) => fit(r, size, width, em));
 }
 
 function text(
@@ -113,6 +104,14 @@ function text(
   extra = "",
 ): string {
   return `<text x="${x}" y="${y}" font-size="${size}" fill="${fill}"${extra}>${escapeXml(body)}</text>`;
+}
+
+/** The figure's SVG, or nothing for an absent or unknown one. */
+function drawFigure(figure: unknown): string {
+  const f = figure as Figure | undefined;
+  if (f?.kind === "graph") return graphSvg(f, FIGURE_BOX);
+  if (f?.kind === "score") return scoreSvg(f, FIGURE_BOX);
+  return "";
 }
 
 export function renderCard(input: CardInput): string {
@@ -135,24 +134,29 @@ export function renderCard(input: CardInput): string {
     text(CARD_WIDTH - PAD, PAD + 24, 24, color, label, ` font-weight="700" text-anchor="end" letter-spacing="2"`),
   );
 
-  // Title: up to two lines, 64px bold.
-  const tsize = 64;
-  const title = wrap(input?.title ?? "", tsize, TITLE_LINES, EM_BOLD);
+  const figure = drawFigure(input?.figure);
+  const column = figure ? COLUMN : INNER;
+  if (figure) out.push(figure);
+
+  // Title: up to two lines, 64px bold (56px beside a figure).
+  const tsize = figure ? 56 : 64;
+  const title = wrap(input?.title ?? "", tsize, TITLE_LINES, EM_BOLD, column);
   let y = 270;
   for (const row of title) {
     out.push(text(PAD, y, tsize, T.fg, row, ` font-weight="700"`));
-    y += 78;
+    y += tsize + 14;
   }
 
-  // Supporting lines, 30px muted.
+  // Supporting lines, 30px muted (26px beside a figure).
   const lines = (Array.isArray(input?.lines) ? input.lines : [])
     .map(clean)
     .filter(Boolean)
     .slice(0, MAX_LINES);
+  const lsize = figure ? 26 : 30;
   y = Math.max(y + 10, 360);
   for (const l of lines) {
-    out.push(text(PAD, y, 30, T["muted-fg"], fit(l, 30, INNER)));
-    y += 44;
+    out.push(text(PAD, y, lsize, T["muted-fg"], fit(l, lsize, column)));
+    y += lsize + 14;
   }
 
   // Footer rule and stat.

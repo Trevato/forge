@@ -89,6 +89,7 @@ export async function auditPage(ctx: Ctx): Promise<Response> {
     title: "Audit",
     description:
       "Who can do what, across every app, read from each one's contract.",
+    ogImage: "/og/audit.png",
     body: html`<div class="page-head">
         <h1>Audit</h1>
         <span class="spacer"></span>

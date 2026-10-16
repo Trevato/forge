@@ -746,6 +746,25 @@ takes back (`supersedes`). `/asked` shows "said again, first on …", "takes bac
 social cards. They show only what an anonymous reader can open; anything
 private, sealed or unknown is the same 404.
 
+Two of them carry a figure beside the words:
+
+- **Map** — `/og/map/owner~name.svg`: the repository's dependency graph as a
+  thumbnail, laid out exactly as `/owner/name/map` lays it out (ready green,
+  working solid accent, blocked grey, waiting/held purple, parked amber,
+  deferred and done faint), the critical path in the accent; beside it the
+  open count, the critical path's length and ends, and the next issue a free
+  hand would take; along the foot `ready · working · blocked · waiting · done`.
+  Drawn from what a signed-out reader sees: no sealed issue, no run on one.
+- **Audit** — `/og/audit.svg`: the policy score as a ring, the share of apps
+  that hold (sound `contract.json` and no disagreeing probe; an app with no
+  contract does not hold — 3 sound, one disobeying, one unread is 2 of 4,
+  50%), with the top three findings worst first. Public repositories' apps only,
+  as `/audit` shows them signed out.
+
+The map page (public repositories) and `/audit` name their `.png` as
+`og:image` with `twitter:card=summary_large_image`; every other page keeps the
+forge icon.
+
 ## Develop
 
 ```sh
@@ -1059,7 +1078,7 @@ as kind `choose`.
 
 ### OG cards as PNG
 
-`/og/{repo,app,issue,pull,run}/<ref>.png` is the same public card as the `.svg`,
+`/og/{repo,app,issue,pull,run,map}/<ref>.png` and `/og/audit.png` are the same public cards as the `.svg`,
 rasterized (1200×630) for the link previews that refuse SVG. Same refs, same
 404s, same ETag-per-inputs (suffixed `-png`). Each PNG is rendered once and kept
 under `$FORGE_APP_DATA/og-png/<sha256 of the inputs>.png`; the cache holds at

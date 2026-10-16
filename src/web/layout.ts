@@ -62,6 +62,12 @@ export interface PageOptions {
    * are unchanged; only the main column lets go of `--page`.
    */
   wide?: boolean;
+  /**
+   * This page's link-preview card, a same-origin path such as
+   * `/og/audit.png` (`pages/og.ts`). Only for a page whose card answers a
+   * signed-out unfurler; absent, the forge's icon stands in.
+   */
+  ogImage?: string;
   /** This page's feed, advertised in the head so a reader can find it. */
   feed?: { href: string; title: string };
   /** Breadcrumb segments rendered in the topbar, e.g. owner / repo. */
@@ -595,11 +601,21 @@ export function page(options: PageOptions, status = 200): Response {
               />`
             : null
         }
-        <meta
-          property="og:image"
-          content="${ctx.url.origin}/icons/forge-512.png"
-        />
-        <meta name="twitter:card" content="summary" />
+        ${
+          options.ogImage !== undefined && options.ogImage.startsWith("/og/")
+            ? html`<meta
+                  property="og:image"
+                  content="${ctx.url.origin}${options.ogImage}"
+                />
+                <meta property="og:image:width" content="1200" />
+                <meta property="og:image:height" content="630" />
+                <meta name="twitter:card" content="summary_large_image" />`
+            : html`<meta
+                  property="og:image"
+                  content="${ctx.url.origin}/icons/forge-512.png"
+                />
+                <meta name="twitter:card" content="summary" />`
+        }
         <link rel="manifest" href="/manifest.webmanifest" />
         ${links.map(
           (l) =>

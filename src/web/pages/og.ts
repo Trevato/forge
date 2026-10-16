@@ -1,10 +1,13 @@
 /**
- * The social card on the web: GET /og/{repo,app,issue,pull,run}/:ref.svg.
+ * The social card on the web: GET /og/{repo,app,issue,pull,run,map}/:ref.svg
+ * and GET /og/audit.svg.
  * Public by design — it is what a link preview fetches without a session —
  * so it says only what an anonymous reader may already see: a public repo
  * (`owner~name`), the public app of one (its slug), or an issue, pull or run
  * of a public repo (`owner~name~number`, `owner~name~runid`) that an
- * anonymous reader could open (not sealed, runs readable). Anything else, or a
+ * anonymous reader could open (not sealed, runs readable); a public repo's
+ * map (`owner~name`) drawn from only the issues and runs it may see; or the
+ * audit of the public apps. Anything else, or a
  * ref that is not shaped like one, is the same 404. The ETag is the sha256
  * of the card's inputs, so a changed repo is a new card and an unchanged
  * one is a 304. The `.png` twin is the same card rasterized once per input
@@ -16,22 +19,29 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { App } from "../../app.ts";
 import { getRepoRun } from "../../actions/runs.ts";
-import { getAppBySlug, isSlug } from "../../core/apps.ts";
+import { appsForRepos, getAppBySlug, isSlug } from "../../core/apps.ts";
+import { audit } from "../../contract/audit.ts";
+import { latestProbes } from "../../contract/probes.ts";
+import { listActiveRuns } from "../../core/runs.ts";
 import {
   canRead,
   countsForRepos,
   getRepo,
   getRepoById,
+  listReposVisibleTo,
   type Repo,
 } from "../../core/repos.ts";
 import { dependenciesOf, repoGraph, readyNow } from "../../core/dependencies.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { getPull, type Pull } from "../../core/pulls.ts";
-import { mayView } from "../../core/sealed.ts";
+import { mayView, mayViewId, sealedScope } from "../../core/sealed.ts";
 import { isSafeName } from "../../git/guard.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFound } from "../../http/respond.ts";
+import { auditInput, type AuditRow } from "../og/audit.ts";
 import { renderCard, type CardInput } from "../og/card.ts";
+import { mapInput } from "../og/map.ts";
+import { marksFor } from "./map.ts";
 import { Busy, pngCache, type PngCache } from "../og/png-cache.ts";
 import { rasterizer } from "../og/raster.ts";
 
@@ -93,7 +103,10 @@ function waiting(ctx: Ctx, repo: Repo, issue: Issue): string {
   return `waits on ${shown.join(", ")}${more > 0 ? ` +${more}` : ""}`;
 }
 
-export type OgKind = "repo" | "app" | "issue" | "pull" | "run";
+export type OgKind = "repo" | "app" | "issue" | "pull" | "run" | "map" | "audit";
+
+/** The audit page's own bound. */
+const AUDIT_LIMIT = 200;
 
 const RUN_ID = /^[0-9a-z]{1,40}$/;
 
@@ -146,15 +159,61 @@ function runInput(ctx: Ctx, ref: string): CardInput | undefined {
   };
 }
 
-function resolve(ctx: Ctx, kind: OgKind, ref: string): CardInput | undefined {
+/** `owner~name` → its public repo, or nothing. */
+function twoPart(ctx: Ctx, ref: string): Repo | undefined {
+  const [owner, name, extra] = ref.split("~");
+  if (extra !== undefined || !owner || !name) return undefined;
+  if (!isSafeName(owner) || !isSafeName(name)) return undefined;
+  return publicRepo(ctx, getRepo(ctx.app.db, owner, name));
+}
+
+/** The map as the map page draws it for someone signed out. */
+function mapCardInput(ctx: Ctx, ref: string): CardInput | undefined {
+  const repo = twoPart(ctx, ref);
+  if (!repo) return undefined;
+  const db = ctx.app.db;
+  const graph = repoGraph(db, repo.id, sealedScope(db, repo, undefined));
+  // A run on a sealed report is not shown to who may not see the report.
+  const runs = listActiveRuns(db, [repo.id]).filter((r) =>
+    mayViewId(db, repo, r.issueId, undefined),
+  );
+  return mapInput(`${repo.ownerName}/${repo.name}`, graph, marksFor(db, repo.id, graph, runs));
+}
+
+/** The public apps, read the way the audit page reads them for someone signed out. */
+async function auditCardInput(ctx: Ctx): Promise<CardInput> {
+  const db = ctx.app.db;
+  const repos = listReposVisibleTo(db, undefined, { limit: AUDIT_LIMIT });
+  const records = appsForRepos(
+    db,
+    repos.map((r) => r.id),
+  );
+  const apps = repos.filter((r) => records.has(r.id));
+  const audited = await Promise.all(apps.map((repo) => audit(ctx.app.reposRoot, repo)));
+  const appId = (repoId: string): string => records.get(repoId)!.id;
+  const probed = latestProbes(
+    db,
+    audited.filter((a) => a.standing.kind === "sound").map((a) => appId(a.repo.id)),
+  );
+  const rows: AuditRow[] = audited.map((a) => ({
+    name: `${a.repo.ownerName}/${a.repo.name}`,
+    standing: a.standing.kind,
+    open: a.standing.kind === "sound" ? a.standing.open.length : 0,
+    problems: a.standing.kind === "unsound" ? a.standing.problems : [],
+    disobeys:
+      a.standing.kind === "sound" && probed.get(appId(a.repo.id))?.verdict === "mismatch",
+  }));
+  return auditInput(rows);
+}
+
+async function resolve(ctx: Ctx, kind: OgKind, ref: string): Promise<CardInput | undefined> {
   const db = ctx.app.db;
   if (kind === "issue" || kind === "pull") return threadInput(ctx, kind, ref);
   if (kind === "run") return runInput(ctx, ref);
+  if (kind === "map") return mapCardInput(ctx, ref);
+  if (kind === "audit") return ref === "" ? auditCardInput(ctx) : undefined;
   if (kind === "repo") {
-    const [owner, name, extra] = ref.split("~");
-    if (extra !== undefined || !owner || !name) return undefined;
-    if (!isSafeName(owner) || !isSafeName(name)) return undefined;
-    const repo = publicRepo(ctx, getRepo(db, owner, name));
+    const repo = twoPart(ctx, ref);
     return repo && repoInput(ctx, repo, "repo");
   }
   if (!isSlug(ref)) return undefined;
@@ -181,7 +240,7 @@ function cacheFor(app: App): PngCache {
 
 export function ogCard(kind: OgKind, format: "svg" | "png" = "svg") {
   return async (ctx: Ctx): Promise<Response> => {
-    const input = resolve(ctx, kind, ctx.params.ref ?? "");
+    const input = await resolve(ctx, kind, ctx.params.ref ?? "");
     if (!input) return notFound();
     const etag = `"${createHash("sha256").update(JSON.stringify(input)).digest("hex")}${format === "png" ? "-png" : ""}"`;
     const headers = {
