@@ -80,9 +80,9 @@ describe("invites: an admin mints, lists and revokes", () => {
     const made = mintInvite(app.db, "x");
     for (const token of [guest, "forge_nope"]) {
       const post = await api("/api/v1/admin/invites", token, { method: "POST", body: "{}" });
-      expect([401, 404]).toContain(post.status);
-      expect([401, 404]).toContain((await api("/api/v1/admin/invites", token)).status);
-      expect([401, 404]).toContain(
+      expect([401, 403, 404]).toContain(post.status);
+      expect([401, 403, 404]).toContain((await api("/api/v1/admin/invites", token)).status);
+      expect([401, 403, 404]).toContain(
         (await api(`/api/v1/admin/invites/${made.invite.id}`, token, { method: "DELETE" })).status,
       );
     }
@@ -155,7 +155,7 @@ describe("invites: the settings form", () => {
   test("a cross-origin post is refused and a non-admin gets the not-found page", async () => {
     const before = listInvites(app.db).length;
     expect((await post(alice, "/admin/invites", { days: "3" }, "https://evil.example")).status).toBe(403);
-    expect((await post(bob, "/admin/invites", { days: "3" })).status).toBe(404);
+    expect((await post(bob, "/admin/invites", { days: "3" })).status).toBe(403);
     expect(listInvites(app.db).length).toBe(before);
   });
 });

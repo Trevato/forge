@@ -430,6 +430,7 @@ import { targetForShortCode } from "../origins/oauth.ts";
 import { apiRoutes } from "./api.ts";
 import { inNamespace } from "../core/proposal_token.ts";
 import { proposalTokenMint, proposalTokenRevoke } from "../web/pages/proposal-tokens.ts";
+import { adminGate } from "./admin_gate.ts";
 import { proposalGate } from "./proposal_gate.ts";
 import { feedRoutes } from "./feed.ts";
 import type { Database } from "bun:sqlite";
@@ -2301,6 +2302,10 @@ async function answerGet(
   // request it makes ends here, before the limiter or any handler.
   const proposalRefusal = proposalGate(app, request, url, auth);
   if (proposalRefusal !== undefined) return proposalRefusal;
+
+  // Admin settings and releases are an admin's; a member is told so.
+  const adminRefusal = adminGate(app, request, url, auth);
+  if (adminRefusal !== undefined) return adminRefusal;
 
   // The two things standing between one runaway agent and everybody
   // else's latency, applied before a handler runs and after auth is

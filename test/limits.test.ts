@@ -80,12 +80,13 @@ describe("limits", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("a non-admin, signed in or not, gets a 404 and changes nothing", async () => {
+  test("a non-admin, signed in or not, is refused and changes nothing", async () => {
     const bob = (await login("bob")).cookie;
     for (const cookie of [bob, ""]) {
       const got = await fetch(`${servers.url}/admin/limits`, { headers: { cookie } });
-      expect(got.status).toBe(404);
-      expect((await post(cookie, { key: "front.pinned_max", value: "50" })).status).toBe(404);
+      const refused = cookie === "" ? 404 : 403; // signed out: not there; signed in: not an admin
+      expect(got.status).toBe(refused);
+      expect((await post(cookie, { key: "front.pinned_max", value: "50" })).status).toBe(refused);
     }
     expect(limitValue(app.db, "front.pinned_max")).toBe(LIMITS["front.pinned_max"].default);
     expect(limitChanges(app.db)).toEqual([]);
@@ -177,8 +178,8 @@ describe("limits", () => {
     const listed = await api(adminToken, "GET", "/admin/limits");
     expect(listed.status).toBe(200);
     expect(((await listed.json()) as { limits: unknown[] }).limits).toHaveLength(LIMIT_KEYS.length);
-    expect((await api(bobToken, "GET", "/admin/limits")).status).toBe(404);
-    expect((await api(bobToken, "PUT", "/admin/limits/share.daily_max", { value: "9" })).status).toBe(404);
+    expect((await api(bobToken, "GET", "/admin/limits")).status).toBe(403);
+    expect((await api(bobToken, "PUT", "/admin/limits/share.daily_max", { value: "9" })).status).toBe(403);
     expect((await api(adminToken, "PUT", "/admin/limits/share.daily_max", { value: "0" })).status).toBe(422);
     expect((await api(adminToken, "PUT", "/admin/limits/nothing.here", { value: "3" })).status).toBe(422);
     expect(limitValue(app.db, "share.daily_max")).toBe(LIMITS["share.daily_max"].default);

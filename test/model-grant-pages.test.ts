@@ -107,7 +107,7 @@ describe("a model grant, from the account's page and the API", () => {
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify({ usdPerMonth: usd }),
       });
-    expect((await post(bobTok.token, 5)).status).toBe(404);
+    expect((await post(bobTok.token, 5)).status).toBe(403);
     expect((await post(tok.token, "5")).status).toBe(422);
     expect((await post(tok.token, -1)).status).toBe(422);
     expect((await post(tok.token, 7.5)).status).toBe(200);
@@ -174,7 +174,7 @@ describe("a model grant, from the account's page and the API", () => {
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-    expect((await post(bobTok.token, { dailyUsd: 5, perRunUsd: 1 })).status).toBe(404);
+    expect((await post(bobTok.token, { dailyUsd: 5, perRunUsd: 1 })).status).toBe(403);
     expect((await post(tok.token, { dailyUsd: "5", perRunUsd: 1 })).status).toBe(422);
     expect((await post(tok.token, { dailyUsd: 0, perRunUsd: 1 })).status).toBe(422);
     expect((await post(tok.token, { dailyUsd: 5, perRunUsd: 1 }, "nobody")).status).toBe(404);

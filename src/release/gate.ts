@@ -3,11 +3,15 @@
  * both clients (the /releases page and the SSH terminal) run: the same
  * refusals, `beginSwap`/`endSwap`, the health-read swap, then this process
  * drains. Plain data in, plain data out; neither client re-states a rule.
+ * Releases are an admin's to see and undo: a person whose role lacks
+ * `administer` (`core/roles.ts`) is refused here, whatever they may do to
+ * FORGE_REPO, so the page and the terminal agree.
  */
 
 import { existsSync } from "node:fs";
 import type { App } from "../app.ts";
 import { canRead, canWrite, getRepo, type Repo } from "../core/repos.ts";
+import { lacks } from "../core/roles.ts";
 import type { User } from "../core/users.ts";
 import { releaseDir } from "./checkout.ts";
 import type { Release } from "./record.ts";
@@ -27,7 +31,7 @@ function forgeRepoOf(app: App): Repo | undefined {
 
 /** Who may see the release history: the forge repository's readers and a site admin. */
 export function mayRead(app: App, user: User | undefined): boolean {
-  if (user === undefined) return false;
+  if (user === undefined || lacks(app.db, user, "administer")) return false;
   if (user.isAdmin) return true;
   const repo = forgeRepoOf(app);
   return repo !== undefined && canRead(app.db, repo, user);
@@ -35,7 +39,7 @@ export function mayRead(app: App, user: User | undefined): boolean {
 
 export function mayRollBack(app: App, user: User | undefined): boolean {
   // Undoing a deployment is a person's decision, as a revert is (#1824).
-  if (user === undefined || user.kind === "agent") return false;
+  if (user === undefined || user.kind === "agent" || lacks(app.db, user, "administer")) return false;
   const repo = forgeRepoOf(app);
   return repo !== undefined && canWrite(app.db, repo, user);
 }

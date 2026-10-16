@@ -15,6 +15,13 @@ verify, a suspended one is refused, an agent and a stranger to a private
 repository meet their own reasons first. A comment from a guest is still a
 comment; it just starts no run. Agents and organizations are not guests.
 
+Part 3a (#2384) enforces "Administer the forge" for admin settings and
+releases: every `/admin/*` page, `/api/v1/admin/*` call, and the `/releases`
+page with its rollback refuse a member or guest with a 403 and "only an admin
+can change the forge's settings or its releases" (`not_admin` in the API).
+`src/http/admin_gate.ts` is the one gate, ahead of every handler;
+`/releases.json` stays public. Token scopes are a later part.
+
 Nothing switches the refusal off: the test suite runs with it everywhere, and
 a suite whose people make things promotes them first (`promote` in
 `test/helpers/members.ts`). The crew's wake-up sweep, which starts a run on an

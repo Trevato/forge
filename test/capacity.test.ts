@@ -171,14 +171,16 @@ describe("capacity: only a forge admin reads or changes it", () => {
     expect(bobPost.status).toBe(404);
 
     for (const token of [bobAdmin, agentRw]) {
-      expect((await api(token, "GET", "/admin/capacity")).status).toBe(404);
+      // A person who is not an admin is refused; an agent is told it is not there.
+      const refused = token === bobAdmin ? 403 : 404;
+      expect((await api(token, "GET", "/admin/capacity")).status).toBe(refused);
       expect(
         (
           await api(token, "PUT", "/admin/capacity/checks.concurrency", {
             value: "9",
           })
         ).status,
-      ).toBe(404);
+      ).toBe(refused);
       const tool = await mcp(token, {
         key: "checks.concurrency",
         value: "9",

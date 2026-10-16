@@ -48,6 +48,9 @@ export function rolesTable(): string {
 /** The words a guest is refused with, on every surface. */
 export const NOT_A_MEMBER = "the owner has not made this account a member";
 
+/** The words a member (or guest) is refused admin settings and releases with. */
+export const NOT_AN_ADMIN = "only an admin can change the forge's settings or its releases";
+
 /**
  * Whether the table withholds `ability` from this account. Only a person
  * can be a guest: agents and organizations are not accounts the owner

@@ -148,8 +148,8 @@ describe("quotas", () => {
 
   test("a non-admin is refused", async () => {
     const t = createToken(app.db, bob.id, "t", "admin").token;
-    expect((await api(t, "GET")).status).toBe(404);
-    expect((await api(t, "PATCH", { quotas: { apps: 2 } })).status).toBe(404);
+    expect((await api(t, "GET")).status).toBe(403);
+    expect((await api(t, "PATCH", { quotas: { apps: 2 } })).status).toBe(403);
     expect(getQuotas(app.db).apps).toBeNull();
   });
 

@@ -103,7 +103,7 @@ describe("signup setting", () => {
   test("a non-admin is refused", async () => {
     const t = createToken(app.db, bob.id, "t", "admin").token;
     const res = await api(t, "PATCH", { signup: "open" });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(403);
     expect(getSignup(app.db)).toBe("closed");
   });
 
@@ -133,7 +133,7 @@ describe("signup setting", () => {
     // Before: invite (set through MCP above).
     expect((await post(aliceCookie, "closed", "https://evil.example")).status).toBe(403);
     expect(getSignup(app.db)).toBe("invite");
-    expect((await post(bobCookie, "closed", servers.url)).status).toBe(404);
+    expect((await post(bobCookie, "closed", servers.url)).status).toBe(403);
     expect(getSignup(app.db)).toBe("invite");
     await post(aliceCookie, "nope", servers.url);
     expect(getSignup(app.db)).toBe("invite");

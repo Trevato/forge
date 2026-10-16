@@ -106,22 +106,24 @@ describe("the releases page", () => {
     expect(body).not.toContain(`/releases/${PRUNED}/rollback`);
   });
 
-  test("a non-reader gets a 404 and no live line; a reader who cannot write sees the list with no button", async () => {
+  test("a non-admin is refused with a 403 and gets no live line, even as a reader of the repository", async () => {
     const cookie = await login("bob", "another-good-passphrase");
     const get = (path: string) => fetch(`${servers.url}${path}`, { headers: { cookie } });
-    expect((await get("/releases")).status).toBe(404);
+    expect((await get("/releases")).status).toBe(403);
     const home = await (await get("/")).text();
     expect(home).not.toContain("live-release");
     expect(home).not.toContain("aaaaaaa");
     expect((await post(`/releases/${KEPT}/rollback`, cookie, servers.url)).status).toBe(403);
 
     app.db.query("UPDATE repo SET visibility = 'public' WHERE name = 'forge'").run();
-    const body = await (await get("/releases")).text();
-    expect(body).toContain("bbbbbbb");
+    const refused = await get("/releases");
+    expect(refused.status).toBe(403);
+    const body = await refused.text();
+    expect(body).not.toContain("bbbbbbb");
     expect(body).not.toContain("/rollback");
     expect((await post(`/releases/${KEPT}/rollback`, cookie, servers.url)).status).toBe(403);
     expect((await post(`/releases/${KEPT}/rollback`, "", servers.url)).status).toBe(403);
-    expect(await (await get("/")).text()).toContain("live-release");
+    expect(await (await get("/")).text()).not.toContain("live-release");
     app.db.query("UPDATE repo SET visibility = 'private' WHERE name = 'forge'").run();
   });
 

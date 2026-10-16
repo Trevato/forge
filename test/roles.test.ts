@@ -152,7 +152,7 @@ describe("roles on /settings/people", () => {
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify({ role, usdPerMonth: usd }),
       });
-    expect((await send(bobTok, "member")).status).toBe(404);
+    expect((await send(bobTok, "member")).status).toBe(403);
     expect((await send(tok, "admin")).status).toBe(422);
     expect((await send(tok, "member", -1)).status).toBe(422);
     expect(roleNow("bob")).toBe("guest");

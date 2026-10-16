@@ -148,7 +148,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
 
   test("nobody but the owner sees the list, or can act on it", async () => {
     const { token } = await outsider("mallory");
-    expect((await api("/api/v1/admin/accounts", { token })).status).toBe(404);
+    expect((await api("/api/v1/admin/accounts", { token })).status).toBe(403);
     expect(
       (
         await api("/api/v1/admin/accounts/ada/suspend", {
@@ -156,11 +156,11 @@ describe("accounts: the owner sees, suspends and removes", () => {
           token,
         })
       ).status,
-    ).toBe(404);
+    ).toBe(403);
     expect(
       (await api("/api/v1/admin/accounts/ada", { method: "DELETE", token }))
         .status,
-    ).toBe(404);
+    ).toBe(403);
     expect((await api("/api/v1/admin/accounts")).status).toBe(404);
     const page = await fetch(`${base}/settings/accounts`, {
       headers: { authorization: `Bearer ${token}` },
@@ -498,7 +498,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
     // The plain path is as it was.
     expect((await del({})).status).toBe(409);
     // A non-admin is refused.
-    expect((await del({ retireOrgs: true, confirm: true }, bossToken)).status).toBe(404);
+    expect((await del({ retireOrgs: true, confirm: true }, bossToken)).status).toBe(403);
     // Without confirm: the list, and nothing changes.
     const preview = await del({ retireOrgs: true });
     expect(preview.status).toBe(200);
@@ -636,7 +636,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
     // Nobody but the owner may say so.
     expect(
       (await api("/api/v1/admin/accounts/nadia/verify", { method: "POST", token: other })).status,
-    ).toBe(404);
+    ).toBe(403);
 
     const listed = (await (await api("/api/v1/admin/accounts", { token: ownerToken })).json()) as {
       items: { username: string; verified: boolean }[];

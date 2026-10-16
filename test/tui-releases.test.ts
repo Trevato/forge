@@ -10,9 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
+import { setMember } from "../src/core/roles.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { releaseDir } from "../src/release/checkout.ts";
-import { mayRollBack } from "../src/release/gate.ts";
+import { mayRead, mayRollBack } from "../src/release/gate.ts";
 import { recordRelease } from "../src/release/record.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import type { Ctx } from "../src/tui/app/app.ts";
@@ -113,16 +114,11 @@ describe("the releases screen", () => {
     expect(text).toContain("healthy since");
   });
 
-  test("a reader sees the releases but gets no rollback", async () => {
+  test("a non-admin reader of FORGE_REPO sees nothing and gets no rollback", async () => {
     app.db.run("UPDATE repo SET visibility='public' WHERE name='forge'");
-    expect(offered(carol)).toBe(true);
-    const lines = await readReleases(new Session(app, identity(carol)));
-    expect(lines.map((l) => l.release.sha.slice(0, 1))).toEqual(["b", "a"]);
-    expect(lines.every((l) => !l.rollable)).toBe(true);
-    // Enter on the kept release asks nothing.
-    const text = await open(carol, "j\r");
-    expect(text).not.toContain("Swap to");
-    expect(text).toContain("bbbbbbb");
+    expect(offered(carol)).toBe(false);
+    expect(await readReleases(new Session(app, identity(carol)))).toEqual([]);
+    expect(await open(carol, "j\r")).not.toContain("bbbbbbb");
   });
 
   test("an agent is refused a rollback, whatever it can read", async () => {
@@ -141,5 +137,24 @@ describe("the releases screen", () => {
     expect(asking).toContain("Swap to bbbbbbb");
     const told = await open(alice, "\r\x1b[D\r");
     expect(told).toContain("FORGE_SELF_SWAP is off");
+  });
+
+  test("a member who writes FORGE_REPO is refused releases and rollback (#2384), in the rule, the palette and the screen", async () => {
+    setMember(app.db, carol.id, true, alice.id, new Date());
+    app.db.query("UPDATE repo SET owner_id = ?1 WHERE name = 'forge'").run(carol.id);
+    app.config.forgeRepo = "carol/forge";
+    try {
+      expect(mayRead(app, carol)).toBe(false);
+      expect(mayRollBack(app, carol)).toBe(false);
+      expect(mayRead(app, alice) && mayRollBack(app, alice)).toBe(true);
+      expect(offered(carol)).toBe(false);
+      expect(await readReleases(new Session(app, identity(carol)))).toEqual([]);
+      const text = await open(carol, "\r");
+      expect(text).not.toContain("bbbbbbb");
+      expect(text).not.toContain("Swap to");
+      expect(offered(alice)).toBe(true);
+    } finally {
+      app.config.forgeRepo = "alice/forge";
+    }
   });
 });
