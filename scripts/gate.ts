@@ -31,7 +31,6 @@ export type Exclusion = {
 
 export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/crew-sandbox-real.test.ts", reason: "landed unlisted and red locally; the builder admits it", issue: 1238 },
-  { file: "test/api-errors.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-api.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/apps-open-host.test.ts",
@@ -40,7 +39,11 @@ export const EXCLUDED: readonly Exclusion[] = [
   },
   { file: "test/apps-sleep.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-ws.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/audit.test.ts", reason: "not yet admitted", issue: 261 },
+  {
+    file: "test/audit.test.ts",
+    reason: "red in random order: the page: every app the viewer can read, each in its standing",
+    issue: 2108,
+  },
   {
     file: "test/board-windows.test.ts",
     reason:
@@ -57,17 +60,23 @@ export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/probes.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/prompts.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/public-url.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/read-api.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/reviews-states.test.ts",
-    reason: "not yet admitted",
-    issue: 261,
+    reason: "red in random order: every verdict and resolution reaches the event outbox",
+    issue: 2107,
   },
-  { file: "test/reviews.test.ts", reason: "not yet admitted", issue: 261 },
+  {
+    file: "test/reviews.test.ts",
+    reason: "red in random order: a posted review comment appears inline, anchored to its line",
+    issue: 2106,
+  },
   { file: "test/runs-lease.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/scaffold.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/search.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/security-xss.test.ts", reason: "not yet admitted", issue: 261 },
+  {
+    file: "test/search.test.ts",
+    reason: "red in random order: local repo hits carry their open counts",
+    issue: 2105,
+  },
   {
     file: "test/snapshot-destination.test.ts",
     reason: "not yet admitted",
@@ -79,7 +88,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     reason: "not yet admitted",
     issue: 261,
   },
-  { file: "test/sse.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/ssh-app.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/ssh-port-taken.test.ts",
@@ -87,7 +95,6 @@ export const EXCLUDED: readonly Exclusion[] = [
     issue: 261,
   },
   { file: "test/ssh.test.ts", reason: "not yet admitted", issue: 261 },
-  { file: "test/standards.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/studio-phone.test.ts", reason: "not yet admitted", issue: 261 },
   {
     file: "test/tui-code.test.ts",
