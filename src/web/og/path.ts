@@ -19,3 +19,15 @@ export function cardPath(
   if (repo.visibility !== "public" || thread.sealed) return undefined;
   return `/og/${kind}/${repo.ownerName}~${repo.name}~${thread.number}.png`;
 }
+
+/** A run's card, when the repo is public and the run's thread is not sealed (`visible`). */
+export function runCardPath(repo: Where, runId: string, visible: boolean): string | undefined {
+  if (repo.visibility !== "public" || !visible) return undefined;
+  return `/og/run/${repo.ownerName}~${repo.name}~${runId}.png`;
+}
+
+/** An app's card, by slug: only a public app of a public repo has one. */
+export function appCardPath(repo: Where, app: { slug: string; access: string }): string | undefined {
+  if (repo.visibility !== "public" || app.access !== "public") return undefined;
+  return `/og/app/${app.slug}.png`;
+}

@@ -9,6 +9,7 @@
  * for a viewer who can write here; a stranger sees the app.
  */
 
+import { appCardPath } from "../og/path.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import { egressSetting } from "../../core/capacity.ts";
 import { egressNote } from "./egress.ts";
@@ -501,6 +502,7 @@ export async function studioApp(
         ),
       ).word,
     }),
+    ogImage: appCardPath(repo, record),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,

@@ -15,6 +15,8 @@ import { carriedBy } from "../../core/carried.ts";
 import { getIssueById } from "../../core/issues.ts";
 import { getPull, openPullsClosing } from "../../core/pulls.ts";
 import { canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
+import { getRepoRun } from "../../actions/runs.ts";
+import { runCardPath } from "../og/path.ts";
 import { isTerminal, type Run } from "../../core/runs.ts";
 import { listHeldSecrets } from "../../core/run_secret.ts";
 import { getUserById } from "../../core/users.ts";
@@ -323,6 +325,7 @@ export async function runView(
       commitOid: run.kind === "agent" ? "" : run.commitOid,
       summary: run.summary,
     }),
+    ogImage: runCardPath(repo, run.id, getRepoRun(ctx.app, undefined, repo, run.id).ok),
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,

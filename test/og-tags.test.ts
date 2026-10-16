@@ -6,6 +6,8 @@ import { createApp as createForge, type App } from "../src/app.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { createIssue } from "../src/core/issues.ts";
+import { createApp as createAppRecord } from "../src/core/apps.ts";
+import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -24,6 +26,8 @@ describe("every kind of page unfurls", () => {
   let servers: Servers;
   let base: string;
   let cookie = "";
+  let runPath = "";
+  let sealedRunPath = "";
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-ogtags-"));
@@ -67,6 +71,26 @@ describe("every kind of page unfurls", () => {
           )
           .run(i.value.id, repoId);
     }
+    // An app (a public one), a run that finished, and a run on a sealed report.
+    const widget = await createRepo(app, u.value, { name: "widget", visibility: "public" });
+    if (!widget.ok) throw new Error(String(widget.error));
+    const widgetId = getRepo(app.db, "alice", "widget")!.id;
+    const record = createAppRecord(app.db, { repoId: widgetId, slug: "widget", access: "public" });
+    if (!record.ok) throw new Error(record.error);
+    const deploy = createRun(app.db, { repoId: widgetId, kind: "deploy", env: "production" });
+    claimRun(app.db, deploy.id);
+    finishRun(app.db, deploy.id, { state: "ok", summary: "deployed" });
+    runPath = `/alice/widget/runs/${deploy.id}`;
+    const report = createIssue(app.db, {
+      repoId: widgetId,
+      authorId: u.value.id,
+      title: "Sealed",
+      kind: "issue",
+      sealed: true,
+    });
+    if (!report.ok) throw new Error(String(report.error));
+    const sealed = createRun(app.db, { repoId: widgetId, kind: "agent", issueId: report.value.id });
+    sealedRunPath = `/alice/widget/runs/${sealed.id}`;
   });
 
   afterAll(async () => {
@@ -119,6 +143,42 @@ describe("every kind of page unfurls", () => {
       await card.arrayBuffer();
     });
   }
+
+  test("a run page's description is its outcome and its card answers", async () => {
+    const res = await fetch(base + runPath);
+    expect(res.status).toBe(200);
+    const t = tags(await res.text());
+    expect(t.get("og:title")).toBeTruthy();
+    expect(t.get("og:description")).toMatch(/deployed/i);
+    expect(t.get("twitter:card")).toBe("summary_large_image");
+    const image = new URL(t.get("og:image")!).pathname;
+    expect(image).toBe(`/og/run/alice~widget~${runPath.split("/").pop()}.png`);
+    const card = await fetch(base + image);
+    expect(card.status).toBe(200);
+    expect(card.headers.get("content-type")).toBe("image/png");
+    await card.arrayBuffer();
+  });
+
+  test("an app page's description is its status and its card answers", async () => {
+    const res = await fetch(base + "/alice/widget");
+    expect(res.status).toBe(200);
+    const t = tags(await res.text());
+    expect(t.get("og:title")).toBeTruthy();
+    expect(t.get("og:description")).toMatch(/·.*\.$/);
+    expect(t.get("twitter:card")).toBe("summary_large_image");
+    const image = new URL(t.get("og:image")!).pathname;
+    expect(image).toBe("/og/app/widget.png");
+    const card = await fetch(base + image);
+    expect(card.status).toBe(200);
+    expect(card.headers.get("content-type")).toBe("image/png");
+    await card.arrayBuffer();
+  });
+
+  test("a run on a sealed report names the site card, not one that 404s", async () => {
+    const res = await fetch(base + sealedRunPath, { headers: { cookie } });
+    expect(res.status).toBe(200);
+    expect(new URL(tags(await res.text()).get("og:image")!).pathname).toBe("/og/site.png");
+  });
 
   // A card an unfurler cannot fetch is never named: the site card stands in,
   // even when the page is viewed by a signed-in writer who can see the thing.
