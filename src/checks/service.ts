@@ -48,6 +48,7 @@ import { checkKey, provenBy, recordProven } from "./proven.ts";
 import { giveHistory } from "./history.ts";
 import { readLearned } from "./learned.ts";
 import { keepCache, restoreCache } from "./cache.ts";
+import { MAX_FILED, clearedFiles, fileOrderDependent } from "./order_dependent.ts";
 import { ASKED, redMain, unheld } from "./red_main.ts";
 import { IMPACT_FILE, keepImpact, seedImpact } from "./impact-store.ts";
 import { getIssueById } from "../core/issues.ts";
@@ -582,6 +583,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       tier: pull === undefined ? "run" : "fast",
       keep: run.issueId === null && run.env === repo.defaultBranch,
       keepImpact: pull === undefined && run.env === repo.defaultBranch,
+      fileOrderDependent: run.issueId === null && run.env === repo.defaultBranch,
       write,
       signal,
     });
@@ -602,6 +604,8 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     readonly keep?: boolean;
     /** A green run keeps the impact map it measured; `full` always does. */
     readonly keepImpact?: boolean;
+    /** The default branch's own run: only its log may open issues. */
+    readonly fileOrderDependent?: boolean;
     readonly write: (line: string) => void;
     readonly signal: AbortSignal;
   }
@@ -857,6 +861,28 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         });
       }
       if (!ran.ok && ran.error === JOB_VANISHED) return { ok: false, error: JOB_VANISHED };
+      // A file the gate cleared because it passed alone is still a failure
+      // to track: the cell cannot reach the forge, so it is filed from here.
+      try {
+        // Only the default branch's own run files: a pull branch controls
+        // its check's output, and the issues are authored as the owner.
+        const all =
+          x.fileOrderDependent === true
+            ? clearedFiles(checkLines)
+            : [];
+        const cleared = all.slice(0, MAX_FILED);
+        if (cleared.length > 0) {
+          fileOrderDependent(app.db, app.bus, repo, cleared, {
+            runId: run.id,
+            commit: run.commitOid,
+          });
+          write(`filed: ${cleared.length} test file(s) that fail only beside others`);
+          if (all.length > cleared.length)
+            write(`not filed: ${all.length - cleared.length} more (at most ${MAX_FILED} per run)`);
+        }
+      } catch (error) {
+        write(`order-dependent tests not filed: ${String(error)}`);
+      }
       if (!ran.ok) {
         const { summary, detail } = summariseCheckFailure(
           checkLines,
