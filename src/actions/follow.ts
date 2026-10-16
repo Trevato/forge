@@ -54,6 +54,7 @@ export async function severForge(
   if (!cut.ok) return err("not_following");
   app.bus.append({
     kind: "forge.severed",
+    repoId: repo.id,
     actorId: who.value.id,
     payload: { repo: `${repo.ownerName}/${repo.name}`, at: cut.value },
   });

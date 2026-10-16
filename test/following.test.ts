@@ -12,6 +12,12 @@ import { parentUrlProblem, refreshIdle } from "../src/core/parent_releases.ts";
 import { Session } from "../src/tui/session.ts";
 import { releasesRow } from "../src/tui/screens/about.ts";
 import { createApp, type App } from "../src/app.ts";
+import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
+import { severForge } from "../src/actions/follow.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { getRepo } from "../src/core/repos.ts";
+import { commitFiles } from "../src/git/write.ts";
+import { hostedPlacement } from "../src/spawn/placement.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { mergePull, openPull } from "../src/actions/pulls.ts";
@@ -1015,5 +1021,92 @@ describe("a parent URL", () => {
     expect(parentUrlProblem("https://u:p@parent.example")).not.toBeNull();
     expect(parentUrlProblem("nonsense")).not.toBeNull();
     expect(parentUrlProblem("http://127.0.0.1:1", true)).toBeNull();
+  });
+});
+
+describe("an open chain page hears a sever", () => {
+  let dir = "";
+  let root: App;
+  let child: App;
+  let servers: Servers;
+  let cookie = "";
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-chain-live-"));
+    root = createApp({ dataDir: dir, url: "https://root.test", port: 0, forgeRepo: "alice/forge-code" });
+    const alice = await createUser(root.db, { trusted: true, username: "alice", email: "a@x.test", isAdmin: true });
+    if (!alice.ok) throw new Error("user");
+    const made = await createRepo(root, alice.value, { name: "forge-code", visibility: "public" });
+    if (!made.ok) throw new Error("repo");
+    const c = await commitFiles(repoDir(root.reposRoot, "alice", "forge-code"), {
+      branch: "main",
+      message: "forge v1",
+      files: [{ path: "README.md", content: "# forge\n" }],
+      author: { name: "a", email: "a@x.invalid" },
+    });
+    if (!c.ok) throw new Error("commit");
+    const host = "root.test";
+    const spawned = await spawnForge(
+      root,
+      alice.value,
+      { name: "kid", org: "kid", apps: [], carryBriefs: false, carrySubscriptions: false },
+      { catalog: [], briefs: [], subscriptions: [] },
+      {
+        placement: hostedPlacement({ host }),
+        request: new Request(`https://${host}/x`, { method: "POST", headers: { origin: `https://${host}` } }),
+        url: new URL(`https://${host}/x`),
+      },
+    );
+    if (!spawned.ok) throw new Error(JSON.stringify(spawned.error));
+    child = createApp({ dataDir: childDirOf(root, spawned.value.bodyId), url: "https://kid.test", port: 0 });
+    servers = await serve(child);
+    cookie = `forge_session=${createSession(child.db, getUserByName(child.db, "alice")!.id).token}`;
+  }, 60_000);
+
+  afterAll(async () => {
+    servers.stop();
+    child.close();
+    root.close();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const chainPage = async () =>
+    (await (await fetch(`${servers.url}/kid/forge/following`, { headers: { cookie } })).text()).replace(/\s+/g, " ");
+
+  test("the page carries a live region for forge.severed, scoped to its repository", async () => {
+    const page = await chainPage();
+    expect(page).toContain('id="live-chain"');
+    expect(page).toContain('data-live="forge.severed"');
+    expect(page).toContain('data-live-repo="kid/forge"');
+    expect(page).not.toContain("follows nothing since");
+  });
+
+  test("a sever reaches the viewer's stream with the repo the region filters on, and a refetch shows it", async () => {
+    const ctl = new AbortController();
+    const res = await fetch(`${servers.url}/events`, {
+      headers: { cookie },
+      signal: ctl.signal,
+    });
+    const reader = res.body!.getReader();
+    const owner = getUserByName(child.db, "alice")!;
+    const cut = await severForge(child, owner, getRepo(child.db, "kid", "forge")!);
+    expect(cut.ok).toBe(true);
+
+    let seen = "";
+    const dec = new TextDecoder();
+    while (!seen.includes('"forge.severed"')) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      seen += dec.decode(value);
+    }
+    ctl.abort();
+    const line = seen.split("\n").find((l) => l.startsWith("data:") && l.includes("forge.severed"))!;
+    const event = JSON.parse(line.slice(5));
+    expect(event.kind).toBe("forge.severed");
+    expect(event.repo).toBe("kid/forge");
+
+    const page = await chainPage();
+    expect(page).toContain("follows nothing since");
+    expect(page).toContain('id="live-chain"');
   });
 });

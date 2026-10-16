@@ -15,6 +15,9 @@ import { html, type Html } from "../html.ts";
 import { flashOrJson, page, redirect } from "../layout.ts";
 import { btn, card } from "../ui.ts";
 
+/** The events that change what the chain page says. */
+export const CHAIN_LIVE = "forge.severed";
+
 const MODE_WORDS = { "tell-me": "tells when the parent moves", "take-updates": "takes updates" } as const;
 
 function lineRow(l: ChainLine): Html {
@@ -63,6 +66,11 @@ export async function chainPage(ctx: Ctx): Promise<Response> {
       ${pageHead("Following", {
         sub: "The forges this one's code descends from, root first. Numbers are as of the day each hop was made; the last is counted now.",
       })}
+      <div
+        id="live-chain"
+        data-live="${CHAIN_LIVE}"
+        data-live-repo="${repo.ownerName}/${repo.name}"
+      >
       ${card(
         html`<ul class="list lineage" aria-label="Forges, root first">
           ${view.lines.map(lineRow)}
@@ -91,6 +99,7 @@ export async function chainPage(ctx: Ctx): Promise<Response> {
               { head: html`<h2>Sever</h2>` },
             )
           : null}
+      </div>
     </div>`,
   });
 }
