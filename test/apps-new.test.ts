@@ -4,7 +4,14 @@
  * Split from `apps.test.ts` so each part runs apart (#1798).
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  setDefaultTimeout,
+  test,
+} from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -24,6 +31,11 @@ import {
   deriveAppName,
   STOP_WORDS,
 } from "../src/web/pages/apps-name.ts";
+
+// Every test here makes a repository (git, scaffold); on a busy check machine
+// that outgrows bun's 5 s default, and the hung-plan test spends 3 s waiting
+// by design. Red on main from this alone (#2011).
+setDefaultTimeout(30_000);
 
 describe("New app: turn the sentence into a plan and pick the crew", () => {
   let dataDir: string;
@@ -132,7 +144,7 @@ printf '%s\\n' '{"is_error":false,"result":"{\\"summary\\":\\"Build a notes app\
     expect(made.value.issue?.assigneeName).toBeNull();
     const crew = listCrew(app, alice, made.value.repo);
     expect(crew.ok && crew.value.length).toBe(0);
-  }, 10_000);
+  }, 30_000);
 
   test("FORGE_APP_PLAN=0 behaves exactly as without pickAgent", async () => {
     process.env["FORGE_APP_PLAN"] = "0";
