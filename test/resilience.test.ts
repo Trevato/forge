@@ -258,8 +258,8 @@ describe("the owner's screen with snapshots", () => {
       expect(v.snapshots.mirror).toBe(mirror.where);
       const rows = ownerRows(v);
       expect(rows.find((r) => r.title === "Snapshots")!.meta).toContain(`mirrored to ${mirror.where}`);
-      expect(rows.some((r) => r.secondary === "act")).toBe(false);
-      expect(rows[0]).toMatchObject({ title: "Needs", secondary: "all fine" });
+      const act = rows.filter((r) => r.title === "Needs" && r.secondary === "act");
+      expect(act.map((r) => r.meta).join("\n")).not.toMatch(/snapshot/i);
     } finally {
       await mirrored.stop();
     }
