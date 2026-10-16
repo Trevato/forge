@@ -264,9 +264,20 @@ describe("search: one query, four sources", () => {
   });
 
   test("local repo hits carry their open counts", async () => {
-    const results = await find("q=widget-engine&kind=repos");
+    // Its own repo: other tests file issues in widget-engine, so counts
+    // read there depend on which of them ran first.
+    await api("/api/v1/repos", {
+      method: "POST",
+      body: JSON.stringify({ name: "tally-box", visibility: "public" }),
+    });
+    for (const title of ["first tally", "second tally"])
+      await api("/api/v1/repos/alice/tally-box/issues", {
+        method: "POST",
+        body: JSON.stringify({ title, body: "" }),
+      });
+    const results = await find("q=tally-box&kind=repos");
     const hit = results.repos.find(
-      (r) => r.source === "local" && r.name === "widget-engine",
+      (r) => r.source === "local" && r.name === "tally-box",
     );
     expect(hit).toMatchObject({ openIssues: 2, openPulls: 0 });
   });
