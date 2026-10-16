@@ -49,6 +49,8 @@ import { proposedByText } from "../../core/proposal_token.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
+import { checkStale } from "../../checks/stale.ts";
+import { resolveOid } from "../../git/merge.ts";
 import { getPull, pullDir, variantSiblings, type Pull } from "../../core/pulls.ts";
 import { voteVariant } from "../../actions/variants.ts";
 import { getRepoById, type Repo } from "../../core/repos.ts";
@@ -227,6 +229,8 @@ export function pullScreen(
   let check: CheckSummary = NO_CHECK;
   /** The pull's base branch, to name what the check was merged with. */
   let checkBase = "";
+  /** The check's green was against a base that has since moved. */
+  let checkOld = false;
   /** Agent runs about this pull, newest first. */
   const crew = new RunList(f);
   const mayWrite = (): boolean => src.capabilities.write && repo !== undefined;
@@ -275,6 +279,18 @@ export function pullScreen(
         ? NO_CHECK
         : checkSummary(f.db, row.id, row.headOid || (facts?.headOid ?? ""));
     checkBase = row?.baseBranch ?? facts?.baseBranch ?? "";
+    checkOld =
+      repo !== undefined &&
+      row !== undefined &&
+      row.state === "open" &&
+      row.mergedAt === null &&
+      checkStale(
+        check.run,
+        await resolveOid(
+          await pullDir(f.app.db, f.app.reposRoot, repo, row),
+          `refs/heads/${row.baseBranch}`,
+        ),
+      );
     const runs =
       repo === undefined || row === undefined
         ? undefined
@@ -757,7 +773,7 @@ export function pullScreen(
       // The box is exactly as tall as what is in it: the state, then a row
       // for the verdicts when there are any, then a row for the checks when
       // a deploy has run or the gate demands one.
-      const checksLine = checksText(check, requireChecks, isApp, checkBase);
+      const checksLine = checksText(check, requireChecks, isApp, checkBase, checkOld);
       const boxH =
         3 +
         (standingText(standing(), requireReview) === "" ? 0 : 1) +
@@ -1198,6 +1214,7 @@ export function checksText(
   required: boolean,
   isApp: boolean,
   baseBranch = "",
+  stale = false,
 ): string {
   if (check.state === "none")
     return required
@@ -1215,7 +1232,9 @@ export function checksText(
   }`;
   switch (check.state) {
     case "ok":
-      return `checks: passed${summary}`;
+      return stale
+        ? `checks: passed against an older ${baseBranch || "base"}${summary}`
+        : `checks: passed${summary}`;
     case "failed":
       return `checks: failed${summary}`;
     case "running":

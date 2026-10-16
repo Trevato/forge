@@ -321,12 +321,14 @@ import {
 } from "../core/issues.ts";
 import type { Closing } from "../actions/issues.ts";
 import {
+  checkSummary,
   checksForHead,
   getRun,
   isTerminal,
   listActiveRuns,
   type Run,
 } from "../core/runs.ts";
+import { checkStale } from "../checks/stale.ts";
 import { resolveOid } from "../git/merge.ts";
 import { readUsage, usageDays, USAGE_DAYS_MAX } from "../actions/usage.ts";
 import { readReturns, reportSpend, RETURNS_DAYS } from "../actions/returns.ts";
@@ -3246,8 +3248,19 @@ export function apiRoutes(router: Router<Handler>): void {
       { db: ctx.app.db, requireReview: found.repo.requireReview },
     );
     const hold = getHold(ctx.app.db, found.pull.id);
+    const live = found.pull.state === "open" && found.pull.mergedAt === null;
+    const checkStaleNow =
+      live &&
+      checkStale(
+        checkSummary(ctx.app.db, found.pull.id, status.headOid).run,
+        await resolveOid(
+          await pullDirOf(ctx, found.repo, found.pull),
+          `refs/heads/${found.pull.baseBranch}`,
+        ),
+      );
     return json({
       ...withLabels(ctx, found.pull),
+      checkStale: checkStaleNow,
       variantSiblings: variantSiblings(ctx.app.db, [found.pull])[0] ?? [],
       ...(found.pull.state === "open" && found.pull.mergedAt === null
         ? { mergeable: status.mergeable, conflicts: status.conflicts }

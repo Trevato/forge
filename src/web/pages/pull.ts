@@ -34,6 +34,7 @@ import {
   type PullStatus,
 } from "../../core/pulls.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
+import { checkStale } from "../../checks/stale.ts";
 import { checkSummary, type CheckSummary } from "../../core/runs.ts";
 import {
   anchorKey,
@@ -47,6 +48,7 @@ import {
 } from "../../core/reviews.ts";
 import { getUsersByIds } from "../../core/users.ts";
 import { canWrite, getRepoById, type Repo } from "../../core/repos.ts";
+import { resolveOid } from "../../git/merge.ts";
 import { commitLog } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
 import { wallOf } from "../../contract/policy.ts";
@@ -215,6 +217,8 @@ export function checksLine(
   conflicts = 0,
   /** The pull's base branch, to name what the check was merged with. */
   baseBranch = "",
+  /** The green was checked against a base that has since moved. */
+  stale = false,
 ): Html {
   if (!isApp && !required && check.state === "none" && !waiting && again === "")
     return html``;
@@ -237,6 +241,10 @@ export function checksLine(
     check.state === "ok" && conflicts > 0
       ? html`<span class="bad"
           >${icon("x")}Conflicts in ${conflicts} ${conflicts === 1 ? "file" : "files"}</span
+        >${link}`
+    : check.state === "ok" && stale
+      ? html`<span class="now"
+          >${icon("clock")}Checked against an older ${baseBranch || "base"}</span
         >${link}`
     : check.state === "ok"
       ? html`<span class="ok">${icon("check")}Checks passed</span>${link}`
@@ -319,6 +327,7 @@ function mergeBox(
   check: CheckSummary,
   isApp: boolean,
   tier = "",
+  stale = false,
 ): Html {
   const thread = `${repoBase(repo)}/pulls/${pull.number}`;
   // A reader's head runs nothing until a writer approves it; say so rather
@@ -337,6 +346,7 @@ function mergeBox(
       : "",
     status.conflicts.length,
     pull.baseBranch,
+    stale,
   );
   const reopen = html`<form method="post" action="${thread}/state">
     <input type="hidden" name="state" value="open" />
@@ -744,6 +754,10 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
   const check = checkSummary(ctx.app.db, pull.id, status.headOid);
   const isApp = getAppByRepo(ctx.app.db, repo.id) !== undefined;
   const tier = await tierOf(dir, status.headOid, check);
+  const stale =
+    pull.state === "open" && pull.mergedAt === null
+      ? checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`))
+      : false;
   const threads = pullThreads(ctx.app, pull);
   const threadViews = threadStateViews(ctx, repo, threads);
   const unresolved = threads.filter((t) => t.resolvedAt === null).length;
@@ -833,7 +847,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     </p>
     ${when(wall, (w) => wallCard(w))}
     ${holdCard(ctx, repo, pull, { act: false })}
-    ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier)}
+    ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale)}
     <div class="split">
       <div>
         ${approveHereCard(ctx, repo, pull, status.headOid, `${thread}/approve-here`)}

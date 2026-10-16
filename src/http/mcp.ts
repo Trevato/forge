@@ -93,6 +93,7 @@ import { waitsForPerson } from "../crew/review.ts";
 import { attachLook } from "../actions/attach_look.ts";
 import { lookUrl } from "../core/looks.ts";
 import { pullProposalOf } from "../core/proposal_token.ts";
+import { resolveOid } from "../git/merge.ts";
 import { getPull, pullDir, pullMergeState } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
@@ -108,6 +109,7 @@ import {
   type Repo,
 } from "../core/repos.ts";
 import { plannerDeclines } from "../crew/autonomy.ts";
+import { checkStale } from "../checks/stale.ts";
 import { checkSummary, listActiveRuns } from "../core/runs.ts";
 import { scopeAllows } from "../core/tokens.ts";
 import { getUserByName, getUsersByIds, type User } from "../core/users.ts";
@@ -503,7 +505,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "pull",
     description:
-      "Read a pull: its title, state and head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), `proposal` ({child, origin}, or null) when a child's proposal token opened it, and `check`: the latest check's state and the base tip it was merged with (`baseOid`, empty when it merged nothing). `mergeable` and `conflicts` are the same fields as GET /api/v1/repos/:owner/:name/pulls/:number; `check` is the latest check's `state` and `run.baseOid` from GET …/pulls/:number/checks.",
+      "Read a pull: its title, state and head and base, and for an open pull whether it merges into the base's current head (`mergeable`) and the paths that stop it (`conflicts`), `proposal` ({child, origin}, or null) when a child's proposal token opened it, `checkStale` (true when that check ran against an older tip of the base), and `check`: the latest check's state and the base tip it was merged with (`baseOid`, empty when it merged nothing). `mergeable` and `conflicts` are the same fields as GET /api/v1/repos/:owner/:name/pulls/:number; `check` is the latest check's `state` and `run.baseOid` from GET …/pulls/:number/checks.",
     inputSchema: {
       type: "object",
       properties: {
@@ -523,11 +525,13 @@ const TOOLS: readonly Tool[] = [
           : undefined;
       if (pull === undefined || !mayView(ctx.app.db, repo, pull, user))
         return bad("no_such_pull", `no pull #${String(n)}`);
-      const state = await pullMergeState(
-        await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull),
-        pull,
-      );
+      const dir = await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull);
+      const state = await pullMergeState(dir, pull);
       const check = checkSummary(ctx.app.db, pull.id, pull.headOid);
+      const stale =
+        pull.state === "open" &&
+        pull.mergedAt === null &&
+        checkStale(check.run, await resolveOid(dir, `refs/heads/${pull.baseBranch}`));
       return good({
         number: pull.number,
         title: pull.title,
@@ -536,6 +540,7 @@ const TOOLS: readonly Tool[] = [
         head: pull.headBranch,
         proposal: pullProposalOf(ctx.app.db, pull.id) ?? null,
         check: { state: check.state, baseOid: check.run?.baseOid ?? "" },
+        checkStale: stale,
         ...(state ?? {}),
       });
     },

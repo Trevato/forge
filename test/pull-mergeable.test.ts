@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { createRun, setRunBase } from "../src/core/runs.ts";
 
 const gitEnv = gitClientEnv();
 
@@ -133,6 +134,7 @@ describe("a pull says whether it merges", () => {
 
     const one = await api("/pulls/1");
     expect(one.mergeable).toBe(false);
+    expect(one.checkStale).toBe(false);
     expect(one.conflicts).toEqual(["code.txt"]);
     const listed = await api("/pulls");
     expect(listed.items[0].mergeable).toBe(false);
@@ -152,6 +154,28 @@ describe("a pull says whether it merges", () => {
     const mcpAfter = await mcp("pull", { repo: "dev/app", number: 1 });
     expect(mcpAfter.mergeable).toBe(true);
     expect(mcpAfter.conflicts).toEqual([]);
+
+    // A check recorded against some other base tip is from an older main.
+    const row = app.db
+      .query<{ issue_id: string; repo_id: string; head_oid: string }, []>(
+        "SELECT pull.issue_id, issue.repo_id, pull.head_oid FROM pull JOIN issue ON issue.id = pull.issue_id LIMIT 1",
+      )
+      .get()!;
+    const run = createRun(app.db, {
+      repoId: row.repo_id,
+      kind: "check",
+      issueId: row.issue_id,
+      env: "pull-1",
+      commitOid: row.head_oid,
+    });
+    setRunBase(app.db, run.id, "abc1234abc1234abc1234abc1234abc1234abc12");
+    expect((await api("/pulls/1")).checkStale).toBe(true);
+    expect((await mcp("pull", { repo: "dev/app", number: 1 })).checkStale).toBe(true);
+    // A merged pull is not called stale once main moves on.
+    app.db.query("UPDATE pull SET merged_at = '2026-10-01T00:00:00.000Z' WHERE issue_id = ?1").run(row.issue_id);
+    expect((await api("/pulls/1")).checkStale).toBe(false);
+    expect((await mcp("pull", { repo: "dev/app", number: 1 })).checkStale).toBe(false);
+    app.db.query("UPDATE pull SET merged_at = NULL WHERE issue_id = ?1").run(row.issue_id);
   });
 
   test("a sealed pull answers no_such_pull to a reader who cannot see it", async () => {

@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { pullDir } from "../src/core/pulls.ts";
+import { resolveOid } from "../src/git/merge.ts";
 import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo, forkRepo } from "../src/actions/repos.ts";
 import { createApp as insertApp } from "../src/core/apps.ts";
@@ -486,6 +488,16 @@ describe("the forge over MCP", () => {
     setRunBase(app.db, run.id, "abc1234abc1234abc1234abc1234abc1234abc12");
     const read = await tool(ro, "pull", { repo: "alice/game", number: pull.number });
     expect(read.value.check.baseOid).toBe("abc1234abc1234abc1234abc1234abc1234abc12");
+    // That base is not main's tip: the green is from an older main.
+    expect(read.value.checkStale).toBe(true);
+    const tip = await resolveOid(
+      await pullDir(app.db, app.reposRoot, game, pull),
+      "refs/heads/main",
+    );
+    setRunBase(app.db, run.id, tip ?? "");
+    expect(
+      (await tool(ro, "pull", { repo: "alice/game", number: pull.number })).value.checkStale,
+    ).toBe(false);
   });
 
   test("stop takes a run id from now, and refuses a stale or foreign one", async () => {
