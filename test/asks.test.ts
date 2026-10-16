@@ -99,7 +99,7 @@ describe("the asks page", () => {
     const page = await get(alice, "/");
     expect(sentence(page)).toBe("All fine");
     expect(headerCount(page)).toBe(0);
-    expect(await get(alice, "/")).not.toContain("<h2>Needs you</h2>");
+    expect(await get(alice, "/")).not.toContain('<section id="needs-you"');
   });
 
   test("/asks lands on the home's pinned needs-you, and a signed-out reader there gets the door, no asks", async () => {

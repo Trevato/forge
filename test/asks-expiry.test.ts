@@ -247,15 +247,17 @@ describe("asks that expire, hold and collapse", () => {
       ),
     ).toBe(false);
     expect(JSON.stringify(asksAnswer({ app, auth: { user: aliceUser } } as never, aliceUser))).not.toContain("is green");
-    // Assigned to alice, the home's On you says it conflicts, never ready.
+    // Assigned to alice, the home's one list says it conflicts, never ready.
     setAssignee(app.db, plums.id, aliceUser.id);
     const home = await get("/");
-    expect(home).toContain("Conflicts in 1 file");
+    expect(home).toContain("conflicts with main");
+    expect(askLinesFor(app.db, aliceUser).map((l) => l.waitingFor.word)).toEqual(["conflicts with main"]);
     // Its own page still says why it cannot ship.
     const change = await get(
       `/${repo.ownerName}/${repo.name}/pulls/${plums.number}`,
     );
     expect(change).toContain("README.md");
+    setAssignee(app.db, plums.id, null);
   });
   test("a row dismissed while a pull conflicted asks again when it merges again, with no new check", async () => {
     await tick();

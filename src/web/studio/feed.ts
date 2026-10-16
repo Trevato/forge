@@ -241,9 +241,7 @@ function chipsBar(user: User, ctx: Ctx, items: readonly FeedItem[]): Html {
 export function feedRegion(user: User, ctx: Ctx): Html {
   // What needs you is pinned above the timeline (`needsYouSection`), so an
   // ask is never a second time a post below it; the feed API keeps them.
-  const items = readFeed(ctx.app.db, user, { limit: FEED_FIRST_PAGE }).items.filter(
-    (item) => item.kind !== "ask",
-  );
+  const items = readFeed(ctx.app.db, user, { limit: FEED_FIRST_PAGE, withoutAsks: true }).items;
   const thoughts = recentThoughts(ctx.app.db, user.id, THOUGHTS_SHOWN, new Date(Date.now() - THOUGHT_AGE_MS).toISOString());
   const placed = placementsOf(ctx.app.db, thoughts.map((t) => t.id));
   // Who each poster is, asked once for the page (`core/marks.ts`).

@@ -21,7 +21,7 @@ import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
 import { getIssueById, listComments, type Issue } from "../src/core/issues.ts";
 import { assignIssue } from "../src/actions/issues.ts";
 import { mutedRepos, recordInteraction, removeMutes } from "../src/core/interactions.ts";
-import { onYouCard } from "../src/web/pages/site.ts";
+import { needsYouSection } from "../src/web/studio/asks_page.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
@@ -634,12 +634,14 @@ describe("acting on many asks at once", () => {
       const issue = getIssueById(app.db, pull.id)!;
       expect(assignIssue(app, alice, open, issue, alice).ok).toBe(true);
     }
-    const ctx = (user: User) => ({ app, auth: { user } }) as never;
-    const card = (user: User) => onYouCard(ctx(user), user)?.text ?? "";
+    const ctx = (user: User) => ({ app, auth: { user }, url: new URL("http://x/") }) as never;
+    const card = (user: User) => needsYouSection(ctx(user), user).body.text;
     expect(card(alice)).toContain("On you one");
-    // The card offers the set: a box each, the kinds, one form.
-    expect(card(alice)).toContain('form="onyou-bulk"');
-    expect(card(alice)).toContain('value="issue:' + a.id + '"');
+    // The list offers the set: a box each, the kinds, one form.
+    expect(card(alice)).toContain('form="asks-bulk"');
+    // A green pull assigned to alice is an ask: one row, under the ask's id.
+    expect(card(alice)).toContain('value="look:' + a.id + '"');
+    expect(card(alice)).not.toContain('value="assigned:' + a.id + '"');
     expect(card(alice)).toContain("data-pick");
     const done = await api(aliceRw, "/api/v1/asks/bulk", {
       action: "mute",
@@ -713,8 +715,9 @@ describe("acting on many asks at once", () => {
     const b = await greenPull(open, "Muted two");
     for (const pull of [a, b])
       expect(assignIssue(app, alice, open, getIssueById(app.db, pull.id)!, alice).ok).toBe(true);
-    const card = () => onYouCard({ app, auth: { user: alice } } as never, alice)?.text ?? "";
-    expect(card()).not.toContain("muted");
+    const card = () =>
+      needsYouSection({ app, auth: { user: alice }, url: new URL("http://x/") } as never, alice).body.text;
+    expect(card()).not.toContain("muted repositor");
     const done = await api(aliceRw, "/api/v1/asks/bulk", {
       action: "mute",
       items: [`issue:${a.id}`, `issue:${b.id}`],
@@ -722,7 +725,7 @@ describe("acting on many asks at once", () => {
     });
     expect(done.status).toBe(201);
     // Past the day's undo, the card still says it, and offers the way back.
-    expect(card()).toContain("1 repository muted");
+    expect(card()).toContain("1 muted repository still asks");
     expect(card()).toContain('action="/asks/listen"');
     const headers = { cookie: `${aliceCookie}; forge_mode=studio`, origin: servers.url };
     const res = await fetch(`${servers.url}/asks/listen`, {
@@ -734,7 +737,7 @@ describe("acting on many asks at once", () => {
     expect(res.status).toBe(303);
     expect(mutedRepos(app.db, alice.id).has(open.id)).toBe(false);
     expect(card()).toContain("Muted one");
-    expect(card()).not.toContain("repository muted");
+    expect(card()).not.toContain("muted repository still asks");
   });
   test("on the card, a refusal answers 422 with its message, and a partial set says what was not done", async () => {
     const a = await greenPull(open, "Refuse one");

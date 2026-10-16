@@ -1205,7 +1205,10 @@ textarea.editor:focus { outline: none; }
 }
 /* What needs you, pinned on the home: the bulk step's select as wide as
    its words, not the column. */
-.needs-you #asks-bulk select { width: auto; }
+.needs-you #asks-bulk select { width: auto; max-width: 100%; }
+.needs-you #asks-bulk .input[name="reason"] { flex: 1 1 12rem; width: auto; min-width: 0; }
+/* A row's box sits in a label, so a phone's thumb has 44 px to hit. */
+.ask-pick-hit { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; }
 /* A phone shows the top asks and one "N more" that opens in place to all
    of them; a wider screen shows ASKS_SHOWN and its own "N more" past that.
    Only where a details element can be held open: elsewhere both summaries
@@ -1257,7 +1260,9 @@ textarea.editor:focus { outline: none; }
   .ask-card .ask-kind::after { content: " ·"; font-weight: 400; }
   .ask-card .ask-short { display: none; }
   .ask-card .ask-waiting { order: 3; flex: 0 1 auto; margin-left: 0; min-width: 0; max-width: 100%; white-space: normal; }
-  .ask-card .ask-pick { order: 0; min-width: 24px; min-height: 24px; }
+  .ask-card .ask-pick-hit { order: 0; }
+  .needs-you .ask-pick-hit { min-width: 44px; min-height: 44px; }
+  .ask-card .ask-pick { min-width: 24px; min-height: 24px; }
   .ask-card .ask-group > summary { padding: 10px 16px; min-height: 44px; }
   .ask-card .ask-group .row { flex-wrap: wrap; padding-inline: 16px; }
   .ask-card .ask-group .row-main { flex-basis: 100%; }

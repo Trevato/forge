@@ -167,7 +167,7 @@ export const undoable = (op: Operation, now = Date.now()): boolean =>
 
 /**
  * The viewer's latest bulk action on asks that can still be undone — the
- * one undo link the On you card keeps for a day. Nothing when none.
+ * one undo link the home's On you list keeps for a day. Nothing when none.
  */
 export function latestUndoable(
   app: App,

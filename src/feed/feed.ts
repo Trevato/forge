@@ -35,7 +35,13 @@ export function parseCursor(
 export function readFeed(
   db: Database,
   viewer: User,
-  options: { limit?: number; cursor?: { score: number; id: string }; now?: number } = {},
+  options: {
+    limit?: number;
+    cursor?: { score: number; id: string };
+    now?: number;
+    /** The home pins asks above the feed: they must not fill its page. */
+    withoutAsks?: boolean;
+  } = {},
 ): { items: FeedItem[]; next_cursor: string | null } {
   const now = options.now ?? Date.now();
   const limit = Math.min(options.limit ?? FEED_LIMIT_DEFAULT, FEED_LIMIT_MAX);
@@ -65,7 +71,9 @@ export function readFeed(
           c.kind === "choose" ||
           !muted.has(c.repoId)),
   );
-  let ranked = rank(candidates, affinityFor(db, viewer, now), now);
+  const pageable =
+    options.withoutAsks === true ? candidates.filter((c) => c.kind !== "ask") : candidates;
+  let ranked = rank(pageable, affinityFor(db, viewer, now), now);
   const cursor = options.cursor;
   if (cursor) {
     const at = ranked.findIndex((i) => i.id === cursor.id);

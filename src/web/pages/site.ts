@@ -9,32 +9,21 @@
  */
 
 import { limitValue } from "../../settings/limits.ts";
-import { mayView } from "../../core/sealed.ts";
 import { signOutHere } from "../../actions/signins.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo } from "../../actions/repos.ts";
 import { HUMAN_CHECK_MESSAGE, PASSKEY_REQUIRED_MESSAGE, signUp } from "../../actions/users.ts";
-import { listAssignedTo, type Issue } from "../../core/issues.ts";
-import { joinMany } from "../../core/pulls.ts";
-import { conflictsOf } from "../../crew/stale_asks.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins } from "../../core/pins.ts";
-import {
-  canRead,
-  getReposByIds,
-  listReposVisibleTo,
-  type Repo,
-} from "../../core/repos.ts";
+import { getReposByIds } from "../../core/repos.ts";
 import { createSession } from "../../core/sessions.ts";
 import { hasAnyUser, verifyPassword, type User } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
-import { homeTop, onYouBulk } from "../studio/asks_page.ts";
-import { latestUndoable } from "../../actions/asks_bulk.ts";
-import { mutedRepos } from "../../core/interactions.ts";
+import { homeTop } from "../studio/asks_page.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
@@ -52,7 +41,6 @@ import {
   listCard,
   row,
   selectField,
-  time,
 } from "../ui.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -174,112 +162,6 @@ export function downloadsCard(ctx: Ctx, user: User): Html {
     ],
     { head },
   );
-}
-
-const threadPath = (repo: Repo, issue: Issue): string =>
-  `/${repo.ownerName}/${repo.name}/${issue.kind === "pull" ? "pulls" : "issues"}/${issue.number}`;
-
-/** Open issues and pulls assigned to the viewer, anywhere they can see. */
-export function onYouCard(ctx: Ctx, user: User): Html | undefined {
-  const db = ctx.app.db;
-  const assigned = listAssignedTo(db, user.id, 20);
-  if (assigned.length === 0) return undefined;
-  const repos = getReposByIds(
-    db,
-    assigned.map((issue) => issue.repoId),
-  );
-  // `listAssignedTo` has no visibility filter of its own (an assignment can
-  // outlive the access that made it), so each repo needs a real `canRead`.
-  // Checking it straight would cost one query per row for any repo the
-  // viewer does not own outright — `canRead` resolves org ownership from
-  // the database. `listReposVisibleTo` answers the common case with one
-  // query for the whole page; `canRead` only runs for the rare repo it
-  // did not reach (its own cap), so the cost stays flat as rows grow.
-  const visible = new Set(
-    listReposVisibleTo(db, user, { limit: 200 }).map((repo) => repo.id),
-  );
-  const muted = mutedRepos(db, user.id);
-  const shown: { issue: Issue; repo: Repo }[] = [];
-  // Muted repositories that hold work assigned to the viewer: said, never silent.
-  const silenced = new Map<string, Repo>();
-  for (const issue of assigned) {
-    const repo = repos.get(issue.repoId);
-    if (!repo) continue;
-    if (!visible.has(repo.id) && !canRead(db, repo, user)) continue;
-    if (!mayView(db, repo, issue, user)) continue;
-    if (muted.has(repo.id)) {
-      silenced.set(repo.id, repo);
-      continue;
-    }
-    shown.push({ issue, repo });
-  }
-  // Two or more can be given one move: a box each, and one form for the set.
-  const bulk = shown.length >= 2;
-  const heads = new Map(
-    joinMany(
-      db,
-      shown.map((s) => s.issue).filter((i) => i.kind === "pull"),
-    ).map((p) => [p.id, p.headOid]),
-  );
-  const rows = shown.map(({ issue, repo }) => {
-    // A pull the last sweep found unable to merge is never shown as ready.
-    const conflicts = conflictsOf(db, issue.id, heads.get(issue.id) ?? "");
-    return row({
-      ...(bulk ? {} : { href: threadPath(repo, issue), nav: true as const }),
-      state: "open",
-      lead: bulk
-        ? html`<input
-            type="checkbox"
-            class="ask-pick"
-            name="item"
-            value="issue:${issue.id}"
-            form="onyou-bulk"
-            data-repo="${repo.id}"
-            data-kind="${issue.kind}"
-            aria-label="Select ${issue.title}"
-          />`
-        : icon(issue.kind === "pull" ? "pull" : "issue"),
-      title: bulk
-        ? html`<a href="${threadPath(repo, issue)}">${issue.title}</a>`
-        : issue.title,
-      titleAttr: issue.title,
-      meta: html`${repo.ownerName}/${repo.name} #${issue.number} · updated
-      ${time(issue.updatedAt)}${conflicts > 0
-        ? html` · <span class="conflicts">Conflicts in ${conflicts}
-            ${conflicts === 1 ? "file" : "files"}</span>`
-        : null}`,
-    });
-  });
-  if (rows.length === 0 && silenced.size === 0) return undefined;
-  const last = latestUndoable(ctx.app, user);
-  const byKind = [...new Set(shown.map((s) => s.issue.kind))].map((k) => ({
-    id: k,
-    label: k === "pull" ? "Pulls" : "Issues",
-  }));
-  const byRepo = [...new Map(shown.map((s) => [s.repo.id, s.repo])).values()].map(
-    (r) => ({ id: r.id, label: `${r.ownerName}/${r.name}` }),
-  );
-  return listCard(rows, {
-    head: html`${icon("user")}
-      <h2>On you</h2>`,
-    ...(bulk || last !== undefined || silenced.size > 0
-      ? {
-          foot: onYouBulk(
-            byKind,
-            byRepo,
-            last === undefined
-              ? undefined
-              : {
-                  id: last.id,
-                  verb: last.verb,
-                  done: last.rows.filter((r) => r.outcome === "ok").length,
-                },
-            bulk,
-            [...silenced.values()].map((r) => ({ id: r.id, label: `${r.ownerName}/${r.name}` })),
-          ),
-        }
-      : {}),
-  });
 }
 
 export function orgsCard(ctx: Ctx, user: User): Html {

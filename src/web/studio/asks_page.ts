@@ -11,6 +11,7 @@ import type { WaitingFor } from "../../core/waiting_for.ts";
 import {
   applyAsksBulk,
   BULK_MAX,
+  latestUndoable,
   ownAsksOperation,
   undoAsksBulk,
   previewAsksBulk,
@@ -60,15 +61,16 @@ const ASK_KIND_WORDS: Readonly<Record<string, string>> = {
   review: "Reviews",
   stopped: "Stopped",
   parked: "Parked",
+  assigned: "Assigned",
 };
 
 /** The kinds a bulk action takes: a ceiling and a planner's decline are decided where they live. */
-const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "review", "stopped", "handover", "parked"]);
+const BULK_KINDS: ReadonlySet<Decision["kind"]> = new Set(["look", "review", "stopped", "handover", "parked", "assigned"]);
 
 /** A row's box for the bulk form, which sits apart (`form="asks-bulk"`): forms do not nest. */
 const pick = (d: Decision, picked: ReadonlySet<string>): Html | null =>
   BULK_KINDS.has(d.kind)
-    ? html`<input
+    ? html`<label class="ask-pick-hit"><input
         type="checkbox"
         class="ask-pick"
         name="item"
@@ -78,7 +80,7 @@ const pick = (d: Decision, picked: ReadonlySet<string>): Html | null =>
         data-kind="${d.kind}"
         ${picked.has(d.id) ? html`checked` : null}
         aria-label="Select ${d.pull?.title ?? d.issue?.title ?? d.id}"
-      />`
+      /></label>`
     : null;
 
 /**
@@ -166,6 +168,7 @@ const KIND_LABEL: Readonly<Record<Decision["kind"], string>> = {
   parked: "Parked",
   declined: "Declined",
   paused: "Paused",
+  assigned: "Assigned",
 };
 
 /**
@@ -266,12 +269,12 @@ function rowCard(ctx: Ctx, r: AskRow<Decision>, picked: ReadonlySet<string>): Ht
       id: askAnchor(r.id),
       extra: "ask-card",
       head: html`${BULK_KINDS.has(r.kind)
-          ? html`<input
+          ? html`<label class="ask-pick-hit"><input
               type="checkbox"
               class="ask-pick"
               data-select-all
               aria-label="Select all ${r.items.length}"
-            />`
+            /></label>`
           : null}
         <h2>${rowHead(r.kind, r.items.length)}</h2>
         <span class="muted small">${r.repo.ownerName}/${r.repo.name}</span>${waitChip(r.items[0]!.waiting)}`,
@@ -374,10 +377,19 @@ export function needsYouSection(
           >
           <button type="submit" class="btn btn-sm btn-ghost">Listen again</button>
         </form>`;
+  const last = latestUndoable(ctx.app, user);
+  const undo =
+    last === undefined
+      ? null
+      : html`<form class="bar" method="post" action="/asks/bulk/${last.id}/undo" role="status">
+          <span class="small">${VERB_WORDS[last.verb] ?? last.verb}: ${last.rows.filter((r) => r.outcome === "ok").length} done</span>
+          ${btn("Undo", { size: "sm" })}
+          <span class="muted small">kept for a day</span>
+        </form>`;
   const count = rows.length + needs.length;
   if (count === 0 && top === undefined)
     return {
-      body: html`<h2 id="asks-sentence" class="sr-only">${askSentence(0)}</h2>${silencedNote}`,
+      body: html`<h2 id="asks-sentence" class="sr-only">${askSentence(0)}</h2>${silencedNote}${undo}`,
       scriptJs: "",
     };
   // The forge's own health first, then the few asks that matter most;
@@ -428,6 +440,7 @@ export function needsYouSection(
           ${reasonInput(top?.reason)} ${btn("Preview", { size: "sm" })}
           <span class="muted small">on the selected asks</span>
         </form>`}
+    ${silencedNote} ${undo}
     ${decisions.map((d) => decisionForm(d, ctx.url.pathname))}
   </section>`;
   return { body, scriptJs: SELECT_JS };
@@ -452,11 +465,8 @@ const VERB_WORDS: Readonly<Record<string, string>> = {
   replan: "Hand back to the planner",
 };
 
-/** What the asks below can be given in one move; mute is the On you card's. */
-const ASK_VERBS = ["decline", "ship", "close", "replan"] as const;
-
-/** What the On you card's set can be given. */
-const CARD_VERBS = ["close", "mute", "ship"] as const;
+/** What the asks below can be given in one move. */
+const ASK_VERBS = ["decline", "ship", "close", "replan", "mute"] as const;
 
 /** One reason, written on each pull or issue closed. */
 const reasonInput = (value = ""): Html =>
@@ -493,45 +503,6 @@ export function pickControls(
           ${repos.map((r) => html`<option value="${r.id}">${r.label}</option>`)}
         </select>`}
   </span>`;
-}
-
-/**
- * The On you card's one form: a verb for the set, one reason, one request.
- * `receipt` is the day's undo link for the last set acted on.
- */
-export function onYouBulk(
-  kinds: readonly { id: string; label: string }[],
-  repos: readonly { id: string; label: string }[],
-  receipt: { id: string; verb: string; done: number } | undefined,
-  withForm = true,
-  muted: readonly { id: string; label: string }[] = [],
-): Html {
-  return html`${muted.length === 0
-      ? null
-      : html`<form class="bar" method="post" action="/asks/listen">
-          ${muted.map((r) => html`<input type="hidden" name="repo" value="${r.id}" />`)}
-          <span class="muted small" title="${muted.map((r) => r.label).join(", ")}"
-            >${muted.length} ${muted.length === 1 ? "repository" : "repositories"} muted</span
-          >
-          <button type="submit" class="btn btn-sm btn-ghost">Listen again</button>
-        </form>`}
-    ${receipt === undefined
-      ? null
-      : html`<form class="bar" method="post" action="/asks/bulk/${receipt.id}/undo" role="status">
-          <span class="small">${VERB_WORDS[receipt.verb] ?? receipt.verb}: ${receipt.done} done</span>
-          ${btn("Undo", { size: "sm" })}
-          <span class="muted small">kept for a day</span>
-        </form>`}
-    ${withForm
-      ? html`<form id="onyou-bulk" method="post" action="/asks/bulk" class="bar" data-bulk>
-          <input type="hidden" name="apply" value="1" />
-          ${pickControls("onyou-bulk", kinds, repos)}
-          <select name="action" class="input" aria-label="What to do with the selected">
-            ${CARD_VERBS.map((v) => html`<option value="${v}">${VERB_WORDS[v]}</option>`)}
-          </select>
-          ${reasonInput()} ${btn("Do it", { size: "sm" })}
-        </form>`
-      : null}`;
 }
 
 const shown = (v: FleetValue): string =>

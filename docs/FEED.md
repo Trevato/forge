@@ -132,13 +132,13 @@ may not see the item are both `unreachable`.
 
 ## Clearing what is on you in one move
 
-The home's On you card (what is assigned to you) and the asks section take a
+The home's one On you list (what asks you, and what is assigned to you) takes a
 set: tick boxes, or *Select all*, a kind, or a repository, then one verb for
 all of it — **close** (one `reason`, written on each as "Closed: …"),
 **mute** (the repository goes quiet in your feed and On you; asks are never
 muted away), **ship**, or on asks **decline** (dismiss) and hand back. It is
 one `POST /api/v1/asks/bulk` (`action`, `items`, `reason`, `preview: false`);
-`items` are ask ids, or `issue:<id>` for something assigned to you. The card
-swaps in place and the top bar's count follows. One undo link
+`items` are ask ids (`assigned:<id>` for something assigned to you; `issue:<id>`
+still names one). The list swaps in place and the top bar's count follows. One undo link
 (`POST /api/v1/asks/bulk/<id>/undo`) is kept for a day. The MCP's `asks_act`
 takes the same set, verb and reason.

@@ -29,6 +29,7 @@ import {
   listOpenPullsVisibleTo,
   type Issue,
 } from "../../core/issues.ts";
+import { mayView } from "../../core/sealed.ts";
 import { looksForApps } from "../../core/looks.ts";
 import { closesFromBody, getPull, joinMany, type Pull } from "../../core/pulls.ts";
 import {
@@ -104,7 +105,7 @@ export function writableAppsOf(ctx: Ctx, user: User | undefined) {
   );
 }
 
-export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover";
+export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover" | "assigned";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
@@ -172,6 +173,11 @@ export const ASK_WORDS: Readonly<Record<DecisionKind, AskWords>> = {
     options: ["Answer the planner"],
     ifNothing: "the planner plans nothing more for this app",
   },
+  assigned: {
+    decision: "This is assigned to you: act on it?",
+    options: ["Open it"],
+    ifNothing: "it stays assigned to you",
+  },
   paused: {
     decision: "Raise today's ceiling?",
     options: ["Raise it in settings"],
@@ -199,6 +205,7 @@ export const KIND_TIER: Readonly<Record<DecisionKind, Consequence>> = {
   handover: { score: 55, why: "three reviews without an approval: handed to a person" },
   parked: { score: 40, why: "parked by the crew" },
   look: { score: 30, why: "green, waiting" },
+  assigned: { score: 20, why: "assigned to you" },
 };
 
 /** When a person last spoke on a conversation, or its start. */
@@ -432,6 +439,36 @@ function askCandidatesFor(
       who: "the planner",
       decline: { runId: d.runId, words: d.words },
     });
+  // Open work assigned to the viewer that no ask above already covers: a
+  // pull that is an ask and assigned to them is one row, the ask's.
+  const taken = new Set(out.flatMap((a) => [a.pull?.id, a.issue?.id].filter((i) => i !== undefined)));
+  const visible = new Map(allRepos.map((r) => [r.id, r]));
+  const mine = listAssignedTo(db, user.id, 50).filter((i) => !taken.has(i.id));
+  const elsewhere = getReposByIds(
+    db,
+    [...new Set(mine.map((i) => i.repoId))].filter((id) => !visible.has(id)),
+  );
+  // An assignment can outlive the access that made it: each repo needs a real read.
+  const readable = (repo: Repo | undefined): repo is Repo =>
+    repo !== undefined && (visible.has(repo.id) || canRead(db, repo, user));
+  const joinedMine = new Map(
+    joinMany(db, mine.filter((i) => i.kind === "pull")).map((p) => [p.id, p]),
+  );
+  for (const issue of mine) {
+    const repo = visible.get(issue.repoId) ?? elsewhere.get(issue.repoId);
+    if (!readable(repo) || !mayView(db, repo, issue, user)) continue;
+    const pull = joinedMine.get(issue.id);
+    if (issue.kind === "pull" && pull === undefined) continue;
+    out.push({
+      kind: "assigned",
+      id: `assigned:${issue.id}`,
+      since: issue.updatedAt,
+      repo,
+      ...(pull === undefined ? { issue } : { pull }),
+      who: issue.authorName,
+      authorIsAgent: issue.authorIsAgent,
+    });
+  }
   return out;
 }
 
@@ -509,8 +546,9 @@ function consequencesOf(
 }
 
 /** The row an ask collapses into: one kind in one repository. */
-const groupId = (a: { kind: DecisionKind; repo: Repo }): string =>
-  `${a.kind}:${a.repo.id}`;
+const groupId = (a: { kind: DecisionKind; repo: Repo; id: string }): string =>
+  // Work assigned to you is each its own row: they share no decision.
+  a.kind === "assigned" ? a.id : `${a.kind}:${a.repo.id}`;
 
 /**
  * The asks the viewer has not set aside: a muted repository's asks are all
@@ -682,6 +720,10 @@ export function endOf(
     if (pull !== undefined && pull.state !== "open") return "acted";
     return getHold(db, what)?.heldBy === viewerId ? "acted" : "expired";
   }
+  if (kind === "assigned") {
+    const issue = getIssueById(db, what);
+    return issue !== undefined && issue.state !== "open" ? "acted" : "expired";
+  }
   if (kind === "parked") {
     const issue = getIssueById(db, what);
     if (issue === undefined) return "expired";
@@ -749,6 +791,8 @@ export function recordAskLedger(db: Database, now = new Date()): void {
 /** One ask in a line, without its repository's name (the row adds that). */
 function lineOf(c: AskCandidate): string {
   if (c.kind === "paused") return "is paused at its ceiling";
+  if (c.kind === "assigned")
+    return `"${c.pull?.title ?? c.issue?.title ?? ""}" is assigned to you`;
   if (c.kind === "parked")
     return `the crew parked #${c.issue!.number} after three failed runs`;
   if (c.kind === "declined")
@@ -782,6 +826,7 @@ export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> =
   handover: (n) => `${n} changes had three reviews asking for changes and wait for you`,
   declined: (n) => `the planner declined ${n} times and waits for you`,
   paused: (n) => `${n} pauses at the ceiling`,
+  assigned: (n) => `${n} things assigned to you`,
 };
 
 /** Every kind has its own: a row never says "green changes" of something that is not one. */
@@ -842,7 +887,7 @@ export function askLinesFor(
     const line = `${row.repo.name}${only.kind === "paused" ? " " : ": "}${lineOf(only)}`;
     if (only.kind === "paused")
       return { ...about, line, link: `${base}/settings/autonomy` };
-    if (only.kind === "parked" || only.kind === "declined")
+    if (only.pull === undefined && only.issue !== undefined)
       return {
         ...about,
         line,
@@ -894,6 +939,18 @@ export function decisionsFor(
     );
   };
   const worded = (c: Scored): Omit<Decision, "consequence" | "waiting"> => {
+    if (c.kind === "assigned") {
+      const thing = c.pull ?? c.issue!;
+      return {
+        kind: "assigned",
+        id: `assigned:${thing.id}`,
+        repo: c.repo,
+        ...(c.pull === undefined ? { issue: c.issue } : { pull: c.pull }),
+        who: c.who,
+        says: `"${thing.title}" is assigned to you.`,
+        short: `assigned to you · updated ${thing.updatedAt.slice(0, 10)}`,
+      };
+    }
     if (c.kind === "parked" && c.issue)
       return {
         kind: "parked",
@@ -1060,6 +1117,15 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
         }),
       ],
     };
+  if (d.kind === "assigned" && (d.pull ?? d.issue))
+    return {
+      primary: btn("Open", {
+        href: pull ? changeHref(base, pull.number) : `${base}/issues/${d.issue!.number}`,
+        size: "sm",
+        variant: "primary",
+      }),
+      others: [],
+    };
   if (d.kind === "declined" && d.issue)
     return {
       primary: btn("Answer", {
@@ -1146,7 +1212,7 @@ export function asksAnswer(ctx: Ctx, user: User) {
 
 /**
  * The asks an issue or pull can raise, as dismissal items: a pull is looked
- * at or stopped on, an issue is parked. What a bulk dismissal records, and
+ * at or stopped on, an issue is parked, and either can be assigned to you. What a bulk dismissal records, and
  * what its undo takes back (`fleet/verbs.ts`).
  */
 export function askItemsOf(issue: Issue): string[] {
@@ -1156,8 +1222,9 @@ export function askItemsOf(issue: Issue): string[] {
         `ask:review:${issue.id}`,
         `ask:stopped:${issue.id}`,
         `ask:handover:${issue.id}`,
+        `ask:assigned:${issue.id}`,
       ]
-    : [`ask:parked:${issue.id}`];
+    : [`ask:parked:${issue.id}`, `ask:assigned:${issue.id}`];
 }
 
 /**
@@ -1207,8 +1274,9 @@ export function askTargetsFor(
   );
   const issueIds: string[] = [];
   const refused: { item: string; reason: string }[] = [];
-  // `issue:<id>` names an issue or pull assigned to the viewer — what the
-  // home's On you card holds — rather than an ask it raises.
+  // `issue:<id>` names an issue or pull assigned to the viewer. The home no
+  // longer hands it out (its assigned rows are `assigned:<id>`); it is kept
+  // because the API and the MCP's `asks_act` document it to their callers.
   const assigned = new Map(
     listAssignedTo(db, user.id, 200).map((i) => [`issue:${i.id}`, i]),
   );

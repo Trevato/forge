@@ -40,7 +40,6 @@ import {
 } from "../ui.ts";
 import {
   downloadsCard,
-  onYouCard,
   orgsCard,
   terminalCard,
 } from "../pages/site.ts";
@@ -127,14 +126,19 @@ const appsRegion = (ctx: Ctx, user: User): Html =>
     ${yourApps(ctx, user)}
   </div>`;
 
-const onYouRegion = (ctx: Ctx, user: User, note?: string): Html =>
+const onYouRegion = (
+  ctx: Ctx,
+  user: User,
+  note?: string,
+  section: Html = needsYouSection(ctx, user).body,
+): Html =>
   html`<div
     id="live-on-you"
     data-live="${ON_YOU_LIVE}"
     data-live-src="/live/on-you"
   >
     ${note === undefined ? null : html`<p class="small" role="status">${note}</p>`}
-    ${onYouCard(ctx, user) ?? null}
+    ${section}
   </div>`;
 
 // GET /live/apps — your apps alone, for the region that shows them.
@@ -145,7 +149,7 @@ export function liveAppsFragment(ctx: Ctx): Response {
 }
 
 /**
- * What a bulk step on the On you card answers its own script with: the
+ * What a bulk step on the On you list answers its own script with: the
  * region as it is now and the top bar's Asks link with its new count.
  */
 export function onYouAnswer(ctx: Ctx, user: User, note?: string): Response {
@@ -220,7 +224,7 @@ export async function studioHome(
     ${homeTabs("feed")}
     <div class="dash">
       <div class="dash-main stack">
-        ${needsYou.body} ${composer(ctx, user)}
+        ${onYouRegion(ctx, user, undefined, needsYou.body)} ${composer(ctx, user)}
         <div class="bar feed-head">
           <span class="spacer"></span>
           <a class="small muted" href="/asked">What you asked for</a>
@@ -237,7 +241,6 @@ export async function studioHome(
           user.isAdmin || appRepos.length > 0 ? crewKeyNote(ctx) : null
         }
         ${appsRegion(ctx, user)}
-        ${onYouRegion(ctx, user)}
         ${terminalCard(ctx)} ${downloadsCard(ctx, user)}
         ${orgsCard(ctx, user)}
       </aside>

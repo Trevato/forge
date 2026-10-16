@@ -817,15 +817,17 @@ describe("apps, runs and the crew on the web", () => {
     );
     if (check?.state !== "ok") expect(page).toContain("Waiting on checks.");
 
-    // On you: assigned to the viewer, the pull shows on the dashboard.
+    // On you: assigned to the viewer, the pull is a row of the home's one
+    // list, under the sentence that counts it.
     const assigned = await web(alice, `/alice/hello/pulls/${number}/assignee`, {
       form: { assignee: "alice" },
     });
     expect(assigned.status).toBe(303);
     const dash = await bodyOf(alice, "/");
-    expect(dash).toContain("<h2>On you</h2>");
+    expect(dash).toContain('<section id="needs-you"');
+    expect(dash).toMatch(/<h2 id="asks-sentence">\d+ things? needs? you<\/h2>/);
     expect(dash).toContain("Say hello");
-    expect(await bodyOf(bob, "/")).not.toContain("<h2>On you</h2>");
+    expect(await bodyOf(bob, "/")).not.toContain('<section id="needs-you"');
 
     // Needs you: a pull the crew opened, in a repository alice can write.
     expect(addToCrew(app, aliceUser, hello, "bot").ok).toBe(true);
@@ -846,7 +848,7 @@ describe("apps, runs and the crew on the web", () => {
     // racing to finish here: when it does, the dashboard links to /asks
     // rather than listing it (test/asks.test.ts holds that page to account).
     // Bob can read the public repo but not write it: not his inbox.
-    expect(await bodyOf(bob, "/")).not.toContain("<h2>Needs you</h2>");
+    expect(await bodyOf(bob, "/")).not.toContain('<section id="needs-you"');
   });
 
   test("the assignee select offers the people who can read the repository", async () => {

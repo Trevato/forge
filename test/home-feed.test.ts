@@ -362,7 +362,7 @@ describe("home is the feed", () => {
     expect(second.items.map((i: any) => i.id)).toEqual(whole.slice(2, 4));
   });
 
-  test("On you can be cleared in one move: a box each, select all, by kind and by repository, one form", async () => {
+  test("The one list can be cleared in one move: a box each, select all, by kind and by repository, one form", async () => {
     const one = openIssue(app, alice, garden, { title: "Sweep the path" });
     const two = openIssue(app, alice, vault, { title: "Oil the hinges" });
     if (!one.ok || !two.ok) throw new Error("issues");
@@ -370,14 +370,15 @@ describe("home is the feed", () => {
       expect(assignIssue(app, alice, repo, issue, alice).ok).toBe(true);
     const text = await (await get("/", aliceCookie)).text();
     const card = text.slice(text.indexOf('id="live-on-you"')).replace(/\s+/g, " ");
-    expect(card).toContain("On you");
-    expect(card).toContain(`value="issue:${one.value.id}"`);
-    expect(card).toContain(`value="issue:${two.value.id}"`);
-    expect((card.match(/form="onyou-bulk"/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(card).toContain("things need you");
+    expect(card).toContain("assigned to you");
+    expect(card).toContain(`value="assigned:${one.value.id}"`);
+    expect(card).toContain(`value="assigned:${two.value.id}"`);
+    expect((card.match(/form="asks-bulk"/g) ?? []).length).toBeGreaterThanOrEqual(2);
     expect(card).toContain('data-pick="all"');
     expect(card).toContain("data-pick-repo");
     expect(card).toContain('<option value="' + garden.id + '">alice/garden</option>');
-    expect(card).toContain('id="onyou-bulk"');
+    expect(card).toContain('id="asks-bulk"');
     expect(card).toContain('action="/asks/bulk"');
     expect(card).toContain('name="reason"');
     expect(card).toContain(">Mute repository<");
@@ -386,6 +387,6 @@ describe("home is the feed", () => {
     expect(text).toContain("data-pick");
     // Alone, a single row stays a plain link.
     const bobCard = await (await get("/", bobCookie)).text();
-    expect(bobCard).not.toContain('id="onyou-bulk"');
+    expect(bobCard).not.toContain('id="asks-bulk"');
   });
 });
