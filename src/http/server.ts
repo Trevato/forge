@@ -153,7 +153,7 @@ import {
   subscriptionHeadroom,
   subscriptionWake,
 } from "../web/pages/subscriptions.ts";
-import { grantAct, modelAdd, modelPage } from "../web/pages/model.ts";
+import { ceilingAct, grantAct, modelAdd, modelPage } from "../web/pages/model.ts";
 import {
   changePassword,
   iconPng,
@@ -798,6 +798,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings/model", modelPage);
   router.add("POST", "/settings/model", modelAdd);
   router.add("POST", "/settings/accounts/:username/model", grantAct);
+  router.add("POST", "/settings/accounts/:username/ceiling", ceilingAct);
   router.add("GET", "/settings/accounts/:username", personSignInsPage);
   router.add(
     "POST",

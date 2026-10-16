@@ -362,6 +362,13 @@ export async function ownerProfile(ctx: Ctx): Promise<Response> {
           })}
         </div>`,
     )}
+    ${when(
+      isOrg && ctx.auth.user?.isAdmin === true && ctx.auth.user.kind === "user",
+      () =>
+        html`<p class="mt small">
+          <a href="/settings/accounts/${encodeURIComponent(owner.username)}">Model spend ceilings</a>
+        </p>`,
+    )}
     ${isOrg ? orgSecrets(ctx, owner.username) : null}`;
 
   const listed = listReposByOwner(ctx.app.db, owner.username, undefined, {

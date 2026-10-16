@@ -1,0 +1,110 @@
+/**
+ * What one account's crew may spend on a model: a ceiling per UTC day and a
+ * ceiling per run, apart from the forge-wide one. An account has none until
+ * an admin sets them — a person's, an agent's or an organization's — so a
+ * forge's own crew is never stopped by a default nobody chose. Spend is counted from the
+ * usage ledger over the account's own repositories, so another account's
+ * spend never counts here. Pure data; who may set is the action's to decide.
+ */
+
+import type { Database } from "bun:sqlite";
+
+/** The most either ceiling may be, in dollars. */
+export const CEILING_MAX_USD = 10_000;
+
+export interface AccountCeiling {
+  readonly dailyUsd: number;
+  readonly perRunUsd: number;
+}
+
+export const dayStart = (now: Date): string =>
+  new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+
+/** Whole cents, above zero and within the maximum. */
+export const validCeiling = (usd: number): boolean =>
+  Number.isFinite(usd) && usd >= 0.01 && usd <= CEILING_MAX_USD;
+
+/** The ceilings an admin set, or undefined: no ceiling. */
+export function getAccountCeiling(db: Database, userId: string): AccountCeiling | undefined {
+  const row = db
+    .query<{ daily_usd: number; per_run_usd: number }, [string]>(
+      "SELECT daily_usd, per_run_usd FROM account_ceiling WHERE user_id = ?1",
+    )
+    .get(userId);
+  return row ? { dailyUsd: row.daily_usd, perRunUsd: row.per_run_usd } : undefined;
+}
+
+/** Dollars rounded to whole cents. */
+export const cents = (n: number): number => Math.round(n * 100) / 100;
+
+/** Take the ceilings back: the account has none again. */
+export function clearAccountCeiling(db: Database, userId: string): void {
+  db.query("DELETE FROM account_ceiling WHERE user_id = ?1").run(userId);
+}
+
+/** Set both ceilings. False when either is not a valid amount. */
+export function setAccountCeiling(
+  db: Database,
+  userId: string,
+  dailyUsd: number,
+  perRunUsd: number,
+  by: string,
+  now: Date,
+): boolean {
+  if (!validCeiling(dailyUsd) || !validCeiling(perRunUsd)) return false;
+  db.query(
+    `INSERT INTO account_ceiling (user_id, daily_usd, per_run_usd, set_by, set_at)
+     VALUES (?1, ?2, ?3, ?4, ?5)
+     ON CONFLICT(user_id) DO UPDATE SET daily_usd = ?2, per_run_usd = ?3, set_by = ?4, set_at = ?5`,
+  ).run(userId, cents(dailyUsd), cents(perRunUsd), by, now.toISOString());
+  return true;
+}
+
+/** What the account's repositories have spent today (UTC), running runs included. */
+export function daySpent(db: Database, userId: string, now: Date): number {
+  return (
+    db
+      .query<{ n: number }, [string, string]>(
+        `SELECT COALESCE(SUM(u.cost_usd), 0) AS n
+         FROM usage u JOIN repo r ON r.id = u.repo_id
+         WHERE r.owner_id = ?1 AND u.at >= ?2`,
+      )
+      .get(userId, dayStart(now))?.n ?? 0
+  );
+}
+
+/** Dollars left today, or undefined when the account has no ceiling. */
+export function dailyLeft(db: Database, userId: string, now: Date): number | undefined {
+  const c = getAccountCeiling(db, userId);
+  return c === undefined ? undefined : Math.max(0, c.dailyUsd - daySpent(db, userId, now));
+}
+
+export type CeilingVerdict =
+  | { readonly ok: true; readonly capUsd: number | undefined }
+  | { readonly ok: false; readonly said: string };
+
+/**
+ * May a run start for this account, and with what cap: the smaller of its
+ * per-run ceiling and what is left of today. A refusal names the ceiling.
+ */
+export function checkCeiling(
+  db: Database,
+  userId: string,
+  minRunUsd: number,
+  now: Date,
+): CeilingVerdict {
+  const c = getAccountCeiling(db, userId);
+  if (c === undefined) return { ok: true, capUsd: undefined };
+  if (c.perRunUsd < minRunUsd)
+    return {
+      ok: false,
+      said: `This account's per-run ceiling ($${c.perRunUsd.toFixed(2)}) is too small to start a run: an admin can raise it`,
+    };
+  const left = dailyLeft(db, userId, now) ?? 0;
+  if (left < minRunUsd)
+    return {
+      ok: false,
+      said: `This account's daily ceiling ($${c.dailyUsd.toFixed(2)}) is spent for today: an admin can raise it`,
+    };
+  return { ok: true, capUsd: Math.min(c.perRunUsd, left) };
+}

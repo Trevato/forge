@@ -8,7 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
-import { setAccountGrant } from "../actions/model_grant.ts";
+import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
 import { storageLimitMessage } from "../core/storage.ts";
 import { voteVariant } from "../actions/variants.ts";
 import { parentForgeFor } from "../core/parent_releases.ts";
@@ -1604,6 +1604,23 @@ export function apiRoutes(router: Router<Handler>): void {
       : done.error === "not_allowed"
         ? apiError("not_allowed", 422, "a grant is for a person who is not an admin")
         : notFound();
+  });
+
+  // An account's daily and per-run model spend ceilings, dollars (any account, orgs too).
+  router.add("POST", "/api/v1/admin/accounts/:username/ceiling", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const { dailyUsd, perRunUsd } = input;
+    const amount = (v: unknown): v is number | null =>
+      v === null || (typeof v === "number" && Number.isFinite(v));
+    if (!amount(dailyUsd) || !amount(perRunUsd))
+      return apiError("invalid", 422, "dailyUsd and perRunUsd are numbers of dollars, both null to take them back");
+    const done = setAccountCeilings(ctx.app, ctx.auth.user, ctx.params.username!, dailyUsd, perRunUsd);
+    if (done.ok) return json(done.value);
+    return done.error === "invalid_amount"
+      ? apiError("invalid", 422, "dailyUsd and perRunUsd are each from 0.01 to 10000 dollars, or both null")
+      : notFound();
   });
 
   router.add("POST", "/api/v1/admin/accounts/:username/unsuspend", (ctx) => {

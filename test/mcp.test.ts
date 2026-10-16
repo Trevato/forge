@@ -18,6 +18,7 @@ import { createApp as insertApp } from "../src/core/apps.ts";
 import { listIssues } from "../src/core/issues.ts";
 import { getRepoById, updateRepoSettings, type Repo } from "../src/core/repos.ts";
 import { createRun, listRuns, setRunBase } from "../src/core/runs.ts";
+import { getAccountCeiling } from "../src/core/account_ceiling.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { savePlacement } from "../src/core/placements.ts";
@@ -180,6 +181,7 @@ describe("the forge over MCP", () => {
       "health",
       "audit",
       "model_grant",
+      "model_ceiling",
       "outsiders",
       "decisions_by",
       "probe",
@@ -867,5 +869,32 @@ describe("the forge over MCP", () => {
     const back = await tool(rw, "feed_chips", { kind: "kind", value: "releases", hidden: false });
     expect(back.value).toEqual({ kinds: [], people: [] });
     expect(await kinds()).toContain("release");
+  });
+
+  test("model_ceiling: dry by default, an admin person with an admin token sets and clears it", async () => {
+    const admin = createToken(app.db, alice.id, "admin", "admin").token;
+    const readOnly = createToken(app.db, alice.id, "ro", "ro").token;
+    const target = (await createUser(app.db, { trusted: true, username: "ceilee", email: "ceilee@forge.local", password: "a-good-passphrase" }));
+    if (!target.ok) throw new Error(target.error);
+    const id = target.value.id;
+    const args = { username: "ceilee", dailyUsd: 12, perRunUsd: 3 };
+    // A non-admin is refused.
+    expect((await tool(bobRw, "model_ceiling", { ...args, dryRun: false })).error).toContain("forbidden");
+    // A dry run changes nothing.
+    expect((await tool(admin, "model_ceiling", args)).value.says).toContain("nothing changed");
+    expect(getAccountCeiling(app.db, id)).toBeUndefined();
+    // A read-only token is refused.
+    expect((await tool(readOnly, "model_ceiling", { ...args, dryRun: false })).error).toContain("forbidden");
+    expect(getAccountCeiling(app.db, id)).toBeUndefined();
+    // Bad amounts are invalid; half a clear too.
+    for (const bad of [{ dailyUsd: 0 }, { dailyUsd: 1e9 }, { perRunUsd: null }])
+      expect((await tool(admin, "model_ceiling", { ...args, ...bad, dryRun: false })).error).toContain("invalid");
+    expect(getAccountCeiling(app.db, id)).toBeUndefined();
+    expect((await tool(admin, "model_ceiling", { ...args, dryRun: false })).value).toEqual({ username: "ceilee", dailyUsd: 12, perRunUsd: 3 });
+    expect(getAccountCeiling(app.db, id)).toEqual({ dailyUsd: 12, perRunUsd: 3 });
+    // Both null takes them back.
+    const cleared = await tool(admin, "model_ceiling", { username: "ceilee", dailyUsd: null, perRunUsd: null, dryRun: false });
+    expect(cleared.value).toEqual({ username: "ceilee", dailyUsd: null, perRunUsd: null });
+    expect(getAccountCeiling(app.db, id)).toBeUndefined();
   });
 });

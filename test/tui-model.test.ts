@@ -7,6 +7,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App as Forge } from "../src/app.ts";
+import { getAccountCeiling } from "../src/core/account_ceiling.ts";
 import { getModelGrant, ownSubscription } from "../src/core/model_grant.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
@@ -107,6 +108,33 @@ describe("model budget in the terminal", () => {
     await p.ctrl("k");
     await p.type("Model grant");
     expect(p.text()).not.toContain("give an account dollars");
+    p.stop();
+  });
+
+  test("an admin sets an account's ceilings in the terminal; a person has no such command", async () => {
+    const bob = getUserByName(forge.db, "bob")!;
+    const h = boot("alice");
+    await open(h, "Model ceiling");
+    await h.type("bob");
+    await h.press("enter");
+    await h.type("20 5");
+    await h.press("enter");
+    expect(getAccountCeiling(forge.db, bob.id)).toEqual({ dailyUsd: 20, perRunUsd: 5 });
+    await open(h, "Model ceiling");
+    await h.type("bob");
+    await h.press("enter");
+    expect(h.text()).toContain("now $20.00 a day, $5.00 a run");
+    await h.press("enter"); // a stray Enter takes nothing back
+    expect(getAccountCeiling(forge.db, bob.id)).toEqual({ dailyUsd: 20, perRunUsd: 5 });
+    await h.type("none");
+    await h.press("enter");
+    expect(getAccountCeiling(forge.db, bob.id)).toBeUndefined();
+    h.stop();
+
+    const p = boot("bob");
+    await p.ctrl("k");
+    await p.type("Model ceiling");
+    expect(p.text()).not.toContain("set an account's dollars");
     p.stop();
   });
 });

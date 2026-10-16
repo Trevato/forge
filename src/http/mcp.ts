@@ -61,7 +61,7 @@ import {
   CARD_URI,
   cardFor,
 } from "../web/studio/cards.ts";
-import { setAccountGrant } from "../actions/model_grant.ts";
+import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
 import { keepThought } from "../actions/thought.ts";
 import {
   FROM_WORDS,
@@ -998,6 +998,48 @@ const TOOLS: readonly Tool[] = [
             ? "usdPerMonth is from 0.01 to 10000 dollars"
             : "no such person, or not one a grant is for",
         );
+      return good(set.value);
+    },
+  },
+  {
+    name: "model_ceiling",
+    description:
+      "Set an account's daily and per-run model spend ceilings, in dollars (a person's, an agent's or an organization's; an account has none until set). A run that would pass either does not start; one under way stops at the day's. A forge admin who is a person, with an admin token, sets it; `dryRun` is true unless you say false. Each change is recorded in the audit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        username: { type: "string" },
+        dailyUsd: { type: ["number", "null"], description: "0.01 to 10000; null (with perRunUsd null) takes the ceilings back." },
+        perRunUsd: { type: ["number", "null"], description: "0.01 to 10000; null (with dailyUsd null) takes the ceilings back." },
+        dryRun: { type: "boolean", description: "Plan only (the default). Send false to set it." },
+      },
+      required: ["username", "dailyUsd", "perRunUsd"],
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const { username, dailyUsd, perRunUsd } = args;
+      if (
+        typeof username !== "string" ||
+        !(dailyUsd === null || (typeof dailyUsd === "number" && Number.isFinite(dailyUsd))) ||
+        !(perRunUsd === null || (typeof perRunUsd === "number" && Number.isFinite(perRunUsd)))
+      )
+        return bad("invalid", "send a username, dailyUsd and perRunUsd in dollars (both null takes them back)");
+      if (!mayBoards(user)) return bad("forbidden", "a ceiling is a forge admin's to set");
+      if (args["dryRun"] !== false)
+        return good({
+          username,
+          dailyUsd,
+          perRunUsd,
+          says: "This is the plan; nothing changed. Send dryRun: false to set it.",
+        });
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "a ceiling needs an admin token");
+      const set = setAccountCeilings(ctx.app, user, username, dailyUsd, perRunUsd);
+      if (!set.ok)
+        return set.error === "invalid_amount"
+          ? bad("invalid", "dailyUsd and perRunUsd are each from 0.01 to 10000 dollars, or both null")
+          : bad("forbidden", "no such account");
       return good(set.value);
     },
   },

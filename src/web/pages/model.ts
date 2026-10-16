@@ -6,7 +6,8 @@
  * card). A token is typed once and never shown again.
  */
 
-import { ADD_MESSAGES, addOwnModel, setAccountGrant } from "../../actions/model_grant.ts";
+import { ADD_MESSAGES, addOwnModel, setAccountCeilings, setAccountGrant } from "../../actions/model_grant.ts";
+import { CEILING_MAX_USD, dailyLeft, getAccountCeiling } from "../../core/account_ceiling.ts";
 import {
   budgetLine,
   getModelGrant,
@@ -88,10 +89,43 @@ export async function modelAdd(ctx: Ctx): Promise<Response> {
   );
 }
 
+/** The admin's card for an account's spend ceilings, on a person's or an organization's page. */
+export function ceilingCard(ctx: Ctx, user: User, at: string): Html {
+  const ceiling = getAccountCeiling(ctx.app.db, user.id);
+  const left = dailyLeft(ctx.app.db, user.id, new Date());
+  return card(
+    html`<form class="stack" method="post" action="${at}/ceiling">
+      <div class="field">
+        <label for="f-daily">Daily ceiling, dollars</label>
+        <input class="input" id="f-daily" name="daily" inputmode="decimal"
+          autocomplete="off" value="${ceiling === undefined ? "" : ceiling.dailyUsd.toFixed(2)}" />
+      </div>
+      <div class="field">
+        <label for="f-per-run">Per-run ceiling, dollars</label>
+        <input class="input" id="f-per-run" name="perRun" inputmode="decimal"
+          autocomplete="off" value="${ceiling === undefined ? "" : ceiling.perRunUsd.toFixed(2)}" />
+        <span class="hint">Up to $${CEILING_MAX_USD}. Both empty takes them back. A run that would pass
+          either does not start, or stops at it; apart from the forge-wide
+          ceiling.</span>
+      </div>
+      <div>${btn("Save", { variant: "primary", size: "sm" })}</div>
+    </form>`,
+    {
+      head: html`<h2>Spend ceilings</h2>
+        <p class="muted" id="ceiling-line">
+          ${ceiling === undefined || left === undefined
+            ? "No ceiling set."
+            : `$${ceiling.dailyUsd.toFixed(2)} a day, $${ceiling.perRunUsd.toFixed(2)} a run; $${left.toFixed(2)} left today.`}
+        </p>`,
+    },
+  );
+}
+
 /** The admin's card on a person's page: what they have, and the grant form. */
 export function grantCard(ctx: Ctx, user: User, at: string): Html {
   const grant = getModelGrant(ctx.app.db, user.id);
-  return card(
+  const ceilings = ceilingCard(ctx, user, at);
+  const grantForm = card(
     html`<form class="stack" method="post" action="${at}/model">
       <div class="field">
         <label for="f-grant">Grant, dollars a month</label>
@@ -108,6 +142,7 @@ export function grantCard(ctx: Ctx, user: User, at: string): Html {
         <p class="muted">${budgetLine(ctx.app.db, user, new Date())}</p>`,
     },
   );
+  return html`${grantForm}${ceilings}`;
 }
 
 // POST /settings/accounts/:username/model
@@ -136,5 +171,34 @@ export async function grantAct(ctx: Ctx): Promise<Response> {
       done.value.usdPerMonth === null
         ? `${username}'s grant is taken back.`
         : `${username} has $${done.value.usdPerMonth.toFixed(2)} a month.`,
+  });
+}
+
+// POST /settings/accounts/:username/ceiling
+export async function ceilingAct(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const username = ctx.params.username ?? "";
+  // Both fields empty takes the ceilings back.
+  const amount = (name: string): number | null => {
+    const raw = field(form, name).trim().replace(/^\$/, "");
+    if (raw === "") return null;
+    return /^\d{1,6}(\.\d{1,2})?$/.test(raw) ? Number(raw) : NaN;
+  };
+  const done = setAccountCeilings(ctx.app, ctx.auth.user, username, amount("daily"), amount("perRun"));
+  const back = `/settings/accounts/${encodeURIComponent(username)}`;
+  if (!done.ok) {
+    if (done.error === "not_found") return notFoundPage(ctx);
+    return flashTo(ctx, back, {
+      tone: "danger",
+      message: `A ceiling is dollars, from 0.01 to ${CEILING_MAX_USD}.`,
+    });
+  }
+  if (done.value.dailyUsd === null || done.value.perRunUsd === null)
+    return flashTo(ctx, back, { message: `${username}'s ceilings are taken back.` });
+  return flashTo(ctx, back, {
+    message: `${username} has $${done.value.dailyUsd.toFixed(2)} a day and $${done.value.perRunUsd.toFixed(2)} a run.`,
   });
 }

@@ -10,8 +10,11 @@
 import {
   ADD_MESSAGES,
   addOwnModel,
+  setAccountCeilings,
   setAccountGrant,
 } from "../../actions/model_grant.ts";
+import { getAccountCeiling } from "../../core/account_ceiling.ts";
+import { getUserByName } from "../../core/users.ts";
 import { budgetLine, ownSubscription } from "../../core/model_grant.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -84,6 +87,43 @@ export function modelGrantPrompt(f: Session, ctx: Ctx, parent: Screen): Screen {
             const done = setAccountGrant(f.app, f.user, name.trim(), usd);
             if (!done.ok) return done.error === "invalid_amount" ? "That amount will not do." : "No such account.";
             ctx.toast(usd === null ? `${name.trim()}: grant taken back.` : `${name.trim()}: $${usd.toFixed(2)} a month.`);
+            return undefined;
+          },
+        }),
+      ),
+  });
+}
+
+/** What an account's ceilings are now, for the prompt's label. */
+function nowCeilings(f: Session, name: string): string {
+  const user = getUserByName(f.app.db, name);
+  const c = user === undefined ? undefined : getAccountCeiling(f.app.db, user.id);
+  return c === undefined ? "now none" : `now $${c.dailyUsd.toFixed(2)} a day, $${c.perRunUsd.toFixed(2)} a run`;
+}
+
+/** Admin: an account's name (an organization's too), then its daily and per-run ceilings in dollars. */
+export function modelCeilingPrompt(f: Session, ctx: Ctx, parent: Screen): Screen {
+  return promptScreen(ctx, parent, {
+    title: "Model ceiling",
+    label: "account name",
+    onSubmit: (name) =>
+      later(ctx, () =>
+        promptScreen(ctx, parent, {
+          title: `Model ceiling for ${name.trim()}`,
+          label: `${nowCeilings(f, name.trim())}; new: 20 5, or none`,
+          onSubmit: (raw) => {
+            if (raw.trim().toLowerCase() === "none") {
+              const cleared = setAccountCeilings(f.app, f.user, name.trim(), null, null);
+              if (!cleared.ok) return "No such account.";
+              ctx.toast(`${name.trim()}: ceilings taken back.`);
+              return undefined;
+            }
+            const [daily, perRun, ...rest] = raw.trim().split(/\s+/).map(Number);
+            if (daily === undefined || perRun === undefined || rest.length > 0)
+              return "Two amounts, like 20 5.";
+            const done = setAccountCeilings(f.app, f.user, name.trim(), daily, perRun);
+            if (!done.ok) return done.error === "invalid_amount" ? "That amount will not do." : "No such account.";
+            ctx.toast(`${name.trim()}: $${done.value.dailyUsd?.toFixed(2)} a day, $${done.value.perRunUsd?.toFixed(2)} a run.`);
             return undefined;
           },
         }),

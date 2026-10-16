@@ -1228,3 +1228,16 @@ ro/rw access token — the same grant, not a second credential. Present that
 access token to `/oauth/userinfo` for the claims. `/oauth/jwks` publishes the
 current signing key and the previous one; keys rotate every 30 days and live
 in the database, never in the repository.
+
+## Account spend ceilings
+
+An account (a repository's owner: a person, an agent or an organization)
+has a daily and a per-run model spend ceiling (`core/account_ceiling.ts`),
+apart from the forge-wide one. An account has none until an admin sets them,
+so no default ever stops a crew nobody chose to limit: on the account's page
+under Settings → Accounts (an organization's too), in the terminal's **Model
+ceiling** command, `POST /api/v1/admin/accounts/:name/ceiling`
+(`{"dailyUsd": 20, "perRunUsd": 5}`) or the MCP `model_ceiling` tool. A run
+that would pass either does not start and its message names the ceiling; one
+under way stops at the day's. Spend is the
+account's own repositories' usage today (UTC); another account's never counts.

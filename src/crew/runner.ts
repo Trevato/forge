@@ -112,6 +112,7 @@ import { heldNow, stuckOf } from "./held.ts";
 import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import { grantLeft } from "../core/model_grant.ts";
+import { checkCeiling, dailyLeft } from "../core/account_ceiling.ts";
 import {
   credentialEnvOf,
   hostOfApiBase,
@@ -544,6 +545,8 @@ interface Meter {
   stop: () => void;
   /** Set when the run spends an owner's capped grant: whose. */
   grantOwner?: string;
+  /** Set on every run: whose daily ceiling it counts against. */
+  ceilingOwner?: string;
   /** Why the run was stopped by its grant's cap, when it was. */
   stoppedFor?: string;
 }
@@ -566,6 +569,10 @@ const LIVE_MS = 2_000;
 /** Said on a run stopped at its grant's cap. */
 const GRANT_SPENT =
   "This month's model grant is spent: the run stopped at the cap; an admin can raise it";
+
+/** Said on a run stopped at its account's daily ceiling. */
+const DAILY_SPENT =
+  "This account's daily ceiling is spent: the run stopped; an admin can raise it";
 
 /**
  * A running session's spend so far, as its `running` line in the ledger,
@@ -605,6 +612,13 @@ function meterLive(
       const left = grantLeft(app.db, meter.grantOwner, new Date(now));
       if (left !== undefined && left <= 0) {
         meter.stoppedFor = GRANT_SPENT;
+        meter.stop();
+      }
+    }
+    if (meter.ceilingOwner !== undefined && meter.stoppedFor === undefined) {
+      const left = dailyLeft(app.db, meter.ceilingOwner, new Date(now));
+      if (left !== undefined && left <= 0) {
+        meter.stoppedFor = DAILY_SPENT;
         meter.stop();
       }
     }
@@ -1011,6 +1025,14 @@ async function work(
       write(said);
       return { state: "failed", summary: said };
     }
+    // The account's own ceilings, daily and per run, apart from the forge's:
+    // a run past either does not start and spends nothing.
+    const ceiling = checkCeiling(app.db, repo.ownerId, MIN_RUN_USD, new Date());
+    if (!ceiling.ok) {
+      write(ceiling.said);
+      return { state: "failed", summary: ceiling.said };
+    }
+    meter.ceilingOwner = repo.ownerId;
     if (picked.kind === "ready") {
       write(`subscription: ${picked.subscription.name}`);
       noteRunProgress(app.db, run.id, {
@@ -1045,12 +1067,14 @@ async function work(
     // The budget in two parts: the work, and a reserve for landing it. An
     // agent cut off mid-task otherwise leaves a tree the forge commits blind
     // and a pull whose description is the error.
-    const budget =
+    const budget = Math.min(
+      ceiling.capUsd ?? Infinity,
       picked.kind === "ready" && picked.capUsd !== undefined
         ? Math.min(ownBudget, picked.capUsd)
         : grantCap !== undefined
           ? Math.min(ownBudget, grantCap)
-          : ownBudget;
+          : ownBudget,
+    );
     const reserve = wrapUpReserve(budget);
     // Asked again for every invocation (`crew/sandbox.ts`): an agent made
     // since the last one is denied from this one on.

@@ -11,6 +11,7 @@ import {
   setModelGrant,
   validGrant,
 } from "../core/model_grant.ts";
+import { cents, clearAccountCeiling, setAccountCeiling, validCeiling } from "../core/account_ceiling.ts";
 import { getUserByName, type User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireUser } from "./access.ts";
@@ -74,4 +75,34 @@ export function addOwnModel(
     payload: { username: user.value.username },
   });
   return ok(null);
+}
+
+/** An admin sets any account's — a person's, an agent's, an organization's — daily and per-run ceilings, or takes both back (null, null); the change is on the outbox with who made it. */
+export function setAccountCeilings(
+  app: App,
+  actor: User | undefined,
+  username: string,
+  dailyUsd: number | null,
+  perRunUsd: number | null,
+): Result<
+  { username: string; dailyUsd: number | null; perRunUsd: number | null },
+  ModelGrantError
+> {
+  const admin = requireUser(actor);
+  if (!admin.ok || !admin.value.isAdmin || admin.value.kind !== "user")
+    return err("not_found");
+  const user = getUserByName(app.db, username);
+  if (user === undefined) return err("not_found");
+  if ((dailyUsd === null) !== (perRunUsd === null)) return err("invalid_amount");
+  if (dailyUsd === null || perRunUsd === null) {
+    clearAccountCeiling(app.db, user.id);
+    const value = { username: user.username, dailyUsd: null, perRunUsd: null };
+    app.bus.append({ kind: "account.ceiling_set", actorId: admin.value.id, payload: value });
+    return ok(value);
+  }
+  if (!validCeiling(dailyUsd) || !validCeiling(perRunUsd)) return err("invalid_amount");
+  setAccountCeiling(app.db, user.id, dailyUsd, perRunUsd, admin.value.id, new Date());
+  const value = { username: user.username, dailyUsd: cents(dailyUsd), perRunUsd: cents(perRunUsd) };
+  app.bus.append({ kind: "account.ceiling_set", actorId: admin.value.id, payload: value });
+  return ok(value);
 }
