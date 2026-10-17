@@ -360,6 +360,14 @@ import {
   type FleetError,
 } from "../actions/fleet.ts";
 import { sessionCookie, signupSlot } from "../web/pages/site.ts";
+import {
+  FIRST_ADMIN_TOKEN_MAX_S,
+  FIRST_ADMIN_TOKEN_MIN_S,
+  FIRST_ADMIN_WORDS,
+  firstAdminLifetime,
+  recoverFirstAdmin,
+  redeemFirstAdmin,
+} from "../actions/first_admin.ts";
 import { cookieValue, crossOrigin, type Ctx, type Handler } from "./context.ts";
 import {
   apiError,
@@ -1832,6 +1840,86 @@ export function apiRoutes(router: Router<Handler>): void {
     );
     if (!minted.ok) return unauthorized();
     return json(minted.value, 201);
+  });
+
+  // The first admin, headless (`core/first_admin.ts`): the operator's
+  // one-time code is the credential, so no session or password is asked.
+  // It makes the admin and answers once with a token of the asked scope.
+  router.add("POST", "/api/v1/first-admin", async (ctx) => {
+    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
+    const input = await boundedBody(ctx.request, STRANGER_MAX);
+    if (input === "too_large")
+      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
+    const scope = str(input.scope);
+    if (scope !== "ro" && scope !== "rw" && scope !== "admin")
+      return apiError("invalid_scope", 422, "scope is ro, rw or admin");
+    // The token always expires (`actions/first_admin.ts`).
+    const expiresIn = firstAdminLifetime(input.expiresIn);
+    if (expiresIn === undefined)
+      return apiError(
+        "invalid_expiry",
+        422,
+        `expiresIn is whole seconds from ${FIRST_ADMIN_TOKEN_MIN_S} to ${FIRST_ADMIN_TOKEN_MAX_S}; leave it out for a day`,
+      );
+    let expiresAt = "";
+    const made = await redeemFirstAdmin(
+      ctx.app,
+      {
+        code: str(input.code).trim(),
+        username: str(input.username).trim(),
+        email: str(input.email).trim(),
+        via: "token",
+        address: clientAddress(ctx.request),
+      },
+      (user) => {
+        expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+        const minted = createToken(ctx.app, user, str(input.name).trim() || "first-admin", scope, {
+          expiresAt,
+        });
+        return minted.ok ? minted.value : undefined;
+      },
+    );
+    // The throttle is in the action, before the code is read (H2's shape).
+    if (!made.ok && made.error === "rate_limited")
+      return json({ error: made.error, message: FIRST_ADMIN_WORDS[made.error] }, 429, { "retry-after": "60" });
+    if (!made.ok)
+      return apiError(made.error, made.error === "refused" ? 403 : 422, FIRST_ADMIN_WORDS[made.error]);
+    return json(
+      { user: publicUser(made.value.user), scope, ...made.value.finished, expiresAt, expiresIn },
+      201,
+    );
+  });
+
+  // A stranded admin, headless (`core/first_admin.ts`): every admin's way in
+  // has lapsed, and the operator's recovery code buys the one it names a new
+  // expiring token. No account is made; refusals read as the door above.
+  router.add("POST", "/api/v1/first-admin/recover", async (ctx) => {
+    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
+    const input = await boundedBody(ctx.request, STRANGER_MAX);
+    if (input === "too_large")
+      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
+    const scope = str(input.scope);
+    if (scope !== "ro" && scope !== "rw" && scope !== "admin")
+      return apiError("invalid_scope", 422, "scope is ro, rw or admin");
+    const expiresIn = firstAdminLifetime(input.expiresIn);
+    if (expiresIn === undefined)
+      return apiError(
+        "invalid_expiry",
+        422,
+        `expiresIn is whole seconds from ${FIRST_ADMIN_TOKEN_MIN_S} to ${FIRST_ADMIN_TOKEN_MAX_S}; leave it out for a day`,
+      );
+    const recovered = recoverFirstAdmin(ctx.app, {
+      code: str(input.code).trim(),
+      scope,
+      name: str(input.name).trim(),
+      expiresIn,
+      address: clientAddress(ctx.request),
+    });
+    if (!recovered.ok && recovered.error === "rate_limited")
+      return json({ error: recovered.error, message: FIRST_ADMIN_WORDS.rate_limited }, 429, { "retry-after": "60" });
+    if (!recovered.ok) return apiError("refused", 403, FIRST_ADMIN_WORDS.refused);
+    const { user, id, token, expiresAt } = recovered.value;
+    return json({ user: publicUser(user), scope, id, token, expiresAt, expiresIn }, 201);
   });
 
   router.add("GET", "/api/v1/tokens", (ctx) => {
