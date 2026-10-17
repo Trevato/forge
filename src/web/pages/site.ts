@@ -359,8 +359,9 @@ function authForm(
 
   // A spawned forge nobody has claimed yet: its person may arrive here with
   // the code from their link but not the link itself (#730).
+  const unowned = !hasAdmin(ctx.app.db);
   const claimable =
-    existsSync(join(ctx.app.config.dataDir, "parent.json")) && !hasAdmin(ctx.app.db);
+    existsSync(join(ctx.app.config.dataDir, "parent.json")) && unowned;
   return html`<div class="narrow">
     ${pageHead(kind === "signin" ? "Sign in" : "Create your account")}
     ${card(body)}
@@ -384,6 +385,11 @@ function authForm(
     ${claimable
       ? html`<p class="muted small mt" id="claim-door">
           Was this forge made for you? <a href="/claim">Claim it with your code</a>.
+        </p>`
+      : null}
+    ${kind === "signin" && unowned
+      ? html`<p class="muted small mt" id="first-admin-door">
+          Have a first-admin code from this forge's operator? <a href="/first-admin">Use it</a>.
         </p>`
       : null}
   </div>`;
