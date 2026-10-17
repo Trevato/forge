@@ -230,7 +230,7 @@ describe("watching a milestone", () => {
   }, 60_000);
 
   afterAll(async () => {
-    notifier.stop();
+    await notifier.close();
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });

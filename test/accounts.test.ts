@@ -87,7 +87,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
     await notifier.settled();
   });
   afterAll(async () => {
-    notifier.stop();
+    await notifier.close();
     servers.stop();
     app.close();
     await rm(dataDir, { recursive: true, force: true });
