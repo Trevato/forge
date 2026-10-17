@@ -132,7 +132,7 @@ describe("the off-box mirror", () => {
       await Bun.sleep(40);
       await n.settled();
     }
-    n.stop();
+    await n.close();
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain("off-box mirror");
     expect(sent[0]).toContain("unreachable");
