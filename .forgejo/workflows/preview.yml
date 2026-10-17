@@ -8,6 +8,9 @@ on:
 
 jobs:
   preview:
+    # Not for a pull from a fork: it gets no secrets, and a preview builds and
+    # pushes an image of the pull's code.
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: isolated
     env:
       REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
