@@ -29,6 +29,7 @@ describe("og png", () => {
     servers = await serve(app);
     base = servers.url;
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -215,6 +216,7 @@ describe("og cards with a look", () => {
     servers = await serve(app);
     base = servers.url;
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -303,7 +305,19 @@ describe("og cards with a look", () => {
 });
 
 describe("og cards render cold within budget", () => {
+  /**
+   * The budget, on the machine it was set on (#2483, #2490): there the
+   * plain repo card rendered cold in `PLAIN_MS`. A check runner can be many
+   * times slower (half a CPU, 512 MiB: the plain card takes ~295 ms there),
+   * so the budget scales by how much slower the plain card is here than it
+   * was there, measured in this process before any design is timed — never
+   * below 1, so a faster machine is held to the full 300 ms. A design that
+   * grows slow against the plain card still goes red anywhere; a machine
+   * that is merely slow does not.
+   */
   const BUDGET_MS = 300;
+  const PLAIN_MS = 45;
+  let scale = 1;
 
   /** A small page-like picture as a data URI, the size `shotUri` leaves on a card. */
   const uri = (hue: number): string => {
@@ -394,26 +408,39 @@ describe("og cards render cold within budget", () => {
 
   const median = (xs: number[]) => xs.toSorted((a, b) => a - b)[Math.floor(xs.length / 2)]!;
 
-  for (const [name, input] of Object.entries(designs)) {
-    test(`${name}: median of three cold renders is within ${BUDGET_MS} ms`, async () => {
-      const raster = await rasterizer();
-      raster(renderCard(designs.repo!)); // warm the wasm and fonts; never time the first render
-      const times: number[] = [];
-      for (let i = 0; i < 3; i++) {
-        const dir = await mkdtemp(join(tmpdir(), "forge-ogcold-"));
-        try {
-          const cache = pngCache({ dir, raster: async () => raster, svg: renderCard });
-          const t0 = performance.now();
-          const png = await cache.get(input);
-          times.push(performance.now() - t0);
-          expect([...png.slice(0, 4)]).toEqual(PNG);
-        } finally {
-          await rm(dir, { recursive: true, force: true });
-        }
+  /** Three cold renders of `input` through a fresh cache each, in ms. */
+  const coldTimes = async (input: CardInput): Promise<number[]> => {
+    const raster = await rasterizer();
+    raster(renderCard(designs.repo!)); // warm the wasm and fonts; never time the first render
+    const times: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const dir = await mkdtemp(join(tmpdir(), "forge-ogcold-"));
+      try {
+        const cache = pngCache({ dir, raster: async () => raster, svg: renderCard });
+        const t0 = performance.now();
+        const png = await cache.get(input);
+        times.push(performance.now() - t0);
+        expect([...png.slice(0, 4)]).toEqual(PNG);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
       }
+    }
+    return times;
+  };
+
+  beforeAll(async () => {
+    const plain = median(await coldTimes(designs.repo!));
+    scale = Math.max(1, plain / PLAIN_MS);
+    console.log(`og plain card: ${plain.toFixed(1)} ms cold here, ${PLAIN_MS} ms where the budget was set: budget ×${scale.toFixed(2)}`);
+  });
+
+  for (const [name, input] of Object.entries(designs)) {
+    test(`${name}: median of three cold renders is within ${BUDGET_MS} ms, scaled to this machine`, async () => {
+      const times = await coldTimes(input);
       const m = median(times);
-      console.log(`og ${name}: ${m.toFixed(1)} ms cold (median of ${times.map((t) => t.toFixed(0)).join(", ")})`);
-      expect(m).toBeLessThanOrEqual(BUDGET_MS);
+      const budget = BUDGET_MS * scale;
+      console.log(`og ${name}: ${m.toFixed(1)} ms cold (median of ${times.map((t) => t.toFixed(0)).join(", ")}), budget ${budget.toFixed(0)} ms`);
+      expect(m).toBeLessThanOrEqual(budget);
     });
   }
 

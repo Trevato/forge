@@ -43,6 +43,7 @@ describe("the drill's board line", () => {
     root = mkdtempSync(join(tmpdir(), "forge-drill-line-"));
     app = createApp({ dataDir: root, port: 0 });
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -131,7 +132,7 @@ describe("the drill's board line", () => {
     await n.settled();
     expect(sent).toHaveLength(2);
     expect(sent[1]).toContain("No restore drill");
-    n.stop();
+    await n.close();
   });
 
   test("eight days of silence alone, with no event, is pushed once by the clock", async () => {
@@ -151,7 +152,7 @@ describe("the drill's board line", () => {
     await n.settled();
     await Bun.sleep(50);
     await n.settled();
-    n.stop();
+    await n.close();
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain("No restore drill");
   });

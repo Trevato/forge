@@ -1060,18 +1060,21 @@ export const withoutArchived = (repos: readonly Repo[]): Repo[] =>
 /** The one line said wherever the crew declines to start a run here. */
 export const ARCHIVED_WHY = "This repository is archived; wake it to start a run.";
 
-/** Update the mutable repo fields, leaving unspecified ones untouched. */
+/**
+ * Update the mutable repo fields, leaving unspecified ones untouched.
+ * Archiving is not one of them: it is a transition, `moveArchived`.
+ */
 export function updateRepoSettings(
   db: Database,
   repo: Repo,
-  settings: RepoSettings,
+  settings: Omit<RepoSettings, "archived">,
 ): Repo {
   db.query(
     `UPDATE repo SET visibility = ?1, description = ?2, protect_default = ?3,
        default_branch = ?4, require_review = ?5, require_checks = ?7,
        autonomy = ?8, autonomy_direction = ?9, autonomy_ceiling_usd = ?10,
        autonomy_slots = ?11, autonomy_by = ?12, crew_outsiders = ?13, decisions_by = ?14,
-       archived_at = ?15, plans_need_nod = ?16
+       plans_need_nod = ?15
      WHERE id = ?6`,
   ).run(
     settings.visibility ?? repo.visibility,
@@ -1088,14 +1091,30 @@ export function updateRepoSettings(
     settings.autonomyBy === undefined ? repo.autonomyBy : settings.autonomyBy,
     (settings.crewOutsiders ?? repo.crewOutsiders) ? 1 : 0,
     settings.decisionsBy ?? repo.decisionsBy,
-    settings.archived === undefined
-      ? repo.archivedAt
-      : settings.archived
-        ? (repo.archivedAt ?? new Date().toISOString())
-        : null,
     (settings.plansNeedNod ?? repo.plansNeedNod) ? 1 : 0,
   );
   return getRepoById(db, repo.id)!;
+}
+
+/**
+ * Archive (true) or wake (false) in one conditional write. True only when
+ * this call moved the repository: of two at once, one moves it and the
+ * other finds it already there, whatever either read before.
+ */
+export function moveArchived(
+  db: Database,
+  repoId: string,
+  archived: boolean,
+  at: string = new Date().toISOString(),
+): boolean {
+  const changes = archived
+    ? db
+        .query("UPDATE repo SET archived_at = ?2 WHERE id = ?1 AND archived_at IS NULL")
+        .run(repoId, at).changes
+    : db
+        .query("UPDATE repo SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL")
+        .run(repoId).changes;
+  return changes === 1;
 }
 
 /** Repositories the crew drives on its own, assisted or autonomous. */

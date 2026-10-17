@@ -44,6 +44,7 @@ describe("anonymous spawn", () => {
     servers = await serve(app);
     base = servers.url;
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "a@forge.local",

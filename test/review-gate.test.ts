@@ -44,7 +44,7 @@ describe("the review gate", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-review-gate-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -326,7 +326,7 @@ describe("a pull nobody reviewed, however old (#1655)", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-review-old-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

@@ -63,11 +63,11 @@ beforeAll(async () => {
   child = createApp({ dataDir: await make(), port: 0, parentUrl: ps.url, parentLoopback: true });
   cs = await serve(child);
   for (const name of ["amy", "ben"]) {
-    const made = await createUser(parent.db, { username: name, email: `${name}@parent.local`, password: "a-long-family-passphrase", adminIfFirst: name === "amy" });
+    const made = await createUser(parent.db, { origin: "seed", username: name, email: `${name}@parent.local`, password: "a-long-family-passphrase", adminIfFirst: name === "amy" });
     if (!made.ok) throw new Error(made.error);
     cookies[name] = `forge_session=${createSession(parent.db, made.value.id).token}`;
   }
-  const seeded = await createUser(child.db, { username: "olive", email: "olive@f.dev", password: "a-long-family-passphrase", trusted: true });
+  const seeded = await createUser(child.db, { origin: "seed", username: "olive", email: "olive@f.dev", password: "a-long-family-passphrase", trusted: true });
   if (!seeded.ok) throw new Error(seeded.error);
   const actor = seeded.value.id;
   // Two sign-ups a minute from this source, shared by every door.

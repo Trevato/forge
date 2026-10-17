@@ -11,6 +11,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { STRANGER_MAX } from "../src/http/limits.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 // No request a stranger can make has the forge read an unbounded body: a
 // declared length and an undeclared (chunked) one are both stopped at the
@@ -34,7 +35,7 @@ describe("request body limits", () => {
       username: "ada",
       email: "ada@f.dev",
       password: "owner-passphrase",
-    });
+    }, { slot: fixtureSlot(app) });
     if (!owner.ok) throw new Error(owner.error);
     ownerToken = createToken(app.db, owner.value.id, "t", "admin").token;
     const repo = await createRepo(app, owner.value, {

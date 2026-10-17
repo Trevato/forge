@@ -91,6 +91,7 @@ beforeAll(async () => {
   servers = await serve(app);
   alice = ok(
     await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -100,6 +101,7 @@ beforeAll(async () => {
   );
   mallory = ok(
     await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "mallory",
       email: "mallory@forge.local",

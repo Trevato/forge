@@ -49,6 +49,7 @@ describe("a child forge proposes to its parent forge", () => {
 
   const person = async (app: App, username: string) => {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@forge.local`,
@@ -179,6 +180,7 @@ describe("a child forge proposes to its parent forge", () => {
 
   test("a reader of the child cannot propose", async () => {
     const stranger = await createUser(child.db, {
+      origin: "seed",
       trusted: true,
       username: "stranger",
       email: "s@forge.local",
@@ -318,6 +320,7 @@ describe("a child forge proposes to its parent forge", () => {
     await land("viaapi", "Add viaapi");
     const writer = createToken(child.db, kid.id, "api", "rw").token;
     const reader = await createUser(child.db, {
+      origin: "seed",
       trusted: true,
       username: "reader",
       email: "r@forge.local",

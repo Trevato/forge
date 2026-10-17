@@ -106,6 +106,7 @@ describe("variant votes over MCP and the terminal", () => {
     servers = await serve(app);
     const make = async (username: string, first: boolean) => {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

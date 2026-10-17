@@ -90,6 +90,7 @@ beforeAll(async () => {
   const make = async (username: string) =>
     ok(
       await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

@@ -38,6 +38,7 @@ describe("a run the last forge left running", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -437,6 +438,7 @@ describe("an issue handed to someone else", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

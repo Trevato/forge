@@ -123,7 +123,7 @@ describe.skipIf(NO_OPENSSH)("a terminal for every app, over ssh", () => {
       { stdout: "ignore", stderr: "ignore" },
     );
     expect(await gen.exited).toBe(0);
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

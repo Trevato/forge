@@ -25,7 +25,9 @@ import {
   createRepo as initRepo,
   deleteRepo as destroyRepo,
   forkRepo as cloneRepo,
+  getRepoById,
   getSealedFork,
+  moveArchived,
   updateRepoSettings as writeSettings,
   type CreateRepoError,
   type DecisionsBy,
@@ -276,6 +278,56 @@ export async function privateRepoForSealed(
 
 export type UpdateSettingsError = "not_found" | "unknown_branch";
 
+/** Each repository's archive transitions, one after another. */
+const archiveTurns = new WeakMap<App, Map<string, Promise<void>>>();
+
+/** Run `work` after every archive transition already asked of `repoId`. */
+function inTurn<T>(app: App, repoId: string, work: () => Promise<T>): Promise<T> {
+  let turns = archiveTurns.get(app);
+  if (turns === undefined) {
+    turns = new Map();
+    archiveTurns.set(app, turns);
+  }
+  const queue = turns;
+  const turn = (queue.get(repoId) ?? Promise.resolve()).then(work);
+  const tail = turn.then(
+    () => {},
+    () => {},
+  );
+  queue.set(repoId, tail);
+  void tail.then(() => {
+    if (queue.get(repoId) === tail) queue.delete(repoId);
+  });
+  return turn;
+}
+
+/**
+ * Archive (true) or wake (false), and act on it only if this call moved the
+ * repository (`moveArchived`). The write and its effect take one turn per
+ * repository, so a Wake asked while an Archive is still stopping the app
+ * starts it after that stop, not before it. True when this call moved it.
+ */
+function moveArchive(app: App, repoId: string, archived: boolean): Promise<boolean> {
+  return inTurn(app, repoId, async () => {
+    if (!moveArchived(app.db, repoId, archived)) return false;
+    const runtime = appsRuntime(app);
+    if (runtime === undefined) return true;
+    // Archiving puts the app away: production and every preview stop through
+    // the runtime's ordinary stop; their data stays where it is.
+    if (archived) {
+      await runtime.stopRepo(repoId);
+      return true;
+    }
+    // Waking brings production back from the default branch on the same data
+    // directory; a preview returns on its pull's next push.
+    const woken = getRepoById(app.db, repoId);
+    const record = getAppByRepo(app.db, repoId);
+    if (woken !== undefined && record !== undefined)
+      await runtime.reconcileApp(record, woken, "wake", "production");
+    return true;
+  });
+}
+
 /**
  * Change settings. A new default branch must exist; git HEAD is moved first
  * and the row follows (git is truth, the index is derived from it).
@@ -311,21 +363,12 @@ export async function updateRepoSettings(
     const moved = await setDefaultBranch(dir, branch);
     if (!moved.ok) return err("unknown_branch");
   }
-  const updated = writeSettings(app.db, repo, settings);
-  // Archiving puts the app away: production and every preview stop through
-  // the runtime's ordinary stop; their data stays where it is.
-  if (updated.archivedAt !== null && repo.archivedAt === null) {
-    const runtime = appsRuntime(app);
-    if (runtime !== undefined) await runtime.stopRepo(repo.id);
-  }
-  // Waking brings production back from the default branch on the same data
-  // directory; a preview returns on its pull's next push.
-  if (updated.archivedAt === null && repo.archivedAt !== null) {
-    const runtime = appsRuntime(app);
-    const record = getAppByRepo(app.db, repo.id);
-    if (runtime !== undefined && record !== undefined)
-      await runtime.reconcileApp(record, updated, "wake", "production");
-  }
+  const { archived, ...rest } = settings;
+  writeSettings(app.db, repo, rest);
+  const moved =
+    archived === undefined ? false : await moveArchive(app, repo.id, archived);
+  const updated = getRepoById(app.db, repo.id);
+  if (updated === undefined) return err("not_found");
   const changed: string[] = (
     [
       "visibility",
@@ -339,8 +382,7 @@ export async function updateRepoSettings(
       "plansNeedNod",
     ] as const
   ).filter((k) => settings[k] !== undefined && settings[k] !== repo[k]);
-  if (settings.archived !== undefined && settings.archived !== (repo.archivedAt !== null))
-    changed.push("archived");
+  if (moved) changed.push("archived");
   app.bus.append({
     kind: "repo.settings_updated",
     repoId: repo.id,

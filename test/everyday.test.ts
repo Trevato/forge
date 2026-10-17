@@ -88,6 +88,7 @@ describe("the everyday account", () => {
       ["bea", true],
     ] as const) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@x.test`,
@@ -338,7 +339,7 @@ describe("the everyday account", () => {
 
   test("joining an org whose \"Writers\" team grants something else still makes a writer, never more", async () => {
     const mk = async (username: string) => {
-      const made = await createUser(app.db, { trusted: true, username, email: `${username}@x.test`, password: PASSWORD });
+      const made = await createUser(app.db, { origin: "seed", trusted: true, username, email: `${username}@x.test`, password: PASSWORD });
       if (!made.ok) throw new Error(username);
       return made.value;
     };
@@ -358,13 +359,13 @@ describe("the everyday account", () => {
   });
 
   test("when no write team can be had, joinAsWriter says so", async () => {
-    const owner = await createUser(app.db, { trusted: true, username: "stall", email: "stall@x.test", password: PASSWORD });
+    const owner = await createUser(app.db, { origin: "seed", trusted: true, username: "stall", email: "stall@x.test", password: PASSWORD });
     if (!owner.ok) throw new Error("owner");
     const org = createOrg(app.db, "stalls", owner.value.id);
     if (!org.ok) throw new Error("org");
     for (const name of [WRITERS_TEAM, "Everyday writers"])
       if (!createTeam(app.db, org.value.id, name, "read").ok) throw new Error(name);
-    const daily = await createUser(app.db, { trusted: true, username: "stall-daily", email: "sd@x.test", password: PASSWORD });
+    const daily = await createUser(app.db, { origin: "seed", trusted: true, username: "stall-daily", email: "sd@x.test", password: PASSWORD });
     if (!daily.ok) throw new Error("daily");
     expect(joinAsWriter(app.db, org.value, daily.value)).toBe(false);
     expect(orgAccessByOrg(app.db, daily.value).get(org.value.id)).toBeUndefined();
@@ -372,7 +373,7 @@ describe("the everyday account", () => {
 
   // Last: it makes this forge a spawned one (a parent.json naming "stalls").
   test("on a spawned forge, an everyday account that cannot join keeps the admin signed in, sent to the org's teams", async () => {
-    const cyd = await createUser(app.db, { trusted: true, username: "cyd", email: "cyd@x.test", password: PASSWORD, isAdmin: true });
+    const cyd = await createUser(app.db, { origin: "seed", trusted: true, username: "cyd", email: "cyd@x.test", password: PASSWORD, isAdmin: true });
     if (!cyd.ok) throw new Error("cyd");
     await Bun.write(join(dataDir, "parent.json"), JSON.stringify({ org: "stalls" }));
     const admin = await signIn("cyd");

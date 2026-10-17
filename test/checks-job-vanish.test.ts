@@ -55,6 +55,7 @@ describe("a vanished check Job", () => {
       job: { fetch: fetch as never, credentials: cred, pollMs: 1 },
     });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

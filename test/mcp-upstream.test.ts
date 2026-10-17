@@ -41,6 +41,7 @@ describe("MCP proposes to the parent forge and lists proposals", () => {
 
   const person = async (app: App, username: string) => {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@forge.local`,
@@ -210,6 +211,7 @@ describe("MCP proposes to the parent forge and lists proposals", () => {
 
   test("a reader is refused the proposal and can still list", async () => {
     const made = await createUser(child.db, {
+      origin: "seed",
       trusted: true,
       username: "reader",
       email: "r@forge.local",

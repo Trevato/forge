@@ -35,7 +35,7 @@ describe("the feed on the home page", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const mk = async (username: string, first = false) => {
-      const r = await createUser(app.db, { trusted: true,
+      const r = await createUser(app.db, { origin: "seed", trusted: true,
         username,
         // Fixtures may name an account after a reserved word on purpose.
         allowReserved: true,

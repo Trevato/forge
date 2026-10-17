@@ -44,6 +44,7 @@ async function twoUsers(app: App): Promise<{ alice: User; bob: User }> {
   const users: User[] = [];
   for (const username of ["alice", "bob"]) {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@forge.local`,

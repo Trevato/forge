@@ -55,24 +55,10 @@ describe("the repository", () => {
   );
 
   test("this guard is itself in the gate: no exclusion names it", () => {
-    expect(EXCLUDED.map((e) => e.file)).not.toContain("test/hollow.test.ts");
+    const excluded = EXCLUDED.map((e) => e.file);
+    expect(excluded).not.toContain("test/hollow.test.ts");
+    expect(excluded).not.toContain("test/hollow-cli.test.ts");
   });
-
-  test(
-    "`bun scripts/hollow.ts` says so and exits 0",
-    () => {
-      const ran = Bun.spawnSync([process.execPath, "scripts/hollow.ts"], {
-        cwd: root,
-        env: { PATH: process.env["PATH"] ?? "" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      expect(ran.stderr.toString()).toBe("");
-      expect(ran.stdout.toString()).toStartWith("hollow: none");
-      expect(ran.exitCode).toBe(0);
-    },
-    WHOLE_TREE,
-  );
 });
 
 describe("an action nothing that runs reaches", () => {

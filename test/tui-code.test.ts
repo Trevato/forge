@@ -32,6 +32,7 @@ import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { indexPaths, rankPaths } from "../src/tui/ui/fuzzy.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -108,7 +109,7 @@ describe("the terminal, around the workspace", () => {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    });
+    }, { slot: fixtureSlot(forge) });
     if (!a.ok) throw new Error("signup failed");
     alice = a.value;
 

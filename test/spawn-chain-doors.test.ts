@@ -76,7 +76,7 @@ describe("the chain at the MCP and terminal doors", () => {
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "forge-chain-doors-"));
     root = createApp({ dataDir: dir, url: "https://root.test", port: 0, forgeRepo: "alice/forge-code" });
-    const a = await createUser(root.db, { trusted: true, username: "alice", email: "a@x.test", isAdmin: true });
+    const a = await createUser(root.db, { origin: "seed", trusted: true, username: "alice", email: "a@x.test", isAdmin: true });
     if (!a.ok) throw new Error("user");
     const made = await createRepo(root, a.value, { name: "forge-code", visibility: "public" });
     if (!made.ok) throw new Error("repo");
@@ -102,7 +102,7 @@ describe("the chain at the MCP and terminal doors", () => {
     child = createApp({ dataDir: childDirOf(root, spawned.value.bodyId), url: "https://kid.test", port: 0 });
     servers = await serve(child);
     alice = getUserByName(child.db, "alice")!;
-    const r = await createUser(child.db, { trusted: true, username: "reader", email: "r@x.test" });
+    const r = await createUser(child.db, { origin: "seed", trusted: true, username: "reader", email: "r@x.test" });
     if (!r.ok) throw new Error("reader");
     reader = r.value;
     rw = createToken(child.db, alice.id, "rw", "rw").token;

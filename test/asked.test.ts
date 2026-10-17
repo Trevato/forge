@@ -112,7 +112,7 @@ describe("what you asked for", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asked-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -120,7 +120,7 @@ describe("what you asked for", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -432,7 +432,7 @@ describe("an old ask says what exists for it", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asked-old-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -578,7 +578,7 @@ describe("a repository with more asks than one read", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asked-many-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

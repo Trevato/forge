@@ -153,7 +153,7 @@ describe("every green pull an agent wrote is sent to review", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-review-route-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

@@ -13,6 +13,7 @@ import { setSignup, type SignupMode } from "../src/settings/signup.ts";
 import { signUp, signUpWithPasskey } from "../src/actions/users.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 const TOKEN = "edge-secret-0123456789";
 const edge = (login: string) => ({ "x-plat-user": login, "x-plat-edge-token": TOKEN });
@@ -111,9 +112,9 @@ describe("closed signup", () => {
     expect(getUserByName(app.db, "formed")).toBeUndefined();
 
     const input = { username: "direct", email: "d@example.com" };
-    const key = await signUpWithPasskey(app, { ...input, passkey: {} as never, passkeyName: "k" });
+    const key = await signUpWithPasskey(app, { ...input, passkey: {} as never, passkeyName: "k" }, { slot: fixtureSlot(app) });
     expect(key).toEqual({ ok: false, error: "signup_closed" });
-    const terminal = await signUp(app, { ...input, password: "a-good-passphrase" }, { door: "terminal" });
+    const terminal = await signUp(app, { ...input, password: "a-good-passphrase" }, { slot: fixtureSlot(app), door: "terminal" });
     expect(terminal).toEqual({ ok: false, error: "signup_closed" });
     expect(getUserByName(app.db, "direct")).toBeUndefined();
   });

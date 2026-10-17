@@ -69,7 +69,7 @@ describe("apps adversarial: grants and the proxy", () => {
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -176,7 +176,7 @@ describe("apps adversarial: grants and the proxy", () => {
     // anonymous" from "you're signed in but still can't see it" — both
     // must read `not_found`, or an anonymous prober could tell the two
     // apart and learn something about a repo they cannot see.
-    const strangerCreated = await createUser(app.db, { trusted: true,
+    const strangerCreated = await createUser(app.db, { origin: "seed", trusted: true,
       username: "stranger",
       email: "stranger@forge.local",
       password: "a-good-passphrase",

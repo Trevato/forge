@@ -68,7 +68,7 @@ describe("an account's whole-life budget", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-budget-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "a@x.test",
       password: "a-long-budget-passphrase",
@@ -76,7 +76,7 @@ describe("an account's whole-life budget", () => {
     });
     if (!a.ok) throw new Error("user");
     alice = a.value;
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "b@x.test",
       password: "a-long-budget-passphrase",
@@ -262,7 +262,7 @@ describe("spend that cannot be taken back", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-budget-spent-"));
     app = createApp({ dataDir, port: 0 });
-    const made = await createUser(app.db, { trusted: true, username: "olga", email: "o@x.test", password: "a-long-budget-passphrase", isAdmin: true });
+    const made = await createUser(app.db, { origin: "seed", trusted: true, username: "olga", email: "o@x.test", password: "a-long-budget-passphrase", isAdmin: true });
     if (!made.ok) throw new Error("user");
     owner = made.value;
     const s = addSubscription(app.db, dataDir, { name: "starter", token: "sk-ant-api03-spent-counter-key-for-the-test" });

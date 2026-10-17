@@ -30,6 +30,7 @@ export async function bootWorld(dataDir: string): Promise<World> {
     username: "chaos",
     email: "chaos@forge.local",
     adminIfFirst: true,
+    origin: "seed",
   });
   if (!made.ok) throw new Error(made.error);
   const repo = await createRepo(app, made.value, { name: "side" });

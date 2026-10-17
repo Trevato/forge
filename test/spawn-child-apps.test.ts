@@ -47,7 +47,7 @@ describe("a spawned child's apps", () => {
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "forge-child-apps-"));
     parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
-    const made = await createUser(parent.db, { trusted: true,
+    const made = await createUser(parent.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "a@x.invalid",
       isAdmin: true,
@@ -79,7 +79,7 @@ describe("a spawned child's apps", () => {
       });
       if (!c.ok) throw new Error("commit");
       if (name === "bakery") {
-        const atlas = await createUser(parent.db, { trusted: true,
+        const atlas = await createUser(parent.db, { origin: "seed", trusted: true,
           username: "atlas",
           email: "atlas@a.invalid",
           agent: true,
@@ -186,7 +186,7 @@ describe("a spawned child's apps", () => {
     const anonymous = await (await fetch(`${servers.url}/marias/bakery`)).text();
     expect(anonymous).toContain("bakery");
     expect(anonymous).not.toContain("The crew has no model key yet");
-    const reader = await createUser(child.db, { trusted: true,
+    const reader = await createUser(child.db, { origin: "seed", trusted: true,
       username: "reader",
       email: "reader@x.test",
       password: "a-long-reader-passphrase",

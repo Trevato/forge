@@ -34,6 +34,7 @@ describe("the pill's data", () => {
     app = createApp({ dataDir, port: 0, host: "forge.test" });
     runtime = { app } as unknown as AppsRuntime;
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -101,6 +102,7 @@ describe("the pill's data", () => {
     expect(pillWhere(runtime, targets.leaky!, undefined).repo).toBeUndefined();
     expect(pillWhere(runtime, preview("leaky"), undefined).title).toBeUndefined();
     const bob = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "bob@forge.local",

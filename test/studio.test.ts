@@ -96,7 +96,7 @@ describe("the studio", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -910,7 +910,7 @@ describe("the studio", () => {
     const at = `/alice/publicchange/pulls/${opened.value.number}`;
     expect(await (await get(at)).text()).toContain(`action="${at}/state"`);
 
-    const stranger = await createUser(app.db, { trusted: true,
+    const stranger = await createUser(app.db, { origin: "seed", trusted: true,
       username: "changestranger",
       email: "changestranger@forge.local",
       password: "a-good-passphrase",

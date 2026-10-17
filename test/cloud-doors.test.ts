@@ -49,7 +49,7 @@ describe("cloud accounts at the terminal and MCP doors", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     for (const [username, adminIfFirst] of [["alice", true], ["bob", false]] as const) {
-      const made = await createUser(app.db, { trusted: true, username, email: `${username}@f.test`, password: "a-good-passphrase", adminIfFirst });
+      const made = await createUser(app.db, { origin: "seed", trusted: true, username, email: `${username}@f.test`, password: "a-good-passphrase", adminIfFirst });
       if (!made.ok) throw new Error(made.error);
     }
     alice = getUserByName(app.db, "alice")!;

@@ -48,7 +48,7 @@ describe("fleet operations", () => {
   let bobsPrivate: Repo;
 
   const person = async (username: string, adminIfFirst = false) => {
-    const made = await createUser(app.db, { trusted: true,
+    const made = await createUser(app.db, { origin: "seed", trusted: true,
       username,
       // Fixtures may name an account after a reserved word on purpose.
       allowReserved: true,

@@ -60,6 +60,7 @@ beforeAll(async () => {
   http = forgeHttp(app);
   const alice: User = ok(
     await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -69,6 +70,7 @@ beforeAll(async () => {
   );
   const mallory = ok(
     await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "mallory",
       email: "mallory@forge.local",

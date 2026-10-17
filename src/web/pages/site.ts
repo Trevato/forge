@@ -29,7 +29,7 @@ import { homeTop } from "../studio/asks_page.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
-import { signupWindow } from "../../actions/signup-window.ts";
+import { SignupSlot, signupWindow } from "../../actions/signup-window.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
 import { field, readForm } from "../form.ts";
 import { passkeyJs } from "../passkey-client.ts";
@@ -483,6 +483,11 @@ export function signupAllowed(ctx: Ctx): number | undefined {
   return signupWindow(ctx.app, clientAddress(ctx.request));
 }
 
+/** The same window, as the slot a stranger's account is made with, or the seconds to wait. */
+export function signupSlot(ctx: Ctx): SignupSlot | number {
+  return SignupSlot.take(ctx.app, clientAddress(ctx.request));
+}
+
 export async function signinSubmit(ctx: Ctx): Promise<Response> {
   // Posted by people with no account yet: a stranger's form.
   const form = await readForm(ctx, undefined, STRANGER_MAX);
@@ -561,8 +566,9 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const username = field(form, "username");
   const email = field(form, "email");
-  const wait = signupAllowed(ctx);
-  if (wait !== undefined) {
+  const slot = signupSlot(ctx);
+  if (typeof slot === "number") {
+    const wait = slot;
     const response = page(
       {
         ctx,
@@ -589,7 +595,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       password: field(form, "password"),
       humanToken: field(form, "cf-turnstile-response"),
     },
-    { address: clientAddress(ctx.request) },
+    { slot, address: clientAddress(ctx.request) },
   );
   if (!created.ok) {
     if (created.error === "signup_closed") return signupClosedPage(ctx);

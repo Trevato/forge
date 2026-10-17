@@ -48,6 +48,7 @@ describe("release checkout on landing", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-release-"));
     app = createApp({ dataDir, port: 0, forgeRepo: "alice/forge-code", releasesKeep: 2 });
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "a@forge.local",
@@ -155,6 +156,7 @@ describe("overlapping landings", () => {
     const app = createApp({ dataDir, port: 0, forgeRepo: "alice/forge-code", releasesKeep: 5 });
     try {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "alice",
         email: "a@forge.local",

@@ -65,6 +65,7 @@ describe("the off-box mirror", () => {
     offbox = bucket(join(root, "offbox-dir"));
     app = createApp({ dataDir: root, port: 0 });
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -132,7 +133,7 @@ describe("the off-box mirror", () => {
       await Bun.sleep(40);
       await n.settled();
     }
-    n.stop();
+    await n.close();
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain("off-box mirror");
     expect(sent[0]).toContain("unreachable");
