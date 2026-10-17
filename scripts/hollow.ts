@@ -555,7 +555,14 @@ function orphanScreens(modules: Modules, edges: Edges): Hollow[] {
 /** Every hollow action and orphan screen in `sources`. */
 export function hollow(sources: Sources): Hollow[] {
   const modules = new Map<string, Module>();
-  for (const [file, text] of sources) modules.set(file, read(file, text));
+  let parsed = 0;
+  for (const [file, text] of sources) {
+    modules.set(file, read(file, text));
+    // Each file's syntax tree is garbage once read: collect as we go, or a
+    // whole-tree audit peaks near 450 MiB of dead trees, most of a 512 MiB
+    // check runner.
+    if (++parsed % 64 === 0) Bun.gc(true);
+  }
   const edges = graph(modules);
   return [...hollowActions(modules), ...orphanScreens(modules, edges)];
 }
