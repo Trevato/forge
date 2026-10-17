@@ -31,6 +31,7 @@ beforeAll(async () => {
   servers = await serve(app);
   const mk = async (username: string, adminIfFirst?: boolean) => {
     const r = await createUser(app.db, {
+      origin: "seed",
       trusted: true, username, email: `${username}@forge.local`,
       password: "a-good-passphrase", ...(adminIfFirst ? { adminIfFirst } : {}),
     });

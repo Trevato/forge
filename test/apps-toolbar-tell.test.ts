@@ -38,6 +38,7 @@ describe("tell the crew from the pill", () => {
     app = createApp({ dataDir, port: 0, host: "forge.test" });
     servers = await serve(app);
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

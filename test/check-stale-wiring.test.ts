@@ -41,6 +41,7 @@ describe("a green from an older main says so where people read it", () => {
     app = createApp({ dataDir, port: 0, host: "forge.test" });
     servers = await serve(app);
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

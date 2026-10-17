@@ -651,6 +651,7 @@ describe.skipIf(noCells)(
       });
 
       const a = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "alice",
         email: "alice@forge.local",
@@ -660,6 +661,7 @@ describe.skipIf(noCells)(
       if (!a.ok) throw new Error(a.error);
       alice = a.value;
       const m = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "mallory",
         email: "mallory@forge.local",
@@ -1044,6 +1046,7 @@ describe.skipIf(noCells)(
     test("a fork's code, run by the base's check once approved, is refused everything but the forge", async () => {
       const user = async (username: string, first = false): Promise<User> => {
         const made = await createUser(app.db, {
+          origin: "seed",
           trusted: true,
           username,
           email: `${username}@forge.local`,

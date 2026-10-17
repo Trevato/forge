@@ -60,7 +60,7 @@ describe("the studio, continued", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -585,7 +585,7 @@ describe("the studio, continued", () => {
     expect(own).toContain(`action="${at}/state"`);
 
     // A signed-in stranger may comment on a public issue, never close it.
-    const stranger = await createUser(app.db, { trusted: true,
+    const stranger = await createUser(app.db, { origin: "seed", trusted: true,
       username: "plainstranger",
       email: "plainstranger@forge.local",
       password: "a-good-passphrase",
@@ -809,7 +809,7 @@ describe("the studio, continued", () => {
   });
 
   test("/apps in the studio is the shelf, not dev's table: an app the viewer can land, never one they cannot, and no dev table markup; ?mode=dev is unchanged", async () => {
-    const bob = await createUser(app.db, { trusted: true,
+    const bob = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -899,7 +899,7 @@ describe("the studio, continued", () => {
     expect(dev).toContain('href="/apps/new?owner=alice"');
     expect(dev).toContain("not running");
 
-    const carol = await createUser(app.db, { trusted: true,
+    const carol = await createUser(app.db, { origin: "seed", trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -1119,7 +1119,7 @@ describe("the studio, continued", () => {
 
     // Erin just signed up: no apps of her own, but the forge already has a
     // public one.
-    const erin = await createUser(app.db, { trusted: true,
+    const erin = await createUser(app.db, { origin: "seed", trusted: true,
       username: "erin",
       email: "erin@forge.local",
       password: "a-good-passphrase",
@@ -1176,7 +1176,7 @@ describe("the studio, continued", () => {
     const servers2 = await serve(app2);
     try {
       // A public repository that is not an app is not on the shelf.
-      const owner = await createUser(app2.db, { trusted: true,
+      const owner = await createUser(app2.db, { origin: "seed", trusted: true,
         username: "olga",
         email: "olga@forge.local",
         password: "a-good-passphrase",
@@ -1223,7 +1223,7 @@ describe("the studio, continued", () => {
     const app2 = createApp({ dataDir: dataDir2, port: 0 });
     const servers2 = await serve(app2);
     try {
-      const made = await createUser(app2.db, { trusted: true,
+      const made = await createUser(app2.db, { origin: "seed", trusted: true,
         username: "pia",
         email: "pia@forge.local",
         password: "a-good-passphrase",

@@ -88,6 +88,7 @@ describe("a spawned child's own keys and domain", () => {
     loadKey(dir);
     loadOrCreateHostKey(join(dir, "ssh"));
     const made = await createUser(parent.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "a@x.invalid",

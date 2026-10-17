@@ -156,6 +156,7 @@ describe("the sandbox on a run's record", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-sandbox-run-"));
     app = createApp({ dataDir, port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -492,7 +493,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","total
       runTimeoutMs: 60_000,
     });
     try {
-      const alice = await createUser(app.db, { trusted: true,
+      const alice = await createUser(app.db, { origin: "seed", trusted: true,
         username: "alice",
         email: "alice@forge.local",
         password: "a-good-passphrase",

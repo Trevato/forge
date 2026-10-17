@@ -251,6 +251,7 @@ describe("readFlow over real records", () => {
     const app = createApp({ dataDir: dir, port: 0 });
     try {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "alice",
         email: "alice@forge.local",
@@ -337,10 +338,12 @@ describe("readFlow reads everything, and only what the viewer may see", () => {
     const dir = await mkdtemp(join(tmpdir(), "forge-flow-big-"));
     const app = createApp({ dataDir: dir, port: 0 });
     const alice = await createUser(app.db, {
+      origin: "seed",
       trusted: true, username: "alice", email: "alice@forge.local",
       password: "a-good-passphrase", adminIfFirst: true,
     });
     const bob = await createUser(app.db, {
+      origin: "seed",
       trusted: true, username: "bob", email: "bob@forge.local", password: "a-good-passphrase",
     });
     if (!alice.ok || !bob.ok) throw new Error("users");

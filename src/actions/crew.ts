@@ -102,6 +102,7 @@ export async function createAgent(
     password: "",
     displayName: input.displayName ?? input.username,
     agent: true,
+    origin: "agent",
   });
   if (!user.ok) return user;
   const agent = createAgentRow(app.db, {

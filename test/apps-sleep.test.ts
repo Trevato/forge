@@ -68,7 +68,7 @@ describe("apps that sleep", () => {
       sweepEveryMs: 150,
     });
     await runtime.start();
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

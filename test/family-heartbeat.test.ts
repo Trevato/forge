@@ -81,6 +81,7 @@ describe("family heartbeats", () => {
     dir = await mkdtemp(join(tmpdir(), "forge-family-"));
     parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
     const alice = await createUser(parent.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "a@x.test",
@@ -88,6 +89,7 @@ describe("family heartbeats", () => {
       isAdmin: true,
     });
     const bob = await createUser(parent.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "b@x.test",

@@ -40,6 +40,7 @@ import {
 } from "../src/web/pages/edit.ts";
 import { highlightAsset } from "../src/web/asset.ts";
 import { highlightToHtml } from "../src/web/highlight-html.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -116,12 +117,12 @@ describe("editing files on the web", () => {
       username: "alice",
       email: "a@f.dev",
       password: PASSWORD,
-    });
+    }, { slot: fixtureSlot(app) });
     const k = await signUp(app, {
       username: "kim",
       email: "k@f.dev",
       password: PASSWORD,
-    });
+    }, { slot: fixtureSlot(app) });
     if (!a.ok || !k.ok) throw new Error("signup failed");
     aliceUser = a.value;
     alice = `forge_session=${createSession(app.db, a.value.id).token}`;

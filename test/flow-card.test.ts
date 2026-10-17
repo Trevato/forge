@@ -92,6 +92,7 @@ describe("stalled steps on the home", () => {
     servers = await serve(app);
     const mk = async (username: string, first = false) => {
       const r = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

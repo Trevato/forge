@@ -49,6 +49,7 @@ const open = (): App =>
 
 async function person(email = `p${++made}@example.com`): Promise<User> {
   const u = await createUser(app.db, {
+    origin: "seed",
     username: `p${++made}`,
     email,
     password: "a-good-passphrase",
@@ -68,6 +69,7 @@ beforeAll(async () => {
   app = open();
   servers = await serve(app);
   const o = await createUser(app.db, {
+    origin: "seed",
     trusted: true,
     username: "olive",
     email: "olive@forge.example",

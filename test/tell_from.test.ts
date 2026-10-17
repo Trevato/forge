@@ -26,6 +26,7 @@ beforeAll(async () => {
   app = createApp({ dataDir: dir, port: 0 });
   servers = await serve(app);
   const u = await createUser(app.db, {
+    origin: "seed",
     trusted: true,
     username: "alice",
     email: "alice@forge.local",

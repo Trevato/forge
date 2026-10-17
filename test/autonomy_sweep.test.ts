@@ -51,6 +51,7 @@ describe("the green sweep runs beside the tick", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-sweep-"));
     app = createApp({ dataDir, port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

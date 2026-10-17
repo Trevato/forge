@@ -56,7 +56,7 @@ describe("triage", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-triage-"));
     app = createApp({ dataDir, port: 0 });
-    const made = await createUser(app.db, { trusted: true, username: "alice", email: "alice@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+    const made = await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "alice@forge.local", password: "a-good-passphrase", adminIfFirst: true });
     if (!made.ok) throw new Error(String(made.error));
     alice = made.value;
     const r = await createRepo(app, alice, { name: "forge", visibility: "private" });

@@ -101,7 +101,7 @@ fi
     runTimeoutMs: 60_000,
   });
 
-  const a = await createUser(app.db, { trusted: true,
+  const a = await createUser(app.db, { origin: "seed", trusted: true,
     username: "alice",
     email: "alice@forge.local",
     password: "a-good-passphrase",
@@ -109,7 +109,7 @@ fi
   });
   if (!a.ok) throw new Error(a.error);
   alice = a.value;
-  const m = await createUser(app.db, { trusted: true,
+  const m = await createUser(app.db, { origin: "seed", trusted: true,
     username: "mallory",
     email: "mallory@forge.local",
     password: "a-good-passphrase",
@@ -441,6 +441,7 @@ describe("every other door that queues a run", () => {
 
   test("an unverified writer's tell is refused and opens nothing, through every door", async () => {
     const u = await createUser(app.db, {
+      origin: "seed",
       username: "uma",
       email: "uma@forge.local",
       password: "a-good-passphrase",

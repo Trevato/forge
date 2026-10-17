@@ -190,6 +190,7 @@ describe("a tell asks for variants", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -332,6 +333,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
 
   test("two variants open two pulls in the returned group, on different branches", async () => {
     const alice = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

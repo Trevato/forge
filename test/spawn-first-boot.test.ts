@@ -80,7 +80,7 @@ describe("a spawned child's first boot", () => {
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "forge-first-boot-"));
     parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
-    const made = await createUser(parent.db, { trusted: true,
+    const made = await createUser(parent.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "a@x.invalid",
       isAdmin: true,
@@ -101,7 +101,7 @@ describe("a spawned child's first boot", () => {
       ["atlas", "planner"],
       ["scout", "builder"],
     ] as const) {
-      const agent = await createUser(parent.db, { trusted: true,
+      const agent = await createUser(parent.db, { origin: "seed", trusted: true,
         username: name,
         email: `${name}@agents.invalid`,
         agent: true,
@@ -385,7 +385,7 @@ describe("claims are bound to a spawned forge, and the link is shown once", () =
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "forge-claim-bound-"));
     parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
-    const made = await createUser(parent.db, { trusted: true, username: "alice", email: "a@x.invalid", password: "a-long-passphrase-1", isAdmin: true });
+    const made = await createUser(parent.db, { origin: "seed", trusted: true, username: "alice", email: "a@x.invalid", password: "a-long-passphrase-1", isAdmin: true });
     if (!made.ok) throw new Error("user");
     const repo = await createRepo(parent, made.value, { name: "bakery" });
     if (!repo.ok) throw new Error("repo");

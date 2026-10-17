@@ -67,6 +67,7 @@ describe("the claim link in the fragment, and its re-issue", () => {
     dir = await mkdtemp(join(tmpdir(), "forge-claim-link-"));
     parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
     const alice = await createUser(parent.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "a@x.test",
@@ -74,6 +75,7 @@ describe("the claim link in the fragment, and its re-issue", () => {
       isAdmin: true,
     });
     const bob = await createUser(parent.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "b@x.test",
@@ -197,7 +199,7 @@ describe("the claim link in the fragment, and its re-issue", () => {
     expect(await replayed.text()).toContain("That request expired.");
     expect(getUserByName(child.db, "admin")).toBeUndefined();
     // A device whose key another account on this forge already holds.
-    const holder = await createUser(child.db, { trusted: true, username: "holder", email: "h@x.test" });
+    const holder = await createUser(child.db, { origin: "seed", trusted: true, username: "holder", email: "h@x.test" });
     if (!holder.ok) throw new Error(holder.error);
     const shared = await device(childServers.url);
     const held = await passkeyFields(childServers.url, "/claim/options", { token: tokenOf(second), username: "holder-two", email: "h2@x.test" }, { device: shared });

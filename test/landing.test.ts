@@ -62,7 +62,7 @@ sleep 60
       throw new Error(`${what}: did not happen in time`);
     };
     try {
-      const a = await createUser(app.db, { trusted: true,
+      const a = await createUser(app.db, { origin: "seed", trusted: true,
         username: "alice",
         email: "alice@forge.local",
         password: "a-good-passphrase",

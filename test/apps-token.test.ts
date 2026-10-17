@@ -43,7 +43,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 const EXAMPLE = join(import.meta.dir, "..", "examples", "forge-live");
 
 async function user(app: App, username: string): Promise<User> {
-  const made = await createUser(app.db, { trusted: true,
+  const made = await createUser(app.db, { origin: "seed", trusted: true,
     username,
     email: `${username}@forge.local`,
     password: "a-good-passphrase",

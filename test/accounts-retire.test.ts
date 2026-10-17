@@ -14,6 +14,7 @@ import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 describe("accounts: the confirm page for removing an organization too", () => {
   let dataDir: string;
@@ -33,7 +34,7 @@ describe("accounts: the confirm page for removing an organization too", () => {
         username,
         email: `${username}@f.dev`,
         password: "a-long-passphrase",
-      });
+      }, { slot: fixtureSlot(app) });
       if (!u.ok) throw new Error(u.error);
       return u.value;
     };

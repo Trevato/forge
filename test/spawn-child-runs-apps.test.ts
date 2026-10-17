@@ -60,7 +60,7 @@ describe("a hosted child's apps run in the parent", () => {
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "forge-child-runs-apps-"));
     parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
-    const made = await createUser(parent.db, { trusted: true, username: "alice", email: "a@x.invalid", isAdmin: true });
+    const made = await createUser(parent.db, { origin: "seed", trusted: true, username: "alice", email: "a@x.invalid", isAdmin: true });
     if (!made.ok) throw new Error("user");
     const repo = await createRepo(parent, made.value, { name: "bakery", visibility: "public" });
     if (!repo.ok) throw new Error("repo");

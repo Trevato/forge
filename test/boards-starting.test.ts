@@ -23,7 +23,7 @@ let admin: User;
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-boards-starting-"));
   app = createApp({ dataDir: dir, port: 0 });
-  const made = await createUser(app.db, { username: "alice", email: "a@x.test", password: "correct horse battery", isAdmin: true });
+  const made = await createUser(app.db, { origin: "seed", username: "alice", email: "a@x.test", password: "correct horse battery", isAdmin: true });
   if (!made.ok) throw new Error("no admin");
   admin = made.value;
 });

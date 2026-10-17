@@ -71,6 +71,7 @@ describe("a guest cannot own, copy or run", () => {
     });
   const mk = async (username: string, extra: { isAdmin?: boolean; trusted?: boolean } = {}) => {
     const r = await createUser(app.db, {
+      origin: "seed",
       trusted: extra.trusted ?? true,
       username,
       email: `${username}@forge.local`,

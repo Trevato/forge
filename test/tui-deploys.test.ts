@@ -15,6 +15,7 @@ import { deploysScreen } from "../src/tui/screens/deploys.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -30,7 +31,7 @@ beforeAll(async () => {
     username: "alice",
     email: "alice@forge.test",
     password: "a-long-passphrase",
-  });
+  }, { slot: fixtureSlot(forge) });
   if (!a.ok) throw new Error("signup failed");
   alice = a.value;
   const r = await createRepo(forge, alice, { name: "lamp", visibility: "public" });
@@ -96,7 +97,7 @@ test("a non-reader sees nothing of a private repo's deploys", async () => {
     username: "bob",
     email: "bob@forge.test",
     password: "a-long-passphrase",
-  });
+  }, { slot: fixtureSlot(forge) });
   if (!b.ok) throw new Error("signup failed");
   const r = await createRepo(forge, alice, { name: "vault", visibility: "private" });
   if (!r.ok) throw new Error("repo failed");

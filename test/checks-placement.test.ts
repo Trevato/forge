@@ -109,6 +109,7 @@ describe("checks placed", () => {
       },
     });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

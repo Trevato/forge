@@ -90,6 +90,7 @@ describe("a count that differs is red", () => {
     root = mkdtempSync(join(tmpdir(), "forge-drill-weekly-"));
     app = createApp({ dataDir: join(root, "live"), port: 0 });
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

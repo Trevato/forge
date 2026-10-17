@@ -58,7 +58,7 @@ describe("a throttled source is throttled only at the signup and sign-in doors",
     dataDir = await mkdtemp(join(tmpdir(), "forge-throttle-scope-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const pat = await createUser(app.db, { trusted: true, isAdmin: true, username: "pat", email: "pat@forge.test", password: PASSWORD });
+    const pat = await createUser(app.db, { origin: "seed", trusted: true, isAdmin: true, username: "pat", email: "pat@forge.test", password: PASSWORD });
     if (!pat.ok) throw new Error("setup: no user");
     setLimit(app.db, "signup.per_source", LIMIT, pat.value.id);
     setLimit(app.db, "signin.per_source", LIMIT, pat.value.id);

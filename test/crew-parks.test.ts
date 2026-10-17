@@ -85,6 +85,7 @@ async function engine(
   const app = createApp({ dataDir, port: 0 });
   const servers = await serve(app);
   const a = await createUser(app.db, {
+    origin: "seed",
     trusted: true,
     username: "alice",
     email: "alice@forge.local",
@@ -328,6 +329,7 @@ describe("a comment that only reads like a park", () => {
   test("refused: a reader's comment in a park's words strikes nothing, and hands nothing to the planner", async () => {
     const { app, atlas } = e;
     const c = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "carol",
       email: "carol@forge.local",
@@ -461,6 +463,7 @@ describe("an issue parked twice is the planner's", () => {
     });
     if (!record.ok) throw new Error(record.error);
     const b = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "bob@forge.local",
@@ -1421,6 +1424,7 @@ describe("an issue found already done is the asker's to close, not a park", () =
 
   test("another person's comment that reads like the note is that person's word", async () => {
     const carol = await createUser(e.app.db, {
+      origin: "seed",
       trusted: true,
       username: "carol",
       email: "carol@forge.local",

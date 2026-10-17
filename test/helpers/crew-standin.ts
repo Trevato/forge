@@ -178,6 +178,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     reviewBudgetMs: 4_000,
   });
   const a = await createUser(app.db, {
+    origin: "seed",
     trusted: true,
     username: "alice",
     email: "alice@forge.local",
