@@ -116,6 +116,7 @@ test("every caller of createUser says where its account comes from", async () =>
   // A new way in is added here on purpose: a stranger's door, or a named exemption.
   expect(await callers()).toEqual({
     "src/actions/crew.ts": ["agent"],
+    "src/actions/first_admin.ts": ["first-admin"],
     "src/actions/spawn.ts": ["spawn", "spawn"],
     "src/actions/users.ts": ["signup", "passkey"],
     "src/chaos/world.ts": ["seed"],

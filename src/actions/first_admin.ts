@@ -142,6 +142,7 @@ export async function redeemFirstAdmin<T>(
   // Origin: the operator's first admin, an exemption from the signup policy
   // (the operator vouches by minting the code), as a claim is.
   const made = await createUser(app.db, {
+    origin: "first-admin",
     username: input.username,
     email: input.email,
     isAdmin: true,

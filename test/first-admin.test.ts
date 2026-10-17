@@ -29,12 +29,13 @@ import { listTeamMembers, listTeams, OWNERS_TEAM } from "../src/core/orgs.ts";
 import { LIFETIMES } from "../src/core/oauth.ts";
 import { listPasskeys } from "../src/core/passkeys.ts";
 import { createToken } from "../src/core/tokens.ts";
-import { createUser, getUserByName } from "../src/core/users.ts";
+import { createUser, getUserByName, newAccountsClosed } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { sha256 } from "../src/kernel/hash.ts";
 import { logLevel, setLogLevel } from "../src/kernel/log.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { setSignup } from "../src/settings/signup.ts";
 import { readClaim, spawnedOrg } from "../src/spawn/claim.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { passkeyFields } from "./helpers/passkey.ts";
@@ -58,7 +59,7 @@ const redeem = (base: string, body: Record<string, unknown>) =>
     body: JSON.stringify(body),
   });
 const admin = (db: App["db"]) =>
-  createUser(db, { trusted: true, username: "operator-made", email: "op@x.test", isAdmin: true });
+  createUser(db, { origin: "seed", trusted: true, username: "operator-made", email: "op@x.test", isAdmin: true });
 /** The first-admin token's row: its expiry, as the forge will enforce it. */
 const tokenRow = (db: App["db"], tokenId: string) =>
   db.query<{ expires_at: string | null }, [string]>("SELECT expires_at FROM token WHERE id = ?1").get(tokenId)!;
@@ -396,6 +397,25 @@ describe("the throttle is in the action, so no door can skip it", () => {
   });
 });
 
+describe("the signup setting does not hold back the operator", () => {
+  test("with signup closed and an account already made, the code still makes the first admin", async () => {
+    const { app } = await fresh();
+    try {
+      const plain = await createUser(app.db, { origin: "seed", trusted: true, username: "plain", email: "p@x.test" });
+      if (!plain.ok) throw new Error("plain");
+      setSignup(app.db, "closed", plain.value.id);
+      expect(newAccountsClosed(app.db)).toBe(true);
+      const { code } = mintFirstAdmin(app.db)!;
+      const made = await redeemFirstAdmin(app, { code, username: "boss", email: "b@x.test", via: "token", address: "198.51.100.8" }, () => true);
+      if (!made.ok) throw new Error(made.error);
+      expect(made.value.user.isAdmin).toBe(true);
+      expect(getUserByName(app.db, "boss")?.isAdmin).toBe(true);
+    } finally {
+      app.close();
+    }
+  });
+});
+
 describe("the operator's command: --first-admin", () => {
   test("refuses a data directory with no forge database, and bad flags", async () => {
     const dir = await mkdtemp(join(tmpdir(), "forge-first-admin-empty-"));
@@ -441,7 +461,7 @@ describe("a spawned child, made admin by its parent's operator", () => {
 
   beforeAll(async () => {
     ({ dir: parentDir, app: parent } = await fresh({ url: "https://forge.test" }));
-    const alice = await createUser(parent.db, { trusted: true, username: "alice", email: "a@x.test", isAdmin: true });
+    const alice = await createUser(parent.db, { origin: "seed", trusted: true, username: "alice", email: "a@x.test", isAdmin: true });
     if (!alice.ok) throw new Error("alice");
     const rw = createToken(parent.db, alice.value.id, "rw", "rw").token;
     const repo = await createRepo(parent, alice.value, { name: "bakery" });

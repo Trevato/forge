@@ -38,7 +38,7 @@ async function stranded(name = "opsbot"): Promise<{ dir: string; app: App; serve
   const dir = await mkdtemp(join(tmpdir(), "forge-first-admin-recovery-"));
   dirs.push(dir);
   const app = createApp({ dataDir: dir, port: 0, passkeyOnlySignup: true });
-  const made = await createUser(app.db, { trusted: true, username: name, email: `${name}@x.test`, isAdmin: true });
+  const made = await createUser(app.db, { origin: "seed", trusted: true, username: name, email: `${name}@x.test`, isAdmin: true });
   if (!made.ok) throw new Error("user");
   // Its token from the first-admin redemption, lapsed.
   createToken(app.db, made.value.id, "first-admin", "admin", { expiresAt: past() });
@@ -269,7 +269,7 @@ describe("refused while any admin has a working credential", () => {
       }
       const other = await stranded();
       try {
-        const second = await createUser(other.app.db, { trusted: true, username: "second", email: "s@x.test", isAdmin: true });
+        const second = await createUser(other.app.db, { origin: "seed", trusted: true, username: "second", email: "s@x.test", isAdmin: true });
         if (!second.ok) throw new Error("second");
         give(other.app, second.value.id);
         const refused = firstAdminCli([], { FORGE_DATA: other.dir });
@@ -312,8 +312,8 @@ describe("which admin is recovered", () => {
   test("with several stranded admins the operator names one with --user; nobody else", async () => {
     const { dir, app, servers } = await stranded("opsbot");
     try {
-      const b = await createUser(app.db, { trusted: true, username: "builder", email: "b@x.test", isAdmin: true });
-      const plain = await createUser(app.db, { trusted: true, username: "plain", email: "p@x.test" });
+      const b = await createUser(app.db, { origin: "seed", trusted: true, username: "builder", email: "b@x.test", isAdmin: true });
+      const plain = await createUser(app.db, { origin: "seed", trusted: true, username: "plain", email: "p@x.test" });
       if (!b.ok || !plain.ok) throw new Error("users");
       const ambiguous = firstAdminCli([], { FORGE_DATA: dir });
       expect(ambiguous.exit).toBe(1);
