@@ -15,6 +15,7 @@ import { missing } from "./helpers/tools.ts";
 import { sendMail, type Mail } from "../src/kernel/mail.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 // A fresh outsider signs up and, until the link in its email is followed,
 // can read but cannot make or cost anything.
@@ -44,7 +45,7 @@ describe("verified email", () => {
       username: "olive",
       email: "olive@f.dev",
       password: "owner-passphrase",
-    });
+    }, { slot: fixtureSlot(app) });
     if (!owner.ok) throw new Error(owner.error);
   });
   afterAll(async () => {
@@ -230,6 +231,7 @@ describe("verified email", () => {
     // Any future path that makes a person without saying "trusted" — a
     // linked sign-in, an invite — starts unproven.
     const made = await createUser(app.db, {
+      origin: "seed",
       username: "unvouched",
       email: "unvouched@f.dev",
       password: "unvouched-passphrase",
@@ -246,6 +248,7 @@ describe("verified email", () => {
 
   test("an account a caller vouches for (a seed, a claim) is not held back", async () => {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "seeded",
       email: "seeded@f.dev",
@@ -269,7 +272,7 @@ describe("verified email", () => {
   });
 
   test("agents are never held back by email", async () => {
-    const made = await createUser(app.db, { trusted: true,
+    const made = await createUser(app.db, { origin: "seed", trusted: true,
       username: "crewbot",
       email: "crewbot@agents.invalid",
       agent: true,
@@ -535,11 +538,11 @@ describe("mail settings come from the secrets store first", () => {
     const live = createApp({ dataDir: dir, port: 0, url: "https://forge.example" });
     try {
       // Before the secrets are set the forge sends nothing.
-      const first = await signUp(live, { username: "founder", email: "f@f.dev", password: "founder-passphrase" });
+      const first = await signUp(live, { username: "founder", email: "f@f.dev", password: "founder-passphrase" }, { slot: fixtureSlot(live) });
       expect(first.ok).toBe(true);
       setSecret(live.db, live.config.dataDir, "forge", "", "MAIL_SMTP_URL", `smtp://127.0.0.1:${relay.port}`);
       setSecret(live.db, live.config.dataDir, "forge", "", "MAIL_FROM", "forge@f.dev");
-      const made = await signUp(live, { username: "newcomer", email: "newcomer@outsider.test", password: "newcomer-passphrase" });
+      const made = await signUp(live, { username: "newcomer", email: "newcomer@outsider.test", password: "newcomer-passphrase" }, { slot: fixtureSlot(live) });
       expect(made.ok).toBe(true);
       expect(rcpts).toContain("RCPT TO:<newcomer@outsider.test>");
     } finally {

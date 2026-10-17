@@ -52,6 +52,7 @@ beforeAll(async () => {
   servers = await serve(app);
   const make = (username: string, adminIfFirst = false) =>
     createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@forge.local`,

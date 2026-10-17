@@ -29,6 +29,7 @@ const cells = process.env["FORGE_CELLS"];
 
 const mk = async (username: string, first = false): Promise<User> => {
   const made = await createUser(app.db, {
+    origin: "seed",
     trusted: true,
     username,
     email: `${username}@forge.local`,

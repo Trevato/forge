@@ -36,6 +36,7 @@ afterAll(async () => {
 test("composer, timeline, a tell, a crew member's run and pull, a share, the apps one link away", async () => {
   const mk = async (username: string, first = false): Promise<User> => {
     const r = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@forge.local`,

@@ -30,6 +30,7 @@ describe("a crew agent's brief is the owner's configuration", () => {
 
   const person = async (username: string, adminIfFirst = false) => {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@f.dev`,

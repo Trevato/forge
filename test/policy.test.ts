@@ -147,6 +147,7 @@ const wallWorld = () => {
     w.app = app;
     w.servers = await serve(app);
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

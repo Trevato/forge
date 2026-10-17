@@ -43,6 +43,7 @@ describe("the drill's board line", () => {
     root = mkdtempSync(join(tmpdir(), "forge-drill-line-"));
     app = createApp({ dataDir: root, port: 0 });
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

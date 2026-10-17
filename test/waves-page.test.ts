@@ -53,6 +53,7 @@ describe("waves page", () => {
     servers = await serve(app);
     alice = must(
       await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "alice",
         email: "alice@f.dev",

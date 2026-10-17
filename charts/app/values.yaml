@@ -43,6 +43,14 @@ forge:
   crewConcurrency: 5
   # App deploys at once.
   appsConcurrency: 3
+  # FORGE_TRUSTED_PROXIES — comma-separated CIDR ranges of the proxies
+  # allowed to say who the client is (e.g. "10.42.0.0/16" for a k3s ingress).
+  # Unset, only the pod itself may, and per-client limits see the proxy.
+  # trustedProxies: ""
+  # FORGE_CLIENT_IP_HEADER — the header a listed proxy names the client in,
+  # when the edge sets one (e.g. "cf-connecting-ip" behind a Cloudflare
+  # tunnel). Read only from a listed proxy. Unset, X-Forwarded-For is used.
+  # clientIpHeader: ""
 
 ssh:
   # The platform edge's raw-TCP entrypoint this forge claims. Plain SSH has

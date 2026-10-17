@@ -18,6 +18,7 @@ import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -39,7 +40,7 @@ describe("a member and another account", () => {
     });
 
   const person = async (username: string) => {
-    const made = await signUp(app, { username, email: `${username}@f.dev`, password: PASS });
+    const made = await signUp(app, { username, email: `${username}@f.dev`, password: PASS }, { slot: fixtureSlot(app) });
     if (!made.ok) throw new Error(made.error);
     return made.value;
   };

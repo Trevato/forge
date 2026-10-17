@@ -90,6 +90,7 @@ describe("raise and lower a limb in the terminal", () => {
     servers = await serve(forge);
     for (const [username, adminIfFirst] of [["alice", true], ["bob", false]] as const) {
       const made = await createUser(forge.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

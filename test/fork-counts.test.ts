@@ -45,6 +45,7 @@ describe("fork counts hold only the forks the viewer may read", () => {
       ["carol", false],
     ] as const) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: name,
         email: `${name}@forge.local`,

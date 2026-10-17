@@ -88,6 +88,7 @@ describe("proposal tokens through MCP and the terminal", () => {
     const people: User[] = [];
     for (const [username, first] of [["alice", true], ["bob", false]] as const) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

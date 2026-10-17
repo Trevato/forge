@@ -416,7 +416,7 @@ describe("prompts from Instagram", () => {
       // The test drives the clock; the timer must never run on its own.
       everyMs: 3_600_000,
     });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -424,7 +424,7 @@ describe("prompts from Instagram", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",

@@ -8,6 +8,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { drillVerdict } from "../src/kernel/domain_drill.ts";
 import { DOMAINS } from "../src/kernel/domains.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 const state = DOMAINS.find((d) => d.key === "state")!;
 
@@ -39,8 +40,8 @@ describe("POST /api/v1/drills", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-drill-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await signUp(app, { username: "ada", email: "ada@f.dev", password: "owner-passphrase" });
-    const b = await signUp(app, { username: "bob", email: "bob@f.dev", password: "bob-passphrase" });
+    const a = await signUp(app, { username: "ada", email: "ada@f.dev", password: "owner-passphrase" }, { slot: fixtureSlot(app) });
+    const b = await signUp(app, { username: "bob", email: "bob@f.dev", password: "bob-passphrase" }, { slot: fixtureSlot(app) });
     if (!a.ok || !b.ok) throw new Error("signup");
     admin = createToken(app.db, a.value.id, "t", "admin").token;
     plain = createToken(app.db, b.value.id, "t", "admin").token;

@@ -27,6 +27,7 @@ beforeAll(async () => {
   servers = await serve(app);
   for (const [username, first] of [["alice", true], ["bob", false]] as const) {
     const r = await createUser(app.db, {
+      origin: "seed",
       trusted: true, username, email: `${username}@forge.local`,
       password: "a-good-passphrase", ...(first ? { adminIfFirst: true } : {}),
     });

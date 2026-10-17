@@ -53,7 +53,7 @@ describe("share", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const mk = async (username: string, first = false) => {
-      const r = await createUser(app.db, { trusted: true,
+      const r = await createUser(app.db, { origin: "seed", trusted: true,
         username,
         // Fixtures may name an account after a reserved word on purpose.
         allowReserved: true,
@@ -134,7 +134,7 @@ describe("share", () => {
 
   test("a queued share that waits too long is dropped", async () => {
     const t0 = Date.now();
-    const dave = await createUser(app.db, { trusted: true,
+    const dave = await createUser(app.db, { origin: "seed", trusted: true,
       username: "dave",
       email: "dave@forge.local",
       password: "a-good-passphrase",
@@ -188,7 +188,7 @@ describe("share", () => {
     // When only the sender is left, the followers hear it.
     const lone = await createRepo(app, alice, { name: "lone", visibility: "public" });
     if (!lone.ok) throw new Error("repo");
-    const erin = await createUser(app.db, { trusted: true, username: "erin", email: "e@forge.local", password: "a-good-passphrase" });
+    const erin = await createUser(app.db, { origin: "seed", trusted: true, username: "erin", email: "e@forge.local", password: "a-good-passphrase" });
     if (!erin.ok) throw new Error("user");
     pin(app.db, erin.value.id, lone.value.id);
     const item3 = emit(lone.value);
@@ -197,7 +197,7 @@ describe("share", () => {
 
   test("a sender who is opened rises, one who is not sinks", async () => {
     const mk = async (username: string) => {
-      const r = await createUser(app.db, { trusted: true, username, email: `${username}@forge.local`, password: "a-good-passphrase" });
+      const r = await createUser(app.db, { origin: "seed", trusted: true, username, email: `${username}@forge.local`, password: "a-good-passphrase" });
       if (!r.ok) throw new Error("user");
       return r.value;
     };

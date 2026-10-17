@@ -133,7 +133,7 @@ describe("the feed of a forge", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const mk = async (username: string, first = false) => {
-      const r = await createUser(app.db, { trusted: true,
+      const r = await createUser(app.db, { origin: "seed", trusted: true,
         username,
         // Fixtures may name an account after a reserved word on purpose.
         allowReserved: true,
@@ -288,7 +288,7 @@ describe("affinity", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-affinity-"));
     app = createApp({ dataDir, port: 0 });
-    const u = await createUser(app.db, { trusted: true,
+    const u = await createUser(app.db, { origin: "seed", trusted: true,
       username: "dana",
       email: "dana@forge.local",
       password: "a-good-passphrase",

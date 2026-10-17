@@ -65,6 +65,7 @@ describe("the releases screen", () => {
     app = createApp({ dataDir: root, port: 0, forgeRepo: "alice/forge" });
     const mk = async (username: string, adminIfFirst: boolean) => {
       const r = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

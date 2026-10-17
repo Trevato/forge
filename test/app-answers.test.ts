@@ -60,6 +60,7 @@ describe("the crew's answer under the tell box", () => {
     servers = await serve(app);
     for (const name of ["alice", "bob"]) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: name,
         email: `${name}@forge.local`,

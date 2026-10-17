@@ -33,7 +33,7 @@ async function forge(): Promise<{ app: App; url: string }> {
   const made = createApp({ dataDir: dir, port: 0 });
   app = made;
   servers = await serve(made);
-  const pat = await users.createUser(made.db, { trusted: true, isAdmin: true, username: "pat", email: "pat@forge.test", password: PASSWORD });
+  const pat = await users.createUser(made.db, { origin: "seed", trusted: true, isAdmin: true, username: "pat", email: "pat@forge.test", password: PASSWORD });
   if (!pat.ok) throw new Error("setup");
   setLimit(made.db, "signin.per_account", TRIES, pat.value.id);
   return { app: made, url: servers.url };

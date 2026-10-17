@@ -15,6 +15,7 @@ import { setLimit } from "../src/settings/limits.ts";
 import { errorText } from "../src/tui/screens/common.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { device } from "./helpers/passkey.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 describe("passkey sign-up", () => {
   let dataDir: string;
@@ -39,7 +40,7 @@ describe("passkey sign-up", () => {
     app = createApp({ dataDir, port: 0, passkeyOnlySignup: true });
     servers = await serve(app);
     base = servers.url;
-    await createUser(app.db, { username: "olive", email: "olive@f.dev", password: "olive-password-1", trusted: true });
+    await createUser(app.db, { origin: "seed", username: "olive", email: "olive@f.dev", password: "olive-password-1", trusted: true });
     // This suite signs up more than five times a minute from one source.
     setLimit(app.db, "signup.per_source", 100, (await getOlive()));
   });
@@ -134,7 +135,7 @@ describe("passkey sign-up", () => {
 
     // The terminal calls this action, bootstrap door included.
     for (const door of [undefined, "terminal" as const]) {
-      const t = await signUp(app, { username: "termy", email: "termy@f.dev", password: "termy-password-1" }, door ? { door } : {});
+      const t = await signUp(app, { username: "termy", email: "termy@f.dev", password: "termy-password-1" }, { slot: fixtureSlot(app), ...(door ? { door } : {}) });
       expect(t.ok).toBe(false);
       if (!t.ok) {
         expect(t.error).toBe("passkey_required");

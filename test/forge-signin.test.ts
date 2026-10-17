@@ -85,6 +85,7 @@ describe("sign in through the parent forge", () => {
     });
     childServers = await serve(child);
     const made = await createUser(parent.db, {
+      origin: "seed",
       username: "alice",
       email: "alice@parent.local",
       password: PASSWORD,
@@ -198,9 +199,9 @@ describe("sign in through the parent forge", () => {
   });
 
   test("a parent's name that is taken here does not take over the local account", async () => {
-    const bob = await createUser(parent.db, { username: "bob", email: "bob@parent.local", password: PASSWORD });
+    const bob = await createUser(parent.db, { origin: "seed", username: "bob", email: "bob@parent.local", password: PASSWORD });
     if (!bob.ok) throw new Error(bob.error);
-    const local = await createUser(child.db, { username: "bob", email: "bob@child.local", password: PASSWORD });
+    const local = await createUser(child.db, { origin: "seed", username: "bob", email: "bob@child.local", password: PASSWORD });
     if (!local.ok) throw new Error(local.error);
     const { callback, state } = await begin(`forge_session=${createSession(parent.db, bob.value.id).token}`);
     const done = await finish(callback, state);

@@ -305,6 +305,7 @@ async function copyInto(
           // name they already hold there.
           trusted: true,
           allowReserved: true,
+          origin: "spawn",
         });
         return made.ok ? made.value : undefined;
       })());
@@ -382,6 +383,7 @@ async function copyInto(
         username: b.agent,
         email: `${b.agent}@agents.spawn.forge.invalid`,
         agent: true,
+        origin: "spawn",
       });
       if (!made.ok) return err(`could not make crew member ${b.agent}: ${made.error}`);
       createAgentRow(child.db, { userId: made.value.id, brief: b.text, createdBy: founder.id });

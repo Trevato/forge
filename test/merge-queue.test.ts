@@ -48,6 +48,7 @@ describe("the merge queue", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-merge-queue-"));
     app = createApp({ dataDir, port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

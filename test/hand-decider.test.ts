@@ -89,6 +89,7 @@ describe("let the decider answer a hand-over", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.test",
@@ -211,6 +212,7 @@ describe("let the decider answer a hand-over", () => {
     says = 0.99;
     const issue = parked("not for bob");
     const bob = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "bob@forge.test",
@@ -403,6 +405,7 @@ describe("let the decider answer a hand-over", () => {
       const done = await decideAsk(app, alice, `parked:${issue.id}`);
       if (!done.ok) throw new Error("no decision");
       const carol = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "carol",
         email: "carol@forge.test",

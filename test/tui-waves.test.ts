@@ -15,6 +15,7 @@ import { local } from "../src/tui/screens/where.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -65,8 +66,8 @@ describe("waves in the terminal", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-waves-"));
     forge = createApp({ dataDir, port: 0 });
-    const a = await signUp(forge, { username: "alice", email: "a@f.test", password: "a-long-passphrase" });
-    const b = await signUp(forge, { username: "bob", email: "b@f.test", password: "a-long-passphrase" });
+    const a = await signUp(forge, { username: "alice", email: "a@f.test", password: "a-long-passphrase" }, { slot: fixtureSlot(forge) });
+    const b = await signUp(forge, { username: "bob", email: "b@f.test", password: "a-long-passphrase" }, { slot: fixtureSlot(forge) });
     if (!a.ok || !b.ok) throw new Error("signup failed");
     alice = a.value;
     bob = b.value;

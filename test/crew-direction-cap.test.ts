@@ -72,6 +72,7 @@ describe("the direction is paced, not capped", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-direction-cap-"));
     app = createApp({ dataDir, port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

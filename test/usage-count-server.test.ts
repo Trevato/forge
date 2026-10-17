@@ -23,6 +23,7 @@ beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-usage-"));
   app = createApp({ dataDir, port: 0 });
   const root = await createUser(app.db, {
+    origin: "seed",
     trusted: true,
     username: "alice",
     email: "alice@forge.local",
@@ -37,6 +38,7 @@ beforeAll(async () => {
   });
   if (!agent.ok) throw new Error(String(agent.error));
   const bob = await createUser(app.db, {
+    origin: "seed",
     trusted: true,
     username: "bob",
     email: "bob@forge.local",

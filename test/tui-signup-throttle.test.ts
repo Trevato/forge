@@ -18,6 +18,7 @@ import { signupAllowed } from "../src/web/pages/site.ts";
 import type { Ctx } from "../src/http/context.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -31,7 +32,7 @@ describe("terminal sign-up throttle", () => {
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "forge-tui-signup-"));
     forge = createApp({ dataDir: dir, port: 0, disk: () => ({ freeBytes: 95, totalBytes: 100 }) });
-    const admin = await signUp(forge, { username: "alice", email: "alice@forge.test", password: "a-long-passphrase" });
+    const admin = await signUp(forge, { username: "alice", email: "alice@forge.test", password: "a-long-passphrase" }, { slot: fixtureSlot(forge) });
     expect(admin).toMatchObject({ ok: true });
   });
   afterAll(async () => {

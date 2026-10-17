@@ -11,6 +11,8 @@ import { reservedName } from "./reserved.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { admitSignin } from "./signin-window.ts";
+import { getSignup } from "../settings/signup.ts";
+import type { SignupSlot } from "../actions/signup-window.ts";
 
 export interface User {
   readonly id: string;
@@ -95,9 +97,45 @@ export type CreateUserError =
   | "username_taken"
   | "username_reserved"
   | "email_taken"
-  | "weak_password";
+  | "weak_password"
+  | "signup_closed";
 
-export interface CreateUserInput {
+/**
+ * Where a new account comes from — said by every caller, because this is the
+ * one place accounts are made, so the owner's signup setting is held here
+ * and not at each door.
+ *
+ * A stranger's door (the signup form, the API and the terminal through
+ * `signUp`, the passkey door, the parent forge's sign-in) is refused while
+ * signup is not open and must bring a place it took in the sign-up window.
+ * The platform edge is a stranger's door too; it vouches for the login and
+ * is held to the setting, not to the window, which it never was.
+ *
+ * Every other origin is a named exemption, made by someone the forge already
+ * trusts: a claim link the owner handed out, an admin's everyday account, a
+ * crew member the admin adds, a spawned forge's seed accounts, and `seed`
+ * for code that sets a forge up directly (the chaos world, test fixtures).
+ * A new exemption is one more name here.
+ */
+export type StrangerOrigin = "signup" | "passkey" | "parent";
+export type ExemptOrigin = "claim" | "everyday" | "agent" | "spawn" | "seed";
+export type AccountOrigin =
+  | { origin: StrangerOrigin; slot: SignupSlot }
+  | { origin: "edge" }
+  | { origin: ExemptOrigin };
+
+export type CreateUserInput = CreateUserFields & AccountOrigin;
+
+/**
+ * Whether no stranger may make an account now: signup is not `open` (`invite`
+ * acts as closed until #1143) and the forge has an account already, so the
+ * owner can never be locked out of a fresh forge by a setting.
+ */
+export function newAccountsClosed(db: Database): boolean {
+  return getSignup(db) !== "open" && hasAnyUser(db);
+}
+
+interface CreateUserFields {
   username: string;
   email: string;
   /**
@@ -155,10 +193,36 @@ export function discardFreshUser(db: Database, userId: string): void {
   db.query("DELETE FROM user WHERE id = ?1 AND password_hash = ''").run(userId);
 }
 
+/** What an origin is held to before its account is made: a refusal, or none. */
+function admission(db: Database, input: AccountOrigin): "signup_closed" | undefined {
+  switch (input.origin) {
+    case "signup":
+    case "passkey":
+    case "parent":
+      if (input.slot.spent) throw new Error("a sign-up slot makes one account");
+      return newAccountsClosed(db) ? "signup_closed" : undefined;
+    case "edge":
+      return newAccountsClosed(db) ? "signup_closed" : undefined;
+    case "claim":
+    case "everyday":
+    case "agent":
+    case "spawn":
+    case "seed":
+      return undefined;
+    default: {
+      // A new origin is a decision: tsc refuses one left out above.
+      const unclassified: never = input;
+      return unclassified;
+    }
+  }
+}
+
 export async function createUser(
   db: Database,
   input: CreateUserInput,
 ): Promise<Result<User, CreateUserError>> {
+  const refused = admission(db, input);
+  if (refused !== undefined) return err(refused);
   if (!isSafeName(input.username)) return err("invalid_username");
   const agent = input.agent === true;
   const password = agent ? undefined : input.password;
@@ -186,6 +250,8 @@ export async function createUser(
   )
     return err("username_reserved");
 
+  // One account per slot: spent here, with nothing awaited since it was checked.
+  if ("slot" in input) input.slot.spend();
   const userId = id();
   // An account without a password has an empty hash, which no verifier
   // accepts: argon2 refuses to parse it (and checkPassword refuses an agent
@@ -341,6 +407,7 @@ export async function ensureEdgeUser(
     username: login,
     email: noreplyAddress(login, host),
     adminIfFirst: true,
+    origin: "edge",
   });
   if (!made.ok) return undefined;
   // A newcomer through the edge starts unproven like one through /signup

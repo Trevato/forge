@@ -123,7 +123,7 @@ describe("the service worker and the server", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-offline-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const r = await createUser(app.db, { trusted: true,
+    const r = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

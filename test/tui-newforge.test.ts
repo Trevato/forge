@@ -47,6 +47,7 @@ beforeAll(async () => {
   app = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
   const mk = async (username: string, isAdmin: boolean) => {
     const r = await createUser(app.db, {
+      origin: "seed",
       trusted: true, username, email: `${username}@forge.local`, password: "a-good-passphrase", isAdmin,
     });
     if (!r.ok) throw new Error(r.error);

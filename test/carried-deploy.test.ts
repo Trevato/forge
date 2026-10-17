@@ -75,6 +75,7 @@ describe("a production deploy carries what it records", () => {
     });
     await runtime.start();
     const created = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

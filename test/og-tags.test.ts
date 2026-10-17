@@ -35,6 +35,7 @@ describe("every kind of page unfurls", () => {
     servers = await serve(app);
     base = servers.url;
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

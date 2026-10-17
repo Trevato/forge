@@ -40,6 +40,7 @@ describe("a suspension holds in every process serving the forge", () => {
 
   const person = async (username: string, adminIfFirst = false) => {
     const made = await createUser(fresh.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@f.dev`,

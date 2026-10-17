@@ -32,6 +32,7 @@ describe("an MCP client walks from nothing to a tool list", () => {
     servers = await serve(app);
     base = servers.url;
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "walker",
       email: "walker@forge.local",

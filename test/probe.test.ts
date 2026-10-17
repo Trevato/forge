@@ -93,7 +93,7 @@ describe("the probe asks the running app whether it obeys its table", () => {
       concurrency: 1,
     });
     await runtime.start();
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

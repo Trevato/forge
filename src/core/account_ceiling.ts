@@ -4,7 +4,9 @@
  * an admin sets them — a person's, an agent's or an organization's — so a
  * forge's own crew is never stopped by a default nobody chose. Spend is counted from the
  * usage ledger over the account's own repositories, so another account's
- * spend never counts here. Pure data; who may set is the action's to decide.
+ * spend never counts here. A run reserves its budget against the day when
+ * it starts (`reserveCeiling`), so runs started together are counted
+ * together. Pure data; who may set is the action's to decide.
  */
 
 import type { Database } from "bun:sqlite";
@@ -84,27 +86,54 @@ export type CeilingVerdict =
   | { readonly ok: false; readonly said: string };
 
 /**
- * May a run start for this account, and with what cap: the smaller of its
- * per-run ceiling and what is left of today. A refusal names the ceiling.
+ * What the account's other runs still queued or running have reserved of
+ * the day and not spent yet. Never `runId`'s own, which it is reserving now.
  */
-export function checkCeiling(
+function reservedByOthers(db: Database, userId: string, runId: string): number {
+  return (
+    db
+      .query<{ n: number }, [string, string]>(
+        `SELECT COALESCE(SUM(MAX(0, r.ceiling_reserved_usd -
+            (SELECT COALESCE(SUM(u.cost_usd), 0) FROM usage u WHERE u.run_id = r.id))), 0) AS n
+         FROM run r JOIN repo p ON p.id = r.repo_id
+         WHERE p.owner_id = ?1 AND r.state IN ('queued', 'running')
+           AND r.id <> ?2 AND r.ceiling_reserved_usd IS NOT NULL`,
+      )
+      .get(userId, runId)?.n ?? 0
+  );
+}
+
+/**
+ * May a run start for this account, and with what cap: the smaller of its
+ * per-run ceiling, what it wants, and what is left of today once the other
+ * runs under way have their reservations. That cap is reserved for the run
+ * in the same transaction, so the next run already counts it; the
+ * reservation goes when the run leaves `queued`/`running`. A refusal names
+ * the ceiling.
+ */
+export function reserveCeiling(
   db: Database,
   userId: string,
+  run: { readonly id: string; readonly wantUsd: number },
   minRunUsd: number,
   now: Date,
 ): CeilingVerdict {
-  const c = getAccountCeiling(db, userId);
-  if (c === undefined) return { ok: true, capUsd: undefined };
-  if (c.perRunUsd < minRunUsd)
-    return {
-      ok: false,
-      said: `This account's per-run ceiling ($${c.perRunUsd.toFixed(2)}) is too small to start a run: an admin can raise it`,
-    };
-  const left = dailyLeft(db, userId, now) ?? 0;
-  if (left < minRunUsd)
-    return {
-      ok: false,
-      said: `This account's daily ceiling ($${c.dailyUsd.toFixed(2)}) is spent for today: an admin can raise it`,
-    };
-  return { ok: true, capUsd: Math.min(c.perRunUsd, left) };
+  return db.transaction((): CeilingVerdict => {
+    const c = getAccountCeiling(db, userId);
+    if (c === undefined) return { ok: true, capUsd: undefined };
+    if (c.perRunUsd < minRunUsd)
+      return {
+        ok: false,
+        said: `This account's per-run ceiling ($${c.perRunUsd.toFixed(2)}) is too small to start a run: an admin can raise it`,
+      };
+    const left = Math.max(0, c.dailyUsd - daySpent(db, userId, now) - reservedByOthers(db, userId, run.id));
+    if (left < minRunUsd)
+      return {
+        ok: false,
+        said: `This account's daily ceiling ($${c.dailyUsd.toFixed(2)}) is spent for today: an admin can raise it`,
+      };
+    const capUsd = Math.min(c.perRunUsd, left, run.wantUsd);
+    db.query("UPDATE run SET ceiling_reserved_usd = ?1 WHERE id = ?2").run(capUsd, run.id);
+    return { ok: true, capUsd };
+  })();
 }

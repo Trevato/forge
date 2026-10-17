@@ -41,6 +41,7 @@ describe("a model grant, from the account's page and the API", () => {
     servers = await serve(app);
     for (const [username, isAdmin] of [["alice", true], ["bob", false], ["carol", false]] as const) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@x.test`,

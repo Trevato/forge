@@ -39,7 +39,7 @@ afterAll(async () => {
 });
 
 test("a cleared file opens one issue, and its next appearance comments on it", async () => {
-  const u = await createUser(app.db, { trusted: true, username: "alice", email: "alice@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+  const u = await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "alice@forge.local", password: "a-good-passphrase", adminIfFirst: true });
   if (!u.ok) throw new Error(u.error);
   const made = await createRepo(app, u.value, { name: "r", visibility: "public" });
   if (!made.ok) throw new Error("repo");

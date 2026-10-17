@@ -90,7 +90,7 @@ describe("a stranger sees the app, not the owner's books", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -98,7 +98,7 @@ describe("a stranger sees the app, not the owner's books", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const c = await createUser(app.db, { trusted: true,
+    const c = await createUser(app.db, { origin: "seed", trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -542,7 +542,7 @@ describe("a person's own change ships from its own studio page", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -550,7 +550,7 @@ describe("a person's own change ships from its own studio page", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const r = await createUser(app.db, { trusted: true,
+    const r = await createUser(app.db, { origin: "seed", trusted: true,
       username: "eve",
       email: "eve@forge.local",
       password: "a-good-passphrase",
@@ -770,7 +770,7 @@ describe("take it back: the studio's verb on a shipped change", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -778,7 +778,7 @@ describe("take it back: the studio's verb on a shipped change", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const r = await createUser(app.db, { trusted: true,
+    const r = await createUser(app.db, { origin: "seed", trusted: true,
       username: "eve",
       email: "eve@forge.local",
       password: "a-good-passphrase",
@@ -967,7 +967,7 @@ describe("the studio's crew panel on a forge with no agents yet", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -975,7 +975,7 @@ describe("the studio's crew panel on a forge with no agents yet", () => {
     });
     if (!a.ok) throw new Error(a.error);
     const alice = a.value;
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -1164,7 +1164,7 @@ describe("previewLatency: the median seconds from push to serving", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-preview-latency-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1441,7 +1441,7 @@ describe("the studio's own words for how fast a change reaches its preview", () 
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1637,7 +1637,7 @@ describe("a low deploy count never reads as a failure ratio (#274)", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1738,7 +1738,7 @@ describe("this week's runs and spend are counted by the database, not read off a
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1908,7 +1908,7 @@ describe("this week's shipping is counted by the database, not read off a page o
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -2043,7 +2043,7 @@ describe("a one-minute-old app's front door does not lead with a week of zeros (
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

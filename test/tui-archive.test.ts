@@ -17,6 +17,7 @@ import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -59,7 +60,7 @@ describe("archive in the terminal", () => {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    });
+    }, { slot: fixtureSlot(forge) });
     if (!a.ok) throw new Error("signup failed");
     alice = a.value;
     const made = await createRepo(forge, alice, {

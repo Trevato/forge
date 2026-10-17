@@ -31,5 +31,31 @@ export function signupWindow(app: App, address: string): number | undefined {
   return whole.allowed ? undefined : whole.retryAfter;
 }
 
+/**
+ * A place in the sign-up window, taken by a stranger's door before it makes
+ * an account. `createUser` asks a stranger's origin for one, so a door that
+ * forgets the window cannot make an account at all; it holds for one
+ * account. Only `take` makes one: the constructor is private and the
+ * private field keeps a look-alike object from passing for it.
+ */
+export class SignupSlot {
+  #spent = false;
+  private constructor() {}
+
+  /** A slot, or the seconds to wait when the window is spent. */
+  static take(app: App, address: string): SignupSlot | number {
+    const wait = signupWindow(app, address);
+    return wait === undefined ? new SignupSlot() : wait;
+  }
+
+  get spent(): boolean {
+    return this.#spent;
+  }
+
+  spend(): void {
+    this.#spent = true;
+  }
+}
+
 export const waitText = (seconds: number): string =>
   `Too many attempts. Try again in ${seconds === 1 ? "a second" : `${seconds} seconds`}.`;

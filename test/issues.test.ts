@@ -13,7 +13,7 @@ describe("issue core", () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-iss-core-"));
     const app = createApp({ dataDir, port: 0 });
     try {
-      const user = await createUser(app.db, { trusted: true,
+      const user = await createUser(app.db, { origin: "seed", trusted: true,
         username: "n",
         email: "n@f.dev",
         password: "numbers-please",

@@ -60,6 +60,7 @@ describe("a client's first screen", () => {
     dir = await mkdtemp(join(tmpdir(), "forge-first-login-"));
     parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
     const made = await createUser(parent.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "a@x.test",
@@ -84,6 +85,7 @@ describe("a client's first screen", () => {
     });
     if (!c.ok) throw new Error("commit");
     const atlas = await createUser(parent.db, {
+      origin: "seed",
       username: "atlas",
       email: "atlas@a.invalid",
       agent: true,
@@ -202,6 +204,7 @@ describe("a client's first screen", () => {
 
   test("a plain reader gets the ordinary home", async () => {
     const reader = await createUser(child.db, {
+      origin: "seed",
       trusted: true,
       username: "reader",
       email: "r@x.test",
@@ -254,6 +257,7 @@ describe("a client's first screen", () => {
   test("an everyday account that cannot see the apps is told they will appear, and no more", async () => {
     const maria = getUserByName(child.db, "maria")!;
     const daily = await createUser(child.db, {
+      origin: "seed",
       trusted: true,
       username: "mariadaily",
       email: "md@x.test",

@@ -105,6 +105,16 @@ spec:
             - name: FORGE_ORIGIN_CLIENT_ID
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.forge.trustedProxies }}
+            # The proxies allowed to say who the client is (README, Signup).
+            - name: FORGE_TRUSTED_PROXIES
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.forge.clientIpHeader }}
+            # The header a listed proxy names the client in, if not X-Forwarded-For.
+            - name: FORGE_CLIENT_IP_HEADER
+              value: {{ . | quote }}
+            {{- end }}
             {{- if include "forge.ssh" . }}
             - name: FORGE_SSH_PORT
               value: {{ .Values.forge.sshPort | quote }}

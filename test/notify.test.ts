@@ -44,7 +44,7 @@ describe("notify", () => {
   };
 
   const user = async (username: string, first = false): Promise<User> => {
-    const made = await createUser(app.db, { trusted: true,
+    const made = await createUser(app.db, { origin: "seed", trusted: true,
       username,
       email: `${username}@forge.local`,
       password: "a-good-passphrase",
@@ -206,7 +206,7 @@ describe("the account page", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-notify-page-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const made = await createUser(app.db, { trusted: true,
+    const made = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-long-passphrase",

@@ -157,6 +157,7 @@ describe("a private app names the people who may enter it", () => {
       ["dave", false],
     ] as const) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

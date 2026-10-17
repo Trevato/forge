@@ -71,6 +71,7 @@ describe("the access log", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -78,6 +79,7 @@ describe("the access log", () => {
       adminIfFirst: true,
     });
     const b = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "bob@forge.local",
@@ -258,6 +260,7 @@ describe("the access log and app hostnames", () => {
     try {
       await runtime.start();
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "alice",
         email: "alice@forge.local",

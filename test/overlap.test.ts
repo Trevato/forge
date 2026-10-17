@@ -34,6 +34,7 @@ describe("two processes on one data directory start each run once", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-overlap-"));
     app = createApp({ dataDir, port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

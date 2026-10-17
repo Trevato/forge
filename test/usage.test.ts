@@ -110,7 +110,7 @@ describe("the ledger", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-usage-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -323,13 +323,13 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       budgetUsd: 2,
       runTimeoutMs: 60_000,
     });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
       adminIfFirst: true,
     });
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "another-good-passphrase",

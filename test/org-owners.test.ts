@@ -48,6 +48,7 @@ describe("an organization always keeps a person who owns it", () => {
       ["bob", false],
     ] as const) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: name,
         email: `${name}@forge.local`,
@@ -176,6 +177,7 @@ describe("an organization always keeps a person who owns it", () => {
   test("a suspended owner does not count: the last active person cannot be removed, nor their account", async () => {
     // Ann owns acme with Bob; then Bob is suspended.
     const ann = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "ann",
       email: "ann@forge.local",

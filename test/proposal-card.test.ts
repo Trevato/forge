@@ -77,8 +77,8 @@ describe("a wave proposal is one inbox card", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-proposal-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, { trusted: true, username: "alice", email: "alice@forge.local", password: PASSWORD, adminIfFirst: true });
-    const b = await createUser(app.db, { trusted: true, username: "bob", email: "bob@forge.local", password: PASSWORD });
+    const a = await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "alice@forge.local", password: PASSWORD, adminIfFirst: true });
+    const b = await createUser(app.db, { origin: "seed", trusted: true, username: "bob", email: "bob@forge.local", password: PASSWORD });
     if (!a.ok || !b.ok) throw new Error("users");
     alice = a.value;
     bob = b.value;

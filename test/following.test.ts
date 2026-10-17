@@ -90,7 +90,7 @@ describe("a fork that follows its parent", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -98,7 +98,7 @@ describe("a fork that follows its parent", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -214,7 +214,7 @@ describe("a fork that follows its parent", () => {
     expect(r?.forkTip).toBe(j.to);
     // A reader who cannot write may look, not take. (Alice would: the
     // forge's first account is its admin.)
-    const e = await createUser(app.db, { trusted: true,
+    const e = await createUser(app.db, { origin: "seed", trusted: true,
       username: "eve",
       email: "eve@forge.local",
       password: "a-good-passphrase",
@@ -428,7 +428,7 @@ describe("a fork that follows its parent", () => {
 
   test("a fork with autonomy on converges by itself when its parent moves", async () => {
     // A second follower, with a crew and autonomy on, and its own README.
-    const c = await createUser(app.db, { trusted: true,
+    const c = await createUser(app.db, { origin: "seed", trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -467,7 +467,7 @@ describe("a fork that follows its parent", () => {
   }, 20_000);
 
   test("a fork with autonomy on takes a clean merge by itself", async () => {
-    const d = await createUser(app.db, { trusted: true,
+    const d = await createUser(app.db, { origin: "seed", trusted: true,
       username: "dan",
       email: "dan@forge.local",
       password: "a-good-passphrase",
@@ -697,7 +697,7 @@ describe("a fork that follows its parent", () => {
   });
 
   test("the family is a tree: a fork of a fork nests under it, from any page in it", async () => {
-    const f = await createUser(app.db, { trusted: true,
+    const f = await createUser(app.db, { origin: "seed", trusted: true,
       username: "fay",
       email: "fay@forge.local",
       password: "a-good-passphrase",
@@ -916,7 +916,7 @@ describe("a landed pull moves the forks, like the push it amounts to", () => {
     checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
     const people: User[] = [];
     for (const username of ["alice", "bob", "carol"]) {
-      const made = await createUser(app.db, { trusted: true,
+      const made = await createUser(app.db, { origin: "seed", trusted: true,
         username,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",
@@ -1040,7 +1040,7 @@ describe("an open chain page hears a sever", () => {
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "forge-chain-live-"));
     root = createApp({ dataDir: dir, url: "https://root.test", port: 0, forgeRepo: "alice/forge-code" });
-    const alice = await createUser(root.db, { trusted: true, username: "alice", email: "a@x.test", isAdmin: true });
+    const alice = await createUser(root.db, { origin: "seed", trusted: true, username: "alice", email: "a@x.test", isAdmin: true });
     if (!alice.ok) throw new Error("user");
     const made = await createRepo(root, alice.value, { name: "forge-code", visibility: "public" });
     if (!made.ok) throw new Error("repo");
