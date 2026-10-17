@@ -49,6 +49,16 @@ export const unauthorized = () =>
     401,
     "authenticate with a bearer token or account credentials",
   );
+// A password door past the sign-in windows (`core/signin-window.ts`).
+export const tooManyAttempts = (retryAfter: number) =>
+  json(
+    {
+      error: "too_many_attempts",
+      message: `too many sign-in attempts: try again in ${retryAfter} s`,
+    },
+    429,
+    { "retry-after": String(retryAfter) },
+  );
 export const forbidden = () =>
   apiError("forbidden", 403, "your credentials lack the scope for this action");
 // A path matching no route at all — distinct from a missing resource, so a

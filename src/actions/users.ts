@@ -28,7 +28,7 @@ import {
   discardFreshUser,
   hasAnyUser,
   updateProfile as writeProfile,
-  verifyPassword,
+  verifyPasswordThrottled,
   type CreateUserError,
   type ProfilePatch,
   type UpdateProfileError,
@@ -101,7 +101,7 @@ export async function signUp(
   // Password sign-in stays for the accounts that have a password. It can go
   // when every such account has a passkey (Settings → Passkeys shows who is
   // left) and recovery without a password exists (#1618): then delete this
-  // action's password path, `verifyPassword`'s doors and the password column.
+  // action's password path, `verifyPasswordThrottled`'s doors and the password column.
   if (signupClosed(app)) return err("signup_closed");
   if (app.config.passkeyOnlySignup === true) return err("passkey_required");
   const secret = app.config.turnstileSecret;
@@ -267,22 +267,23 @@ export function updateProfile(
 export type ChangePasswordError =
   | "unauthorized"
   | "bad_credentials"
+  | "throttled"
   | "weak_password";
 
 /** Replace the password; the current one must be presented and verified. */
 export async function changePassword(
   app: App,
   actor: User | undefined,
-  input: { current: string; next: string },
+  input: { current: string; next: string; source: string },
 ): Promise<Result<void, ChangePasswordError>> {
   const user = requireUser(actor);
   if (!user.ok) return user;
-  const verified = await verifyPassword(
-    app.db,
-    user.value.username,
-    input.current,
-  );
-  if (!verified.ok) return err("bad_credentials");
+  const verified = await verifyPasswordThrottled(app.db, {
+    username: user.value.username,
+    password: input.current,
+    source: input.source,
+  });
+  if (!verified.ok) return err(verified.error.reason);
   const changed = await rehash(app.db, user.value.id, input.next);
   if (!changed.ok) return err(changed.error === "weak_password" ? "weak_password" : "unauthorized");
   app.bus.append({

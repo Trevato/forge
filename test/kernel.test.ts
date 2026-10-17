@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openDb } from "../src/kernel/db.ts";
-import { createUser, verifyPassword } from "../src/core/users.ts";
+import { createUser, verifyPasswordThrottled } from "../src/core/users.ts";
 import { migrations } from "../src/core/schema.ts";
 import { CHEAP, cheapened, realHash } from "./helpers/cheap-hash.ts";
 import { ForgeError, defect } from "../src/kernel/error.ts";
@@ -214,8 +214,8 @@ describe("passwords under test are hashed at argon2id's floor (#2038)", () => {
       .query<{ password_hash: string }, []>("SELECT password_hash FROM user")
       .get();
     expect(row?.password_hash.startsWith("$argon2id$v=19$m=8,t=1,p=1$")).toBe(true);
-    expect((await verifyPassword(db, "alice", "a-good-passphrase")).ok).toBe(true);
-    expect((await verifyPassword(db, "alice", "a-bad-passphrase")).ok).toBe(false);
+    expect((await verifyPasswordThrottled(db, { username: "alice", password: "a-good-passphrase", source: "127.0.0.1" })).ok).toBe(true);
+    expect((await verifyPasswordThrottled(db, { username: "alice", password: "a-bad-passphrase", source: "127.0.0.1" })).ok).toBe(false);
     db.close();
   });
 

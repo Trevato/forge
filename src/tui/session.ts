@@ -16,7 +16,7 @@ import { addSshKey } from "../actions/users.ts";
 import { setPreference } from "../actions/users.ts";
 import { touchKey, type UserKey } from "../core/keys.ts";
 import { getUserSetting } from "../core/settings.ts";
-import { getUserById, verifyPassword, type User } from "../core/users.ts";
+import { getUserById, verifyPasswordThrottled, type User } from "../core/users.ts";
 import type { Repo } from "../core/repos.ts";
 import { repoDir } from "../git/repos.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -40,6 +40,7 @@ export interface TuiIdentity {
 
 export type SignInError =
   | "bad_credentials"
+  | "throttled"
   | "invalid_key"
   | "key_exists"
   | "unauthorized";
@@ -127,8 +128,12 @@ export class Session {
     username: string,
     password: string,
   ): Promise<Result<User, SignInError>> {
-    const verified = await verifyPassword(this.db, username, password);
-    if (!verified.ok) return err("bad_credentials");
+    const verified = await verifyPasswordThrottled(this.db, {
+      username,
+      password,
+      source: this.identity.remoteAddress,
+    });
+    if (!verified.ok) return err(verified.error.reason);
     return this.adopt(verified.value);
   }
 
