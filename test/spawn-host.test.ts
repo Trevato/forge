@@ -118,6 +118,7 @@ describe("a parent on plain http with a port", () => {
 
   test("its child lives at http, on the parent's port, wherever its address is read", async () => {
     const made = await createUser(parent.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "a@x.invalid",
