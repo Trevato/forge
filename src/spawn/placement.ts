@@ -69,9 +69,27 @@ export function childHostSuffix(parentHost: string): string {
   return `--${host}`;
 }
 
-/** Public origin of a hosted child, derived from name + parent host. */
-export function childPublicUrl(name: string, parentHost: string): string {
-  return `https://${name}${childHostSuffix(parentHost)}`;
+/**
+ * The parent forge's public origin, which its children's addresses derive
+ * from: its canonical `url` when it has one (the address people reach it at
+ * through a proxy), otherwise the plain HTTP host and port it serves on, as
+ * `main.ts` names itself.
+ */
+export function parentOrigin(config: { url?: string; host?: string; port?: number }): string {
+  if (config.url) return new URL(config.url).origin;
+  const port = config.port ?? 3000;
+  return `http://${config.host ?? "localhost"}${port ? `:${port}` : ""}`;
+}
+
+/**
+ * Public origin of a hosted child: `<name>--<parent hostname>`, on the
+ * parent's scheme and port, so a child of `http://forge.lan:8080` is
+ * `http://<name>--forge.lan:8080`. `parent` is the parent's origin
+ * (`parentOrigin`); a bare host is the hosted platform's https, as before.
+ */
+export function childPublicUrl(name: string, parent: string): string {
+  const at = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(parent) ? parent : `https://${parent}`);
+  return `${at.protocol}//${name}${childHostSuffix(at.hostname)}${at.port ? `:${at.port}` : ""}`;
 }
 
 export const CHILD_NAME = /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/;
@@ -112,7 +130,10 @@ export function parseHostedChildAppLabel(
 }
 
 export interface HostedOptions {
-  /** The parent forge's public host, e.g. "forge.example.com". */
+  /**
+   * The parent forge's public origin (`parentOrigin`), e.g.
+   * "https://forge.example.com"; a bare host is taken as https.
+   */
   readonly host: string;
   /** How deep this forge itself is: 0 for a root forge. */
   readonly depth?: number;

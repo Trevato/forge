@@ -19,6 +19,7 @@ import {
   childPublicUrl,
   hostedPlacement,
   memoryBodies,
+  parentOrigin,
   type BodyStore,
   type Placement,
 } from "./placement.ts";
@@ -51,7 +52,7 @@ export const childHost = (app: App): string =>
 
 /** Public URL of a hosted child — derived from name + parent host so old ledgers stay reachable. */
 export const childUrlOf = (app: App, name: string): string =>
-  childPublicUrl(name, childHost(app));
+  childPublicUrl(name, parentOrigin(app.config));
 
 /** Seed the in-memory body store from on-disk ledgers so room()/exists survive restart. */
 function seedBodies(app: App, store: BodyStore): void {
@@ -62,7 +63,7 @@ function seedBodies(app: App, store: BodyStore): void {
   } catch {
     return;
   }
-  const host = childHost(app);
+  const origin = parentOrigin(app.config);
   for (const f of files) {
     if (!f.endsWith(".json")) continue;
     try {
@@ -76,7 +77,7 @@ function seedBodies(app: App, store: BodyStore): void {
       store.add({
         bodyId: ledger.bodyId,
         name: ledger.name,
-        url: childPublicUrl(ledger.name, host),
+        url: childPublicUrl(ledger.name, origin),
         depth: 1,
         agents: 1,
         ssh: false,
@@ -92,7 +93,7 @@ function placementFor(app: App): Placement {
   if (!p) {
     const store = memoryBodies();
     seedBodies(app, store);
-    p = hostedPlacement({ host: childHost(app), store, maxChildren: () => maxChildren(app.db) });
+    p = hostedPlacement({ host: parentOrigin(app.config), store, maxChildren: () => maxChildren(app.db) });
     placements.set(app, p);
   }
   return p;
