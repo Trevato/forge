@@ -106,6 +106,7 @@ describe("capacity: only a forge admin reads or changes it", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -115,6 +116,7 @@ describe("capacity: only a forge admin reads or changes it", () => {
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
     const b = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "bob@forge.local",
@@ -323,6 +325,7 @@ describe("report mode is loud to admins, and to nobody else", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -332,6 +335,7 @@ describe("report mode is loud to admins, and to nobody else", () => {
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
     const b = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "bob@forge.local",
@@ -391,6 +395,7 @@ describe("the default shown, and gone back to, is the one the service booted wit
     const app = createApp({ dataDir, port: 0 });
     try {
       const a = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "alice",
         email: "alice@forge.local",
@@ -468,6 +473,7 @@ describe("the next check honours a concurrency the admin lowered, and gets the s
     // Booted at three at once.
     checks = startChecks(app, { forgeUrl: servers.url, concurrency: 3 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -564,6 +570,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"ok","total
     });
     try {
       const a = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "alice",
         email: "alice@forge.local",
@@ -640,6 +647,7 @@ describe("the egress mode is the emergency lever: the next cell starts with what
     });
     try {
       const a = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "alice",
         email: "alice@forge.local",

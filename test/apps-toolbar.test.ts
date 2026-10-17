@@ -98,6 +98,7 @@ describe("the forge pill", () => {
         }) as EnvStatus,
     );
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -323,6 +324,7 @@ describe("the opt-out, from forge.json to the proxy", () => {
 
   test('a deployed "toolbar": false reaches envStatus and the page loses its pill', async () => {
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

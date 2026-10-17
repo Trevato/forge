@@ -39,6 +39,7 @@ describe("a pull lands once", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-lands-once-"));
     app = createApp({ dataDir, port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

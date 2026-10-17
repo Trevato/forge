@@ -38,6 +38,7 @@ afterAll(async () => {
 
 test("counts written after the first read reach the terminal's line", async () => {
   const made = await createUser(app.db, {
+    origin: "seed",
     trusted: true,
     username: "alice",
     email: "alice@forge.local",

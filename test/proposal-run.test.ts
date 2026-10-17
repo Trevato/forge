@@ -57,6 +57,7 @@ describe("letting a proposed pull run", () => {
     const people: User[] = [];
     for (const [username, first] of [["alice", true], ["carol", false]] as const) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

@@ -16,6 +16,7 @@ const setup = async () => {
   const dir = mkdtempSync(join(tmpdir(), "forge-oidc-"));
   const db = openDb(":memory:", migrations);
   const made = await createUser(db, {
+    origin: "seed",
     trusted: true,
     username: "bob",
     email: "bob@forge.local",

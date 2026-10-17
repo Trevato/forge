@@ -43,6 +43,7 @@ import {
 import { liveClientJs } from "../src/web/live.ts";
 import { spineOf } from "../src/web/pages/explorer.ts";
 import { markMatch } from "../src/web/pages/search.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -77,12 +78,12 @@ describe("the code browser on the web", () => {
       username: "alice",
       email: "a@f.dev",
       password: PASSWORD,
-    });
+    }, { slot: fixtureSlot(app) });
     const k = await signUp(app, {
       username: "kim",
       email: "k@f.dev",
       password: PASSWORD,
-    });
+    }, { slot: fixtureSlot(app) });
     if (!a.ok || !k.ok) throw new Error("signup failed");
     alice = `forge_session=${createSession(app.db, a.value.id).token}`;
     kim = `forge_session=${createSession(app.db, k.value.id).token}`;

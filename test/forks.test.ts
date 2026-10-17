@@ -85,6 +85,7 @@ describe("forks", () => {
     base = servers.url;
     for (const name of ["alice", "bob", "carol", "dan"]) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: name,
         email: `${name}@f.dev`,

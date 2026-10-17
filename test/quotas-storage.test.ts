@@ -28,6 +28,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 describe("storage quota", () => {
   let dataDir: string;
@@ -44,9 +45,9 @@ describe("storage quota", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-quotas-storage-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const ada = await signUp(app, { username: "ada", email: "ada@f.dev", password: "owner-passphrase" });
-    const bob = await signUp(app, { username: "bob", email: "bob@f.dev", password: "bob-passphrase" });
-    const carol = await signUp(app, { username: "carol", email: "carol@f.dev", password: "carol-passphrase" });
+    const ada = await signUp(app, { username: "ada", email: "ada@f.dev", password: "owner-passphrase" }, { slot: fixtureSlot(app) });
+    const bob = await signUp(app, { username: "bob", email: "bob@f.dev", password: "bob-passphrase" }, { slot: fixtureSlot(app) });
+    const carol = await signUp(app, { username: "carol", email: "carol@f.dev", password: "carol-passphrase" }, { slot: fixtureSlot(app) });
     if (!ada.ok || !bob.ok || !carol.ok) throw new Error("signup");
     carolId = carol.value.id;
     carolToken = createToken(app.db, carolId, "t", "admin").token;
@@ -239,7 +240,7 @@ describe("storage quota", () => {
     // The origin: a public repository of 1.5 MB on this same forge.
     expect((await push("ada", adaToken, "bigorigin", 1_500_000)).code).toBe(0);
     app.db.query("UPDATE repo SET visibility = 'public' WHERE name = 'bigorigin'").run();
-    const dave = await signUp(app, { username: "dave", email: "dave@f.dev", password: "dave-passphrase" });
+    const dave = await signUp(app, { username: "dave", email: "dave@f.dev", password: "dave-passphrase" }, { slot: fixtureSlot(app) });
     if (!dave.ok) throw new Error("signup");
     proveAll(app);
     promote(app.db);
@@ -282,7 +283,7 @@ describe("storage quota", () => {
   });
 
   test("a migrate import bigger than the limit is allowed in, and the next create is refused as storage_limit", async () => {
-    const gina = await signUp(app, { username: "gina", email: "gina@f.dev", password: "gina-passphrase" });
+    const gina = await signUp(app, { username: "gina", email: "gina@f.dev", password: "gina-passphrase" }, { slot: fixtureSlot(app) });
     if (!gina.ok) throw new Error("signup");
     proveAll(app);
     promote(app.db);
@@ -321,7 +322,7 @@ describe("storage quota", () => {
 
   /** A fresh account holding 1.5 MB, its figure measured, against the 1 MB limit. */
   async function fullAccount(username: string) {
-    const made = await signUp(app, { username, email: `${username}@f.dev`, password: `${username}-passphrase` });
+    const made = await signUp(app, { username, email: `${username}@f.dev`, password: `${username}-passphrase` }, { slot: fixtureSlot(app) });
     if (!made.ok) throw new Error("signup");
     proveAll(app);
     promote(app.db);
@@ -365,7 +366,7 @@ describe("storage quota", () => {
   });
 
   test("a create under a full organisation names the organisation's figure on the page", async () => {
-    const gwen = await signUp(app, { username: "gwen", email: "gwen@f.dev", password: "gwen-passphrase" });
+    const gwen = await signUp(app, { username: "gwen", email: "gwen@f.dev", password: "gwen-passphrase" }, { slot: fixtureSlot(app) });
     if (!gwen.ok) throw new Error("signup");
     proveAll(app);
     promote(app.db);

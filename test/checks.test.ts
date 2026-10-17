@@ -58,6 +58,7 @@ describe("cancelRunsForPull: a landed or closed pull leaves nothing in the lane"
     const db = createApp({ dataDir: dir, port: 0 });
     try {
       const u = await createUser(db.db, {
+        origin: "seed",
         trusted: true,
         username: "alice",
         email: "alice@forge.local",
@@ -336,6 +337,7 @@ describe("checks", () => {
     servers = await serve(app);
     checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -345,6 +347,7 @@ describe("checks", () => {
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
     const b = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "bob@forge.local",
@@ -1012,6 +1015,7 @@ describe("a check its forge died under", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-checks-abandoned-"));
     app = createApp({ dataDir, port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -1151,6 +1155,7 @@ describe("startChecks: a booting forge removes only checkouts nobody is running 
     const db = createApp({ dataDir: dir, port: 0 });
     try {
       const u = await createUser(db.db, {
+        origin: "seed",
         trusted: true,
         username: "alice",
         email: "alice@forge.local",

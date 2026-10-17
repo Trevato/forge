@@ -72,7 +72,7 @@ describe("take it back: reverting a shipped change, headless", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-revert-"));
     app = createApp({ dataDir, port: 0 });
 
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

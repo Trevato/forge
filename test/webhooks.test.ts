@@ -37,7 +37,7 @@ describe("webhook delivery", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-hook-"));
     app = createApp({ dataDir, port: 0 });
-    const user = await createUser(app.db, { trusted: true,
+    const user = await createUser(app.db, { origin: "seed", trusted: true,
       username: "hooky",
       email: "h@f.dev",
       password: "webhooks-are-fun",

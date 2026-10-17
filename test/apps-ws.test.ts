@@ -219,7 +219,7 @@ describe("apps: websockets through the proxy", () => {
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -446,7 +446,7 @@ describe("apps: websockets through the proxy", () => {
   });
 
   test("a visitor's socket closes when their account is suspended; the app and others' sockets go on", async () => {
-    const made = await createUser(app.db, { trusted: true,
+    const made = await createUser(app.db, { origin: "seed", trusted: true,
       username: "visitor",
       email: "visitor@forge.local",
       password: "a-visitor-passphrase",

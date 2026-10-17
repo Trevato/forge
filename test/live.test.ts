@@ -60,7 +60,7 @@ describe("the viewer's stream", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-live-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

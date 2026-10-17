@@ -359,7 +359,7 @@ import {
   undoFleetOp,
   type FleetError,
 } from "../actions/fleet.ts";
-import { sessionCookie, signupAllowed } from "../web/pages/site.ts";
+import { sessionCookie, signupSlot } from "../web/pages/site.ts";
 import { cookieValue, crossOrigin, type Ctx, type Handler } from "./context.ts";
 import {
   apiError,
@@ -1193,12 +1193,12 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── accounts ─────────────────────────────────────────────────────────
 
   router.add("POST", "/api/v1/users", async (ctx) => {
-    const wait = signupAllowed(ctx);
-    if (wait !== undefined)
+    const slot = signupSlot(ctx);
+    if (typeof slot === "number")
       return json(
         { error: "rate_limited", message: "too many sign-ups; wait and send again" },
         429,
-        { "retry-after": String(wait) },
+        { "retry-after": String(slot) },
       );
     // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
     const input = await boundedBody(ctx.request, STRANGER_MAX);
@@ -1212,7 +1212,7 @@ export function apiRoutes(router: Router<Handler>): void {
         password: str(input.password),
         humanToken: str(input.turnstile_token),
       },
-      { address: clientAddress(ctx.request) },
+      { slot, address: clientAddress(ctx.request) },
     );
     if (!created.ok && created.error === "signup_closed")
       return apiError("signup_closed", 403, SIGNUP_CLOSED_MESSAGE);

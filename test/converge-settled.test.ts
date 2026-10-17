@@ -45,6 +45,7 @@ describe("a converge issue whose parent tip the fork already holds", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-converge-settled-"));
     app = createApp({ dataDir, port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -52,6 +53,7 @@ describe("a converge issue whose parent tip the fork already holds", () => {
       adminIfFirst: true,
     });
     const b = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "bob@forge.local",

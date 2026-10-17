@@ -63,6 +63,7 @@ describe("+ New forge", () => {
     dir = await mkdtemp(join(tmpdir(), "forge-new-forge-"));
     app = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "a@x.test",
@@ -70,6 +71,7 @@ describe("+ New forge", () => {
       isAdmin: true,
     });
     const b = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "b@x.test",

@@ -45,6 +45,7 @@ import {
 import { theme } from "../src/tui/ui/theme.ts";
 import { row, table } from "../src/tui/ui/widgets.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -129,7 +130,7 @@ describe("the terminal lays out for the terminal it is in", () => {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    });
+    }, { slot: fixtureSlot(forge) });
     if (!a.ok) throw new Error("signup failed");
     alice = a.value;
     const r = await createRepo(forge, alice, {

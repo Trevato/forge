@@ -46,6 +46,7 @@ describe("per-account spend ceilings", () => {
 
   async function person(name: string): Promise<{ user: User; repo: Repo }> {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: name,
       email: `${name}@forge.local`,

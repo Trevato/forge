@@ -32,6 +32,7 @@ describe("suspending an organization's last active owner", () => {
 
   const person = async (username: string, adminIfFirst = false) => {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@f.dev`,

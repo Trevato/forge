@@ -196,6 +196,7 @@ describe("on landing", () => {
     dirs.push(dataDir);
     const app = createApp({ dataDir, port, forgeRepo: "alice/forge-code", selfSwap, swapBudgetMs: 5_000 });
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "a@forge.local",

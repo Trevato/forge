@@ -104,6 +104,7 @@ describe("a green checked against an older main waits for its re-check", () => {
     app = createApp({ dataDir, port: 0, host: "forge.test" });
     servers = await serve(app);
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

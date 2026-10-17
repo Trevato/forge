@@ -96,7 +96,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
     budgetUsd: 2,
     runTimeoutMs: 60_000,
   });
-  const a = await createUser(app.db, { trusted: true,
+  const a = await createUser(app.db, { origin: "seed", trusted: true,
     username: "alice",
     email: "alice@forge.local",
     password: "a-good-passphrase",
@@ -169,6 +169,7 @@ describe("a subscription's scope", () => {
 describe("a repository whose owner is not a forge admin", () => {
   test("gets none without a grant and the subscription once granted; an admin's still gets env", async () => {
     const b = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "bob@forge.local",

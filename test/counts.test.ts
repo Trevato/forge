@@ -33,6 +33,7 @@ import type { User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { id } from "../src/kernel/id.ts";
 import { unwrap } from "../src/kernel/result.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 /**
  * Count the SQL statements a block of work runs. `db.query` is the one door
@@ -105,7 +106,7 @@ describe("counts are grouped, and stay grouped", () => {
         username: "alice",
         email: "alice@forge.test",
         password: "alice-counts-secret",
-      }),
+      }, { slot: fixtureSlot(app) }),
     );
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",

@@ -187,7 +187,7 @@ describe("efficiency and standing, grouped", () => {
       ["alice", true],
       ["bob", false],
     ] as const) {
-      const u = await createUser(app.db, { trusted: true,
+      const u = await createUser(app.db, { origin: "seed", trusted: true,
         username,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",

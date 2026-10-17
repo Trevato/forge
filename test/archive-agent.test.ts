@@ -38,6 +38,7 @@ beforeAll(async () => {
   servers = await serve(app);
   const founder = ok(
     await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "founder",
       email: "founder@forge.local",

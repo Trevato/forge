@@ -72,6 +72,7 @@ describe("the chips of a forge", () => {
     servers = await serve(app);
     const mk = async (username: string, first = false) => {
       const r = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         allowReserved: true,

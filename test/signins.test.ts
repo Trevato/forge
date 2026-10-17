@@ -25,6 +25,7 @@ describe("sign-ins: tokens and browsers, seen and ended", () => {
 
   const person = async (username: string, isAdmin = false) => {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@f.dev`,

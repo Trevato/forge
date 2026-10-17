@@ -62,7 +62,7 @@ describe("roles on /settings/people", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     for (const [username, isAdmin] of [["alice", true], ["bob", false], ["carol", false]] as const) {
-      const made = await createUser(app.db, { trusted: true, username, email: `${username}@x.test`, password: PASS, isAdmin });
+      const made = await createUser(app.db, { origin: "seed", trusted: true, username, email: `${username}@x.test`, password: PASS, isAdmin });
       if (!made.ok) throw new Error(username);
     }
   }, 30_000);

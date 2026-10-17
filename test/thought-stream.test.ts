@@ -34,6 +34,7 @@ describe("thought stream", () => {
     app = createApp({ dataDir: dir, port: 0 });
     const mk = async (username: string, first = false) => {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true, username, email: `${username}@forge.local`,
         password: "a-good-passphrase", adminIfFirst: first,
       });

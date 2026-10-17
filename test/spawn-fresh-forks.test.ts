@@ -44,6 +44,7 @@ describe("a forge with forked and fresh apps", () => {
     dir = await mkdtemp(join(tmpdir(), "forge-fresh-forks-"));
     app = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "a@x.test",

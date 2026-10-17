@@ -40,6 +40,7 @@ describe("an archived repository on the web", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

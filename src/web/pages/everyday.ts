@@ -185,6 +185,7 @@ export async function everydayCreate(ctx: Ctx): Promise<Response> {
     email,
     reservedSelf: admin.id,
     trusted: requireVerified(ctx.app, admin).ok,
+    origin: "everyday",
   });
   if (!made.ok)
     return say(

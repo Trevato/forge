@@ -123,6 +123,7 @@ describe("resilience", () => {
   test("a guest is sent to sign in, a non-admin gets 404, an admin sees the rows", async () => {
     for (const [name, admin] of [["alice", true], ["bob", false]] as const) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: name,
         email: `${name}@forge.local`,
@@ -209,6 +210,7 @@ describe("the owner's screen with snapshots", () => {
     process.env["FORGE_GUARD_DIR"] = guard;
     forge = createApp({ dataDir: dir, port: 0 });
     const made = await createUser(forge.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

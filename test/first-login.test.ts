@@ -71,6 +71,7 @@ describe("the first login to a spawned forge", () => {
     dir = await mkdtemp(join(tmpdir(), "forge-first-login-"));
     parent = createApp({ dataDir: dir, url: "https://forge.test", port: 0 });
     const made = await createUser(parent.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "a@x.test",
@@ -95,6 +96,7 @@ describe("the first login to a spawned forge", () => {
     });
     if (!c.ok) throw new Error("commit");
     const atlas = await createUser(parent.db, {
+      origin: "seed",
       username: "atlas",
       email: "atlas@a.invalid",
       agent: true,
@@ -185,6 +187,7 @@ describe("the first login to a spawned forge", () => {
 
   test("a plain reader of the child sees no next-steps card", async () => {
     const reader = await createUser(child.db, {
+      origin: "seed",
       trusted: true,
       username: "reader",
       email: "r@x.test",

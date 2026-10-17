@@ -133,13 +133,14 @@ describe("what the tokens bought", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const a = await createUser(app.db, {
+      origin: "seed",
       username: "alice",
       email: "alice@forge.local",
       password: PASSWORD,
       adminIfFirst: true,
       trusted: true,
     });
-    const b = await createUser(app.db, { username: "bob", email: "bob@forge.local", password: PASSWORD, trusted: true });
+    const b = await createUser(app.db, { origin: "seed", username: "bob", email: "bob@forge.local", password: PASSWORD, trusted: true });
     if (!a.ok || !b.ok) throw new Error("users");
     alice = a.value;
     bob = b.value;

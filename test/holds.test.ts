@@ -42,6 +42,7 @@ async function forge(prefix: string, visibility: "public" | "private") {
   const app = createApp({ dataDir, port: 0 });
   const person = async (username: string): Promise<User> => {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@forge.local`,

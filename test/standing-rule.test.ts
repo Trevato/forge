@@ -70,6 +70,7 @@ describe("a standing rule per repository", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.test",

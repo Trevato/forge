@@ -96,6 +96,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrote note
       runTimeoutMs: 60_000,
     });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -105,6 +106,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrote note
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
     const b = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "bob",
       email: "bob@forge.local",

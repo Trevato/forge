@@ -16,7 +16,7 @@ import { STRANGER_MAX } from "../../http/limits.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
 import { relying, store } from "./passkeys.ts";
-import { safeNext, sessionCookie, signinAllowed, signupAllowed } from "./site.ts";
+import { safeNext, sessionCookie, signinAllowed, signupSlot } from "./site.ts";
 
 const refuse = (status: number, message: string) =>
   json({ error: "refused", message }, status);
@@ -93,12 +93,12 @@ export async function signupPasskey(ctx: Ctx): Promise<Response> {
   // The slot is taken once the key is proven, before the account is tried:
   // a taken name or a closed door found there still spends it. Cheap
   // validation above has already refused what it can.
-  const wait = signupAllowed(ctx);
-  if (wait !== undefined) return tooMany(wait);
+  const slot = signupSlot(ctx);
+  if (typeof slot === "number") return tooMany(slot);
   const created = await signUpWithPasskey(
     ctx.app,
     { username, email, passkey: made, passkeyName: "Passkey", humanToken: str(data.humanToken) },
-    { address: clientAddress(ctx.request) },
+    { slot, address: clientAddress(ctx.request) },
   );
   if (!created.ok)
     return refuse(created.error === "human_check" ? 422 : created.error === "signup_closed" ? 403 : 409, WORDS[created.error] ?? "Sign-up did not work. Try again.");

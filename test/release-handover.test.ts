@@ -85,6 +85,7 @@ async function forgeWithPush() {
   const oldServers = await serve(oldApp);
   const port = oldServers.port;
   const made = await createUser(oldApp.db, {
+    origin: "seed",
     trusted: true,
     username: "alice",
     email: "a@forge.local",

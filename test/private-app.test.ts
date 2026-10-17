@@ -74,7 +74,7 @@ describe("a private app on a public repository stays private", () => {
       ["alice", true],
       ["carol", false],
     ] as const) {
-      const made = await createUser(app.db, { trusted: true,
+      const made = await createUser(app.db, { origin: "seed", trusted: true,
         username,
         email: `${username}@forge.local`,
         password: "a-good-passphrase",

@@ -118,6 +118,7 @@ describe("a reader's fork pull runs nothing until a writer approves its head", (
       ["carol", false],
     ] as const) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

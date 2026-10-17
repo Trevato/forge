@@ -21,6 +21,7 @@ import { createLog } from "../src/kernel/log.ts";
 import { serveForgeSsh } from "../src/tui/ssh.ts";
 import type { SshServer } from "../src/ssh/server.ts";
 import { missing } from "./helpers/tools.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 const log = createLog("ssh-app-test");
@@ -106,7 +107,7 @@ describe.skipIf(NO_OPENSSH)("ssh into the forge", () => {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    });
+    }, { slot: fixtureSlot(forge) });
     if (!alice.ok) throw new Error("signup failed");
     await createRepo(forge, alice.value, {
       name: "lighthouse",

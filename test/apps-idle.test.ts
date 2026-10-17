@@ -90,7 +90,7 @@ describe("previews of idle pulls sleep", () => {
     servers = await serve(app);
     runtime = new AppsRuntime(app, options());
     await runtime.start();
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

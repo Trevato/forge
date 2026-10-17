@@ -35,6 +35,7 @@ import {
   type HeadlessTerminal,
 } from "../src/tui/term/terminal.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -160,7 +161,7 @@ describe("the terminal workspace", () => {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    });
+    }, { slot: fixtureSlot(forge) });
     if (!a.ok) throw new Error("signup failed");
     alice = a.value;
 

@@ -96,6 +96,7 @@ describe("the tick says why each ready issue cannot start", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-held-"));
     app = createApp({ dataDir, port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

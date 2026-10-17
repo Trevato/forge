@@ -156,6 +156,7 @@ describe("over HTTP", () => {
     const people: User[] = [];
     for (const [username, first] of [["alice", true], ["carol", false]] as const) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,
@@ -210,6 +211,7 @@ describe("over HTTP", () => {
     // A proposal token cannot mint another.
     expect((await ask(secret, { child: "again", origin: ORIGIN })).status).toBe(403);
     const reader = await createUser(app.db, {
+      origin: "seed",
       trusted: true, username: "dave", email: "d@forge.local", password: "a-good-passphrase",
     });
     if (!reader.ok) throw new Error(reader.error);

@@ -33,7 +33,7 @@ describe("a repository's feed", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -41,7 +41,7 @@ describe("a repository's feed", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",

@@ -50,8 +50,8 @@ describe("spawn over the API and MCP", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true, username: "alice", email: "a@forge.local", password: "a-good-passphrase", adminIfFirst: true });
-    const b = await createUser(app.db, { trusted: true, username: "bob", email: "b@forge.local", password: "a-good-passphrase" });
+    const a = await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "a@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+    const b = await createUser(app.db, { origin: "seed", trusted: true, username: "bob", email: "b@forge.local", password: "a-good-passphrase" });
     if (!a.ok || !b.ok) throw new Error("users");
     rw = createToken(app.db, a.value.id, "rw", "rw").token;
     ro = createToken(app.db, a.value.id, "ro", "ro").token;

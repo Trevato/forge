@@ -52,6 +52,7 @@ describe("model budget in the terminal", () => {
     forge = createApp({ dataDir, port: 0 });
     for (const [username, adminIfFirst] of [["alice", true], ["bob", false]] as const) {
       const made = await createUser(forge.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,
