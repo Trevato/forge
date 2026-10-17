@@ -175,10 +175,23 @@ describe("the ring", () => {
     expect(coarse).toBe((2 * FINE_KEEP_MS) / 300_000);
   });
 
-  test("31 days of 15-s points keep at most 30 days of 5-min roll-ups, none past COARSE_KEEP_MS", () => {
+  test("31 days of 15-s points keep at most 30 days of 5-min roll-ups, none past COARSE_KEEP_MS, within 5 s scaled to this machine", () => {
     const db = fresh();
     const days = 31;
     const end = T0 + days * 24 * 3_600_000;
+    // The budget is 5 s where plain inserts of the same points, in the same
+    // batches, take 250 ms; a slower machine gets the same multiple. A roll-up
+    // that rescans every window is ~150× that baseline, so it still fails here.
+    const plain = fresh();
+    const put = plain.query("INSERT OR REPLACE INTO machine_sample (at, step, target, cpu_cores, memory_bytes) VALUES (?, 15, 'forge', 1, 1)");
+    const calibrating = performance.now();
+    for (let w = T0; w < end; w += COARSE_MS) {
+      plain.transaction(() => {
+        for (let t = w; t < w + COARSE_MS; t += FINE_MS) put.run(new Date(t).toISOString());
+      })();
+    }
+    const budget = 5_000 * Math.max(1, (performance.now() - calibrating) / 250);
+    plain.close();
     const started = performance.now();
     // Real 15-s cadence, handed over one 5-min batch at a time, `now` at the batch's last point.
     for (let w = T0; w < end; w += COARSE_MS) {
@@ -189,7 +202,7 @@ describe("the ring", () => {
       record(db, batch, w + COARSE_MS - FINE_MS);
     }
     const now = end - FINE_MS;
-    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(performance.now() - started).toBeLessThan(budget);
 
     const count = (step: number) =>
       db.query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM machine_sample WHERE step = ? AND target = 'forge'").get(step)!.n;
