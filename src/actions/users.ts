@@ -191,14 +191,20 @@ export function createToken(
   actor: User | undefined,
   name: string,
   scope: TokenScope,
+  options: { expiresAt?: string } = {},
 ): Result<{ id: string; token: string }, "unauthorized"> {
   const user = requireUser(actor);
   if (!user.ok) return user;
-  const minted = mintToken(app.db, user.value.id, name, scope);
+  const minted = mintToken(app.db, user.value.id, name, scope, options);
   app.bus.append({
     kind: "token.created",
     actorId: user.value.id,
-    payload: { tokenId: minted.id, name, scope },
+    payload: {
+      tokenId: minted.id,
+      name,
+      scope,
+      ...(options.expiresAt === undefined ? {} : { expiresAt: options.expiresAt }),
+    },
   });
   return ok(minted);
 }

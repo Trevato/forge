@@ -360,7 +360,13 @@ import {
   type FleetError,
 } from "../actions/fleet.ts";
 import { sessionCookie, signupAllowed } from "../web/pages/site.ts";
-import { FIRST_ADMIN_WORDS, redeemFirstAdmin } from "../actions/first_admin.ts";
+import {
+  FIRST_ADMIN_TOKEN_MAX_S,
+  FIRST_ADMIN_TOKEN_MIN_S,
+  FIRST_ADMIN_WORDS,
+  firstAdminLifetime,
+  redeemFirstAdmin,
+} from "../actions/first_admin.ts";
 import { cookieValue, crossOrigin, type Ctx, type Handler } from "./context.ts";
 import {
   apiError,
@@ -1846,6 +1852,15 @@ export function apiRoutes(router: Router<Handler>): void {
     const scope = str(input.scope);
     if (scope !== "ro" && scope !== "rw" && scope !== "admin")
       return apiError("invalid_scope", 422, "scope is ro, rw or admin");
+    // The token always expires (`actions/first_admin.ts`).
+    const expiresIn = firstAdminLifetime(input.expiresIn);
+    if (expiresIn === undefined)
+      return apiError(
+        "invalid_expiry",
+        422,
+        `expiresIn is whole seconds from ${FIRST_ADMIN_TOKEN_MIN_S} to ${FIRST_ADMIN_TOKEN_MAX_S}; leave it out for a day`,
+      );
+    let expiresAt = "";
     const made = await redeemFirstAdmin(
       ctx.app,
       {
@@ -1856,7 +1871,10 @@ export function apiRoutes(router: Router<Handler>): void {
         address: clientAddress(ctx.request),
       },
       (user) => {
-        const minted = createToken(ctx.app, user, str(input.name).trim() || "first-admin", scope);
+        expiresAt = new Date(Date.now() + expiresIn * 1000).toISOString();
+        const minted = createToken(ctx.app, user, str(input.name).trim() || "first-admin", scope, {
+          expiresAt,
+        });
         return minted.ok ? minted.value : undefined;
       },
     );
@@ -1866,7 +1884,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!made.ok)
       return apiError(made.error, made.error === "refused" ? 403 : 422, FIRST_ADMIN_WORDS[made.error]);
     return json(
-      { user: publicUser(made.value.user), scope, ...made.value.finished },
+      { user: publicUser(made.value.user), scope, ...made.value.finished, expiresAt, expiresIn },
       201,
     );
   });

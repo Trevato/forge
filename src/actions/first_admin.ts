@@ -16,6 +16,7 @@
 
 import type { App } from "../app.ts";
 import { burnFirstAdmin, readFirstAdmin, unburnFirstAdmin } from "../core/first_admin.ts";
+import { LIFETIMES } from "../core/oauth.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import { createUser, discardFreshUser, getUserByName, type User } from "../core/users.ts";
 import { bucketOf } from "../http/peer.ts";
@@ -50,6 +51,27 @@ export const FIRST_ADMIN_WORDS: Record<FirstAdminError, string> = {
 
 /** The account's origin, for the audit and for the one gate where accounts are made. */
 export const FIRST_ADMIN_ORIGIN = "first-admin";
+
+/**
+ * How long the headless first admin's token lives, in seconds. It always
+ * expires: by default in a day, the shortest lifetime a person can pick for
+ * an OAuth token and as long as an app's token (`apps/token.ts`). A caller
+ * may ask for anything from a minute to 30 days (OAuth's "month"), never
+ * longer and never forever. Tokens do not mint tokens, and this account has
+ * no password or passkey, so the agent uses the day to arrange how it keeps
+ * working; when the token lapses the account cannot sign in.
+ */
+export const FIRST_ADMIN_TOKEN_TTL_S = LIFETIMES["day"]!;
+export const FIRST_ADMIN_TOKEN_MIN_S = 60;
+export const FIRST_ADMIN_TOKEN_MAX_S = LIFETIMES["month"]!;
+
+/** The lifetime asked for (`expiresIn`, whole seconds), or undefined when it is not one we mint. */
+export function firstAdminLifetime(asked: unknown): number | undefined {
+  if (asked === undefined || asked === null) return FIRST_ADMIN_TOKEN_TTL_S;
+  if (typeof asked !== "number" || !Number.isInteger(asked)) return undefined;
+  if (asked < FIRST_ADMIN_TOKEN_MIN_S || asked > FIRST_ADMIN_TOKEN_MAX_S) return undefined;
+  return asked;
+}
 
 const limiters = new WeakMap<App, RateLimiter>();
 

@@ -95,7 +95,7 @@ export function firstAdminCli(
       `First-admin code for ${dir}: works once, until ${minted.expiresAt} (${minutes} minutes), and not once anyone is admin.`,
       "Shown only here; the forge keeps its hash. Running this again replaces it.",
       `  a person, with a passkey:  ${firstAdminLink(base, minted.code)}`,
-      `  an agent, for a token:     POST ${base}/api/v1/first-admin  {"code": "<the part after #>", "username": "…", "email": "…", "scope": "ro|rw|admin"}`,
+      `  an agent, for a token:     POST ${base}/api/v1/first-admin  {"code": "<the part after #>", "username": "…", "email": "…", "scope": "ro|rw|admin", "expiresIn": 86400}  (seconds, optional: a day by default, at most 30 days)`,
     ],
     err: [],
   };

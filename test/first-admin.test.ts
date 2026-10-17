@@ -11,13 +11,22 @@ import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FIRST_ADMIN_ORIGIN, redeemFirstAdmin } from "../src/actions/first_admin.ts";
+import {
+  FIRST_ADMIN_ORIGIN,
+  FIRST_ADMIN_TOKEN_MAX_S,
+  FIRST_ADMIN_TOKEN_MIN_S,
+  FIRST_ADMIN_TOKEN_TTL_S,
+  firstAdminLifetime,
+  redeemFirstAdmin,
+} from "../src/actions/first_admin.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
+import { APP_TOKEN_TTL_MS } from "../src/apps/token.ts";
 import { FIRST_ADMIN_TTL_MS, burnFirstAdmin, mintFirstAdmin, readFirstAdmin } from "../src/core/first_admin.ts";
 import { firstAdminCli } from "../src/core/first_admin_cli.ts";
 import { listTeamMembers, listTeams, OWNERS_TEAM } from "../src/core/orgs.ts";
+import { LIFETIMES } from "../src/core/oauth.ts";
 import { listPasskeys } from "../src/core/passkeys.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
@@ -42,7 +51,7 @@ afterAll(async () => {
   for (const d of dirs) await rm(d, { recursive: true, force: true });
 });
 
-const redeem = (base: string, body: Record<string, string>) =>
+const redeem = (base: string, body: Record<string, unknown>) =>
   fetch(`${base}/api/v1/first-admin`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -50,6 +59,10 @@ const redeem = (base: string, body: Record<string, string>) =>
   });
 const admin = (db: App["db"]) =>
   createUser(db, { trusted: true, username: "operator-made", email: "op@x.test", isAdmin: true });
+/** The first-admin token's row: its expiry, as the forge will enforce it. */
+const tokenRow = (db: App["db"], tokenId: string) =>
+  db.query<{ expires_at: string | null }, [string]>("SELECT expires_at FROM token WHERE id = ?1").get(tokenId)!;
+
 /** Every byte the database holds, as text: where a stored secret would show. */
 const everything = (app: App) => Buffer.from(app.db.serialize()).toString("latin1");
 
@@ -152,9 +165,20 @@ describe("headless: POST /api/v1/first-admin", () => {
   test("makes the admin once, with no password and a token of the asked scope", async () => {
     const res = await redeem(servers.url, { code, username: "opsbot", email: "bot@x.test", scope: "rw", name: "agent" });
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { user: { username: string; isAdmin: boolean }; scope: string; token: string };
+    const body = (await res.json()) as {
+      user: { username: string; isAdmin: boolean };
+      scope: string;
+      id: string;
+      token: string;
+      expiresAt: string;
+      expiresIn: number;
+    };
     expect(body.user).toMatchObject({ username: "opsbot", isAdmin: true });
     expect(body.scope).toBe("rw");
+    // Asked for no lifetime: a day, and the forge holds that expiry.
+    expect(body.expiresIn).toBe(86_400);
+    expect(Math.abs(Date.parse(body.expiresAt) - (Date.now() + 86_400_000))).toBeLessThan(60_000);
+    expect(tokenRow(app.db, body.id).expires_at).toBe(body.expiresAt);
     const me = await fetch(`${servers.url}/api/v1/user`, { headers: { authorization: `Bearer ${body.token}` } });
     expect(((await me.json()) as { username: string }).username).toBe("opsbot");
     const row = app.db.query<{ password_hash: string }, []>("SELECT password_hash FROM user WHERE username = 'opsbot'").get()!;
@@ -172,6 +196,71 @@ describe("headless: POST /api/v1/first-admin", () => {
       .map((e) => JSON.parse(e.payload) as { via: string; with: string });
     expect(events).toContainEqual(expect.objectContaining({ via: "first-admin", with: "token" }));
     expect(everything(app)).not.toContain(code);
+  });
+});
+
+describe("the headless token always expires", () => {
+  let app: App;
+  let servers: Servers;
+  let code = "";
+  beforeAll(async () => {
+    ({ app } = await fresh());
+    servers = await serve(app);
+    code = mintFirstAdmin(app.db)!.code;
+  });
+  afterAll(() => {
+    servers.stop();
+    app.close();
+  });
+
+  test("a day by default, as an OAuth token's shortest and an app's token; at most 30 days", () => {
+    expect(FIRST_ADMIN_TOKEN_TTL_S).toBe(LIFETIMES["day"]!);
+    expect(FIRST_ADMIN_TOKEN_TTL_S * 1000).toBe(APP_TOKEN_TTL_MS);
+    expect(FIRST_ADMIN_TOKEN_MAX_S).toBe(LIFETIMES["month"]!);
+    expect(firstAdminLifetime(undefined)).toBe(86_400);
+    expect(firstAdminLifetime(null)).toBe(86_400);
+    expect(firstAdminLifetime(FIRST_ADMIN_TOKEN_MIN_S)).toBe(60);
+    expect(firstAdminLifetime(FIRST_ADMIN_TOKEN_MAX_S)).toBe(2_592_000);
+  });
+
+  test("never forever, never past the cap: a bad expiresIn is refused and spends nothing", async () => {
+    for (const expiresIn of [0, -1, 59, 2_592_001, 1e12, 3600.5, "3600", true, "never", Number.MAX_SAFE_INTEGER]) {
+      const res = await redeem(servers.url, { code, username: "opsbot", email: "bot@x.test", scope: "admin", expiresIn });
+      expect(res.status).toBe(422);
+      expect(((await res.json()) as { error: string }).error).toBe("invalid_expiry");
+    }
+    expect(getUserByName(app.db, "opsbot")).toBeUndefined();
+    expect(readFirstAdmin(app.db, code)).toBe("ok");
+  });
+
+  test("a caller's own lifetime is kept, and the token stops working when it lapses", async () => {
+    const res = await redeem(servers.url, { code, username: "opsbot", email: "bot@x.test", scope: "admin", expiresIn: 3600 });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { id: string; token: string; expiresAt: string; expiresIn: number };
+    expect(body.expiresIn).toBe(3600);
+    expect(Math.abs(Date.parse(body.expiresAt) - (Date.now() + 3_600_000))).toBeLessThan(60_000);
+    expect(tokenRow(app.db, body.id).expires_at).toBe(body.expiresAt);
+    const me = () => fetch(`${servers.url}/api/v1/user`, { headers: { authorization: `Bearer ${body.token}` } });
+    expect((await me()).status).toBe(200);
+    // The hour passes.
+    app.db.query("UPDATE token SET expires_at = ?1 WHERE id = ?2").run(new Date(Date.now() - 1000).toISOString(), body.id);
+    expect((await me()).status).toBe(401);
+    // The audit says when it ends.
+    const created = app.db
+      .query<{ payload: string }, []>("SELECT payload FROM event WHERE kind = 'token.created'")
+      .all()
+      .map((e) => JSON.parse(e.payload) as { tokenId: string; expiresAt?: string });
+    expect(created).toContainEqual(expect.objectContaining({ tokenId: body.id, expiresAt: body.expiresAt }));
+  });
+
+  test("no token the first admin holds lives forever", () => {
+    const rows = app.db
+      .query<{ expires_at: string | null }, []>(
+        "SELECT t.expires_at FROM token t JOIN user u ON u.id = t.user_id WHERE u.username = 'opsbot'",
+      )
+      .all();
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.expires_at !== null)).toBe(true);
   });
 });
 

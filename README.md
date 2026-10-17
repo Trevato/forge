@@ -84,9 +84,14 @@ curl -sX POST localhost:3000/api/v1/repos -H "authorization: Bearer $TOKEN" \
 git clone "http://you:$TOKEN@localhost:3000/you/hello.git"
 ```
 
-`POST /api/v1/first-admin` takes `{code, username, email, scope, name?}`
-(`scope` is `ro`, `rw` or `admin`; `name` names the token) and answers 201 once
-with `{user, scope, id, token}`. Every refusal of the code (wrong, used, expired,
+`POST /api/v1/first-admin` takes `{code, username, email, scope, name?,
+expiresIn?}` (`scope` is `ro`, `rw` or `admin`; `name` names the token) and
+answers 201 once with `{user, scope, id, token, expiresAt, expiresIn}`. The
+token always expires: in a day (86400 seconds) unless `expiresIn` asks for
+whole seconds from 60 to 2592000 (30 days); anything else is 422
+`invalid_expiry` and spends nothing. The account has no password or passkey and
+a token cannot mint tokens, so it cannot sign in once its token lapses: use the
+time to set up how you will keep working. Every refusal of the code (wrong, used, expired,
 replaced, or the forge already has an admin) is the same 403. Every attempt, at
 either door, is counted before the code is read, per address and for the whole
 forge, at the sign-in limits (429 past them). The account made is in the audit
