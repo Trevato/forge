@@ -17,7 +17,7 @@ import { createOrg } from "../src/core/orgs.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { recordUsage } from "../src/core/usage.ts";
 import {
-  checkCeiling,
+  reserveCeiling,
   dailyLeft,
   getAccountCeiling,
 } from "../src/core/account_ceiling.ts";
@@ -94,12 +94,12 @@ describe("per-account spend ceilings", () => {
     const { user } = await person("dee");
     expect(getAccountCeiling(app.db, user.id)).toBeUndefined();
     expect(dailyLeft(app.db, user.id, new Date())).toBeUndefined();
-    expect(checkCeiling(app.db, user.id, 0.25, new Date())).toEqual({ ok: true, capUsd: undefined });
+    expect(reserveCeiling(app.db, user.id, { id: "no-run", wantUsd: Infinity }, 0.25, new Date())).toEqual({ ok: true, capUsd: undefined });
     // The admin owns repositories too; a spend far past any default does not stop them.
     const mine = await createRepo(app, admin, { name: "crewwork", visibility: "private" });
     if (!mine.ok) throw new Error(String(mine.error));
     spend(mine.value, 500);
-    expect(checkCeiling(app.db, admin.id, 0.25, new Date())).toEqual({ ok: true, capUsd: undefined });
+    expect(reserveCeiling(app.db, admin.id, { id: "no-run", wantUsd: Infinity }, 0.25, new Date())).toEqual({ ok: true, capUsd: undefined });
   });
 
   test("an admin sets an organization's ceiling, and it is what the runner checks", () => {
@@ -107,7 +107,7 @@ describe("per-account spend ceilings", () => {
     if (!org.ok) throw new Error(String(org.error));
     expect(setAccountCeilings(app, admin, "yardorg", 9, 2).ok).toBe(true);
     const id = getUserByName(app.db, "yardorg")!.id;
-    expect(checkCeiling(app.db, id, 0.25, new Date())).toEqual({ ok: true, capUsd: 2 });
+    expect(reserveCeiling(app.db, id, { id: "no-run", wantUsd: Infinity }, 0.25, new Date())).toEqual({ ok: true, capUsd: 2 });
   });
 
   test("an account at its daily ceiling cannot start a run; another's spend does not count", async () => {
@@ -129,11 +129,11 @@ describe("per-account spend ceilings", () => {
   test("a run is capped at the per-run ceiling, or refused when that is too small", async () => {
     const { user, repo } = await person("pru");
     expect(setAccountCeilings(app, admin, "pru", 50, 1.5).ok).toBe(true);
-    expect(checkCeiling(app.db, user.id, 0.25, new Date())).toEqual({ ok: true, capUsd: 1.5 });
+    expect(reserveCeiling(app.db, user.id, { id: "no-run", wantUsd: Infinity }, 0.25, new Date())).toEqual({ ok: true, capUsd: 1.5 });
     spend(repo, 49.5); // 0.50 left of the day: the day's rest is the cap
-    expect(checkCeiling(app.db, user.id, 0.25, new Date())).toEqual({ ok: true, capUsd: 0.5 });
+    expect(reserveCeiling(app.db, user.id, { id: "no-run", wantUsd: Infinity }, 0.25, new Date())).toEqual({ ok: true, capUsd: 0.5 });
     expect(setAccountCeilings(app, admin, "pru", 50, 0.1).ok).toBe(true);
-    const v = checkCeiling(app.db, user.id, 0.25, new Date());
+    const v = reserveCeiling(app.db, user.id, { id: "no-run", wantUsd: Infinity }, 0.25, new Date());
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.said).toContain("per-run ceiling");
     const run = await runOn(user, repo);

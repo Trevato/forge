@@ -113,7 +113,7 @@ import { heldNow, stuckOf } from "./held.ts";
 import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import { grantLeft } from "../core/model_grant.ts";
-import { checkCeiling, dailyLeft } from "../core/account_ceiling.ts";
+import { dailyLeft, reserveCeiling } from "../core/account_ceiling.ts";
 import {
   credentialEnvOf,
   hostOfApiBase,
@@ -1045,9 +1045,25 @@ async function work(
       write(said);
       return { state: "failed", summary: said };
     }
+    // What this run would spend before the account's ceilings: its own
+    // budget, under the subscription's reservation or the grant's rest.
+    const wanted =
+      picked.kind === "ready" && picked.capUsd !== undefined
+        ? Math.min(ownBudget, picked.capUsd)
+        : grantCap !== undefined
+          ? Math.min(ownBudget, grantCap)
+          : ownBudget;
     // The account's own ceilings, daily and per run, apart from the forge's:
-    // a run past either does not start and spends nothing.
-    const ceiling = checkCeiling(app.db, repo.ownerId, MIN_RUN_USD, new Date());
+    // a run past either does not start and spends nothing. What it may
+    // spend is reserved against the day now, so a run started beside it is
+    // handed only what is left.
+    const ceiling = reserveCeiling(
+      app.db,
+      repo.ownerId,
+      { id: run.id, wantUsd: wanted },
+      MIN_RUN_USD,
+      new Date(),
+    );
     if (!ceiling.ok) {
       write(ceiling.said);
       return { state: "failed", summary: ceiling.said };
@@ -1087,14 +1103,7 @@ async function work(
     // The budget in two parts: the work, and a reserve for landing it. An
     // agent cut off mid-task otherwise leaves a tree the forge commits blind
     // and a pull whose description is the error.
-    const budget = Math.min(
-      ceiling.capUsd ?? Infinity,
-      picked.kind === "ready" && picked.capUsd !== undefined
-        ? Math.min(ownBudget, picked.capUsd)
-        : grantCap !== undefined
-          ? Math.min(ownBudget, grantCap)
-          : ownBudget,
-    );
+    const budget = Math.min(ceiling.capUsd ?? Infinity, wanted);
     const reserve = wrapUpReserve(budget);
     // Asked again for every invocation (`crew/sandbox.ts`): an agent made
     // since the last one is denied from this one on.
