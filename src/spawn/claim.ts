@@ -20,7 +20,14 @@
 import type { Database } from "bun:sqlite";
 import { join } from "node:path";
 import type { App } from "../app.ts";
-import { getOrg } from "../core/orgs.ts";
+import {
+  addTeamMember,
+  getOrg,
+  listTeamMembers,
+  listTeams,
+  OWNERS_TEAM,
+  removeTeamMember,
+} from "../core/orgs.ts";
 import type { User } from "../core/users.ts";
 import { sha256 } from "../kernel/hash.ts";
 
@@ -213,4 +220,18 @@ export function unburnClaim(db: Database, orgId: string, token: string): void {
   db.query(
     "UPDATE user_setting SET value = ?1 WHERE user_id = ?2 AND key = ?3 AND value = ?4",
   ).run(JSON.stringify(back), orgId, KEY, found.raw);
+}
+
+/**
+ * Give a spawned child's organisation to its first admin: they join its
+ * Owners and, unless the spawner asked to keep access, the spawner leaves.
+ * The claim page and the first-admin code (`core/first_admin.ts`) both end here.
+ */
+export function handOver(db: Database, spawned: Spawned, userId: string): void {
+  const team = listTeams(db, spawned.org.id).find((t) => t.name === OWNERS_TEAM);
+  if (team === undefined) return;
+  const spawner = listTeamMembers(db, team.id)[0];
+  addTeamMember(db, team, userId);
+  if (!spawned.keepAccess && spawner && spawner.id !== userId)
+    removeTeamMember(db, team, spawner.id);
 }

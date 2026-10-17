@@ -112,12 +112,14 @@ export type CreateUserError =
  *
  * Every other origin is a named exemption, made by someone the forge already
  * trusts: a claim link the owner handed out, an admin's everyday account, a
- * crew member the admin adds, a spawned forge's seed accounts, and `seed`
- * for code that sets a forge up directly (the chaos world, test fixtures).
+ * crew member the admin adds, a spawned forge's seed accounts, the
+ * operator's first admin (`first-admin`, from the one-time code only the
+ * operator is shown), and `seed` for code that sets a forge up directly (the
+ * chaos world, test fixtures).
  * A new exemption is one more name here.
  */
 export type StrangerOrigin = "signup" | "passkey" | "parent";
-export type ExemptOrigin = "claim" | "everyday" | "agent" | "spawn" | "seed";
+export type ExemptOrigin = "claim" | "everyday" | "agent" | "spawn" | "first-admin" | "seed";
 export type AccountOrigin =
   | { origin: StrangerOrigin; slot: SignupSlot }
   | { origin: "edge" }
@@ -206,6 +208,7 @@ function admission(db: Database, input: AccountOrigin): "signup_closed" | undefi
     case "everyday":
     case "agent":
     case "spawn":
+    case "first-admin":
     case "seed":
       return undefined;
     default: {
