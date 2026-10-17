@@ -7,12 +7,14 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readdirSync, readFileSync } from "node:fs";
-import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
+import { childDirOf, liveChildUrl, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
 import { flushAccess } from "../src/http/access_log.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { hostedPlacement } from "../src/spawn/placement.ts";
+import { childUrlOf } from "../src/spawn/door.ts";
+import { closeHostedChildren, resolveHostedChild } from "../src/spawn/host.ts";
+import { hostedPlacement, parentOrigin } from "../src/spawn/placement.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -95,5 +97,58 @@ describe("hosted child Host dispatch", () => {
       );
     expect(paths(childDirOf(parent, bodyId))).toEqual(["/api/in-the-childs-house"]);
     expect(paths(dir)).toEqual(["/api/in-the-parents-house"]);
+  });
+});
+
+describe("a parent on plain http with a port", () => {
+  let dir = "";
+  let parent: App;
+
+  beforeAll(async () => {
+    dir = await mkdtemp(join(tmpdir(), "forge-spawn-host-http-"));
+    parent = createApp({ dataDir: dir, url: "http://forge.lan:8080", port: 0 });
+  });
+
+  afterAll(() => {
+    closeHostedChildren(parent);
+    parent?.close();
+    return rm(dir, { recursive: true, force: true });
+  });
+
+  test("its child lives at http, on the parent's port, wherever its address is read", async () => {
+    const made = await createUser(parent.db, {
+      trusted: true,
+      username: "alice",
+      email: "a@x.invalid",
+      isAdmin: true,
+    });
+    if (!made.ok) throw new Error("user");
+    const spawned = await spawnForge(
+      parent,
+      made.value,
+      { name: "kid", org: "kid", apps: [], carryBriefs: false, carrySubscriptions: false },
+      { catalog: [], briefs: [], subscriptions: [] },
+      {
+        // As the spawn door builds it (`spawn/door.ts`).
+        placement: hostedPlacement({ host: parentOrigin(parent.config) }),
+        request: new Request("http://forge.lan:8080/spawn", {
+          method: "POST",
+          headers: { origin: "http://forge.lan:8080" },
+        }),
+        url: new URL("http://forge.lan:8080/spawn"),
+      },
+    );
+    if (!spawned.ok) throw new Error(JSON.stringify(spawned.error));
+    // Was https://kid--forge.lan: the wrong scheme and no port.
+    expect(spawned.value.url).toBe("http://kid--forge.lan:8080");
+    expect(liveChildUrl(parent, "kid")).toBe("http://kid--forge.lan:8080");
+    expect(childUrlOf(parent, "kid")).toBe("http://kid--forge.lan:8080");
+    // The child itself is told the same address, so its links and cookies are its own.
+    const child = await resolveHostedChild(
+      parent,
+      new Request("http://forge.lan:8080/healthz", { headers: { host: "kid--forge.lan:8080" } }),
+    );
+    if (child === undefined || child === "unknown") throw new Error("child not found");
+    expect(child.config.url).toBe("http://kid--forge.lan:8080");
   });
 });
