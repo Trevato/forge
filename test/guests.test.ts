@@ -5,6 +5,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setArchivedIn } from "./helpers/archive.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +13,7 @@ import { createApp, type App } from "../src/app.ts";
 import { changeCapacity } from "../src/actions/capacity.ts";
 import { proposePlan } from "../src/actions/plan.ts";
 import { redirectProposal } from "../src/actions/proposals.ts";
-import { ARCHIVED_WHY, updateRepoSettings } from "../src/core/repos.ts";
+import { ARCHIVED_WHY } from "../src/core/repos.ts";
 import { setCrewRole } from "../src/core/agents.ts";
 import { getProposal } from "../src/core/proposals.ts";
 import { listComments } from "../src/core/issues.ts";
@@ -298,7 +299,7 @@ describe("a guest cannot own, copy or run", () => {
     const id = proposed.value.id;
     const direction = ensureDirectionIssue(app, alice, lab)!;
     const comments = listComments(app.db, direction.id).length;
-    const archived = updateRepoSettings(app.db, lab, { archived: true });
+    const archived = setArchivedIn(app.db, lab, true);
     setMember(app.db, bob.id, true, alice.id, new Date());
     expect(redirectProposal(app, bob, id, "Roses first")).toEqual({
       ok: false,
@@ -306,7 +307,7 @@ describe("a guest cannot own, copy or run", () => {
     });
     expect(getProposal(app.db, id)!.state).toBe("pending");
     expect(listComments(app.db, direction.id)).toHaveLength(comments);
-    updateRepoSettings(app.db, archived, { archived: false });
+    setArchivedIn(app.db, archived, false);
     expect(redirectProposal(app, bob, id, "Roses first").ok).toBe(true);
     setMember(app.db, bob.id, false, alice.id, new Date());
   });

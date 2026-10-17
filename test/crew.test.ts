@@ -8,6 +8,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setArchivedIn } from "./helpers/archive.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { App } from "../src/app.ts";
@@ -204,7 +205,7 @@ describe("the crew, with a stand-in Claude Code", () => {
     const own = queueAgentRun(app, repo, issue.value, agent, "assigned");
     expect(own).toBeDefined();
     cancelRepoRun(app, alice, repo, own!.id);
-    const archived = updateRepoSettings(app.db, repo, { archived: true });
+    const archived = setArchivedIn(app.db, repo, true);
     expect(archived.archivedAt).not.toBeNull();
     expect(queueAgentRun(app, archived, issue.value, agent, "assigned")).toBeUndefined();
     const refused = requeueRepoRun(app, alice, archived, own!.id);
@@ -232,7 +233,7 @@ describe("the crew, with a stand-in Claude Code", () => {
     expect(listRuns(app.db, archived.id, { limit: 200 }).length).toBe(before);
     // Taking someone off is not starting a run.
     expect(assignIssue(app, alice, archived, issue.value, null).ok).toBe(true);
-    const woken = updateRepoSettings(app.db, archived, { archived: false });
+    const woken = setArchivedIn(app.db, archived, false);
     expect(woken.archivedAt).toBeNull();
     expect(assignIssue(app, alice, woken, issue.value, bot).ok).toBe(true);
     // The assignment after Wake queued the run the archive had refused.
@@ -257,7 +258,7 @@ describe("the crew, with a stand-in Claude Code", () => {
     const carrying = queueAgentRun(app, repo, other.value, agent, "assigned", undefined, again);
     expect(carrying).toBeDefined();
     // Archived at once, before the crew's next pick.
-    const archived = updateRepoSettings(app.db, repo, { archived: true });
+    const archived = setArchivedIn(app.db, repo, true);
     const done = await settled((r) => r.id === queued!.id, 60_000);
     expect(done.state).toBe("cancelled");
     expect(done.summary).toBe(ARCHIVED_WHY);
@@ -269,7 +270,7 @@ describe("the crew, with a stand-in Claude Code", () => {
     // The fresh run spawned nothing: its whole log is the one archived line.
     expect(readRunLog(dataDir, done.id).lines.filter((l) => l.trim() !== "").length).toBe(1);
     // Wake leaves it cancelled; a new assignment starts normally.
-    const woken = updateRepoSettings(app.db, archived, { archived: false });
+    const woken = setArchivedIn(app.db, archived, false);
     await Bun.sleep(6_000);
     expect(listRuns(app.db, repo.id, { issueId: issue.value.id }).find((r) => r.id === queued!.id)!.state).toBe("cancelled");
     const next = queueAgentRun(app, woken, issue.value, agent, "assigned");

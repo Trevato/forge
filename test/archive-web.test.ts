@@ -4,6 +4,7 @@
  * page still show it.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { setArchivedIn } from "./helpers/archive.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +17,6 @@ import { setAssignee } from "../src/core/issues.ts";
 import {
   listReposVisibleTo,
   listReposWritableTo,
-  updateRepoSettings,
   type Repo,
 } from "../src/core/repos.ts";
 import { createUser, type User } from "../src/core/users.ts";
@@ -84,7 +84,7 @@ describe("an archived repository on the web", () => {
   });
 
   test("absent once archived, the assigned issue included", async () => {
-    repo = updateRepoSettings(app.db, repo, { archived: true });
+    repo = setArchivedIn(app.db, repo, true);
     expect(await get("/live/apps")).not.toContain("alice/oldie");
     expect(await get("/live/on-you")).not.toContain("Sweep the shed");
     expect(askLinesFor(app.db, alice).some((l) => l.id === `assigned:${assigned}`)).toBe(false);

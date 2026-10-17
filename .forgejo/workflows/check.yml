@@ -54,6 +54,11 @@ jobs:
           set -eu
           git clone "http://x-access-token:$TOKEN@$REGISTRY/$OWNER/$APP.git" src
           cd src
+          # A pull from a fork: its head is in this repository only as
+          # refs/pull/<n>/head, which a clone does not fetch.
+          if ! git cat-file -e "$GITHUB_SHA^{commit}" 2>/dev/null; then
+            git fetch -q origin "+refs/pull/${{ github.event.pull_request.number }}/head"
+          fi
           git checkout -q "$GITHUB_SHA"
           echo "checked out $(git rev-parse --short HEAD)"
 
