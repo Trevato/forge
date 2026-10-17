@@ -418,7 +418,10 @@ describe("the operator's command: --first-admin", () => {
       // The agent's line names the field, never the code a second time.
       expect(answer.out.filter((l) => l.includes(link![1]!))).toHaveLength(1);
       expect(readFirstAdmin(app.db, link![1]!)).toBe("ok");
-      await admin(app.db);
+      // An admin who can sign in (an admin with no way in is recovered instead: first-admin-recovery.test.ts).
+      const made = await admin(app.db);
+      if (!made.ok) throw new Error("admin");
+      createToken(app.db, made.value.id, "everyday", "rw");
       const refused = firstAdminCli([], { FORGE_DATA: dir });
       expect(refused.exit).toBe(1);
       expect(refused.out).toHaveLength(0);

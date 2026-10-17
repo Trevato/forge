@@ -365,6 +365,7 @@ import {
   FIRST_ADMIN_TOKEN_MIN_S,
   FIRST_ADMIN_WORDS,
   firstAdminLifetime,
+  recoverFirstAdmin,
   redeemFirstAdmin,
 } from "../actions/first_admin.ts";
 import { cookieValue, crossOrigin, type Ctx, type Handler } from "./context.ts";
@@ -1887,6 +1888,38 @@ export function apiRoutes(router: Router<Handler>): void {
       { user: publicUser(made.value.user), scope, ...made.value.finished, expiresAt, expiresIn },
       201,
     );
+  });
+
+  // A stranded admin, headless (`core/first_admin.ts`): every admin's way in
+  // has lapsed, and the operator's recovery code buys the one it names a new
+  // expiring token. No account is made; refusals read as the door above.
+  router.add("POST", "/api/v1/first-admin/recover", async (ctx) => {
+    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
+    const input = await boundedBody(ctx.request, STRANGER_MAX);
+    if (input === "too_large")
+      return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
+    const scope = str(input.scope);
+    if (scope !== "ro" && scope !== "rw" && scope !== "admin")
+      return apiError("invalid_scope", 422, "scope is ro, rw or admin");
+    const expiresIn = firstAdminLifetime(input.expiresIn);
+    if (expiresIn === undefined)
+      return apiError(
+        "invalid_expiry",
+        422,
+        `expiresIn is whole seconds from ${FIRST_ADMIN_TOKEN_MIN_S} to ${FIRST_ADMIN_TOKEN_MAX_S}; leave it out for a day`,
+      );
+    const recovered = recoverFirstAdmin(ctx.app, {
+      code: str(input.code).trim(),
+      scope,
+      name: str(input.name).trim(),
+      expiresIn,
+      address: clientAddress(ctx.request),
+    });
+    if (!recovered.ok && recovered.error === "rate_limited")
+      return json({ error: recovered.error, message: FIRST_ADMIN_WORDS.rate_limited }, 429, { "retry-after": "60" });
+    if (!recovered.ok) return apiError("refused", 403, FIRST_ADMIN_WORDS.refused);
+    const { user, id, token, expiresAt } = recovered.value;
+    return json({ user: publicUser(user), scope, id, token, expiresAt, expiresIn }, 201);
   });
 
   router.add("GET", "/api/v1/tokens", (ctx) => {

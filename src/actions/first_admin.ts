@@ -15,10 +15,17 @@
  */
 
 import type { App } from "../app.ts";
-import { burnFirstAdmin, readFirstAdmin, unburnFirstAdmin } from "../core/first_admin.ts";
+import {
+  burnFirstAdmin,
+  burnFirstAdminRecovery,
+  readFirstAdmin,
+  unburnFirstAdmin,
+} from "../core/first_admin.ts";
 import { LIFETIMES } from "../core/oauth.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
-import { createUser, discardFreshUser, getUserByName, type User } from "../core/users.ts";
+import { createToken } from "./users.ts";
+import type { TokenScope } from "../core/tokens.ts";
+import { createUser, discardFreshUser, getUserById, getUserByName, type User } from "../core/users.ts";
 import { bucketOf } from "../http/peer.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { limitValue } from "../settings/limits.ts";
@@ -51,6 +58,8 @@ export const FIRST_ADMIN_WORDS: Record<FirstAdminError, string> = {
 
 /** The account's origin, for the audit and for the one gate where accounts are made. */
 export const FIRST_ADMIN_ORIGIN = "first-admin";
+/** A stranded admin's new token, in the audit. No account is made on this path. */
+export const FIRST_ADMIN_RECOVERY = "first-admin-recovery";
 
 /**
  * How long the headless first admin's token lives, in seconds. It always
@@ -162,4 +171,40 @@ export async function redeemFirstAdmin<T>(
   });
   app.log.info("first admin made", { user: made.value.username, with: input.via });
   return ok({ user: made.value, finished });
+}
+
+/**
+ * Spend a recovery code (`core/first_admin.ts`) and give the stranded admin it
+ * was minted for a new expiring token. The same budget as every other look at
+ * a code, taken before it is read; no account is made. `expiresIn` is already
+ * a lifetime `firstAdminLifetime` allows.
+ */
+export function recoverFirstAdmin(
+  app: App,
+  input: { code: string; scope: TokenScope; name: string; expiresIn: number; address: string },
+  now = Date.now(),
+): Result<{ user: User; id: string; token: string; expiresAt: string }, "rate_limited" | "refused"> {
+  if (!attempt(app, input.address)) return err("rate_limited");
+  const userId = burnFirstAdminRecovery(app.db, input.code, now);
+  const user = userId === undefined ? undefined : getUserById(app.db, userId);
+  if (user === undefined) return err("refused");
+  const expiresAt = new Date(now + input.expiresIn * 1000).toISOString();
+  const minted = createToken(app, user, input.name || "first-admin-recovery", input.scope, { expiresAt });
+  if (!minted.ok) {
+    unburnFirstAdmin(app.db, input.code);
+    return err("refused");
+  }
+  app.bus.append({
+    kind: "user.recovered",
+    actorId: user.id,
+    payload: {
+      via: FIRST_ADMIN_RECOVERY,
+      tokenId: minted.value.id,
+      scope: input.scope,
+      expiresAt,
+      address: input.address,
+    },
+  });
+  app.log.info("stranded admin recovered", { user: user.username });
+  return ok({ user, ...minted.value, expiresAt });
 }
