@@ -242,6 +242,10 @@ describe("the forge over MCP", () => {
       listed.body.result.tools.map((t: any) => [t.name, t]),
     );
     expect(byName.get("tell").annotations.readOnlyHint).toBe(false);
+    // The signup tool says what the setting does today, not that nothing reads it.
+    const signup: string = byName.get("signup").description;
+    expect(signup).not.toContain("Nothing reads it yet");
+    expect(signup).toContain("invite and closed both refuse a new account");
     expect(byName.get("tell").inputSchema.required).toEqual(["text"]);
 
     expect((await call(rw, "nothing/here")).body.error.code).toBe(-32601);

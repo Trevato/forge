@@ -149,9 +149,11 @@ export const LIFETIMES: Readonly<Record<string, number | null>> = {
   year: 365 * 86_400,
 };
 
-export type OAuthScope = "ro" | "rw";
+/** The API scopes /oauth/authorize can grant: never `admin`. Discovery lists these. */
+export const OAUTH_SCOPES = ["ro", "rw"] as const;
+export type OAuthScope = (typeof OAUTH_SCOPES)[number];
 export const isOAuthScope = (v: string): v is OAuthScope =>
-  v === "ro" || v === "rw";
+  OAUTH_SCOPES.some((scope) => scope === v);
 
 /** A valid authorization request: the client is real and the redirect is one it registered. */
 export interface AuthRequest {
