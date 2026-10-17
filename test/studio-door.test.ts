@@ -84,7 +84,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
     haystack.split(needle).length - 1;
 
   test("a person with one app and one plain repository renders each once, in every mode; one with no app shows a visitor no apps card at all", async () => {
-    const dan = await createUser(app.db, { trusted: true,
+    const dan = await createUser(app.db, { origin: "seed", trusted: true,
       username: "dan",
       email: "dan@forge.local",
       password: "a-good-passphrase",
@@ -145,7 +145,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
 
     // Someone with repositories and no app: a visitor is not shown an empty
     // apps card, and the list is simply their repositories.
-    const gus = await createUser(app.db, { trusted: true,
+    const gus = await createUser(app.db, { origin: "seed", trusted: true,
       username: "gus",
       email: "gus@forge.local",
       password: "a-good-passphrase",
@@ -170,7 +170,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
   });
 
   test("an owner whose only repository is an app reads the empty list below as no other repositories, not as a bug", async () => {
-    const eve = await createUser(app.db, { trusted: true,
+    const eve = await createUser(app.db, { origin: "seed", trusted: true,
       username: "eve",
       email: "eve@forge.local",
       password: "a-good-passphrase",
@@ -206,7 +206,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
   });
 
   test("a private app on a public repository shows its state only to its writers: a visitor gets a plain row", async () => {
-    const hal = await createUser(app.db, { trusted: true,
+    const hal = await createUser(app.db, { origin: "seed", trusted: true,
       username: "hal",
       email: "hal@forge.local",
       password: "a-good-passphrase",
@@ -230,7 +230,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
       access: "private",
     });
     if (!enabled.ok) throw new Error(String(enabled.error));
-    const ivy = await createUser(app.db, { trusted: true,
+    const ivy = await createUser(app.db, { origin: "seed", trusted: true,
       username: "ivy",
       email: "ivy@forge.local",
       password: "a-good-passphrase",
@@ -257,7 +257,7 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
   });
 
   test("an org's page draws the same way: its app once, its plain repository once, and Members/Teams unmoved", async () => {
-    const fay = await createUser(app.db, { trusted: true,
+    const fay = await createUser(app.db, { origin: "seed", trusted: true,
       username: "fay",
       email: "fay@forge.local",
       password: "a-good-passphrase",
@@ -373,7 +373,7 @@ describe("every open pull's preview on the studio page", () => {
       concurrency: 1,
     });
     await runtime.start();
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -529,7 +529,7 @@ describe("the studio home keeps itself current", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -780,7 +780,7 @@ describe("the studio head says why the app is not up", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -788,7 +788,7 @@ describe("the studio head says why the app is not up", () => {
     });
     if (!a.ok) throw new Error(a.error);
     promote(app.db, a.value);
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -1047,7 +1047,7 @@ describe("the studio app page's terminal", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1055,7 +1055,7 @@ describe("the studio app page's terminal", () => {
     });
     if (!a.ok) throw new Error(a.error);
     promote(app.db, a.value);
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -1204,7 +1204,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1212,7 +1212,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     });
     if (!a.ok) throw new Error(a.error);
     promote(app.db, a.value);
-    const c = await createUser(app.db, { trusted: true,
+    const c = await createUser(app.db, { origin: "seed", trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",

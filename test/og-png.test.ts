@@ -29,6 +29,7 @@ describe("og png", () => {
     servers = await serve(app);
     base = servers.url;
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -215,6 +216,7 @@ describe("og cards with a look", () => {
     servers = await serve(app);
     base = servers.url;
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

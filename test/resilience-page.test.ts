@@ -28,6 +28,7 @@ describe("Settings → Failure domains", () => {
     servers = await serve(app);
     for (const [username, adminIfFirst] of [["alice", true], ["bob", false]] as const) {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

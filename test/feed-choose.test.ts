@@ -29,7 +29,7 @@ describe("the feed's choose item", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const mk = async (username: string, first = false) => {
-      const r = await createUser(app.db, { trusted: true,
+      const r = await createUser(app.db, { origin: "seed", trusted: true,
         username,
         allowReserved: true,
         email: `${username}@f.dev`,

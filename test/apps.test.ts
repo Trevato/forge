@@ -526,7 +526,7 @@ describe("a preview whose copied data the build cannot read starts fresh (issue 
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -744,7 +744,7 @@ describe("a start failure is said in the app's own terms, not the forge's paths 
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -863,7 +863,7 @@ describe("the App page's terminal line survives an email-scanning edge (issue #2
       concurrency: 1,
     });
     await runtime.start();
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "priya",
       email: "priya@forge.local",
       password: "a-good-passphrase",
@@ -936,7 +936,7 @@ describe("the forge's own restart never reads as this deploy's failure (issue #2
       concurrency: 2,
     });
     await runtime.start();
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1262,7 +1262,7 @@ describe("a restart brings every app's production up before any preview", () => 
     servers = await serve(app);
     runtime = runtimeFor();
     await runtime.start();
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

@@ -56,6 +56,7 @@ describe("the crew line", () => {
     await runtime.start();
     const person = async (username: string, adminIfFirst?: boolean) => {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

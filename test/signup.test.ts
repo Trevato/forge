@@ -30,6 +30,7 @@ describe("signup setting", () => {
     servers = await serve(app);
     for (const username of ["alice", "bob"]) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

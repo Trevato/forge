@@ -83,6 +83,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       runTimeoutMs: 60_000,
     });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

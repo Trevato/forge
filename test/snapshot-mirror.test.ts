@@ -65,6 +65,7 @@ describe("the off-box mirror", () => {
     offbox = bucket(join(root, "offbox-dir"));
     app = createApp({ dataDir: root, port: 0 });
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

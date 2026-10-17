@@ -18,6 +18,7 @@ import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -54,7 +55,7 @@ describe("a member and the crew's standing instructions", () => {
     app = createApp({ dataDir, port: 0, url: FORGE_URL });
     servers = await serve(app);
     for (const name of ["olive", "bob"]) {
-      const made = await signUp(app, { username: name, email: `${name}@f.dev`, password: PASS });
+      const made = await signUp(app, { username: name, email: `${name}@f.dev`, password: PASS }, { slot: fixtureSlot(app) });
       if (!made.ok) throw new Error(made.error);
     }
     const olive = getUserByName(app.db, "olive")!;

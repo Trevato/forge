@@ -131,7 +131,7 @@ describe("acting on many asks at once", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-bulk-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: PASSWORD,
@@ -139,7 +139,7 @@ describe("acting on many asks at once", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: PASSWORD,
@@ -488,6 +488,7 @@ describe("acting on many asks at once", () => {
   });
   test("a held change does not ship in a batch: its row says who holds it, and the rest go", async () => {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "dana",
       email: "dana@forge.local",

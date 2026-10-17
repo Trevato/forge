@@ -44,6 +44,7 @@ describe("settings → flags", () => {
     servers = await serve(app);
     for (const [username, adminIfFirst] of [["alice", true], ["bob", false]] as const) {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,
@@ -146,7 +147,7 @@ describe("make the winner the default (#1829)", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-flagwin-"));
     app = createApp({ dataDir, port: 0, forgeRepo: "alice/forge" });
     servers = await serve(app);
-    const u = await createUser(app.db, { trusted: true, username: "alice", email: "alice@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+    const u = await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "alice@forge.local", password: "a-good-passphrase", adminIfFirst: true });
     if (!u.ok) throw new Error(u.error);
     const made = await createRepo(app.db, app.reposRoot, { ownerId: u.value.id, name: "forge", visibility: "public" });
     if (!made.ok) throw new Error(String(made.error));

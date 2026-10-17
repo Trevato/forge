@@ -31,6 +31,7 @@ beforeAll(async () => {
   root = mkdtempSync(join(tmpdir(), "forge-restore-card-"));
   app = createApp({ dataDir: join(root, "live"), port: 0 });
   const u = await createUser(app.db, {
+    origin: "seed",
     trusted: true,
     username: "alice",
     email: "alice@forge.local",

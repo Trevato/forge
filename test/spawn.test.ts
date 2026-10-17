@@ -29,7 +29,7 @@ const post = (origin?: string) =>
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-spawn-"));
   app = createApp({ dataDir: dir, url: "https://forge.test" });
-  const made = await createUser(app.db, { trusted: true, username: "alice", email: "a@x.invalid", isAdmin: true });
+  const made = await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "a@x.invalid", isAdmin: true });
   if (!made.ok) throw new Error("user");
   alice = made.value;
   const repo = await createRepo(app, alice, { name: "notes" });
@@ -135,7 +135,7 @@ describe("spawnForge", () => {
   });
 
   test("a signed-in person may spawn; a stranger may too; cross-origin may not", async () => {
-    const bob = await createUser(app.db, { trusted: true, username: "bob", email: "b@x.invalid" });
+    const bob = await createUser(app.db, { origin: "seed", trusted: true, username: "bob", email: "b@x.invalid" });
     if (!bob.ok) throw new Error();
     // Bob is not an admin; he may still spawn (self-serve). Dry-run path via action.
     const asBob = await spawn({}, deps, bob.value);

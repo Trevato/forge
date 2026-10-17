@@ -42,6 +42,7 @@ describe("quotas", () => {
     servers = await serve(app);
     for (const username of ["alice", "bob"]) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,
@@ -249,6 +250,7 @@ describe("quotas", () => {
   test("at the limit, make-it-yours, the repo app endpoint and the settings form refuse the same way", async () => {
     const admin = createToken(app.db, alice.id, "t", "admin").token;
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "carol",
       email: "carol@forge.local",
@@ -346,6 +348,7 @@ describe("the repositories limit", () => {
     const users: User[] = [];
     for (const username of ["boss", "fresh"]) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,
@@ -451,6 +454,7 @@ describe("the repositories limit", () => {
   });
   test("owning exactly the limit is refused with 'N of N'; the pages and the terminal say so too", async () => {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "exact",
       email: "exact@forge.local",
@@ -501,6 +505,7 @@ describe("the repositories limit", () => {
   });
   test("every door refuses at exactly the limit with its words, and makes nothing", async () => {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "doors",
       email: "doors@forge.local",

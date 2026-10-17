@@ -44,6 +44,7 @@ import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import type { SshSession } from "../src/ssh/channels.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -157,12 +158,12 @@ describe("the terminal UI, against a real forge", () => {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    });
+    }, { slot: fixtureSlot(forge) });
     const b = await signUp(forge, {
       username: "bob",
       email: "bob@forge.test",
       password: "another-long-passphrase",
-    });
+    }, { slot: fixtureSlot(forge) });
     if (!a.ok || !b.ok) throw new Error("signup failed");
     alice = a.value;
     bob = b.value;
@@ -455,7 +456,7 @@ describe("the terminal UI, against a real forge", () => {
       await h.press("ctrl+t");
       expect(h.text()).not.toContain("Create account");
       expect(h.text()).toContain("Username");
-      const refused = await signUp(forge, { username: "carol", email: "carol@forge.test", password: "a-long-passphrase" }, { address: "127.0.0.1" });
+      const refused = await signUp(forge, { username: "carol", email: "carol@forge.test", password: "a-long-passphrase" }, { slot: fixtureSlot(forge), address: "127.0.0.1" });
       expect(refused).toMatchObject({ ok: false, error: "signup_closed" });
     } finally {
       h.stop();
@@ -760,12 +761,12 @@ describe("the forge's health in the terminal", () => {
         username: "chief",
         email: "chief@forge.test",
         password: "a-long-passphrase",
-      });
+      }, { slot: fixtureSlot(forge) });
       const b = await signUp(forge, {
         username: "bob",
         email: "bob@forge.test",
         password: "another-long-passphrase",
-      });
+      }, { slot: fixtureSlot(forge) });
       if (!a.ok || !b.ok) throw new Error("signup failed");
       expect(a.value.isAdmin).toBe(true);
       expect(b.value.isAdmin).toBe(false);
@@ -829,12 +830,12 @@ describe("the forge's health in the terminal", () => {
         username: "chief",
         email: "chief@forge.test",
         password: "a-long-passphrase",
-      });
+      }, { slot: fixtureSlot(forge) });
       const b = await signUp(forge, {
         username: "bob",
         email: "bob@forge.test",
         password: "another-long-passphrase",
-      });
+      }, { slot: fixtureSlot(forge) });
       if (!a.ok || !b.ok) throw new Error("signup failed");
       const as = (user: User): TuiIdentity => ({
         sshUsername: user.username,

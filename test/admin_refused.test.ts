@@ -44,6 +44,7 @@ describe("a member is refused admin settings and releases", () => {
     });
   const mk = async (username: string, admin = false) => {
     const r = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@forge.local`,

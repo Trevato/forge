@@ -16,6 +16,7 @@ import {
 import { isSafeName } from "../src/git/guard.ts";
 import { buildRouter, serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 // A fresh outsider tries every way in with a name that is not theirs to take:
 // an agent's, the owner's, a system name, or a page of the forge itself.
@@ -36,10 +37,10 @@ describe("reserved names", () => {
       username: "trevato",
       email: "owner@f.dev",
       password: "owner-passphrase",
-    });
+    }, { slot: fixtureSlot(app) });
     if (!owner.ok) throw new Error(owner.error);
     for (const name of ["scout", "torque"]) {
-      const made = await createUser(app.db, { trusted: true,
+      const made = await createUser(app.db, { origin: "seed", trusted: true,
         username: name,
         email: `${name}@agents.invalid`,
         agent: true,
@@ -281,6 +282,7 @@ describe("reserved names", () => {
 
   test("an admin with a common first name leaves the longer names that contain it free", async () => {
     const maria = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "maria",
       email: "maria@f.dev",
@@ -310,10 +312,11 @@ describe("reserved names", () => {
   test("every way an account is made holds to the rule; a seed opts out by name", async () => {
     // A way in added later (a linked sign-in) makes accounts through
     // createUser, and inherits the rule without calling anything.
-    const linked = await createUser(app.db, { username: "sc0ut", email: "linked@outsider.test" });
+    const linked = await createUser(app.db, { origin: "seed", username: "sc0ut", email: "linked@outsider.test" });
     expect(linked.ok).toBe(false);
     if (!linked.ok) expect(linked.error).toBe("username_reserved");
     const seeded = await createUser(app.db, {
+      origin: "seed",
       username: "support",
       email: "support@f.dev",
       allowReserved: true,

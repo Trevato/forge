@@ -75,7 +75,7 @@ describe("the forge over MCP", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -83,7 +83,7 @@ describe("the forge over MCP", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -434,7 +434,7 @@ describe("the forge over MCP", () => {
     expect(
       (await tool(ro, "following", { repo: "bob/open" })).value.state,
     ).toBe("diverged");
-    const carol = await createUser(app.db, { trusted: true,
+    const carol = await createUser(app.db, { origin: "seed", trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -969,7 +969,7 @@ describe("the forge over MCP", () => {
   test("model_ceiling: dry by default, an admin person with an admin token sets and clears it", async () => {
     const admin = createToken(app.db, alice.id, "admin", "admin").token;
     const readOnly = createToken(app.db, alice.id, "ro", "ro").token;
-    const target = (await createUser(app.db, { trusted: true, username: "ceilee", email: "ceilee@forge.local", password: "a-good-passphrase" }));
+    const target = (await createUser(app.db, { origin: "seed", trusted: true, username: "ceilee", email: "ceilee@forge.local", password: "a-good-passphrase" }));
     if (!target.ok) throw new Error(target.error);
     const id = target.value.id;
     const args = { username: "ceilee", dailyUsd: 12, perRunUsd: 3 };

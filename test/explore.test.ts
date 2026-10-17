@@ -67,6 +67,7 @@ describe("explore", () => {
 
   const user = async (username: string) => {
     const made = await createUser(app.db, {
+      origin: "seed",
       username,
       email: `${username}@forge.local`,
       password: "a-good-passphrase",

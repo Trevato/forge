@@ -56,7 +56,7 @@ describe("finding things in the studio: /search", () => {
     servers = await serve(app);
     base = servers.url;
 
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -117,7 +117,7 @@ describe("finding things in the studio: /search", () => {
 
     // A private app, another owner's — never in alice's or a stranger's
     // results, however much its description matches.
-    const bob = await createUser(app.db, { trusted: true,
+    const bob = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.local",
       password: "a-good-passphrase",
@@ -263,7 +263,7 @@ describe("finding things in the studio: /search", () => {
       access: "private",
     });
     if (!enabled.ok) throw new Error(String(enabled.error));
-    const carol = await createUser(app.db, { trusted: true,
+    const carol = await createUser(app.db, { origin: "seed", trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -359,7 +359,7 @@ describe("the studio home says what the crew cost you today", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -368,7 +368,7 @@ describe("the studio home says what the crew cost you today", () => {
     if (!a.ok) throw new Error(a.error);
     promote(app.db, a.value);
     alice = a.value;
-    const c = await createUser(app.db, { trusted: true,
+    const c = await createUser(app.db, { origin: "seed", trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",
@@ -507,7 +507,7 @@ describe("every studio page's headings form one outline", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -707,7 +707,7 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
       forgeUrl: servers.url,
       concurrency: 1,
     });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1025,7 +1025,7 @@ describe("the studio names a person on the app's page, and the crew only for the
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "ivy",
       email: "ivy@forge.local",
       password: "a-good-passphrase",
@@ -1194,7 +1194,7 @@ describe("the studio's empty lists", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1305,7 +1305,7 @@ describe("the studio can change what an app says it is (#230)", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const alice = await createUser(app.db, { trusted: true,
+    const alice = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -1313,7 +1313,7 @@ describe("the studio can change what an app says it is (#230)", () => {
     });
     if (!alice.ok) throw new Error(alice.error);
     promote(app.db, alice.value);
-    const carol = await createUser(app.db, { trusted: true,
+    const carol = await createUser(app.db, { origin: "seed", trusted: true,
       username: "carol",
       email: "carol@forge.local",
       password: "a-good-passphrase",

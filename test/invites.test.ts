@@ -10,6 +10,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { listInvites, mintInvite, revokeInvite } from "../src/core/invites.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 describe("invites: an admin mints, lists and revokes", () => {
   let dir: string;
@@ -28,8 +29,8 @@ describe("invites: an admin mints, lists and revokes", () => {
     dir = await mkdtemp(join(tmpdir(), "forge-invites-"));
     app = createApp({ dataDir: dir, port: 0, url: "https://forge.example" });
     servers = await serve(app);
-    const a = await signUp(app, { username: "olive", email: "o@f.dev", password: "owner-passphrase" });
-    const b = await signUp(app, { username: "ada", email: "a@f.dev", password: "guest-passphrase" });
+    const a = await signUp(app, { username: "olive", email: "o@f.dev", password: "owner-passphrase" }, { slot: fixtureSlot(app) });
+    const b = await signUp(app, { username: "ada", email: "a@f.dev", password: "guest-passphrase" }, { slot: fixtureSlot(app) });
     if (!a.ok || !b.ok) throw new Error("signup");
     proveAll(app);
     admin = createToken(app.db, a.value.id, "t", "admin").token;
@@ -109,8 +110,8 @@ describe("invites: the settings form", () => {
     dir = await mkdtemp(join(tmpdir(), "forge-invites-form-"));
     app = createApp({ dataDir: dir, port: 0 });
     servers = await serve(app);
-    const a = await signUp(app, { username: "olive", email: "o@f.dev", password: "owner-passphrase" });
-    const b = await signUp(app, { username: "ada", email: "a@f.dev", password: "guest-passphrase" });
+    const a = await signUp(app, { username: "olive", email: "o@f.dev", password: "owner-passphrase" }, { slot: fixtureSlot(app) });
+    const b = await signUp(app, { username: "ada", email: "a@f.dev", password: "guest-passphrase" }, { slot: fixtureSlot(app) });
     if (!a.ok || !b.ok) throw new Error("signup");
     proveAll(app);
     alice = `forge_session=${createSession(app.db, a.value.id).token}`;

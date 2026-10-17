@@ -27,6 +27,7 @@ describe("carried", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-carried-"));
     app = createApp({ dataDir, port: 0 });
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

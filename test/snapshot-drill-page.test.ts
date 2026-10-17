@@ -44,6 +44,7 @@ describe("the drill on the Backups page", () => {
       ["bob", "another-good-passphrase", false],
     ] as const) {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,
@@ -191,6 +192,7 @@ describe("the recovery line on the page", () => {
     const root = mkdtempSync(join(tmpdir(), "forge-recov-"));
     const app = createApp({ dataDir: root, port: 0 });
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true, username: "alice", email: "a@forge.local",
       password: "a-good-passphrase", adminIfFirst: true,
     });

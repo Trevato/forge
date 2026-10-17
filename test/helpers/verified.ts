@@ -1,5 +1,6 @@
 import type { App } from "../../src/app.ts";
 import { signUp as signUpAction } from "../../src/actions/users.ts";
+import { fixtureSlot } from "./slot.ts";
 
 /**
  * Prove every account still waiting on its email link. For suites about
@@ -20,7 +21,7 @@ export async function signUpProven(
   app: App,
   input: Parameters<typeof signUpAction>[1],
 ): ReturnType<typeof signUpAction> {
-  const made = await signUpAction(app, input);
+  const made = await signUpAction(app, input, { slot: fixtureSlot(app) });
   if (made.ok) proveAll(app);
   return made;
 }

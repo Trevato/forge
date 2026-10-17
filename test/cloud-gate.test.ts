@@ -54,8 +54,8 @@ describe("cloud gate", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-cloud-gate-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, { trusted: true, username: "alice", email: "a@f.test", password: "a-good-passphrase", adminIfFirst: true });
-    const b = await createUser(app.db, { trusted: true, username: "bob", email: "b@f.test", password: "a-good-passphrase" });
+    const a = await createUser(app.db, { origin: "seed", trusted: true, username: "alice", email: "a@f.test", password: "a-good-passphrase", adminIfFirst: true });
+    const b = await createUser(app.db, { origin: "seed", trusted: true, username: "bob", email: "b@f.test", password: "a-good-passphrase" });
     if (!a.ok || !b.ok) throw new Error("users");
     alice = a.value;
     bob = b.value;

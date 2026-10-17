@@ -43,6 +43,7 @@ import {
   type HeadlessTerminal,
 } from "../src/tui/term/terminal.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -200,12 +201,12 @@ describe("reviews, threads and the merge gate", () => {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    });
+    }, { slot: fixtureSlot(forge) });
     const two = await signUp(forge, {
       username: "bob",
       email: "bob@forge.test",
       password: "another-long-passphrase",
-    });
+    }, { slot: fixtureSlot(forge) });
     if (!one.ok || !two.ok) throw new Error("signup failed");
     alice = one.value;
     bob = two.value;

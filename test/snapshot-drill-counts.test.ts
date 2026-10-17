@@ -44,6 +44,7 @@ describe("the restore drill's counts", () => {
     const users = [];
     for (const name of ["alice", "bob"]) {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: name,
         email: `${name}@forge.local`,

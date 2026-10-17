@@ -34,6 +34,7 @@ import {
 } from "../src/tui/ui/icons.ts";
 import { clusterWidth, clusters, displayWidth } from "../src/tui/term/width.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 quietLogs();
 
@@ -272,7 +273,7 @@ describe("the icon set a session actually draws", () => {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    });
+    }, { slot: fixtureSlot(forge) });
     if (!a.ok) throw new Error("signup failed");
     alice = a.value;
     const made = await createRepo(forge, alice, {

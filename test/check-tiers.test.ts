@@ -418,6 +418,7 @@ describe("the tiers in the forge's own checks service", () => {
     app = createApp({ dataDir, port: 0 });
     checks = startChecks(app, { forgeUrl: "http://127.0.0.1:1", concurrency: 1 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -688,6 +689,7 @@ describe("a pull's fast check is of the merge", () => {
     app = createApp({ dataDir, port: 0 });
     checks = startChecks(app, { forgeUrl: "http://127.0.0.1:1", concurrency: 1, redHoldMs: 60_000 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -959,6 +961,7 @@ describe("the cache between the forge's own checks", () => {
     app = createApp({ dataDir, port: 0 });
     checks = startChecks(app, { forgeUrl: "http://127.0.0.1:1", concurrency: 1 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

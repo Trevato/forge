@@ -52,7 +52,7 @@ describe("an agent's own comment never starts its next run", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-loop-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -217,6 +217,7 @@ describe("a crew reviewer's changes-requested wakes the builder", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-verdict-"));
     app = createApp({ dataDir, port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

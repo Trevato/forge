@@ -48,6 +48,7 @@ beforeAll(async () => {
   servers = await serve(app);
   const mk = async (username: string, adminIfFirst?: boolean) => {
     const r = await createUser(app.db, {
+      origin: "seed",
       trusted: true, username, email: `${username}@forge.local`,
       password: "a-good-passphrase", ...(adminIfFirst ? { adminIfFirst } : {}),
     });
@@ -304,7 +305,7 @@ describe("/api/v1/boards", () => {
   });
 
   test("an agent is 403, a non-admin 403, a stranger 401, a read-only token cannot write", async () => {
-    const agent = await createUser(app.db, { trusted: true, username: "bot", email: "bot@forge.local", password: "a-good-passphrase", agent: true } as never);
+    const agent = await createUser(app.db, { origin: "seed", trusted: true, username: "bot", email: "bot@forge.local", password: "a-good-passphrase", agent: true } as never);
     if (!agent.ok) throw new Error(agent.error);
     const bot = createToken(app.db, agent.value.id, "t", "admin").token;
     const ro = createToken(app.db, alice.id, "t", "ro").token;
