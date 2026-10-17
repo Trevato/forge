@@ -19,7 +19,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { listPulls } from "../src/core/pulls.ts";
@@ -35,7 +34,7 @@ import {
   type HeadlessTerminal,
 } from "../src/tui/term/terminal.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
-import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -157,11 +156,11 @@ describe("the terminal workspace", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-workspace-"));
     forge = createApp({ dataDir, port: 0 });
-    const a = await signUp(forge, {
+    const a = await seedAdmin(forge, {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    }, { slot: fixtureSlot(forge) });
+    });
     if (!a.ok) throw new Error("signup failed");
     alice = a.value;
 

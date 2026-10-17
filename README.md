@@ -60,11 +60,12 @@ refuses every form a browser posts to `localhost`: run it with
 `env -u FORGE_URL bun run src/main.ts`, or set `FORGE_URL` to wherever you
 will actually browse it.
 
-The first account you create becomes the admin. Accounts sign up with a
-passkey and an email address; there is no password signup, from the browser,
-the API or the terminal. So the first admin is made either in a browser at
-`/signup` (or `/claim` on a spawned child), or from the operator's terminal with
-`--first-admin`, which needs no browser at all:
+No sign-up makes the admin, not even the forge's first. Accounts sign up with
+a passkey and an email address (there is no password signup), and the browser
+at `/signup`, the API and the terminal all make an account that is not an
+admin. The site admin is made from the operator's terminal with
+`--first-admin`, which needs no browser at all, or, on a spawned child, by its
+`/claim` link:
 
 ```sh
 # One-time code, printed only here: works once, for 15 minutes, and never once
@@ -307,7 +308,7 @@ allows `https://challenges.cloudflare.com`, and signup asks Cloudflare's
 siteverify about the posted `cf-turnstile-response` (API: `turnstile_token`),
 refusing a missing or bad token before it hashes a password or makes an
 account. Unset, signup is open. The terminal (SSH) cannot show a widget, so
-with Turnstile on it can create only the first account (the admin); everyone
+with Turnstile on it can create only the first account; everyone
 else is told to sign up on the web page. Accounts made through the platform edge are not checked. Behind a
 proxy, `FORGE_TRUSTED_PROXIES` (comma-separated CIDR ranges, e.g.
 `10.42.0.0/16` for a k3s ingress) names the proxies allowed to say who the

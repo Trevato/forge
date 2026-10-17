@@ -19,6 +19,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -54,10 +55,10 @@ describe("a member and the crew's standing instructions", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-member-crew-"));
     app = createApp({ dataDir, port: 0, url: FORGE_URL });
     servers = await serve(app);
-    for (const name of ["olive", "bob"]) {
-      const made = await signUp(app, { username: name, email: `${name}@f.dev`, password: PASS }, { slot: fixtureSlot(app) });
-      if (!made.ok) throw new Error(made.error);
-    }
+    const admin = await seedAdmin(app, { username: "olive", email: "olive@f.dev", password: PASS });
+    if (!admin.ok) throw new Error(admin.error);
+    const member = await signUp(app, { username: "bob", email: "bob@f.dev", password: PASS }, { slot: fixtureSlot(app) });
+    if (!member.ok) throw new Error(member.error);
     const olive = getUserByName(app.db, "olive")!;
     const bob = getUserByName(app.db, "bob")!;
     promote(app.db, bob);

@@ -14,7 +14,6 @@ import { queueAgentRun } from "../src/crew/dispatch.ts";
 import { fetchInternal } from "../src/git/hook-address.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
-import { signUp } from "../src/actions/users.ts";
 import { createOrg } from "../src/core/orgs.ts";
 import { getAgent } from "../src/core/agents.ts";
 import { listEvents } from "../src/core/events.ts";
@@ -29,7 +28,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { forgeSshSession, identityFor } from "../src/tui/ssh.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
-import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const EDGE = "edge-secret-for-accounts";
 const KEY_LINE =
@@ -67,11 +66,11 @@ describe("accounts: the owner sees, suspends and removes", () => {
     servers = await serve(app);
     setLimit(app.db, "signup.per_source", 1000, "setup");
     base = servers.url;
-    const owner = await signUp(app, {
+    const owner = await seedAdmin(app, {
       username: "olive",
       email: "olive@f.dev",
       password: "owner-passphrase",
-    }, { slot: fixtureSlot(app) });
+    });
     if (!owner.ok) throw new Error(owner.error);
     ownerToken = createToken(app.db, owner.value.id, "t", "admin").token;
     expect(

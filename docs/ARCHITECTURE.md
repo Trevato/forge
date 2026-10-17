@@ -256,8 +256,8 @@ A guest becomes someone by signing in: username and password verified with the
 same `verifyPassword` the web uses, then the presenting key is registered to
 that account through the `addSshKey` action. The connection is that user from
 that moment on — no reconnect — and the next connection needs no password. On a
-forge with no accounts at all, the same screen creates the first one (which is
-the admin), so a fresh forge is usable from a terminal alone.
+forge with no accounts at all, the same screen creates the first one, which is
+not the admin: no sign-up makes one, and the operator's `--first-admin` does.
 
 There is no impersonation path. A session acts as the account its key maps to
 and nothing else; the login name in `git@host` is decorative. The local dev

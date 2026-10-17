@@ -15,6 +15,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 describe("accounts: the confirm page for removing an organization too", () => {
   let dataDir: string;
@@ -38,7 +39,9 @@ describe("accounts: the confirm page for removing an organization too", () => {
       if (!u.ok) throw new Error(u.error);
       return u.value;
     };
-    const owner = await mk("olive");
+    const made = await seedAdmin(app, { username: "olive", email: "olive@f.dev", password: "a-long-passphrase" });
+    if (!made.ok) throw new Error(made.error);
+    const owner = made.value;
     await mk("nosy");
     mkUser = mk;
     proveAll(app);

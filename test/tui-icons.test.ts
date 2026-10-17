@@ -18,7 +18,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { getUserSetting } from "../src/core/settings.ts";
 import type { User } from "../src/core/users.ts";
@@ -34,7 +33,7 @@ import {
 } from "../src/tui/ui/icons.ts";
 import { clusterWidth, clusters, displayWidth } from "../src/tui/term/width.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
-import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -269,11 +268,11 @@ describe("the icon set a session actually draws", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-icons-"));
     forge = createApp({ dataDir, port: 0 });
-    const a = await signUp(forge, {
+    const a = await seedAdmin(forge, {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    }, { slot: fixtureSlot(forge) });
+    });
     if (!a.ok) throw new Error("signup failed");
     alice = a.value;
     const made = await createRepo(forge, alice, {

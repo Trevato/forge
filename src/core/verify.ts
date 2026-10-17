@@ -47,7 +47,7 @@ export function markUnproven(db: Database, userId: string): void {
   db.query("INSERT OR IGNORE INTO email_check (user_id) VALUES (?1)").run(userId);
 }
 
-/** Mark proven without a link: the forge's first account, an owner's word. */
+/** Mark proven without a link: an account its maker vouches for, an owner's word. */
 export function markVerified(db: Database, userId: string, at: string): void {
   db.query(
     `INSERT INTO email_check (user_id, verified_at) VALUES (?1, ?2)

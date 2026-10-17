@@ -31,6 +31,7 @@ import {
 } from "./fake-origin.ts";
 import { fastFirstFetch, withoutEnv } from "./helpers/globals.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 /**
  * Adversarial review of the origins surface: OAuth (state, PKCE, redirect
@@ -740,14 +741,10 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
     // The git host the mirrors fetch from: a second real forge.
     upstream = createApp({ dataDir: upstreamDataDir, port: 0 });
     upstreamServers = await serve(upstream);
-    await fetch(`${upstreamServers.url}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: LOGIN,
-        email: "octo@upstream.test",
-        password: ORIGIN_TOKEN,
-      }),
+    await seedAdmin(upstream, {
+      username: LOGIN,
+      email: "octo@upstream.test",
+      password: ORIGIN_TOKEN,
     });
     for (const name of ["widgets", "secret"]) {
       await fetch(`${upstreamServers.url}/api/v1/repos`, {
@@ -804,10 +801,10 @@ describe("authorization across origins, mirrors, pins and disconnect", () => {
     servers = await serve(app);
     base = servers.url;
     api = callerFor(base);
-    // Bob first: the first account is the site admin, which makes him a
-    // writer of every repo — the one kind of non-owner writer a personal
-    // mirror can have.
-    await createUsers(base, ["bob", "alice", "carol"]);
+    // Bob is the site admin, which makes him a writer of every repo — the
+    // one kind of non-owner writer a personal mirror can have.
+    await seedAdmin(app, { username: "bob", email: "bob@forge.test", password: PASSWORD });
+    await createUsers(base, ["alice", "carol"]);
     proveAll(app);
     forgetProviders(dataDir);
 

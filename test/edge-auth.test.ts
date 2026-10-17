@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { edgeIdentity, edgeLoginUrl, edgeLogoutUrl } from "../src/http/edge.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const TOKEN = "edge-secret-0123456789";
 
@@ -53,6 +54,8 @@ describe("a forge behind the platform edge", () => {
   let servers: Servers;
   let base: string;
   const asAda = { "x-plat-user": "ada", "x-plat-edge-token": TOKEN };
+  // The site admin, made by the operator, signs in through the edge too.
+  const asOlive = { "x-plat-user": "olive", "x-plat-edge-token": TOKEN };
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-edge-"));
@@ -64,6 +67,8 @@ describe("a forge behind the platform edge", () => {
     });
     servers = await serve(app);
     base = servers.url;
+    const olive = await seedAdmin(app, { username: "olive", email: "olive@forge.example" });
+    if (!olive.ok) throw new Error(olive.error);
   });
 
   afterAll(async () => {
@@ -78,12 +83,12 @@ describe("a forge behind the platform edge", () => {
     expect(page).not.toContain('href="/signin"');
   });
 
-  test("the first person the edge vouches for is made on sight, as admin", async () => {
+  test("the first person the edge vouches for is made on sight, not as admin", async () => {
     const me = await fetch(`${base}/api/v1/user`, { headers: asAda });
     expect(me.status).toBe(200);
     const body = (await me.json()) as { username: string; isAdmin: boolean };
     expect(body.username).toBe("ada");
-    expect(body.isAdmin).toBe(true);
+    expect(body.isAdmin).toBe(false);
 
     const page = await fetch(`${base}/`, { headers: asAda }).then((r) =>
       r.text(),
@@ -134,14 +139,14 @@ describe("a forge behind the platform edge", () => {
   test("from the public origin the person acts with full authority", async () => {
     const created = await fetch(`${base}/api/v1/repos`, {
       method: "POST",
-      headers: { ...asAda, origin: "https://forge.example" },
+      headers: { ...asOlive, origin: "https://forge.example" },
       body: JSON.stringify({ name: "hello", visibility: "public" }),
     });
     expect(created.status).toBe(201);
     const minted = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
-      headers: { ...asAda, origin: "https://forge.example" },
-      // Ada is the site admin: from a page, her token is minted on purpose (#596).
+      headers: { ...asOlive, origin: "https://forge.example" },
+      // Olive is the site admin: from a page, her token is minted on purpose (#596).
       body: JSON.stringify({ name: "cli", scope: "rw", adminConfirm: true }),
     });
     expect(minted.status).toBe(201);

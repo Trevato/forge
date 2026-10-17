@@ -23,6 +23,7 @@ import {
   serveFakeForge,
   type FakeForge,
 } from "./fake-origin.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const read = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
@@ -63,6 +64,9 @@ describe("branches on a native repo", () => {
         password,
       }),
     });
+    return tokenFor(username, password, scope);
+  };
+  const tokenFor = async (username: string, password: string, scope: string) => {
     const made = await read<{ token: string }>(
       await fetch(`${base}/api/v1/tokens`, {
         method: "POST",
@@ -79,7 +83,8 @@ describe("branches on a native repo", () => {
     servers = await serve(app);
     base = servers.url;
 
-    rw = await signUp("alice", "alice-branch-secret", "rw");
+    await seedAdmin(app, { username: "alice", email: "alice@forge.test", password: "alice-branch-secret" });
+    rw = await tokenFor("alice", "alice-branch-secret", "rw");
     admin = await read<{ token: string }>(
       await fetch(`${base}/api/v1/tokens`, {
         method: "POST",
@@ -318,14 +323,10 @@ describe("branches on a mirror go through the origin", () => {
 
     originApp = createApp({ dataDir: originDataDir, port: 0 });
     originServers = await serve(originApp);
-    await fetch(`${originServers.url}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: ORIGIN_LOGIN,
-        email: "octo@up.test",
-        password: ORIGIN_TOKEN,
-      }),
+    await seedAdmin(originApp, {
+      username: ORIGIN_LOGIN,
+      email: "octo@up.test",
+      password: ORIGIN_TOKEN,
     });
     await upstream("/api/v1/repos", {
       method: "POST",
@@ -352,14 +353,10 @@ describe("branches on a mirror go through the origin", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    await fetch(`${base}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "alice",
-        email: "alice@forge.test",
-        password: ALICE_PASSWORD,
-      }),
+    await seedAdmin(app, {
+      username: "alice",
+      email: "alice@forge.test",
+      password: ALICE_PASSWORD,
     });
 
     const connected = await read<{ id: string }>(
