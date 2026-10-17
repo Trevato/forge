@@ -3,7 +3,8 @@
  * `forge_setting` under `signup`, and every change is kept in
  * `forge_setting_change` (who, when, from what to what). Default `open`.
  * `/signup`, `POST /api/v1/users`, passkey signup and a first edge sign-in ask
- * it (`signupClosed` in `actions/users.ts`); `invite` acts as closed until #1143.
+ * it (`signupClosed` in `actions/users.ts`); `invite` lets in only a person with
+ * an open invite link (`core/invites.ts`), spent with the account.
  */
 
 import type { Database } from "bun:sqlite";

@@ -16,7 +16,7 @@ import { STRANGER_MAX } from "../../http/limits.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
 import { relying, store } from "./passkeys.ts";
-import { safeNext, sessionCookie, signinAllowed, signupSlot } from "./site.ts";
+import { inviteOf, safeNext, sessionCookie, signinAllowed, signupSlot } from "./site.ts";
 
 const refuse = (status: number, message: string) =>
   json({ error: "refused", message }, status);
@@ -55,7 +55,7 @@ function guard(ctx: Ctx): Response | undefined {
 export async function signupOptions(ctx: Ctx): Promise<Response> {
   const denied = guard(ctx);
   if (denied) return denied;
-  if (signupClosed(ctx.app)) return refuse(403, SIGNUP_CLOSED_MESSAGE);
+  if (signupClosed(ctx.app, inviteOf(ctx))) return refuse(403, SIGNUP_CLOSED_MESSAGE);
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const username = str(data.username).trim();
@@ -75,7 +75,7 @@ export async function signupOptions(ctx: Ctx): Promise<Response> {
 export async function signupPasskey(ctx: Ctx): Promise<Response> {
   const denied = guard(ctx);
   if (denied) return denied;
-  if (signupClosed(ctx.app)) return refuse(403, SIGNUP_CLOSED_MESSAGE);
+  if (signupClosed(ctx.app, inviteOf(ctx))) return refuse(403, SIGNUP_CLOSED_MESSAGE);
   const data = await boundedBody(ctx.request, STRANGER_MAX);
   if (data === "too_large") return refuse(413, "payload too large");
   const username = str(data.username).trim();
@@ -98,7 +98,7 @@ export async function signupPasskey(ctx: Ctx): Promise<Response> {
   const created = await signUpWithPasskey(
     ctx.app,
     { username, email, passkey: made, passkeyName: "Passkey", humanToken: str(data.humanToken) },
-    { slot, address: clientAddress(ctx.request) },
+    { slot, invite: inviteOf(ctx), address: clientAddress(ctx.request) },
   );
   if (!created.ok)
     return refuse(created.error === "human_check" ? 422 : created.error === "signup_closed" ? 403 : 409, WORDS[created.error] ?? "Sign-up did not work. Try again.");
