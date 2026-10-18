@@ -231,7 +231,7 @@ import {
 import {
   getUserByName,
   hiddenFrom,
-  verifyPassword,
+  verifyPasswordThrottled,
   type User,
 } from "../core/users.ts";
 import { isPinned } from "../core/pins.ts";
@@ -384,6 +384,7 @@ import {
   respondAccess,
   str,
   unauthorized,
+  tooManyAttempts,
 } from "./respond.ts";
 import {
   readAppMembers,
@@ -1257,12 +1258,15 @@ export function apiRoutes(router: Router<Handler>): void {
     const input = await boundedBody(ctx.request, STRANGER_MAX);
     if (input === "too_large")
       return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
-    const verified = await verifyPassword(
-      ctx.app.db,
-      str(input.username),
-      str(input.password),
-    );
-    if (!verified.ok) return unauthorized();
+    const verified = await verifyPasswordThrottled(ctx.app.db, {
+      username: str(input.username),
+      password: str(input.password),
+      source: clientAddress(ctx.request),
+    });
+    if (!verified.ok)
+      return verified.error.reason === "throttled"
+        ? tooManyAttempts(verified.error.retryAfter)
+        : unauthorized();
     const session = createSession(ctx.app.db, verified.value.id);
     return json(publicUser(verified.value), 201, {
       "set-cookie": sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url),
@@ -1334,11 +1338,16 @@ export function apiRoutes(router: Router<Handler>): void {
     const changed = await changePassword(ctx.app, ctx.auth.user, {
       current: str(input.current),
       next: str(input.next),
+      source: clientAddress(ctx.request),
     });
     if (!changed.ok)
       return respondAccess(
         changed.error,
-        changed.error === "bad_credentials" ? 403 : 422,
+        changed.error === "bad_credentials"
+          ? 403
+          : changed.error === "throttled"
+            ? 429
+            : 422,
       );
     return json({}, 200);
   });
@@ -1810,11 +1819,13 @@ export function apiRoutes(router: Router<Handler>): void {
         );
       user = ctx.auth.user;
     } else {
-      const verified = await verifyPassword(
-        ctx.app.db,
-        str(input.username),
-        str(input.password),
-      );
+      const verified = await verifyPasswordThrottled(ctx.app.db, {
+        username: str(input.username),
+        password: str(input.password),
+        source: clientAddress(ctx.request),
+      });
+      if (!verified.ok && verified.error.reason === "throttled")
+        return tooManyAttempts(verified.error.retryAfter);
       if (verified.ok) user = verified.value;
       // With the password too, a site admin's token is minted on purpose.
       if (user?.isAdmin && input.adminConfirm !== true)

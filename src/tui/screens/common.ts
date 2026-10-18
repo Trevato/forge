@@ -841,6 +841,7 @@ const MESSAGES: Record<string, string> = {
   taken: "that name is taken",
   weak_password: "the password must be at least 10 characters",
   bad_credentials: "wrong username or password",
+  throttled: "too many attempts: try again in a minute",
   already_forked: "you already have a fork of this repo",
   already_merged: "this pull is already merged",
   unknown_label: "no such label",

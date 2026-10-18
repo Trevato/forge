@@ -60,7 +60,7 @@ import {
   ensureEdgeUser,
   getUserByName,
   isActive,
-  verifyPassword,
+  verifyPasswordThrottled,
 } from "../core/users.ts";
 import { edgeIdentity } from "./edge.ts";
 import { signupClosed } from "../actions/users.ts";
@@ -572,7 +572,13 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
       return NO_AUTH;
     }
     if (username !== "" && secret !== "") {
-      const verified = await verifyPassword(app.db, username, secret);
+      // Counted in the sign-in windows like every password door; past them
+      // the right password is refused too, so a guesser learns nothing.
+      const verified = await verifyPasswordThrottled(app.db, {
+        username,
+        password: secret,
+        source: clientAddress(request),
+      });
       if (verified.ok)
         return { user: verified.value, scope: "admin", via: "password" };
     }
