@@ -7,6 +7,7 @@
  * of them. Nothing here knows about repos or issues — that is the point.
  */
 
+import { refusalText } from "../../http/refusal.ts";
 import { NOT_A_MEMBER } from "../../core/roles.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding, type Binding } from "../app/keys.ts";
@@ -996,6 +997,8 @@ export function errorText(code: string): string {
 
 /** Anything thrown, as a string — the toast text of last resort. */
 export function message(error: unknown): string {
+  const refused = refusalText(error);
+  if (refused !== undefined) return refused;
   return error instanceof Error ? error.message : String(error);
 }
 

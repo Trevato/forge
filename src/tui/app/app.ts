@@ -63,6 +63,7 @@ import {
   type CursorPos,
 } from "../ui/widgets.ts";
 import { binding, find, keyFor, type Binding } from "./keys.ts";
+import { message } from "../screens/common.ts";
 import { Palette, type Command, type PaletteSearch } from "./palette.ts";
 import { truncate } from "../term/width.ts";
 
@@ -470,7 +471,7 @@ export class App {
         // Every failure becomes a toast; nothing throws into the loop, and no
         // single bad read may drop the session.
         if (!entry.abort.signal.aborted)
-          this.toast(e instanceof Error ? e.message : String(e), "danger");
+          this.toast(message(e), "danger");
       })
       .finally(() => {
         entry.loading = false;
@@ -876,7 +877,7 @@ export class App {
   private run(command: Command): void {
     this.overlay = "none";
     void Promise.resolve(command.run()).catch((err: unknown) =>
-      this.toast(err instanceof Error ? err.message : String(err), "danger"),
+      this.toast(message(err), "danger"),
     );
   }
 

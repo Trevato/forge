@@ -5,6 +5,7 @@
  * verdict. Auth is resolved once per request and handed to handlers as data.
  */
 
+import { refusedByDatabase, shownRefusal } from "./refusal.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
 import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
 import { toolbarComment, toolbarPage } from "../web/studio/toolbar.ts";
@@ -1857,25 +1858,16 @@ export interface Servers {
 }
 
 /**
- * A refusal a database trigger raised (`RAISE(ABORT, '…')`): an operator's
- * guard saying no, in its own words. It is the answer, not a fault, so the
- * person sees the reason and a 403 rather than "internal".
- */
-function refusedByDatabase(error: unknown): string | undefined {
-  if (!(error instanceof Error)) return undefined;
-  const code = (error as { code?: unknown }).code;
-  return code === "SQLITE_CONSTRAINT_TRIGGER" ? error.message : undefined;
-}
-
-/**
- * What a thrown handler is answered with: the guard's own words and a 403
+ * What a thrown handler is answered with: the guard's words (or a generic
+ * "refused") and a 403
  * when a database trigger refused, else a 500 that says nothing of the fault.
  */
 function failure(app: App, error: unknown): Response {
   const refused = refusedByDatabase(error);
   if (refused !== undefined) {
-    app.log.warn("refused by the database", { reason: refused });
-    return securityFloor(json({ error: "refused", message: refused }, 403));
+    const shown = shownRefusal(refused);
+    app.log.warn("refused by the database", { reason: refused, shown });
+    return securityFloor(json({ error: "refused", message: shown }, 403));
   }
   app.log.error("unhandled request error", { error: String(error) });
   return securityFloor(json({ error: "internal" }, 500));

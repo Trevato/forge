@@ -2,6 +2,9 @@
 // row per thought, appended and never changed: the triggers refuse an
 // UPDATE or DELETE, and there is no foreign key so no cascade can remove
 // one when an account goes. The author is an id, not a reference.
+// The RAISE messages below are shown to any caller, anonymous ones included
+// (#723); they are written for anyone, and are known by name in
+// src/http/refusal.ts because the numbered migrations' text is frozen.
 export default `
   CREATE TABLE thought (
     id          TEXT PRIMARY KEY,

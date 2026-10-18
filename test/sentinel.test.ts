@@ -159,7 +159,7 @@ describe("the faults of the day", () => {
     // 5. a hand-installed guard that outlived its fix.
     app.db.exec(
       `CREATE TRIGGER steward_guard_repo BEFORE INSERT ON repo
-       BEGIN SELECT RAISE(ABORT, 'paused for new accounts'); END`,
+       BEGIN SELECT RAISE(ABORT, 'forge: paused for new accounts'); END`,
     );
   });
 

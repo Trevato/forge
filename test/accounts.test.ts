@@ -598,7 +598,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
   test("a refusal the database raises answers 403 with its reason, not 500", async () => {
     // An operator's guard, the way production holds new accounts back.
     app.db.exec(
-      "CREATE TRIGGER test_refuse BEFORE INSERT ON repo BEGIN SELECT RAISE(ABORT, 'new repositories are paused here'); END;",
+      "CREATE TRIGGER test_refuse BEFORE INSERT ON repo BEGIN SELECT RAISE(ABORT, 'forge: new repositories are paused here'); END;",
     );
     try {
       const res = await api("/api/v1/repos", {
@@ -609,12 +609,46 @@ describe("accounts: the owner sees, suspends and removes", () => {
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({
         error: "refused",
-        message: "new repositories are paused here",
+        message: "forge: new repositories are paused here",
       });
       // The refusal leaves nothing on disk.
       expect(existsSync(repoDir(app.reposRoot, "olive", "guarded"))).toBe(false);
     } finally {
       app.db.exec("DROP TRIGGER test_refuse");
+    }
+  });
+
+  test("a refusal without the forge: prefix is answered generically to anyone, and logged in full (#723)", async () => {
+    const secret = "constraint on table repo_internal_x failed";
+    app.db.exec(
+      `CREATE TRIGGER test_refuse_plain BEFORE INSERT ON repo BEGIN SELECT RAISE(ABORT, '${secret}'); END;`,
+    );
+    const logged: { message: string; fields: Record<string, unknown> | undefined }[] = [];
+    const log = app.log;
+    (app as { log: typeof log }).log = {
+      ...log,
+      warn: (message, fields) => {
+        logged.push({ message, fields });
+        log.warn(message, fields);
+      },
+    };
+    try {
+      const res = await api("/api/v1/repos", {
+        method: "POST",
+        token: ownerToken,
+        body: JSON.stringify({ name: "guarded-plain" }),
+      });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({
+        error: "refused",
+        message: "refused",
+      });
+      expect(
+        logged.some((l) => l.fields?.reason === secret),
+      ).toBe(true);
+    } finally {
+      (app as { log: typeof log }).log = log;
+      app.db.exec("DROP TRIGGER test_refuse_plain");
     }
   });
 
