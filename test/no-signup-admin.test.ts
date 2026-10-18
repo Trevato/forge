@@ -83,7 +83,7 @@ test("the first account through the passkey door is not an admin", async () => {
 
 test("the first account from the terminal's sign-up is not an admin", async () => {
   const app = await fresh();
-  const made = await signUp(app, { username: "termy", email: "t@f.test", password: PASSWORD }, { slot: fixtureSlot(app), door: "terminal" });
+  const made = await signUp(app, { username: "termy", email: "t@f.test", password: PASSWORD }, { slot: fixtureSlot(app) });
   expect(made.ok && made.value.isAdmin).toBe(false);
   expect(admins(app)).toBe(0);
 });

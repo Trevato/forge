@@ -147,11 +147,12 @@ export type CreateUserInput = CreateUserFields & AccountOrigin;
 
 /**
  * Whether no stranger may make an account now: signup is not `open` (`invite`
- * acts as closed until #1143) and the forge has an account already, so the
- * owner can never be locked out of a fresh forge by a setting.
+ * acts as closed until #1143). A fresh forge's first account is held to it
+ * too: no sign-up makes the admin (the operator's first-admin link or a claim
+ * does), so being first earns nothing.
  */
 export function newAccountsClosed(db: Database): boolean {
-  return getSignup(db) !== "open" && hasAnyUser(db);
+  return getSignup(db) !== "open";
 }
 
 interface CreateUserFields {
