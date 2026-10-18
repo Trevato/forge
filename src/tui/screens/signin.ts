@@ -4,8 +4,8 @@
  * same connection is that user. No reconnect, and no impersonation: the only
  * account a session can take on is one whose password was just verified.
  *
- * On a forge with no users at all, the same screen creates the first account
- * — not an admin; the operator makes the admin.
+ * On a forge with no users at all, the same screen opens on creating the first
+ * account while signup allows — not an admin; the operator makes the admin.
  */
 
 import { SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
@@ -43,7 +43,7 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
   const first = !hasAnyUser(f.db);
   // Closed signup offers no create mode at all, as the page offers no form.
   const closed = signupClosed(f.app);
-  let mode: "signin" | "create" = first ? "create" : "signin";
+  let mode: "signin" | "create" = first && !closed ? "create" : "signin";
   let values = ["", "", ""];
   let focus = 0;
   let error: string | undefined;
@@ -75,11 +75,7 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
           const created = await signUp(
             f.app,
             { username, email, password },
-            {
-              slot,
-              address: f.identity.remoteAddress,
-              ...(first ? { door: "terminal" as const } : {}),
-            },
+            { slot, address: f.identity.remoteAddress },
           );
           if (!created.ok) {
             error = errorText(created.error);
