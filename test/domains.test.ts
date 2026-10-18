@@ -22,6 +22,7 @@ beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-domains-"));
   app = createApp({ dataDir, port: 0 });
   const owner = await createUser(app.db, {
+    origin: "seed",
     username: "alice", email: "alice@forge.local", password: "a-good-passphrase",
   });
   if (!owner.ok) throw new Error("no owner");

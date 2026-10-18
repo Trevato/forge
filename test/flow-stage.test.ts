@@ -14,6 +14,7 @@ import {
   type FlowIssue,
   type FlowPull,
 } from "../src/flow/stage.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const NOW = new Date("2026-10-15T12:00:00.000Z");
 const ago = (minutes: number): string =>
@@ -198,7 +199,7 @@ describe("GET /flow", () => {
         headers: { "content-type": "application/json", ...extra },
         body: JSON.stringify(body),
       });
-    await post("/api/v1/users", {
+    await seedAdmin(app, {
       username: "mira",
       email: "mira@f.dev",
       password: "flow-stage-pass",
@@ -251,6 +252,7 @@ describe("readFlow over real records", () => {
     const app = createApp({ dataDir: dir, port: 0 });
     try {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "alice",
         email: "alice@forge.local",
@@ -337,10 +339,12 @@ describe("readFlow reads everything, and only what the viewer may see", () => {
     const dir = await mkdtemp(join(tmpdir(), "forge-flow-big-"));
     const app = createApp({ dataDir: dir, port: 0 });
     const alice = await createUser(app.db, {
+      origin: "seed",
       trusted: true, username: "alice", email: "alice@forge.local",
       password: "a-good-passphrase", adminIfFirst: true,
     });
     const bob = await createUser(app.db, {
+      origin: "seed",
       trusted: true, username: "bob", email: "bob@forge.local", password: "a-good-passphrase",
     });
     if (!alice.ok || !bob.ok) throw new Error("users");

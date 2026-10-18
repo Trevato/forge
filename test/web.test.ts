@@ -41,6 +41,7 @@ describe("stylesheet asset", () => {
   });
 });
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 describe("html template", () => {
   test("escapes interpolations by default", () => {
@@ -213,16 +214,11 @@ describe("a page ships each drawing once", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const signup = await fetch(`${base}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username: "ada",
-        email: "ada@forge.local",
-        password: "analytical-engine",
-      }),
-      redirect: "manual",
+    cookie = await adminCookie(app, {
+      username: "ada",
+      email: "ada@forge.local",
+      password: "analytical-engine",
     });
-    cookie = (signup.headers.get("set-cookie") ?? "").split(";")[0]!;
     const mode = await fetch(`${base}/mode`, {
       method: "POST",
       headers: { cookie, origin: base },
@@ -345,6 +341,8 @@ describe("web pages end to end", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
+    // The site admin, who makes things below; no sign-up makes one.
+    cookie = await adminCookie(app, { username: "ada", email: "ada@forge.local", password: "analytical-engine" });
   });
 
   afterAll(async () => {
@@ -358,20 +356,20 @@ describe("web pages end to end", () => {
     const response = await fetch(`${base}/signup`, {
       method: "POST",
       body: new URLSearchParams({
-        username: "ada",
-        email: "ada@forge.local",
-        password: "analytical-engine",
+        username: "babbage",
+        email: "babbage@forge.local",
+        password: "difference-engine",
       }),
       redirect: "manual",
     });
     expect(response.status).toBe(303);
-    cookie = (response.headers.get("set-cookie") ?? "").split(";")[0]!;
-    expect(cookie).toStartWith("forge_session=");
+    const signedUp = (response.headers.get("set-cookie") ?? "").split(";")[0]!;
+    expect(signedUp).toStartWith("forge_session=");
 
-    const homePage = await fetch(base, { headers: { cookie } });
+    const homePage = await fetch(base, { headers: { cookie: signedUp } });
     const text = await homePage.text();
     expect(text).toContain("Sign out");
-    expect(text).toContain(`href="/ada"`); // the account link in the topbar
+    expect(text).toContain(`href="/babbage"`); // the account link in the topbar
     expect(text).toContain("New repository");
   });
 

@@ -176,6 +176,7 @@ describe("where the stamp is read", () => {
 
   const person = async (username: string): Promise<User> => {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@forge.local`,

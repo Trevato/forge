@@ -19,7 +19,6 @@ import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
@@ -33,6 +32,7 @@ import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { Editor, colFromDisplay, displayCol } from "../src/tui/ui/editor.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -248,7 +248,7 @@ describe("editing a file in the terminal workspace", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-editor-"));
     forge = createApp({ dataDir, port: 0 });
-    const a = await signUp(forge, {
+    const a = await seedAdmin(forge, {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",

@@ -4,12 +4,12 @@
  * same connection is that user. No reconnect, and no impersonation: the only
  * account a session can take on is one whose password was just verified.
  *
- * On a forge with no users at all, the same screen creates the first account,
- * which is the admin — the terminal equivalent of the web's first-run signup.
+ * On a forge with no users at all, the same screen opens on creating the first
+ * account while signup allows — not an admin; the operator makes the admin.
  */
 
 import { SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
-import { signupWindow, waitText } from "../../actions/signup-window.ts";
+import { SignupSlot, waitText } from "../../actions/signup-window.ts";
 import { hasAnyUser } from "../../core/users.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
@@ -43,7 +43,7 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
   const first = !hasAnyUser(f.db);
   // Closed signup offers no create mode at all, as the page offers no form.
   const closed = signupClosed(f.app);
-  let mode: "signin" | "create" = first ? "create" : "signin";
+  let mode: "signin" | "create" = first && !closed ? "create" : "signin";
   let values = ["", "", ""];
   let focus = 0;
   let error: string | undefined;
@@ -67,18 +67,15 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
             string,
             string,
           ];
-          const wait = signupWindow(f.app, f.identity.remoteAddress);
-          if (wait !== undefined) {
-            error = waitText(wait);
+          const slot = SignupSlot.take(f.app, f.identity.remoteAddress);
+          if (typeof slot === "number") {
+            error = waitText(slot);
             return;
           }
           const created = await signUp(
             f.app,
             { username, email, password },
-            {
-              address: f.identity.remoteAddress,
-              ...(first ? { door: "terminal" as const } : {}),
-            },
+            { slot, address: f.identity.remoteAddress },
           );
           if (!created.ok) {
             error = errorText(created.error);
@@ -129,7 +126,7 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
           closed
             ? SIGNUP_CLOSED_MESSAGE
             : first
-            ? "This forge has no accounts yet — the first one is the admin."
+            ? "This forge has no accounts yet. The operator makes the admin."
             : `Connected from ${f.identity.remoteAddress} with ${f.identity.fingerprint ?? "no key"}`,
           head!.w,
         ),

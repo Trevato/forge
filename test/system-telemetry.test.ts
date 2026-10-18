@@ -154,6 +154,7 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     servers = await serve(app);
     const mk = async (username: string, adminIfFirst = false) => {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true, username, email: `${username}@forge.local`, password: "a-good-passphrase", adminIfFirst,
       });
       if (!u.ok) throw new Error(u.error);

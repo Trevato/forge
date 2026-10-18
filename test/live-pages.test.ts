@@ -28,7 +28,7 @@ describe("live browsing pages", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const user = await createUser(app.db, { trusted: true,
+    const user = await createUser(app.db, { origin: "seed", trusted: true,
       username: "lex",
       email: "lex@f.dev",
       password: "live-pages-pass",
@@ -73,7 +73,7 @@ describe("live browsing pages", () => {
   });
 
   test("the studio app page wires up the live client with data-app, so a deploy run event refetches the app's own fragment", async () => {
-    const user = await createUser(app.db, { trusted: true,
+    const user = await createUser(app.db, { origin: "seed", trusted: true,
       username: "nia",
       email: "nia@f.dev",
       password: "live-pages-pass",
@@ -136,7 +136,7 @@ describe("live browsing pages", () => {
     ).text();
     expect(signedOut).not.toContain('id="live-on-you"');
 
-    const user = await createUser(app.db, { trusted: true,
+    const user = await createUser(app.db, { origin: "seed", trusted: true,
       username: "ren",
       email: "ren@f.dev",
       password: "live-pages-pass",

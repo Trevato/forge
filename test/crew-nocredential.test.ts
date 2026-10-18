@@ -73,6 +73,7 @@ describe("the crew, with a stand-in Claude Code: no credential reaches the repos
     process.env.ANTHROPIC_API_KEY = "sk-forge-own-token";
     try {
       const o = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "otto",
         email: "otto@forge.local",

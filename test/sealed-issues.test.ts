@@ -130,6 +130,7 @@ beforeAll(async () => {
   servers = await serve(app);
   alice = ok(
     await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -139,6 +140,7 @@ beforeAll(async () => {
   );
   mallory = ok(
     await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "mallory",
       email: "mallory@forge.local",
@@ -313,6 +315,7 @@ describe("a reader who files a sealed report follows it, and only it", () => {
   test("its author reads it, comments on it and finds it in lists and search; may not close it; a second stranger finds nothing", async () => {
     const eve = ok(
       await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "eve",
         email: "eve@forge.local",

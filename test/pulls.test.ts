@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 const gitEnv = gitClientEnv();
 
@@ -55,16 +56,11 @@ describe("pull requests end to end", () => {
     servers = await serve(app);
     base = servers.url;
 
-    const signup = await fetch(`${base}/signup`, {
-      method: "POST",
-      body: form({
-        username: "dev",
-        email: "dev@f.dev",
-        password: "pull-request-pass",
-      }),
-      redirect: "manual",
+    cookie = await adminCookie(app, {
+      username: "dev",
+      email: "dev@f.dev",
+      password: "pull-request-pass",
     });
-    cookie = (signup.headers.get("set-cookie") ?? "").split(";")[0]!;
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },

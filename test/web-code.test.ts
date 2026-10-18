@@ -43,6 +43,8 @@ import {
 import { liveClientJs } from "../src/web/live.ts";
 import { spineOf } from "../src/web/pages/explorer.ts";
 import { markMatch } from "../src/web/pages/search.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -73,7 +75,7 @@ describe("the code browser on the web", () => {
     servers = await serve(app);
     base = servers.url;
 
-    const a = await signUp(app, {
+    const a = await seedAdmin(app, {
       username: "alice",
       email: "a@f.dev",
       password: PASSWORD,
@@ -82,7 +84,7 @@ describe("the code browser on the web", () => {
       username: "kim",
       email: "k@f.dev",
       password: PASSWORD,
-    });
+    }, { slot: fixtureSlot(app) });
     if (!a.ok || !k.ok) throw new Error("signup failed");
     alice = `forge_session=${createSession(app.db, a.value.id).token}`;
     kim = `forge_session=${createSession(app.db, k.value.id).token}`;

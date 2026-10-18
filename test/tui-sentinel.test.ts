@@ -40,6 +40,7 @@ beforeAll(async () => {
   app = createApp({ dataDir, port: 0 });
   const mk = async (username: string, adminIfFirst: boolean) => {
     const r = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@forge.local`,

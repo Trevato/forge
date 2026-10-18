@@ -56,6 +56,7 @@ describe("make it yours", () => {
     servers = await serve(app);
     const mk = async (username: string, first = false) => {
       const r = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,
@@ -254,6 +255,7 @@ describe("make it yours", () => {
   test("refused, by the action and the API: an agent, an unverified account, a suspended one, a stranger to a private repository, a stranger to a public repository's private app, and the owner", async () => {
     const mk = async (username: string, trusted = true) => {
       const r = await createUser(app.db, {
+        origin: "seed",
         trusted,
         username,
         email: `${username}@forge.local`,
@@ -329,6 +331,7 @@ describe("make it yours", () => {
 
   test("a copy starts private unless chosen public, and never public from a private original (#852)", async () => {
     const frank = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "frank",
       email: "frank@forge.local",
@@ -363,6 +366,7 @@ describe("make it yours", () => {
 
   test("at most five copies an account a day; the sixth is refused and nothing made; landing on a copy already made still works (#853)", async () => {
     const gina = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "gina",
       email: "gina@forge.local",
@@ -402,6 +406,7 @@ describe("make it yours", () => {
   describe("#888: born private, and one limit on every way to copy", () => {
     const person = async (username: string) => {
       const r = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

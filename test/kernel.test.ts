@@ -204,6 +204,7 @@ describe("passwords under test are hashed at argon2id's floor (#2038)", () => {
   test("bunfig preloads it: an account made in a test stores the cheapest argon2id", async () => {
     const db = openDb(":memory:", migrations);
     const made = await createUser(db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

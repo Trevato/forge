@@ -261,6 +261,7 @@ describe("over HTTP", () => {
     servers = await serve(app);
     base = servers.url;
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

@@ -64,6 +64,7 @@ beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-sentinel-"));
   app = createApp({ dataDir, port: 0 });
   const a = await createUser(app.db, {
+    origin: "seed",
     trusted: true,
     username: "alice",
     email: "alice@forge.local",
@@ -452,7 +453,7 @@ describe("the signals inside the hour", () => {
     app.bus.append({ kind: "issue.closed", repoId: i.repo_id, actorId, payload: { number: i.number } });
   };
   const planter = async (name: string): Promise<User> => {
-    const made = await createUser(app.db, { trusted: true, username: name, email: `${name}@forge.local`, password: "a-good-passphrase" });
+    const made = await createUser(app.db, { origin: "seed", trusted: true, username: name, email: `${name}@forge.local`, password: "a-good-passphrase" });
     if (!made.ok) throw new Error(made.error);
     app.db.query("UPDATE user SET is_agent = 1 WHERE id = ?1").run(made.value.id);
     return made.value;
@@ -524,6 +525,7 @@ describe("the signals inside the hour", () => {
 
   test("a comment saying why a setting stays keeps it too (#2001)", async () => {
     const owner = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "carol",
       email: "carol@forge.local",
@@ -555,7 +557,7 @@ describe("the signals inside the hour", () => {
     app.db.query("UPDATE forge_setting SET updated_at = ?1 WHERE key = 'checks.concurrency'").run(new Date(base - 10 * 24 * HOUR).toISOString());
     hunt(app, "alice/forge", base);
     const issue = app.db.query<{ id: string }, []>("SELECT id FROM issue WHERE state = 'open' AND title LIKE 'Sentinel: Setting checks.concurrency %'").get()!;
-    const bot = await createUser(app.db, { trusted: true, username: "reviewbot", email: "reviewbot@forge.local", password: "a-good-passphrase" });
+    const bot = await createUser(app.db, { origin: "seed", trusted: true, username: "reviewbot", email: "reviewbot@forge.local", password: "a-good-passphrase" });
     if (!bot.ok) throw new Error(bot.error);
     app.db.query("UPDATE user SET is_agent = 1 WHERE id = ?1").run(bot.value.id);
     addComment(app.db, { issueId: issue.id, authorId: bot.value.id, body: "Looks fine to me." });
@@ -601,6 +603,7 @@ describe("degraded causes", () => {
     ddir = await mkdtemp(join(tmpdir(), "forge-sentinel-degraded-"));
     dapp = createApp({ dataDir: ddir, port: 0 });
     const a = await createUser(dapp.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -665,6 +668,7 @@ describe("a budget breach is crew work at once", () => {
     bdir = await mkdtemp(join(tmpdir(), "forge-sentinel-breach-"));
     bapp = createApp({ dataDir: bdir, port: 0 });
     const a = await createUser(bapp.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -676,6 +680,7 @@ describe("a budget breach is crew work at once", () => {
     if (!made.ok) throw new Error(String(made.error));
     brepo = made.value;
     const s = await createUser(bapp.db, {
+      origin: "seed",
       username: "sentinel",
       email: "sentinel@a.invalid",
       agent: true,

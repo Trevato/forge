@@ -37,6 +37,7 @@ import type { App as TuiApp, Screen } from "../src/tui/app/app.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { statements } from "./helpers/statements.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -104,7 +105,7 @@ describe("surfaces adversarial: web", () => {
     app = createApp({ dataDir, port: 0, standingSweepMs: 3_600_000 });
     servers = await serve(app);
     base = servers.url;
-    alice = await signUp("alice", alicePassword); // first account: the admin
+    alice = `${await adminCookie(app, { username: "alice", email: "alice@forge.test", password: alicePassword })}; forge_mode=dev`;
   }, 30_000);
 
   afterAll(async () => {
@@ -335,7 +336,7 @@ describe("surfaces adversarial: web", () => {
     const team = createTeam(app.db, org.value.id, "readers", "read");
     expect(team.ok).toBe(true);
     if (!team.ok) return;
-    const viewer = await createUser(app.db, { trusted: true,
+    const viewer = await createUser(app.db, { origin: "seed", trusted: true,
       username: "viewer1",
       email: "viewer1@forge.test",
       password: "viewer-pass-1234",
@@ -381,7 +382,7 @@ describe("surfaces adversarial: web", () => {
   });
 
   test("N+1: the dashboard's Apps and On-you cards stay flat with 30 apps and 30 assigned issues", async () => {
-    const owner = await createUser(app.db, { trusted: true,
+    const owner = await createUser(app.db, { origin: "seed", trusted: true,
       username: "dashowner",
       email: "dashowner@forge.test",
       password: "dashowner-pass-123",
@@ -394,7 +395,7 @@ describe("surfaces adversarial: web", () => {
     const team = createTeam(app.db, org.value.id, "readers", "read");
     expect(team.ok).toBe(true);
     if (!team.ok) return;
-    const viewer = await createUser(app.db, { trusted: true,
+    const viewer = await createUser(app.db, { origin: "seed", trusted: true,
       username: "dashviewer",
       email: "dashviewer@forge.test",
       password: "dashviewer-pass-1",
@@ -457,7 +458,7 @@ describe("surfaces adversarial: web", () => {
   // `writableRepoIds` query (`REPO_WRITABLE`, the SQL twin of `canWrite`),
   // so the count must not move with the number of distinct repositories.
   test("N+1: needsYouCard does not cost more as agent pulls span more distinct repos", async () => {
-    const owner = await createUser(app.db, { trusted: true,
+    const owner = await createUser(app.db, { origin: "seed", trusted: true,
       username: "needsowner",
       email: "needsowner@forge.test",
       password: "needsowner-pass-1",
@@ -467,7 +468,7 @@ describe("surfaces adversarial: web", () => {
     if (!org.ok) return;
     const team = createTeam(app.db, org.value.id, "writers", "write");
     if (!team.ok) return;
-    const viewer = await createUser(app.db, { trusted: true,
+    const viewer = await createUser(app.db, { origin: "seed", trusted: true,
       username: "needsviewer",
       email: "needsviewer@forge.test",
       password: "needsviewer-pass-1",
@@ -724,7 +725,7 @@ describe("surfaces adversarial: tui", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-surfaces-adv-"));
     forge = createApp({ dataDir, port: 0 });
-    const a = await createUser(forge.db, { trusted: true,
+    const a = await createUser(forge.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",

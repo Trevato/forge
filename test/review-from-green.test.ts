@@ -78,6 +78,7 @@ describe("review is owed from the check's green", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-review-check-"));
     app = createApp({ dataDir, port: 0 });
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

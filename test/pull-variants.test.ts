@@ -16,6 +16,7 @@ import { createToken } from "../src/core/tokens.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { queueAgentRun, startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const gitEnv = gitClientEnv();
 
@@ -82,14 +83,10 @@ describe("a pull says its variant group and siblings", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    await fetch(`${base}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username: "dev",
-        email: "dev@f.dev",
-        password: "pull-variants-pass",
-      }),
-      redirect: "manual",
+    await seedAdmin(app, {
+      username: "dev",
+      email: "dev@f.dev",
+      password: "pull-variants-pass",
     });
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
@@ -190,6 +187,7 @@ describe("a tell asks for variants", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -332,6 +330,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
 
   test("two variants open two pulls in the returned group, on different branches", async () => {
     const alice = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

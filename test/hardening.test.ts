@@ -17,6 +17,7 @@ import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { renderMarkdown } from "../src/web/markdown.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "T",
@@ -53,7 +54,7 @@ describe("reconcile refreshes hooks (H-1)", () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-harden-recon-"));
     const app = createApp({ dataDir, port: 0 });
     try {
-      const user = await createUser(app.db, { trusted: true,
+      const user = await createUser(app.db, { origin: "seed", trusted: true,
         username: "h",
         email: "h@f.dev",
         password: "reconcile-me-now",
@@ -206,17 +207,7 @@ describe("running-forge attacks", () => {
     servers = await serve(app);
     base = servers.url;
 
-    await fetch(`${base}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username: "t",
-        email: "t@f.dev",
-        password: "long-enough-pass",
-      }),
-      redirect: "manual",
-    }).then((r) => {
-      cookie = (r.headers.get("set-cookie") ?? "").split(";")[0]!;
-    });
+    cookie = await adminCookie(app, { username: "t", email: "t@f.dev", password: "long-enough-pass" });
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },

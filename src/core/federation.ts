@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { sha256 } from "../kernel/hash.ts";
 import { parentUrlProblem } from "./parent_releases.ts";
 import { createUser, getUserById, getUserByName, isActive, type User } from "./users.ts";
+import type { SignupSlot } from "../actions/signup-window.ts";
 
 /** Where the parent sends a person back; the address registered at the parent. */
 export const CALLBACK_PATH = "/signin/parent/callback";
@@ -69,7 +70,7 @@ export function takeLogin(db: Database, state: string, now = Date.now()): Login 
 }
 
 /** A local username for a parent's person: their name if free and fit, else made unique by their `sub`. */
-async function makeAccount(db: Database, sub: string, preferred: string): Promise<User | undefined> {
+async function makeAccount(db: Database, sub: string, preferred: string, slot: SignupSlot): Promise<User | undefined> {
   const base = preferred.toLowerCase().replace(/[^a-z0-9.-]/g, "").replace(/^[.-]+/, "").slice(0, 30);
   const tail = sub.toLowerCase().replace(/[^a-z0-9]/g, "").slice(-8);
   for (const username of [base, `${base}-${tail}`, `user-${tail}`]) {
@@ -80,8 +81,11 @@ async function makeAccount(db: Database, sub: string, preferred: string): Promis
       // Unique, never mailed: `.invalid` is reserved and resolves nowhere.
       email: `${sub.toLowerCase()}@sso.invalid`,
       displayName: preferred,
+      origin: "parent",
+      slot,
     });
     if (made.ok) return made.value;
+    if (made.error === "signup_closed") return undefined;
   }
   return undefined;
 }
@@ -101,13 +105,16 @@ export function knownIdentity(db: Database, issuer: string, sub: string): boolea
 
 /**
  * The local account for an issuer's `sub`, made on first sight with no
- * password. Two returns of the same person at once make one account.
+ * password — a stranger's sign-up, so only with a place in the sign-up
+ * window and while signup is open. Two returns of the same person at once
+ * make one account.
  */
 export function accountFor(
   db: Database,
   issuer: string,
   sub: string,
   preferred: string,
+  slot: SignupSlot | undefined,
 ): Promise<User | undefined> {
   const key = `${issuer}\0${sub}`;
   const pending = making.get(key);
@@ -122,7 +129,8 @@ export function accountFor(
       const user = getUserById(db, known.user_id);
       return user !== undefined && isActive(user) ? user : undefined;
     }
-    const made = await makeAccount(db, sub, preferred);
+    if (slot === undefined) return undefined;
+    const made = await makeAccount(db, sub, preferred, slot);
     if (made === undefined) return undefined;
     db.query("INSERT INTO federated_identity (issuer, sub, user_id) VALUES (?1, ?2, ?3)").run(
       issuer,

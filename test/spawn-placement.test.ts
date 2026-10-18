@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { childPublicUrl, childHostSuffix, hostedPlacement, memoryBodies, parseHostedChildName } from "../src/spawn/placement.ts";
+import {
+  childPublicUrl,
+  childHostSuffix,
+  hostedPlacement,
+  memoryBodies,
+  parentOrigin,
+  parseHostedChildName,
+} from "../src/spawn/placement.ts";
 import type { SpawnPlan } from "../src/spawn/plan.ts";
 
 const plan = (name: string): SpawnPlan => ({ name, org: "o", apps: [], briefs: [], subscriptions: [], direction: "", keepAccess: false, budgetUsd: null });
@@ -51,6 +58,25 @@ describe("hosted child hostnames", () => {
       "https://homie--forge.open-platform.sh",
     );
     expect(childPublicUrl("kid", "forge.test")).toBe("https://kid--forge.test");
+  });
+
+  test("keep the parent's scheme and port: a child of an http parent is not sent to https", () => {
+    expect(childPublicUrl("kid", "http://localhost:3000")).toBe("http://kid--localhost:3000");
+    expect(childPublicUrl("kid", "http://forge.lan:8080")).toBe("http://kid--forge.lan:8080");
+    expect(childPublicUrl("kid", "https://forge.test:8443")).toBe("https://kid--forge.test:8443");
+    // A default port is the scheme's own, and the platform's address is unchanged.
+    expect(childPublicUrl("kid", "https://forge.open-platform.sh")).toBe("https://kid--forge.open-platform.sh");
+    expect(childPublicUrl("kid", "https://forge.test:443")).toBe("https://kid--forge.test");
+    expect(childPublicUrl("kid", "http://forge.lan:80")).toBe("http://kid--forge.lan");
+    expect(childPublicUrl("kid", "HTTP://Forge.LAN:8080")).toBe("http://kid--forge.lan:8080");
+  });
+
+  test("the parent's origin: its canonical url, else the plain host and port it serves on", () => {
+    expect(parentOrigin({ url: "https://forge.open-platform.sh/" })).toBe("https://forge.open-platform.sh");
+    expect(parentOrigin({ url: "http://forge.lan:8080", host: "ignored", port: 9 })).toBe("http://forge.lan:8080");
+    expect(parentOrigin({})).toBe("http://localhost:3000");
+    expect(parentOrigin({ host: "box.lan", port: 4000 })).toBe("http://box.lan:4000");
+    expect(parentOrigin({ port: 0 })).toBe("http://localhost");
   });
 
   test("parse a child name from Host", () => {

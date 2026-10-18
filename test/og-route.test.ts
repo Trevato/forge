@@ -27,6 +27,7 @@ describe("og cards", () => {
     servers = await serve(app);
     base = servers.url;
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
@@ -240,6 +241,7 @@ describe("og cards", () => {
       expect(merged).toContain("merged 2026-01-01<");
       expect(merged).toContain("#4 · closed · merged · check none");
       const bob = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: "bob",
         email: "bob@forge.local",

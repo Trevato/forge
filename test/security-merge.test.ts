@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { adminCookie, seedAdmin } from "./helpers/admin.ts";
 
 const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "Dev",
@@ -55,14 +56,11 @@ describe("security: read-only token scope bypass on web mutation routes", () => 
     servers = await serve(app);
     base = servers.url;
 
-    await fetch(`${base}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "alice",
-        password: "password12345",
-        displayName: "Alice",
-      }),
+    await seedAdmin(app, {
+      username: "alice",
+      email: "alice@f.dev",
+      password: "password12345",
+      displayName: "Alice",
     });
 
     rwToken = await fetch(`${base}/api/v1/tokens`, {
@@ -262,16 +260,7 @@ describe("merge correctness (clean results, recorded for regression)", () => {
     servers = await serve(app);
     base = servers.url;
 
-    const signup = await fetch(`${base}/signup`, {
-      method: "POST",
-      body: form({
-        username: "bob",
-        email: "bob@f.dev",
-        password: "merge-test-pass",
-      }),
-      redirect: "manual",
-    });
-    cookie = (signup.headers.get("set-cookie") ?? "").split(";")[0]!;
+    cookie = await adminCookie(app, { username: "bob", email: "bob@f.dev", password: "merge-test-pass" });
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },

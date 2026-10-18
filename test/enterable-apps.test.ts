@@ -41,6 +41,7 @@ describe("enterableApps answers what canEnterApp answers", () => {
 
   const person = async (username: string, admin = false): Promise<User> => {
     const made = await createUser(app.db, {
+      origin: "seed",
       username,
       email: `${username}@forge.test`,
       password: "a-long-matrix-passphrase",

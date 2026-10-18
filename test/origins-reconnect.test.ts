@@ -22,6 +22,7 @@ import {
 } from "./fake-origin.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 /**
  * A detached mirror, reconnected (#1090). What happened live: an origin's
@@ -218,14 +219,10 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
     // The other forge, whose git we clone from.
     originApp = createApp({ dataDir: originDataDir, port: 0 });
     originServers = await serve(originApp);
-    await fetch(`${originServers.url}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: ORIGIN_LOGIN,
-        email: "octo@upstream.test",
-        password: ORIGIN_TOKEN,
-      }),
+    await seedAdmin(originApp, {
+      username: ORIGIN_LOGIN,
+      email: "octo@upstream.test",
+      password: ORIGIN_TOKEN,
     });
     proveAll(originApp);
     await fetch(`${originServers.url}/api/v1/repos`, {
@@ -254,20 +251,12 @@ describe("a frozen mirror is said, and reconnected in one click", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    for (const [username, password] of [
-      ["alice", ALICE_PASSWORD],
-      ["bob", BOB_PASSWORD],
-    ] as const) {
-      await fetch(`${base}/api/v1/users`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          username,
-          email: `${username}@forge.test`,
-          password,
-        }),
-      });
-    }
+    await seedAdmin(app, { username: "alice", email: "alice@forge.test", password: ALICE_PASSWORD });
+    await fetch(`${base}/api/v1/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "bob", email: "bob@forge.test", password: BOB_PASSWORD }),
+    });
     proveAll(app);
 
     // Connect, mirror octo/widgets as alice/widgets, and fork the mirror so

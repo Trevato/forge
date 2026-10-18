@@ -14,7 +14,6 @@ import { queueAgentRun } from "../src/crew/dispatch.ts";
 import { fetchInternal } from "../src/git/hook-address.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
 import { createRepo } from "../src/actions/repos.ts";
-import { signUp } from "../src/actions/users.ts";
 import { createOrg } from "../src/core/orgs.ts";
 import { getAgent } from "../src/core/agents.ts";
 import { listEvents } from "../src/core/events.ts";
@@ -29,6 +28,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { forgeSshSession, identityFor } from "../src/tui/ssh.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const EDGE = "edge-secret-for-accounts";
 const KEY_LINE =
@@ -66,7 +66,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
     servers = await serve(app);
     setLimit(app.db, "signup.per_source", 1000, "setup");
     base = servers.url;
-    const owner = await signUp(app, {
+    const owner = await seedAdmin(app, {
       username: "olive",
       email: "olive@f.dev",
       password: "owner-passphrase",
@@ -399,6 +399,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
     // What was waiting is cancelled, and the crew starts nothing new there.
     expect(getRun(app.db, queued.id)?.state).toBe("cancelled");
     const agent = await insertAgent(app.db, {
+      origin: "seed",
       username: "builder",
       email: "builder@agents.invalid",
       agent: true,
@@ -622,6 +623,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
     const { token: other } = await outsider("mallet");
     // A way in that vouches for nothing: the account starts unproven.
     const made = await insertAgent(app.db, {
+      origin: "seed",
       username: "nadia",
       email: "nadia@outsider.test",
       password: "outsider-passphrase",

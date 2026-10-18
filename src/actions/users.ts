@@ -26,7 +26,7 @@ import {
   cleanDisplayName,
   createUser,
   discardFreshUser,
-  hasAnyUser,
+  newAccountsClosed,
   updateProfile as writeProfile,
   verifyPassword,
   type CreateUserError,
@@ -35,8 +35,8 @@ import {
   type User,
 } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { getSignup } from "../settings/signup.ts";
 import { requireUser } from "./access.ts";
+import type { SignupSlot } from "./signup-window.ts";
 
 export interface SignUpInput {
   username: string;
@@ -58,11 +58,10 @@ export const SIGNUP_CLOSED_MESSAGE = "Signup is closed on this forge.";
 /**
  * Whether no new account may be made now. Read from the store on every call,
  * so a change takes effect on the next request. `invite` acts as closed until
- * invitations exist (#1143). The forge's first account is never refused: the
- * owner cannot be locked out of a fresh forge by a setting.
+ * invitations exist (#1143). The forge's first account is no exception.
  */
 export function signupClosed(app: App): boolean {
-  return getSignup(app.db) !== "open" && hasAnyUser(app.db);
+  return newAccountsClosed(app.db);
 }
 
 /** What anyone is told at a door that still offers a password-only sign-up. */
@@ -79,8 +78,9 @@ export const HUMAN_CHECK_MESSAGE =
   "We could not tell you are a person. Reload the page and try again.";
 
 /**
- * The first account on a fresh forge is the admin — no setup wizard. A name
- * the crew, the owner or the forge itself answers to is not free
+ * A person signs up; never the admin, even the forge's first account
+ * (`createUser` decides: the admin comes from the operator or a claim). A
+ * name the crew, the owner or the forge itself answers to is not free
  * (`core/reserved.ts`).
  */
 export async function signUp(
@@ -88,15 +88,10 @@ export async function signUp(
   input: SignUpInput,
   /** Where the request came from, for the owner's audit of who joined. */
   from: {
+    /** The place the door took in the sign-up window (`actions/signup-window.ts`). */
+    slot: SignupSlot;
     address?: string | undefined;
-    /**
-     * The terminal cannot render a widget, so it is let past the Turnstile
-     * check for the first account only (the bootstrap admin); once anyone
-     * exists, the terminal is asked like everyone else and, having no
-     * token, is refused: sign up on the web page.
-     */
-    door?: "terminal";
-  } = {},
+  },
 ): Promise<Result<User, SignUpError>> {
   // Password sign-in stays for the accounts that have a password. It can go
   // when every such account has a passkey (Settings → Passkeys shows who is
@@ -105,15 +100,16 @@ export async function signUp(
   if (signupClosed(app)) return err("signup_closed");
   if (app.config.passkeyOnlySignup === true) return err("passkey_required");
   const secret = app.config.turnstileSecret;
-  const bootstrap = from.door === "terminal" && !hasAnyUser(app.db);
-  if (secret !== undefined && !bootstrap) {
+  // The terminal cannot render a widget, so with a secret set it brings no
+  // token and is refused, the forge's first account too: sign up on the web page.
+  if (secret !== undefined) {
     const verify = app.config.verifyHuman ?? turnstileVerifier(secret);
     // Before a password is hashed or a row is written.
     if (!(await verify(input.humanToken ?? "", from.address)))
       return err("human_check");
   }
   const { humanToken: _token, ...account } = input;
-  const created = await createUser(app.db, { ...account, adminIfFirst: true });
+  const created = await createUser(app.db, { ...account, origin: "signup", slot: from.slot });
   if (!created.ok) return created;
   app.bus.append({
     kind: "user.created",
@@ -123,8 +119,8 @@ export async function signUp(
       ...(from.address === undefined ? {} : { address: from.address }),
     },
   });
-  // The address is proven by the link it is sent (the first account by
-  // being first); until then nothing it does may create or cost.
+  // The address is proven by the link it is sent; until then nothing it
+  // does may create or cost.
   await welcome(app, created.value);
   return created;
 }
@@ -148,7 +144,7 @@ export interface PasskeySignUpInput {
 export async function signUpWithPasskey(
   app: App,
   input: PasskeySignUpInput,
-  from: { address?: string | undefined } = {},
+  from: { slot: SignupSlot; address?: string | undefined },
 ): Promise<Result<User, SignUpError | "passkey_taken">> {
   if (signupClosed(app)) return err("signup_closed");
   const secret = app.config.turnstileSecret;
@@ -161,7 +157,8 @@ export async function signUpWithPasskey(
   const created = await createUser(app.db, {
     username: input.username,
     email: input.email,
-    adminIfFirst: true,
+    origin: "passkey",
+    slot: from.slot,
   });
   if (!created.ok) return created;
   const kept = addPasskey(app.db, created.value.id, input.passkeyName, input.passkey);
@@ -191,14 +188,20 @@ export function createToken(
   actor: User | undefined,
   name: string,
   scope: TokenScope,
+  options: { expiresAt?: string } = {},
 ): Result<{ id: string; token: string }, "unauthorized"> {
   const user = requireUser(actor);
   if (!user.ok) return user;
-  const minted = mintToken(app.db, user.value.id, name, scope);
+  const minted = mintToken(app.db, user.value.id, name, scope, options);
   app.bus.append({
     kind: "token.created",
     actorId: user.value.id,
-    payload: { tokenId: minted.id, name, scope },
+    payload: {
+      tokenId: minted.id,
+      name,
+      scope,
+      ...(options.expiresAt === undefined ? {} : { expiresAt: options.expiresAt }),
+    },
   });
   return ok(minted);
 }

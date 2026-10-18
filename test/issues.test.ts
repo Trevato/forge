@@ -7,13 +7,14 @@ import { createIssue, listIssues, nextNumber } from "../src/core/issues.ts";
 import { createRepo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 describe("issue core", () => {
   test("numbers are unique and monotonic across issues and pulls", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "forge-iss-core-"));
     const app = createApp({ dataDir, port: 0 });
     try {
-      const user = await createUser(app.db, { trusted: true,
+      const user = await createUser(app.db, { origin: "seed", trusted: true,
         username: "n",
         email: "n@f.dev",
         password: "numbers-please",
@@ -82,16 +83,11 @@ describe("issue pages end to end", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const signup = await fetch(`${base}/signup`, {
-      method: "POST",
-      body: form({
-        username: "mel",
-        email: "mel@f.dev",
-        password: "issue-tracker-pass",
-      }),
-      redirect: "manual",
+    cookie = await adminCookie(app, {
+      username: "mel",
+      email: "mel@f.dev",
+      password: "issue-tracker-pass",
     });
-    cookie = (signup.headers.get("set-cookie") ?? "").split(";")[0]!;
     await fetch(`${base}/new`, {
       method: "POST",
       headers: { cookie },

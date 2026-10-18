@@ -62,6 +62,7 @@ describe("the mirror's admin routes", () => {
       ["bob", "another-good-passphrase", false],
     ] as const) {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

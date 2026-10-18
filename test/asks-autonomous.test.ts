@@ -29,6 +29,7 @@ describe("autonomous repositories ask no one about the crew's own stalls", () =>
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-auto-"));
     app = createApp({ dataDir, port: 0 });
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.test",

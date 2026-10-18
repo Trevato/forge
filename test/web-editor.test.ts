@@ -40,6 +40,8 @@ import {
 } from "../src/web/pages/edit.ts";
 import { highlightAsset } from "../src/web/asset.ts";
 import { highlightToHtml } from "../src/web/highlight-html.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -112,7 +114,7 @@ describe("editing files on the web", () => {
     base = servers.url;
     origin = new URL(base).origin;
 
-    const a = await signUp(app, {
+    const a = await seedAdmin(app, {
       username: "alice",
       email: "a@f.dev",
       password: PASSWORD,
@@ -121,7 +123,7 @@ describe("editing files on the web", () => {
       username: "kim",
       email: "k@f.dev",
       password: PASSWORD,
-    });
+    }, { slot: fixtureSlot(app) });
     if (!a.ok || !k.ok) throw new Error("signup failed");
     aliceUser = a.value;
     alice = `forge_session=${createSession(app.db, a.value.id).token}`;

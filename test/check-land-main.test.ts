@@ -42,6 +42,7 @@ beforeAll(async () => {
   servers = await serve(app);
   checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
   const a = await createUser(app.db, {
+    origin: "seed",
     trusted: true,
     username: "alice",
     email: "alice@forge.local",

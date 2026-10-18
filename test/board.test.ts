@@ -81,7 +81,7 @@ describe("the board", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -427,7 +427,7 @@ describe("the board's forge strip", () => {
       ["root", true],
       ["bob", false],
     ] as const) {
-      const u = await createUser(app.db, { trusted: true,
+      const u = await createUser(app.db, { origin: "seed", trusted: true,
         username,
         // Fixtures may name an account after a reserved word on purpose.
         allowReserved: true,

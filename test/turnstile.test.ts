@@ -14,6 +14,7 @@ import { settleApp } from "./helpers/tui.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const dirs: string[] = [];
 const running: { app: App; servers: Servers }[] = [];
@@ -170,8 +171,9 @@ describe("turnstile doors", () => {
   });
 
   test("the admin settings line says on when Turnstile is on, and never the secret", async () => {
-    const { base } = await boot({ turnstileSecret: "SECRET-VALUE", turnstileSiteKey: "0xSITE" });
-    expect((await signup(base, "good")).status).toBe(201);
+    const { app, base } = await boot({ turnstileSecret: "SECRET-VALUE", turnstileSiteKey: "0xSITE" });
+    const admin = await seedAdmin(app, { username: "casey", email: "casey@example.com", password: "correct horse battery" });
+    expect(admin.ok).toBe(true);
     const signedIn = await fetch(`${base}/signin`, {
       method: "POST",
       redirect: "manual",
@@ -229,16 +231,17 @@ describe("turnstile doors", () => {
     return text;
   }
 
-  test("the terminal makes the first account without a token, and is never asked", async () => {
+  test("the terminal is asked for a fresh forge's first account too, and refused without a token", async () => {
     const { app, asked } = await boot({ turnstileSecret: "s" });
-    await terminalSignup(app, "casey");
-    expect(users(app)).toBe(1);
-    expect(asked).toEqual([]);
+    const text = await terminalSignup(app, "casey");
+    expect(users(app)).toBe(0);
+    expect(asked).toEqual([""]);
+    expect(text).toContain("sign up on the web page");
   });
 
   test("once an account exists the terminal cannot create another", async () => {
     const { app } = await boot({ turnstileSecret: "s" });
-    await terminalSignup(app, "casey");
+    expect((await seedAdmin(app, { username: "casey", email: "casey@example.com" })).ok).toBe(true);
     const text = await terminalSignup(app, "robin");
     expect(users(app)).toBe(1);
     expect(text).toContain("sign up on the web page");

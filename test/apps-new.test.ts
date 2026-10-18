@@ -48,7 +48,7 @@ describe("New app: turn the sentence into a plan and pick the crew", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-plan-"));
     app = createApp({ dataDir, port: 0 });
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -207,7 +207,7 @@ describe("New app on a forge with no agents at all: the sentence still opens", (
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-noagents-"));
     app = createApp({ dataDir, port: 0 });
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -248,7 +248,7 @@ describe("New app: the form asks for the sentence, and names it (issue #60)", ()
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "nadia",
       email: "nadia@forge.local",
       password: "a-good-passphrase",
@@ -372,7 +372,7 @@ describe("New app lands on the app's page, not the flash (issue #133)", () => {
       concurrency: 1,
     });
     await runtime.start();
-    const created = await createUser(app.db, { trusted: true,
+    const created = await createUser(app.db, { origin: "seed", trusted: true,
       username: "priya",
       email: "priya@forge.local",
       password: "a-good-passphrase",

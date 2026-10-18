@@ -1,6 +1,6 @@
 /**
  * With `signup` closed (or `invite`, which acts as closed), no new account is
- * made by any door; the forge's first always is; a switch is live.
+ * made by any door, the forge's first neither; a switch is live.
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -13,6 +13,7 @@ import { setSignup, type SignupMode } from "../src/settings/signup.ts";
 import { signUp, signUpWithPasskey } from "../src/actions/users.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 const TOKEN = "edge-secret-0123456789";
 const edge = (login: string) => ({ "x-plat-user": login, "x-plat-edge-token": TOKEN });
@@ -45,11 +46,11 @@ describe("closed signup", () => {
     });
   const me = (login: string) => fetch(`${base}/api/v1/user`, { headers: edge(login) });
 
-  test("the first account is made even when closed", async () => {
+  test("a fresh forge's first account is refused while closed, like any other", async () => {
     mode("closed");
-    const first = await me("founder");
-    expect(first.status).toBe(200);
-    expect(((await first.json()) as { isAdmin: boolean }).isAdmin).toBe(true);
+    expect((await me("founder")).status).toBe(401);
+    expect((await post("founder")).status).toBe(403);
+    expect(getUserByName(app.db, "founder")).toBeUndefined();
   });
 
   for (const closed of ["closed", "invite"] as const) {
@@ -73,6 +74,8 @@ describe("closed signup", () => {
   }
 
   test("existing accounts still sign in through the edge when closed", async () => {
+    mode("open");
+    expect((await me("founder")).status).toBe(200);
     mode("closed");
     expect((await me("founder")).status).toBe(200);
   });
@@ -111,9 +114,9 @@ describe("closed signup", () => {
     expect(getUserByName(app.db, "formed")).toBeUndefined();
 
     const input = { username: "direct", email: "d@example.com" };
-    const key = await signUpWithPasskey(app, { ...input, passkey: {} as never, passkeyName: "k" });
+    const key = await signUpWithPasskey(app, { ...input, passkey: {} as never, passkeyName: "k" }, { slot: fixtureSlot(app) });
     expect(key).toEqual({ ok: false, error: "signup_closed" });
-    const terminal = await signUp(app, { ...input, password: "a-good-passphrase" }, { door: "terminal" });
+    const terminal = await signUp(app, { ...input, password: "a-good-passphrase" }, { slot: fixtureSlot(app) });
     expect(terminal).toEqual({ ok: false, error: "signup_closed" });
     expect(getUserByName(app.db, "direct")).toBeUndefined();
   });

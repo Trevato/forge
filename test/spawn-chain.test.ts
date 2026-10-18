@@ -55,7 +55,7 @@ describe("the chain of forges", () => {
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "forge-chain-"));
     root = createApp({ dataDir: dir, url: "https://root.test", port: 0, forgeRepo: "alice/forge-code" });
-    const alice = await createUser(root.db, { trusted: true, username: "alice", email: "a@x.test", isAdmin: true });
+    const alice = await createUser(root.db, { origin: "seed", trusted: true, username: "alice", email: "a@x.test", isAdmin: true });
     if (!alice.ok) throw new Error("user");
     const made = await createRepo(root, alice.value, { name: "forge-code", visibility: "public" });
     if (!made.ok) throw new Error("repo");
@@ -160,7 +160,7 @@ describe("the chain of forges", () => {
     const got = (await (await fetch(`${servers.url}/api/v1/repos/tot/forge/following`, { headers: bearer(owner.id) })).json()) as any;
     expect(got.chain.map((l: any) => l.repo)).toEqual(["alice/forge-code", "kid/forge", "tot/forge"]);
     expect(got.severedAt).toBeNull();
-    const reader = await createUser(grand.db, { trusted: true, username: "apireader", email: "ar@x.test" });
+    const reader = await createUser(grand.db, { origin: "seed", trusted: true, username: "apireader", email: "ar@x.test" });
     if (!reader.ok) throw new Error("reader");
     const denied = await fetch(`${servers.url}/api/v1/repos/tot/forge/following/sever`, { method: "POST", headers: bearer(reader.value.id) });
     expect(denied.status).toBeGreaterThanOrEqual(401);
@@ -188,7 +188,7 @@ describe("the chain of forges", () => {
     expect((await forgeLinkOf(grand))?.severedAt).toBeUndefined();
     const cross = await fetch(url, { method: "POST", headers: { cookie, origin: "https://evil.test" }, body: body("sever"), redirect: "manual" });
     expect(cross.status).toBeGreaterThanOrEqual(400);
-    const reader = await createUser(grand.db, { trusted: true, username: "reader", email: "r@x.test" });
+    const reader = await createUser(grand.db, { origin: "seed", trusted: true, username: "reader", email: "r@x.test" });
     if (!reader.ok) throw new Error("reader");
     const theirs = `forge_session=${createSession(grand.db, reader.value.id).token}`;
     await fetch(url, { method: "POST", headers: { cookie: theirs, origin: servers.url }, body: body("sever"), redirect: "manual" });

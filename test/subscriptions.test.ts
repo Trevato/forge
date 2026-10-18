@@ -31,6 +31,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { isRateLimited, resumeAt } from "../src/crew/limits.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 const OAT = "sk-ant-oat01-personal-token-for-the-test";
 const KEY = "sk-ant-api03-work-key-for-the-test";
@@ -317,7 +318,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Added CREW
       budgetUsd: 2,
       runTimeoutMs: 60_000,
     });
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -480,16 +481,11 @@ describe("the pages", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const signed = await fetch(`${base}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username: "ada",
-        email: "ada@forge.example",
-        password: "analytical-engine",
-      }),
-      redirect: "manual",
+    cookie = await adminCookie(app, {
+      username: "ada",
+      email: "ada@forge.example",
+      password: "analytical-engine",
     });
-    cookie = (signed.headers.get("set-cookie") ?? "").split(";")[0]!;
     ada = (await import("../src/core/users.ts")).getUserByName(app.db, "ada")!;
     const created = await createRepo(app, ada, {
       name: "hello",

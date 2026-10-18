@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -81,7 +82,7 @@ describe("proposal tokens on the settings page", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    owner = await signup("ada");
+    owner = await adminCookie(app, { username: "ada", email: "ada@f.dev", password: "proposal-password" });
     stranger = await signup("bob");
     await post(owner, "/new", { name: "lib", visibility: "public", description: "d" });
   });

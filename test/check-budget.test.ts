@@ -45,6 +45,7 @@ test("the summary names the thing, the time and the limit", () => {
 
 test("a check past its budget is re-queued once; the second overrun fails it and is a card", async () => {
   const u = await createUser(app.db, {
+    origin: "seed",
     trusted: true,
     username: "alice",
     email: "alice@forge.local",

@@ -131,6 +131,7 @@ describe("milestones", () => {
       ["bob", false],
     ] as const) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,

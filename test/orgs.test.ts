@@ -25,6 +25,7 @@ import { createRepo, getRepo } from "../src/core/repos.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "O",
@@ -47,22 +48,22 @@ describe("org & team core", () => {
   });
 
   test("permission resolves to the highest team a member is on", async () => {
-    const founder = await createUser(app.db, { trusted: true,
+    const founder = await createUser(app.db, { origin: "seed", trusted: true,
       username: "founder",
       email: "f@f.dev",
       password: "org-core-pass",
     });
-    const dev = await createUser(app.db, { trusted: true,
+    const dev = await createUser(app.db, { origin: "seed", trusted: true,
       username: "dev",
       email: "d@f.dev",
       password: "org-core-pass",
     });
-    const reader = await createUser(app.db, { trusted: true,
+    const reader = await createUser(app.db, { origin: "seed", trusted: true,
       username: "reader",
       email: "r@f.dev",
       password: "org-core-pass",
     });
-    const outsider = await createUser(app.db, { trusted: true,
+    const outsider = await createUser(app.db, { origin: "seed", trusted: true,
       username: "outsider",
       email: "o@f.dev",
       password: "org-core-pass",
@@ -215,6 +216,9 @@ describe("orgs over HTTP", () => {
         password: "org-http-pass",
       }),
     });
+    return tokenOf(username);
+  }
+  async function tokenOf(username: string): Promise<string> {
     return fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -235,7 +239,8 @@ describe("orgs over HTTP", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    founderToken = await mkUser("boss");
+    await seedAdmin(app, { username: "boss", email: "boss@f.dev", password: "org-http-pass" });
+    founderToken = await tokenOf("boss");
     devToken = await mkUser("worker");
   });
   afterAll(async () => {

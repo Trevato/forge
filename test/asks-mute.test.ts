@@ -77,6 +77,7 @@ describe("muting a repository's asks", () => {
     servers = await serve(app);
     for (const name of ["alice", "bob"]) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username: name,
         email: `${name}@forge.local`,

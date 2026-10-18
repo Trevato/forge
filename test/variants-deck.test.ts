@@ -9,6 +9,7 @@ import { listComments } from "../src/core/issues.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 const gitEnv = gitClientEnv();
 
@@ -69,7 +70,7 @@ describe("a deck chooses among sibling pulls", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    ownerCookie = await signUp("dev");
+    ownerCookie = await adminCookie(app, { username: "dev", email: "dev@f.dev", password: "variants-deck-pass" });
     readerCookie = await signUp("reader");
     const token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",

@@ -73,6 +73,7 @@ describe("a review that comes back with no verdict", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-review-retry-"));
     app = createApp({ dataDir, port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

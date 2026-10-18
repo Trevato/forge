@@ -90,7 +90,7 @@ describe("a plan says what each issue is for", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.local",
       password: "a-good-passphrase",
@@ -376,7 +376,7 @@ describe("whose issue stands for a pillar", () => {
       : { error: undefined, value: JSON.parse(text) };
   };
   const person = async (username: string): Promise<User> => {
-    const made = await createUser(app.db, { trusted: true,
+    const made = await createUser(app.db, { origin: "seed", trusted: true,
       username,
       email: `${username}@forge.local`,
       password: "a-good-passphrase",

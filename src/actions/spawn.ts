@@ -52,7 +52,7 @@ import { Database } from "bun:sqlite";
 import { loadKey, open } from "../kernel/secret.ts";
 import { loadOrCreateHostKey } from "../ssh/keys.ts";
 import { claimLink, hasAdmin, mintClaim, spawnedOrg } from "../spawn/claim.ts";
-import { childPublicUrl, type Placement } from "../spawn/placement.ts";
+import { childPublicUrl, parentOrigin, type Placement } from "../spawn/placement.ts";
 import { planSpawn, type SpawnInput, type SpawnPlan, type SpawnSource } from "../spawn/plan.ts";
 import { chainForChild, DEFAULT_MODE, forgeLinkOf, type FollowMode, type Hop } from "../spawn/chain.ts";
 import { requireUser } from "./access.ts";
@@ -130,13 +130,9 @@ export const childDirOf = (app: App, bodyId: string): string =>
 const ledgerPath = (app: App, name: string): string =>
   join(app.config.dataDir, "spawn", `${name}.json`);
 
-/** Parent public host for deriving child URLs (ignores stale ledger.url). */
-const parentHostOf = (app: App): string =>
-  app.config.url ? new URL(app.config.url).host : (app.config.host ?? "localhost");
-
-/** Live child URL from name + parent host — old subdomain ledgers still resolve. */
+/** Live child URL from name + the parent's origin (ignores stale ledger.url), so old subdomain ledgers still resolve. */
 export const liveChildUrl = (app: App, name: string): string =>
-  childPublicUrl(name, parentHostOf(app));
+  childPublicUrl(name, parentOrigin(app.config));
 
 async function readLedger(app: App, name: string): Promise<Ledger | undefined> {
   const file = Bun.file(ledgerPath(app, name));
@@ -305,6 +301,7 @@ async function copyInto(
           // name they already hold there.
           trusted: true,
           allowReserved: true,
+          origin: "spawn",
         });
         return made.ok ? made.value : undefined;
       })());
@@ -382,6 +379,7 @@ async function copyInto(
         username: b.agent,
         email: `${b.agent}@agents.spawn.forge.invalid`,
         agent: true,
+        origin: "spawn",
       });
       if (!made.ok) return err(`could not make crew member ${b.agent}: ${made.error}`);
       createAgentRow(child.db, { userId: made.value.id, brief: b.text, createdBy: founder.id });

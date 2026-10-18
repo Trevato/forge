@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { listEvents } from "../src/core/events.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 /**
  * Review states: the verdict that gates a merge.
@@ -51,6 +52,10 @@ describe("review states, and the merge they gate", () => {
         password: PASSWORD,
       }),
     });
+    await mintToken(username);
+  }
+
+  async function mintToken(username: string): Promise<void> {
     const token = await read<{ token: string }>(
       await fetch(`${base}/api/v1/tokens`, {
         method: "POST",
@@ -91,7 +96,9 @@ describe("review states, and the merge they gate", () => {
     servers = await serve(app);
     base = servers.url;
 
-    for (const who of ["ada", "bob", "cas"]) await mkUser(who);
+    await seedAdmin(app, { username: "ada", email: "ada@f.dev", password: PASSWORD });
+    await mintToken("ada");
+    for (const who of ["bob", "cas"]) await mkUser(who);
 
     // An org, so there is more than one writer: a repo with one owner cannot
     // express "somebody else approved this".

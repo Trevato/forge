@@ -43,7 +43,12 @@ bun install          # dev-only: types + tsc (native, 7.x), no runtime deps
 bun run src/main.ts  # web on :3000, ssh on :2222 (FORGE_SSH_PORT=0 turns it off; a taken port turns it off with one warning)
 bun src/main.ts --preflight  # can this tree boot? config parses, migrations run on a copy of the database; one line, exit 0 or 1, no socket opened. Run it before the swap, not under load: the copy is not atomic against a live writer, and a `preflight-*` directory a killed run left behind is swept by the next run once an hour old, and a missing data directory is created, as boot would
 bun src/main.ts --rollback <sha>  # swap back to a kept release: a full 40-hex sha under $FORGE_DATA/releases/, PORT as the running forge's. Exit 0 once that release reads healthy as that sha, else 1 with one line
+bun src/main.ts --first-admin  # a forge with no admin: print a one-time code that makes one (below)
 ```
+
+Apps and agent runs are contained only where `bwrap` (bubblewrap) and `socat`
+are on `PATH` (Linux); without them they run uncontained, and the boot log says
+so. The crew also needs the `claude` CLI and a model credential.
 
 Set `FORGE_REPO=owner/name` to the forge's own code and a pull the crew lands there is written to `$FORGE_DATA/releases/<sha>/` (the newest `FORGE_RELEASES_KEEP`, default 5, are kept), preflighted with that tree's own `--preflight`, and recorded in the `release` table (sha, landed pull, verdict, its line, when). A red preflight is asked again once (the copy of the live database can tear under load); a second red is logged and told to the landed pull. Other repositories are untouched, and nothing is swapped unless `FORGE_SELF_SWAP=1`: then the forge binds its port with SO_REUSEPORT, a green release is started from `releases/<sha>/` beside it on the same port (`FORGE_COMMIT` set to the sha), `/api/v1/health` is read until an answer names that sha and is well (`FORGE_SWAP_BUDGET_S`, default 60), and only then does this process drain as a SIGTERM does — except that it stops accepting at once, so every new connection is the release's, and answers what it already holds (a long push or clone) to the end, for up to five minutes, before it closes. A release not healthy in its budget is killed, the old keeps serving, and the log and the landed pull say so. One swap per process: a landing while another swap is in its budget, or after one succeeded, is released and recorded but not started (the new process runs it from the next restart). The SSH terminal is not handed over yet (the new process cannot bind the old one's port), so a process holding the SSH listener refuses the swap and tells the landed pull; run with `FORGE_SSH_PORT=0` to swap. The swap also needs `net.ipv4.tcp_migrate_req=1` (Linux 5.14+): without it the kernel resets the connections still queued on the old listener when it closes, so a swap is refused (and told to the landed pull) rather than failing requests. The release is a child of the old process, so the swap is for a forge run directly, not under a supervisor that kills its children when the old process exits (PID 1 of a container, a systemd unit with the default `KillMode=control-group`). SO_REUSEPORT lets any process of the forge's user bind the same port and take a share of its connections, so `FORGE_SELF_SWAP=1` assumes nothing else runs as the forge's user on the host network (agents and apps are sandboxed or in cells). `--rollback <sha>` starts the kept release beside the running forge by the same health-read swap (`FORGE_SWAP_BUDGET_S` does not apply: it waits the default 60s), and a release that is not healthy is killed with the old still serving. It refuses, with one line and exit 1, a sha that is not kept (never checked out, or pruned) and a release whose schema has fewer migrations than the live database has applied (`<sha> predates schema N; rolling back would need a down-migration`); a release with a newer schema is allowed, as it migrates forward on boot, and the database's refusal of a future schema is unchanged. It does not drain the forge that was serving: until part 2 of the rollback does, both processes share the port and the operator stops the old one (the command prints that). It does not check `tcp_migrate_req` or SSH either; stopping the old process cleanly needs the same `net.ipv4.tcp_migrate_req=1` setup as the swap, and the SSH port stays with the old process. `/releases` lists the kept releases (short sha, landed pull, when, and since when the live one has been healthy: this process's start); a person who writes the `FORGE_REPO` repository (never an agent: the button is hidden and the POST is a 403) gets a Roll back button on a kept, schema-compatible release, which runs the same refusals and swap and then drains this process (so it needs `FORGE_SELF_SWAP=1`); only readers of that repository and site admins see the page and the home line (anyone else gets a 404), and the forge's SSH terminal has the same, gated the same (`src/release/gate.ts`): the palette's `Releases` shows `live: <sha> since <time>` and the kept releases, only to those readers, and Enter on a rollable release asks to confirm then runs the same rollback as the button (a person who writes the repository only, never an agent; told when `FORGE_SELF_SWAP` is off); the home carries a `live: <sha> since <time>` line linking there. `FORGE_REPO` also names the parent code that spawned child forges fork.
 
@@ -55,16 +60,27 @@ refuses every form a browser posts to `localhost`: run it with
 `env -u FORGE_URL bun run src/main.ts`, or set `FORGE_URL` to wherever you
 will actually browse it.
 
-The first account you create becomes the admin — from the browser, the API, or
-a terminal (`ssh -p 2222 localhost` on a fresh forge offers to create it). Then:
+No sign-up makes the admin, not even the forge's first, and that first one is
+held to the signup setting and Turnstile like any other. Accounts sign up with
+a passkey and an email address (there is no password signup), and the browser
+at `/signup`, the API and the terminal all make an account that is not an
+admin. The site admin is made from the operator's terminal with
+`--first-admin`, which needs no browser at all and works whatever signup says,
+or, on a spawned child, by its `/claim` link (code that sets a forge up
+directly, like test fixtures, seeds one):
 
 ```sh
-# mint a token, create a repo, push to it
-curl -sX POST localhost:3000/api/v1/users \
-  -d '{"username":"you","email":"you@forge.dev","password":"a-good-passphrase"}'
+# One-time code, printed only here: works once, for 15 minutes, and never once
+# anyone is admin. --child <name> mints for a child this forge hosts; --url
+# names the address to print. The forge keeps only its hash. Run it beside
+# the running forge with the same FORGE_DATA (and PORT, or --url, for the
+# link); before the forge's first boot there is no database and it refuses.
+bun src/main.ts --first-admin
 
-TOKEN=$(curl -sX POST localhost:3000/api/v1/tokens \
-  -d '{"username":"you","password":"a-good-passphrase","name":"cli","scope":"rw"}' \
+# A person opens the printed link and makes the admin with a passkey.
+# A headless agent trades the part after "#" for a token instead:
+TOKEN=$(curl -sX POST localhost:3000/api/v1/first-admin \
+  -d '{"code":"<code>","username":"you","email":"you@forge.dev","scope":"rw"}' \
   | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
 
 curl -sX POST localhost:3000/api/v1/repos -H "authorization: Bearer $TOKEN" \
@@ -72,6 +88,50 @@ curl -sX POST localhost:3000/api/v1/repos -H "authorization: Bearer $TOKEN" \
 
 git clone "http://you:$TOKEN@localhost:3000/you/hello.git"
 ```
+
+`POST /api/v1/first-admin` takes `{code, username, email, scope, name?,
+expiresIn?}` (`scope` is `ro`, `rw` or `admin`; `name` names the token) and
+answers 201 once with `{user, scope, id, token, expiresAt, expiresIn}`. The
+token always expires: in a day (86400 seconds) unless `expiresIn` asks for
+whole seconds from 60 to 2592000 (30 days); anything else is 422
+`invalid_expiry` and spends nothing. The account has no password or passkey and
+a token cannot mint tokens, so once its token lapses it cannot sign in.
+
+If that leaves no admin with a working credential (no password, passkey,
+unexpired token, live session, SSH key or sign-in with the parent), running
+`--first-admin` again prints a recovery code for the stranded admin instead
+(`--user <name>` picks one when there are several). It has the same rules: it
+works once, for 15 minutes, only its hash is kept, and it is rate-limited. Send
+it to `POST /api/v1/first-admin/recover` with `{code, scope, name?, expiresIn?}`
+and you get back a new expiring token for that existing admin, in the same
+shape as above. No account is made, and each kind of code is refused at the
+other's door. The command refuses, and a live code dies, as long as any admin
+can still sign in. The audit records it as `user.recovered` with
+`via: first-admin-recovery`. Every refusal of the code (wrong, used, expired,
+replaced, or the forge already has an admin) is the same 403. Every attempt, at
+either door, is counted before the code is read, per address and for the whole
+forge, at the sign-in limits (429 past them). The account made is in the audit
+as `user.created` `via: first-admin`, and the sign-in page links `/first-admin`
+only while the forge has no admin. Later tokens come from Settings → Tokens, or
+`POST /api/v1/tokens` from a signed-in session with `{"name", "scope"}`; the
+admin adds `"adminConfirm": true` to mean a token that acts as admin.
+
+The same token spawns a child forge (`dryRun` is true unless `false`, so
+without it you get the plan and nothing is made). The child's admin comes
+from the operator's `--first-admin --child`, or from the `claimUrl` the spawn
+answers once:
+
+```sh
+curl -sX POST localhost:3000/api/v1/forges -H "authorization: Bearer $TOKEN" \
+  -d '{"name":"kid","dryRun":false}'
+# {…, "url":"http://kid--localhost:3000", "claimUrl":"http://kid--localhost:3000/claim#…"}
+bun src/main.ts --first-admin --child kid
+```
+
+The child keeps this forge's scheme and port at `<name>--<host>`, on its own
+data under `$FORGE_DATA/children/`. Browsers send `*.localhost` to this
+machine; curl needs `--resolve kid--localhost:3000:127.0.0.1`. The rest is in
+`docs/SPAWN.md`.
 
 The commits the forge writes for you — merges, squashes, reverts, web edits —
 carry `you@users.noreply.<forge host>`, never your account email. Choosing your
@@ -269,8 +329,8 @@ allows `https://challenges.cloudflare.com`, and signup asks Cloudflare's
 siteverify about the posted `cf-turnstile-response` (API: `turnstile_token`),
 refusing a missing or bad token before it hashes a password or makes an
 account. Unset, signup is open. The terminal (SSH) cannot show a widget, so
-with Turnstile on it can create only the first account (the admin); everyone
-else is told to sign up on the web page. Accounts made through the platform edge are not checked. Behind a
+with Turnstile on it creates no account, the forge's first neither; everyone
+is told to sign up on the web page. Accounts made through the platform edge are not checked. Behind a
 proxy, `FORGE_TRUSTED_PROXIES` (comma-separated CIDR ranges, e.g.
 `10.42.0.0/16` for a k3s ingress) names the proxies allowed to say who the
 client is; limits for strangers and the signup audit then see each outside
@@ -1381,7 +1441,7 @@ Every limit the owner can hit is declared in `src/settings/limits.ts` with its d
 
 Per-account quotas (`src/settings/quotas.ts`) — how many `repositories` and `apps` one account may own, how many `previews`, `runs` and `checks` it may have going at once — are set the same way: **Account quotas** on `/admin/limits`, `GET`/`PATCH /api/v1/admin/settings` (`{"quotas": {"repositories": 5, "apps": null}}`) or the `quotas` MCP tool (dry by default, admin scope, never an agent). A value is a positive whole number, or empty/`null` for no limit, which is the default; anything else is a 422. Every change is kept with who made it and listed beside the form. The `apps` limit is enforced (`src/actions/app_limit.ts`): with one set, an account owning that many apps is refused one more, unless the actor is a forge admin; with none set nothing is asked. The check and the insert are separate statements, so two concurrent creates can pass by one. The refusal reads "This account is at its limit: 3 of 3 apps. Remove one to make room." and each door answers it its own way: the API (`POST /api/v1/apps` and `POST /api/v1/repos/:owner/:name/app`) a 403 `{"error": "app_limit", "message", "limit", "count"}`; the new-app page and the app settings form a 422 with the sentence on the form; make-it-yours the same sentence as an invalid error, before the fork, so no repository is left behind. The `repositories` limit is enforced too (`src/actions/repos.ts`): with one set, an account owning that many repositories (sealed forks are not counted) is refused one more by create, fork, make-it-yours, mirror, migrate and new app, before anything is made on disk. Forge admins and agents are exempt, and creating under an organisation is not counted: the quota is per account, so only a repository the actor owns itself is asked. The refusal reads "2 of 2 repositories"; the API answers 403 `{"error": "repository_limit", "message"}`, the pages say "Not made: 2 of 2 repositories." on the form (a 422), and the terminal shows it as a toast. The check and the insert are separate statements here as well, so two concurrent creates can pass by one. The `storage` limit (megabytes, `src/core/storage.ts`) bounds the bare repositories an account owns plus its apps' data: a push, create, fork, make-it-yours, mirror, migrate or new app by a non-admin, non-agent account at the limit is refused before anything is written (the account asked is the owner the repository would belong to, an organisation included); a push is refused before git runs, as a git error over HTTP and SSH ("storage limit reached: 1.9 GB of 2 GB"), and a push that would pass it is capped inside git (`receive.maxInputSize` = the room left) so it is stopped in quarantine and the repository is as it was. Every other door answers a refusal as `storage_limit`, not `repository_limit`: the API a 403 `{"error": "storage_limit", "message"}` with the message "…storage limit: 1.9 GB of 2 GB", the pages "Not made: …" on the form (a 422), the terminal a toast. A mirror's periodic sync fetch and a migrate import mark the figure stale without walking the disk, so the next check measures again and no account can mirror past the limit unseen; the one fetch that crosses the limit is let in, the next create is refused. The figure is cached per account in memory and re-measured in the background after each push, walked on the request path only when it must be: the first look at an account waits for one walk, and so does the first check after a push, create, fork, mirror or delete changed the disk (a walk already under way is joined, not repeated). An account found at its limit is measured again before it is refused, so a deletion frees it with no restart, but at most once every 5 seconds, so retries by a locked-out client do not scan the disk. Two pushes at once can each pass. Three more limits bound what an account has going at once, each unset by default and never asked of a forge admin: `previews` (live previews), `runs` (concurrent agent runs) and `checks` (concurrent checks), counted across the account's repositories and asked before the thing starts. A preview past its limit does not start: its deploy run — the check the pull shows — fails with "not started: 1 of 1 live previews", and a sleeping preview stays asleep when woken at the limit. A run or check past its limit stays queued, with "queued, not started: 1 of 1 concurrent runs" (or "concurrent checks") in its log, and starts when one of the account's own ends; none is dropped. An admin sets the three running limits exactly like the other two: the `previews`, `runs` and `checks` fields on `/admin/limits`, or `{"quotas": {"previews": 3, "runs": 2, "checks": 1}}` to `PATCH /api/v1/admin/settings`. In the terminal the same admin opens the command palette (`ctrl+k`), picks Account quotas, and sees every key with its limit and last change; enter sets one (empty for no limit), `x` clears it, both through the same validation.
 
-The forge setting `signup` (`src/settings/signup.ts`) is `open`, `invite` or `closed`, and `open` is the default. A forge admin who is a person changes it live — **Signup** on `/admin/limits`, `PATCH /api/v1/admin/settings` (`{"signup":"closed"}`) or the `signup` MCP tool (dry by default, admin scope, never an agent) — with no restart; any other value is a 422. `FORGE_SIGNUP` sets it at boot, and a wrong value stops the boot with a plain message; while it stays set, every restart or deploy writes it again over a change made on the page (kept as a change by `boot`), so unset it to let the page decide. Every change is kept with who made it and when, and listed beside the form. While signup is `closed` (and `invite`, until #1143), `/signup` is one sentence with no form, the API and passkey signup answer 403 `signup_closed`, the terminal offers no Create account and refuses, and a first edge sign-in for a new name is 401. Existing accounts still sign in, and the forge's first account is always made.
+The forge setting `signup` (`src/settings/signup.ts`) is `open`, `invite` or `closed`, and `open` is the default. A forge admin who is a person changes it live — **Signup** on `/admin/limits`, `PATCH /api/v1/admin/settings` (`{"signup":"closed"}`) or the `signup` MCP tool (dry by default, admin scope, never an agent) — with no restart; any other value is a 422. `FORGE_SIGNUP` sets it at boot, and a wrong value stops the boot with a plain message; while it stays set, every restart or deploy writes it again over a change made on the page (kept as a change by `boot`), so unset it to let the page decide. Every change is kept with who made it and when, and listed beside the form. While signup is `closed` (and `invite`, until #1143), `/signup` is one sentence with no form, the API and passkey signup answer 403 `signup_closed`, the terminal offers no Create account and refuses, and a first edge sign-in for a new name is 401. Existing accounts still sign in. A fresh forge's first account is held to the setting too; the operator's `--first-admin` link and a spawned forge's claim make the admin whatever it says.
 
 ## Choosing among variants
 

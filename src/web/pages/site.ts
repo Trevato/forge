@@ -29,7 +29,7 @@ import { homeTop } from "../studio/asks_page.ts";
 import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
-import { signupWindow } from "../../actions/signup-window.ts";
+import { SignupSlot, signupWindow } from "../../actions/signup-window.ts";
 import { RateLimiter } from "../../core/ratelimit.ts";
 import { field, readForm } from "../form.ts";
 import { passkeyJs } from "../passkey-client.ts";
@@ -332,8 +332,8 @@ function authForm(
         firstAccount,
         () =>
           html`<p class="muted small mb">
-            This forge has no accounts yet — the first account becomes the site
-            admin.
+            This forge has no accounts yet. Accounts made here are not admins:
+            the operator makes the site admin.
           </p>`,
       )}
       <div class="form-actions">
@@ -359,8 +359,9 @@ function authForm(
 
   // A spawned forge nobody has claimed yet: its person may arrive here with
   // the code from their link but not the link itself (#730).
+  const unowned = !hasAdmin(ctx.app.db);
   const claimable =
-    existsSync(join(ctx.app.config.dataDir, "parent.json")) && !hasAdmin(ctx.app.db);
+    existsSync(join(ctx.app.config.dataDir, "parent.json")) && unowned;
   return html`<div class="narrow">
     ${pageHead(kind === "signin" ? "Sign in" : "Create your account")}
     ${card(body)}
@@ -384,6 +385,11 @@ function authForm(
     ${claimable
       ? html`<p class="muted small mt" id="claim-door">
           Was this forge made for you? <a href="/claim">Claim it with your code</a>.
+        </p>`
+      : null}
+    ${kind === "signin" && unowned
+      ? html`<p class="muted small mt" id="first-admin-door">
+          Have a first-admin code from this forge's operator? <a href="/first-admin">Use it</a>.
         </p>`
       : null}
   </div>`;
@@ -477,6 +483,11 @@ export function signupAllowed(ctx: Ctx): number | undefined {
   return signupWindow(ctx.app, clientAddress(ctx.request));
 }
 
+/** The same window, as the slot a stranger's account is made with, or the seconds to wait. */
+export function signupSlot(ctx: Ctx): SignupSlot | number {
+  return SignupSlot.take(ctx.app, clientAddress(ctx.request));
+}
+
 export async function signinSubmit(ctx: Ctx): Promise<Response> {
   // Posted by people with no account yet: a stranger's form.
   const form = await readForm(ctx, undefined, STRANGER_MAX);
@@ -555,8 +566,9 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const username = field(form, "username");
   const email = field(form, "email");
-  const wait = signupAllowed(ctx);
-  if (wait !== undefined) {
+  const slot = signupSlot(ctx);
+  if (typeof slot === "number") {
+    const wait = slot;
     const response = page(
       {
         ctx,
@@ -583,7 +595,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       password: field(form, "password"),
       humanToken: field(form, "cf-turnstile-response"),
     },
-    { address: clientAddress(ctx.request) },
+    { slot, address: clientAddress(ctx.request) },
   );
   if (!created.ok) {
     if (created.error === "signup_closed") return signupClosedPage(ctx);

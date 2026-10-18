@@ -20,6 +20,7 @@ import {
 import type { User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { missing } from "./helpers/tools.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
 
 /** Real keys come from real ssh-keygen; without it these skip, loudly. */
 const NO_KEYGEN = missing("ssh-keygen");
@@ -61,12 +62,12 @@ describe.skipIf(NO_KEYGEN)("ssh keys", () => {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    });
+    }, { slot: fixtureSlot(app) });
     const b = await signUp(app, {
       username: "bob",
       email: "bob@forge.test",
       password: "a-long-passphrase",
-    });
+    }, { slot: fixtureSlot(app) });
     if (!a.ok || !b.ok) throw new Error("signup failed");
     alice = a.value;
     bob = b.value;

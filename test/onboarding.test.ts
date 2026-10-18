@@ -5,6 +5,7 @@ import { join, relative } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "N",
@@ -40,16 +41,11 @@ describe("onboarding: a person with just a login", () => {
     servers = await serve(app);
     base = servers.url;
     port = servers.port;
-    const signup = await fetch(`${base}/signup`, {
-      method: "POST",
-      body: form({
-        username: "nora",
-        email: "n@f.dev",
-        password: "nora-login-secret",
-      }),
-      redirect: "manual",
+    cookie = await adminCookie(app, {
+      username: "nora",
+      email: "n@f.dev",
+      password: "nora-login-secret",
     });
-    cookie = (signup.headers.get("set-cookie") ?? "").split(";")[0]!;
   });
 
   afterAll(async () => {
@@ -222,16 +218,11 @@ describe("a forge booted from a relative data dir still accepts pushes", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     port = servers.port;
-    const signup = await fetch(`${servers.url}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username: "rel",
-        email: "r@f.dev",
-        password: "rel-secret",
-      }),
-      redirect: "manual",
+    cookie = await adminCookie(app, {
+      username: "rel",
+      email: "r@f.dev",
+      password: "rel-secret",
     });
-    cookie = (signup.headers.get("set-cookie") ?? "").split(";")[0]!;
   });
 
   afterAll(async () => {

@@ -49,6 +49,7 @@ describe("new words for an issue or a pull", () => {
 
   const person = async (username: string): Promise<User> => {
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username,
       email: `${username}@forge.local`,

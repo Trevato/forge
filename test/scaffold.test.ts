@@ -172,6 +172,7 @@ describe("a scaffolded app signs a person in through the forge", () => {
     const forge = createApp({ dataDir: join(root, "forge"), port: 0 });
     const servers = await serve(forge);
     const made = await createUser(forge.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

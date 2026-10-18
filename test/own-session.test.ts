@@ -34,6 +34,7 @@ describe("a forge with no platform edge", () => {
     servers = await serve(app);
     base = servers.url;
     const made = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "olive",
       email: "olive@f.dev",

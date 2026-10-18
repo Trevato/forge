@@ -35,6 +35,7 @@ describe("the drill's verdict", () => {
     root = mkdtempSync(join(tmpdir(), "forge-verdict-"));
     app = createApp({ dataDir: join(root, "live"), port: 0 });
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",

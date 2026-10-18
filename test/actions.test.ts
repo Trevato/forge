@@ -32,8 +32,9 @@ import { listEvents } from "../src/core/events.ts";
 import { getOrg, listTeams, OWNERS_TEAM } from "../src/core/orgs.ts";
 import { getPull } from "../src/core/pulls.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
-import type { User } from "../src/core/users.ts";
+import { createUser, type User } from "../src/core/users.ts";
 import { promote } from "./helpers/members.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 /** Event kinds in chronological order (listEvents returns newest first). */
 const kinds = (app: App, repoId?: string) =>
@@ -81,8 +82,8 @@ describe("actions own authorization and events", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("signing up records user.created; the first account is admin", () => {
-    expect(alice.isAdmin).toBe(true);
+  test("signing up records user.created; no sign-up is the admin, the first neither", () => {
+    expect(alice.isAdmin).toBe(false);
     expect(bob.isAdmin).toBe(false);
     expect(kinds(app).filter((k) => k === "user.created")).toHaveLength(2);
   });
@@ -317,13 +318,13 @@ describe("actions own authorization and events", () => {
 });
 
 describe("sign-up races", () => {
-  test("two simultaneous first sign-ups yield exactly one admin", async () => {
+  test("two simultaneous first accounts made admin if first yield exactly one admin", async () => {
     const dir = await mkdtemp(join(tmpdir(), "forge-race-"));
     const fresh = createApp({ dataDir: dir });
     try {
       const [a, b] = await Promise.all([
-        signUp(fresh, { username: "one", email: "one@x.io", password: "a-good-passphrase" }),
-        signUp(fresh, { username: "two", email: "two@x.io", password: "a-good-passphrase" }),
+        createUser(fresh.db, { origin: "seed", adminIfFirst: true, username: "one", email: "one@x.io", password: "a-good-passphrase" }),
+        createUser(fresh.db, { origin: "seed", adminIfFirst: true, username: "two", email: "two@x.io", password: "a-good-passphrase" }),
       ]);
       if (!a.ok || !b.ok) throw new Error("sign-ups failed");
       expect([a.value.isAdmin, b.value.isAdmin].filter(Boolean)).toHaveLength(1);
@@ -356,7 +357,7 @@ describe("free-text caps", () => {
     const dir = await mkdtemp(join(tmpdir(), "forge-caps-"));
     const fresh = createApp({ dataDir: dir });
     try {
-      const u = await signUp(fresh, { username: "cap", email: "cap@x.io", password: "a-good-passphrase" });
+      const u = await seedAdmin(fresh, { username: "cap", email: "cap@x.io", password: "a-good-passphrase" });
       if (!u.ok) throw new Error("sign-up failed");
       const r = await createRepo(fresh, u.value, { name: "caps", visibility: "public" });
       if (!r.ok) throw new Error("repo failed");

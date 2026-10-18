@@ -8,7 +8,6 @@ import { updateRepoSettings } from "../src/actions/repos.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { openIssue } from "../src/actions/issues.ts";
 import { setAssignee } from "../src/core/issues.ts";
-import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
@@ -17,6 +16,7 @@ import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp, settleUntil } from "./helpers/tui.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -55,7 +55,7 @@ describe("archive in the terminal", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-archive-"));
     forge = createApp({ dataDir, port: 0 });
-    const a = await signUp(forge, {
+    const a = await seedAdmin(forge, {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",

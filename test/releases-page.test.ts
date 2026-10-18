@@ -56,6 +56,7 @@ describe("the releases page", () => {
       ["bob", "another-good-passphrase", false],
     ] as const) {
       const u = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,
@@ -129,6 +130,7 @@ describe("the releases page", () => {
 
   test("an agent that can write the repository gets no button and a 403", async () => {
     const u = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "crew1",
       email: "crew1@forge.local",

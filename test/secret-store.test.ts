@@ -69,7 +69,7 @@ describe("forge-level secrets", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-secret-store-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const a = await createUser(app.db, { trusted: true,
+    const a = await createUser(app.db, { origin: "seed", trusted: true,
       username: "alice",
       email: "alice@forge.test",
       password: "a-good-passphrase",
@@ -77,7 +77,7 @@ describe("forge-level secrets", () => {
     });
     if (!a.ok) throw new Error(a.error);
     alice = a.value;
-    const b = await createUser(app.db, { trusted: true,
+    const b = await createUser(app.db, { origin: "seed", trusted: true,
       username: "bob",
       email: "bob@forge.test",
       password: "a-good-passphrase",

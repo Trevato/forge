@@ -227,7 +227,7 @@ describe("the front page", () => {
     servers = await serve(app);
     base = servers.url;
     const user = async (username: string) => {
-      const made = await createUser(app.db, { trusted: true,
+      const made = await createUser(app.db, { origin: "seed", trusted: true,
         username,
         // Fixtures may name an account after a reserved word on purpose.
         allowReserved: true,
@@ -633,6 +633,7 @@ describe("the front page", () => {
 
   test("a suspended account's app is not on the front page, ranked or pinned", async () => {
     const sus = await createUser(app.db, {
+      origin: "seed",
       username: "suspended-maker",
       email: "suspended-maker@forge.local",
       password: "a-good-passphrase",
@@ -715,7 +716,7 @@ describe("the front page", () => {
     // One app with forks by people, one with ships: which leads depends on
     // what counts.
     const forked = await make(other, "weighed-forks");
-    const forkerA = await createUser(app.db, { trusted: true, username: "forker-a", email: "fa@forge.local", password: "a-good-passphrase" });
+    const forkerA = await createUser(app.db, { origin: "seed", trusted: true, username: "forker-a", email: "fa@forge.local", password: "a-good-passphrase" });
     if (!forkerA.ok) throw new Error(forkerA.error);
     promote(app.db, forkerA.value);
     const forkA = await createRepo(app, forkerA.value, { name: "my-weighed", visibility: "public" });

@@ -18,6 +18,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { hostDir } from "../src/cli/config.ts";
 import { changesBetween, type RepoReport, type SyncReport } from "../src/cli/sync.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const CLI = new URL("../src/cli/main.ts", import.meta.url).pathname;
 
@@ -103,13 +104,10 @@ describe("the local client, against a real forge", () => {
     base = servers.url;
     host = hostDir(base);
 
-    await api("/api/v1/users", {
-      method: "POST",
-      body: JSON.stringify({
-        username: "alice",
-        email: "alice@forge.local",
-        password: "correct horse battery",
-      }),
+    await seedAdmin(app, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "correct horse battery",
     });
     const minted = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",

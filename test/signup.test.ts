@@ -30,6 +30,7 @@ describe("signup setting", () => {
     servers = await serve(app);
     for (const username of ["alice", "bob"]) {
       const made = await createUser(app.db, {
+        origin: "seed",
         trusted: true,
         username,
         email: `${username}@forge.local`,
@@ -191,14 +192,14 @@ describe("signup closed (#2166)", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("the first account is made whatever the setting, by every door", async () => {
+  test("a fresh forge's first account is refused while closed, like any other", async () => {
     setSignup(app.db, "closed", "boot");
     const res = await post({ ...newcomer(), username: "founder", email: "founder@example.com" });
-    expect(res.status).toBe(201);
-    expect(getUserByName(app.db, "founder")?.isAdmin).toBe(true);
+    expect(res.status).toBe(403);
+    expect(getUserByName(app.db, "founder")).toBeUndefined();
   });
 
-  test("a fresh forge's first edge sign-in is made even when closed", async () => {
+  test("a fresh forge's first edge sign-in is refused while closed", async () => {
     const fresh = await mkdtemp(join(tmpdir(), "forge-signup-edge-"));
     const a = createApp({ dataDir: fresh, port: 0, edgeToken: EDGE });
     const s = await serve(a);
@@ -207,7 +208,8 @@ describe("signup closed (#2166)", () => {
       const res = await fetch(`${s.url}/api/v1/user`, {
         headers: { "x-plat-user": "ada", "x-plat-edge-token": EDGE },
       });
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(401);
+      expect(getUserByName(a.db, "ada")).toBeUndefined();
     } finally {
       await s.stop();
       await rm(fresh, { recursive: true, force: true });
@@ -266,7 +268,6 @@ describe("signup closed (#2166)", () => {
     expect((await edge("returning")).status).toBe(200);
     setSignup(app.db, "closed", "boot");
     expect((await edge("returning")).status).toBe(200);
-    expect((await edge("founder")).status).toBe(200);
   });
 
   test("open: page has the form and the API makes the account", async () => {

@@ -44,6 +44,8 @@ import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import type { SshSession } from "../src/ssh/channels.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -153,7 +155,7 @@ describe("the terminal UI, against a real forge", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-"));
     forge = createApp({ dataDir, port: 0, disk: roomy });
-    const a = await signUp(forge, {
+    const a = await seedAdmin(forge, {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
@@ -162,7 +164,7 @@ describe("the terminal UI, against a real forge", () => {
       username: "bob",
       email: "bob@forge.test",
       password: "another-long-passphrase",
-    });
+    }, { slot: fixtureSlot(forge) });
     if (!a.ok || !b.ok) throw new Error("signup failed");
     alice = a.value;
     bob = b.value;
@@ -455,7 +457,7 @@ describe("the terminal UI, against a real forge", () => {
       await h.press("ctrl+t");
       expect(h.text()).not.toContain("Create account");
       expect(h.text()).toContain("Username");
-      const refused = await signUp(forge, { username: "carol", email: "carol@forge.test", password: "a-long-passphrase" }, { address: "127.0.0.1" });
+      const refused = await signUp(forge, { username: "carol", email: "carol@forge.test", password: "a-long-passphrase" }, { slot: fixtureSlot(forge), address: "127.0.0.1" });
       expect(refused).toMatchObject({ ok: false, error: "signup_closed" });
     } finally {
       h.stop();
@@ -619,7 +621,32 @@ describe("a forge with no accounts", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("the first key through the door can create the admin account", async () => {
+  test("while signup is closed the first key is offered no Create account and makes none", async () => {
+    setSignup(forge.db, "closed", "boot");
+    const h = boot(forge, {
+      sshUsername: "git",
+      remoteAddress: "127.0.0.1",
+      fingerprint: "SHA256:closed",
+      publicKey: KEY_LINE,
+    });
+    try {
+      await h.settle();
+      await h.press("s");
+      expect(h.text()).toContain("Signup is closed on this forge.");
+      expect(h.text()).not.toContain("Create account");
+      await h.typeText("founder");
+      await h.press("tab");
+      await h.typeText("a-long-passphrase");
+      await h.press("enter");
+      await h.settle();
+      expect(getUserByName(forge.db, "founder")).toBeUndefined();
+    } finally {
+      h.stop();
+      setSignup(forge.db, "open", "boot");
+    }
+  });
+
+  test("the first key through the door can create an account, not the admin", async () => {
     const h = boot(forge, {
       sshUsername: "git",
       remoteAddress: "127.0.0.1",
@@ -640,7 +667,8 @@ describe("a forge with no accounts", () => {
     await h.settle();
 
     const founder = getUserByName(forge.db, "founder");
-    expect(founder?.isAdmin).toBe(true);
+    // No sign-up makes the admin, the first neither: the operator does.
+    expect(founder?.isAdmin).toBe(false);
     // The key that created the account is registered to it, so the next
     // connection needs no password.
     const key = forge.db
@@ -756,7 +784,7 @@ describe("the forge's health in the terminal", () => {
     process.env["FORGE_GUARD_DIR"] = guard;
     const forge = createApp({ dataDir, port: 0, disk: roomy });
     try {
-      const a = await signUp(forge, {
+      const a = await seedAdmin(forge, {
         username: "chief",
         email: "chief@forge.test",
         password: "a-long-passphrase",
@@ -765,7 +793,7 @@ describe("the forge's health in the terminal", () => {
         username: "bob",
         email: "bob@forge.test",
         password: "another-long-passphrase",
-      });
+      }, { slot: fixtureSlot(forge) });
       if (!a.ok || !b.ok) throw new Error("signup failed");
       expect(a.value.isAdmin).toBe(true);
       expect(b.value.isAdmin).toBe(false);
@@ -825,7 +853,7 @@ describe("the forge's health in the terminal", () => {
     const store = dirStore(join(dataDir, "snapshots"));
     let svc = startSnapshots(forge, store, { version: "t", nightly: false });
     try {
-      const a = await signUp(forge, {
+      const a = await seedAdmin(forge, {
         username: "chief",
         email: "chief@forge.test",
         password: "a-long-passphrase",
@@ -834,7 +862,7 @@ describe("the forge's health in the terminal", () => {
         username: "bob",
         email: "bob@forge.test",
         password: "another-long-passphrase",
-      });
+      }, { slot: fixtureSlot(forge) });
       if (!a.ok || !b.ok) throw new Error("signup failed");
       const as = (user: User): TuiIdentity => ({
         sshUsername: user.username,

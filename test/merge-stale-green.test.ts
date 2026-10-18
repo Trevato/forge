@@ -6,6 +6,7 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { createRun, setRunBase } from "../src/core/runs.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const gitEnv = gitClientEnv();
 
@@ -44,14 +45,10 @@ beforeAll(async () => {
   app = createApp({ dataDir, port: 0 });
   servers = await serve(app);
   base = servers.url;
-  await fetch(`${base}/signup`, {
-    method: "POST",
-    body: new URLSearchParams({
-      username: "dev",
-      email: "dev@f.dev",
-      password: "merge-stale-pass",
-    }),
-    redirect: "manual",
+  await seedAdmin(app, {
+    username: "dev",
+    email: "dev@f.dev",
+    password: "merge-stale-pass",
   });
   const token = await fetch(`${base}/api/v1/tokens`, {
     method: "POST",

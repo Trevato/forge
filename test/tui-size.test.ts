@@ -18,7 +18,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openIssue } from "../src/actions/issues.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import type { Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
@@ -45,6 +44,7 @@ import {
 import { theme } from "../src/tui/ui/theme.ts";
 import { row, table } from "../src/tui/ui/widgets.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -125,7 +125,7 @@ describe("the terminal lays out for the terminal it is in", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-size-"));
     forge = createApp({ dataDir, port: 0 });
-    const a = await signUp(forge, {
+    const a = await seedAdmin(forge, {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",

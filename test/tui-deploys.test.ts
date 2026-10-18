@@ -15,6 +15,8 @@ import { deploysScreen } from "../src/tui/screens/deploys.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -26,7 +28,7 @@ let repo: Repo;
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-tui-deploys-"));
   forge = createApp({ dataDir: dir, port: 0 });
-  const a = await signUp(forge, {
+  const a = await seedAdmin(forge, {
     username: "alice",
     email: "alice@forge.test",
     password: "a-long-passphrase",
@@ -96,7 +98,7 @@ test("a non-reader sees nothing of a private repo's deploys", async () => {
     username: "bob",
     email: "bob@forge.test",
     password: "a-long-passphrase",
-  });
+  }, { slot: fixtureSlot(forge) });
   if (!b.ok) throw new Error("signup failed");
   const r = await createRepo(forge, alice, { name: "vault", visibility: "private" });
   if (!r.ok) throw new Error("repo failed");

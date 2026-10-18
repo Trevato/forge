@@ -32,6 +32,7 @@ describe("the restore drill", () => {
     root = mkdtempSync(join(tmpdir(), "forge-drill-"));
     app = createApp({ dataDir: join(root, "live"), port: 0 });
     const a = await createUser(app.db, {
+      origin: "seed",
       trusted: true,
       username: "alice",
       email: "alice@forge.local",
