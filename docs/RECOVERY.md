@@ -16,8 +16,8 @@ Sundays 09:00 UTC the forge drills a restore of the newest snapshot, boots it
 on a side port and reads `/api/v1/health`. One comment lands on the recovery
 issue (`FORGE_RECOVERY_ISSUE` in `FORGE_RECOVERY_REPO`): snapshot, restore
 time, health, counts, pass or fail. A failed drill is an inbox card naming
-the step (fetch, restore, open, count, unseal, health) until one passes. No
-comment this week means the backups are unproven.
+the step (fetch, restore, open, count, unseal, health), run again at boot and
+every three hours until one passes. No comment this week: backups unproven.
 
 ## What a restore needs
 

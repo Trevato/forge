@@ -22,7 +22,7 @@ import {
   type Progress,
 } from "./snapshot.ts";
 import { runDrill, type DrillDeps, type DrillResult } from "./drill.ts";
-import { drillDue } from "./due.ts";
+import { BOOT_RED_FLOOR_MS, drillDue, RED_RETRY_MS } from "./due.ts";
 import { lastDrill, recordDrill } from "./drills.ts";
 import { lastMirror, mirrorPass, MIRROR_EVERY_MS, recordMirror, type MirrorState } from "./mirror.ts";
 import { recordSnapshotOutcome } from "./outcome.ts";
@@ -61,7 +61,7 @@ export interface SnapshotsHandle {
   readonly last: () => { manifest?: Manifest; error?: string; at?: string };
   /** Drill the newest snapshot now and keep the result; waits for any snapshot in flight. */
   readonly drill: () => Promise<DrillResult>;
-  /** Drill if this week's slot has no drill yet; says whether it did. */
+  /** Drill if this week's slot has no drill yet, or the last one has stood red long enough; says whether it did. */
   readonly drillIfDue: () => Promise<boolean>;
   /** The off-box mirror's store; undefined when the forge has none. */
   readonly mirror: Store | undefined;
@@ -115,6 +115,10 @@ export function startSnapshots(
     readonly passphrase?: string | undefined;
     /** Test seam: the drill itself. */
     readonly drill?: ((deps: DrillDeps) => Promise<DrillResult>) | undefined;
+    /** Test seams: how soon after boot an owed drill runs, and when a red one is owed again. */
+    readonly catchUpMs?: number | undefined;
+    readonly redRetryMs?: number | undefined;
+    readonly bootRedFloorMs?: number | undefined;
   } = {
     version: "0",
   },
@@ -244,6 +248,8 @@ export function startSnapshots(
       return result;
     })().finally(() => {
       drilling = undefined;
+      // However it was asked for, a red drill is tried again on its own.
+      armRedRetry();
     });
     return drilling;
   };
@@ -276,22 +282,40 @@ export function startSnapshots(
 
   let catchUp: ReturnType<typeof setTimeout> | undefined;
   let drillTimer: ReturnType<typeof setTimeout> | undefined;
+  let redRetry: ReturnType<typeof setTimeout> | undefined;
+  const catchUpMs = options.catchUpMs ?? CATCH_UP_MS;
+  const redRetryMs = options.redRetryMs ?? RED_RETRY_MS;
   const scheduleDrill = (): void => {
     if (options.nightly === false || stopped) return;
     drillTimer = setTimeout(() => {
       runIfDue().finally(scheduleDrill);
     }, untilDrill());
   };
-  // Owed and not yet kept: run it once. A restart after the drill ran finds it kept.
-  const runIfDue = async (): Promise<boolean> => {
-    if (!drillDue(lastDrill(app.db)?.at, firstSeen(app.config.dataDir), Date.now())) return false;
+  // While the newest drill is red, look again when it is owed again.
+  const armRedRetry = (): void => {
+    if (redRetry !== undefined) clearTimeout(redRetry);
+    redRetry = undefined;
+    if (options.nightly === false || stopped) return;
+    const newest = lastDrill(app.db);
+    if (newest?.verdict !== "red") return;
+    const wait = Math.max(catchUpMs, Date.parse(newest.at) + redRetryMs - Date.now());
+    redRetry = setTimeout(() => void runIfDue().finally(armRedRetry), wait);
+  };
+  // Owed and not yet kept: run it once. A restart after a green drill finds it
+  // kept; one after a red drill runs it again, once it is past the boot floor.
+  const runIfDue = async (redAfterMs: number = redRetryMs): Promise<boolean> => {
+    if (!drillDue(lastDrill(app.db), firstSeen(app.config.dataDir), Date.now(), redAfterMs)) return false;
     await drill().catch((error) => log.error("restore drill failed to run", { error: String(error) }));
     return true;
   };
   scheduleDrill();
-  // A forge that was down at the slot catches up shortly after boot.
+  // A forge that was down at the slot, or whose last drill was red, drills
+  // shortly after boot; a red one is looked at again until one passes.
   if (options.nightly !== false) {
-    catchUp = setTimeout(() => void runIfDue(), CATCH_UP_MS);
+    catchUp = setTimeout(
+      () => void runIfDue(options.bootRedFloorMs ?? BOOT_RED_FLOOR_MS).finally(armRedRetry),
+      catchUpMs,
+    );
   }
 
   // Within the hour: look for snapshots the mirror lacks, soon after boot and then hourly.
@@ -314,7 +338,7 @@ export function startSnapshots(
     wraps: !!options.passphrase,
     now: take,
     drill,
-    drillIfDue: runIfDue,
+    drillIfDue: () => runIfDue(),
     list: async () => {
       const store = current();
       return store === undefined ? [] : listSnapshots(store);
@@ -336,6 +360,7 @@ export function startSnapshots(
       if (timer !== undefined) clearTimeout(timer);
       if (drillTimer !== undefined) clearTimeout(drillTimer);
       if (catchUp !== undefined) clearTimeout(catchUp);
+      if (redRetry !== undefined) clearTimeout(redRetry);
       if (mirrorTimer !== undefined) clearTimeout(mirrorTimer);
       if (mirroring !== undefined) await mirroring.catch(() => {});
       if (inFlight !== undefined) await inFlight.catch(() => {});

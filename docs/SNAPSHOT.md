@@ -139,6 +139,15 @@ run is a row in the `drill` table, and the last one shows as a line on the
 Backups page: when, which snapshot, how long, the counts, and green or the
 step that failed.
 
+The drill runs on its own every Sunday 09:00 UTC, and a forge that was down
+then catches up five minutes after boot. A red drill does not keep the
+week's slot: it is owed again `RED_RETRY_MS` (three hours) after it ran,
+and at a boot once it is `BOOT_RED_FLOOR_MS` (30 minutes) old, until one
+passes (`src/snapshot/due.ts`). The floor keeps a crash loop with a broken
+restore from running a restore on every boot. Kept for the
+week, a drill red at 09:11 stood as a card long after the fix deployed at
+10:18 (#2541).
+
 ## Restore
 
 The printable card, seven lines, is [RESTORE.md](RESTORE.md); a test runs it.
