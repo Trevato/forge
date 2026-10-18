@@ -325,13 +325,33 @@ one undo.
   the ready order changes. It is one fleet row, the verb `place`; undo puts
   the place back. Through the API and the MCP `limb` tool (`action` raise or
   lower, `under` when the limb sits in several places), dry-run by default.
+- **Re-plan** (#761) hands the limb to the planner to come back as fewer,
+  larger pieces. The preview lists every open issue the planner will be
+  given. Pressing it writes the hand-over (`limb_replan`, with the issues
+  it was given) and owes the planner one pass, even with a full map, even
+  after it declined the direction, and without waiting out the hour since
+  its last pass. Its task names the limb and lists the issues. Until the
+  planner has answered — a planning run begun after the hand-over has
+  ended — the limb reads _With the planner_ on its milestone and the crew
+  picks nothing beneath it (the `with_planner` hold). The planner may close
+  an issue beneath it only as `split` into open issues made since the
+  hand-over, as for a twice-parked issue; it may not drop one, and the
+  hand-over grants nothing outside the limb. A person may **take it back**
+  until a planning run has begun. Afterwards the milestone lists which old
+  issue closed into which. Not a fleet operation: it writes no issue row,
+  so there is no receipt to undo; taking it back is the undo.
+  In the terminal, `p` on the limbs screen (Milestones in a repository)
+  previews what the planner is given and hands the limb over on confirm; the
+  row then reads _with the planner_, and `p` takes it back while allowed.
+  Through the API and the MCP `limb` tool as `action` `replan` or
+  `takeback`, dry-run by default (the dry run is the list of issues).
 
 An umbrella or the gate is the plan's own and is not filed. A leaf beneath
 a limb that is not deferred cannot be deferred alone: defer the limb. A
-candidate to trim offers Defer first. Handing one to the planner is #761.
+candidate to trim offers Defer first.
 
 The same is `POST /api/v1/repos/:owner/:name/milestones/:number/limb`
-`{ "action": "defer" | "resume" | "close" | "raise" | "lower", "reason"?, "pillar"?, "under"?, "dryRun"? }`
+`{ "action": "defer" | "resume" | "close" | "raise" | "lower" | "replan" | "takeback", "reason"?, "pillar"?, "under"?, "dryRun"? }`
 and the MCP's `limb`, both a dry run unless `dryRun` is false. Applying and
 undoing take an admin token of a person who administers the repository; an
 agent may look and never apply.

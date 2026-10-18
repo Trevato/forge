@@ -89,6 +89,7 @@ import { reviewSummary } from "../core/reviews.ts";
 import { standing } from "../core/standing.ts";
 import { pace, type Pace } from "./pacing.ts";
 import { BREAKER_NOTE, breakerTripped } from "./breaker.ts";
+import { given, pendingReplans } from "../core/limb_replan.ts";
 import { handedOverPulls, SKIP_SUMMARY, skipsReplan } from "./guard.ts";
 import { atRunCap, type Held, heldBy, heldWords, replannable } from "./held.ts";
 import { BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
@@ -562,7 +563,8 @@ async function planIfThin(
   stuck: Held | null = null,
 ): Promise<boolean> {
   const handed = [...parkedTwice(app.db, [repo]), ...handedOverPulls(app.db, repo)];
-  if (ready >= THIN_MAP && handed.length === 0) return false;
+  const limbs = pendingReplans(app.db, repo);
+  if (ready >= THIN_MAP && handed.length === 0 && limbs.length === 0) return false;
   const planner = crew.find((c) => c.role === "planner")?.agent;
   if (planner === undefined) return notPlanned(repo, "no planner on the crew");
   if (repo.autonomyDirection.trim() === "")
@@ -582,11 +584,14 @@ async function planIfThin(
   // The hand-overs the planner has not been given: newer than its last pass.
   const seen = lastPlan?.created_at ?? "";
   const owed = handed.filter((issue) => issue.at > seen);
-  if (ready >= THIN_MAP && owed.length === 0) return false;
+  // A limb a person handed over is owed one pass, whatever the map and
+  // whatever the planner said of the direction before (#761).
+  const limbsOwed = limbs.filter((r) => !given(app.db, repo, r.at));
+  if (ready >= THIN_MAP && owed.length === 0 && limbsOwed.length === 0) return false;
   // Nothing startable for issues held since its last pass that re-planning
   // lifts: owed one pass like a hand-over, once (#2244).
   const unstuck = stuck === null ? [] : replannable(stuck).filter((issue) => heldSince(app, issue, seen));
-  const news = owed.length + unstuck.length;
+  const news = owed.length + unstuck.length + limbsOwed.length;
   // The direction is the planner's standing issue, not one issue retried:
   // it is held to its own day's share, never the builders' cap (#2143).
   if (atRunCap(app, repo, direction))
@@ -606,9 +611,11 @@ async function planIfThin(
       return notPlanned(repo, "the planner declined; waiting for a person");
     if (lastPlan.state === "queued" || lastPlan.state === "running")
       return notPlanned(repo, "a planning run is in flight");
+    // A person's hand-over is not made to wait for the last pass's hour.
     if (
+      limbsOwed.length === 0 &&
       now.getTime() - new Date(lastPlan.created_at).getTime() <
-      REPLAN_AFTER_MS
+        REPLAN_AFTER_MS
     )
       return notPlanned(repo, "planned recently");
     // Nobody spoke and the map has not moved since the last pass: another
@@ -631,7 +638,9 @@ async function planIfThin(
   if (!assigned.ok)
     return notPlanned(repo, `could not assign: ${String(assigned.error)}`);
   log.info(
-    owed.length > 0
+    limbsOwed.length > 0
+      ? "a limb was handed over; planner asked"
+      : owed.length > 0
       ? "parked twice; planner asked"
       : unstuck.length > 0
         ? "nothing startable; planner asked"

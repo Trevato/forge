@@ -313,6 +313,12 @@ import {
   milestonesJson,
 } from "../web/pages/milestones.ts";
 import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
+import {
+  isReplanAction,
+  previewReplan,
+  replanLimb,
+  takeBackLimb,
+} from "../actions/limb_replan.ts";
 import { appsRuntime, envsFor, type AppsRuntime } from "../apps/runtime.ts";
 import { isEnvName } from "../apps/data.ts";
 import { getAppByRepo } from "../core/apps.ts";
@@ -3157,8 +3163,19 @@ export function apiRoutes(router: Router<Handler>): void {
       const repo = loadRepo(ctx);
       const number = positiveInt(ctx.params.number);
       if (!repo || number === undefined) return notFound();
+      if (isReplanAction(input.action)) {
+        if (dryRun) {
+          const plan = previewReplan(ctx.app, ctx.auth.user, repo, number);
+          return plan.ok ? json({ dryRun: true, ...plan.value }) : respondFleet(plan.error);
+        }
+        const done =
+          input.action === "replan"
+            ? replanLimb(ctx.app, ctx.auth.user, repo, number)
+            : takeBackLimb(ctx.app, ctx.auth.user, repo, number);
+        return done.ok ? json({ dryRun: false, ...done.value }, 201) : respondFleet(done.error);
+      }
       if (!isLimbAction(input.action))
-        return apiError("bad_action", 422, "action is defer, resume, close, raise or lower");
+        return apiError("bad_action", 422, "action is defer, resume, close, raise, lower, replan or takeback");
       const request = {
         action: input.action,
         ...(typeof input.reason === "string" ? { reason: input.reason } : {}),

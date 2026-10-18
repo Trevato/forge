@@ -186,6 +186,8 @@ export interface TaskInput extends BriefInput {
   readonly looks?: readonly string[] | undefined;
   /** For a planner: the issues the crew parked twice, with why. */
   readonly parkedTwice?: readonly HandedOver[] | undefined;
+  /** For a planner: the limbs a person handed over to re-plan as fewer, larger pieces. */
+  readonly limbs?: readonly HandedLimb[] | undefined;
   /** For a planner: the issue deferred work waits behind, if there is one. */
   readonly laterGate?: number | undefined;
   /** For a planner: nothing ready can start, and what holds it (`held.ts`). */
@@ -202,6 +204,13 @@ export interface Stuck {
     readonly title: string;
     readonly hold: "stalled" | "run_cap";
   }[];
+}
+
+/** A limb a person handed to the planner, with every open issue beneath it. */
+export interface HandedLimb {
+  readonly number: number;
+  readonly title: string;
+  readonly issues: readonly { readonly number: number; readonly title: string }[];
 }
 
 /** An issue the crew parked twice, as the planner is told of it. */
@@ -234,7 +243,7 @@ function taskBody(input: TaskInput): string {
   const { issue } = input;
   const out: string[] = [];
   const isAgent = (name: string): boolean => name === input.agent.user.username;
-  const handed = [parkedTwiceLines(input), stuckLines(input)]
+  const handed = [parkedTwiceLines(input), limbLines(input), stuckLines(input)]
     .filter((lines) => lines.length > 0)
     .flatMap((lines, n) => (n === 0 ? lines : ["", ...lines]));
   const readers = input.readers ?? new Set<string>();
@@ -530,6 +539,27 @@ function parkedTwiceLines(input: TaskInput): string[] {
         ]
       : []),
     "Never leave one as it was: what you leave stays on the owner's board and comes back to you.",
+  ];
+}
+
+/**
+ * What a planner is told of a limb a person handed it: the limb and every
+ * open issue beneath it, to come back as fewer, larger issues. Each old
+ * issue is closed as split into the new ones, never dropped — the person
+ * asked for them. Nothing outside the limb is touched.
+ */
+function limbLines(input: TaskInput): string[] {
+  const limbs = input.role === "planner" ? (input.limbs ?? []) : [];
+  if (limbs.length === 0) return [];
+  const issues = `$FORGE_URL/api/v1/repos/${input.repo.ownerName}/${input.repo.name}/issues`;
+  return [
+    "A person handed you these limbs to re-plan as fewer, larger pieces. Nothing beneath one is picked by the crew until you have answered:",
+    ...limbs.flatMap((limb) => [
+      `- Limb #${limb.number} ${limb.title}, ${limb.issues.length} open issue${limb.issues.length === 1 ? "" : "s"}:`,
+      ...limb.issues.map((i) => `    #${i.number} ${i.title}`),
+    ]),
+    `Open the larger issues first, each saying what done looks like. Then close every old issue of the limb as split into them — PATCH ${issues}/N with {"state":"closed","reason":"split","into":[A,B]}. Only open issues made since the hand-over are accepted, and nothing outside the limb is yours to close this way. Do not drop an issue of the limb: a person asked for it, so what it asked for must be in a larger piece.`,
+    `If other issues wait for one you close, make them wait for what replaces it: DELETE ${issues}/D/dependencies/N, then POST ${issues}/D/dependencies with {"blockedBy":M}. Make the new issues wait for the limb's issue, so they stay beneath it.`,
   ];
 }
 

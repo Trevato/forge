@@ -55,6 +55,7 @@ import {
   unadoptedAmong,
 } from "../crew/direct.ts";
 import { laterGate } from "../crew/later.ts";
+import { replanSince } from "../core/limb_replan.ts";
 import { handedOver } from "../crew/parks.ts";
 import { alreadyDone, CLOSED_NOTE } from "../core/done_on_main.ts";
 import { listReviews } from "../core/reviews.ts";
@@ -511,17 +512,22 @@ function handedToPlanner(
   // Replacements must be newer than the hand-over when the crew handed the
   // issue over, and newer than the issue itself when the planner re-plans it
   // on its own pass.
-  const since = handedOver(app.db, repo, issue.id) ?? {
+  // A limb a person handed over (`core/limb_replan.ts`): newer than that
+  // hand-over, and only as a split — a person's issue beneath it is not dropped.
+  const limbSince = replanSince(app.db, repo, issue);
+  const own = handedOver(app.db, repo, issue.id) ?? {
     at: issue.createdAt,
     id: issue.id,
   };
+  const since = limbSince !== undefined && limbSince > own.at ? { at: limbSince, id: "" } : own;
   // Done on main: only when commits already name the issue, as the close
   // note keeps them.
   if (closing.reason === undefined || closing.reason === "done")
     return (alreadyDone(app.db, [issue.id]).get(issue.id) ?? []).length > 0;
   // Dropped only when no person's ask stands in it — not one the planner
   // wrote to replace a person's, however many times it was split since.
-  if (closing.reason === "dropped") return !standsForPerson(app.db, issue);
+  if (closing.reason === "dropped")
+    return limbSince === undefined && !standsForPerson(app.db, issue);
   if (closing.reason !== "split") return false;
   const into = closing.into ?? [];
   if (into.length === 0) return false;

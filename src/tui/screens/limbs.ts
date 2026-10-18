@@ -12,6 +12,11 @@
  * facts (`canSeeOwnerFacts`, as on the page) also gets, under the list, what
  * the limb under the cursor cost and landed, and its costliest issues.
  *
+ * `p` hands the limb under the cursor to the planner to re-plan as fewer,
+ * larger pieces (#761): `previewReplan` lists what it will be given, then
+ * `replanLimb` on confirm. The row reads "with the planner" until it
+ * answers, and `p` then takes it back while that is still allowed.
+ *
  * `enter` on a limb that has limbs of its own opens them, so a milestone's
  * sub-limbs can be moved among themselves (the `under` of the action).
  * Subscribed to the bus while on the stack, so a move made on the web, or in
@@ -19,6 +24,8 @@
  */
 
 import { undoFleetOp } from "../../actions/fleet.ts";
+import { previewReplan, replanLimb, takeBackLimb } from "../../actions/limb_replan.ts";
+import { pendingReplans } from "../../core/limb_replan.ts";
 import { applyLimb, previewLimb, type LimbPreview } from "../../actions/limbs.ts";
 import { canAdmin, canRead, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { readPlan, type Limb, type Milestone } from "../../core/milestones.ts";
@@ -40,7 +47,7 @@ import {
 } from "./common.ts";
 
 /** What reorders or reshapes the limbs: a move, or an issue opening or closing. */
-const LIVE_KINDS = ["limb.moved", "issue.opened", "issue.closed", "issue.reopened"];
+const LIVE_KINDS = ["limb.moved", "limb.replan", "limb.replan_taken_back", "issue.opened", "issue.closed", "issue.reopened"];
 
 /** How many lines of the new order and of the ready list a preview shows. */
 const SHOWN = 6;
@@ -104,6 +111,8 @@ export function limbsScreen(
   let spends = new Map<number, NonNullable<Milestone["spend"]>>();
   /** The receipt of the last move made here, which `u` reverses once. */
   let last: string | undefined;
+  /** The limbs with the planner, by issue id (#761). */
+  let withPlanner = new Set<string>();
   // Read at use, not at open: a repository's admin can change under a session.
   const may = (): boolean =>
     f.user !== undefined && f.user.kind === "user" && canAdmin(f.db, repo, f.user);
@@ -117,6 +126,7 @@ export function limbsScreen(
       return;
     }
     limbs = limbsOf(f, repo, group) ?? [];
+    withPlanner = new Set(pendingReplans(f.db, repo).map((r) => r.limbId));
     spends = new Map();
     if (canSeeOwnerFacts(f.db, repo, f.user)) {
       const plan = readPlan(f.db, repo, { spend: true });
@@ -175,6 +185,57 @@ export function limbsScreen(
     );
   };
 
+  /** Re-plan: hand the limb to the planner after reading what it is given; or take it back. */
+  const replan = (): void => {
+    const limb = current();
+    if (limb === undefined || !may()) return;
+    const number = limb.issue.number;
+    const seen = previewReplan(f.app, f.user, repo, number);
+    if (!seen.ok) {
+      ctx.toast(seen.error.message, "danger");
+      return;
+    }
+    const p = seen.value;
+    if (p.withPlanner && !p.takeBack) {
+      ctx.toast("the planner has it in hand already", "danger");
+      return;
+    }
+    if (!p.withPlanner && p.blocked !== undefined) {
+      ctx.toast(p.blocked, "danger");
+      return;
+    }
+    const taking = p.withPlanner;
+    const body = [
+      taking
+        ? "It is with the planner; nothing beneath it is picked. Take it back before the planner starts:"
+        : `The planner will be given ${plural(p.issues.length, "issue")}, to close as split into fewer, larger ones:`,
+      ...p.issues.slice(0, SHOWN).map((i) => `  ${line(i.number, i.title)}`),
+      ...(p.issues.length > SHOWN ? [`  … ${p.issues.length - SHOWN} more`] : []),
+    ];
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: `${taking ? "Take back" : "Re-plan"} “${limb.name}”?`,
+        body,
+        actions: [
+          { label: taking ? "Take it back" : "Hand to the planner", variant: "default" },
+          { label: "Cancel", variant: "ghost" },
+        ],
+        onChoose: (choice) => {
+          if (choice !== 0) return;
+          const done = taking
+            ? takeBackLimb(f.app, f.user, repo, number)
+            : replanLimb(f.app, f.user, repo, number);
+          if (!done.ok) {
+            ctx.toast(done.error.message, "danger");
+            return;
+          }
+          reload(number);
+          ctx.toast(taking ? "taken back" : "with the planner", "success");
+        },
+      }),
+    );
+  };
+
   const undo = (): void => {
     const id = last;
     if (id === undefined || !may()) return;
@@ -202,7 +263,7 @@ export function limbsScreen(
   const rows = (): ListRow[] =>
     limbs.map((l, n) => ({
       title: `${n + 1}. ${line(l.issue.number, l.name)}`,
-      secondary: l.deferred ? "deferred" : "",
+      secondary: withPlanner.has(l.issue.id) ? "with the planner" : l.deferred ? "deferred" : "",
       meta: `${l.weight.done}/${l.weight.total} done`,
     }));
 
@@ -215,6 +276,7 @@ export function limbsScreen(
         binding(["enter"], "open"),
         binding(["r"], "raise", { disabled: !moves }),
         binding(["l"], "lower", { disabled: !moves }),
+        binding(["p"], withPlanner.has(current()?.issue.id ?? "") ? "take back" : "re-plan", { disabled: !may() || current() === undefined }),
         binding(["u"], "undo", { disabled: !may() || last === undefined }),
       ];
     },
@@ -246,6 +308,7 @@ export function limbsScreen(
       if (e.key === "enter") open();
       else if (e.key === "r") move("raise");
       else if (e.key === "l") move("lower");
+      else if (e.key === "p") replan();
       else if (e.key === "u") undo();
       else return false;
       return true;

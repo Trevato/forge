@@ -34,6 +34,8 @@ import {
 import { canAdmin, canSeeOwnerFacts, type Repo } from "../../core/repos.ts";
 import { isWatching } from "../../core/watches.ts";
 import { watchMilestone } from "../../actions/watches.ts";
+import { replanResult } from "../../actions/limb_replan.ts";
+import { given, pendingFor } from "../../core/limb_replan.ts";
 import type { Ctx } from "../../http/context.ts";
 import { askToLiveFor } from "../ask_to_live.ts";
 import {
@@ -59,7 +61,7 @@ export const milestoneHref = (base: string, number: number): string =>
 export const limbHref = (
   base: string,
   number: number,
-  action: LimbAction,
+  action: LimbAction | "replan",
   under?: string,
 ): string =>
   `${milestoneHref(base, number)}/limb?action=${action}${under === undefined ? "" : `&under=${under}`}`;
@@ -120,11 +122,13 @@ function limbActions(
   furniture: boolean,
   lead: Html | null,
   move: Html | null,
+  replan: Html | null,
 ): Html {
   const number = m.issue.number;
   return html`<p class="bar ms-actions" id="limb-actions">
     ${lead}
     ${move}
+    ${replan}
     ${furniture
       ? null
       : m.deferred
@@ -240,6 +244,58 @@ function folded(rows: Html[], what: string, shown: number): Html {
       <summary class="small">${rows.length - shown} more ${what}</summary>
       <ul class="ms-rows">${rows.slice(shown)}</ul>
     </details>`;
+}
+
+/**
+ * Where a limb stands with the planner (#761): "with the planner" while it
+ * waits, with a way to take it back until the planner has been given it;
+ * otherwise Re-plan, for whoever administers the repository.
+ */
+function replanControl(
+  ctx: Ctx,
+  repo: Repo,
+  m: Milestone,
+  admin: boolean,
+): Html | null {
+  const base = repoBase(repo);
+  const pending = pendingFor(ctx.app.db, repo, m.issue.id);
+  if (pending === undefined)
+    return admin && m.weight.open > 1
+      ? btn("Re-plan", {
+          href: limbHref(base, m.issue.number, "replan"),
+          size: "sm",
+          title: "Hand this limb to the planner to re-plan as fewer, larger pieces",
+        })
+      : null;
+  return html`<span class="ms-planner" id="ms-with-planner"
+      ><b>With the planner</b>
+      <span class="muted small">Nothing beneath it is picked until it answers.</span></span
+    >${admin && !given(ctx.app.db, repo, pending.at)
+      ? html`<form method="post" action="${milestoneHref(base, m.issue.number)}/limb">
+          <input type="hidden" name="action" value="takeback" />
+          ${btn("Take it back", { size: "sm", variant: "ghost" })}
+        </form>`
+      : null}`;
+}
+
+/** What the planner changed on this limb, once it has answered: each old issue and what replaced it. */
+function replanChanged(ctx: Ctx, repo: Repo, m: Milestone): Html | null {
+  const base = repoBase(repo);
+  const result = replanResult(ctx.app, repo, m.issue.id);
+  if (result === undefined || result.splits.length === 0) return null;
+  const link = (n: { number: number; title: string }): Html =>
+    html`<a href="${base}/issues/${n.number}">${n.title}</a>
+      <span class="muted small">#${n.number}</span>`;
+  return html`<section class="ms-section" id="ms-replanned">
+    <h2>Re-planned ${time(result.at)}</h2>
+    <ul class="ms-rows">
+      ${result.splits.map(
+        (s) =>
+          html`<li>${link(s)} <span class="muted small">closed as split into</span>
+            ${s.into.map((p, n) => html`${n === 0 ? "" : ", "}${link(p)}`)}</li>`,
+      )}
+    </ul>
+  </section>`;
 }
 
 /**
@@ -490,17 +546,20 @@ export function milestonePage(ctx: Ctx): Response {
   const move = moverFor(ctx.app.db, repo, viewer, plan.read);
   // Its own place: among the limbs of whichever milestone holds it first.
   const seat = move?.homeOf(milestone.issue);
-  const actions = canAdmin(ctx.app.db, repo, ctx.auth.user)
+  const admin = canAdmin(ctx.app.db, repo, ctx.auth.user);
+  const replan = replanControl(ctx, repo, milestone, admin);
+  const actions = admin
     ? limbActions(
         repoBase(repo),
         milestone,
         isStructural(pillarsOf(ctx.app.db, repo), milestone.issue.id),
         watch,
         seat === undefined ? null : (move?.(milestone.issue, seat) ?? null),
+        replan,
       )
-    : watch === null
+    : watch === null && replan === null
       ? null
-      : html`<p class="bar ms-actions">${watch}</p>`;
+      : html`<p class="bar ms-actions">${watch}${replan}</p>`;
   return page({
     ctx,
     title: `${milestone.name} · ${repo.name}`,
@@ -508,6 +567,7 @@ export function milestonePage(ctx: Ctx): Response {
     palette: repoPalette(ctx, repo),
     body: html`${repoHeader(ctx, repo, "map")}
     ${milestoneBody(repo, milestone, owner, actions, move)}
+    ${replanChanged(ctx, repo, milestone)}
     ${liveMount({ repo: repoBase(repo) })}`,
     styleCss: milestonesCss,
     scriptJs: liveClientJs,
@@ -621,6 +681,7 @@ export const milestonesCss = /* css */ `
 .ms-top h1, .ms-top p { margin: 0; }
 .ms-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .ms-actions { margin-top: 4px; }
+.ms-planner { display: inline-flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
 .ms-move { grid-column: 1 / -1; display: flex; gap: 14px; }
 .ms-section { margin-top: 22px; }
 .ms-section h2 { font-size: 13px; margin: 0 0 6px; }

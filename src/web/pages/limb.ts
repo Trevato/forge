@@ -6,6 +6,7 @@
  * take it back once.
  */
 
+import { isReplanAction } from "../../actions/limb_replan.ts";
 import { getFleetOp, undoFleetOp } from "../../actions/fleet.ts";
 import {
   applyLimb,
@@ -32,6 +33,7 @@ import { field, readForm } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
 import { page, redirect } from "../layout.ts";
 import { btn } from "../ui.ts";
+import { replanPreviewPage, replanSubmit } from "./limb_replan.ts";
 import { milestoneHref, milestonesCss } from "./milestones.ts";
 
 const WORDS: Record<LimbAction, { ask: string; does: string; go: string }> = {
@@ -166,6 +168,7 @@ export function limbPreviewPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   const number = Number(ctx.params.number);
   const action = ctx.url.searchParams.get("action");
+  if (action === "replan") return replanPreviewPage(ctx, repo, number);
   if (!Number.isInteger(number) || !isLimbAction(action))
     return notFoundPage(ctx);
   const request = requestOf(action, (n) => ctx.url.searchParams.get(n) ?? "");
@@ -350,6 +353,7 @@ export async function limbSubmit(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const number = Number(ctx.params.number);
   const action = field(form, "action");
+  if (isReplanAction(action)) return replanSubmit(ctx, repo, number, action);
   if (!Number.isInteger(number) || !isLimbAction(action))
     return notFoundPage(ctx);
   const base = repoBase(repo);

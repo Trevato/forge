@@ -14,7 +14,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { linkIssue } from "../src/actions/dependencies.ts";
 import { openIssue } from "../src/actions/issues.ts";
-import { createRepo } from "../src/actions/repos.ts";
+import { addToCrew, createAgent } from "../src/actions/crew.ts";
+import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
+import { setCrewRole } from "../src/core/agents.ts";
+import { pendingReplans } from "../src/core/limb_replan.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { listEvents } from "../src/core/events.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
@@ -248,5 +251,54 @@ describe("raise and lower a limb in the terminal", () => {
     const body = await res.text();
     expect(body).toContain('id="live"');
     expect(body).toContain("limb.moved");
+    // A hand-over to the planner, or taking it back, reaches an open page too.
+    expect(body).toMatch(/limb\.replan[^_]/);
+    expect(body).toContain("limb.replan_taken_back");
+  });
+
+  test("p hands a limb to the planner after a preview, shows it with the planner, and takes it back; a reader has no key", async () => {
+    const made = await createRepo(forge, alice, { name: "plan", visibility: "public" });
+    if (!made.ok) throw new Error("repo");
+    const r = made.value;
+    const agent = await createAgent(forge, alice, { username: "atlas" });
+    if (!agent.ok) throw new Error(String(agent.error));
+    addToCrew(forge, alice, r, "atlas");
+    setCrewRole(forge.db, r.id, getUserByName(forge.db, "atlas")!.id, "planner");
+    await updateRepoSettings(forge, alice, r, {
+      autonomy: "autonomous",
+      autonomyDirection: "Keep it small.",
+      autonomyCeilingUsd: 10,
+      autonomyBy: alice.id,
+    });
+    const search = open(r, alice, "Search everything");
+    for (const t of ["Index titles", "Index bodies"]) link(r, search, open(r, alice, t));
+    const pending = () => pendingReplans(forge.db, getRepoById(forge.db, r.id)!).length;
+
+    const reader = boot(bob);
+    await reader.toMilestones("alice/plan");
+    await reader.press("p");
+    expect(reader.text()).not.toContain("Hand to the planner");
+    expect(pending()).toBe(0);
+    reader.stop();
+
+    const h = boot(alice);
+    await h.toMilestones("alice/plan");
+    await h.press("p");
+    // The preview lists what the planner will be given; nothing is written yet.
+    expect(h.text()).toContain("Index titles");
+    expect(h.text()).toContain("Hand to the planner");
+    expect(pending()).toBe(0);
+    await h.press("esc");
+    expect(pending()).toBe(0);
+    await h.press("p", "enter");
+    expect(pending()).toBe(1);
+    expect(h.text()).toContain("with the planner");
+    // Take it back while the planner has not started.
+    await h.press("p");
+    expect(h.text()).toContain("Take it back");
+    await h.press("enter");
+    expect(pending()).toBe(0);
+    expect(h.text()).not.toContain("with the planner");
+    h.stop();
   });
 });

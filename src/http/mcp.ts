@@ -133,6 +133,12 @@ import { mapJson, marksFor } from "../web/pages/map.ts";
 import { applyFleetIds, previewFleetIds, undoFleetOp } from "../actions/fleet.ts";
 import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
 import {
+  isReplanAction,
+  previewReplan,
+  replanLimb,
+  takeBackLimb,
+} from "../actions/limb_replan.ts";
+import {
   milestoneData,
   milestonesJson,
 } from "../web/pages/milestones.ts";
@@ -2076,7 +2082,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "limb",
     description:
-      "One action on a whole limb of the plan — a milestone and everything beneath it that only it needs. `defer` moves the limb behind the Later gate, so the crew picks none of it; `resume` brings it back, under `pillar` when you name one; `close` closes every open issue of the limb as not doing, with `reason` said on each; `raise` and `lower` move it one place among its siblings — `under` says whose limbs when it is a limb of several, or `top` — and the crew takes ready work from the higher limb first; the dry run answers with the new `order` and the top of the ready list `before` and `after`. `undo` reverses an `operation` by its id. A dry run unless `dryRun` is false: it answers with every row before and after, what the action takes along (`taken`) and what stays because something outside the limb still waits for it (`kept`), and changes nothing. Applying and undoing take an admin token of a person who administers the app, and answer with the receipt.",
+      "One action on a whole limb of the plan — a milestone and everything beneath it that only it needs. `defer` moves the limb behind the Later gate, so the crew picks none of it; `resume` brings it back, under `pillar` when you name one; `close` closes every open issue of the limb as not doing, with `reason` said on each; `raise` and `lower` move it one place among its siblings — `under` says whose limbs when it is a limb of several, or `top` — and the crew takes ready work from the higher limb first; the dry run answers with the new `order` and the top of the ready list `before` and `after`. `replan` hands the limb to the planner to re-plan as fewer, larger pieces: the dry run lists every open issue it will be given, applying owes the planner's next pass once and holds the limb from the crew until it answers, and `takeback` withdraws it before the planner starts. `undo` reverses an `operation` by its id. A dry run unless `dryRun` is false: it answers with every row before and after, what the action takes along (`taken`) and what stays because something outside the limb still waits for it (`kept`), and changes nothing. Applying and undoing take an admin token of a person who administers the app, and answer with the receipt.",
     inputSchema: {
       type: "object",
       properties: {
@@ -2086,7 +2092,7 @@ const TOOLS: readonly Tool[] = [
           minimum: 1,
           description: "The limb: the number of its issue.",
         },
-        action: { type: "string", enum: ["defer", "resume", "close", "raise", "lower", "undo"] },
+        action: { type: "string", enum: ["defer", "resume", "close", "raise", "lower", "replan", "takeback", "undo"] },
         reason: {
           type: "string",
           description: "For close: why it is not being done, in one sentence.",
@@ -2130,12 +2136,28 @@ const TOOLS: readonly Tool[] = [
       }
       const number = args["issue"];
       if (
+        isReplanAction(args["action"]) &&
+        typeof number === "number" &&
+        Number.isInteger(number) &&
+        number > 0
+      ) {
+        if (dry) {
+          const plan = previewReplan(ctx.app, user, repo, number);
+          return plan.ok ? good({ dryRun: true, ...plan.value }) : refused(plan.error);
+        }
+        const done =
+          args["action"] === "replan"
+            ? replanLimb(ctx.app, user, repo, number)
+            : takeBackLimb(ctx.app, user, repo, number);
+        return done.ok ? good({ dryRun: false, ...done.value }) : refused(done.error);
+      }
+      if (
         !isLimbAction(args["action"]) ||
         typeof number !== "number" ||
         !Number.isInteger(number) ||
         number < 1
       )
-        return bad("invalid", "give the limb's issue number and an action: defer, resume, close, raise, lower or undo");
+        return bad("invalid", "give the limb's issue number and an action: defer, resume, close, raise, lower, replan, takeback or undo");
       const request = {
         action: args["action"],
         ...(typeof args["reason"] === "string" ? { reason: args["reason"] } : {}),

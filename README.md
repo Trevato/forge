@@ -300,7 +300,10 @@ repository's limbs in the order the crew takes ready work (`enter` opens a
 limb's own limbs). A person who administers the repository presses `r` to
 Raise or `l` to Lower the limb under the cursor: a preview of the new order
 and of the top of the ready list first, then `enter` to apply (`esc` backs
-out), then `u` to undo the last move. It is the same fleet operation the web
+out), then `u` to undo the last move. `p` hands the limb to the planner to
+re-plan as fewer, larger pieces: it lists what the planner will be given, then
+`enter` confirms; the row reads *with the planner*, and `p` takes it back
+until the planner starts. It is the same fleet operation the web
 milestones page uses, and a move is heard by that page when it is open.
 Anyone else sees the order and no keys to change it; a guest sees only what
 the web shows them. Whoever may see owner facts also gets two lines under

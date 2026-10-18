@@ -108,6 +108,7 @@ import {
 import { clearStaleLocks, lockedOut } from "./locks.ts";
 import { interruptedSummary } from "./interrupted.ts";
 import { laterGate } from "./later.ts";
+import { handedLimbs } from "./handed_limbs.ts";
 import { parkedTwice } from "./parks.ts";
 import { heldNow, stuckOf } from "./held.ts";
 import { noteLimit } from "../core/standing.ts";
@@ -974,6 +975,7 @@ async function work(
       ...(brief.role === "planner" && issue.id === repo.directionIssueId
         ? {
             parkedTwice: [...parkedTwice(app.db, [repo]), ...handedOverPulls(app.db, repo)],
+            limbs: handedLimbs(app, repo),
             laterGate: laterGate(app.db, repo.id),
             stuck: stuckOf(heldNow(app, repo)),
           }
