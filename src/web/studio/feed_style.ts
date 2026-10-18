@@ -27,6 +27,9 @@ export const feedCss = /* css */ `
 /* Your apps: a narrow column on a desk, a tab away on a phone. */
 .home-tabs { display: none; margin-bottom: 12px; }
 .home-app { gap: 8px; }
+.home-pick { display: none; }
+#apps-select:checked ~ * .home-pick { display: inline-flex; }
+#apps-select:focus-visible ~ * .home-apps-verbs label { outline: 2px solid var(--accent, currentColor); }
 .home-apps-verbs { flex-wrap: wrap; padding: 10px 14px; }
 @media (max-width: 899px) {
   .home-tabs { display: inline-flex; }

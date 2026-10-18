@@ -1930,6 +1930,10 @@ export const liveRegionsJs = /* js */ `
       // post is in flight) is never pulled out from under the click; the next
       // matching event tries the swap again.
       if (mine.querySelector('[data-busy]')) return;
+      // Likewise a region with a ticked box (apps picked for Archive, or the
+      // Select toggle itself): a tap on a phone does not focus a checkbox, so
+      // focus cannot be what protects the picks.
+      if (mine.querySelector('input[type=checkbox]:checked')) return;
       var active = document.activeElement;
       if (active && mine.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return;
       if (same(mine.innerHTML, theirs.innerHTML)) return;

@@ -169,6 +169,15 @@ describe("live browsing pages", () => {
     const { liveRegionsJs } = await import("../src/web/client.ts");
     expect(liveRegionsJs).toContain("data-busy");
   });
+
+  test("a live region never swaps out from under ticked boxes", async () => {
+    const { liveRegionsJs } = await import("../src/web/client.ts");
+    expect(liveRegionsJs).toContain("input[type=checkbox]:checked");
+    // The guard sits in `swap`, before anything is replaced.
+    const swap = liveRegionsJs.slice(liveRegionsJs.indexOf("function swap("));
+    expect(swap.indexOf("checkbox]:checked")).toBeGreaterThan(-1);
+    expect(swap.indexOf("checkbox]:checked")).toBeLessThan(swap.indexOf("innerHTML = "));
+  });
 });
 
 describe("the beat of a region with data-live-every", () => {

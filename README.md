@@ -390,6 +390,14 @@ reader and the explorer's default view; `/explore` shows it with `archived:yes`
 (the **Show archived** toggle). It stays in `/apps`, search, the palette and
 the repository API (`GET /api/v1/repos`).
 
+A site admin archives many at once from the home. In the **Your apps** card,
+**Select** shows a checkbox per app (they take no room until then); tick some
+and press **Archive**. This is the fleet's `archive` operation over those
+repositories (`POST /home/archive`, same-origin, a site admin's), so it has the
+fleet's receipt: the page that answers lists what was archived and an **Undo**
+button for the person who ran it (kept for a day), after which the apps are back
+on the home. The terminal's dashboard archives and undoes the same way (below); either door refreshes an open web home (the `fleet.operated` event).
+
 ## Health
 
 `GET /api/v1/health` (and the MCP `health` tool) answer a site admin with

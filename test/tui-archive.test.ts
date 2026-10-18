@@ -11,6 +11,9 @@ import { setAssignee } from "../src/core/issues.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { createApp as insertApp } from "../src/core/apps.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -139,6 +142,83 @@ describe("archive in the terminal", () => {
       expect(text).toContain("livelytask");
       expect(text).not.toContain("alice/oldrepo");
       expect(text).not.toContain("oldtask");
+    } finally {
+      h.app.stop();
+    }
+  });
+});
+
+describe("a terminal archive and the web home", () => {
+  let dataDir: string;
+  let forge: Forge;
+  let admin: User;
+  let servers: Servers;
+
+  function boot(user: User) {
+    const terminal = headlessTerminal(120, 40);
+    const { app } = createForgeApp(
+      forge,
+      { sshUsername: user.username, remoteAddress: "127.0.0.1", fingerprint: "SHA256:test", user },
+      { terminal, exitHooks: false },
+    );
+    app.start();
+    const press = async (...keys: string[]): Promise<void> => {
+      for (const key of keys)
+        app.dispatch({ type: "key", key, ctrl: false, alt: false, shift: false });
+      await settleApp(app);
+    };
+    return { app, press, text: () => app.screen.toText() };
+  }
+  const apps = async (cookie: string) =>
+    (
+      await fetch(`${servers.url}/live/apps`, {
+        headers: { cookie: `${cookie}; forge_mode=studio` },
+      })
+    ).text();
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), "forge-tui-bulk-archive-"));
+    forge = createApp({ dataDir, port: 0 });
+    const a = await seedAdmin(forge, {
+      username: "keeper",
+      email: "keeper@forge.test",
+      password: "a-long-passphrase",
+    });
+    if (!a.ok) throw new Error("signup failed");
+    admin = a.value;
+    for (const name of ["alpha", "beta"]) {
+      const made = await createRepo(forge, admin, { name, visibility: "public" });
+      if (!made.ok) throw new Error("repo failed");
+      insertApp(forge.db, { repoId: made.value.id, slug: name, access: "public" });
+    }
+    servers = await serve(forge);
+  });
+
+  afterAll(async () => {
+    servers.stop();
+    forge.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  test("the web home drops what the terminal archives, and has it back on undo", async () => {
+    const cookie = `forge_session=${createSession(forge.db, admin.id).token}`;
+    expect(await apps(cookie)).toContain("keeper/alpha");
+    const h = boot(admin);
+    try {
+      await settleUntil(h.app, "keeper/alpha");
+      await h.press("space", "j", "space");
+      await h.press("a");
+      await h.press("enter");
+      await settleUntil(h.app, "archived 2");
+      expect(getRepo(forge.db, "keeper", "alpha")?.archivedAt).not.toBeNull();
+      expect(getRepo(forge.db, "keeper", "beta")?.archivedAt).not.toBeNull();
+      const gone = await apps(cookie);
+      expect(gone).not.toContain("keeper/alpha");
+      expect(gone).not.toContain("keeper/beta");
+      await h.press("u");
+      await settleUntil(h.app, "undone");
+      expect(getRepo(forge.db, "keeper", "alpha")?.archivedAt).toBeNull();
+      expect(await apps(cookie)).toContain("keeper/alpha");
     } finally {
       h.app.stop();
     }

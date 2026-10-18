@@ -72,6 +72,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "flow",
   "front",
   "go",
+  "home",
   "icons",
   "live",
   "login",

@@ -60,7 +60,7 @@ import { passkeyJs } from "../passkey-client.ts";
 const ON_YOU_LIVE =
   "issue.assigned,pull.assigned,issue.closed,pull.closed,issue.reopened,pull.reopened,pull.merged,fleet.operated";
 /** The events that can change how an app on the rail is. */
-const APPS_LIVE = "app.serving,app.stopped,run.finished";
+const APPS_LIVE = "app.serving,app.stopped,run.finished,fleet.operated";
 /** How many of your apps the rail names before "All apps". */
 const RAIL_APPS = 8;
 
@@ -83,13 +83,23 @@ function yourApps(ctx: Ctx, user: User): Html {
         ? undefined
         : runtime.status(record).find((env) => env.env === "production")?.state;
     return html`<li class="row home-app">
+      ${when(
+        user.isAdmin,
+        () =>
+          html`<input
+            class="home-pick"
+            type="checkbox"
+            name="repo"
+            value="${repo.id}"
+            aria-label="Select ${repo.name}"
+          />`,
+      )}
       <a class="truncate" href="${repoBase(repo)}">${repo.ownerName}/${repo.name}</a>
       <span class="spacer"></span>
       ${state === undefined ? null : envStateBadge(state)}
     </li>`;
   });
-  return card(
-    html`${rows.length === 0
+  const list = html`${rows.length === 0
         ? html`<p class="muted small">No apps yet.</p>`
         : html`<ul class="list">
             ${rows}
@@ -108,7 +118,24 @@ function yourApps(ctx: Ctx, user: User): Html {
         ${when(user.isAdmin, () =>
           btn("Front page", { href: "/front", size: "sm", icon: "globe" }),
         )}
-      </div>`,
+        ${when(
+          user.isAdmin && rows.length > 0,
+          () => html`<label class="btn btn-sm" for="apps-select">Select</label>
+            <span class="home-pick">${btn("Archive", { size: "sm" })}</span>`,
+        )}
+      </div>`;
+  return card(
+    // An admin's list is a form: ticks cost no space until Select shows them.
+    user.isAdmin && rows.length > 0
+      ? html`<form method="post" action="/home/archive">
+          <input
+            class="sr-only"
+            type="checkbox"
+            id="apps-select"
+            aria-label="Select apps"
+          />${list}
+        </form>`
+      : list,
     {
       head: html`${icon("rocket")}
         <h2>Your apps</h2>`,

@@ -248,6 +248,7 @@ import {
   asksMute,
   asksPage,
 } from "../web/studio/asks_page.ts";
+import { homeArchive, homeArchived, homeArchiveUndo } from "../web/studio/home_archive.ts";
 import { liveFeedFragment } from "../web/studio/feed.ts";
 import { serviceWorker } from "../web/sw.ts";
 import { explorePage } from "../web/studio/explore.ts";
@@ -648,6 +649,9 @@ export function buildRouter(): Router<Handler> {
   // Apps and people ranked by real numbers, narrowed in one line (#607).
   router.add("GET", "/explore", explorePage);
   router.add("POST", "/front", frontUpdate);
+  router.add("POST", "/home/archive", homeArchive);
+  router.add("GET", "/home/archived/:op", homeArchived);
+  router.add("POST", "/home/archived/:op/undo", homeArchiveUndo);
   router.add("GET", "/signin", signinPage);
   router.add("POST", "/signin", signinSubmit);
   router.add("GET", "/signin/parent", parentStart);
