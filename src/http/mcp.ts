@@ -151,6 +151,7 @@ import {
   isAskedOrder,
   isAskedShow,
 } from "../core/asked.ts";
+import { audienceFor } from "../core/audience.ts";
 import { linksFrom, linksTo } from "../core/thought_links.ts";
 import { streamJson, thoughtStream } from "../core/thought_stream.ts";
 import {
@@ -402,6 +403,28 @@ const TOOLS: readonly Tool[] = [
           };
         }),
       );
+    },
+  },
+  {
+    name: "repo",
+    description:
+      "One repository you can read: its name, description, visibility and autonomy, and who can see it as `audience` { level, sentence } — the same words as GET /api/v1/repos/:owner/:name.",
+    inputSchema: {
+      type: "object",
+      properties: { repo: REPO_ARG },
+      required: ["repo"],
+    },
+    writes: false,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      return good({
+        repo: `${repo.ownerName}/${repo.name}`,
+        description: repo.description,
+        visibility: repo.visibility,
+        autonomy: repo.autonomy,
+        audience: audienceFor(ctx.app.db, repo, user),
+      });
     },
   },
   {

@@ -212,3 +212,12 @@ export function audienceFacts(
       : {}),
   };
 }
+
+/** The audience of `repo` for `viewer`: the one call the API and the MCP share. */
+export function audienceFor(
+  db: Database,
+  repo: Repo,
+  viewer: User | undefined,
+): Audience {
+  return audienceOf(audienceFacts(db, repo, viewer));
+}

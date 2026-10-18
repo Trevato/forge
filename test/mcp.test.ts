@@ -165,6 +165,7 @@ describe("the forge over MCP", () => {
     const names = listed.body.result.tools.map((t: { name: string }) => t.name);
     expect(names).toEqual([
       "apps",
+      "repo",
       "here",
       "tell",
       "share",
@@ -254,6 +255,39 @@ describe("the forge over MCP", () => {
     expect(
       (await call(rw, "tools/call", { name: "nope" })).body.error.code,
     ).toBe(-32602);
+  });
+
+  test("repo and GET /api/v1/repos give the same audience; a stranger learns nothing of a private one", async () => {
+    const api = async (token: string | null, path: string) =>
+      fetch(`${base}/api/v1/repos/${path}`, {
+        headers: token === null ? {} : { authorization: `Bearer ${token}` },
+      });
+    const viaApi = (await (await api(rw, "alice/game")).json()) as any;
+    const viaMcp = await tool(rw, "repo", { repo: "alice/game" });
+    expect(viaApi.audience.level).toBe("private");
+    expect(viaMcp.value.audience).toEqual(viaApi.audience);
+    expect(viaApi.audience.sentence).toStartWith("Private: only you");
+
+    // Bob cannot read it: a 404 and the same refusal, with no names in either.
+    const denied = await api(bobRw, "alice/game");
+    expect(denied.status).toBe(404);
+    expect(JSON.stringify(await denied.json())).not.toContain("alice");
+    expect((await tool(bobRw, "repo", { repo: "alice/game" })).error).toContain("no such");
+    const anon = await api(null, "alice/game");
+    expect(anon.status).toBe(404);
+    expect(JSON.stringify(await anon.json())).not.toContain("alice");
+
+    // A public repository tells everyone the public sentence, signed out too.
+    const open = await createRepo(app, alice, { name: "wide", visibility: "public" });
+    if (!open.ok) throw new Error(String(open.error));
+    const pub = (await (await api(null, "alice/wide")).json()) as any;
+    expect(pub.audience.level).toBe("public");
+    expect(pub.audience.sentence).toStartWith("Public: anyone can read this");
+    expect(pub.audience.sentence).not.toContain("you");
+    const asBob = await tool(bobRw, "repo", { repo: "alice/wide" });
+    expect(asBob.value.audience).toEqual(
+      ((await (await api(bobRw, "alice/wide")).json()) as any).audience,
+    );
   });
 
   test("apps and now read what the studio reads", async () => {

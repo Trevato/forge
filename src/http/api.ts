@@ -160,6 +160,7 @@ import {
   updateProfile,
 } from "../actions/users.ts";
 import { listEvents } from "../core/events.ts";
+import { audienceFor } from "../core/audience.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import {
   forkParentFor,
@@ -2148,7 +2149,12 @@ export function apiRoutes(router: Router<Handler>): void {
 
   router.add("GET", "/api/v1/repos/:owner/:name", (ctx) => {
     const repo = loadRepo(ctx);
-    return repo ? json(repoJson(ctx, repo)) : notFound();
+    return repo
+      ? json({
+          ...repoJson(ctx, repo),
+          audience: audienceFor(ctx.app.db, repo, ctx.auth.user),
+        })
+      : notFound();
   });
 
   router.add("PATCH", "/api/v1/repos/:owner/:name", async (ctx) => {
