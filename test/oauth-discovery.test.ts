@@ -143,8 +143,8 @@ describe("oauth discovery and registration", () => {
     expect(doc.token_endpoint).toBe(`${base}/oauth/token`);
     expect(doc.userinfo_endpoint).toBe(`${base}/oauth/userinfo`);
     expect(doc.jwks_uri).toBe(`${base}/oauth/jwks`);
-    for (const scope of ["openid", "profile", "email", "ro", "rw", "admin"])
-      expect(doc.scopes_supported).toContain(scope);
+    // Only what /oauth/authorize can grant: an admin token is never one.
+    expect(doc.scopes_supported).toEqual(["openid", "profile", "email", "ro", "rw"]);
     expect(doc.id_token_signing_alg_values_supported).toEqual(["ES256"]);
   });
 

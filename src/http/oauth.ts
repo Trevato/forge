@@ -9,8 +9,8 @@
  * checked on its POST.
  */
 import type { App } from "../app.ts";
-import { createClient, parseRegistration, redeemCode } from "../core/oauth.ts";
-import { jwks, userinfo } from "../core/oidc.ts";
+import { createClient, OAUTH_SCOPES, parseRegistration, redeemCode } from "../core/oauth.ts";
+import { jwks, OIDC_SCOPES, userinfo } from "../core/oidc.ts";
 import { RateLimiter } from "../core/ratelimit.ts";
 import type { Handler } from "./context.ts";
 import { clientBucket } from "./peer.ts";
@@ -119,7 +119,7 @@ export function oauthRoutes(router: Router<Handler>): void {
         userinfo_endpoint: `${ctx.url.origin}/oauth/userinfo`,
         jwks_uri: `${ctx.url.origin}/oauth/jwks`,
         registration_endpoint: `${ctx.url.origin}/oauth/register`,
-        scopes_supported: ["openid", "profile", "email", "ro", "rw", "admin"],
+        scopes_supported: [...OIDC_SCOPES, ...OAUTH_SCOPES],
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code"],
         subject_types_supported: ["public"],
@@ -137,7 +137,7 @@ export function oauthRoutes(router: Router<Handler>): void {
       {
         resource: `${ctx.url.origin}/mcp`,
         authorization_servers: [ctx.url.origin],
-        scopes_supported: ["ro", "rw"],
+        scopes_supported: [...OAUTH_SCOPES],
         bearer_methods_supported: ["header"],
       },
       200,
@@ -151,7 +151,7 @@ export function oauthRoutes(router: Router<Handler>): void {
         authorization_endpoint: `${ctx.url.origin}/oauth/authorize`,
         token_endpoint: `${ctx.url.origin}/oauth/token`,
         registration_endpoint: `${ctx.url.origin}/oauth/register`,
-        scopes_supported: ["ro", "rw"],
+        scopes_supported: [...OAUTH_SCOPES],
         response_types_supported: ["code"],
         grant_types_supported: ["authorization_code"],
         code_challenge_methods_supported: ["S256"],
