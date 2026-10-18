@@ -11,6 +11,7 @@ import {
 } from "../src/core/runs.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 describe("what an agent has done, in totals", () => {
   let dataDir: string;
@@ -26,16 +27,11 @@ describe("what an agent has done, in totals", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const signed = await fetch(`${base}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username: "ada",
-        email: "ada@forge.example",
-        password: "analytical-engine",
-      }),
-      redirect: "manual",
+    cookie = await adminCookie(app, {
+      username: "ada",
+      email: "ada@forge.example",
+      password: "analytical-engine",
     });
-    cookie = (signed.headers.get("set-cookie") ?? "").split(";")[0]!;
     const headers = { cookie, "content-type": "application/json" };
     const repo = (await fetch(`${base}/api/v1/repos`, {
       method: "POST",

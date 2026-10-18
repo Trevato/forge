@@ -35,6 +35,7 @@ import { quietLogs } from "./helpers/globals.ts";
 import { isBusy, transact } from "../src/kernel/db.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -67,14 +68,10 @@ describe("fifty agents at once", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    await fetch(`${base}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "cora",
-        email: "cora@forge.test",
-        password: "a-long-crew-password",
-      }),
+    await seedAdmin(app, {
+      username: "cora",
+      email: "cora@forge.test",
+      password: "a-long-crew-password",
     });
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
@@ -281,14 +278,10 @@ describe("Idempotency-Key", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    await fetch(`${base}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "mira",
-        email: "mira@forge.test",
-        password: "a-long-bot-password",
-      }),
+    await seedAdmin(app, {
+      username: "mira",
+      email: "mira@forge.test",
+      password: "a-long-bot-password",
     });
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",

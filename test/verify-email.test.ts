@@ -16,6 +16,7 @@ import { sendMail, type Mail } from "../src/kernel/mail.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { promote } from "./helpers/members.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 // A fresh outsider signs up and, until the link in its email is followed,
 // can read but cannot make or cost anything.
@@ -40,12 +41,12 @@ describe("verified email", () => {
     servers = await serve(app);
     setLimit(app.db, "signup.per_source", 1000, "setup");
     base = servers.url;
-    // The owner predates verification; the first account is never held back.
-    const owner = await signUp(app, {
+    // The owner is the admin, made proven as the operator's is.
+    const owner = await seedAdmin(app, {
       username: "olive",
       email: "olive@f.dev",
       password: "owner-passphrase",
-    }, { slot: fixtureSlot(app) });
+    });
     if (!owner.ok) throw new Error(owner.error);
   });
   afterAll(async () => {
@@ -95,7 +96,7 @@ describe("verified email", () => {
     expect(mail.subject).toContain("Verify");
   });
 
-  test("the first account on a fresh forge is verified", () => {
+  test("the admin is verified", () => {
     expect(emailVerified(app.db, getUserByName(app.db, "olive")!.id)).toBe(
       true,
     );
@@ -222,7 +223,8 @@ describe("verified email", () => {
     const { ensureEdgeUser } = await import("../src/core/users.ts");
     const first = await ensureEdgeUser(edged.db, "founder", "forge.example");
     const second = await ensureEdgeUser(edged.db, "newcomer", "forge.example");
-    expect(emailVerified(edged.db, first!.id)).toBe(true);
+    // The first is no admin, so it is not proven by being first.
+    expect(emailVerified(edged.db, first!.id)).toBe(false);
     expect(emailVerified(edged.db, second!.id)).toBe(false);
     edged.close();
   });

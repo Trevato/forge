@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const clientEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "Alice",
@@ -61,13 +62,10 @@ describe("XSS through diff/highlight rendering (real server, real git)", () => {
     servers = await serve(app);
     base = servers.url;
 
-    await api("/api/v1/users", {
-      method: "POST",
-      body: JSON.stringify({
-        username: "alice",
-        email: "alice@forge.local",
-        password: "correct-horse-battery",
-      }),
+    await seedAdmin(app, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "correct-horse-battery",
     });
     const minted = await api("/api/v1/tokens", {
       method: "POST",

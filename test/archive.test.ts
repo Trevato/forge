@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 type Row = { archivedAt: string | null };
 
@@ -43,7 +44,7 @@ describe("archive and wake", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    owner = await signup("ada");
+    owner = await adminCookie(app, { username: "ada", email: "ada@f.dev", password: "archive-password" });
     stranger = await signup("bob");
     await fetch(`${base}/new`, {
       method: "POST",

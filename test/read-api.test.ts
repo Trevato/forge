@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 describe("read-back API (contents, branches, commits)", () => {
   let dataDir: string;
@@ -29,14 +30,10 @@ describe("read-back API (contents, branches, commits)", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    await fetch(`${base}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "dev",
-        email: "d@f.dev",
-        password: "read-api-pass",
-      }),
+    await seedAdmin(app, {
+      username: "dev",
+      email: "d@f.dev",
+      password: "read-api-pass",
     });
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",

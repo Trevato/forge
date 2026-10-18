@@ -29,6 +29,7 @@ import { gitClientEnv } from "./helpers/git-client.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 describe("storage quota", () => {
   let dataDir: string;
@@ -45,7 +46,7 @@ describe("storage quota", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-quotas-storage-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const ada = await signUp(app, { username: "ada", email: "ada@f.dev", password: "owner-passphrase" }, { slot: fixtureSlot(app) });
+    const ada = await seedAdmin(app, { username: "ada", email: "ada@f.dev", password: "owner-passphrase" });
     const bob = await signUp(app, { username: "bob", email: "bob@f.dev", password: "bob-passphrase" }, { slot: fixtureSlot(app) });
     const carol = await signUp(app, { username: "carol", email: "carol@f.dev", password: "carol-passphrase" }, { slot: fixtureSlot(app) });
     if (!ada.ok || !bob.ok || !carol.ok) throw new Error("signup");

@@ -13,6 +13,7 @@ import {
   serveFakeForge,
   type FakeForge,
 } from "./fake-origin.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 /**
  * The sync loop, against a fake that speaks GitHub's dialect — because the
@@ -65,14 +66,10 @@ describe("origin sync: incremental, event-shaped, and polite", () => {
 
     originApp = createApp({ dataDir: originDataDir, port: 0 });
     originServers = await serve(originApp);
-    await fetch(`${originServers.url}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: LOGIN,
-        email: "octo@up.test",
-        password: TOKEN,
-      }),
+    await seedAdmin(originApp, {
+      username: LOGIN,
+      email: "octo@up.test",
+      password: TOKEN,
     });
     await fetch(`${originServers.url}/api/v1/repos`, {
       method: "POST",
@@ -129,14 +126,10 @@ describe("origin sync: incremental, event-shaped, and polite", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    await fetch(`${base}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "alice",
-        email: "alice@forge.test",
-        password: PASSWORD,
-      }),
+    await seedAdmin(app, {
+      username: "alice",
+      email: "alice@forge.test",
+      password: PASSWORD,
     });
 
     // GitHub is discovered by name, so connect by kind and let the fake API
@@ -360,14 +353,10 @@ describe("a mirror follows the origin's visibility", () => {
     const upDir = await mkdtemp(join(tmpdir(), "forge-vis-up-"));
     const upApp = createApp({ dataDir: upDir, port: 0 });
     const upServers = await serve(upApp);
-    await fetch(`${upServers.url}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: LOGIN,
-        email: "octo@v.test",
-        password: TOKEN,
-      }),
+    await seedAdmin(upApp, {
+      username: LOGIN,
+      email: "octo@v.test",
+      password: TOKEN,
     });
     await fetch(`${upServers.url}/api/v1/repos`, {
       method: "POST",
@@ -391,14 +380,10 @@ describe("a mirror follows the origin's visibility", () => {
 
     const app2 = createApp({ dataDir, port: 0 });
     const servers2 = await serve(app2);
-    await fetch(`${servers2.url}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "alice",
-        email: "alice@v.test",
-        password: PASSWORD,
-      }),
+    await seedAdmin(app2, {
+      username: "alice",
+      email: "alice@v.test",
+      password: PASSWORD,
     });
     const auth = { authorization: basic("alice", PASSWORD) };
     const connected = await read<{ id: string }>(

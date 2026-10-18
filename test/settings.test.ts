@@ -6,6 +6,7 @@ import { createApp, type App } from "../src/app.ts";
 import { getRepo } from "../src/core/repos.ts";
 import { listLabels } from "../src/core/issues.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 describe("repo settings", () => {
   let dataDir: string;
@@ -35,7 +36,7 @@ describe("repo settings", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    ownerCookie = await signup("olive");
+    ownerCookie = await adminCookie(app, { username: "olive", email: "olive@f.dev", password: "settings-password" });
     strangerCookie = await signup("stranger");
     await fetch(`${base}/new`, {
       method: "POST",

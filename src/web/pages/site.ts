@@ -332,8 +332,8 @@ function authForm(
         firstAccount,
         () =>
           html`<p class="muted small mb">
-            This forge has no accounts yet — the first account becomes the site
-            admin.
+            This forge has no accounts yet. Accounts made here are not admins:
+            the operator makes the site admin.
           </p>`,
       )}
       <div class="form-actions">

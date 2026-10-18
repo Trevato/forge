@@ -25,6 +25,7 @@ import {
   type FakeForge,
 } from "./fake-origin.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 /**
  * Adversarial push-through. The pusher is the attacker: a local writer on a
@@ -430,20 +431,12 @@ describe("push-through, adversarially", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    for (const [username, password] of [
-      ["alice", ALICE_PASSWORD],
-      ["bob", BOB_PASSWORD],
-    ]) {
-      await fetch(`${base}/api/v1/users`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          username,
-          email: `${username}@forge.test`,
-          password,
-        }),
-      });
-    }
+    await seedAdmin(app, { username: "alice", email: "alice@forge.test", password: ALICE_PASSWORD });
+    await fetch(`${base}/api/v1/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "bob", email: "bob@forge.test", password: BOB_PASSWORD }),
+    });
 
     const connected = await read<{ id: string }>(
       await api("/api/v1/user/origins", {

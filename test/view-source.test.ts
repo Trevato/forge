@@ -21,6 +21,7 @@ import {
   type FakeForge,
 } from "./fake-origin.ts";
 import { fastFirstFetch } from "./helpers/globals.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 /**
  * Browsing before mirroring.
@@ -114,15 +115,11 @@ describe("RepoSource: one repository, two places to read it from", () => {
         },
         body: JSON.stringify(body),
       });
-    await up(
-      "/api/v1/users",
-      {
-        username: ORIGIN_LOGIN,
-        email: "octo@upstream.test",
-        password: ORIGIN_TOKEN,
-      },
-      false,
-    );
+    await seedAdmin(originApp, {
+      username: ORIGIN_LOGIN,
+      email: "octo@upstream.test",
+      password: ORIGIN_TOKEN,
+    });
     await up("/api/v1/repos", { name: "widgets", visibility: "public" });
     await up("/api/v1/repos/octo/widgets/contents", {
       branch: "main",
@@ -267,20 +264,12 @@ describe("RepoSource: one repository, two places to read it from", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    for (const [username, password] of [
-      ["alice", ALICE_PASSWORD],
-      ["bob", BOB_PASSWORD],
-    ] as const) {
-      await fetch(`${base}/api/v1/users`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          username,
-          email: `${username}@forge.test`,
-          password,
-        }),
-      });
-    }
+    await seedAdmin(app, { username: "alice", email: "alice@forge.test", password: ALICE_PASSWORD });
+    await fetch(`${base}/api/v1/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "bob", email: "bob@forge.test", password: BOB_PASSWORD }),
+    });
     alice = getUserByName(app.db, "alice")!;
     bob = getUserByName(app.db, "bob")!;
 

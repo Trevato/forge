@@ -31,6 +31,7 @@ import { clearViewCache } from "../src/view/cache.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 import { codeJs } from "../src/web/client.ts";
+import { adminCookie, seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -113,15 +114,11 @@ describe("browsing an origin repository on the web", () => {
         },
         body: JSON.stringify(body),
       });
-    await up(
-      "/api/v1/users",
-      {
-        username: ORIGIN_LOGIN,
-        email: "octo@upstream.test",
-        password: ORIGIN_TOKEN,
-      },
-      false,
-    );
+    await seedAdmin(originApp, {
+      username: ORIGIN_LOGIN,
+      email: "octo@upstream.test",
+      password: ORIGIN_TOKEN,
+    });
     await up("/api/v1/repos", { name: "widgets", visibility: "public" });
     await up("/api/v1/repos/octo/widgets/contents", {
       branch: "main",
@@ -216,7 +213,7 @@ describe("browsing an origin repository on the web", () => {
     servers = await serve(app);
     base = servers.url;
     delete process.env.FORGE_GITHUB_CLIENT_ID;
-    alice = await signUp("alice");
+    alice = await adminCookie(app, { username: "alice", email: "alice@forge.test", password: PASSWORD });
     bob = await signUp("bob");
     forgetProviders(dataDir);
 

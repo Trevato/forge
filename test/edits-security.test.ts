@@ -20,6 +20,7 @@ import {
   serveFakeForge,
   type FakeForge,
 } from "./fake-origin.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const read = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
@@ -83,14 +84,10 @@ describe("edits: refusals that must leave nothing behind", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    await fetch(`${base}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "alice",
-        email: "alice@forge.test",
-        password: "alice-password-1",
-      }),
+    await seedAdmin(app, {
+      username: "alice",
+      email: "alice@forge.test",
+      password: "alice-password-1",
     });
     rw = (
       await read<{ token: string }>(
@@ -424,14 +421,10 @@ describe("edits on a mirror: the origin's refusal is final", () => {
 
     originApp = createApp({ dataDir: originDataDir, port: 0 });
     originServers = await serve(originApp);
-    await fetch(`${originServers.url}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: ORIGIN_LOGIN,
-        email: "octo@up.test",
-        password: ORIGIN_TOKEN,
-      }),
+    await seedAdmin(originApp, {
+      username: ORIGIN_LOGIN,
+      email: "octo@up.test",
+      password: ORIGIN_TOKEN,
     });
     await upstream("/api/v1/repos", {
       method: "POST",
@@ -461,14 +454,10 @@ describe("edits on a mirror: the origin's refusal is final", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    await fetch(`${base}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "alice",
-        email: "alice@forge.test",
-        password: ALICE_PASSWORD,
-      }),
+    await seedAdmin(app, {
+      username: "alice",
+      email: "alice@forge.test",
+      password: ALICE_PASSWORD,
     });
 
     const connected = await read<{ id: string }>(

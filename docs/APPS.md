@@ -488,9 +488,10 @@ inherits the app's environment variables. That is how its crew signs in:
 a `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) set on the app under
 **Settings → App → Environment** reaches every forge it hosts, and no
 other secret of the host does — an app's environment is only what the
-section above lists, and its first sign-up is its admin, as on any fresh
-forge. `install` is empty because the forge has no dependencies to fetch;
-`ready` is generous because the first boot migrates.
+section above lists, and its admin comes from the operator's
+`--first-admin`, as on any fresh forge: no sign-up makes one. `install`
+is empty because the forge has no dependencies to fetch; `ready` is
+generous because the first boot migrates.
 
 ## What a new app starts as
 

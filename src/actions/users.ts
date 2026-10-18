@@ -80,8 +80,9 @@ export const HUMAN_CHECK_MESSAGE =
   "We could not tell you are a person. Reload the page and try again.";
 
 /**
- * The first account on a fresh forge is the admin — no setup wizard. A name
- * the crew, the owner or the forge itself answers to is not free
+ * A person signs up; never the admin, even the forge's first account
+ * (`createUser` decides: the admin comes from the operator or a claim). A
+ * name the crew, the owner or the forge itself answers to is not free
  * (`core/reserved.ts`).
  */
 export async function signUp(
@@ -94,7 +95,7 @@ export async function signUp(
     address?: string | undefined;
     /**
      * The terminal cannot render a widget, so it is let past the Turnstile
-     * check for the first account only (the bootstrap admin); once anyone
+     * check for the forge's first account only; once anyone
      * exists, the terminal is asked like everyone else and, having no
      * token, is refused: sign up on the web page.
      */
@@ -116,7 +117,7 @@ export async function signUp(
       return err("human_check");
   }
   const { humanToken: _token, ...account } = input;
-  const created = await createUser(app.db, { ...account, adminIfFirst: true, origin: "signup", slot: from.slot });
+  const created = await createUser(app.db, { ...account, origin: "signup", slot: from.slot });
   if (!created.ok) return created;
   app.bus.append({
     kind: "user.created",
@@ -126,8 +127,8 @@ export async function signUp(
       ...(from.address === undefined ? {} : { address: from.address }),
     },
   });
-  // The address is proven by the link it is sent (the first account by
-  // being first); until then nothing it does may create or cost.
+  // The address is proven by the link it is sent; until then nothing it
+  // does may create or cost.
   await welcome(app, created.value);
   return created;
 }
@@ -164,7 +165,6 @@ export async function signUpWithPasskey(
   const created = await createUser(app.db, {
     username: input.username,
     email: input.email,
-    adminIfFirst: true,
     origin: "passkey",
     slot: from.slot,
   });

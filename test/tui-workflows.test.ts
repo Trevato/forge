@@ -44,6 +44,7 @@ import {
 } from "../src/tui/term/terminal.ts";
 import { settleApp } from "./helpers/tui.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -197,11 +198,11 @@ describe("reviews, threads and the merge gate", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tuirev-"));
     forge = createApp({ dataDir, port: 0 });
-    const one = await signUp(forge, {
+    const one = await seedAdmin(forge, {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    }, { slot: fixtureSlot(forge) });
+    });
     const two = await signUp(forge, {
       username: "bob",
       email: "bob@forge.test",

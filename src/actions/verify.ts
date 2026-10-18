@@ -15,7 +15,6 @@ import {
   issueRecovery,
   recoveryOwner,
   spendRecovery,
-  markVerified,
   resetVerification,
 } from "../core/verify.ts";
 import { listSecretNames, resolveSecrets } from "../core/secret_store.ts";
@@ -124,12 +123,8 @@ export async function sendVerification(
   return "sent";
 }
 
-/** After signup: the forge's first account is proven by being first. */
+/** After a sign-up: the address is proven by the link it is sent, the first account's too. */
 export async function welcome(app: App, user: User): Promise<void> {
-  if (user.isAdmin) {
-    markVerified(app.db, user.id, new Date().toISOString());
-    return;
-  }
   resetVerification(app.db, user.id);
   await sendVerification(app, user);
 }
