@@ -926,6 +926,7 @@ stands, taking updates, and the crew's part when both sides moved.
 
 `docs/FLEET.md` is one change across many repositories, runs or issues: a
 query, a dry-run plan of every row before → after, a receipt, and undo.
+`archive` (true or false) archives or wakes many repositories; its undo is kept a day.
 
 `docs/MCP.md` is the forge as a connector, and `docs/STANDARDS.md` is what
 it answers by default: `.well-known`, feeds, cards, the manifest.
