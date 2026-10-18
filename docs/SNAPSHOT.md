@@ -133,6 +133,7 @@ The restore reads several objects at a time, under the same limits as the
 upload (`IN_FLIGHT` gets, `IN_FLIGHT_BYTES` held): read one after another, a
 snapshot of thousands of objects spent the drill's whole 10 minutes in the
 restore step (#2539).
+Repositories come back four clones at a time, not one after another (#2543).
 One drill runs at a time: a second click, or a retry after a proxy timeout,
 joins the drill already running rather than starting another restore. Every
 run is a row in the `drill` table, and the last one shows as a line on the

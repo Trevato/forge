@@ -56,6 +56,9 @@ export interface Restored {
   readonly sealedMissing: readonly string[];
 }
 
+/** Repositories cloned at once while restoring. */
+export const CLONES = 4;
+
 /** Names of every sealed value in a restored database; never the values. */
 async function sealedNames(dbFile: string): Promise<string[]> {
   const { Database } = await import("bun:sqlite");
@@ -139,6 +142,8 @@ export async function restoreSnapshot(
     readonly passphrase?: string | undefined;
     /** Bytes held by reads in flight; `IN_FLIGHT_BYTES` unless a test shrinks it. */
     readonly inFlightBytes?: number | undefined;
+    /** Test seam: the git runner the clones go through. */
+    readonly git?: typeof runGit | undefined;
   } = {},
 ): Promise<Restored> {
   if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z$/.test(name))
@@ -229,21 +234,37 @@ export async function restoreSnapshot(
     await Bun.write(target, await unpack(file, parts));
     files++;
   }
-  for (const b of bundles) {
-    const dir = repoDir(join(dataDir, "repos"), b.owner, b.name);
-    mkdirSync(dirname(dir), { recursive: true });
-    const cloned = await runGit(["clone", "--quiet", "--mirror", b.file, dir]);
-    if (!cloned.ok)
-      throw new Error(
-        `could not restore ${b.owner}/${b.name}: ${cloned.error.stderr}`,
-      );
-    // A mirror clone remembers the bundle as its origin; the forge's
-    // repositories have no origin of their own.
-    await runGit(["remote", "remove", "origin"], { cwd: dir });
-    await runGit(["config", "core.logAllRefUpdates", "true"], { cwd: dir });
-    await installHooks(dir);
-    repos++;
-  }
+  // Each repository is its own clone, so several at once: a forge of
+  // hundreds of them spent the drill's minutes here, one after another.
+  const git = options.git ?? runGit;
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(CLONES, bundles.length) }, async () => {
+      for (let b = bundles[next++]; b !== undefined; b = bundles[next++]) {
+        const dir = repoDir(join(dataDir, "repos"), b.owner, b.name);
+        mkdirSync(dirname(dir), { recursive: true });
+        const cloned = await git([
+          "clone",
+          "--quiet",
+          "--mirror",
+          b.file,
+          dir,
+        ]);
+        if (!cloned.ok) {
+          next = bundles.length;
+          throw new Error(
+            `could not restore ${b.owner}/${b.name}: ${cloned.error.stderr}`,
+          );
+        }
+        // A mirror clone remembers the bundle as its origin; the forge's
+        // repositories have no origin of their own.
+        await git(["remote", "remove", "origin"], { cwd: dir });
+        await git(["config", "core.logAllRefUpdates", "true"], { cwd: dir });
+        await installHooks(dir);
+        repos++;
+      }
+    }),
+  );
   const { rmSync } = await import("node:fs");
   rmSync(join(dataDir, "restore-bundles"), { recursive: true, force: true });
   if (key !== undefined) {
