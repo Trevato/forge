@@ -15,6 +15,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { memoryLimitBytes } from "../core/capacity.ts";
 
 /** Base env for all server-side git. Nothing from the host leaks in. */
 export function gitEnv(extra?: Record<string, string>): Record<string, string> {
@@ -195,6 +196,24 @@ const limitFromEnv = (name: string, fallback: number): number => {
 export const gitGate = new Gate(limitFromEnv("FORGE_GIT_CONCURRENCY", 8));
 
 /**
+ * How many pack transfers a host of `bytes` memory runs at once by default:
+ * one per 64 MiB, at least two, at most sixteen. A push is not one process
+ * but three while it runs: `receive-pack`, the pre-receive hook (a whole Bun
+ * runtime relaying to the forge) and the git it calls back into. Sixteen of
+ * those on a 512 MiB cell, with the clients beside them, is past the cgroup's
+ * limit: the kernel reclaims the binaries' pages, every process waits on the
+ * disk, and the hook relay times out after two minutes with nothing wrong but
+ * the count (gate (1) on the isolated runner). Every host with 1 GiB or more
+ * keeps sixteen; `FORGE_GIT_TRANSFER_CONCURRENCY` still overrides it. A push
+ * past the count waits for a permit before its hook starts, so the wait is
+ * never charged to the relay's deadline.
+ */
+export function transfersForMemory(bytes: number): number {
+  const n = Math.floor(bytes / (64 * 1024 * 1024));
+  return Math.min(16, Math.max(2, Number.isFinite(n) ? n : 16));
+}
+
+/**
  * Pack transfers: `upload-pack` and `receive-pack`. A separate pool, and that
  * separation is load-bearing — a `receive-pack` holds its permit for the
  * whole push, and the pre-receive hook it runs comes back into the forge and
@@ -202,7 +221,7 @@ export const gitGate = new Gate(limitFromEnv("FORGE_GIT_CONCURRENCY", 8));
  * deadlock the moment pushes filled it.
  */
 export const transferGate = new Gate(
-  limitFromEnv("FORGE_GIT_TRANSFER_CONCURRENCY", 16),
+  limitFromEnv("FORGE_GIT_TRANSFER_CONCURRENCY", transfersForMemory(memoryLimitBytes())),
 );
 
 export interface GitFailure {
