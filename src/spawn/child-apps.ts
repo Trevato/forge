@@ -14,7 +14,7 @@ import { startChecks, checksFor, type ChecksHandle } from "../checks/service.ts"
 import { listApps } from "../core/apps.ts";
 import { appsRuntime, AppsRuntime } from "../apps/runtime.ts";
 import { childHost } from "./door.ts";
-import { childPublicUrl } from "./placement.ts";
+import { childPublicUrl, parentOrigin } from "./placement.ts";
 
 interface Running {
   readonly child: App;
@@ -44,7 +44,7 @@ export async function startChildApps(parent: App, child: App, name: string): Pro
     domain: `--${name}--${childHost(parent)}`,
     scheme: own.options.scheme,
     publicPort: own.options.publicPort,
-    forgeUrl: childPublicUrl(name, childHost(parent)),
+    forgeUrl: childPublicUrl(name, parentOrigin(parent.config)),
     gate: own.lane,
     busyGraceMs: own.options.busyGraceMs,
     idlePullMs: own.options.idlePullMs,

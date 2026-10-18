@@ -20,6 +20,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { shellJs } from "../src/web/client.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 const form = (fields: Record<string, string>) => new URLSearchParams(fields);
 
@@ -70,7 +71,7 @@ describe("web ui", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    owner = await signup("mel");
+    owner = await adminCookie(app, { username: "mel", email: "mel@f.dev", password: "web-ui-password" });
     stranger = await signup("kim");
 
     await fetch(`${base}/new`, {

@@ -7,6 +7,7 @@ import { commitLog, listTree } from "../src/git/read.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { unwrap } from "../src/kernel/result.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 describe("commit via API (no git client)", () => {
   let dataDir: string;
@@ -21,14 +22,10 @@ describe("commit via API (no git client)", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    await fetch(`${base}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "mira",
-        email: "mira@f.dev",
-        password: "contents-api-pass",
-      }),
+    await seedAdmin(app, {
+      username: "mira",
+      email: "mira@f.dev",
+      password: "contents-api-pass",
     });
     token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",

@@ -54,6 +54,7 @@ import {
 import { quietLogs } from "./helpers/globals.ts";
 import type { User } from "../src/core/users.ts";
 import { promote } from "./helpers/members.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -79,7 +80,7 @@ describe("the index carries the hot queries", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-scale-"));
     app = createApp({ dataDir, port: 0 });
 
-    const a = await signUp(app, {
+    const a = await seedAdmin(app, {
       username: "alice",
       email: "a@forge.test",
       password: "a-long-alice-password",
@@ -232,7 +233,7 @@ describe("grouped reads answer exactly what the per-row ones did", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-grouped-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await signUp(app, {
+    const a = await seedAdmin(app, {
       username: "alice",
       email: "a@forge.test",
       password: "a-long-alice-password",
@@ -403,14 +404,13 @@ describe("visibility is enforced in SQL, not after the fact", () => {
     // The *first* account on a fresh forge is the site admin, and a site
     // admin sees everything — which would make every assertion here vacuous.
     // So the admin is somebody else entirely, and alice is an ordinary user.
-    // Not "root": that name is reserved now, and a refused sign-up here made
-    // alice the first account — the admin — without a word.
-    const admin = await signUp(app, {
+    // Not "root": that name is reserved now.
+    const admin = await seedAdmin(app, {
       username: "keeper",
       email: "keeper@forge.test",
       password: "a-long-keeper-password",
     });
-    if (!admin.ok) throw new Error(`the admin could not sign up: ${admin.error}`);
+    if (!admin.ok) throw new Error(`the admin could not be made: ${admin.error}`);
     const a = await signUp(app, {
       username: "alice",
       email: "a@forge.test",
@@ -509,7 +509,7 @@ describe("the cat-file reader pool", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-pool-"));
     app = createApp({ dataDir, port: 0 });
-    const a = await signUp(app, {
+    const a = await seedAdmin(app, {
       username: "alice",
       email: "a@forge.test",
       password: "a-long-alice-password",

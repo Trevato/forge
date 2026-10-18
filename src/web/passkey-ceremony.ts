@@ -1,11 +1,12 @@
 /**
  * The server half of a form that makes an account with a passkey — the
- * claim link (`pages/claim.ts`) and the everyday account
- * (`pages/everyday.ts`). The page's button asks its options route for a
- * challenge (`makeOptions`), the browser makes the key, `passkey-client.ts`
- * writes the answer into the form's hidden fields (`passkeyFields`) and
- * submits it; the page's POST reads it back (`readPasskey`). A form with no
- * key in it — a password, or a browser without script — makes nothing.
+ * claim link (`pages/claim.ts`), the everyday account (`pages/everyday.ts`)
+ * and the first admin (`pages/first-admin.ts`). The page's button asks its
+ * options route for a challenge (`makeOptions`), the browser makes the key,
+ * `passkey-client.ts` writes the answer into the form's hidden fields
+ * (`passkeyFields`) and submits it; the page's POST reads it back
+ * (`readPasskey`). A form with no key in it — a password, or a browser
+ * without script — makes nothing.
  */
 
 import type { Credential } from "../auth/webauthn.ts";
@@ -20,7 +21,7 @@ import { relying, store } from "./pages/passkeys.ts";
  * Which form is making the account. Each has its own challenge store, so a
  * challenge one options route issued is spent only at that form's POST.
  */
-export type Ceremony = "claim" | "everyday";
+export type Ceremony = "claim" | "everyday" | "firstAdmin";
 
 /** What the browser needs for `navigator.credentials.create`, for `username`. */
 export function makeOptions(ctx: Ctx, ceremony: Ceremony, username: string) {

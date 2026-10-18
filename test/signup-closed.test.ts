@@ -46,11 +46,11 @@ describe("closed signup", () => {
     });
   const me = (login: string) => fetch(`${base}/api/v1/user`, { headers: edge(login) });
 
-  test("the first account is made even when closed", async () => {
+  test("the first account is made even when closed, and is not the admin", async () => {
     mode("closed");
     const first = await me("founder");
     expect(first.status).toBe(200);
-    expect(((await first.json()) as { isAdmin: boolean }).isAdmin).toBe(true);
+    expect(((await first.json()) as { isAdmin: boolean }).isAdmin).toBe(false);
   });
 
   for (const closed of ["closed", "invite"] as const) {

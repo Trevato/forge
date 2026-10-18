@@ -14,6 +14,7 @@ import {
   type FlowIssue,
   type FlowPull,
 } from "../src/flow/stage.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const NOW = new Date("2026-10-15T12:00:00.000Z");
 const ago = (minutes: number): string =>
@@ -198,7 +199,7 @@ describe("GET /flow", () => {
         headers: { "content-type": "application/json", ...extra },
         body: JSON.stringify(body),
       });
-    await post("/api/v1/users", {
+    await seedAdmin(app, {
       username: "mira",
       email: "mira@f.dev",
       password: "flow-stage-pass",

@@ -11,6 +11,7 @@ import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { cutWave } from "../src/story/cut.ts";
 import { parseWave, writeWave } from "../src/story/wave.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 const link = (n: number) => `https://f.test/o/r/pulls/${n}`;
 const merged = (number: number, mergedAt: string, title = `Pull ${number}`) => ({
@@ -132,7 +133,7 @@ describe("Cut a wave in Settings", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    cookies = { olive: await signup("olive"), stranger: await signup("stranger") };
+    cookies = { olive: await adminCookie(app, { username: "olive", email: "olive@f.dev", password: "cut-wave-password" }), stranger: await signup("stranger") };
     await fetch(`${base}/new`, {
       method: "POST",
       headers: { cookie: cookies.olive! },

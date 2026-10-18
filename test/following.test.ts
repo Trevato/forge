@@ -868,6 +868,16 @@ describe("a fork that follows its parent", () => {
     const standing = getPull(app.db, lamp.id, first.number)!;
     const taken = await mergePull(app, alice, lamp, standing, "merge");
     if (!taken.ok) throw new Error(JSON.stringify(taken.error));
+    // The untouched fork follows that merge on the bus. Landing the next
+    // pull before it has would race the follow's move of the same branch.
+    const start = Date.now();
+    for (;;) {
+      const r = await forkRelation(app, fresh(mine), fresh(lamp));
+      if (r?.state === "synced" && r.forkTip === r.parentTip) break;
+      if (Date.now() - start > 5000)
+        throw new Error(`not settled: ${JSON.stringify(r)}`);
+      await Bun.sleep(40);
+    }
 
     await land("Dim the lights", "dim");
     const second = await propose();

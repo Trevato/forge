@@ -9,6 +9,7 @@ import { choicesFrom } from "../src/web/pages/conflicts.ts";
 import { runGit } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const labels = { ours: "main", theirs: "loud" };
 const FILE =
@@ -97,14 +98,10 @@ describe("the Resolve page", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    await fetch(`${base}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username: "dev",
-        email: "dev@f.dev",
-        password: "conflicts-pass-123",
-      }),
-      redirect: "manual",
+    await seedAdmin(app, {
+      username: "dev",
+      email: "dev@f.dev",
+      password: "conflicts-pass-123",
     });
     const token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",

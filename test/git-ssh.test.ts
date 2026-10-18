@@ -35,6 +35,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { missing } from "./helpers/tools.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -109,11 +110,11 @@ describe.skipIf(NO_OPENSSH)("git over ssh", () => {
     forge = createApp({ dataDir, port: 0 });
     servers = await serve(forge); // the hook socket lives here
 
-    const a = await signUp(forge, {
+    const a = await seedAdmin(forge, {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    }, { slot: fixtureSlot(forge) });
+    });
     const b = await signUp(forge, {
       username: "bob",
       email: "bob@forge.test",
@@ -320,11 +321,11 @@ describe.skipIf(NO_OPENSSH)("a git service outlives neither the channel nor the 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-gitkill-"));
     forge = createApp({ dataDir, port: 0 });
-    const alice = await signUp(forge, {
+    const alice = await seedAdmin(forge, {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    }, { slot: fixtureSlot(forge) });
+    });
     if (!alice.ok) throw new Error("signup failed");
     const repo = await createRepo(forge, alice.value, {
       name: "lighthouse",

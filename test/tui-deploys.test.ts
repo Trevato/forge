@@ -16,6 +16,7 @@ import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -27,11 +28,11 @@ let repo: Repo;
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-tui-deploys-"));
   forge = createApp({ dataDir: dir, port: 0 });
-  const a = await signUp(forge, {
+  const a = await seedAdmin(forge, {
     username: "alice",
     email: "alice@forge.test",
     password: "a-long-passphrase",
-  }, { slot: fixtureSlot(forge) });
+  });
   if (!a.ok) throw new Error("signup failed");
   alice = a.value;
   const r = await createRepo(forge, alice, { name: "lamp", visibility: "public" });

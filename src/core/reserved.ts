@@ -106,6 +106,7 @@ export const SYSTEM_NAMES: readonly string[] = [
   "www",
   "asked",
   "claim",
+  "first-admin",
   "forges",
   // the forge's own nouns, and the platform's name
   "user",

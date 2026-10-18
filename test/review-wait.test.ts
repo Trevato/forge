@@ -20,6 +20,7 @@ import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { pullWord, type WordCtx } from "../src/web/studio/words.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -70,16 +71,7 @@ describe("a green agent pull and its reviewer", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-review-wait-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const signup = await fetch(`${servers.url}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username: "alice",
-        email: "alice@forge.test",
-        password: "a-long-review-passphrase",
-      }),
-      redirect: "manual",
-    });
-    cookie = `${(signup.headers.get("set-cookie") ?? "").split(";")[0]!}; forge_mode=studio`;
+    cookie = `${await adminCookie(app, { username: "alice", email: "alice@forge.test", password: "a-long-review-passphrase" })}; forge_mode=studio`;
     const alice = getUserByName(app.db, "alice")!;
     const made = await createRepo(app, alice, { name: "garden", visibility: "public" });
     if (!made.ok) throw new Error(String(made.error));

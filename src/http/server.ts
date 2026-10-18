@@ -232,6 +232,7 @@ import {
 } from "../web/studio/actions.ts";
 import { everydayCreate, everydayKeep, everydayOptions, everydaySwitch } from "../web/pages/everyday.ts";
 import { claimFragmentPage, claimOptions, claimSubmit } from "../web/pages/claim.ts";
+import { firstAdminOptions, firstAdminPage, firstAdminSubmit } from "../web/pages/first-admin.ts";
 import { familyPage } from "../web/pages/family.ts";
 import { forgeLinkSubmit, forgesPage } from "../web/pages/forges.ts";
 import { newForgePage, newForgeSubmit } from "../web/pages/new-forge.ts";
@@ -637,6 +638,10 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/claim", claimFragmentPage);
   router.add("POST", "/claim", claimSubmit);
   router.add("POST", "/claim/options", claimOptions);
+  // The operator's first-admin code, redeemed with a passkey (core/first_admin.ts).
+  router.add("GET", "/first-admin", firstAdminPage);
+  router.add("POST", "/first-admin", firstAdminSubmit);
+  router.add("POST", "/first-admin/options", firstAdminOptions);
   // "+ New forge": the spawn door as a page, any signed-in person (spawn/door.ts).
   router.add("GET", "/forges", forgesPage);
   router.add("GET", "/family", familyPage);

@@ -22,17 +22,16 @@ import { clientAddress } from "../../http/peer.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
 import { addPasskey } from "../../core/passkeys.ts";
 import {
-  addTeamMember,
   listTeamMembers,
   listTeams,
   OWNERS_TEAM,
-  removeTeamMember,
   type Team,
 } from "../../core/orgs.ts";
 import { createSession } from "../../core/sessions.ts";
 import { createUser, discardFreshUser, getUserByName, type User } from "../../core/users.ts";
 import {
   burnClaim,
+  handOver,
   readClaim,
   spawnedOrg,
   unburnClaim,
@@ -263,7 +262,7 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
   const token = field(form, "token");
   const before = readClaim(ctx.app.db, orgId, token);
   if (before.state !== "ok") return dead(ctx, before.state);
-  const { team, spawner } = owners(ctx, spawned);
+  const { spawner } = owners(ctx, spawned);
 
   const values = {
     username: field(form, "username"),
@@ -312,12 +311,8 @@ export async function claimSubmit(ctx: Ctx): Promise<Response> {
     unburnClaim(ctx.app.db, orgId, token);
     return again({ passkey: PASSKEY_WORDS.taken });
   }
-  if (team) {
-    addTeamMember(ctx.app.db, team, made.value.id);
-    // As the page said: unless the spawner kept access, they leave now.
-    if (!spawned.keepAccess && spawner && spawner.id !== made.value.id)
-      removeTeamMember(ctx.app.db, team, spawner.id);
-  }
+  // As the page said: unless the spawner kept access, they leave now.
+  handOver(ctx.app.db, spawned, made.value.id);
   ctx.app.log.info("forge claimed", {
     org: spawned.org.username,
     user: made.value.username,

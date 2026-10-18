@@ -41,6 +41,7 @@ import {
 import { highlightAsset } from "../src/web/asset.ts";
 import { highlightToHtml } from "../src/web/highlight-html.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -113,11 +114,11 @@ describe("editing files on the web", () => {
     base = servers.url;
     origin = new URL(base).origin;
 
-    const a = await signUp(app, {
+    const a = await seedAdmin(app, {
       username: "alice",
       email: "a@f.dev",
       password: PASSWORD,
-    }, { slot: fixtureSlot(app) });
+    });
     const k = await signUp(app, {
       username: "kim",
       email: "k@f.dev",

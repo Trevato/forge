@@ -26,6 +26,7 @@ import { readFeed } from "../src/feed/feed.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { ASK_WORDS, ROW_PLURAL, askLinesFor, asksAnswer } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -93,16 +94,7 @@ describe("asks that expire, hold and collapse", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-expiry-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    const response = await fetch(`${servers.url}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username: "alice",
-        email: "alice@forge.test",
-        password: PASSWORD,
-      }),
-      redirect: "manual",
-    });
-    alice = `${(response.headers.get("set-cookie") ?? "").split(";")[0]!}; forge_mode=studio`;
+    alice = `${await adminCookie(app, { username: "alice", email: "alice@forge.test", password: PASSWORD })}; forge_mode=studio`;
     aliceUser = getUserByName(app.db, "alice")!;
     const made = await createRepo(app, aliceUser, {
       name: "orchard",

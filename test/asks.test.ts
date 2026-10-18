@@ -28,6 +28,7 @@ import { hunt } from "../src/crew/sentinel.ts";
 import { ASK_WORDS, decisionsFor } from "../src/web/studio/asks.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { promote } from "./helpers/members.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -80,7 +81,7 @@ describe("the asks page", () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-asks-"));
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
-    alice = await signUp("alice"); // the first account: the site admin
+    alice = `${await adminCookie(app, { username: "alice", email: "alice@forge.test", password: PASSWORD })}; forge_mode=studio`;
     bob = await signUp("bob");
     const aliceUser = getUserByName(app.db, "alice")!;
     const made = await createRepo(app, aliceUser, {

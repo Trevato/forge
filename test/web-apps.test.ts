@@ -30,6 +30,7 @@ import { isTerminal, listRuns, type Run } from "../src/core/runs.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -152,7 +153,7 @@ describe("apps, runs and the crew on the web", () => {
       concurrency: 1,
     });
     await runtime.start();
-    alice = await signUp("alice"); // the first account: the site admin
+    alice = `${await adminCookie(app, { username: "alice", email: "alice@forge.test", password: PASSWORD })}; forge_mode=dev`;
     bob = await signUp("bob");
   }, 30_000);
 
