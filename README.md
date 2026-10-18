@@ -844,7 +844,8 @@ the hold; an issue handed to the planner is still owed its pass.
 Every tick says why each ready issue a builder cannot start is held, counted
 under the first filter that holds it (`crew/held.ts`): `held: running=1
 open_pull=10 stalled=12 run_cap=11` — a run on it, an open pull proposing it,
-the planner's, stalled, at its run cap, parked twice, covered by a red-main
+the planner's, found done on main and waiting for a person to close it
+(`done_on_main`, never re-planned), stalled, at its run cap, parked twice, covered by a red-main
 fix, or a setting's finding. `/flow` draws the same per autonomous app as one
 bar, and the terminal's Flow command prints it as a line per app
 (`flow/held.ts`, kept 5 s). When nothing is startable while builder slots are free and some of the
