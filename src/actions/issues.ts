@@ -482,17 +482,22 @@ export function setIssueState(
 
 /**
  * The one close a crew member may make on an issue it did not write: the
- * repository's planner, on an open issue the crew parked twice and handed
- * to it (`crew/parks.ts`). Nothing a person asked for is lost by it:
+ * repository's planner, on an open issue it is re-planning — one the crew
+ * parked twice and handed to it (`crew/parks.ts`), or any other. Nothing a
+ * person asked for is lost by it:
  *
  * - split, only into what replaces it — every issue named must be an open
  *   issue made since the hand-over, not the issue itself and not the Later
- *   gate, so a closed or an old issue cannot stand in for a drop;
+ *   gate, so a closed or an old issue cannot stand in for a drop. Or, once
+ *   every piece has landed, into issues of this repository that all closed as
+ *   done since the hand-over, so old unrelated work cannot stand in either;
  * - dropped, only when an agent wrote the issue. A person's ask is dropped
  *   by a person.
  *
- * Done is what a landed pull or a person says; a pull, a reopen, and every
- * other issue stay with the people who can write here.
+ * - done, only when commits on main already name the issue (`alreadyDone`).
+ *
+ * A pull, a reopen, and any other close stay with the people who can write
+ * here.
  */
 function handedToPlanner(
   app: App,
@@ -503,8 +508,14 @@ function handedToPlanner(
 ): boolean {
   if (issue.kind !== "issue" || issue.state !== "open") return false;
   if (crewRole(app.db, repo.id, actor.id) !== "planner") return false;
-  const handed = handedOverAt(app.db, repo, issue.id);
-  if (handed === undefined) return false;
+  // Replacements must be newer than the hand-over when the crew handed the
+  // issue over, and newer than the issue itself when the planner re-plans it
+  // on its own pass.
+  const since = handedOverAt(app.db, repo, issue.id) ?? issue.createdAt;
+  // Done on main: only when commits already name the issue, as the close
+  // note keeps them.
+  if (closing.reason === undefined || closing.reason === "done")
+    return (alreadyDone(app.db, [issue.id]).get(issue.id) ?? []).length > 0;
   // Dropped only when no person's ask stands in it — not one the planner
   // wrote to replace a person's, however many times it was split since.
   if (closing.reason === "dropped") return !standsForPerson(app.db, issue);
@@ -512,17 +523,29 @@ function handedToPlanner(
   const into = closing.into ?? [];
   if (into.length === 0) return false;
   const gate = laterGate(app.db, repo.id);
-  return into.every((number) => {
-    const part = getIssue(app.db, repo.id, number);
-    return (
-      part !== undefined &&
-      part.kind === "issue" &&
-      part.state === "open" &&
-      part.id !== issue.id &&
-      part.number !== gate &&
-      part.createdAt > handed
-    );
-  });
+  const found = into.map((number) => getIssue(app.db, repo.id, number));
+  const parts: Issue[] = [];
+  for (const part of found) {
+    if (
+      part === undefined ||
+      part.kind !== "issue" ||
+      part.id === issue.id ||
+      part.number === gate
+    )
+      return false;
+    parts.push(part);
+  }
+  // Every piece landed since: closed as done at or after the hand-over.
+  if (
+    parts.every(
+      (part) =>
+        part.state === "closed" &&
+        part.closeReason === "done" &&
+        (part.closedAt ?? "") >= since,
+    )
+  )
+    return true;
+  return parts.every((part) => part.state === "open" && part.createdAt > since);
 }
 
 /** How an issue closes: done unless said otherwise; split names its children. */

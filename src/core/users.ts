@@ -10,6 +10,7 @@ import { noreplyAddress } from "./commit_identity.ts";
 import { reservedName } from "./reserved.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { admitSignin } from "./signin-window.ts";
 import { getSignup } from "../settings/signup.ts";
 import type { SignupSlot } from "../actions/signup-window.ts";
 
@@ -280,7 +281,7 @@ export async function createUser(
   if ("slot" in input) input.slot.spend();
   const userId = id();
   // An account without a password has an empty hash, which no verifier
-  // accepts: argon2 refuses to parse it (and verifyPassword refuses an agent
+  // accepts: argon2 refuses to parse it (and checkPassword refuses an agent
   // besides).
   const hash =
     password === undefined ? "" : await Bun.password.hash(password, "argon2id");
@@ -440,8 +441,42 @@ export async function ensureEdgeUser(
   return made.value;
 }
 
+/** Why a password was not accepted: wrong, or tried too often to check. */
+export type PasswordRefusal =
+  | { readonly reason: "bad_credentials" }
+  | { readonly reason: "throttled"; readonly retryAfter: number };
+
+/** One password attempt: who it names, the secret, and the peer that sent it. */
+export interface PasswordAttempt {
+  readonly username: string;
+  readonly password: string;
+  /** The socket's peer (`http/peer.ts` `clientAddress`, or the SSH peer). */
+  readonly source: string;
+}
+
+/**
+ * The only way to prove a password. The attempt is counted in the sign-in
+ * windows (per account, per source, per forge: `core/signin-window.ts`)
+ * before the hash, so no door can guess at line speed or spend the CPU on
+ * argon2; a right password is given back, so a git client that sends it on
+ * every request is not throttled. The check itself is not exported: a new door cannot skip the
+ * windows, because there is nothing else to call.
+ */
+export async function verifyPasswordThrottled(
+  db: Database,
+  attempt: PasswordAttempt,
+): Promise<Result<User, PasswordRefusal>> {
+  const admission = admitSignin(db, attempt.username, attempt.source);
+  if (!admission.admitted)
+    return err({ reason: "throttled", retryAfter: admission.retryAfter });
+  const checked = await checkPassword(db, attempt.username, attempt.password);
+  if (!checked.ok) return err({ reason: "bad_credentials" });
+  admission.succeeded();
+  return checked;
+}
+
 /** Constant-shape verification: always burns an argon2 verify, hit or miss. */
-export async function verifyPassword(
+async function checkPassword(
   db: Database,
   username: string,
   password: string,

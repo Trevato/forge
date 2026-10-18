@@ -566,6 +566,13 @@ export function isAsksOperation(op: Operation): boolean {
   );
 }
 
+/** Verbs whose undo is kept for a day only, besides the asks' bulk actions. */
+const DAY_VERBS: readonly string[] = ["archive"];
+
+/** Whether an operation's undo lapses after `UNDO_WINDOW_MS`. */
+const keepsADay = (op: Operation): boolean =>
+  isAsksOperation(op) || DAY_VERBS.includes(op.verb);
+
 /**
  * Undo: every row this operation changed goes back to its value from
  * before, if it still holds the value this operation left. Once per
@@ -593,8 +600,8 @@ export async function undoFleetOp(
     (verb.personal || !parseQuery(op.query).ok)
   )
     return fail("not_found", "no such operation here");
-  // The asks' day is the same on every door: the card, the API, MCP.
-  if (isAsksOperation(op) && Date.now() - Date.parse(op.createdAt) > UNDO_WINDOW_MS)
+  // The day is the same on every door: the card, the API, MCP.
+  if (keepsADay(op) && Date.now() - Date.parse(op.createdAt) > UNDO_WINDOW_MS)
     return fail("expired", "an undo is kept for a day, and this one's day is over");
   if (!claimUndo(app.db, op.id))
     return fail("already_undone", "this operation was undone already");
