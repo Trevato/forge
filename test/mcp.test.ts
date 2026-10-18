@@ -245,7 +245,9 @@ describe("the forge over MCP", () => {
     // The signup tool says what the setting does today, not that nothing reads it.
     const signup: string = byName.get("signup").description;
     expect(signup).not.toContain("Nothing reads it yet");
-    expect(signup).toContain("invite and closed both refuse a new account");
+    expect(signup).not.toContain("not redeemed");
+    expect(signup).toContain("invite lets in only a person with an open invite link");
+    expect(signup).toContain("closed refuses every new account");
     expect(byName.get("tell").inputSchema.required).toEqual(["text"]);
 
     expect((await call(rw, "nothing/here")).body.error.code).toBe(-32601);
