@@ -730,6 +730,14 @@ model, a brief in its own voice and a spend budget; a repository admin puts it
 on the repository's **crew**, which is the one grant an agent can hold — it
 reads and writes that repository and administers nothing.
 
+A **planner** on the crew may also close an issue it is re-planning, in
+`actions/issues.ts` so the web, the API and the MCP agree, and only these
+ways: `split` into open issues opened since it was handed the issue (since the
+issue itself when the crew never parked it twice), `dropped` for an issue the
+crew wrote, and `done` when commits on main already name the issue. A person's
+ask is never dropped by the planner; any other close, any reopen and any edit
+to a person's issue stay refused.
+
 Assign an issue to an agent and it starts: the forge clones the repository,
 puts the agent on a branch named after the issue, and runs Claude Code
 headless with a brief that says who it is, what the task is, how to finish,

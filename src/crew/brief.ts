@@ -111,6 +111,7 @@ export function systemPrompt(input: BriefInput): string {
       "  It answers with what it opened (key and number), the numbers now ready, and those deferred.",
       "- The direction is never finished. When what it names is built, propose its next increment in the same spirit: what a demanding user would want next, what is fragile, slow, ugly, untested or undocumented, what the pictures and the previews show is off. Leave the map with at least three ready issues, every time.",
       '- An issue with a comment that starts "Parked by the crew" was tried and could not be finished as written. Split it into smaller issues, or rewrite what done looks like, or close it with a word if the direction no longer needs it — never leave it as it was. One the crew parked twice is yours: your task lists it, with what you may do with it.',
+      "- Closing what you re-plan: PATCH …/issues/N with {\"state\":\"closed\",\"reason\":\"split\",\"into\":[A,B]} (open issues made since it was handed to you, or since the issue itself when it was never handed over), {\"state\":\"closed\",\"reason\":\"dropped\"} for an issue the crew wrote, or {\"state\":\"closed\",\"reason\":\"done\"} only when an \"already done on main\" note on it names commits on main. A person's ask is never yours to drop; nothing else is yours to close, and nothing to reopen.",
       "- Assign nobody and push nothing: the map is the result. The direction issue stays open.",
       "- The forge's API works; open no issue to try it. Every issue you open is work a builder is given.",
       "- Finish with a short message that lists what you opened, in order, and what is ready now.",
@@ -513,13 +514,14 @@ function parkedTwiceLines(input: TaskInput): string[] {
       ...issue.reasons.map((reason, n) => `    ${n + 1}. ${reason}`),
     ]),
     "Leave every one of them in exactly one of these states, and say which in a comment on it:",
-    `- Split: open the smaller issues first, then close it as split into them — PATCH ${issues}/N with {"state":"closed","reason":"split","into":[A,B]}. Only open issues made since it was handed to you are accepted.`,
+    `- Split: open the smaller issues first, then close it as split into them — PATCH ${issues}/N with {"state":"closed","reason":"split","into":[A,B]}. Only open issues made since it was handed to you are accepted (for an issue you are re-planning that was never handed over: made since that issue).`,
     '- Replaced: open one fresh issue that says what done looks like now, comment "replaced by #M" on the old one, and close it the same way with "into":[M].',
     ...(input.laterGate === undefined
       ? []
       : [
           `- Deferred: when it serves the direction later rather than now, say why on it, with the reasons above, and put it behind the Later gate — POST ${issues}/N/dependencies with {"blockedBy":${input.laterGate}}.`,
         ]),
+    `- Done: when an "already done on main" note on it names commits on main, close it with {"state":"closed","reason":"done"}. Without that note a close as done is refused.`,
     '- Dropped: only an issue the crew wrote, when the direction no longer needs it — say why on it and close it with {"state":"closed","reason":"dropped"}. A person\'s ask is never yours to drop: split it, replace it or defer it.',
     `If other issues wait for one you close, make them wait for what replaces it: DELETE ${issues}/D/dependencies/N, then POST ${issues}/D/dependencies with {"blockedBy":M}.`,
     ...(handed.some((h) => h.pull === true)

@@ -353,11 +353,10 @@ describe("a comment that only reads like a park", () => {
     expect(struckOut(app.db, e.fresh(), [work.id]).has(work.id)).toBe(false);
     expect(handedOverAt(app.db, e.fresh(), work.id)).toBeUndefined();
     expect(parkedTwice(app.db, [e.fresh()])).toEqual([]);
-    // So the planner has no more say over it than over any other issue.
-    const part = e.issue("Shader cache: the key only");
+    // So the planner has no more say over it than over any other person's
+    // issue: it may split it, never drop it.
     const closed = setIssueState(app, atlas, e.fresh(), current(), "closed", {
-      reason: "split",
-      into: [part.number],
+      reason: "dropped",
     });
     expect(closed.ok ? "closed" : closed.error).toBe("forbidden");
     expect(current().state).toBe("open");
@@ -582,6 +581,8 @@ describe("an issue parked twice is the planner's", () => {
     expect(brief).toContain(`- Parked twice: #${again.number} Particles`);
     expect(brief).toContain('{"state":"closed","reason":"split","into":[A,B]}');
     expect(brief).toContain('comment "replaced by #M"');
+    expect(brief).toContain("never handed over: made since that issue");
+    expect(brief).toContain('- Done: when an "already done on main" note on it names commits on main');
     // Dropping is for what the crew wrote; a person's ask is never dropped.
     expect(brief).toContain("- Dropped: only an issue the crew wrote");
     expect(brief).toContain("A person's ask is never yours to drop");
@@ -786,7 +787,8 @@ describe("an issue parked twice is the planner's", () => {
     expect(
       closing(mason, again, { reason: "split", into: [part.number] }),
     ).toBe("forbidden");
-    // Refused: the planner, on an issue nobody handed it.
+    // Refused: the planner, dropping a person's issue nobody handed it, or
+    // splitting it into an issue opened before it.
     expect(closing(atlas, untried, { reason: "dropped" })).toBe("forbidden");
     expect(closing(atlas, once, { reason: "dropped" })).toBe("forbidden");
     expect(
@@ -1420,6 +1422,60 @@ describe("an issue found already done is the asker's to close, not a park", () =
     expect(settle(work, "ok", alreadyDoneSummary([oid]))).toBe(true);
     expect(alreadyDone(e.app.db, [work.id]).get(work.id)).toEqual([oid]);
     expect(listed()).toBe(false);
+  });
+
+  test("the planner re-planning on its own pass: splits, drops what the crew wrote, closes what is done, and no more", async () => {
+    const { atlas, mason } = e;
+    const state = (on: Issue) => getIssueById(e.app.db, on.id)!;
+    const close = (
+      on: Issue,
+      how?: { reason: "done" | "dropped" | "split"; into?: number[] },
+    ) => {
+      const closed = setIssueState(e.app, atlas, e.fresh(), state(on), "closed", how);
+      return closed.ok ? "closed" : closed.error;
+    };
+    // Nobody handed any of these over: a person's ask, never parked.
+    const asked = e.issue("Re-plan me");
+    const stale = e.issue("Opened before the ask");
+    const part = e.issue("Re-plan me, the first half");
+    // Split, into an issue opened since.
+    expect(close(asked, { reason: "split", into: [part.number] })).toBe("closed");
+    expect(state(asked).closeReason).toBe("split");
+    // Refused: into an issue older than the issue, or a closed one.
+    const again = e.issue("Re-plan me too");
+    expect(close(again, { reason: "split", into: [stale.number] })).toBe("forbidden");
+    expect(close(again, { reason: "split", into: [asked.number] })).toBe("forbidden");
+    // Refused: dropping a person's ask.
+    expect(close(again, { reason: "dropped" })).toBe("forbidden");
+    // Refused: done with no done note, said or not.
+    expect(close(again)).toBe("forbidden");
+    expect(close(again, { reason: "done" })).toBe("forbidden");
+    expect(state(again).state).toBe("open");
+    // Dropped: an issue the crew wrote.
+    const made = openIssue(e.app, mason, e.fresh(), { title: "Crew's own chore" });
+    if (!made.ok) throw new Error(String(made.error));
+    expect(close(made.value, { reason: "dropped" })).toBe("closed");
+    expect(state(made.value).closeReason).toBe("dropped");
+    // Done: when commits on main are named for it.
+    const built = e.issue("Already built, found by the planner");
+    expect(
+      settleAgentRun(e.app, e.fresh(), {
+        issueId: built.id,
+        state: "ok",
+        summary: alreadyDoneSummary([oid]),
+        reason: "assigned",
+        actorId: mason.id,
+      }),
+    ).toBe(true);
+    expect(close(built, { reason: "done" })).toBe("closed");
+    expect(state(built).closeReason).toBe("done");
+    // Never a reopen.
+    const reopened = setIssueState(e.app, atlas, e.fresh(), state(made.value), "open");
+    expect(reopened.ok ? "open" : reopened.error).toBe("forbidden");
+    // A builder has none of it.
+    const other = e.issue("Not for builders");
+    const own = setIssueState(e.app, mason, e.fresh(), other, "closed", { reason: "split", into: [part.number] });
+    expect(own.ok ? "closed" : own.error).toBe("forbidden");
   });
 
   test("another person's comment that reads like the note is that person's word", async () => {
