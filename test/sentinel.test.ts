@@ -739,3 +739,77 @@ describe("a budget breach is crew work at once", () => {
     }
   });
 });
+
+// ---- a degraded incident closed as done (#2553) ----
+
+describe("a degraded incident whose issue closed as done", () => {
+  let idir: string;
+  let iapp: App;
+  let irepo: Repo;
+  const T0 = Date.parse("2026-10-18T12:00:00.000Z");
+  const OPEN = T0 - 3 * HOUR;
+  const span = (cause: string, openedAt: number, minutes: number): void => {
+    iapp.db
+      .query("INSERT INTO degraded_span (cause, sentence, href, opened_at, closed_at) VALUES (?1, 'It is slow.', '/x', ?2, ?3)")
+      .run(cause, openedAt, openedAt + minutes * D_MIN);
+  };
+  const issues = (state: string) => listIssues(iapp.db, irepo.id, { state } as never);
+  const close = (reason: string): void => {
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = ?1, closed_at = ?2").run(reason, new Date(T0).toISOString());
+  };
+  beforeAll(async () => {
+    idir = await mkdtemp(join(tmpdir(), "forge-sentinel-incident-"));
+    iapp = createApp({ dataDir: idir, port: 0 });
+    const a = await createUser(iapp.db, { origin: "seed", trusted: true, username: "alice", email: "alice@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+    if (!a.ok) throw new Error(a.error);
+    const made = await createRepo(iapp, a.value, { name: "forge", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    irepo = made.value;
+  });
+  afterAll(async () => {
+    iapp.db.close();
+    await rm(idir, { recursive: true, force: true });
+  });
+
+  test("is commented once a day, not refiled", () => {
+    span("drill", OPEN, 40 * 60);
+    expect(hunt(iapp, "alice/forge", T0).filed).toBe(1);
+    close("done");
+    const again = hunt(iapp, "alice/forge", T0 + 30 * D_MIN);
+    expect(again.filed).toBe(0);
+    expect(again.commented).toBe(1);
+    expect(issues("open").length).toBe(0);
+    const closed = issues("closed");
+    expect(closed.length).toBe(1);
+    const comments = listComments(iapp.db, closed[0]!.id);
+    expect(comments.length).toBe(1);
+    expect(comments[0]!.body).toContain("Still degraded after the fix; the fix may not be live yet");
+    // Same day: nothing more, and still no new issue.
+    const third = hunt(iapp, "alice/forge", T0 + 2 * HOUR);
+    expect(third.filed).toBe(0);
+    expect(third.commented).toBe(0);
+    expect(listComments(iapp.db, closed[0]!.id).length).toBe(1);
+    // The next day it is told again.
+    expect(hunt(iapp, "alice/forge", T0 + 25 * HOUR).commented).toBe(1);
+    expect(listComments(iapp.db, closed[0]!.id).length).toBe(2);
+    expect(issues("open").length).toBe(0);
+  });
+
+  test("a new incident of the same cause is refiled", () => {
+    const later = T0 + 3 * DAY;
+    span("drill", later - HOUR, 30);
+    const r = hunt(iapp, "alice/forge", later);
+    expect(r.filed).toBe(1);
+    expect(issues("open").length).toBe(1);
+  });
+
+  test("a finding closed as dropped that returns is refiled", () => {
+    const t = T0 + 10 * DAY;
+    span("disk", t - 2 * HOUR, 30);
+    expect(hunt(iapp, "alice/forge", t).filed).toBe(1);
+    iapp.db.query("UPDATE issue SET state = 'closed', close_reason = 'dropped', closed_at = ?1 WHERE state = 'open'").run(new Date(t).toISOString());
+    const r = hunt(iapp, "alice/forge", t + 30 * D_MIN);
+    expect(r.filed).toBe(1);
+    expect(r.commented).toBe(0);
+  });
+});

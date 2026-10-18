@@ -64,6 +64,8 @@ export interface Finding {
   readonly fix?: string;
   /** A setting finding: the value and `updated_at` a person may have kept (#2001). */
   readonly kept?: { readonly value: string; readonly updatedAt: string };
+  /** A degraded finding: when its cause first opened. Same cause and time, same incident (#2553). */
+  readonly incident?: string;
 }
 
 const clip = (text: string, n = 200): string =>
@@ -386,7 +388,7 @@ export function repeatedErrors(now: number): Finding[] {
  */
 export function degradedCauses(db: Database, now: number): Finding[] {
   const from = now - DAY_MS;
-  const byCause = new Map<string, { sentence: string; href: string; first: number; ms: number }>();
+  const byCause = new Map<string, { sentence: string; href: string; first: number; opened: number; ms: number }>();
   for (const s of spans(db, from, now)) {
     const start = Math.max(s.openedAt, from);
     const held = Math.min(s.closedAt ?? now, now) - start;
@@ -396,6 +398,7 @@ export function degradedCauses(db: Database, now: number): Finding[] {
       sentence: s.sentence,
       href: s.href,
       first: seen?.first ?? start,
+      opened: seen?.opened ?? s.openedAt,
       ms: (seen?.ms ?? 0) + Math.max(0, held),
     });
   }
@@ -415,6 +418,7 @@ export function degradedCauses(db: Database, now: number): Finding[] {
       ],
       pillar: "P0 Trust: the forge says when it is not well, and is well again",
       lookFor: `\`${cause}\` stays out of the degraded list for a day, or holds under ${DEGRADED_DAY_MS / 60_000} minutes.`,
+      incident: new Date(d.opened).toISOString(),
     });
   }
   return out;
@@ -627,6 +631,42 @@ export function recordKept(db: Database, key: string, value: string, updatedAt: 
 }
 
 /**
+ * A degraded incident whose issue was closed as done and which goes on (same
+ * cause, same first-open time) is told to that issue, not filed again: the
+ * fix is likely merged but not live. At most one comment a day. True when
+ * the incident is that one: the comments made (0 or 1), else undefined.
+ */
+function continuesDone(app: App, repo: Repo, actor: User, f: Finding, evidence: string, at: string, now: number): 0 | 1 | undefined {
+  const prior = app.db
+    .query<{ issue_id: string; commented_at: string | null }, [string, string]>(
+      `SELECT t.issue_id, t.commented_at FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
+        WHERE t.key = ?1 AND t.incident = ?2 AND i.state = 'closed'
+        ORDER BY t.first_seen DESC LIMIT 1`,
+    )
+    .get(f.key, f.incident ?? "");
+  if (prior === null) return undefined;
+  const issue = getIssueById(app.db, prior.issue_id);
+  if (issue === undefined || issue.closeReason !== "done") return undefined;
+  if (prior.commented_at !== null && now - Date.parse(prior.commented_at) < DAY_MS) return 0;
+  const minutes = f.evidence.find((e) => e.startsWith("total: "));
+  const said = addComment(
+    app,
+    actor,
+    repo,
+    issue,
+    `Still degraded after the fix; the fix may not be live yet. At ${at}${minutes === undefined ? "" : `, ${minutes.slice(7)}`}; evidence now:\n${f.evidence.map((e) => `- ${e}`).join("\n")}`,
+  );
+  if (!said.ok) {
+    log.warn("sentinel could not comment", { key: f.key, error: String(said.error) });
+    return 0;
+  }
+  app.db
+    .query("UPDATE sentinel_finding SET commented_at = ?1, last_seen = ?1, evidence = ?2 WHERE key = ?3 AND issue_id = ?4")
+    .run(at, evidence, f.key, prior.issue_id);
+  return 1;
+}
+
+/**
  * Read, file, record. One open issue per finding: a tracked finding whose
  * issue is open is commented on only when its evidence changed; one whose
  * issue is closed and returns is a new issue — except a setting a person
@@ -674,6 +714,11 @@ export function hunt(
             .run(at, evidence, f.key, tracked.issue_id);
           continue;
         }
+        const told = f.incident === undefined ? undefined : continuesDone(app, repo, actor, f, evidence, at, now);
+        if (told !== undefined) {
+          commented += told;
+          continue;
+        }
         const title = `Sentinel: ${clip(f.title, 200)}`;
         // An issue already filed under this title whose record was lost
         // (the insert failed last hunt) is adopted, not filed twice.
@@ -694,8 +739,8 @@ export function hunt(
           if (f.urgent && f.kept === undefined) handOver(app, repo, actor, made.value);
         }
         app.db
-          .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES (?1, ?2, ?3, ?4, ?4)")
-          .run(f.key, issueId, evidence, at);
+          .query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen, incident) VALUES (?1, ?2, ?3, ?4, ?4, ?5)")
+          .run(f.key, issueId, evidence, at, f.incident ?? null);
       } catch (error) {
         log.error("sentinel filing failed", { key: f.key, error: String(error) });
       }
