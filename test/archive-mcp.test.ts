@@ -18,6 +18,7 @@ let dataDir: string;
 let app: App;
 let servers: Servers;
 let repo: Repo;
+let second: Repo;
 const tok: Record<string, string> = {};
 
 const ok = <T>(r: { ok: true; value: T } | { ok: false; error: unknown }): T => {
@@ -26,7 +27,7 @@ const ok = <T>(r: { ok: true; value: T } | { ok: false; error: unknown }): T => 
 };
 const archived = (): boolean => getRepoById(app.db, repo.id)!.archivedAt !== null;
 
-async function mcp(token: string, args: unknown): Promise<{ error?: string; value?: any }> {
+async function mcp(token: string, args: unknown, tool = "archive"): Promise<{ error?: string; value?: any }> {
   const res = await fetch(`${servers.url}/mcp`, {
     method: "POST",
     headers: {
@@ -38,7 +39,7 @@ async function mcp(token: string, args: unknown): Promise<{ error?: string; valu
       jsonrpc: "2.0",
       id: 1,
       method: "tools/call",
-      params: { name: "archive", arguments: args },
+      params: { name: tool, arguments: args },
     }),
   });
   const body = (await res.json()) as any;
@@ -64,6 +65,9 @@ beforeAll(async () => {
   const org = ok(createOrg(app.db, "acme", founder.id));
   repo = ok(
     await createRepo(app.db, app.reposRoot, { ownerId: org.id, name: "svc", visibility: "public" }),
+  );
+  second = ok(
+    await createRepo(app.db, app.reposRoot, { ownerId: org.id, name: "web", visibility: "public" }),
   );
   const bot = ok(await createAgent(app, founder, { username: "bot" }));
   expect(addToCrew(app, founder, repo, "bot").ok).toBe(true);
@@ -110,4 +114,51 @@ test("an admin needs an admin token; then archives and wakes", async () => {
   const woke = await mcp(tok["founder"]!, { repo: "acme/svc", archived: false, dryRun: false });
   expect(woke.value).toMatchObject({ archived: false, was: true });
   expect(archived()).toBe(false);
+});
+
+const asleep = (r: Repo): boolean => getRepoById(app.db, r.id)!.archivedAt !== null;
+
+test("`repos`: a dry run over two changes nothing; applying archives both; the undo wakes both", async () => {
+  const repos = ["acme/svc", "acme/web"];
+  const planned = await mcp(tok["founder"]!, { repos });
+  expect(planned.value.dryRun).toBe(true);
+  expect(planned.value.rows.map((r: any) => r.outcome)).toEqual(["change", "change"]);
+  expect(asleep(repo) || asleep(second)).toBe(false);
+
+  const done = await mcp(tok["founder"]!, { repos, dryRun: false });
+  expect(done.value.rows.map((r: any) => r.repo)).toEqual(["acme/svc", "acme/web"]);
+  expect(done.value.rows.every((r: any) => r.outcome === "ok")).toBe(true);
+  expect(asleep(repo) && asleep(second)).toBe(true);
+
+  const undone = await mcp(
+    tok["founder"]!,
+    { app: "acme/svc", action: "undo", operation: done.value.operation, dryRun: false },
+    "limb",
+  );
+  expect(undone.error).toBeUndefined();
+  expect(asleep(repo) || asleep(second)).toBe(false);
+});
+
+test("`repos`: a non-admin is refused per row, an agent and a small token are refused outright", async () => {
+  const repos = ["acme/svc", "acme/web", "acme/nope"];
+  const tried = await mcp(tok["mallory"]!, { repos, dryRun: false });
+  expect(tried.value.rows.map((r: any) => r.outcome)).toEqual(["refused", "refused", "refused"]);
+  expect(asleep(repo) || asleep(second)).toBe(false);
+  expect((await mcp(tok["bot"]!, { repos })).error).toContain("forbidden");
+  expect((await mcp(tok["founderRw"]!, { repos, dryRun: false })).error).toContain("forbidden");
+  expect((await mcp(tok["founder"]!, { repos: [] })).error).toContain("invalid");
+  expect((await mcp(tok["founder"]!, { repo: "acme/svc", repos })).error).toContain("invalid");
+  expect((await mcp(tok["founder"]!, { repos, archived: "yes" })).error).toContain("invalid");
+  expect((await mcp(tok["founder"]!, { repos: Array(51).fill("acme/svc") })).error).toContain("invalid");
+  expect(asleep(repo) || asleep(second)).toBe(false);
+});
+
+test("`repos` with `archived: false` wakes several in one operation", async () => {
+  const repos = ["acme/svc", "acme/web"];
+  await mcp(tok["founder"]!, { repos, dryRun: false });
+  expect(asleep(repo) && asleep(second)).toBe(true);
+  const woke = await mcp(tok["founder"]!, { repos, archived: false, dryRun: false });
+  expect(woke.value.rows.map((r: any) => r.outcome)).toEqual(["ok", "ok"]);
+  expect(typeof woke.value.operation).toBe("string");
+  expect(asleep(repo) || asleep(second)).toBe(false);
 });

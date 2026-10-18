@@ -130,7 +130,7 @@ import {
 } from "../crew/direct.ts";
 import { setArchived, setCrewOutsiders, setDecisionsBy } from "../actions/repos.ts";
 import { mapJson, marksFor } from "../web/pages/map.ts";
-import { undoFleetOp } from "../actions/fleet.ts";
+import { applyFleetIds, previewFleetIds, undoFleetOp } from "../actions/fleet.ts";
 import { applyLimb, isLimbAction, previewLimb } from "../actions/limbs.ts";
 import {
   milestoneData,
@@ -262,6 +262,67 @@ function repoArg(ctx: Ctx, user: User, args: Args): Repo | Answer {
   return repo !== undefined && canRead(ctx.app.db, repo, user)
     ? repo
     : bad("not_found", "no such app or repository (owner/name)");
+}
+
+const MAX_ARCHIVE_REPOS = 50;
+
+/** `archive` over `repos`: the fleet's own operation, each row's outcome and the id to undo. */
+async function archiveMany(ctx: Ctx, user: User, args: Args): Promise<Answer> {
+  const names = args["repos"];
+  if (
+    !Array.isArray(names) ||
+    names.length === 0 ||
+    names.length > MAX_ARCHIVE_REPOS ||
+    names.some((n) => typeof n !== "string")
+  )
+    return bad("invalid", `\`repos\` is one to ${MAX_ARCHIVE_REPOS} names, owner/name each`);
+  if (args["repo"] !== undefined)
+    return bad("invalid", "give `repo` or `repos`, not both");
+  if (args["archived"] !== undefined && typeof args["archived"] !== "boolean")
+    return bad("invalid", "`archived` is true or false");
+  const archived = args["archived"] ?? true;
+  const dryRun = args["dryRun"] !== false;
+  if (user.kind === "agent")
+    return bad("forbidden", "archiving or waking is a person's call, not an agent's");
+  if (!dryRun && !scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+    return bad("forbidden", "archiving or waking needs an admin token");
+  const ids: string[] = [];
+  const missing: string[] = [];
+  for (const name of new Set(names as string[])) {
+    const repo = repoArg(ctx, user, { repo: name });
+    if (isAnswer(repo)) missing.push(name);
+    else ids.push(repo.id);
+  }
+  const query = `mcp: ${ids.length + missing.length} named`;
+  const action = { verb: "archive", value: archived };
+  const unknown = missing.map((repo) => ({
+    repo,
+    outcome: "refused",
+    reason: "no such app or repository (owner/name)",
+  }));
+  const rowsOf = (rows: readonly { label: string; outcome: string; reason: string }[]) => [
+    ...rows.map((r) => ({ repo: r.label, outcome: r.outcome, reason: r.reason })),
+    ...unknown,
+  ];
+  if (dryRun) {
+    const plan = previewFleetIds(ctx.app, user, "repo", ids, query, action);
+    if (!plan.ok) return bad(plan.error.code, plan.error.message);
+    return good({
+      dryRun: true,
+      archived,
+      rows: rowsOf(plan.value.rows),
+      says: "This is the plan; nothing changed. Send dryRun: false to do it.",
+    });
+  }
+  const op = await applyFleetIds(ctx.app, user, "repo", ids, query, action);
+  if (!op.ok) return bad(op.error.code, op.error.message);
+  return good({
+    dryRun: false,
+    archived,
+    operation: op.value.id,
+    rows: rowsOf(op.value.rows),
+    says: `Done. The \`limb\` tool with action undo and operation ${op.value.id} reverts it for 24 hours.`,
+  });
 }
 
 const APP_ARG = {
@@ -1209,22 +1270,28 @@ const TOOLS: readonly Tool[] = [
   {
     name: "archive",
     description:
-      "Put a repository away (archive) or bring it back (wake), by name: nothing is deleted. Without `archived`, says which way it is. With `archived` (true to archive, false to wake), it plans — `dryRun` is true unless you say false — and only an admin of the repository, with an admin token and never as an agent, does it. Each change is recorded in the repository's activity.",
+      "Put a repository away (archive) or bring it back (wake), by name: nothing is deleted. Without `archived`, says which way it is. With `archived` (true to archive, false to wake), it plans — `dryRun` is true unless you say false — and only an admin of the repository, with an admin token and never as an agent, does it. Each change is recorded in the repository's activity. To archive several at once, pass `repos` (owner/name each, at most 50) instead of `repo`: it runs the fleet `archive` operation, a dry run unless `dryRun` is false, and answers each repository's outcome and the `operation` id; the `limb` tool with action `undo` and that `operation` (with `app` naming any of them) reverts it for 24 hours.",
     inputSchema: {
       type: "object",
       properties: {
         repo: REPO_ARG,
+        repos: {
+          type: "array",
+          items: { type: "string" },
+          maxItems: MAX_ARCHIVE_REPOS,
+          description: "Several repositories, as owner/name, to archive in one operation.",
+        },
         archived: { type: "boolean" },
         dryRun: {
           type: "boolean",
           description: "Plan only (the default). Send false to do it.",
         },
       },
-      required: ["repo"],
     },
     writes: true,
     dryByDefault: true,
     async run(ctx, user, args) {
+      if (args["repos"] !== undefined) return archiveMany(ctx, user, args);
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
       const archived = args["archived"];
