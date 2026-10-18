@@ -231,16 +231,17 @@ describe("turnstile doors", () => {
     return text;
   }
 
-  test("the terminal makes the first account without a token, and is never asked", async () => {
+  test("the terminal is asked for a fresh forge's first account too, and refused without a token", async () => {
     const { app, asked } = await boot({ turnstileSecret: "s" });
-    await terminalSignup(app, "casey");
-    expect(users(app)).toBe(1);
-    expect(asked).toEqual([]);
+    const text = await terminalSignup(app, "casey");
+    expect(users(app)).toBe(0);
+    expect(asked).toEqual([""]);
+    expect(text).toContain("sign up on the web page");
   });
 
   test("once an account exists the terminal cannot create another", async () => {
     const { app } = await boot({ turnstileSecret: "s" });
-    await terminalSignup(app, "casey");
+    expect((await seedAdmin(app, { username: "casey", email: "casey@example.com" })).ok).toBe(true);
     const text = await terminalSignup(app, "robin");
     expect(users(app)).toBe(1);
     expect(text).toContain("sign up on the web page");

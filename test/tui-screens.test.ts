@@ -621,6 +621,31 @@ describe("a forge with no accounts", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
+  test("while signup is closed the first key is offered no Create account and makes none", async () => {
+    setSignup(forge.db, "closed", "boot");
+    const h = boot(forge, {
+      sshUsername: "git",
+      remoteAddress: "127.0.0.1",
+      fingerprint: "SHA256:closed",
+      publicKey: KEY_LINE,
+    });
+    try {
+      await h.settle();
+      await h.press("s");
+      expect(h.text()).toContain("Signup is closed on this forge.");
+      expect(h.text()).not.toContain("Create account");
+      await h.typeText("founder");
+      await h.press("tab");
+      await h.typeText("a-long-passphrase");
+      await h.press("enter");
+      await h.settle();
+      expect(getUserByName(forge.db, "founder")).toBeUndefined();
+    } finally {
+      h.stop();
+      setSignup(forge.db, "open", "boot");
+    }
+  });
+
   test("the first key through the door can create an account, not the admin", async () => {
     const h = boot(forge, {
       sshUsername: "git",
