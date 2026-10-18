@@ -45,6 +45,7 @@ import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import type { SshSession } from "../src/ssh/channels.ts";
 import { settleApp } from "./helpers/tui.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -154,11 +155,11 @@ describe("the terminal UI, against a real forge", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-"));
     forge = createApp({ dataDir, port: 0, disk: roomy });
-    const a = await signUp(forge, {
+    const a = await seedAdmin(forge, {
       username: "alice",
       email: "alice@forge.test",
       password: "a-long-passphrase",
-    }, { slot: fixtureSlot(forge) });
+    });
     const b = await signUp(forge, {
       username: "bob",
       email: "bob@forge.test",
@@ -620,7 +621,7 @@ describe("a forge with no accounts", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("the first key through the door can create the admin account", async () => {
+  test("the first key through the door can create an account, not the admin", async () => {
     const h = boot(forge, {
       sshUsername: "git",
       remoteAddress: "127.0.0.1",
@@ -641,7 +642,8 @@ describe("a forge with no accounts", () => {
     await h.settle();
 
     const founder = getUserByName(forge.db, "founder");
-    expect(founder?.isAdmin).toBe(true);
+    // No sign-up makes the admin, the first neither: the operator does.
+    expect(founder?.isAdmin).toBe(false);
     // The key that created the account is registered to it, so the next
     // connection needs no password.
     const key = forge.db
@@ -757,11 +759,11 @@ describe("the forge's health in the terminal", () => {
     process.env["FORGE_GUARD_DIR"] = guard;
     const forge = createApp({ dataDir, port: 0, disk: roomy });
     try {
-      const a = await signUp(forge, {
+      const a = await seedAdmin(forge, {
         username: "chief",
         email: "chief@forge.test",
         password: "a-long-passphrase",
-      }, { slot: fixtureSlot(forge) });
+      });
       const b = await signUp(forge, {
         username: "bob",
         email: "bob@forge.test",
@@ -826,11 +828,11 @@ describe("the forge's health in the terminal", () => {
     const store = dirStore(join(dataDir, "snapshots"));
     let svc = startSnapshots(forge, store, { version: "t", nightly: false });
     try {
-      const a = await signUp(forge, {
+      const a = await seedAdmin(forge, {
         username: "chief",
         email: "chief@forge.test",
         password: "a-long-passphrase",
-      }, { slot: fixtureSlot(forge) });
+      });
       const b = await signUp(forge, {
         username: "bob",
         email: "bob@forge.test",

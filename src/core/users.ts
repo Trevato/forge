@@ -113,12 +113,20 @@ export type CreateUserError =
  *
  * Every other origin is a named exemption, made by someone the forge already
  * trusts: a claim link the owner handed out, an admin's everyday account, a
- * crew member the admin adds, a spawned forge's seed accounts, and `seed`
- * for code that sets a forge up directly (the chaos world, test fixtures).
+ * crew member the admin adds, a spawned forge's seed accounts, the
+ * operator's first admin (`first-admin`, from the one-time code only the
+ * operator is shown), and `seed` for code that sets a forge up directly (the
+ * chaos world, test fixtures).
  * A new exemption is one more name here.
+ *
+ * Only an `AdminOrigin` makes a site admin: the claim link a spawned forge's
+ * owner hands out (with the Owners handover), the operator's `first-admin`
+ * code, and `seed`, which no request reaches. Every other origin makes a person who is not an admin, even on a
+ * forge with no admin at all: no sign-up becomes the admin by being first.
  */
 export type StrangerOrigin = "signup" | "passkey" | "parent";
-export type ExemptOrigin = "claim" | "everyday" | "agent" | "spawn" | "seed";
+export type AdminOrigin = "claim" | "first-admin" | "seed";
+export type ExemptOrigin = AdminOrigin | "everyday" | "agent" | "spawn";
 export type AccountOrigin =
   /**
    * `invite` is the token of an invite link (`core/invites.ts`): while
@@ -127,7 +135,19 @@ export type AccountOrigin =
   | { origin: "signup" | "passkey"; slot: SignupSlot; invite?: string | undefined }
   | { origin: "parent"; slot: SignupSlot }
   | { origin: "edge" }
-  | { origin: ExemptOrigin };
+  | { origin: Exclude<ExemptOrigin, AdminOrigin> }
+  | ({ origin: AdminOrigin } & AdminFields);
+
+interface AdminFields {
+  /** @default false */
+  isAdmin?: boolean;
+  /**
+   * Make this account the admin if it is the first one — decided inside the
+   * INSERT, so two racing first accounts can never both win.
+   * @default false
+   */
+  adminIfFirst?: boolean;
+}
 
 export type CreateUserInput = CreateUserFields & AccountOrigin;
 
@@ -157,14 +177,6 @@ interface CreateUserFields {
   password?: string;
   /** @default "" */
   displayName?: string;
-  /** @default false */
-  isAdmin?: boolean;
-  /**
-   * Make this account the admin if it is the first one — decided inside the
-   * INSERT, so two racing first sign-ups can never both win.
-   * @default false
-   */
-  adminIfFirst?: boolean;
   /**
    * Create a crew member: no password is stored (`password` is ignored),
    * so nothing can ever sign in as it. Never admin, never first.
@@ -236,6 +248,7 @@ function admission(db: Database, input: AccountOrigin): Admission {
     case "everyday":
     case "agent":
     case "spawn":
+    case "first-admin":
     case "seed":
       return ADMITTED;
     default: {
@@ -246,12 +259,25 @@ function admission(db: Database, input: AccountOrigin): Admission {
   }
 }
 
+/** The admin flags an origin may carry: none but an `AdminOrigin`'s. */
+function adminOf(input: AccountOrigin): { isAdmin: boolean; adminIfFirst: boolean } {
+  switch (input.origin) {
+    case "claim":
+    case "first-admin":
+    case "seed":
+      return { isAdmin: input.isAdmin === true, adminIfFirst: input.adminIfFirst === true };
+    default:
+      return { isAdmin: false, adminIfFirst: false };
+  }
+}
+
 export async function createUser(
   db: Database,
   input: CreateUserInput,
 ): Promise<Result<User, CreateUserError>> {
   const admitted = admission(db, input);
   if (!admitted.admitted) return err("signup_closed");
+  const admin = adminOf(input);
   if (!isSafeName(input.username)) return err("invalid_username");
   const agent = input.agent === true;
   const password = agent ? undefined : input.password;
@@ -309,8 +335,8 @@ export async function createUser(
       input.email,
       hash,
       input.displayName ?? "",
-      input.isAdmin === true ? 1 : 0,
-      input.adminIfFirst === true ? 1 : 0,
+      admin.isAdmin ? 1 : 0,
+      admin.adminIfFirst ? 1 : 0,
       agent ? 1 : 0,
     );
     return true;
@@ -425,8 +451,8 @@ export function getUserByName(
 /**
  * The person behind an identity the platform edge vouched for: found by
  * name, or made on first sight — with no password, because the edge is how
- * they sign in, and a noreply address until they set one. The first account
- * on a fresh forge is the admin, exactly as at sign-up. A name that is an
+ * they sign in, and a noreply address until they set one. Like a sign-up,
+ * it is never the admin, first or not. A name that is an
  * organization or a crew member here is nobody's login.
  */
 export async function ensureEdgeUser(
@@ -443,14 +469,11 @@ export async function ensureEdgeUser(
   const made = await createUser(db, {
     username: login,
     email: noreplyAddress(login, host),
-    adminIfFirst: true,
     origin: "edge",
   });
   if (!made.ok) return undefined;
   // A newcomer through the edge starts unproven like one through /signup
-  // (its placeholder is no address at all); the forge's first account is
-  // proven by being first.
-  if (made.value.isAdmin) markVerified(db, made.value.id, made.value.createdAt);
+  // (its placeholder is no address at all).
   return made.value;
 }
 

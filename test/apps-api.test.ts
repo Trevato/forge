@@ -16,6 +16,7 @@ import { getRepo } from "../src/core/repos.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 /** Read from an SSE body until `predicate(buffer)` holds or we time out —
  * never to a "done" that #284's still-live stream no longer sends. */
@@ -109,15 +110,11 @@ describe("apps, runs and the crew over the API", () => {
       budgetUsd: 1,
       runTimeoutMs: 60_000,
     });
-    await post(
-      "/api/v1/users",
-      {
-        username: "alice",
-        email: "alice@forge.local",
-        password: "a-good-passphrase",
-      },
-      null,
-    );
+    await seedAdmin(app, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "a-good-passphrase",
+    });
     const mint = async (scope: string) =>
       (
         (await (

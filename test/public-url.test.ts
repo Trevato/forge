@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { crossOrigin, publicUrl } from "../src/http/context.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { promote } from "./helpers/members.ts";
+import { proveAll } from "./helpers/verified.ts";
 
 describe("publicUrl", () => {
   test("without a configured origin the request's URL is the truth", () => {
@@ -87,6 +89,9 @@ describe("a forge behind a TLS-terminating proxy", () => {
   });
 
   test("clone URLs name the public address", async () => {
+    // Ada signed up above: an owner proves and promotes her before she makes things.
+    proveAll(app);
+    promote(app.db);
     const token = await fetch(`${base}/api/v1/tokens`, {
       method: "POST",
       body: JSON.stringify({ adminConfirm: true,

@@ -32,6 +32,7 @@ import {
   type FakeForge,
   type FakeOAuth,
 } from "./fake-origin.ts";
+import { adminCookie, seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -105,14 +106,10 @@ describe("origins on the web", () => {
     // A second real forge, so the mirror's git fetch speaks real smart HTTP.
     originApp = createApp({ dataDir: originDataDir, port: 0 });
     originServers = await serve(originApp);
-    await fetch(`${originServers.url}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: ORIGIN_LOGIN,
-        email: "octo@upstream.test",
-        password: ORIGIN_TOKEN,
-      }),
+    await seedAdmin(originApp, {
+      username: ORIGIN_LOGIN,
+      email: "octo@upstream.test",
+      password: ORIGIN_TOKEN,
     });
     await fetch(`${originServers.url}/api/v1/repos`, {
       method: "POST",
@@ -169,7 +166,7 @@ describe("origins on the web", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    alice = await signUp("alice");
+    alice = await adminCookie(app, { username: "alice", email: "alice@forge.test", password: PASSWORD });
     bob = await signUp("bob");
     carol = await signUp("carol");
     forgetProviders(dataDir);

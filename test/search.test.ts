@@ -23,6 +23,7 @@ import { searchLocalIssues, MAX_CODE_HITS } from "../src/core/search.ts";
 import { getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const read = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
@@ -112,14 +113,16 @@ describe("search: one query, four sources", () => {
         password,
       }),
     });
-    return read<{ token: string }>(
+    return tokenFor(username, password, scope);
+  };
+  const tokenFor = async (username: string, password: string, scope = "rw") =>
+    read<{ token: string }>(
       await fetch(`${base}/api/v1/tokens`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ adminConfirm: true, username, password, name: scope, scope }),
       }),
     ).then((t) => t.token);
-  };
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-search-"));
@@ -127,7 +130,8 @@ describe("search: one query, four sources", () => {
     servers = await serve(app);
     base = servers.url;
 
-    alice = await signUp("alice", "alice-search-secret");
+    await seedAdmin(app, { username: "alice", email: "alice@forge.test", password: "alice-search-secret" });
+    alice = await tokenFor("alice", "alice-search-secret");
     bob = await signUp("bob", "bob-search-secret");
     aliceUser = getUserByName(app.db, "alice")!;
     bobUser = getUserByName(app.db, "bob")!;

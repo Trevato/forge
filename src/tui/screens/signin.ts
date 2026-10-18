@@ -4,8 +4,8 @@
  * same connection is that user. No reconnect, and no impersonation: the only
  * account a session can take on is one whose password was just verified.
  *
- * On a forge with no users at all, the same screen creates the first account,
- * which is the admin — the terminal equivalent of the web's first-run signup.
+ * On a forge with no users at all, the same screen creates the first account
+ * — not an admin; the operator makes the admin.
  */
 
 import { SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
@@ -130,7 +130,7 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
           closed
             ? SIGNUP_CLOSED_MESSAGE
             : first
-            ? "This forge has no accounts yet — the first one is the admin."
+            ? "This forge has no accounts yet. The operator makes the admin."
             : `Connected from ${f.identity.remoteAddress} with ${f.identity.fingerprint ?? "no key"}`,
           head!.w,
         ),

@@ -21,6 +21,7 @@ import {
   serveFakeForge,
   type FakeForge,
 } from "./fake-origin.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const read = async <T>(response: Response): Promise<T> =>
   (await response.json()) as T;
@@ -78,7 +79,7 @@ describe("edits: files, branches and a pull in one call", () => {
     servers = await serve(app);
     base = servers.url;
 
-    await signUp("alice", "alice-edit-secret");
+    await seedAdmin(app, { username: "alice", email: "alice@forge.test", password: "alice-edit-secret" });
     await signUp("bob", "bob-edit-secret");
     rw = await tokenFor("alice", "alice-edit-secret", "rw");
     admin = await tokenFor("alice", "alice-edit-secret", "admin");
@@ -381,14 +382,10 @@ describe("edits on a mirror land upstream first", () => {
 
     originApp = createApp({ dataDir: originDataDir, port: 0 });
     originServers = await serve(originApp);
-    await fetch(`${originServers.url}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: ORIGIN_LOGIN,
-        email: "octo@up.test",
-        password: ORIGIN_TOKEN,
-      }),
+    await seedAdmin(originApp, {
+      username: ORIGIN_LOGIN,
+      email: "octo@up.test",
+      password: ORIGIN_TOKEN,
     });
     await upstream("/api/v1/repos", {
       method: "POST",
@@ -415,14 +412,10 @@ describe("edits on a mirror land upstream first", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    await fetch(`${base}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "alice",
-        email: "alice@forge.test",
-        password: ALICE_PASSWORD,
-      }),
+    await seedAdmin(app, {
+      username: "alice",
+      email: "alice@forge.test",
+      password: ALICE_PASSWORD,
     });
 
     const connected = await read<{ id: string }>(

@@ -14,6 +14,7 @@ import { settleApp } from "./helpers/tui.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const dirs: string[] = [];
 const running: { app: App; servers: Servers }[] = [];
@@ -170,8 +171,9 @@ describe("turnstile doors", () => {
   });
 
   test("the admin settings line says on when Turnstile is on, and never the secret", async () => {
-    const { base } = await boot({ turnstileSecret: "SECRET-VALUE", turnstileSiteKey: "0xSITE" });
-    expect((await signup(base, "good")).status).toBe(201);
+    const { app, base } = await boot({ turnstileSecret: "SECRET-VALUE", turnstileSiteKey: "0xSITE" });
+    const admin = await seedAdmin(app, { username: "casey", email: "casey@example.com", password: "correct horse battery" });
+    expect(admin.ok).toBe(true);
     const signedIn = await fetch(`${base}/signin`, {
       method: "POST",
       redirect: "manual",

@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 describe("diff engine + resource edge cases", () => {
   let dataDir: string;
@@ -51,16 +52,11 @@ describe("diff engine + resource edge cases", () => {
     servers = await serve(app);
     base = servers.url;
 
-    const signup = await fetch(`${base}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username: "ada",
-        email: "ada@forge.local",
-        password: "analytical-engine",
-      }),
-      redirect: "manual",
+    cookie = await adminCookie(app, {
+      username: "ada",
+      email: "ada@forge.local",
+      password: "analytical-engine",
     });
-    cookie = (signup.headers.get("set-cookie") ?? "").split(";")[0]!;
 
     await fetch(`${base}/new`, {
       method: "POST",

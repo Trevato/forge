@@ -12,7 +12,14 @@ import { resolveAppHost, type AppTarget } from "../apps/proxy.ts";
 import { childAppsSummary, startChildApps, stopChildApps, type ChildAppsSummary } from "./child-apps.ts";
 import { childHost } from "./door.ts";
 import { firstBoot } from "./first-boot.ts";
-import { childHostSuffix, childPublicUrl, CHILD_NAME, parseHostedChildAppLabel, parseHostedChildName } from "./placement.ts";
+import {
+  childHostSuffix,
+  childPublicUrl,
+  CHILD_NAME,
+  parentOrigin,
+  parseHostedChildAppLabel,
+  parseHostedChildName,
+} from "./placement.ts";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -64,7 +71,7 @@ export function closeHostedChildren(parent: App): void {
 }
 
 async function openChild(parent: App, ledger: ChildLedger): Promise<App> {
-  const url = childPublicUrl(ledger.name, childHost(parent));
+  const url = childPublicUrl(ledger.name, parentOrigin(parent.config));
   const child = createApp({
     dataDir: childDirOf(parent, ledger.bodyId),
     url,

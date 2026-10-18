@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { sshCommand } from "../src/ssh/command.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 describe("sshCommand", () => {
   test("is undefined without a listener, and names host and port with one", async () => {
@@ -51,16 +52,7 @@ describe("the terminal on the website", () => {
       "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
     servers = await serve(app);
     base = servers.url;
-    const response = await fetch(`${base}/signup`, {
-      method: "POST",
-      body: new URLSearchParams({
-        username: "ada",
-        email: "ada@forge.example",
-        password: "analytical-engine",
-      }),
-      redirect: "manual",
-    });
-    cookie = `${(response.headers.get("set-cookie") ?? "").split(";")[0]!}; forge_mode=dev`;
+    cookie = `${await adminCookie(app, { username: "ada", email: "ada@forge.example", password: "analytical-engine" })}; forge_mode=dev`;
   });
 
   afterAll(async () => {

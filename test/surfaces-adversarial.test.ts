@@ -37,6 +37,7 @@ import type { App as TuiApp, Screen } from "../src/tui/app/app.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { statements } from "./helpers/statements.ts";
 import { settleApp } from "./helpers/tui.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -104,7 +105,7 @@ describe("surfaces adversarial: web", () => {
     app = createApp({ dataDir, port: 0, standingSweepMs: 3_600_000 });
     servers = await serve(app);
     base = servers.url;
-    alice = await signUp("alice", alicePassword); // first account: the admin
+    alice = `${await adminCookie(app, { username: "alice", email: "alice@forge.test", password: alicePassword })}; forge_mode=dev`;
   }, 30_000);
 
   afterAll(async () => {

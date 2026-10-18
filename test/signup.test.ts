@@ -192,11 +192,11 @@ describe("signup closed (#2166)", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("the first account is made whatever the setting, by every door", async () => {
+  test("the first account is made whatever the setting, by every door, and is not the admin", async () => {
     setSignup(app.db, "closed", "boot");
     const res = await post({ ...newcomer(), username: "founder", email: "founder@example.com" });
     expect(res.status).toBe(201);
-    expect(getUserByName(app.db, "founder")?.isAdmin).toBe(true);
+    expect(getUserByName(app.db, "founder")?.isAdmin).toBe(false);
   });
 
   test("a fresh forge's first edge sign-in is made even when closed", async () => {

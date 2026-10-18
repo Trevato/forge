@@ -10,10 +10,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { listInvites, mintInvite, revokeInvite } from "../src/core/invites.ts";
-import { createUser, getUserByName } from "../src/core/users.ts";
+import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { setLimit } from "../src/settings/limits.ts";
 import { setSignup } from "../src/settings/signup.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { device } from "./helpers/passkey.ts";
 
@@ -46,7 +47,7 @@ describe("invite links redeem at signup", () => {
     dir = await mkdtemp(join(tmpdir(), "forge-invite-redeem-"));
     app = createApp({ dataDir: dir, port: 0 });
     servers = await serve(app);
-    const made = await createUser(app.db, { username: "olive", email: "o@f.dev", password: PASSWORD, isAdmin: true, trusted: true, origin: "seed" });
+    const made = await seedAdmin(app, { username: "olive", email: "o@f.dev", password: PASSWORD });
     if (!made.ok) throw new Error(made.error);
     owner = made.value.id;
     setSignup(app.db, "invite", owner);
@@ -73,6 +74,8 @@ describe("invite links redeem at signup", () => {
     const { invite, token } = mint();
     expect((await form("ivy", token)).status).toBe(303);
     expect(getUserByName(app.db, "ivy")).toBeDefined();
+    // An invite opens the sign-up door, and a sign-up never makes an admin.
+    expect(getUserByName(app.db, "ivy")?.isAdmin).toBe(false);
     expect(stateOf(invite.id)).toBe("used");
     const row = app.db.query<{ used_by: string | null }, [string]>("SELECT used_by FROM invite WHERE id = ?1").get(invite.id);
     expect(row?.used_by).toBe(getUserByName(app.db, "ivy")?.id ?? "none");

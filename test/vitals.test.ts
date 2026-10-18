@@ -9,6 +9,7 @@ import { createRun } from "../src/core/runs.ts";
 import { vitals } from "../src/kernel/vitals.ts";
 import { fetchInternal } from "../src/git/hook-address.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 let dataDir: string;
 let app: App;
@@ -49,12 +50,8 @@ beforeAll(async () => {
   dataDir = await mkdtemp(join(tmpdir(), "forge-vitals-"));
   app = createApp({ dataDir, port: 0, disk: roomy });
   servers = await serve(app);
-  for (const username of ["alice", "bob"])
-    await post("/api/v1/users", {
-      username,
-      email: `${username}@forge.local`,
-      password: "a-good-passphrase",
-    });
+  await seedAdmin(app, { username: "alice", email: "alice@forge.local", password: "a-good-passphrase" });
+  await post("/api/v1/users", { username: "bob", email: "bob@forge.local", password: "a-good-passphrase" });
   admin = await mint("alice", "ro");
   plain = await mint("bob", "admin");
   repoId = (

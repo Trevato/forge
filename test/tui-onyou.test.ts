@@ -29,6 +29,7 @@ import { quietLogs } from "./helpers/globals.ts";
 import { settleApp } from "./helpers/tui.ts";
 import { promote } from "./helpers/members.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 quietLogs();
 
@@ -82,7 +83,7 @@ describe("terminal On you: mutes and many in one move", () => {
   beforeAll(async () => {
     dir = await mkdtemp(join(tmpdir(), "forge-onyou-"));
     forge = createApp({ dataDir: dir, port: 0 });
-    const a = await signUp(forge, { username: "alice", email: "a@forge.test", password: "a-long-passphrase" }, { slot: fixtureSlot(forge) });
+    const a = await seedAdmin(forge, { username: "alice", email: "a@forge.test", password: "a-long-passphrase" });
     const b = await signUp(forge, { username: "bob", email: "b@forge.test", password: "another-long-passphrase" }, { slot: fixtureSlot(forge) });
     if (!a.ok || !b.ok) throw new Error("signup failed");
     alice = a.value;

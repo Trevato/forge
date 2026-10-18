@@ -6,7 +6,7 @@ import { createApp, type App } from "../src/app.ts";
 import { setLimit } from "../src/settings/limits.ts";
 import { createOrg } from "../src/actions/orgs.ts";
 import { createOrg as foundOrg } from "../src/core/orgs.ts";
-import { signUp, updateProfile } from "../src/actions/users.ts";
+import { updateProfile } from "../src/actions/users.ts";
 import { reservedName, SYSTEM_NAMES, skeleton } from "../src/core/reserved.ts";
 import {
   createUser,
@@ -16,7 +16,7 @@ import {
 import { isSafeName } from "../src/git/guard.ts";
 import { buildRouter, serve, type Servers } from "../src/http/server.ts";
 import { proveAll } from "./helpers/verified.ts";
-import { fixtureSlot } from "./helpers/slot.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 // A fresh outsider tries every way in with a name that is not theirs to take:
 // an agent's, the owner's, a system name, or a page of the forge itself.
@@ -32,12 +32,12 @@ describe("reserved names", () => {
     servers = await serve(app);
     setLimit(app.db, "signup.per_source", 1000, "setup");
     base = servers.url;
-    // The owner is the first account; the crew are agents.
-    const owner = await signUp(app, {
+    // The owner is the admin; the crew are agents.
+    const owner = await seedAdmin(app, {
       username: "trevato",
       email: "owner@f.dev",
       password: "owner-passphrase",
-    }, { slot: fixtureSlot(app) });
+    });
     if (!owner.ok) throw new Error(owner.error);
     for (const name of ["scout", "torque"]) {
       const made = await createUser(app.db, { origin: "seed", trusted: true,

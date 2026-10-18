@@ -17,6 +17,7 @@ import {
   serveFakeForge,
   type FakeForge,
 } from "./fake-origin.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 /**
  * The provider boundary, attacked. An origin is a host the user named and
@@ -408,14 +409,10 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
     // A real git host for the one legitimate repo.
     upstreamApp = createApp({ dataDir: upstreamDataDir, port: 0 });
     upstreamServers = await serve(upstreamApp);
-    await fetch(`${upstreamServers.url}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: LOGIN,
-        email: "octo@up.test",
-        password: TOKEN,
-      }),
+    await seedAdmin(upstreamApp, {
+      username: LOGIN,
+      email: "octo@up.test",
+      password: TOKEN,
     });
     await fetch(`${upstreamServers.url}/api/v1/repos`, {
       method: "POST",
@@ -514,14 +511,10 @@ describe("a hostile origin cannot reach git or the filesystem", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    await fetch(`${base}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "alice",
-        email: "alice@forge.test",
-        password: PASSWORD,
-      }),
+    await seedAdmin(app, {
+      username: "alice",
+      email: "alice@forge.test",
+      password: PASSWORD,
     });
     const connected = await read<{ id: string; kind: string }>(
       await api("/api/v1/user/origins", {

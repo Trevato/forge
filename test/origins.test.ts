@@ -16,6 +16,7 @@ import { staticCredential } from "../src/origins/types.ts";
 import { anchorFromHunk } from "../src/origins/providers/http.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 import { proveAll } from "./helpers/verified.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 /**
  * Origins, end to end: a real forge, a fake API that behaves like Forgejo,
@@ -70,14 +71,10 @@ describe("origins: connecting, mirroring, writing through", () => {
     // The "other forge" whose git server we actually clone from.
     originApp = createApp({ dataDir: originDataDir, port: 0 });
     originServers = await serve(originApp);
-    await fetch(`${originServers.url}/api/v1/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: ORIGIN_LOGIN,
-        email: "octo@upstream.test",
-        password: ORIGIN_TOKEN,
-      }),
+    await seedAdmin(originApp, {
+      username: ORIGIN_LOGIN,
+      email: "octo@upstream.test",
+      password: ORIGIN_TOKEN,
     });
     await fetch(`${originServers.url}/api/v1/repos`, {
       method: "POST",
@@ -156,20 +153,12 @@ describe("origins: connecting, mirroring, writing through", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    for (const [username, password] of [
-      ["alice", ALICE_PASSWORD],
-      ["bob", BOB_PASSWORD],
-    ] as const) {
-      await fetch(`${base}/api/v1/users`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          username,
-          email: `${username}@forge.test`,
-          password,
-        }),
-      });
-    }
+    await seedAdmin(app, { username: "alice", email: "alice@forge.test", password: ALICE_PASSWORD });
+    await fetch(`${base}/api/v1/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "bob", email: "bob@forge.test", password: BOB_PASSWORD }),
+    });
     proveAll(app);
   });
 

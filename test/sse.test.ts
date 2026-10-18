@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { adminCookie } from "./helpers/admin.ts";
 
 /** Read from an SSE body until `predicate(buffer)` holds or we time out. */
 async function readUntil(
@@ -48,16 +49,11 @@ describe("SSE live event stream", () => {
     app = createApp({ dataDir, port: 0 });
     servers = await serve(app);
     base = servers.url;
-    const signup = await fetch(`${base}/signup`, {
-      method: "POST",
-      body: form({
-        username: "sse",
-        email: "sse@f.dev",
-        password: "live-updates-now",
-      }),
-      redirect: "manual",
+    cookie = await adminCookie(app, {
+      username: "sse",
+      email: "sse@f.dev",
+      password: "live-updates-now",
     });
-    cookie = (signup.headers.get("set-cookie") ?? "").split(";")[0]!;
     await fetch(`${base}/new`, {
       method: "POST",
       headers: { cookie },

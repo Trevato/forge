@@ -100,6 +100,17 @@ if (process.argv[2] === "--rollback") {
   process.exit(result.ok ? 0 : 1);
 }
 
+// `--first-admin` mints a one-time code that makes the first admin of a
+// forge with none, printed to this terminal only (core/first_admin.ts).
+if (process.argv[2] === "--first-admin") {
+  const { firstAdminCli } = await import("./core/first_admin_cli.ts");
+  const answer = firstAdminCli(process.argv.slice(3), process.env);
+  // CLI answer on the streams the operator reads; never the forge's log.
+  for (const line of answer.out) console.log(line);
+  for (const line of answer.err) console.error(line);
+  process.exit(answer.exit);
+}
+
 // A forge can be an app of a forge (docs/APPS.md, "The forge as an app of
 // itself"). The host's `FORGE_APP_*` say where this one lives and what it
 // answers to; `FORGE_URL` there names the host, not this forge. Hosted, the

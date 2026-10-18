@@ -43,7 +43,7 @@ describe("the daily ceiling is reserved when a run starts", () => {
   afterAll(() => stopStandInCrew(standIn));
 
   test("two runs together are handed no more than the day's ceiling", async () => {
-    const made = await createUser(app.db, { trusted: true, username: "pat", email: "pat@forge.local", password: "a-good-passphrase" });
+    const made = await createUser(app.db, { origin: "seed", trusted: true, username: "pat", email: "pat@forge.local", password: "a-good-passphrase" });
     if (!made.ok) throw new Error(made.error);
     const pat = made.value;
     promote(app.db, pat);

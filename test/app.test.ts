@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 
 const clientEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "Alice",
@@ -71,21 +72,14 @@ describe("the forge, end to end", () => {
     await rm(work, { recursive: true, force: true });
   });
 
-  test("register: first user is admin, duplicates rejected", async () => {
-    const created = await api("/api/v1/users", {
-      method: "POST",
-      body: JSON.stringify({
-        username: "alice",
-        email: "alice@forge.local",
-        password: "correct-horse-battery",
-      }),
+  test("register: an account made here is not the admin, duplicates rejected", async () => {
+    // No sign-up makes the admin (`test/no-signup-admin.test.ts`): the operator's is alice.
+    const made = await seedAdmin(app, {
+      username: "alice",
+      email: "alice@forge.local",
+      password: "correct-horse-battery",
     });
-    expect(created.status).toBe(201);
-    const user = (await created.json()) as {
-      username: string;
-      isAdmin: boolean;
-    };
-    expect(user.isAdmin).toBe(true);
+    expect(made.ok).toBe(true);
 
     const dupe = await api("/api/v1/users", {
       method: "POST",
