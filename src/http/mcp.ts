@@ -2674,7 +2674,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "signup",
     description:
-      "Who may sign up: open, invite or closed (default open). open lets anyone make an account; invite and closed both refuse a new account, since invite links are not redeemed yet. The forge's first account is never refused. Without `mode`, the setting and the recent changes. With `mode`, the change it would make; with dryRun false, made, by a forge admin with an admin-scope token, never an agent. The same as /admin/limits (Signup) and PATCH /api/v1/admin/settings.",
+      "Who may sign up: open, invite or closed (default open). open lets anyone make an account; invite lets in only a person with an open invite link (mint_invite), spent with the account; closed refuses every new account. The forge's first account is never refused. Without `mode`, the setting and the recent changes. With `mode`, the change it would make; with dryRun false, made, by a forge admin with an admin-scope token, never an agent. The same as /admin/limits (Signup) and PATCH /api/v1/admin/settings.",
     inputSchema: {
       type: "object",
       properties: {
