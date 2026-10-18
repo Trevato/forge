@@ -1293,6 +1293,16 @@ takes tens of ms): assert relative to a baseline from the same run, or bound
 only the failure the test names. The workflow needs a
 `FORGE_TOKEN` secret and a `FORGE_URL` variable on the mirror.
 
+**No unseen red outside the gate.** Nightly, `.forgejo/workflows/outside-gate.yml`
+runs `bun scripts/flake-hunt.ts outside --file-issues`: every file in
+`EXCLUDED` (the complement of the gate, from the same list, so a file moved
+into the gate is no longer run there), once, one at a time, with the gate's
+60 s timeout. A file that newly fails opens one `Red: test/x.test.ts` issue
+naming its first failing test; still red on another test, it updates that
+issue; still red on the same test, it says nothing, so the owner's asks show
+it once; passing again, it closes the issue. Same `FORGE_TOKEN` and
+`FORGE_URL` as the hunt.
+
 Bun's own `--randomize --seed=N` drives every hunt and admission run. Not
 used: `--rerun-each` (one seed for every rerun, so ten reruns explore one
 order) and `--parallel` (it changes the load the gate is judged under).

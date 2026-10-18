@@ -21,6 +21,9 @@ export const HUNT_RUNS = 5;
 /** The title prefix of the issue the hunt files; quarantine reads it back. */
 export const FLAKY_TITLE = "Flaky: ";
 
+/** The title prefix of the issue the scheduled run files for a red file. */
+export const RED_TITLE = "Red: ";
+
 /**
  * The least a test may bound a request or a spawn by, in wall-clock ms. A
  * loopback fetch on a loaded shared runner takes tens of milliseconds; a
@@ -320,4 +323,73 @@ export function shuffled(files: readonly string[], seed: number): string[] {
     [out[i], out[j]] = [out[j]!, out[i]!];
   }
   return out;
+}
+
+/** The first failing test's name as the issue words it. */
+export function firstFailing(run: FileRun): string {
+  return run.failing[0] !== undefined
+    ? `\`${run.failing[0]}\``
+    : "none named; the file failed outside a test";
+}
+
+/** The issue for a file outside the gate that is red. */
+export function redIssueFor(
+  run: FileRun,
+  where: string,
+): { title: string; body: string } {
+  const fence = "```";
+  return {
+    title: `${RED_TITLE}${run.file}`,
+    body: [
+      `\`${run.file}\` is outside the gate and was red in the scheduled run. This issue closes itself when the file passes again.`,
+      "",
+      `- first failing test: ${firstFailing(run)}`,
+      `- run: ${where || "(a local run)"}`,
+      `- reproduce: \`bun test --timeout 60000 ./${run.file}\``,
+      "",
+      fence,
+      run.text || "(no failure text captured)",
+      fence,
+    ].join("\n"),
+  };
+}
+
+/** The file an issue titled `Red: …` names, or undefined. */
+export function redFile(title: string): string | undefined {
+  if (!title.startsWith(RED_TITLE)) return undefined;
+  return flakyFile(`${FLAKY_TITLE}${title.slice(RED_TITLE.length)}`);
+}
+
+/** An open `Red:` issue as the scheduled run sees it. */
+export type OpenRed = { number: number; body?: string };
+
+export type RedAction =
+  | { kind: "open"; run: FileRun }
+  | { kind: "update"; run: FileRun; number: number }
+  | { kind: "close"; file: string; number: number };
+
+/**
+ * What the forge must be told after a scheduled run: a newly red file opens
+ * one issue; a file still red whose first failing test is not in its issue
+ * updates that issue; a file green again closes it. A file that stays red
+ * on the same test says nothing, so the asks show it once.
+ */
+export function redActions(
+  runs: readonly FileRun[],
+  open: ReadonlyMap<string, OpenRed>,
+): RedAction[] {
+  const actions: RedAction[] = [];
+  for (const run of runs) {
+    const issue = open.get(run.file);
+    if (run.green) {
+      if (issue)
+        actions.push({ kind: "close", file: run.file, number: issue.number });
+    } else if (!issue) actions.push({ kind: "open", run });
+    else if (
+      typeof issue.body === "string" &&
+      !issue.body.includes(firstFailing(run))
+    )
+      actions.push({ kind: "update", run, number: issue.number });
+  }
+  return actions;
 }

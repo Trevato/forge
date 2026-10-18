@@ -9,7 +9,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { auditGate, gateFiles, type Exclusion } from "../scripts/gate.ts";
+import { auditGate, EXCLUDED, gateFiles, outsideFiles, presentTests, type Exclusion } from "../scripts/gate.ts";
 import {
   admissionRecord,
   admitted,
@@ -22,6 +22,9 @@ import {
   issueFor,
   quarantine,
   quarantineFlaky,
+  redActions,
+  redFile,
+  redIssueFor,
   readRun,
   retries,
   ROOT_CAUSES,
@@ -344,5 +347,62 @@ describe("no tight wall-clock bound in a test", () => {
       .filter((name) => name !== "flake.test.ts")
       .map((name) => `test/${name}`);
     expect(files.flatMap((path) => tightBounds(path, read(path)))).toEqual([]);
+  });
+});
+
+describe("the scheduled run of the files outside the gate", () => {
+  const present = ["test/a.test.ts", "test/b.test.ts", "test/c.test.ts"];
+  const excluded: Exclusion[] = [
+    { file: "test/b.test.ts", reason: "r", issue: 1 },
+  ];
+  const run = (file: string, failing: string[] = []) =>
+    readRun(file, 0, failing.length ? 1 : 0, failing.map((f) => `(fail) ${f}`).join("\n"));
+
+  test("it runs exactly the files the gate does not", () => {
+    expect(outsideFiles(present, excluded)).toEqual(["test/b.test.ts"]);
+    const both = [...gateFiles(present, excluded), ...outsideFiles(present, excluded)];
+    expect(both.sort()).toEqual(present);
+    // A file moved into the gate is no longer run by the schedule.
+    expect(outsideFiles(present, [])).toEqual([]);
+  });
+
+  test("the real lists partition the test files", () => {
+    const all = presentTests();
+    expect(outsideFiles(all)).toEqual(EXCLUDED.map((e) => e.file).sort());
+    expect(new Set([...gateFiles(all), ...outsideFiles(all)]).size).toBe(all.length);
+  });
+
+  test("a newly red file opens one issue naming it and its first failing test", () => {
+    const red = run("test/b.test.ts", ["first one", "second one"]);
+    const actions = redActions([red], new Map());
+    expect(actions).toEqual([{ kind: "open", run: red }]);
+    const issue = redIssueFor(red, "http://run/1");
+    expect(issue.title).toBe("Red: test/b.test.ts");
+    expect(redFile(issue.title)).toBe("test/b.test.ts");
+    expect(issue.body).toContain("`first one`");
+    expect(issue.body).not.toContain("second one` ");
+  });
+
+  test("a file still red on the same test says nothing; on another it updates", () => {
+    const red = run("test/b.test.ts", ["first one"]);
+    const body = redIssueFor(red, "").body;
+    const open = new Map([["test/b.test.ts", { number: 7, body }]]);
+    expect(redActions([red], open)).toEqual([]);
+    const other = run("test/b.test.ts", ["another"]);
+    expect(redActions([other], open)).toEqual([{ kind: "update", run: other, number: 7 }]);
+  });
+
+  test("a file green again closes its issue; green with no issue does nothing", () => {
+    const green = run("test/b.test.ts");
+    expect(redActions([green], new Map([["test/b.test.ts", { number: 7 }]]))).toEqual([
+      { kind: "close", file: "test/b.test.ts", number: 7 },
+    ]);
+    expect(redActions([green], new Map())).toEqual([]);
+  });
+
+  test("only Red: titles naming a test file count", () => {
+    expect(redFile("Red: ../x.test.ts")).toBeUndefined();
+    expect(redFile("Flaky: test/a.test.ts")).toBeUndefined();
+    expect(redFile("Red: test/a.test.ts")).toBe("test/a.test.ts");
   });
 });

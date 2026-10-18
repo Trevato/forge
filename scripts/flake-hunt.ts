@@ -9,6 +9,12 @@
  *       `--file-issues` each gets an issue carrying the failure text, the
  *       seed and the run (FORGE_API, FORGE_REPO, FORGE_TOKEN; FORGE_RUN_URL
  *       names the run). Exits 1 when it found one.
+ *   bun scripts/flake-hunt.ts outside [--file-issues]
+ *       Every file in EXCLUDED once, one at a time, with the gate's timeout:
+ *       the schedule for what the gate does not run (#812). With
+ *       `--file-issues` a newly red file opens one `Red: test/….test.ts`
+ *       issue naming its first failing test, a file red on another test
+ *       updates it, and a file green again closes it.
  *   bun scripts/flake-hunt.ts quarantine
  *       Puts every file an open `Flaky: test/….test.ts` issue the hunt filed
  *       (author is the token's user, not untrusted) names into
@@ -30,12 +36,16 @@ import {
   huntedFile,
   HUNT_RUNS,
   issueFor,
+  redActions,
+  redFile,
+  redIssueFor,
+  type OpenRed,
   quarantineFlaky,
   readRun,
   shuffled,
   type FileRun,
 } from "./flake.ts";
-import { gateFiles, presentTests } from "./gate.ts";
+import { gateFiles, outsideFiles, presentTests } from "./gate.ts";
 import { parseShardSpec, sliceFiles } from "./shards.ts";
 
 const GATE_FILE = new URL("./gate.ts", import.meta.url).pathname;
@@ -66,7 +76,7 @@ function runsOf(fallback: number): number {
 
 const freshSeed = (): number => crypto.getRandomValues(new Uint32Array(1))[0]!;
 
-/** One file, one seed, one `bun test`: the gate's own unit. */
+/** One file, one `bun test`: the gate's own unit (random order when seeded). */
 async function runFile(file: string, seed: number): Promise<FileRun> {
   const env = { ...process.env };
   // The gate hands its children none of these (scripts/test-shards.ts).
@@ -84,8 +94,7 @@ async function runFile(file: string, seed: number): Promise<FileRun> {
       "test",
       "--timeout",
       "60000",
-      "--randomize",
-      `--seed=${seed}`,
+      ...(seed === 0 ? [] : ["--randomize", `--seed=${seed}`]),
       `./${file}`,
     ],
     { stdin: "ignore", stdout: "pipe", stderr: "pipe", env },
@@ -169,6 +178,102 @@ async function openFlakyIssues(): Promise<Map<string, number>> {
     cursor = body.next_cursor ?? null;
   }
   return found;
+}
+
+async function forgeJson(
+  method: string,
+  path: string,
+  body: unknown,
+): Promise<Response> {
+  const { api, repo, token } = forgeApi();
+  return fetch(`${api}/repos/${repo}${path}`, {
+    method,
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+/** Open `Red:` issues the scheduled run filed: file → issue. */
+async function openRedIssues(): Promise<Map<string, OpenRed>> {
+  const { api, repo, token } = forgeApi();
+  const self = await huntUserId(api, token);
+  const found = new Map<string, OpenRed>();
+  let cursor: string | number | null = "";
+  for (let page = 0; page < 100 && cursor !== null; page++) {
+    const query = cursor === "" ? "" : `&cursor=${encodeURIComponent(cursor)}`;
+    const res = await fetch(
+      `${api}/repos/${repo}/issues?state=open&limit=100${query}`,
+      { headers: { authorization: `Bearer ${token}` } },
+    );
+    if (!res.ok) fail(`listing issues: ${res.status}`);
+    const body = (await res.json()) as {
+      items?: {
+        number?: unknown;
+        title?: unknown;
+        body?: unknown;
+        authorId?: unknown;
+        untrusted?: unknown;
+      }[];
+      next_cursor?: string | number | null;
+    };
+    for (const issue of body.items ?? []) {
+      if (issue.authorId !== self || (issue.untrusted ?? false) !== false)
+        continue;
+      const file =
+        typeof issue.title === "string" ? redFile(issue.title) : undefined;
+      if (file !== undefined && Number.isInteger(issue.number))
+        found.set(file, {
+          number: issue.number as number,
+          ...(typeof issue.body === "string" ? { body: issue.body } : {}),
+        });
+    }
+    cursor = body.next_cursor ?? null;
+  }
+  return found;
+}
+
+/** The files outside the gate, one at a time; red ones reported to the forge. */
+async function outside(): Promise<number> {
+  const files = outsideFiles(presentTests());
+  const fileIssues = rest.includes("--file-issues");
+  const open = fileIssues ? await openRedIssues() : new Map<string, OpenRed>();
+  const runs: FileRun[] = [];
+  for (const file of files) {
+    const run = await runFile(file, 0);
+    console.log(`${run.green ? "green" : "red  "}: ${file}`);
+    runs.push(run);
+  }
+  const where = process.env["FORGE_RUN_URL"] ?? "";
+  for (const action of redActions(runs, open)) {
+    if (!fileIssues) continue;
+    if (action.kind === "open") {
+      const res = await forgeJson("POST", "/issues", redIssueFor(action.run, where));
+      const made = (await res.json().catch(() => ({}))) as { number?: unknown };
+      if (!res.ok) fail(`filing the issue for ${action.run.file}: ${res.status}`);
+      console.log(`  filed #${made.number} for ${action.run.file}`);
+    } else if (action.kind === "update") {
+      const { body } = redIssueFor(action.run, where);
+      const res = await forgeJson("PATCH", `/issues/${action.number}`, { body });
+      if (!res.ok) {
+        const note = await forgeJson("POST", `/issues/${action.number}/comments`, { body });
+        if (!note.ok) fail(`updating #${action.number}: ${note.status}`);
+      }
+      console.log(`  updated #${action.number} for ${action.run.file}`);
+    } else {
+      await forgeJson("POST", `/issues/${action.number}/comments`, {
+        body: `\`${action.file}\` passed in the scheduled run${where ? ` (${where})` : ""}.`,
+      });
+      const res = await forgeJson("PATCH", `/issues/${action.number}`, { state: "closed" });
+      if (!res.ok) fail(`closing #${action.number}: ${res.status}`);
+      console.log(`  closed #${action.number} for ${action.file}`);
+    }
+  }
+  const red = runs.filter((run) => !run.green).length;
+  console.log(`${files.length} files outside the gate, ${red} red`);
+  return 0;
 }
 
 async function hunt(): Promise<number> {
@@ -263,10 +368,11 @@ async function admit(): Promise<number> {
   return admitted(results) ? 0 : 1;
 }
 
-if (mode === "hunt") process.exit(await hunt());
+if (mode === "outside") process.exit(await outside());
+else if (mode === "hunt") process.exit(await hunt());
 else if (mode === "quarantine") process.exit(await quarantineAll());
 else if (mode === "admit") process.exit(await admit());
 else
   fail(
-    "usage: flake-hunt.ts hunt [--runs N] [--shard N/M] [--file-issues] | quarantine | admit test/x.test.ts [--runs N]",
+    "usage: flake-hunt.ts hunt [--runs N] [--shard N/M] [--file-issues] | outside [--file-issues] | quarantine | admit test/x.test.ts [--runs N]",
   );

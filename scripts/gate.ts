@@ -15,6 +15,9 @@
  * order under load (`bun scripts/flake-hunt.ts admit <file>`). A flaky file
  * leaves it only through `bun scripts/flake-hunt.ts quarantine`, under the
  * issue the nightly hunt filed (`.forgejo/workflows/flake-hunt.yml`).
+ *
+ * The excluded files are not unseen: `.forgejo/workflows/outside-gate.yml`
+ * runs `outsideFiles` nightly and files a `Red:` issue for each that fails (#812).
  */
 
 import { readdirSync } from "node:fs";
@@ -133,6 +136,20 @@ export function gateFiles(
 ): string[] {
   const out = new Set(excluded.map((e) => e.file));
   return present.filter((file) => !out.has(file));
+}
+
+/**
+ * What the scheduled run runs (`bun scripts/flake-hunt.ts outside`): the
+ * present files `EXCLUDED` names, in name order. Derived from the same list
+ * as `gateFiles`, so a file is in exactly one of the two: moving it into
+ * the gate stops the schedule running it.
+ */
+export function outsideFiles(
+  present: readonly string[] = presentTests(),
+  excluded: readonly Exclusion[] = EXCLUDED,
+): string[] {
+  const gated = new Set(gateFiles(present, excluded));
+  return present.filter((file) => !gated.has(file));
 }
 
 /**

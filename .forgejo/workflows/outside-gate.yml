@@ -1,0 +1,38 @@
+name: outside-gate
+# Nightly: every file in EXCLUDED (scripts/gate.ts), one at a time with the
+# gate's 60 s timeout, so a suite outside the gate that breaks is seen the
+# day it breaks. A newly red file opens one `Red: test/….test.ts` issue
+# naming its first failing test; a file green again closes it
+# (scripts/flake-hunt.ts outside). The list is EXCLUDED itself: a file moved
+# into the gate stops being run here.
+#
+# Needs secret FORGE_TOKEN and variable FORGE_URL, as flake-hunt does.
+on:
+  schedule:
+    - cron: "47 3 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  outside:
+    runs-on: isolated
+    timeout-minutes: 30
+    env:
+      REGISTRY: forgejo-http.forgejo.svc.cluster.local:3000
+    steps:
+      - name: clone main
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          git clone -q "http://x-access-token:$TOKEN@$REGISTRY/$GITHUB_REPOSITORY.git" src
+          cd src
+          bun install --frozen-lockfile
+
+      - name: run the excluded files
+        working-directory: src
+        env:
+          FORGE_API: ${{ vars.FORGE_URL }}/api/v1
+          FORGE_REPO: ${{ github.repository }}
+          FORGE_TOKEN: ${{ secrets.FORGE_TOKEN }}
+          FORGE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }}
+        run: bun scripts/flake-hunt.ts outside --file-issues
