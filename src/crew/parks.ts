@@ -22,7 +22,7 @@
 import type { Database } from "bun:sqlite";
 import { getIssueById, standsForPerson } from "../core/issues.ts";
 import type { Repo } from "../core/repos.ts";
-import { BY_CREW, DONE_LIKE, PARK_LIKE } from "../core/done_on_main.ts";
+import { alreadyDone, BY_CREW, DONE_LIKE, PARK_LIKE } from "../core/done_on_main.ts";
 import { directorsAmong, proposedWork } from "./direct.ts";
 
 /** Parks since the last word at which the clock no longer dispatches an issue. */
@@ -188,7 +188,7 @@ export interface ParkedTwice {
  * nothing open. So an issue leaves the list when it is closed (split, or
  * replaced by a fresh one), when it is put behind something open (its
  * parts, or the Later gate), or when someone who directs the crew says what
- * to try. One read for every repository, and two more for each that has
+ * to try, or when commits on main already name it (`alreadyDone`). One read for every repository, and two more for each that has
  * any.
  */
 export function parkedTwice(
@@ -280,9 +280,13 @@ export function parkedTwice(
           : issue;
       });
     if (struck.length === 0) continue;
+    // Finished work is the asker's to close, not the planner's to split.
+    const done = alreadyDone(db, struck.map((issue) => issue.issueId));
+    const open = struck.filter((issue) => !done.has(issue.issueId));
+    if (open.length === 0) continue;
     // An open pull that would close it is someone's answer already.
     const proposed = proposedWork(db, repo);
-    out.push(...struck.filter((issue) => !proposed.has(issue.number)));
+    out.push(...open.filter((issue) => !proposed.has(issue.number)));
   }
   return out;
 }

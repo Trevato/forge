@@ -1560,4 +1560,34 @@ describe("an issue found already done is the asker's to close, not a park", () =
     expect(alreadyDone(e.app.db, [work.id]).has(work.id)).toBe(false);
     expect(alreadyDoneOids("no changes pushed: already done: " + oid)).toEqual([]);
   });
+
+  test("an issue parked twice whose newest crew note is the done note is not handed to the planner", () => {
+    const park = (on: Issue) => {
+      for (let n = 0; n < 2; n++)
+        addComment(e.app, e.mason, e.fresh(), on, "Parked by the crew: " + nothingNew);
+    };
+    const nothingNew = "the run ended without a pull: nothing to propose";
+    const finished = e.issue("Parked, then found done");
+    const open = e.issue("Parked, still open");
+    park(finished);
+    park(open);
+    const numbers = () => parkedTwice(e.app.db, [e.fresh()]).map((i) => i.number);
+    expect(numbers()).toEqual([finished.number, open.number]);
+    addComment(
+      e.app,
+      e.mason,
+      e.fresh(),
+      finished,
+      "Done on main already, waiting for you to close it: " + oid,
+    );
+    // Written in the same instant as the park: the clock cannot order them.
+    e.app.db.run(
+      `UPDATE comment SET created_at = (SELECT MAX(p.created_at) FROM comment p
+         WHERE p.issue_id = ?1 AND p.body LIKE 'Parked by the crew%')
+       WHERE issue_id = ?1 AND body LIKE 'Done on main already%'`,
+      [finished.id],
+    );
+    expect(alreadyDone(e.app.db, [finished.id]).get(finished.id)).toEqual([oid]);
+    expect(numbers()).toEqual([open.number]);
+  });
 });
