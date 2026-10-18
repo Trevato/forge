@@ -536,6 +536,10 @@ handover.drain = () => {
 handover.ssh = ssh !== undefined;
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+// The terminal it ran in went away. Apps that run without a cell lead
+// process groups of their own (`apps/process.ts`), so the hangup reaches
+// this process alone: it stops them on the way out, as Ctrl-C does.
+process.on("SIGHUP", shutdown);
 
 let draining = false;
 

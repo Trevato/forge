@@ -419,9 +419,27 @@ export async function startProcess(
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
+    // Without a cell, the app leads a process group of its own, so what it
+    // starts can be signalled with it (`signalGroup`). A cell's tree is
+    // bubblewrap's, walked by `signalTree` and `killTree`.
+    detached: cell === undefined,
   });
+  // A negative pid is the whole group: the app and everything it started
+  // that has not left the group. Nothing left of it is not an error.
+  const signalGroup = (signal: NodeJS.Signals): void => {
+    try {
+      process.kill(-proc.pid, signal);
+    } catch {
+      // the group is already gone
+    }
+  };
   // The cell's sockets and watch end with the process, however it ends.
-  void proc.exited.then(() => cell?.close());
+  // Without a cell, so does the rest of its group: a child that outlived
+  // the app, stopped or crashed, is not left running on its data.
+  void proc.exited.then(() => {
+    cell?.close();
+    if (cell === undefined) signalGroup("SIGKILL");
+  });
   cell?.watch(proc.pid, () => killTree(proc.pid));
   // Output is pumped for the life of the process, not just the start.
   const recent: string[] = [];
@@ -451,14 +469,14 @@ export async function startProcess(
       if (proc.exitCode !== null || proc.signalCode !== null) return;
       // In a cell the pid is bubblewrap's, which passes no signal on: the
       // app itself is asked, so it shuts down the way it would anywhere.
-      if (cell === undefined) proc.kill("SIGTERM");
+      if (cell === undefined) signalGroup("SIGTERM");
       else signalTree(proc.pid, "SIGTERM");
       const gone = await Promise.race([
         proc.exited.then(() => true),
         Bun.sleep(STOP_GRACE_MS).then(() => false),
       ]);
       if (!gone) {
-        if (cell === undefined) proc.kill("SIGKILL");
+        if (cell === undefined) signalGroup("SIGKILL");
         else killTree(proc.pid);
         await proc.exited;
       }
