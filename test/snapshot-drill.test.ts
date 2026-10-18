@@ -14,6 +14,7 @@ import { createApp, type App } from "../src/app.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { createUser } from "../src/core/users.ts";
 import { runDrill } from "../src/snapshot/drill.ts";
+import { pack, partPath } from "../src/snapshot/parts.ts";
 import { takeSnapshot } from "../src/snapshot/snapshot.ts";
 import { dirStore } from "../src/snapshot/store.ts";
 
@@ -74,6 +75,8 @@ describe("the restore drill", () => {
         reposRoot: app.reposRoot,
         version: "t",
         passphrase: PASS,
+        // Small parts, so the drill restores a database that went up in several.
+        partBytes: 4096,
       },
       store(),
       new Date("2026-09-22T08:00:00Z"),
@@ -99,6 +102,10 @@ describe("the restore drill", () => {
     expect(r.verdict).toBe("green");
     expect(r.failedStep).toBeNull();
     expect(r.snapshotId).toBe("2026-09-22T08-00-00Z");
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await store().get("snapshots/2026-09-22T08-00-00Z/manifest.json"))!),
+    );
+    expect(manifest.packed[0].parts).toBeGreaterThan(1);
     expect(r.counts).toEqual({ repositories: 1, issues: 2, users: 1, pulls: 0, apps: 1 });
     expect(r.ms).toBeGreaterThanOrEqual(0);
     expect(scratchLeft()).toEqual([]);
@@ -118,23 +125,26 @@ describe("the restore drill", () => {
         (await s.get("snapshots/2026-09-22T08-00-00Z/manifest.json"))!,
       ),
     );
-    const bytes = manifest.files.find(
-      (f: { path: string }) => f.path === "forge.db",
-    ).bytes;
-    // Same size, so the restore accepts it; only opening it can tell.
-    await s.put(
-      "snapshots/2026-09-23T08-00-00Z/forge.db",
-      new Uint8Array(bytes).fill(7),
+    const db = manifest.packed.find(
+      (p: { path: string }) => p.path === "forge.db",
     );
-    for (const f of manifest.files)
-      if (f.path !== "forge.db")
+    // Same size, packed the same way, so the restore accepts it; only opening it can tell.
+    const junk = await pack("forge.db", new Uint8Array(db.bytes).fill(7));
+    for (const [n, part] of junk.parts.entries())
+      await s.put(`snapshots/2026-09-23T08-00-00Z/${partPath("forge.db", n)}`, part);
+    const files = [
+      ...junk.parts.map((part, n) => ({ path: partPath("forge.db", n), bytes: part.byteLength })),
+      ...manifest.files.filter((f: { path: string }) => !f.path.startsWith("forge.db.zst.")),
+    ];
+    for (const f of files)
+      if (!f.path.startsWith("forge.db.zst."))
         await s.put(
           `snapshots/2026-09-23T08-00-00Z/${f.path}`,
           (await s.get(`snapshots/2026-09-22T08-00-00Z/${f.path}`))!,
         );
     await s.put(
       "snapshots/2026-09-23T08-00-00Z/manifest.json",
-      JSON.stringify({ ...manifest, name: "2026-09-23T08-00-00Z" }),
+      JSON.stringify({ ...manifest, name: "2026-09-23T08-00-00Z", files, packed: [junk.packed] }),
     );
     const r = await runDrill(deps());
     expect(r.snapshotId).toBe("2026-09-23T08-00-00Z");

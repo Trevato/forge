@@ -8,7 +8,23 @@ empty data directory. `src/snapshot/`.
 ## What a snapshot holds
 
 - `forge.db`, copied consistently while the forge runs (`VACUUM INTO`,
-  never a raw copy of a file in WAL mode).
+  never a raw copy of a file in WAL mode), then zstd-compressed and cut in
+  16 MB parts: `forge.db.zst.0000`, `forge.db.zst.0001`, … Each part is its
+  own put with its own deadline and retries, so a slow uplink carries it
+  and a dropped connection costs one part, not the database. The manifest's
+  `packed` says what the parts make and how big that is; a restore joins
+  them, unpacks, and refuses a size that does not match. The log line
+  `database packed` gives each night's ratio. Snapshots from before this
+  hold a plain `forge.db` and still restore. The parts go up through the
+  snapshot's upload queue like every other object: at most eight objects
+  or 64 MB in flight, so four 16 MB parts at a time.
+
+  Packing and restoring both hold the database in memory: the copy, its
+  compressed form (the parts are views of it, not copies), and on restore
+  the joined parts and the unpacked file, about three times the database
+  at the peak (a 334 MB database at about 1 GB). A database that outgrows
+  the app's memory limit needs a streaming pack; until then that limit,
+  not the uplink, is the ceiling.
 - The key the database's sealed values need, **only wrapped**:
   `secret.key.wrapped`, AES-256-GCM under a key scrypt-derived from the
   operator's passphrase. The raw `secret.key` is never written to the store,
@@ -24,8 +40,8 @@ empty data directory. `src/snapshot/`.
   stay out.
 - The crew's run logs (`runs/`).
 - `manifest.json`: the name, when, the forge's version, counts, every file
-  with its size, and `key`: `wrapped` or `none` (older snapshots: `raw`). A
-  restore checks each size.
+  with its size, `packed` (the files that went up in parts), and `key`:
+  `wrapped` or `none` (older snapshots: `raw`). A restore checks each size.
 
 What stays out is what a boot or a deploy rebuilds: clones, checks,
 pictures, previews.
@@ -86,7 +102,24 @@ mirror is copied from the primary store, not written in parallel, so a snapshot
 that never landed on the primary is not seen by it.
 
 The store is `Bun.S3Client` or a directory behind one small interface
-(`src/snapshot/store.ts`): put, get, list, delete. Nothing else.
+(`src/snapshot/store.ts`): put, get, list, delete. Nothing else. Every call
+is tried five times; an attempt that has not answered by its deadline counts
+as failed. A put's deadline follows its size: its bytes at a floor of
+5 Mbit/s, plus 60 s. A fixed 180 s once failed every attempt at a 334 MB
+database behind a 15 Mbit/s uplink (#2536).
+
+## When a snapshot fails
+
+Its outcome is kept in `snapshot/state.json` under the data directory, so a
+restart forgets nothing. A failure shows straight away as a card on the board
+(`snapshot-failed`, pointing at Backups), in the terminal's dashboard among
+the forge's needs, and as a red line on the Backups page with the reason and
+since when. The forge tries again within the hour, not the next night. The
+next snapshot that lands, nightly or on demand, clears both.
+
+A forge given nowhere to put a snapshot has not failed: nothing is kept, no
+card is raised, and nothing is retried sooner than the nightly. The Backups
+page says there is no destination.
 
 ## The restore drill
 

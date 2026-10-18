@@ -20,6 +20,7 @@ import { resolveDestination, sealedSet } from "../../snapshot/destination.ts";
 import { keyOf } from "../../snapshot/snapshot.ts";
 import { lastDrill } from "../../snapshot/drills.ts";
 import { snapshotsOf } from "../../snapshot/service.ts";
+import { lastSnapshotOutcome } from "../../snapshot/outcome.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
@@ -183,9 +184,18 @@ export async function backupsPage(ctx: Ctx): Promise<Response> {
         note: "This forge was given nowhere to put them. On the platform an app's bucket (S3_*) is the place; on a machine, FORGE_SNAPSHOT_DIR names a directory. Seal a bucket below, or restart with one set, and a snapshot is taken every night at 08:00 UTC.",
       })}${form}`,
     );
+  // A failure is kept on disk, so it is shown after a restart too; this
+  // process's own failure is newer when the file could not be written.
+  const kept = lastSnapshotOutcome(ctx.app.config.dataDir);
+  const last = svc.last();
+  const failing =
+    kept?.failingSince !== undefined
+      ? { at: kept.at, since: kept.failingSince, error: kept.error ?? "unknown reason" }
+      : last.error !== undefined && (kept === undefined || (last.at ?? "") > kept.at)
+        ? { at: last.at ?? "", since: last.at ?? "", error: last.error }
+        : undefined;
   // The store is somewhere else; a listing that fails is a sentence on the
   // page, never a page that fails.
-  const last = svc.last();
   let snapshots: Awaited<ReturnType<typeof svc.list>> = [];
   let listing: string | undefined;
   try {
@@ -227,11 +237,11 @@ bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
             </p>`,
         )}
         ${when(
-          last.error,
-          (error) =>
-            html`<p class="backups-error">
-              ${icon("alert")} The last snapshot failed ${time(last.at ?? "")}:
-              ${error}
+          failing,
+          (f) =>
+            html`<p class="backups-error" role="alert">
+              ${icon("alert")} The last snapshot failed ${time(f.at)}, failing
+              since ${time(f.since)}: ${f.error}
             </p>`,
         )}
         ${when(

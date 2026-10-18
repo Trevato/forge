@@ -5,7 +5,9 @@
  * snapshots and says so on its settings page, rather than pretending.
  *
  * Runs are serialized: a nightly that meets an on-demand one waits its
- * turn, and a forge stopping waits for the one in flight.
+ * turn, and a forge stopping waits for the one in flight. A run that fails
+ * is kept (`outcome.ts`) and shows on the board at once, and the next try
+ * is within the hour, not the next night.
  */
 
 import type { App } from "../app.ts";
@@ -23,12 +25,26 @@ import { runDrill, type DrillDeps, type DrillResult } from "./drill.ts";
 import { drillDue } from "./due.ts";
 import { lastDrill, recordDrill } from "./drills.ts";
 import { lastMirror, mirrorPass, MIRROR_EVERY_MS, recordMirror, type MirrorState } from "./mirror.ts";
+import { recordSnapshotOutcome } from "./outcome.ts";
 import type { Store } from "./store.ts";
 
 const log = createLog("snapshots");
 
 /** When the nightly snapshot is taken, in UTC: before the probe round. */
 const NIGHTLY_HOUR_UTC = 8;
+/** After a failed snapshot, the next try is this soon (or the nightly, if sooner). */
+export const RETRY_MS = 3_600_000;
+
+/**
+ * A forge given nowhere to put a snapshot. Not a failure: the Backups page
+ * says so calmly, so it is never kept as an outcome, never a card, and
+ * never retried sooner than the nightly.
+ */
+class Nowhere extends Error {
+  constructor() {
+    super("this forge has nowhere to put a snapshot");
+  }
+}
 
 export interface SnapshotsHandle {
   /** The store in effect now; undefined when the forge has been given none. */
@@ -94,6 +110,8 @@ export function startSnapshots(
     /** Test seam: how often the mirror is looked at. */
     readonly mirrorEveryMs?: number | undefined;
     readonly nightly?: boolean;
+    /** Test seam: how soon a failed snapshot is tried again. */
+    readonly retryMs?: number | undefined;
     readonly passphrase?: string | undefined;
     /** Test seam: the drill itself. */
     readonly drill?: ((deps: DrillDeps) => Promise<DrillResult>) | undefined;
@@ -122,12 +140,13 @@ export function startSnapshots(
   let last: { manifest?: Manifest; error?: string; at?: string } = {};
 
   const take = (): Promise<Manifest> => {
-    const run = (inFlight ?? Promise.resolve()).then(async () => {
+    // After the one before it, however that ended: chained on a failure as it
+    // was, every later run failed at once with the old error until a restart.
+    const run = (inFlight ?? Promise.resolve()).catch(() => {}).then(async () => {
       // Resolved per run, so a destination saved on the Backups page is the
       // very next snapshot's.
       const store = current();
-      if (store === undefined)
-        throw new Error("this forge has nowhere to put a snapshot");
+      if (store === undefined) throw new Nowhere();
       running = { objects: 0, bytes: 0, elapsedMs: 0 };
       const manifest = await takeSnapshot(
         {
@@ -153,11 +172,19 @@ export function startSnapshots(
     inFlight = run.then(
       (m) => {
         last = { manifest: m, at: m.finishedAt };
+        keep({ landed: m.name });
+        arm(untilNightly());
         return m;
       },
       (error) => {
         last = { error: String(error), at: new Date().toISOString() };
+        if (error instanceof Nowhere) {
+          arm(untilNightly());
+          throw error;
+        }
         log.error("snapshot failed", { error: String(error) });
+        keep({ error: error instanceof Error ? error.message : String(error) });
+        arm(Math.min(options.retryMs ?? RETRY_MS, untilNightly()));
         throw error;
       },
     );
@@ -221,16 +248,24 @@ export function startSnapshots(
     return drilling;
   };
 
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const schedule = (): void => {
-    if (options.nightly === false || stopped) return;
-    timer = setTimeout(() => {
-      take()
-        .catch(() => {})
-        .finally(schedule);
-    }, untilNightly());
+  const keep = (result: { landed: string } | { error: string }): void => {
+    try {
+      recordSnapshotOutcome(app.config.dataDir, result);
+    } catch (error) {
+      log.warn("snapshot outcome not kept; the board will not show it", { error: String(error) });
+    }
   };
-  schedule();
+
+  // One timer for the next snapshot: the nightly, or sooner after a failure.
+  // Every run that ends sets it again, whoever asked for the run.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  function arm(ms: number): void {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    if (options.nightly === false || stopped) return;
+    timer = setTimeout(() => void take().catch(() => {}), ms);
+  }
+  arm(untilNightly());
 
   // The board only reads; the time the forge first owed a drill is kept here.
   try {

@@ -12,10 +12,13 @@
  * checks, previews, pictures.
  *
  * A snapshot is named by the moment it began, in UTC, so a listing sorts
- * itself. Nothing is compressed or bundled beyond git's own bundles and
- * the crew's older run logs, one compressed bundle per day: a bucket costs
- * a round trip per object, so thousands of tiny logs are one object a day.
- * A restore is reading files back, and a person can read the manifest.
+ * itself. Little is compressed or bundled beyond git's own bundles: the
+ * crew's older run logs, one compressed bundle per day, because a bucket
+ * costs a round trip per object and thousands of tiny logs are one object
+ * a day; and the database, compressed and cut in parts (`parts.ts`),
+ * because whole it was more than a home uplink carries in one put's
+ * deadline. A restore is reading files back, and a person can read the
+ * manifest.
  *
  * Objects go up through a bounded queue, eight in flight; the manifest
  * lists them in the order they were handed over, not the order they landed.
@@ -32,6 +35,7 @@ import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { countRows, type DrillCounts } from "./counts.ts";
+import { pack, partPath, PART_BYTES, type PackedFile } from "./parts.ts";
 import type { Store } from "./store.ts";
 import { unwrapKey, wrapKey, WRAPPED_KEY } from "./wrap.ts";
 
@@ -63,6 +67,8 @@ export interface Manifest {
    * `raw` in snapshots from before the key was wrapped.
    */
   readonly key?: "wrapped" | "none" | "raw";
+  /** Files that went up compressed in parts, each listed in `files` by its parts. Absent before the database was packed. */
+  readonly packed?: readonly PackedFile[];
 }
 
 /** What a manifest says of the key, including manifests older than the field. */
@@ -162,6 +168,8 @@ export interface Snapshotter {
   readonly onLand?: ((p: Progress) => void) | undefined;
   /** Overrides of the progress cadence, for tests. */
   readonly progressEvery?: { objects?: number; ms?: number } | undefined;
+  /** Override of the database's part size, for tests. */
+  readonly partBytes?: number | undefined;
 }
 
 /** `2026-09-22T09-00-00Z`: sortable, and a name a bucket allows. */
@@ -216,6 +224,7 @@ export async function takeSnapshot(
   const prefix = `${SNAPSHOT_PREFIX}${name}/`;
   const scratch = mkdtempSync(join(tmpdir(), "forge-snapshot-"));
   const files: SnapshotFile[] = [];
+  const packed: PackedFile[] = [];
   let dbCounts: DrillCounts | undefined;
   const started = Date.now();
   const everyObjects = forge.progressEvery?.objects ?? PROGRESS_OBJECTS;
@@ -305,7 +314,23 @@ export async function takeSnapshot(
     } finally {
       copy.close();
     }
-    await putFile("forge.db", dbCopy);
+    // Compressed and in parts: each part one put, with its own deadline and
+    // retries, so a slow uplink carries it and a dropped one costs a part.
+    const database = await pack(
+      "forge.db",
+      new Uint8Array(await Bun.file(dbCopy).arrayBuffer()),
+      forge.partBytes ?? PART_BYTES,
+    );
+    packed.push(database.packed);
+    log.info("database packed", {
+      mb: (database.packed.bytes / 1_048_576).toFixed(1),
+      packedMb: (database.packed.packedBytes / 1_048_576).toFixed(1),
+      ratio: (database.packed.bytes / Math.max(1, database.packed.packedBytes)).toFixed(2),
+      parts: database.packed.parts,
+    });
+    for (const [n, part] of database.parts.entries())
+      await put(partPath("forge.db", n), part);
+    rmSync(dbCopy, { force: true });
     // The key travels only wrapped. Without a passphrase it stays home.
     let key: Manifest["key"] = "none";
     const keyFile = Bun.file(join(forge.dataDir, "secret.key"));
@@ -434,6 +459,7 @@ export async function takeSnapshot(
       bytes: files.reduce((n, f) => n + f.bytes, 0),
       ...(dbCounts === undefined ? {} : { counts: dbCounts }),
       key,
+      packed,
     };
     await store.put(
       `${prefix}manifest.json`,

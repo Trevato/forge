@@ -23,6 +23,7 @@ import {
 import { STALE_AFTER_MS } from "../runs/lease.ts";
 import { BUDGETS } from "./budgets.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
+import { lastSnapshotOutcome, snapshotNeed } from "../snapshot/outcome.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { newestDrills } from "../core/domain_drills.ts";
 import { DOMAINS } from "./domains.ts";
@@ -383,6 +384,10 @@ export function vitals(input: VitalsInput): Vitals {
     DOMAINS,
   ))
     need(owed.cause, owed.sentence, owed.since, "/");
+
+  // A snapshot that failed is a card from that morning until one lands.
+  const failing = snapshotNeed(lastSnapshotOutcome(input.dataDir));
+  if (failing !== undefined) need("snapshot-failed", failing.sentence, failing.since, "/settings/backups");
 
   // A snapshot that did not land off the box, or a mirror a day behind, is a card until it does.
   const behind = mirrorNeed(lastMirror(input.dataDir), now);

@@ -51,17 +51,40 @@ export function s3FromEnv(
   };
 }
 
+/** The slowest uplink a put may assume: 5 Mbit/s, a third of the home line it runs behind. */
+export const FLOOR_BYTES_PER_S = 5_000_000 / 8;
+/** What every attempt gets on top of its bytes' time: the handshake, the server's thought, a queue ahead of it. */
+export const SLACK_MS = 60_000;
+/** How long a read, a listing or a delete may go unanswered. */
+export const CALL_DEADLINE_MS = 180_000;
+
+/** How long a put of `bytes` may take before it counts as failed: its bytes at the floor rate, plus slack. */
+export const deadlineFor = (
+  bytes: number,
+  floorBytesPerS = FLOOR_BYTES_PER_S,
+  slackMs = SLACK_MS,
+): number => slackMs + Math.ceil((bytes / floorBytesPerS) * 1000);
+
+const sizeOf = (body: Uint8Array | string): number =>
+  typeof body === "string" ? Buffer.byteLength(body) : body.byteLength;
+
 /**
  * A store that tries again. Object stores answer a burst, a flake or a
  * moment of maintenance with a 5xx — Backblaze says so in its own docs —
  * and one such answer in a thousand puts used to fail the whole snapshot
  * with "S3Error: an unexpected error has occurred" and no key named. Every
  * call is tried `attempts` times with doubling waits, and what finally
- * fails says which key it was. An attempt that has not answered within
- * `deadlineMs` counts as failed too: a connection that died quietly never
+ * fails says which key it was. An attempt that has not answered within its
+ * deadline counts as failed too: a connection that died quietly never
  * settles on its own, and once held a snapshot on its first object for an
  * hour with the network fine (2026-10-13), so the next attempt opens a
  * fresh request instead.
+ *
+ * A put's deadline follows its size (`deadlineFor`): a fixed 180 s once
+ * failed every attempt at a 334 MB database behind a 15 Mbit/s uplink
+ * (2026-10-17). `deadlineMs` fixes every deadline instead, for tests;
+ * `floorBytesPerS` and `slackMs` scale the size rule, for tests that run a
+ * slow link at a thousand times its speed.
  */
 export function withRetries(
   inner: Store,
@@ -69,14 +92,23 @@ export function withRetries(
     attempts?: number;
     baseMs?: number;
     deadlineMs?: number;
+    floorBytesPerS?: number;
+    slackMs?: number;
     sleep?: (ms: number) => Promise<void>;
   } = {},
 ): Store {
   const attempts = Math.max(1, options.attempts ?? 5);
   const baseMs = options.baseMs ?? 500;
-  const deadlineMs = options.deadlineMs ?? 180_000;
+  const fixed = options.deadlineMs;
+  const callMs = fixed ?? CALL_DEADLINE_MS;
+  const putMs = (body: Uint8Array | string): number =>
+    fixed ?? deadlineFor(sizeOf(body), options.floorBytesPerS, options.slackMs);
   const sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
-  async function tried<T>(what: string, fn: () => Promise<T>): Promise<T> {
+  async function tried<T>(
+    what: string,
+    deadlineMs: number,
+    fn: () => Promise<T>,
+  ): Promise<T> {
     let last: unknown;
     for (let n = 0; n < attempts; n++) {
       try {
@@ -93,11 +125,13 @@ export function withRetries(
   return {
     where: inner.where,
     ...(inner.dir === undefined ? {} : { dir: inner.dir }),
-    put: (key, body) => tried(`put ${key}`, () => inner.put(key, body)),
-    get: (key) => tried(`get ${key}`, () => inner.get(key)),
-    list: (prefix) => tried(`list ${prefix}`, () => inner.list(prefix)),
-    names: (prefix) => tried(`names ${prefix}`, () => inner.names(prefix)),
-    delete: (key) => tried(`delete ${key}`, () => inner.delete(key)),
+    put: (key, body) =>
+      tried(`put ${key}`, putMs(body), () => inner.put(key, body)),
+    get: (key) => tried(`get ${key}`, callMs, () => inner.get(key)),
+    list: (prefix) => tried(`list ${prefix}`, callMs, () => inner.list(prefix)),
+    names: (prefix) =>
+      tried(`names ${prefix}`, callMs, () => inner.names(prefix)),
+    delete: (key) => tried(`delete ${key}`, callMs, () => inner.delete(key)),
   };
 }
 

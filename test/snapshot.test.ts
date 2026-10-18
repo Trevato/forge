@@ -132,14 +132,17 @@ describe("a forge back from a snapshot", () => {
     expect(manifest.repos).toBe(1);
     expect(manifest.apps).toBe(1);
     const paths = manifest.files.map((f) => f.path);
-    expect(paths).toContain("forge.db");
+    // The database goes up compressed, in parts, and the manifest says what they make.
+    expect(paths).toContain("forge.db.zst.0000");
+    expect(paths).not.toContain("forge.db");
+    expect(manifest.packed?.map((p) => p.path)).toEqual(["forge.db"]);
     // The raw key never reaches the store; only its wrapped form does.
     expect(paths).not.toContain("secret.key");
     expect(paths).toContain("secret.key.wrapped");
     expect(manifest.key).toBe("wrapped");
     const rawKey = readFileSync(join(app.config.dataDir, "secret.key"));
     for (const f of paths)
-      if (f !== "forge.db" && !f.includes("/"))
+      if (!f.startsWith("forge.db") && !f.includes("/"))
         expect(
           readFileSync(
             join(root, "store", "snapshots", manifest.name, f),

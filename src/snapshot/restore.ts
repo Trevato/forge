@@ -16,6 +16,10 @@
  * with the same `S3_*` variables the forge runs under, or
  * `FORGE_SNAPSHOT_DIR` for a directory store.
  *
+ * A file that went up compressed in parts (the database, `parts.ts`)
+ * comes back whole: its parts read in order, joined, unpacked, and checked
+ * against the size the manifest gives it.
+ *
  * The key comes back only from its wrapped form and the operator's
  * passphrase (`FORGE_SNAPSHOT_PASSPHRASE`). A wrong passphrase refuses the
  * restore; none leaves the key out, and every sealed value that will not
@@ -36,6 +40,7 @@ import {
   type Manifest,
 } from "./snapshot.ts";
 import { unwrapKey, WRAPPED_KEY } from "./wrap.ts";
+import { isPackedFile, partPaths, unpack, type PackedFile } from "./parts.ts";
 import { resolveDestination } from "./destination.ts";
 import type { Store } from "./store.ts";
 
@@ -104,6 +109,14 @@ export async function restoreSnapshot(
         "the passphrase does not open this snapshot's wrapped key; check FORGE_SNAPSHOT_PASSPHRASE, or restore without it to leave sealed values behind",
       );
   }
+  const packed: readonly unknown[] = manifest.packed ?? [];
+  if (!packed.every(isPackedFile))
+    throw new Error(`snapshot ${name}: a packed file in its manifest does not read whole`);
+  const partOf = new Map<string, { file: PackedFile; n: number }>();
+  for (const file of packed)
+    for (const [n, path] of partPaths(file).entries())
+      partOf.set(path, { file, n });
+  const gathered = new Map<string, Uint8Array[]>();
   mkdirSync(dataDir, { recursive: true });
 
   let files = 0;
@@ -118,6 +131,14 @@ export async function restoreSnapshot(
         `snapshot ${name}: ${entry.path} is ${body.byteLength} bytes, not ${entry.bytes}`,
       );
     if (entry.path === WRAPPED_KEY) continue;
+    // A part waits for the rest of its file.
+    const part = partOf.get(entry.path);
+    if (part !== undefined) {
+      const got = gathered.get(part.file.path) ?? [];
+      got[part.n] = body;
+      gathered.set(part.file.path, got);
+      continue;
+    }
     // A day's run logs in one object come back as the logs they were.
     if (isRunBundle(entry.path)) {
       for (const run of unpackRuns(body)) {
@@ -142,6 +163,20 @@ export async function restoreSnapshot(
     files++;
     if (bundle)
       bundles.push({ owner: bundle[1]!, name: bundle[2]!, file: target });
+  }
+  for (const file of packed) {
+    const got = gathered.get(file.path) ?? [];
+    const parts = partPaths(file).map((path, n) => {
+      const body = got[n];
+      if (body === undefined)
+        throw new Error(`snapshot ${name} is missing ${path}`);
+      return body;
+    });
+    gathered.delete(file.path);
+    const target = join(dataDir, file.path);
+    mkdirSync(dirname(target), { recursive: true });
+    await Bun.write(target, await unpack(file, parts));
+    files++;
   }
   for (const b of bundles) {
     const dir = repoDir(join(dataDir, "repos"), b.owner, b.name);
