@@ -223,6 +223,43 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(replannable(again).map((i) => i.number)).toEqual([done.number]);
   });
 
+  test("an issue the crew found done on main is held as done_on_main, not replannable", async () => {
+    const { repo, mason } = await crewed(app, alice, "finished");
+    const oid = "a".repeat(40);
+    const at = (id: string, ago: number) =>
+      app.db.query("UPDATE comment SET created_at = ?2 WHERE id = ?1").run(id, minutes(ago));
+    const say = (i: Issue, body: string, ago: number) => {
+      const c = addComment(app, alice, getRepoById(app.db, repo.id)!, getIssueById(app.db, i.id)!, body);
+      if (!c.ok) throw new Error(String(c.error));
+      at(c.value.id, ago);
+    };
+    const done = issue(repo, "Already done");
+    ran(repo, done, mason, "declined: it is done", 30);
+    say(done, `${DONE_NOTE}${oid}`, 20);
+    const reparked = issue(repo, "Done, then parked");
+    ran(repo, reparked, mason, "declined: it is done", 30);
+    say(reparked, `${DONE_NOTE}${oid}`, 20);
+    say(reparked, `${PARK_NOTE}not so`, 10);
+    ran(repo, reparked, mason, "declined: it is not done", 5);
+    const spoken = issue(repo, "Done, then a word");
+    ran(repo, spoken, mason, "declined: it is done", 30);
+    say(spoken, `${DONE_NOTE}${oid}`, 20);
+    say(spoken, "Please try again", 10);
+
+    const held = heldNow(app, getRepoById(app.db, repo.id)!);
+    const named = (h: keyof typeof held.by) => held.by[h].map((i) => i.number);
+    expect(named("done_on_main")).toContain(done.number);
+    expect(named("stalled")).not.toContain(done.number);
+    expect(replannable(held).map((i) => i.number)).not.toContain(done.number);
+    // A later park is a newer word: it is the planner's to re-plan again.
+    expect(named("done_on_main")).not.toContain(reparked.number);
+    expect(replannable(held).map((i) => i.number)).toContain(reparked.number);
+    // A person's comment after the done note does not make it startable.
+    expect(held.startable.map((r) => r.issue.number)).not.toContain(spoken.number);
+    expect(named("done_on_main")).toContain(spoken.number);
+    expect(heldWords(held)).toContain("done_on_main=");
+  });
+
   test("nothing startable with a slot free asks the planner once, with the breakdown, whatever the plate", async () => {
     const { repo, atlas, mason } = await crewed(app, alice, "stuck");
     const fresh = () => getRepoById(app.db, repo.id)!;
