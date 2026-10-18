@@ -176,8 +176,9 @@ NOT NULL column without a default, and `test/schema-additive.test.ts`
 refuses one in any migration not shipped by both of the two newest releases
 recorded in `src/core/releases.json` (by id: a count, and the stamped ids),
 which the release agent bumps when it cuts one.
-An old process that restarts mid-roll refuses a database ahead of it
-(`user_version`), as it always has.
+An old process that restarts mid-roll boots on a database ahead of it and
+logs, by name, the migrations it does not know (`schema_migration` records
+each name, #783) — they only add, so it serves as it did.
 
 State transitions use compare-and-swap (`UPDATE … WHERE state = ?`), and every
 transition writes its event row in the same transaction. On boot, a

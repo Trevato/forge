@@ -24,9 +24,18 @@ import { Database } from "bun:sqlite";
 import { openDb } from "../src/kernel/db.ts";
 import { ForgeError } from "../src/kernel/error.ts";
 import { sha256 } from "../src/kernel/hash.ts";
-import { migrationId, readMigrations, statements } from "../src/kernel/migrate.ts";
+import {
+  type Migration,
+  migrate,
+  migrationId,
+  pinBreaks,
+  pinned,
+  readMigrations,
+  statements,
+} from "../src/kernel/migrate.ts";
 import { migrationFiles, migrations, NUMBERED } from "../src/core/schema.ts";
 import { failureReason } from "../src/apps/process.ts";
+import pins from "../src/core/migration-pins.json" with { type: "json" };
 
 const root = mkdtempSync(join(tmpdir(), "forge-schema-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -35,7 +44,7 @@ let n = 0;
 const fresh = (): string => join(root, `db-${++n}`);
 
 /** Production's data, closed and checkpointed, ready to be copied. */
-function production(list: readonly string[]): string {
+function production(list: readonly Migration[]): string {
   const path = fresh();
   const db = openDb(path, list);
   db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
@@ -50,7 +59,7 @@ function copyOf(path: string): string {
   return target;
 }
 
-function boot(path: string, list: readonly string[]): void {
+function boot(path: string, list: readonly Migration[]): void {
   openDb(path, list).close();
 }
 
@@ -155,9 +164,75 @@ describe("a preview booting on copied data", () => {
     db.close();
   });
 
-  test("data ahead of this build is still refused", () => {
+  test("data with one more migration than its code boots and names it (#783)", () => {
+    const a = { name: "20261015110000-a", sql: "CREATE TABLE a (x INTEGER)" };
+    const b = { name: "20261015120000-b", sql: "CREATE TABLE b (y INTEGER)" };
+    const path = copyOf(production([a, b]));
+    const db = new Database(path, { strict: true });
+    expect(migrate(db, [a])).toEqual({ applied: [], unknown: ["20261015120000-b"] });
+    // What it does not know is left as it is, and so is its record.
+    expect(has(db, "b")).toBe(true);
+    expect(migrate(db, [a]).unknown).toEqual(["20261015120000-b"]);
+    db.close();
+    // openDb boots on it too: a warning, not a refusal.
+    boot(path, [a]);
+  });
+
+  test("data with one fewer migration than its code takes the missing one", () => {
+    const a = { name: "20261015110000-a", sql: "CREATE TABLE a (x INTEGER)" };
+    const b = { name: "20261015120000-b", sql: "CREATE TABLE b (y INTEGER)" };
+    const path = copyOf(production([a]));
+    const db = new Database(path, { strict: true });
+    expect(migrate(db, [a, b])).toEqual({ applied: ["20261015120000-b"], unknown: [] });
+    expect(has(db, "b")).toBe(true);
+    db.close();
+  });
+
+  test("a migration recorded without a name is named by its position and id", () => {
     const path = production(["CREATE TABLE a (x INTEGER)", "CREATE TABLE b (y INTEGER)"]);
+    const db = new Database(path, { strict: true });
+    const [unknown] = migrate(db, ["CREATE TABLE a (x INTEGER)"]).unknown;
+    expect(unknown).toBe(`#2 (${migrationId("CREATE TABLE b (y INTEGER)").slice(0, 12)})`);
+    db.close();
+  });
+
+  test("data from before the tracking table that is ahead is still refused: a count names nothing", () => {
+    const path = fresh();
+    const old = new Database(path, { create: true, strict: true });
+    old.exec("CREATE TABLE a (x INTEGER); CREATE TABLE b (y INTEGER); PRAGMA user_version = 2");
+    old.close();
     expect(() => openDb(path, ["CREATE TABLE a (x INTEGER)"])).toThrow(ForgeError);
+  });
+});
+
+describe("the database records migrations by name (#783)", () => {
+  const names = (path: string): (string | null)[] => {
+    const db = new Database(path, { readonly: true, strict: true });
+    try {
+      return db
+        .query<{ name: string | null }, []>("SELECT name FROM schema_migration ORDER BY position")
+        .all()
+        .map((row) => row.name);
+    } finally {
+      db.close();
+    }
+  };
+
+  test("a fresh database applies every migration in order and records each one's name", () => {
+    expect(names(production(migrationFiles))).toEqual(migrationFiles.map((m) => m.name));
+  });
+
+  test("a database recorded before names were kept has them written in, and nothing else changes", () => {
+    const path = copyOf(production(migrations));
+    // As a build from before #783 left it: no name column at all.
+    const old = new Database(path, { strict: true });
+    old.exec("ALTER TABLE schema_migration DROP COLUMN name");
+    const before = old.query("SELECT id, position, applied_at FROM schema_migration ORDER BY id").all();
+    old.close();
+    const db = openDb(path, migrationFiles);
+    expect(db.query("SELECT id, position, applied_at FROM schema_migration ORDER BY id").all()).toEqual(before);
+    db.close();
+    expect(names(path)).toEqual(migrationFiles.map((m) => m.name));
   });
 });
 
@@ -238,7 +313,7 @@ describe("a migration is a file named by a sortable id (#1837)", () => {
     return dir;
   }
 
-  const listIn = (dir: string): string[] => readMigrations(dir).map((m) => m.sql);
+  const listIn = readMigrations;
 
   /** Everything a schema is but the record of how it got there. */
   function shape(path: string): unknown[] {
@@ -285,6 +360,17 @@ describe("a migration is a file named by a sortable id (#1837)", () => {
     expect(recorded(aFirst)).toEqual(recorded(together));
     expect(recorded(bFirst)).toEqual(recorded(together));
     expect(recorded(together).length).toBe(migrations.length + 2);
+    // Each database names both, whichever it took first.
+    for (const path of [aFirst, bFirst, together]) {
+      const db = new Database(path, { readonly: true, strict: true });
+      const names = db
+        .query<{ name: string }, []>("SELECT name FROM schema_migration WHERE name LIKE '2026101511%' OR name LIKE '2026101512%' ORDER BY name")
+        .all()
+        .map((row) => row.name);
+      db.close();
+      expect(names).toContain("20261015110000-user-motto");
+      expect(names).toContain("20261015120000-deploy-note");
+    }
     const db = openDb(together, both);
     expect(has(db, "deploy_note")).toBe(true);
     db.close();
@@ -331,5 +417,40 @@ describe("a migration is a file named by a sortable id (#1837)", () => {
       writeFileSync(join(dir, name), body);
       expect(() => readMigrations(dir)).toThrow(ForgeError);
     }
+  });
+});
+
+describe("a migration on main is never edited (#783)", () => {
+  test("every pinned migration still says what it said when it was pinned", () => {
+    expect(pinBreaks(migrationFiles, pins)).toEqual([]);
+  });
+
+  test("every numbered migration is pinned", () => {
+    for (const m of migrationFiles.slice(0, NUMBERED)) expect(Object.hasOwn(pins, m.name)).toBe(true);
+  });
+
+  test("an edit after its pin is named, a removal too; re-indenting is not an edit", () => {
+    const files = [
+      { name: "20261015110000-a", sql: "CREATE TABLE a (x INTEGER)" },
+      { name: "20261015120000-b", sql: "CREATE TABLE b (y INTEGER)" },
+    ];
+    const pin = pinned(files, {});
+    expect(pinBreaks(files, pin)).toEqual([]);
+    expect(pinBreaks([files[0]!, { name: "20261015120000-b", sql: "CREATE TABLE b (y TEXT)" }], pin)).toEqual([
+      "20261015120000-b was edited after it was pinned — add a new migration instead",
+    ]);
+    expect(pinBreaks([files[1]!], pin)).toEqual(["20261015110000-a was pinned and is gone"]);
+    expect(pinBreaks([{ name: "20261015110000-a", sql: "\n  CREATE TABLE a\n    (x INTEGER)\n" }, files[1]!], pin)).toEqual([]);
+  });
+
+  test("pinning adds what is new and never rewrites a pin", () => {
+    const a = { name: "20261015110000-a", sql: "CREATE TABLE a (x INTEGER)" };
+    const b = { name: "20261015120000-b", sql: "CREATE TABLE b (y INTEGER)" };
+    const pin = pinned([b], {});
+    const edited = { ...b, sql: "CREATE TABLE b (y TEXT)" };
+    const next = pinned([a, edited], pin);
+    expect(Object.keys(next)).toEqual([a.name, b.name]);
+    expect(next[b.name]).toBe(pin[b.name]!);
+    expect(next[a.name]).toBe(migrationId(a.sql));
   });
 });

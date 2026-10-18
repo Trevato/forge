@@ -11,7 +11,8 @@
  * migration is a row in `schema_migration`, keyed by a hash of its text, and
  * a boot runs exactly the ones whose text it has not seen. A second boot is
  * a no-op; a migration that moved is still recognised; a sibling's migration
- * this build does not know is left alone.
+ * this build does not know is left alone and named, never a refusal to boot
+ * (#783) — each row also carries its migration's file name.
  *
  * Each statement is also run so that meeting its own result is a no-op —
  * `CREATE` gains `IF NOT EXISTS`, an `ADD COLUMN` whose column is there is
@@ -77,10 +78,73 @@ export function migrationId(sql: string): string {
   return sha256(sql.replace(/\s+/g, " ").trim());
 }
 
-export function migrate(db: Database, migrations: readonly string[]): void {
+/** Each pinned migration's id, by name: what it said when it was pinned. */
+export type MigrationPins = Readonly<Record<string, string>>;
+
+/**
+ * How `files` differ from what was pinned: one line for each pinned
+ * migration whose text says something else now, or that is gone. A
+ * migration on main is history — an edited one is a new one, and a
+ * database that ran the old text runs the new one again on top of it.
+ */
+export function pinBreaks(
+  files: readonly MigrationFile[],
+  pins: MigrationPins,
+): string[] {
+  const now = new Map(files.map((m) => [m.name, migrationId(m.sql)]));
+  const breaks: string[] = [];
+  for (const [name, id] of Object.entries(pins)) {
+    const current = now.get(name);
+    if (current === undefined) breaks.push(`${name} was pinned and is gone`);
+    else if (current !== id)
+      breaks.push(`${name} was edited after it was pinned — add a new migration instead`);
+  }
+  return breaks;
+}
+
+/**
+ * `pins` with every migration in `files` it lacks added; a pin already
+ * there is never rewritten. Sorted by name, so the file it is written to
+ * changes only where a migration was added.
+ */
+export function pinned(
+  files: readonly MigrationFile[],
+  pins: MigrationPins,
+): MigrationPins {
+  const next: Record<string, string> = { ...pins };
+  for (const m of files) next[m.name] ??= migrationId(m.sql);
+  return Object.fromEntries(
+    Object.entries(next).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+  );
+}
+
+/**
+ * A migration as `migrate` takes it: its file, which names it, or bare SQL —
+ * a test's own list — which is known by its position alone.
+ */
+export type Migration = string | MigrationFile;
+
+/** What a boot did to the database, by migration name. */
+export interface Migrated {
+  /** The migrations this boot applied, in the order it applied them. */
+  readonly applied: string[];
+  /**
+   * What the database has applied that this build does not know: a newer
+   * build's or a sibling branch's, on data copied for a preview. Each by
+   * the name its build recorded; one recorded with none by its position and
+   * the start of its id. Left alone, never undone.
+   */
+  readonly unknown: string[];
+}
+
+export function migrate(db: Database, list: readonly Migration[]): Migrated {
+  const migrations = list.map((m) => (typeof m === "string" ? m : m.sql));
+  const names = list.map((m, i) =>
+    typeof m === "string" ? `migration ${i + 1}` : `migration ${m.name}`,
+  );
   const ids = migrations.map((sql, i) => {
     if (sql.trim() === "")
-      defect("db.migration_missing", `migration ${i + 1} is empty`);
+      defect("db.migration_missing", `${names[i]} is empty`);
     return migrationId(sql);
   });
   const seen = new Set<string>();
@@ -88,22 +152,19 @@ export function migrate(db: Database, migrations: readonly string[]): void {
     if (seen.has(id))
       defect(
         "db.migration_duplicate",
-        `migration ${i + 1} repeats an earlier one word for word — it would never run`,
+        `${names[i]} repeats an earlier one word for word — it would never run`,
       );
     seen.add(id);
   });
 
   const applied = appliedIds(db, migrations, ids);
-  if (applied.size > migrations.length) {
-    defect(
-      "db.future_schema",
-      `database has applied ${applied.size} migrations, this build only knows ${migrations.length} — refusing to run`,
-    );
-  }
+  recordNames(db, list, ids);
+  const ran: string[] = [];
   for (let i = 0; i < migrations.length; i++) {
     const id = ids[i]!;
     if (applied.has(id)) continue;
     const sql = migrations[i]!;
+    const entry = list[i]!;
     db.transaction(() => {
       for (const statement of statements(sql)) {
         try {
@@ -111,19 +172,63 @@ export function migrate(db: Database, migrations: readonly string[]): void {
         } catch (error) {
           defect(
             "db.migration_failed",
-            `migration ${i + 1} failed at ${quote(statement)}: ${messageOf(error)}`,
+            `${names[i]} failed at ${quote(statement)}: ${messageOf(error)}`,
             error,
           );
         }
       }
       db.query(
-        "INSERT INTO schema_migration (id, position, applied_at) VALUES (?1, ?2, ?3)",
-      ).run(id, i + 1, new Date().toISOString());
+        "INSERT INTO schema_migration (id, position, applied_at, name) VALUES (?1, ?2, ?3, ?4)",
+      ).run(
+        id,
+        i + 1,
+        new Date().toISOString(),
+        typeof entry === "string" ? null : entry.name,
+      );
       applied.add(id);
       // PRAGMA can't be parameterized; the value is a count, not input.
       db.exec(`PRAGMA user_version = ${applied.size}`);
     })();
+    ran.push(typeof entry === "string" ? String(i + 1) : entry.name);
   }
+  const known = new Set(ids);
+  const unknown = db
+    .query<{ id: string; position: number; name: string | null }, []>(
+      "SELECT id, position, name FROM schema_migration ORDER BY position, id",
+    )
+    .all()
+    .filter((row) => !known.has(row.id))
+    .map((row) => row.name ?? `#${row.position} (${row.id.slice(0, 12)})`);
+  return { applied: ran, unknown };
+}
+
+/**
+ * Write each known migration's name beside its id, where a build from
+ * before names were recorded left none — so the database says which
+ * migrations it has by name, and a later build that does not know one can
+ * say which. A database written by test lists keeps its blanks.
+ */
+function recordNames(
+  db: Database,
+  list: readonly Migration[],
+  ids: readonly string[],
+): void {
+  if (!hasColumn(db, "schema_migration", "name"))
+    db.exec("ALTER TABLE schema_migration ADD COLUMN name TEXT");
+  const blank = db
+    .query<{ n: number }, []>(
+      "SELECT COUNT(*) AS n FROM schema_migration WHERE name IS NULL",
+    )
+    .get()!.n;
+  if (blank === 0) return;
+  const name = db.query(
+    "UPDATE schema_migration SET name = ?2 WHERE id = ?1 AND name IS NULL",
+  );
+  db.transaction(() => {
+    list.forEach((m, i) => {
+      if (typeof m !== "string") name.run(ids[i]!, m.name);
+    });
+  })();
 }
 
 /**
@@ -132,7 +237,9 @@ export function migrate(db: Database, migrations: readonly string[]): void {
  * taken as applied — what that number always meant — unless one plainly
  * did not run (a table it creates or a column it adds is missing: a
  * branch's migration sat at that number instead). They are written down
- * once, after which positions never matter again.
+ * once, after which positions never matter again. Such a database ahead of
+ * this build is still refused: a count names nothing, so there is no
+ * telling which of its migrations this build lacks.
  */
 function appliedIds(
   db: Database,
@@ -153,7 +260,8 @@ function appliedIds(
       db.exec(`CREATE TABLE schema_migration (
         id         TEXT PRIMARY KEY,
         position   INTEGER NOT NULL,
-        applied_at TEXT NOT NULL
+        applied_at TEXT NOT NULL,
+        name       TEXT
       )`);
       const insert = db.query(
         "INSERT INTO schema_migration (id, position, applied_at) VALUES (?1, ?2, ?3)",

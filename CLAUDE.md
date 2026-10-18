@@ -254,9 +254,12 @@ flag exists only in the stdio dev runner and is never reachable over SSH.
   whose default export is the SQL — never the next number: `0001`–`0091`
   are the numbered history, and a shared next number is what parallel pulls
   collided on (#1837). Files run in name order, once each, recognised by a
-  hash of their text in `schema_migration` (`kernel/migrate.ts`), so two
-  pulls' migrations land in either order. Never edit an existing migration
-  — an edited one is a new one and runs again. It must only add
+  hash of their text in `schema_migration` (`kernel/migrate.ts`, which also
+  records each name), so two pulls' migrations land in either order, and a
+  database with one this build does not know boots and names it. Never edit
+  an existing migration — an edited one is a new one and runs again; once
+  pinned in `core/migration-pins.json` (`bun scripts/pin-migrations.ts`, run
+  by the release agent, never by a pull) the schema test fails on an edit. It must only add
   (`test/schema-additive.test.ts`); the release agent lists its id in
   `core/releases.json`.
 - **New git read:** put it in `git/read.ts`; reuse the long-lived `cat-file`

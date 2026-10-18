@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { parseCidrs } from "./cidr.ts";
 import { dataHomeRefusal } from "./data_home.ts";
 import { applyPragmas } from "./db.ts";
-import { migrate } from "./migrate.ts";
+import { type Migration, migrate } from "./migrate.ts";
 
 /** A scratch directory older than this was left by a killed run. */
 const STALE_MS = 60 * 60 * 1000;
@@ -81,13 +81,14 @@ export function configProblem(
 export function preflight(
   env: Record<string, string | undefined>,
   treeDir: string,
-  migrations: readonly string[],
+  migrations: readonly Migration[],
 ): Preflight {
   const bad = configProblem(env, treeDir);
   if (bad !== null) return { ok: false, line: `preflight failed: ${bad}` };
 
   const dataDir = dataDirOf(env);
   let scratch: string | undefined;
+  let unknown: string[] = [];
   try {
     mkdirSync(dataDir, { recursive: true });
     sweepStale(dataDir);
@@ -101,13 +102,17 @@ export function preflight(
     const db = new Database(copy, { create: true, strict: true });
     try {
       applyPragmas(db);
-      migrate(db, migrations);
+      unknown = migrate(db, migrations).unknown;
     } finally {
       db.close();
     }
     return {
       ok: true,
-      line: `preflight ok: ${migrations.length} migrations apply to a copy of the database`,
+      line:
+        `preflight ok: ${migrations.length} migrations apply to a copy of the database` +
+        (unknown.length > 0
+          ? `; it also has ${unknown.length} this build does not know (${unknown.join(", ")})`
+          : ""),
     };
   } catch (error) {
     const message = (error instanceof Error ? error.message : String(error))

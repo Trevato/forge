@@ -11,7 +11,7 @@ import type { VerifyHuman } from "./core/turnstile.ts";
 import { randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { migrations } from "./core/schema.ts";
+import { migrationFiles } from "./core/schema.ts";
 import { dropLegacyNewAccountGuards } from "./core/schema.ts";
 import { EventBus } from "./core/events.ts";
 import { follow } from "./core/following.ts";
@@ -212,7 +212,7 @@ export function createApp(config: ForgeConfig): App {
   mkdirSync(reposRoot, { recursive: true });
   const socketPath = join(dataDir, `forge-${id()}.sock`);
 
-  const db = openDb(join(dataDir, "forge.db"), migrations);
+  const db = openDb(join(dataDir, "forge.db"), migrationFiles);
   // Hand-installed new-account guards become the `guard_new_accounts`
   // setting (default off): drop the legacy triggers once, here, on boot.
   // Idempotent — a forge without them changes nothing.

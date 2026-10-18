@@ -4,8 +4,9 @@
  * each take one line: the release is not kept, or its schema is behind the
  * live database's (a down-migration is not something this forge has).
  * A release whose schema is ahead of the live database is fine: it migrates
- * forward on boot, and the database's own refusal of a future schema is
- * untouched.
+ * forward on boot. A release behind it is refused here, not by the
+ * database: a build boots on migrations it does not know and only names
+ * them (#783).
  */
 
 import { Database } from "bun:sqlite";

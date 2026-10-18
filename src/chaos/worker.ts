@@ -4,12 +4,12 @@
  */
 
 import { openDb } from "../kernel/db.ts";
-import { migrations } from "../core/schema.ts";
+import { migrationFiles } from "../core/schema.ts";
 import { claimRun, createRun, heartbeatRuns } from "../core/runs.ts";
 
 const [dbPath, repoId] = process.argv.slice(2);
 if (dbPath === undefined || repoId === undefined) process.exit(2);
-const db = openDb(dbPath, migrations);
+const db = openDb(dbPath, migrationFiles);
 console.log("ready");
 for (;;) {
   const run = createRun(db, { repoId, kind: "check" });

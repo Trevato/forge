@@ -73,8 +73,8 @@ if (process.argv[2] === "hook") {
 // config parsed, migrations run on a copy of the database. No socket, no
 // timers, and the live database is never opened.
 if (process.argv.includes("--preflight")) {
-  const { migrations } = await import("./core/schema.ts");
-  const result = preflight(process.env, import.meta.dir, migrations);
+  const { migrationFiles } = await import("./core/schema.ts");
+  const result = preflight(process.env, import.meta.dir, migrationFiles);
   // CLI answer on the stream a person or a script reads.
   (result.ok ? console.log : console.error)(result.line);
   process.exit(result.ok ? 0 : 1);

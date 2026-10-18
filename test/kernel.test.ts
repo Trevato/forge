@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { openDb } from "../src/kernel/db.ts";
+import { migrate } from "../src/kernel/migrate.ts";
 import { createUser, verifyPasswordThrottled } from "../src/core/users.ts";
 import { migrations } from "../src/core/schema.ts";
 import { CHEAP, cheapened, realHash } from "./helpers/cheap-hash.ts";
@@ -139,13 +141,22 @@ describe("db", () => {
     ).toThrow();
   });
 
-  test("future schema refuses to run", () => {
+  test("a schema ahead of this build boots and names what it does not know (#783)", () => {
     const dir = mkdtempSync(join(tmpdir(), "forge-kernel-"));
     try {
       const path = join(dir, "forge.db");
-      const db = openDb(path, ["CREATE TABLE a (x INTEGER)"]);
+      const a = { name: "20261015110000-a", sql: "CREATE TABLE a (x INTEGER)" };
+      openDb(path, [a]).close();
+      const db = openDb(path, []);
+      expect(migrate(db, []).unknown).toEqual(["20261015110000-a"]);
       db.close();
-      expect(() => openDb(path, [])).toThrow(ForgeError);
+      // Data from before the tracking table has only a count, which names
+      // nothing: ahead of the build, it is still refused.
+      const legacy = join(dir, "legacy.db");
+      const old = new Database(legacy, { create: true });
+      old.exec("CREATE TABLE a (x INTEGER); PRAGMA user_version = 1");
+      old.close();
+      expect(() => openDb(legacy, [])).toThrow(ForgeError);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

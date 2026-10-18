@@ -9,7 +9,9 @@
  * new one is named by the UTC second it was written
  * (`date -u +%Y%m%d%H%M%S`, e.g. `20261015093000-deploy-notes.ts`), so two
  * pulls that each add one add two files and never touch the same line
- * (#1837). Each file is one `export default` of SQL.
+ * (#1837). Each file is one `export default` of SQL. The database records
+ * each applied one by name (#783); `migration-pins.json` holds what each
+ * said when it was released, and a test fails if one says something else.
  */
 
 import type { Database } from "bun:sqlite";

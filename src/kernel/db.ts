@@ -7,7 +7,10 @@
 
 import { Database } from "bun:sqlite";
 import { existsSync, writeFileSync } from "node:fs";
-import { migrate } from "./migrate.ts";
+import { createLog } from "./log.ts";
+import { type Migration, migrate } from "./migrate.ts";
+
+const log = createLog("db");
 
 /**
  * How long a writer waits for another writer before giving up. Long by
@@ -34,7 +37,7 @@ const CACHE_KIB = 64 * 1024;
  */
 const MMAP_BYTES = 512 * 1024 * 1024;
 
-export function openDb(path: string, migrations: readonly string[]): Database {
+export function openDb(path: string, migrations: readonly Migration[]): Database {
   const memory = path === ":memory:";
   const fresh = memory || !existsSync(path);
   const image = fresh ? migratedEmpty.get(migrations) : undefined;
@@ -47,8 +50,14 @@ export function openDb(path: string, migrations: readonly string[]): Database {
   }
   applyPragmas(db);
   // On a copy every migration is already recorded, so this is a no-op —
-  // and a list that grew since the copy was taken still runs what is new.
-  migrate(db, migrations);
+  // and a list that grew since the copy was taken still runs what is new;
+  // one behind the copy boots and says what it does not know (#783).
+  const { unknown } = migrate(db, migrations);
+  if (unknown.length > 0)
+    log.warn("database has migrations this build does not know; left as they are", {
+      count: unknown.length,
+      unknown: unknown.join(","),
+    });
   if (fresh && image === undefined) migratedEmpty.set(migrations, db.serialize());
   return db;
 }
@@ -63,7 +72,7 @@ export function openDb(path: string, migrations: readonly string[]): Database {
  * bytes however it was made: the migrations that draw randomness only
  * rewrite rows an empty database does not have.
  */
-const migratedEmpty = new WeakMap<readonly string[], Uint8Array>();
+const migratedEmpty = new WeakMap<readonly Migration[], Uint8Array>();
 
 /**
  * The image with its header saying "rollback journal" (bytes 18 and 19 of a
