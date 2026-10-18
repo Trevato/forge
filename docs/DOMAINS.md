@@ -35,7 +35,7 @@ two devices backed by the same physical disk, are not.
 ## Running a drill
 
 `scripts/drills/run.ts` walks you through one. It refuses a domain whose drill
-is none, prints the fault to cause, and waits for Enter. It then polls
+is none, prints the fault to cause, and waits for Enter (a line on stdin, so piping one works; closing stdin aborts). It then polls
 `/api/v1/health` and `/` once a second, keeping each distinct line the forge
 says while unhealthy; when the forge is healthy again it posts what it saw and
 the seconds it took to `POST /api/v1/drills` and prints the verdict. If the

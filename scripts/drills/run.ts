@@ -141,7 +141,6 @@ const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 export function checkArgs(
   argv: string[],
   env: Record<string, string | undefined>,
-  isTTY: boolean,
 ): { ok: true; args: DrillArgs } | { ok: false; error: string } {
   const at = argv.indexOf("--forge");
   const forge = at >= 0 ? argv[at + 1] : undefined;
@@ -156,7 +155,6 @@ export function checkArgs(
   }
   const token = env.FORGE_TOKEN ?? "";
   if (token === "") return { ok: false, error: `FORGE_TOKEN is empty; ${USAGE}` };
-  if (!isTTY) return { ok: false, error: "stdin is not a terminal; run the drill from an interactive shell" };
   if (url.protocol === "http:" && !LOOPBACK.has(url.hostname) && !insecure) {
     return { ok: false, error: `refusing to send the admin token over plain http to ${url.hostname}; use https, or pass --insecure` };
   }
@@ -164,7 +162,7 @@ export function checkArgs(
 }
 
 if (import.meta.main) {
-  const checked = checkArgs(process.argv.slice(2), process.env, process.stdin.isTTY === true);
+  const checked = checkArgs(process.argv.slice(2), process.env);
   if (!checked.ok) {
     console.error(checked.error);
     process.exit(2);
@@ -173,7 +171,8 @@ if (import.meta.main) {
     ...checked.args,
     say: (l) => console.log(clean(l)),
     enter: async () => {
-      for await (const _ of console) break;
+      for await (const _ of console) return;
+      throw new Error("stdin closed before Enter; nothing was caused or watched");
     },
   });
   process.exit(code);

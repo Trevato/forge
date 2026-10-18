@@ -119,17 +119,16 @@ test("a sign-in redirect from / is up, and a changing counter is one line", asyn
 
 test("checkArgs: each missing piece and the cleartext refusal is an error; the good case is options", () => {
   const env = { FORGE_TOKEN: "t" };
-  const bad = (argv: string[], e: Record<string, string | undefined>, tty: boolean) => {
-    const r = checkArgs(argv, e, tty);
+  const bad = (argv: string[], e: Record<string, string | undefined>) => {
+    const r = checkArgs(argv, e);
     expect(r.ok).toBe(false);
     return r.ok ? "" : r.error;
   };
-  expect(bad(["--forge", "https://f.example"], env, true)).toContain("domain");
-  expect(bad(["runner"], env, true)).toContain("--forge");
-  expect(bad(["runner", "--forge", "https://f.example"], { FORGE_TOKEN: "" }, true)).toContain("FORGE_TOKEN");
-  expect(bad(["runner", "--forge", "https://f.example"], env, false)).toContain("not a terminal");
-  expect(bad(["runner", "--forge", "http://forge.example"], env, true)).toContain("plain http");
-  const ok = (argv: string[]) => checkArgs(argv, env, true);
+  expect(bad(["--forge", "https://f.example"], env)).toContain("domain");
+  expect(bad(["runner"], env)).toContain("--forge");
+  expect(bad(["runner", "--forge", "https://f.example"], { FORGE_TOKEN: "" })).toContain("FORGE_TOKEN");
+  expect(bad(["runner", "--forge", "http://forge.example"], env)).toContain("plain http");
+  const ok = (argv: string[]) => checkArgs(argv, env);
   expect(ok(["runner", "--forge", "http://forge.example", "--insecure"]).ok).toBe(true);
   for (const host of ["localhost:3000", "127.0.0.1:1", "[::1]:1"]) expect(ok(["runner", "--forge", `http://${host}/`]).ok).toBe(true);
   expect(ok(["runner", "--forge", "https://f.example/"])).toEqual({
@@ -160,4 +159,47 @@ test("control characters the forge sends are removed before printing or posting;
   expect(said).toBe("health: bad[31mRED\tx");
   expect(said).not.toContain("\x1b");
   expect(JSON.stringify(state.posts[0]!.body)).not.toContain("\\u001b");
+});
+
+test("spawned with piped stdin: waits for Enter, watches, prints the JSON; no drill exits non-zero", async () => {
+  const state: Stub = { down: false, posts: [], refuse: false };
+  const forge = stub(state);
+  const spawn = (domain: string) =>
+    Bun.spawn(["bun", "scripts/drills/run.ts", domain, "--forge", forge], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, FORGE_TOKEN: "tok" },
+    });
+
+  const none = spawn("state");
+  expect(await none.exited).not.toBe(0);
+  expect(await new Response(none.stdout).text()).toContain("has no drill");
+
+  const p = spawn("compute");
+  const out = new Response(p.stdout).text();
+  await Bun.sleep(300);
+  expect(state.posts).toEqual([]);
+  state.down = true;
+  p.stdin.write("\n");
+  p.stdin.end();
+  await Bun.sleep(1500);
+  state.down = false;
+  expect(await p.exited).toBe(0);
+  const lines = (await out).trim().split("\n");
+  expect(lines[0]).toContain("kill-pod");
+  const result = JSON.parse(lines[lines.length - 1]!);
+  expect(result).toMatchObject({ domain: "compute", posted: true });
+  expect(state.posts).toHaveLength(1);
+  expect(state.posts[0]!.auth).toBe("Bearer tok");
+});
+
+test("stdin closed without Enter exits non-zero and posts nothing", async () => {
+  const state: Stub = { down: false, posts: [], refuse: false };
+  const forge = stub(state);
+  const p = Bun.spawn(["bun", "scripts/drills/run.ts", "compute", "--forge", forge], {
+    stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, FORGE_TOKEN: "tok" },
+  });
+  expect(await p.exited).not.toBe(0);
+  expect(state.posts).toEqual([]);
 });
