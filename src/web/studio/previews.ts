@@ -7,6 +7,7 @@
  * deploy event refreshes (`appStateFragment`) share.
  */
 
+import { audienceFacts, audienceOf } from "../../core/audience.ts";
 import { sealedScope } from "../../core/sealed.ts";
 import { terminalFor } from "../../actions/apps.ts";
 import { envPull, previewEnv } from "../../apps/data.ts";
@@ -298,6 +299,10 @@ export function appPanels(
   // The state in one word, and under it the facts — why it is not up, and
   // the deploy whose log says the rest.
   const live = envPhrase(production);
+  // Who the app answers to, in the sentence the forge's own rules produce.
+  const audience = audienceOf(
+    audienceFacts(db, repo, ctx.auth.user),
+  ).sentence;
   const head = html`<div class="page-head studio-head">
     <div class="stack stack-tight">
       <h1>
@@ -320,6 +325,7 @@ export function appPanels(
                 >`
             : html`· <span class="mono">${url.replace(/^https?:\/\//, "")}</span>`}
       </p>
+      <p class="muted small" id="app-audience">${audience}</p>
       ${when(production, (env) => envFacts(base, env))}
       ${when(writer, () =>
         terminalLine(
