@@ -10,9 +10,8 @@
 
 import { NOT_A_MEMBER } from "../../core/roles.ts";
 import { storageLimitMessage } from "../../core/storage.ts";
-import { limitValue } from "../../settings/limits.ts";
 import { signOutHere } from "../../actions/signins.ts";
-import { bucketOf, clientAddress } from "../../http/peer.ts";
+import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../../actions/repos.ts";
@@ -21,7 +20,7 @@ import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins } from "../../core/pins.ts";
 import { getReposByIds } from "../../core/repos.ts";
 import { createSession } from "../../core/sessions.ts";
-import { hasAnyUser, verifyPassword, type User } from "../../core/users.ts";
+import { hasAnyUser, verifyPasswordThrottled, type User } from "../../core/users.ts";
 import { isThemeName } from "../../design/themes.ts";
 import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
@@ -30,7 +29,7 @@ import { edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
 import { SignupSlot, signupWindow } from "../../actions/signup-window.ts";
-import { RateLimiter } from "../../core/ratelimit.ts";
+import { signinWindow } from "../../core/signin-window.ts";
 import { field, readForm } from "../form.ts";
 import { passkeyJs } from "../passkey-client.ts";
 import { html, when, type Html } from "../html.ts";
@@ -434,44 +433,12 @@ export function signupPage(ctx: Ctx): Response {
 }
 
 /**
- * Sign-in attempts, throttled. The token limiter does not see a password
- * form — a stranger has no credential yet — so guessing a password runs at
- * line speed and each guess costs a slow hash. Two sliding windows, checked
- * before the hash: an account may be tried twenty times a minute, and the
- * forge as a whole two hundred, so neither one account nor every account at
- * once is worth the trying. A person signing in does not notice; a refused
- * attempt is not counted, so the door reopens exactly a window later. One
- * limiter per forge, so a test's forge never throttles another's.
+ * A sign-in attempt at `key` from this request's peer, counted in the
+ * forge's sign-in windows (`core/signin-window.ts`). Seconds to wait when
+ * refused, or undefined when the attempt may go on.
  */
-const signinLimits = new WeakMap<Ctx["app"], RateLimiter>();
-// The third window, by the socket's peer: a source trying many accounts.
-const signinSources = new WeakMap<Ctx["app"], RateLimiter>();
-
-export function signinAllowed(ctx: Ctx, username: string): number | undefined {
-  let limiter = signinLimits.get(ctx.app);
-  if (limiter === undefined) {
-    limiter = new RateLimiter({ perMinute: 0, adminPerMinute: 0, enabled: true });
-    signinLimits.set(ctx.app, limiter);
-  }
-  // Read on every attempt, so a change on /admin/limits governs the next one.
-  limiter.setLimits({
-    perMinute: limitValue(ctx.app.db, "signin.per_account"),
-    adminPerMinute: limitValue(ctx.app.db, "signin.per_forge"),
-    enabled: true,
-  });
-  // The one key first: a key already refused must not spend the forge's budget.
-  const one = limiter.take(`account:${username.toLowerCase()}`, "ro");
-  if (!one.allowed) return one.retryAfter;
-  let sources = signinSources.get(ctx.app);
-  if (sources === undefined) {
-    sources = new RateLimiter({ perMinute: 0, adminPerMinute: 0, enabled: true });
-    signinSources.set(ctx.app, sources);
-  }
-  sources.setLimits({ perMinute: limitValue(ctx.app.db, "signin.per_source"), adminPerMinute: 0, enabled: true });
-  const source = sources.take(`source:${bucketOf(clientAddress(ctx.request))}`, "ro");
-  if (!source.allowed) return source.retryAfter;
-  const whole = limiter.take("forge", "admin");
-  return whole.allowed ? undefined : whole.retryAfter;
+export function signinAllowed(ctx: Ctx, key: string): number | undefined {
+  return signinWindow(ctx.app.db, key, clientAddress(ctx.request));
 }
 
 /**
@@ -493,8 +460,13 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, undefined, STRANGER_MAX);
   if (form instanceof Response) return form;
   const username = field(form, "username");
-  const wait = signinAllowed(ctx, username);
-  if (wait !== undefined) {
+  const verified = await verifyPasswordThrottled(ctx.app.db, {
+    username,
+    password: field(form, "password"),
+    source: clientAddress(ctx.request),
+  });
+  if (!verified.ok && verified.error.reason === "throttled") {
+    const wait = verified.error.retryAfter;
     const response = page(
       {
         ctx,
@@ -511,11 +483,6 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
     response.headers.set("retry-after", String(wait));
     return response;
   }
-  const verified = await verifyPassword(
-    ctx.app.db,
-    username,
-    field(form, "password"),
-  );
   if (!verified.ok) {
     return page(
       {

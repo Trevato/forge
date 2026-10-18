@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createSession } from "../src/core/sessions.ts";
-import { createUser, getUserByName, verifyPassword } from "../src/core/users.ts";
+import { createUser, getUserByName, verifyPasswordThrottled } from "../src/core/users.ts";
 import { keepClient, CALLBACK_PATH } from "../src/core/federation.ts";
 import { forgeSshSession } from "../src/tui/ssh.ts";
 import { addKey, findKeyByFingerprint, fingerprint, parseAuthorizedKey } from "../src/core/keys.ts";
@@ -123,8 +123,8 @@ describe("sign in through the parent forge", () => {
     const local = getUserByName(child.db, "alice")!;
     expect(local.id).not.toBe("");
     // No password was ever set: only the parent vouches for this account.
-    expect((await verifyPassword(child.db, "alice", "")).ok).toBe(false);
-    expect((await verifyPassword(child.db, "alice", PASSWORD)).ok).toBe(false);
+    expect((await verifyPasswordThrottled(child.db, { username: "alice", password: "", source: "127.0.0.1" })).ok).toBe(false);
+    expect((await verifyPasswordThrottled(child.db, { username: "alice", password: PASSWORD, source: "127.0.0.1" })).ok).toBe(false);
     const settings = await fetch(`${childServers.url}/settings`, { headers: { cookie: session }, redirect: "manual" });
     expect(settings.status).toBe(200);
 
