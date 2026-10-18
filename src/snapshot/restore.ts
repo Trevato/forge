@@ -32,6 +32,8 @@ import { runGit } from "../git/env.ts";
 import { installHooks } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import {
+  IN_FLIGHT,
+  IN_FLIGHT_BYTES,
   isRunBundle,
   keyOf,
   listSnapshots,
@@ -79,11 +81,65 @@ async function sealedNames(dbFile: string): Promise<string[]> {
   }
 }
 
+/**
+ * Every file the manifest lists, read with several gets in flight at once
+ * and checked against its size, each handed to `each` as it lands. Read
+ * one after another, the restore drill of a snapshot with thousands of
+ * objects ran out of its ten minutes in the restore step (2026-10-18), as
+ * the upload once ran an hour on latency alone; the same limits bound both.
+ */
+async function fetchAll(
+  store: Store,
+  prefix: string,
+  entries: readonly { readonly path: string; readonly bytes: number }[],
+  each: (entry: { readonly path: string; readonly bytes: number }, body: Uint8Array, at: number) => Promise<void>,
+  name: string,
+  maxBytes: number,
+): Promise<void> {
+  const pending = new Set<Promise<void>>();
+  let failure: unknown;
+  let held = 0;
+  for (const [at, entry] of entries.entries()) {
+    while (
+      (pending.size >= IN_FLIGHT ||
+        (pending.size > 0 && held + entry.bytes > maxBytes)) &&
+      failure === undefined
+    )
+      await Promise.race(pending);
+    if (failure !== undefined) break;
+    held += entry.bytes;
+    const run: Promise<void> = (async () => {
+      const body = await store.get(prefix + entry.path);
+      if (body === undefined)
+        throw new Error(`snapshot ${name} is missing ${entry.path}`);
+      if (body.byteLength !== entry.bytes)
+        throw new Error(
+          `snapshot ${name}: ${entry.path} is ${body.byteLength} bytes, not ${entry.bytes}`,
+        );
+      await each(entry, body, at);
+    })()
+      .catch((error: unknown) => {
+        failure ??= error;
+      })
+      .finally(() => {
+        held -= entry.bytes;
+        pending.delete(run);
+      });
+    pending.add(run);
+  }
+  await Promise.all([...pending]);
+  if (failure !== undefined) throw failure;
+}
+
 export async function restoreSnapshot(
   store: Store,
   name: string,
   dataDir: string,
-  options: { readonly passphrase?: string | undefined } = {},
+  options: {
+    readonly passphrase?: string | undefined;
+    /** Bytes held by reads in flight; `IN_FLIGHT_BYTES` unless a test shrinks it. */
+    readonly inFlightBytes?: number | undefined;
+  } = {},
 ): Promise<Restored> {
   if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z$/.test(name))
     throw new Error(`not a snapshot name: ${name}`);
@@ -121,23 +177,16 @@ export async function restoreSnapshot(
 
   let files = 0;
   let repos = 0;
-  const bundles: { owner: string; name: string; file: string }[] = [];
-  for (const entry of manifest.files) {
-    const body = await store.get(prefix + entry.path);
-    if (body === undefined)
-      throw new Error(`snapshot ${name} is missing ${entry.path}`);
-    if (body.byteLength !== entry.bytes)
-      throw new Error(
-        `snapshot ${name}: ${entry.path} is ${body.byteLength} bytes, not ${entry.bytes}`,
-      );
-    if (entry.path === WRAPPED_KEY) continue;
+  const bundles: { at: number; owner: string; name: string; file: string }[] = [];
+  await fetchAll(store, prefix, manifest.files, async (entry, body, at) => {
+    if (entry.path === WRAPPED_KEY) return;
     // A part waits for the rest of its file.
     const part = partOf.get(entry.path);
     if (part !== undefined) {
       const got = gathered.get(part.file.path) ?? [];
       got[part.n] = body;
       gathered.set(part.file.path, got);
-      continue;
+      return;
     }
     // A day's run logs in one object come back as the logs they were.
     if (isRunBundle(entry.path)) {
@@ -147,7 +196,7 @@ export async function restoreSnapshot(
         await Bun.write(out, run.body);
         files++;
       }
-      continue;
+      return;
     }
     const bundle = entry.path.match(/^repos\/([^/]+)\/([^/]+)\.bundle$/);
     // A bundle is not a file of the forge's; it becomes a repository below.
@@ -162,8 +211,10 @@ export async function restoreSnapshot(
       chmodSync(target, 0o600);
     files++;
     if (bundle)
-      bundles.push({ owner: bundle[1]!, name: bundle[2]!, file: target });
-  }
+      bundles.push({ at, owner: bundle[1]!, name: bundle[2]!, file: target });
+  }, name, options.inFlightBytes ?? IN_FLIGHT_BYTES);
+  // Reads land in any order; repositories come back in the manifest's.
+  bundles.sort((a, b) => a.at - b.at);
   for (const file of packed) {
     const got = gathered.get(file.path) ?? [];
     const parts = partPaths(file).map((path, n) => {

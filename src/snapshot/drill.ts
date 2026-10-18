@@ -56,7 +56,7 @@ class StepTimeout extends Error {}
 function within<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   const late = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new StepTimeout(`no answer in ${ms} ms`)), ms);
+    timer = setTimeout(() => reject(new StepTimeout(`no answer in ${Math.round(ms)} ms`)), ms);
   });
   return Promise.race([work, late]).finally(() => clearTimeout(timer));
 }

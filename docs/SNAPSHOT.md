@@ -129,6 +129,10 @@ scratch directory under the data directory, opens the database read-only,
 counts repositories and issues, opens one sealed value with the restored key,
 and removes the scratch whatever happened. The page waits until it finishes,
 for up to 10 minutes; a step that hangs past that is red and names the step.
+The restore reads several objects at a time, under the same limits as the
+upload (`IN_FLIGHT` gets, `IN_FLIGHT_BYTES` held): read one after another, a
+snapshot of thousands of objects spent the drill's whole 10 minutes in the
+restore step (#2539).
 One drill runs at a time: a second click, or a retry after a proxy timeout,
 joins the drill already running rather than starting another restore. Every
 run is a row in the `drill` table, and the last one shows as a line on the

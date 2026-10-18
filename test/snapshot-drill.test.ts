@@ -166,6 +166,11 @@ describe("the restore drill", () => {
     expect(scratchLeft()).toEqual([]);
   });
 
+  test("a step that times out says its budget in whole milliseconds", async () => {
+    const r = await runDrill(deps({ timeoutMs: 1500.75, restore: () => new Promise(() => {}) }));
+    expect(r.reason).toMatch(/^restore timed out: no answer in \d+ ms$/);
+  });
+
   test("an empty store is red at fetch", async () => {
     const r = await runDrill(
       deps({ store: dirStore(join(root, "nothing")) }),
