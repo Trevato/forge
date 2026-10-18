@@ -7,6 +7,7 @@ import * as users from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { setLimit } from "../src/settings/limits.ts";
 import { Session } from "../src/tui/session.ts";
+import { seedAdmin } from "./helpers/admin.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
 quietLogs();
@@ -33,7 +34,7 @@ async function forge(): Promise<{ app: App; url: string }> {
   const made = createApp({ dataDir: dir, port: 0 });
   app = made;
   servers = await serve(made);
-  const pat = await users.createUser(made.db, { origin: "seed", trusted: true, isAdmin: true, username: "pat", email: "pat@forge.test", password: PASSWORD });
+  const pat = await seedAdmin(made, { username: "pat", email: "pat@forge.test", password: PASSWORD });
   if (!pat.ok) throw new Error("setup");
   setLimit(made.db, "signin.per_account", TRIES, pat.value.id);
   return { app: made, url: servers.url };
