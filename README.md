@@ -60,12 +60,14 @@ refuses every form a browser posts to `localhost`: run it with
 `env -u FORGE_URL bun run src/main.ts`, or set `FORGE_URL` to wherever you
 will actually browse it.
 
-No sign-up makes the admin, not even the forge's first. Accounts sign up with
+No sign-up makes the admin, not even the forge's first, and that first one is
+held to the signup setting and Turnstile like any other. Accounts sign up with
 a passkey and an email address (there is no password signup), and the browser
 at `/signup`, the API and the terminal all make an account that is not an
 admin. The site admin is made from the operator's terminal with
-`--first-admin`, which needs no browser at all, or, on a spawned child, by its
-`/claim` link:
+`--first-admin`, which needs no browser at all and works whatever signup says,
+or, on a spawned child, by its `/claim` link (code that sets a forge up
+directly, like test fixtures, seeds one):
 
 ```sh
 # One-time code, printed only here: works once, for 15 minutes, and never once
