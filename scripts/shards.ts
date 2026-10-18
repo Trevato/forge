@@ -495,3 +495,37 @@ export function besideOthers(
   const line = `fails only beside others: ${cleared.join(", ")} (shard-mates: ${mates})`;
   return { red: stillRed, besideOthers: cleared, line };
 }
+
+const HEADER = /^(\S+\.test\.[cm]?[jt]sx?):$/;
+const FAILED = /^\(fail\) /;
+
+/**
+ * The files whose tests failed in one `bun test` report, in the order the
+ * report reached them: bun prints `path:` before a file's tests and
+ * `(fail) name` for each one that failed. A report that names no failing
+ * test (a crash, a file that would not load) yields none.
+ */
+export function failingFiles(output: string): string[] {
+  const found: string[] = [];
+  let current: string | undefined;
+  for (const line of output.split("\n")) {
+    const header = HEADER.exec(line);
+    if (header) current = header[1]!;
+    else if (FAILED.test(line) && current !== undefined && !found.includes(current))
+      found.push(current);
+  }
+  return found;
+}
+
+/**
+ * Whether every red in one `bun test` report is a failed test: the report
+ * reached its summary, counts no errors, and has no unhandled error between
+ * tests. A file that threw while loading, an error outside any test, or a
+ * crash before the summary is red for a reason a second run alone does not
+ * explain away, so nothing in such a report may be cleared.
+ */
+export function onlyTestFailures(output: string): boolean {
+  if (!/^Ran \d+ tests? across \d+ files?/m.test(output)) return false;
+  if (/^# Unhandled error/m.test(output)) return false;
+  return !/^\s*[1-9][0-9]* errors?\s*$/m.test(output);
+}

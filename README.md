@@ -1168,6 +1168,17 @@ shard's output is written whole as it finishes; the log ends with every
 failing test from every shard, or on green with one line — how many tests,
 across how many files, in how long, then the slowest and fastest shard.
 
+A shard of several files that goes red gets a second chance for its failing
+files, first three only: each is run once alone, same flags and env. A file
+that passes alone was red only beside others and no longer fails the check;
+the shard's log (and the tail) carries `test-shards: fails only beside
+others: <file> (shard-mates: …)`. Only failed tests clear: if the report
+holds an error (a file that threw while loading, an unhandled error, a
+crash before the summary) nothing in that shard is retried, and a file that
+fails alone stays red. `--record`, `--impact` and one-file-per-process runs
+never retry. The cleared file is reported in the log only; filing it as an
+issue is not built yet (#2480).
+
 Two things keep a test's setup in milliseconds (#2038). `bunfig.toml`
 preloads `test/helpers/preload.ts`, which hashes passwords at argon2id's
 floor (8 KiB, one pass) instead of Bun's default 64 MiB, two passes:

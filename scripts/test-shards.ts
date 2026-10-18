@@ -58,6 +58,9 @@ import {
   splitCapped,
   tally,
   weigher,
+  besideOthers,
+  failingFiles,
+  onlyTestFailures,
   type ShardResult,
 } from "./shards.ts";
 import { gateFiles, gateRefusal, presentTests } from "./gate.ts";
@@ -425,6 +428,12 @@ async function drain(
 const measured = new Map<string, string[]>();
 const unmeasured = new Set<string>();
 
+// Failing files a red shard re-runs alone.
+const RETRY_CAP = 3;
+// Set once any shard has gone red for good: no retries then.
+let halted = false;
+const stopping = (): boolean => halted;
+
 type Timed = ShardResult & { seconds: number };
 
 /**
@@ -463,29 +472,60 @@ async function runShard(
   const cover = covDir
     ? ["--coverage", "--coverage-reporter=lcov", `--coverage-dir=${covDir}`]
     : [];
-  const child = Bun.spawn(["bun", "test", ...flags, ...cover, ...paths], {
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-    // Bun keeps shell-inherited vars after `delete process.env.X`; pass a
-    // cleaned env so capacityDefault does not see the gate's shard count.
-    env: childEnv,
-  });
-  children.add(child);
-  // One buffer, in arrival order: `bun test` splits its report across
-  // stdout and stderr.
-  const output: string[] = [];
+  const run = async (
+    targets: string[],
+    extra: string[],
+    through?: (text: string) => void,
+  ): Promise<{ code: number; output: string[] }> => {
+    const child = Bun.spawn(["bun", "test", ...flags, ...extra, ...targets], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      // Bun keeps shell-inherited vars after `delete process.env.X`; pass a
+      // cleaned env so capacityDefault does not see the gate's shard count.
+      env: childEnv,
+    });
+    children.add(child);
+    // One buffer, in arrival order: `bun test` splits its report across
+    // stdout and stderr.
+    const output: string[] = [];
+    await Promise.all([
+      drain(child.stdout, output, through),
+      drain(child.stderr, output, through),
+    ]);
+    const code = await child.exited;
+    children.delete(child);
+    return { code, output };
+  };
   const through = live
     ? (text: string): void => {
         process.stdout.write(text);
       }
     : undefined;
-  await Promise.all([
-    drain(child.stdout, output, through),
-    drain(child.stderr, output, through),
-  ]);
-  const code = await child.exited;
-  children.delete(child);
+  const first = await run(paths, cover, through);
+  let code = first.code;
+  const output = first.output;
+  // A sliced shard that went red: each failing file (the first few) is run
+  // once alone, same env and flags. One that passes alone was red only
+  // beside others, and does not fail the check; the log names it.
+  if (code !== 0 && slice.length > 1 && !covDir && !stopping()) {
+    const report = output.join("");
+    // A file that errored (not a failed test) keeps the whole shard red.
+    const red = onlyTestFailures(report) ? failingFiles(report) : [];
+    const alone = new Map<string, boolean>();
+    for (const file of red.slice(0, RETRY_CAP)) {
+      if (stopping()) break;
+      const again = await run([file.startsWith("/") || file.startsWith("./") ? file : `./${file}`], []);
+      alone.set(file, again.code === 0);
+    }
+    const verdict = besideOthers(red, alone, RETRY_CAP);
+    if (verdict.line !== null) {
+      const note = `${output.join("").endsWith("\n") ? "" : "\n"}test-shards: ${verdict.line}\n`;
+      output.push(note);
+      through?.(note);
+      if (verdict.red.length === 0) code = 0;
+    }
+  }
   const text = output.join("");
   const seconds = ((performance.now() - started) / 1000).toFixed(1);
   process.stdout.write(
@@ -524,6 +564,7 @@ async function pool(width: number): Promise<Timed[]> {
       results[index] = await runShard(slices[index]!, index, width === 1);
       if (results[index]!.code !== 0) {
         stop = true;
+        halted = true;
         for (const child of children) child.kill("SIGTERM");
       }
     }

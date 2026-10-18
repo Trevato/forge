@@ -3,7 +3,7 @@
  * the count follows the host and the override, and one red shard is a
  * red run whose tail names every failing test from every shard.
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,8 @@ import {
   SECONDS_PER_BYTE_DEFAULT,
   SHARDS_MAX,
   besideOthers,
+  failingFiles,
+  onlyTestFailures,
   WORKER_MEMORY_BYTES,
   CELL_CPU_SHARE,
   FILES_PER_PROCESS,
@@ -753,4 +755,88 @@ describe("besideOthers", () => {
       line: "fails only beside others: a, b (shard-mates: none)",
     });
   });
+});
+
+describe("failingFiles", () => {
+  test("names each file with a failing test once, in report order", () => {
+    const report = [
+      "bun test v1",
+      "test/a.test.ts:",
+      "(pass) fine",
+      "test/b.test.ts:",
+      "(fail) one [0.1ms]",
+      "(fail) two [0.1ms]",
+      "test/c.test.ts:",
+      "(fail) three [0.1ms]",
+    ].join("\n");
+    expect(failingFiles(report)).toEqual(["test/b.test.ts", "test/c.test.ts"]);
+  });
+
+  test("a report that names no failing test names no file", () => {
+    expect(failingFiles("test/a.test.ts:\nerror: cannot load\n")).toEqual([]);
+    expect(failingFiles("(fail) before any header")).toEqual([]);
+  });
+});
+
+describe("onlyTestFailures", () => {
+  const ran = "Ran 3 tests across 2 files. [9ms]";
+  test("failed tests and a summary: true", () => {
+    expect(onlyTestFailures(`(fail) a\n 0 pass\n 1 fail\n${ran}`)).toBe(true);
+  });
+  test("an error count, an unhandled error or no summary: false", () => {
+    expect(onlyTestFailures(`(fail) a\n 1 fail\n 1 error\n${ran}`)).toBe(false);
+    expect(onlyTestFailures(`# Unhandled error between tests\n(fail) a\n${ran}`)).toBe(false);
+    expect(onlyTestFailures("(fail) a\n 1 fail\n")).toBe(false);
+  });
+});
+
+describe("a failing file is run once more alone", () => {
+  const script = new URL("../scripts/test-shards.ts", import.meta.url).pathname;
+  const dir = "test/fixtures";
+  // Heavy by bytes, so the splitter gives it a shard of its own and the
+  // other fixtures share the second one. Written here, not committed.
+  const scratch = mkdtempSync(join(tmpdir(), "shard-filler-"));
+  const filler = join(scratch, "shard-filler.test.ts");
+  writeFileSync(filler, `import { test } from "bun:test";\ntest("filler", () => {});\n// ${"padding ".repeat(4000)}\n`);
+  afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+  const run = async (names: string[]) => {
+    const child = Bun.spawn(
+      ["bun", script, ...names.map((name) => (name === "filler" ? filler : `${dir}/shard-${name}.test.ts`))],
+      {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...process.env, FORGE_CHECK_SHARDS: "2" },
+      },
+    );
+    const [out] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
+    return { code: await child.exited, out };
+  };
+
+  test("red only beside another file: the shard is green and the tail names it", async () => {
+    // filler is heavy by bytes, so poison and victim share the other shard.
+    const got = await run(["filler", "poison", "victim"]);
+    expect(got.out).toContain("fails only beside others: test/fixtures/shard-victim.test.ts (shard-mates: none)");
+    expect(got.code).toBe(0);
+  }, 30_000);
+
+  test("red alone too: it stays red", async () => {
+    const got = await run(["filler", "poison", "victim", "broken"]);
+    expect(got.out).toContain("fails only beside others: test/fixtures/shard-victim.test.ts (shard-mates: test/fixtures/shard-broken.test.ts)");
+    expect(got.code).toBe(1);
+    expect(got.out).toContain("(fail) broken");
+  }, 30_000);
+
+  test("one file fails beside others and another errors: the shard stays red", async () => {
+    const got = await run(["filler", "poison", "victim", "errors"]);
+    expect(got.code).toBe(1);
+    expect(got.out).not.toContain("fails only beside others");
+    expect(got.out).toContain("boom at load");
+  }, 30_000);
+
+  test("a lone file that fails stays red with no verdict line", async () => {
+    const got = await run(["broken"]);
+    expect(got.code).toBe(1);
+    expect(got.out).not.toContain("fails only beside others");
+  }, 30_000);
 });
