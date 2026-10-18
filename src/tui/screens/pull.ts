@@ -39,7 +39,7 @@ import {
   submitReview,
 } from "../../actions/pulls.ts";
 import { openEnvUrl } from "../../actions/apps.ts";
-import { listRepoRuns } from "../../actions/runs.ts";
+import { listRepoRuns, mayReadRunLog } from "../../actions/runs.ts";
 import { previewEnv } from "../../apps/data.ts";
 import {
   appsRuntime,
@@ -49,7 +49,7 @@ import { proposedByText } from "../../core/proposal_token.ts";
 import { getAppByRepo } from "../../core/apps.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
-import { runningProgress } from "../../checks/progress.ts";
+import { runningProgress, stepsLine } from "../../checks/progress.ts";
 import { askCheck } from "../../checks/again.ts";
 import { checkStale, checksHold } from "../../checks/stale.ts";
 import { checkWords } from "../../checks/summary.ts";
@@ -237,6 +237,8 @@ export function pullScreen(
   /** The pull's base branch, to name what the check was merged with. */
   let checkBase = "";
   let checkProgress = "";
+  /** The run page's three step rows as a line; empty when the log is hidden. */
+  let checkSteps = "";
   /** The check's green was against a base that has since moved. */
   let checkOld = false;
   /** Agent runs about this pull, newest first. */
@@ -288,6 +290,14 @@ export function pullScreen(
         : checkSummary(f.db, row.id, row.headOid || (facts?.headOid ?? ""));
     checkBase = row?.baseBranch ?? facts?.baseBranch ?? "";
     checkProgress = runningProgress(f.app.config.dataDir, check);
+    checkSteps =
+      settings === undefined
+        ? ""
+        : stepsLine(
+            f.app.config.dataDir,
+            check,
+            mayReadRunLog(f.app, f.user, settings),
+          );
     checkOld =
       repo !== undefined &&
       row !== undefined &&
@@ -790,7 +800,7 @@ export function pullScreen(
       // The box is exactly as tall as what is in it: the state, then a row
       // for the verdicts when there are any, then a row for the checks when
       // a deploy has run or the gate demands one.
-      const checksLine = checksText(check, requireChecks, isApp, checkBase, checkOld, checkProgress);
+      const checksLine = checksText(check, requireChecks, isApp, checkBase, checkOld, checkProgress, checkSteps);
       const boxH =
         3 +
         (standingText(standing(), requireReview) === "" ? 0 : 1) +
@@ -1251,6 +1261,20 @@ export function checksText(
   stale = false,
   /** `runningProgress` of the check's log; empty when none is known. */
   progress = "",
+  /** `stepsLine` of the check's log; empty when none is shown. */
+  steps = "",
+): string {
+  const line = checksLine(check, required, isApp, baseBranch, stale, progress);
+  return line === "" || steps === "" ? line : `${line} · ${steps}`;
+}
+
+function checksLine(
+  check: CheckSummary,
+  required: boolean,
+  isApp: boolean,
+  baseBranch: string,
+  stale: boolean,
+  progress: string,
 ): string {
   if (check.state === "none")
     return required

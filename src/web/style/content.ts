@@ -865,6 +865,13 @@ form.inline { display: inline; margin-left: auto; }
 .checks-line .ok { display: inline-flex; align-items: center; gap: 4px; color: var(--success); }
 .checks-line .bad { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); }
 .checks-line .now { display: inline-flex; align-items: center; gap: 4px; color: var(--attn); }
+.check-steps { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.check-steps li { display: flex; justify-content: space-between; gap: 8px; padding: 8px 12px; min-height: 2.5em; border: 1px solid var(--border); border-radius: var(--radius); }
+@media (max-width: 480px) { .check-steps { grid-template-columns: minmax(0, 1fr); } }
+.check-steps .step-state { color: var(--faint); }
+.check-steps [data-state="ok"] .step-state { color: var(--success); }
+.check-steps [data-state="failed"] .step-state { color: var(--danger); }
+.check-steps [data-state="running"] .step-state { color: var(--attn); }
 /* A run, live: a transcript with a speaker column, bounded so the page
    head stays reachable, and a composer that sits under it. */
 .run-live { position: relative; margin-top: 12px; }

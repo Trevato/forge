@@ -657,6 +657,109 @@ describe("working: a run's own page in the studio", () => {
     // Sub-second, in tenths — not rounded away to "took 0s".
     expect(page).toContain(">took 0.3s<");
   });
+
+  const stepStates = (page: string) =>
+    [...page.matchAll(/<li data-step="(\w+)" data-state="(\w+)"/g)].map(
+      (m) => `${m[1]}:${m[2]}`,
+    );
+
+  test("a running check's page has its three step rows from the first paint: install done, tests running", async () => {
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      commitOid: "c740479",
+      reason: "push",
+    });
+    claimRun(app.db, run.id);
+    for (const line of [
+      "$ bun install",
+      "$ bun scripts/gate.ts && tsc && bun scripts/test-shards.ts",
+      "test-shards: 12 files",
+      "── shard 1/2: test/a.test.ts",
+    ])
+      appendRunLog(app.config.dataDir, run.id, line);
+    const page = await (
+      await get(`/alice/engine/runs/${run.id}`, writerCookie)
+    ).text();
+    expect(stepStates(page)).toEqual([
+      "install:ok",
+      "typecheck:ok",
+      "tests:running",
+    ]);
+  });
+
+  test("the page re-reads its rows as the run goes, and a reader who cannot see the log gets none", async () => {
+    const script = await (
+      await get(
+        `/alice/engine/runs/${
+          (
+            createRun(app.db, {
+              repoId: repo.id,
+              kind: "check",
+              commitOid: "c740479",
+              reason: "push",
+            })
+          ).id
+        }`,
+        writerCookie,
+      )
+    ).text();
+    expect(script).toContain("getElementById('check-steps')");
+    const plain = await createRepo(app, alice, {
+      name: "plain",
+      visibility: "public",
+      description: "no app",
+    });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const hidden = createRun(app.db, {
+      repoId: plain.value.id,
+      kind: "check",
+      commitOid: "c740479",
+      reason: "push",
+    });
+    claimRun(app.db, hidden.id);
+    appendRunLog(app.config.dataDir, hidden.id, "$ bun install");
+    const page = await (
+      await get(`/alice/plain/runs/${hidden.id}`, readerCookie)
+    ).text();
+    expect(page).toContain('id="run-log-hidden"');
+    expect(page).not.toContain('id="check-steps"');
+  });
+
+  test("a finished red check's page shows tests failed, and a fresh one still has three rows", async () => {
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      commitOid: "c740479",
+      reason: "push",
+    });
+    claimRun(app.db, run.id);
+    for (const line of ["$ bun install", "$ bun test", "test-shards: 3 files"])
+      appendRunLog(app.config.dataDir, run.id, line);
+    finishRun(app.db, run.id, { state: "failed", summary: "1 of 3 tests" });
+    const page = await (
+      await get(`/alice/engine/runs/${run.id}`, writerCookie)
+    ).text();
+    expect(stepStates(page)).toEqual([
+      "install:ok",
+      "typecheck:ok",
+      "tests:failed",
+    ]);
+    const fresh = createRun(app.db, {
+      repoId: repo.id,
+      kind: "check",
+      commitOid: "c740479",
+      reason: "push",
+    });
+    const queued = await (
+      await get(`/alice/engine/runs/${fresh.id}`, writerCookie)
+    ).text();
+    expect(stepStates(queued)).toEqual([
+      "install:pending",
+      "typecheck:pending",
+      "tests:pending",
+    ]);
+  });
 });
 
 /**

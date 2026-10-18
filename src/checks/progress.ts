@@ -8,6 +8,7 @@
  */
 
 import type { CheckSummary } from "../core/runs.ts";
+import { checkSteps, stepsWords } from "./summary.ts";
 import { readRunLog } from "../runs/log.ts";
 
 export type CheckProgress = {
@@ -89,4 +90,21 @@ export function runningProgress(dataDir: string, check: CheckSummary): string {
   if (check.state !== "running" || run === null || run.kind !== "check")
     return "";
   return progressWords(parseShardProgress(readRunLog(dataDir, run.id).lines));
+}
+
+/**
+ * The run page's three step rows as one line, for the terminal: the same
+ * `checkSteps` over the same log, and nothing at all when the run is not a
+ * check or when the viewer may not read its log (`mayReadRunLog`), as the
+ * page withholds the rows then.
+ */
+export function stepsLine(
+  dataDir: string,
+  check: CheckSummary,
+  mayReadLog: boolean,
+): string {
+  const run = check.run;
+  if (!mayReadLog || run === null || run.kind !== "check") return "";
+  const { lines, truncated } = readRunLog(dataDir, run.id);
+  return stepsWords(checkSteps({ ...run, state: check.state === "none" ? run.state : check.state }, lines, truncated));
 }

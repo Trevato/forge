@@ -295,6 +295,27 @@ export const studioRunJs = /* js */ `
 
   ${elapsedTickJs}
 
+  // A check's step rows are server-derived from the log; when a line that
+  // can move them lands (a command's echo, the shard runner's banner or a
+  // shard header) or the run ends, the rows are fetched again and swapped in.
+  var stepsTimer = 0;
+  function steps() {
+    var cur = document.getElementById('check-steps');
+    if (!cur || !window.fetch || !window.DOMParser) return;
+    fetch(location.href, { credentials: 'same-origin', headers: { accept: 'text/html' } })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (body) {
+        var next = new DOMParser().parseFromString(body, 'text/html').getElementById('check-steps');
+        var now = document.getElementById('check-steps');
+        if (next && now && now.parentNode) now.parentNode.replaceChild(next, now);
+      })
+      .catch(function () {});
+  }
+  function stepsSoon() {
+    if (!document.getElementById('check-steps') || stepsTimer) return;
+    stepsTimer = window.setTimeout(function () { stepsTimer = 0; steps(); }, 400);
+  }
+
   if (steer && window.fetch) {
     var text = steer.querySelector('textarea');
     function size() { if (!text) return; text.style.height = 'auto'; text.style.height = Math.min(160, text.scrollHeight) + 'px'; fit(); }
@@ -341,12 +362,15 @@ export const studioRunJs = /* js */ `
     var text = event.data;
     try { var parsed = JSON.parse(text); if (typeof parsed === 'string') text = parsed; } catch (err) {}
     add(draw(text));
+    if (/^(\\$ |test-shards: |\u2500\u2500 shard )/.test(text)) stepsSoon();
   });
   source.addEventListener('done', function (event) {
     source.close();
     var run;
     try { run = JSON.parse(event.data); } catch (err) { return; }
     paint(run);
+    if (stepsTimer) { window.clearTimeout(stepsTimer); stepsTimer = 0; }
+    steps();
     if (steer) {
       steer.setAttribute('data-running', '0');
       var n = document.getElementById('run-steer-note');

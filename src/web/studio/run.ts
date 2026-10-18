@@ -8,6 +8,7 @@
  * at `?all=1`.
  */
 
+import { checkSteps, stepWord } from "../../checks/summary.ts";
 import { directionNote } from "../../crew/direct.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
@@ -243,6 +244,20 @@ export async function runView(
         html`<p class="muted small" id="run-empty">
           Nothing has been logged yet.
         </p>`,
+    )}
+    ${when(
+      // Progress is read from the log, so a reader the log is hidden from
+      // gets no rows either.
+      run.kind === "check" && !logHidden,
+      () => html`<ol class="check-steps" id="check-steps" role="status" aria-live="polite">
+        ${checkSteps(run, lines, truncated).map(
+          (s) =>
+            html`<li data-step="${s.name}" data-state="${s.state}">
+              <span class="step-name">${s.name}</span>
+              <span class="step-state">${stepWord(s.state)}</span>
+            </li>`,
+        )}
+      </ol>`,
     )}
     <div class="run-live" id="run-live" data-state="${run.state}">
       ${when(!logHidden, () => logBox({
