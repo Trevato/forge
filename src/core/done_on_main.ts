@@ -20,6 +20,19 @@ export const PARK_LIKE = "Parked by the crew%";
 /** What the comment on a close of such an issue starts with. */
 export const CLOSED_NOTE = "Closed: already done on main in ";
 
+/** When a comment was written: its time, and its id to order one millisecond. */
+export interface Written {
+  readonly at: string;
+  readonly id: string;
+}
+
+/**
+ * Comment `a` was written after comment `b`. Two writes can share a
+ * millisecond; `id()` is monotonic, so the id orders them as written.
+ */
+export const LATER = (a: string, b: string): string =>
+  `(${a}.created_at, ${a}.id) > (${b}.created_at, ${b}.id)`;
+
 /** `n` is a note written by the crew: the one who set it going, or its own agent. */
 export const BY_CREW = `n.origin_author IS NULL AND (n.author_id IN (
     SELECT r.autonomy_by FROM issue i JOIN repo r ON r.id = i.repo_id WHERE i.id = n.issue_id)
@@ -48,7 +61,7 @@ export function alreadyDone(
           WHERE n.issue_id IN (${marks}) AND o.state = 'open'
             AND n.body LIKE '${DONE_LIKE}' AND ${BY_CREW}
             AND NOT EXISTS (SELECT 1 FROM comment q WHERE q.issue_id = n.issue_id
-                 AND q.body LIKE '${PARK_LIKE}' AND q.created_at > n.created_at)
+                 AND q.body LIKE '${PARK_LIKE}' AND ${LATER("q", "n")})
           ORDER BY n.created_at, n.id`,
       )
       .all(...batch);
