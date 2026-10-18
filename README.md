@@ -60,17 +60,21 @@ refuses every form a browser posts to `localhost`: run it with
 `env -u FORGE_URL bun run src/main.ts`, or set `FORGE_URL` to wherever you
 will actually browse it.
 
-No sign-up makes the admin, not even the forge's first. Accounts sign up with
+No sign-up makes the admin, not even the forge's first, and that first one is
+held to the signup setting and Turnstile like any other. Accounts sign up with
 a passkey and an email address (there is no password signup), and the browser
 at `/signup`, the API and the terminal all make an account that is not an
 admin. The site admin is made from the operator's terminal with
-`--first-admin`, which needs no browser at all, or, on a spawned child, by its
-`/claim` link:
+`--first-admin`, which needs no browser at all and works whatever signup says,
+or, on a spawned child, by its `/claim` link (code that sets a forge up
+directly, like test fixtures, seeds one):
 
 ```sh
 # One-time code, printed only here: works once, for 15 minutes, and never once
 # anyone is admin. --child <name> mints for a child this forge hosts; --url
-# names the address to print. The forge keeps only its hash.
+# names the address to print. The forge keeps only its hash. Run it beside
+# the running forge with the same FORGE_DATA (and PORT, or --url, for the
+# link); before the forge's first boot there is no database and it refuses.
 bun src/main.ts --first-admin
 
 # A person opens the printed link and makes the admin with a passkey.
@@ -111,6 +115,23 @@ as `user.created` `via: first-admin`, and the sign-in page links `/first-admin`
 only while the forge has no admin. Later tokens come from Settings → Tokens, or
 `POST /api/v1/tokens` from a signed-in session with `{"name", "scope"}`; the
 admin adds `"adminConfirm": true` to mean a token that acts as admin.
+
+The same token spawns a child forge (`dryRun` is true unless `false`, so
+without it you get the plan and nothing is made). The child's admin comes
+from the operator's `--first-admin --child`, or from the `claimUrl` the spawn
+answers once:
+
+```sh
+curl -sX POST localhost:3000/api/v1/forges -H "authorization: Bearer $TOKEN" \
+  -d '{"name":"kid","dryRun":false}'
+# {…, "url":"http://kid--localhost:3000", "claimUrl":"http://kid--localhost:3000/claim#…"}
+bun src/main.ts --first-admin --child kid
+```
+
+The child keeps this forge's scheme and port at `<name>--<host>`, on its own
+data under `$FORGE_DATA/children/`. Browsers send `*.localhost` to this
+machine; curl needs `--resolve kid--localhost:3000:127.0.0.1`. The rest is in
+`docs/SPAWN.md`.
 
 The commits the forge writes for you — merges, squashes, reverts, web edits —
 carry `you@users.noreply.<forge host>`, never your account email. Choosing your
@@ -308,8 +329,8 @@ allows `https://challenges.cloudflare.com`, and signup asks Cloudflare's
 siteverify about the posted `cf-turnstile-response` (API: `turnstile_token`),
 refusing a missing or bad token before it hashes a password or makes an
 account. Unset, signup is open. The terminal (SSH) cannot show a widget, so
-with Turnstile on it can create only the first account; everyone
-else is told to sign up on the web page. Accounts made through the platform edge are not checked. Behind a
+with Turnstile on it creates no account, the forge's first neither; everyone
+is told to sign up on the web page. Accounts made through the platform edge are not checked. Behind a
 proxy, `FORGE_TRUSTED_PROXIES` (comma-separated CIDR ranges, e.g.
 `10.42.0.0/16` for a k3s ingress) names the proxies allowed to say who the
 client is; limits for strangers and the signup audit then see each outside
@@ -1420,7 +1441,7 @@ Every limit the owner can hit is declared in `src/settings/limits.ts` with its d
 
 Per-account quotas (`src/settings/quotas.ts`) — how many `repositories` and `apps` one account may own, how many `previews`, `runs` and `checks` it may have going at once — are set the same way: **Account quotas** on `/admin/limits`, `GET`/`PATCH /api/v1/admin/settings` (`{"quotas": {"repositories": 5, "apps": null}}`) or the `quotas` MCP tool (dry by default, admin scope, never an agent). A value is a positive whole number, or empty/`null` for no limit, which is the default; anything else is a 422. Every change is kept with who made it and listed beside the form. The `apps` limit is enforced (`src/actions/app_limit.ts`): with one set, an account owning that many apps is refused one more, unless the actor is a forge admin; with none set nothing is asked. The check and the insert are separate statements, so two concurrent creates can pass by one. The refusal reads "This account is at its limit: 3 of 3 apps. Remove one to make room." and each door answers it its own way: the API (`POST /api/v1/apps` and `POST /api/v1/repos/:owner/:name/app`) a 403 `{"error": "app_limit", "message", "limit", "count"}`; the new-app page and the app settings form a 422 with the sentence on the form; make-it-yours the same sentence as an invalid error, before the fork, so no repository is left behind. The `repositories` limit is enforced too (`src/actions/repos.ts`): with one set, an account owning that many repositories (sealed forks are not counted) is refused one more by create, fork, make-it-yours, mirror, migrate and new app, before anything is made on disk. Forge admins and agents are exempt, and creating under an organisation is not counted: the quota is per account, so only a repository the actor owns itself is asked. The refusal reads "2 of 2 repositories"; the API answers 403 `{"error": "repository_limit", "message"}`, the pages say "Not made: 2 of 2 repositories." on the form (a 422), and the terminal shows it as a toast. The check and the insert are separate statements here as well, so two concurrent creates can pass by one. The `storage` limit (megabytes, `src/core/storage.ts`) bounds the bare repositories an account owns plus its apps' data: a push, create, fork, make-it-yours, mirror, migrate or new app by a non-admin, non-agent account at the limit is refused before anything is written (the account asked is the owner the repository would belong to, an organisation included); a push is refused before git runs, as a git error over HTTP and SSH ("storage limit reached: 1.9 GB of 2 GB"), and a push that would pass it is capped inside git (`receive.maxInputSize` = the room left) so it is stopped in quarantine and the repository is as it was. Every other door answers a refusal as `storage_limit`, not `repository_limit`: the API a 403 `{"error": "storage_limit", "message"}` with the message "…storage limit: 1.9 GB of 2 GB", the pages "Not made: …" on the form (a 422), the terminal a toast. A mirror's periodic sync fetch and a migrate import mark the figure stale without walking the disk, so the next check measures again and no account can mirror past the limit unseen; the one fetch that crosses the limit is let in, the next create is refused. The figure is cached per account in memory and re-measured in the background after each push, walked on the request path only when it must be: the first look at an account waits for one walk, and so does the first check after a push, create, fork, mirror or delete changed the disk (a walk already under way is joined, not repeated). An account found at its limit is measured again before it is refused, so a deletion frees it with no restart, but at most once every 5 seconds, so retries by a locked-out client do not scan the disk. Two pushes at once can each pass. Three more limits bound what an account has going at once, each unset by default and never asked of a forge admin: `previews` (live previews), `runs` (concurrent agent runs) and `checks` (concurrent checks), counted across the account's repositories and asked before the thing starts. A preview past its limit does not start: its deploy run — the check the pull shows — fails with "not started: 1 of 1 live previews", and a sleeping preview stays asleep when woken at the limit. A run or check past its limit stays queued, with "queued, not started: 1 of 1 concurrent runs" (or "concurrent checks") in its log, and starts when one of the account's own ends; none is dropped. An admin sets the three running limits exactly like the other two: the `previews`, `runs` and `checks` fields on `/admin/limits`, or `{"quotas": {"previews": 3, "runs": 2, "checks": 1}}` to `PATCH /api/v1/admin/settings`. In the terminal the same admin opens the command palette (`ctrl+k`), picks Account quotas, and sees every key with its limit and last change; enter sets one (empty for no limit), `x` clears it, both through the same validation.
 
-The forge setting `signup` (`src/settings/signup.ts`) is `open`, `invite` or `closed`, and `open` is the default. A forge admin who is a person changes it live — **Signup** on `/admin/limits`, `PATCH /api/v1/admin/settings` (`{"signup":"closed"}`) or the `signup` MCP tool (dry by default, admin scope, never an agent) — with no restart; any other value is a 422. `FORGE_SIGNUP` sets it at boot, and a wrong value stops the boot with a plain message; while it stays set, every restart or deploy writes it again over a change made on the page (kept as a change by `boot`), so unset it to let the page decide. Every change is kept with who made it and when, and listed beside the form. While signup is `closed` (and `invite`, until #1143), `/signup` is one sentence with no form, the API and passkey signup answer 403 `signup_closed`, the terminal offers no Create account and refuses, and a first edge sign-in for a new name is 401. Existing accounts still sign in, and the forge's first account is always made.
+The forge setting `signup` (`src/settings/signup.ts`) is `open`, `invite` or `closed`, and `open` is the default. A forge admin who is a person changes it live — **Signup** on `/admin/limits`, `PATCH /api/v1/admin/settings` (`{"signup":"closed"}`) or the `signup` MCP tool (dry by default, admin scope, never an agent) — with no restart; any other value is a 422. `FORGE_SIGNUP` sets it at boot, and a wrong value stops the boot with a plain message; while it stays set, every restart or deploy writes it again over a change made on the page (kept as a change by `boot`), so unset it to let the page decide. Every change is kept with who made it and when, and listed beside the form. While signup is `closed` (and `invite`, for anyone without an open invite link), `/signup` is one sentence with no form, the API and passkey signup answer 403 `signup_closed`, the terminal offers no Create account and refuses, and a first edge sign-in for a new name is 401. Existing accounts still sign in. A fresh forge's first account is held to the setting too; the operator's `--first-admin` link and a spawned forge's claim make the admin whatever it says.
 
 ## Choosing among variants
 

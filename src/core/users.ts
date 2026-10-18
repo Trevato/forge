@@ -152,10 +152,11 @@ interface AdminFields {
 export type CreateUserInput = CreateUserFields & AccountOrigin;
 
 /**
- * Whether no stranger may make an account now: signup is not `open` and the
- * forge has an account already, so the owner can never be locked out of a
- * fresh forge by a setting. While signup is `invite`, an open invite's token
- * lets one stranger in (`inviteNeeded` says when it must be spent).
+ * Whether no stranger may make an account now: signup is not `open`. A fresh
+ * forge's first account is held to it too: no sign-up makes the admin (the
+ * operator's first-admin link or a claim does), so being first earns nothing.
+ * While signup is `invite`, an open invite's token lets one stranger in
+ * (`inviteNeeded` says when it must be spent).
  */
 export function newAccountsClosed(db: Database, invite?: string): boolean {
   if (!inviteNeeded(db)) return false;
@@ -164,7 +165,7 @@ export function newAccountsClosed(db: Database, invite?: string): boolean {
 
 /** Whether a stranger needs an invite (or cannot come in at all) now. */
 function inviteNeeded(db: Database): boolean {
-  return getSignup(db) !== "open" && hasAnyUser(db);
+  return getSignup(db) !== "open";
 }
 
 interface CreateUserFields {

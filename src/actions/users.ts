@@ -26,7 +26,6 @@ import {
   cleanDisplayName,
   createUser,
   discardFreshUser,
-  hasAnyUser,
   newAccountsClosed,
   updateProfile as writeProfile,
   verifyPassword,
@@ -60,8 +59,7 @@ export const SIGNUP_CLOSED_MESSAGE = "Signup is closed on this forge.";
  * Whether no new account may be made now. Read from the store on every call,
  * so a change takes effect on the next request. While signup is `invite`, an
  * open invite link's token opens it (`core/invites.ts`). The forge's first
- * account is never refused: the owner cannot be locked out of a fresh forge
- * by a setting.
+ * account is no exception.
  */
 export function signupClosed(app: App, invite?: string): boolean {
   return newAccountsClosed(app.db, invite);
@@ -96,13 +94,6 @@ export async function signUp(
     /** The token of the invite link the person came by (`core/invites.ts`). */
     invite?: string | undefined;
     address?: string | undefined;
-    /**
-     * The terminal cannot render a widget, so it is let past the Turnstile
-     * check for the forge's first account only; once anyone
-     * exists, the terminal is asked like everyone else and, having no
-     * token, is refused: sign up on the web page.
-     */
-    door?: "terminal";
   },
 ): Promise<Result<User, SignUpError>> {
   // Password sign-in stays for the accounts that have a password. It can go
@@ -112,8 +103,9 @@ export async function signUp(
   if (signupClosed(app, from.invite)) return err("signup_closed");
   if (app.config.passkeyOnlySignup === true) return err("passkey_required");
   const secret = app.config.turnstileSecret;
-  const bootstrap = from.door === "terminal" && !hasAnyUser(app.db);
-  if (secret !== undefined && !bootstrap) {
+  // The terminal cannot render a widget, so with a secret set it brings no
+  // token and is refused, the forge's first account too: sign up on the web page.
+  if (secret !== undefined) {
     const verify = app.config.verifyHuman ?? turnstileVerifier(secret);
     // Before a password is hashed or a row is written.
     if (!(await verify(input.humanToken ?? "", from.address)))
