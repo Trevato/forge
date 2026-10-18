@@ -41,7 +41,8 @@ says while unhealthy; when the forge is healthy again it posts what it saw and
 the seconds it took to `POST /api/v1/drills` and prints the verdict. If the
 forge is still down after an hour it posts nothing, says so, and exits 0. A
 refused post exits non-zero with the forge's message. `FORGE_TOKEN` must be a
-site admin's token.
+site admin's token; without it the script still watches, prints the result as
+JSON and says that nothing was posted.
 
 ```
 FORGE_TOKEN=… bun scripts/drills/run.ts runner --forge https://forge.open-platform.sh

@@ -76,8 +76,31 @@ test("goes down and comes back: posts what it saw and prints the verdict", async
   expect(body.seen.health).toContain("Disk is nearly full: 97%");
   expect(body.seen.board).toContain("The runner is stuck");
   expect(body.backSeconds).toBe(3);
+  expect(Object.keys(body).sort()).toEqual(["backSeconds", "domain", "seen"]);
   expect(h.lines.filter((l) => l.includes("The runner is stuck"))).toHaveLength(1);
   expect(h.lines).toContain("GREEN: every phrase seen");
+});
+
+test("without a token: prints the result, says nothing was posted, posts nothing", async () => {
+  const state: Stub = { down: false, posts: [], refuse: false };
+  const lines: string[] = [];
+  let t = 0;
+  let sleeps = 0;
+  const code = await runDrill({
+    domain: "runner",
+    forge: stub(state),
+    token: "",
+    say: (l) => lines.push(l),
+    enter: async () => { state.down = true; },
+    now: () => t,
+    sleep: async (ms) => { t += ms; if (++sleeps === 3) state.down = false; },
+    intervalMs: 1000,
+    ceilingMs: 60_000,
+  });
+  expect(code).toBe(0);
+  expect(state.posts).toHaveLength(0);
+  expect(lines.some((l) => l.includes("nothing was posted"))).toBe(true);
+  expect(JSON.parse(lines.at(-1)!)).toMatchObject({ domain: "runner", backSeconds: 3, posted: false });
 });
 
 test("stays down past the ceiling: posts nothing, exits 0, says so", async () => {
@@ -126,7 +149,7 @@ test("checkArgs: each missing piece and the cleartext refusal is an error; the g
   };
   expect(bad(["--forge", "https://f.example"], env)).toContain("domain");
   expect(bad(["runner"], env)).toContain("--forge");
-  expect(bad(["runner", "--forge", "https://f.example"], { FORGE_TOKEN: "" })).toContain("FORGE_TOKEN");
+  expect(checkArgs(["runner", "--forge", "https://f.example"], {}).ok).toBe(true);
   expect(bad(["runner", "--forge", "http://forge.example"], env)).toContain("plain http");
   const ok = (argv: string[]) => checkArgs(argv, env);
   expect(ok(["runner", "--forge", "http://forge.example", "--insecure"]).ok).toBe(true);

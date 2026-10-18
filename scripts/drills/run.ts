@@ -4,8 +4,9 @@
  * polls `/api/v1/health` and `/` once a second keeping each distinct line the
  * forge says while unhealthy, and when the forge is healthy again posts what
  * it saw and how long it took to `POST /api/v1/drills` (`FORGE_TOKEN` from
- * the environment). If the forge never comes back within the ceiling it posts
- * nothing. Zero dependencies; it never shells out.
+ * the environment). Without a token it prints the result and says nothing was
+ * posted. If the forge never comes back within the ceiling it posts nothing.
+ * Zero dependencies; it never shells out.
  */
 
 import { DOMAINS } from "../../src/kernel/domains.ts";
@@ -38,7 +39,7 @@ export function forgePoll(forge: string, token: string, fetchIt: typeof fetch = 
   const get = async (path: string): Promise<{ ok: boolean; lines: string[]; json: unknown }> => {
     try {
       const res = await fetchIt(`${forge}${path}`, {
-        headers: { authorization: `Bearer ${token}` },
+        headers: token === "" ? {} : { authorization: `Bearer ${token}` },
         redirect: "manual",
         signal: AbortSignal.timeout(5_000),
       });
@@ -101,6 +102,11 @@ export async function runDrill(run: DrillRun): Promise<number> {
   const { health = [], board = [] } = watched.said;
   const backSeconds = Math.max(0, Math.round(watched.healthyAt / 1000));
   const body = { domain: domain.key, seen: { health: cap(health), board: cap(board) }, backSeconds };
+  if (run.token === "") {
+    run.say("FORGE_TOKEN is not set; nothing was posted. The result:");
+    run.say(JSON.stringify({ domain: domain.key, backSeconds, posted: false, body }));
+    return 0;
+  }
   let res: Response;
   try {
     res = await fetch(`${run.forge}/api/v1/drills`, {
@@ -134,7 +140,7 @@ export interface DrillArgs {
   token: string;
 }
 
-const USAGE = "usage: FORGE_TOKEN=… bun scripts/drills/run.ts <domain> --forge <url> [--insecure]";
+const USAGE = "usage: [FORGE_TOKEN=…] bun scripts/drills/run.ts <domain> --forge <url> [--insecure]";
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 /** The options, or the one plain line to print before exiting 2. */
@@ -154,8 +160,7 @@ export function checkArgs(
     return { ok: false, error: `--forge must be an http(s) URL; ${USAGE}` };
   }
   const token = env.FORGE_TOKEN ?? "";
-  if (token === "") return { ok: false, error: `FORGE_TOKEN is empty; ${USAGE}` };
-  if (url.protocol === "http:" && !LOOPBACK.has(url.hostname) && !insecure) {
+  if (token !== "" && url.protocol === "http:" && !LOOPBACK.has(url.hostname) && !insecure) {
     return { ok: false, error: `refusing to send the admin token over plain http to ${url.hostname}; use https, or pass --insecure` };
   }
   return { ok: true, args: { domain, forge: forge.replace(/\/+$/, ""), token } };
