@@ -1221,7 +1221,12 @@ export function apiRoutes(router: Router<Handler>): void {
         password: str(input.password),
         humanToken: str(input.turnstile_token),
       },
-      { slot, address: clientAddress(ctx.request) },
+      {
+        slot,
+        // The token of an invite link (`core/invites.ts`), when signup is `invite`.
+        invite: str(input.invite) === "" ? undefined : str(input.invite),
+        address: clientAddress(ctx.request),
+      },
     );
     if (!created.ok && created.error === "signup_closed")
       return apiError("signup_closed", 403, SIGNUP_CLOSED_MESSAGE);

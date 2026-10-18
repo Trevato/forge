@@ -233,9 +233,13 @@ function authForm(
   const values = o.values ?? {};
   const errors = o.errors ?? {};
   const next = safeNext(ctx.url.searchParams.get("next"));
-  const action = next
-    ? `/${kind}?next=${encodeURIComponent(next)}`
-    : `/${kind}`;
+  // The invite link's token rides on the form's own address, as it does on
+  // the passkey door's (`passkey-client.ts` posts to its page's query).
+  const query = new URLSearchParams();
+  if (next) query.set("next", next);
+  const invite = kind === "signup" ? inviteOf(ctx) : undefined;
+  if (invite !== undefined) query.set("invite", invite);
+  const action = query.size === 0 ? `/${kind}` : `/${kind}?${query.toString()}`;
   // "Is this the first account?" is a `LIMIT 1` existence check, not a count
   // of the whole user table — and the sign-in screen paints on every session.
   const firstAccount = kind === "signup" && !hasAnyUser(ctx.app.db);
@@ -409,20 +413,31 @@ function siteKey(ctx: Ctx): string | undefined {
   return turnstileSecret === undefined ? undefined : turnstileSiteKey;
 }
 
+/** The token of the invite link this request came by, if any (`?invite=`). */
+export function inviteOf(ctx: Ctx): string | undefined {
+  const token = ctx.url.searchParams.get("invite") ?? "";
+  return token === "" ? undefined : token;
+}
+
+/** What a person with a link that no longer opens the door is told. */
+const INVITE_SPENT_MESSAGE =
+  "This invite link has been used, revoked or has expired. Ask whoever sent it for a new one.";
+
 /** The whole of `/signup` while the forge makes no new accounts: a sentence, no form. */
 function signupClosedPage(ctx: Ctx): Response {
+  const said = inviteOf(ctx) === undefined ? SIGNUP_CLOSED_MESSAGE : INVITE_SPENT_MESSAGE;
   return page(
     {
       ctx,
       title: "Sign up",
-      body: html`<div class="stack"><h1>Sign up</h1><p>${SIGNUP_CLOSED_MESSAGE}</p><p><a href="/signin">Sign in</a></p></div>`,
+      body: html`<div class="stack"><h1>Sign up</h1><p>${said}</p><p><a href="/signin">Sign in</a></p></div>`,
     },
     403,
   );
 }
 
 export function signupPage(ctx: Ctx): Response {
-  if (signupClosed(ctx.app)) return signupClosedPage(ctx);
+  if (signupClosed(ctx.app, inviteOf(ctx))) return signupClosedPage(ctx);
   return page({
     ctx,
     title: "Sign up",
@@ -562,7 +577,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       password: field(form, "password"),
       humanToken: field(form, "cf-turnstile-response"),
     },
-    { slot, address: clientAddress(ctx.request) },
+    { slot, invite: inviteOf(ctx), address: clientAddress(ctx.request) },
   );
   if (!created.ok) {
     if (created.error === "signup_closed") return signupClosedPage(ctx);

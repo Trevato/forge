@@ -1,7 +1,10 @@
 /**
  * Invite links: a secret handed out once, good for one signup, gone after a
  * deadline. The database holds only the token's hash, so a list can never
- * give a link back. Signup does not read these yet (#2335).
+ * give a link back, and a token is found by its hash: nothing compares the
+ * secret itself. While signup is `invite`, a stranger's signup with an open
+ * invite is let in (`newAccountsClosed` in `core/users.ts`), and the invite is
+ * spent in the same transaction as the account (`redeemInvite`).
  */
 
 import type { Database } from "bun:sqlite";
@@ -63,6 +66,38 @@ export function mintInvite(
   ).run(inviteId, sha256(token), createdBy, new Date(now).toISOString(), new Date(now + days * DAY).toISOString());
   const row = db.query<Row, [string]>("SELECT * FROM invite WHERE id = ?1").get(inviteId)!;
   return { invite: view(row, now), token };
+}
+
+/** Whether `token` names an invite still open now: not used, revoked or expired. */
+export function inviteOpen(db: Database, token: string, now: number = Date.now()): boolean {
+  return (
+    db
+      .query<{ n: number }, [string, string]>(
+        "SELECT 1 AS n FROM invite WHERE token_hash = ?1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?2",
+      )
+      .get(sha256(token), new Date(now).toISOString()) !== null
+  );
+}
+
+/**
+ * Spend the open invite `token` names on `userId`, in one conditional write.
+ * False when it was not open: of two sign-ups racing for one link, one wins.
+ * The caller runs this in the transaction that makes the account.
+ */
+export function redeemInvite(db: Database, token: string, userId: string, now: number = Date.now()): boolean {
+  const at = new Date(now).toISOString();
+  return (
+    db
+      .query(
+        "UPDATE invite SET used_at = ?2, used_by = ?3 WHERE token_hash = ?1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?2",
+      )
+      .run(sha256(token), at, userId).changes === 1
+  );
+}
+
+/** Give back the invite an account spent, when that account is taken back. */
+export function reopenInvite(db: Database, userId: string): void {
+  db.query("UPDATE invite SET used_at = NULL, used_by = NULL WHERE used_by = ?1").run(userId);
 }
 
 /** Every invite, newest first, never with its token. */
