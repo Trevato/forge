@@ -754,7 +754,8 @@ reads and writes that repository and administers nothing.
 A **planner** on the crew may also close an issue it is re-planning, in
 `actions/issues.ts` so the web, the API and the MCP agree, and only these
 ways: `split` into open issues opened since it was handed the issue (since the
-issue itself when the crew never parked it twice), `dropped` for an issue the
+issue itself when the crew never parked it twice, or into issues of the same
+repository that all closed as done since that hand-over), `dropped` for an issue the
 crew wrote, and `done` when commits on main already name the issue. A person's
 ask is never dropped by the planner; any other close, any reopen and any edit
 to a person's issue stay refused.

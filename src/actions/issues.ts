@@ -488,7 +488,9 @@ export function setIssueState(
  *
  * - split, only into what replaces it — every issue named must be an open
  *   issue made since the hand-over, not the issue itself and not the Later
- *   gate, so a closed or an old issue cannot stand in for a drop;
+ *   gate, so a closed or an old issue cannot stand in for a drop. Or, once
+ *   every piece has landed, into issues of this repository that all closed as
+ *   done since the hand-over, so old unrelated work cannot stand in either;
  * - dropped, only when an agent wrote the issue. A person's ask is dropped
  *   by a person.
  *
@@ -521,17 +523,29 @@ function handedToPlanner(
   const into = closing.into ?? [];
   if (into.length === 0) return false;
   const gate = laterGate(app.db, repo.id);
-  return into.every((number) => {
-    const part = getIssue(app.db, repo.id, number);
-    return (
-      part !== undefined &&
-      part.kind === "issue" &&
-      part.state === "open" &&
-      part.id !== issue.id &&
-      part.number !== gate &&
-      part.createdAt > since
-    );
-  });
+  const found = into.map((number) => getIssue(app.db, repo.id, number));
+  const parts: Issue[] = [];
+  for (const part of found) {
+    if (
+      part === undefined ||
+      part.kind !== "issue" ||
+      part.id === issue.id ||
+      part.number === gate
+    )
+      return false;
+    parts.push(part);
+  }
+  // Every piece landed since: closed as done at or after the hand-over.
+  if (
+    parts.every(
+      (part) =>
+        part.state === "closed" &&
+        part.closeReason === "done" &&
+        (part.closedAt ?? "") >= since,
+    )
+  )
+    return true;
+  return parts.every((part) => part.state === "open" && part.createdAt > since);
 }
 
 /** How an issue closes: done unless said otherwise; split names its children. */

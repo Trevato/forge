@@ -769,7 +769,7 @@ describe("an issue parked twice is the planner's", () => {
       "Later gate: nothing behind this starts until the owner opens it",
     );
     const gone = e.issue("Particles, the old plan");
-    expect(setIssueState(app, alice, e.fresh(), gone, "closed").ok).toBe(true);
+    expect(setIssueState(app, alice, e.fresh(), gone, "closed", { reason: "dropped" }).ok).toBe(true);
     // An issue the crew wrote itself, parked twice like the person's.
     const made = openIssue(app, mason, e.fresh(), {
       title: "Tidy the particle pool",
@@ -1476,6 +1476,51 @@ describe("an issue found already done is the asker's to close, not a park", () =
     const other = e.issue("Not for builders");
     const own = setIssueState(e.app, mason, e.fresh(), other, "closed", { reason: "split", into: [part.number] });
     expect(own.ok ? "closed" : own.error).toBe("forbidden");
+  });
+
+  test("the planner closes an umbrella as split into issues that all closed as done since, and no other", async () => {
+    const { atlas } = e;
+    const state = (on: Issue) => getIssueById(e.app.db, on.id)!;
+    const close = (on: Issue, into: number[]) => {
+      const closed = setIssueState(e.app, atlas, e.fresh(), state(on), "closed", {
+        reason: "split",
+        into,
+      });
+      return closed.ok ? "closed" : closed.error;
+    };
+    const finish = (on: Issue, reason: "done" | "dropped") => {
+      const r = setIssueState(e.app, e.alice, e.fresh(), state(on), "closed", { reason });
+      if (!r.ok) throw new Error(String(r.error));
+    };
+    // Old, unrelated work that closed as done before the umbrella existed.
+    const old = e.issue("Old unrelated work");
+    finish(old, "done");
+    await Bun.sleep(5);
+    const umbrella = e.issue("Umbrella");
+    await Bun.sleep(5);
+    const a = e.issue("Piece A");
+    const b = e.issue("Piece B");
+    const dropped = e.issue("Piece dropped");
+    const open = e.issue("Piece still open, older than nothing");
+    finish(a, "done");
+    finish(dropped, "dropped");
+    // Refused: an old done issue is no piece of it, alone or beside a real one.
+    expect(close(umbrella, [old.number])).toBe("forbidden");
+    finish(b, "done");
+    expect(close(umbrella, [a.number, old.number])).toBe("forbidden");
+    // Refused: itself, a dropped piece, an open one, a done beside a fresh open.
+    expect(close(umbrella, [a.number, umbrella.number])).toBe("forbidden");
+    expect(close(umbrella, [a.number, dropped.number])).toBe("forbidden");
+    expect(close(umbrella, [a.number, open.number])).toBe("forbidden");
+    await Bun.sleep(5);
+    const fresh = e.issue("Fresh piece, open");
+    expect(close(umbrella, [a.number, fresh.number])).toBe("forbidden");
+    // Refused: a number that is no issue here (another repository's is none of this one's).
+    expect(close(umbrella, [a.number, 99999])).toBe("forbidden");
+    expect(state(umbrella).state).toBe("open");
+    // Allowed: every piece closed as done since.
+    expect(close(umbrella, [a.number, b.number])).toBe("closed");
+    expect(state(umbrella).closeReason).toBe("split");
   });
 
   test("another person's comment that reads like the note is that person's word", async () => {
