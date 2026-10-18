@@ -30,7 +30,7 @@ import {
 import { CONNECT_LIMITS } from "../src/actions/origins.ts";
 import { RateLimiter } from "../src/core/ratelimit.ts";
 import { deliveryBusy, runDelivery } from "../src/core/webhooks.ts";
-import { Gate, gitGate, runGit } from "../src/git/env.ts";
+import { Gate, gitGate, runGit, transfersForMemory } from "../src/git/env.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { isBusy, transact } from "../src/kernel/db.ts";
 import { repoDir } from "../src/git/repos.ts";
@@ -829,6 +829,15 @@ describe("write transactions", () => {
 // ---- limits on git itself ----
 
 describe("git process limits and timeouts", () => {
+  test("pack transfers at once follow the memory: eight on a 512 MiB cell, sixteen from 1 GiB, never under two", () => {
+    const mib = 1024 * 1024;
+    expect(transfersForMemory(512 * mib)).toBe(8);
+    expect(transfersForMemory(1024 * mib)).toBe(16);
+    expect(transfersForMemory(16 * 1024 * mib)).toBe(16);
+    expect(transfersForMemory(64 * mib)).toBe(2);
+    expect(transfersForMemory(Number.NaN)).toBe(16);
+  });
+
   test("the semaphore hands out no more permits than its limit", async () => {
     const gate = new Gate(3);
     let live = 0;
