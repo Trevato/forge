@@ -60,17 +60,21 @@ refuses every form a browser posts to `localhost`: run it with
 `env -u FORGE_URL bun run src/main.ts`, or set `FORGE_URL` to wherever you
 will actually browse it.
 
-No sign-up makes the admin, not even the forge's first. Accounts sign up with
+No sign-up makes the admin, not even the forge's first, and that first one is
+held to the signup setting and Turnstile like any other. Accounts sign up with
 a passkey and an email address (there is no password signup), and the browser
 at `/signup`, the API and the terminal all make an account that is not an
 admin. The site admin is made from the operator's terminal with
-`--first-admin`, which needs no browser at all, or, on a spawned child, by its
-`/claim` link:
+`--first-admin`, which needs no browser at all and works whatever signup says,
+or, on a spawned child, by its `/claim` link (code that sets a forge up
+directly, like test fixtures, seeds one):
 
 ```sh
 # One-time code, printed only here: works once, for 15 minutes, and never once
 # anyone is admin. --child <name> mints for a child this forge hosts; --url
-# names the address to print. The forge keeps only its hash.
+# names the address to print. The forge keeps only its hash. Run it beside
+# the running forge with the same FORGE_DATA (and PORT, or --url, for the
+# link); before the forge's first boot there is no database and it refuses.
 bun src/main.ts --first-admin
 
 # A person opens the printed link and makes the admin with a passkey.
@@ -111,6 +115,23 @@ as `user.created` `via: first-admin`, and the sign-in page links `/first-admin`
 only while the forge has no admin. Later tokens come from Settings → Tokens, or
 `POST /api/v1/tokens` from a signed-in session with `{"name", "scope"}`; the
 admin adds `"adminConfirm": true` to mean a token that acts as admin.
+
+The same token spawns a child forge (`dryRun` is true unless `false`, so
+without it you get the plan and nothing is made). The child's admin comes
+from the operator's `--first-admin --child`, or from the `claimUrl` the spawn
+answers once:
+
+```sh
+curl -sX POST localhost:3000/api/v1/forges -H "authorization: Bearer $TOKEN" \
+  -d '{"name":"kid","dryRun":false}'
+# {…, "url":"http://kid--localhost:3000", "claimUrl":"http://kid--localhost:3000/claim#…"}
+bun src/main.ts --first-admin --child kid
+```
+
+The child keeps this forge's scheme and port at `<name>--<host>`, on its own
+data under `$FORGE_DATA/children/`. Browsers send `*.localhost` to this
+machine; curl needs `--resolve kid--localhost:3000:127.0.0.1`. The rest is in
+`docs/SPAWN.md`.
 
 The commits the forge writes for you — merges, squashes, reverts, web edits —
 carry `you@users.noreply.<forge host>`, never your account email. Choosing your
