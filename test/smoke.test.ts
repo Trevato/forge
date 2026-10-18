@@ -105,3 +105,10 @@ test("the CLI takes --version and --wait", async () => {
   expect(await run("--version", "v1")).toBe(0);
   expect(await run("--version", "zz", "--wait", "0")).toBe(1);
 });
+
+test("anonymousBoard: a 302 from /board passes with no token, and only then", async () => {
+  const base = stub("text/css");
+  expect(await smoke(base, "", { anonymousBoard: true })).toEqual([]);
+  expect((await smoke(base, "", {})).map((f) => f.status)).toEqual([302, 302]);
+  expect((await smoke(base, "wrong", { anonymousBoard: true })).map((f) => f.status)).toEqual([302, 302]);
+});

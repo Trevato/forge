@@ -54,6 +54,7 @@ import { configProblem, dataDirOf, preflight } from "./kernel/preflight.ts";
 import { running } from "./kernel/version.ts";
 import { record as recordDegraded } from "./kernel/degraded_history.ts";
 import { vitals } from "./kernel/vitals.ts";
+import { proveRelease } from "./release/prove.ts";
 import { snapshotPlace } from "./actions/health.ts";
 import { capacityDefault } from "./core/capacity.ts";
 
@@ -482,6 +483,13 @@ const staleTimer = setInterval(() => void tickAsks(), 120_000);
 void tickAsks();
 
 app.log.info("forge is up", { url: servers.url, data: app.config.dataDir });
+// A new version proves itself against the public URL once (release/prove.ts).
+void proveRelease({
+  dataDir: app.config.dataDir,
+  version: running().version,
+  url: forgeUrl,
+  token: process.env["FORGE_TOKEN"],
+}).then((p) => p && app.log.info("release proof", { version: p.version, ok: String(p.ok), ...(p.failure ? { failure: p.failure } : {}) }));
 // Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
 // put on one before that is reported here for the owner to take off — the
 // forge never removes it on its own.

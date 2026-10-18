@@ -234,6 +234,13 @@ sees `Reduced protection: …` in one line, under the filter on the terminal's
 first screen and in the web footer; nobody else does, and a fully protected
 forge shows nothing.
 
+A new version proves itself once per version: after a boot that changes
+`FORGE_VERSION`, the forge waits (up to 10 minutes) for its public URL to
+answer `/healthz` as that version, then runs `scripts/smoke.ts` against it and
+keeps the verdict in `$FORGE_APP_DATA/release/proof.json`. A failure is a
+`Release X is unproven: …` card on an admin's board and on the terminal's first
+screen (the same cards), and is paged once; a later passing version clears it.
+
 What you asked for: `Ctrl+K`, then **Asked**, is `/asked` in the terminal — your
 thoughts, then the issues you can write to that are not shipped, oldest first
 (`j`/`k` move, `enter` gives the issue's web address, `r` refreshes). It is read

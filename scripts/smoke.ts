@@ -53,10 +53,14 @@ export interface Options {
   waitMs?: number;
   /** Pause between polls, in milliseconds. */
   pollMs?: number;
+  /** The fetch to use; the global one unless a caller (the forge proving itself, a test) gives its own. */
+  fetch?: typeof fetch;
+  /** Accept a redirect from `/board` as the sign-in it is, for a caller holding no token. */
+  anonymousBoard?: boolean;
 }
 
 /** Polls `/healthz` until it reports `version`; null when it does, else a failure. */
-async function waitForVersion(root: URL, version: string, waitMs: number, pollMs: number): Promise<Failure | null> {
+async function waitForVersion(root: URL, version: string, waitMs: number, pollMs: number, fetch: typeof globalThis.fetch): Promise<Failure | null> {
   const url = new URL("/healthz", root).href;
   const deadline = Date.now() + waitMs;
   let seen = "none";
@@ -83,8 +87,9 @@ export async function smoke(base: string, token = "", options: Options = {}): Pr
   const root = new URL(base);
   if (root.protocol !== "http:" && root.protocol !== "https:") throw new Error("url must be http(s)");
   const failures: Failure[] = [];
+  const fetch = options.fetch ?? globalThis.fetch;
   if (options.version) {
-    const late = await waitForVersion(root, options.version, options.waitMs ?? 120_000, options.pollMs ?? 1_000);
+    const late = await waitForVersion(root, options.version, options.waitMs ?? 120_000, options.pollMs ?? 1_000, fetch);
     if (late) return [late];
   }
 
@@ -125,7 +130,8 @@ export async function smoke(base: string, token = "", options: Options = {}): Pr
       }
     }
     const board = await get("/board", agent, auth);
-    if (board && board.res.status !== 200) fail(board.url, agent, board.res, "expected 200 (a 302 is sign-in)");
+    const signIn = options.anonymousBoard && !token && board?.res.status === 302;
+    if (board && board.res.status !== 200 && !signIn) fail(board.url, agent, board.res, "expected 200 (a 302 is sign-in)");
     const health = await get("/healthz", agent);
     if (health && health.res.status !== 200) fail(health.url, agent, health.res, "expected 200");
   }

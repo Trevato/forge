@@ -48,7 +48,7 @@ export const HOLD_MS = 5 * 60_000;
 
 /** The vitals causes this pager owns; the rest are paged elsewhere or are settings. */
 export function owned(cause: string): boolean {
-  return cause === "errors" || cause === "internal" || cause === "disk" || cause.startsWith("queue:");
+  return cause === "errors" || cause === "internal" || cause === "disk" || cause === "release" || cause.startsWith("queue:");
 }
 
 /** One owned cause being watched. */

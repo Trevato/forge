@@ -25,6 +25,7 @@ import { BUDGETS } from "./budgets.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { lastSnapshotOutcome, snapshotNeed } from "../snapshot/outcome.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
+import { proofNeed } from "../release/prove.ts";
 import { newestDrills } from "../core/domain_drills.ts";
 import { DOMAINS } from "./domains.ts";
 import { domainDrillNeeds } from "./domain_drill.ts";
@@ -51,7 +52,7 @@ export interface EnvCount {
 /**
  * One cause of the forge being off: the `needs` sentence, a `cause` key that
  * holds for as long as its condition does (`disk`, `errors`, `internal`,
- * `queue:<kind>`, `stuck:<runId>`, `red:<repoId>`, `shared:<repoId>:<test>`), when it began by the forge's own evidence
+ * `queue:<kind>`, `release`, `stuck:<runId>`, `red:<repoId>`, `shared:<repoId>:<test>`), when it began by the forge's own evidence
  * (the oldest evidence the forge holds, else the first time this process saw
  * it, held until the cause clears; `at` is never the answer to a repeat
  * call), and where to look.
@@ -392,6 +393,10 @@ export function vitals(input: VitalsInput): Vitals {
   // A snapshot that did not land off the box, or a mirror a day behind, is a card until it does.
   const behind = mirrorNeed(lastMirror(input.dataDir), now);
   if (behind !== undefined) need("mirror", behind.sentence, behind.since, "/settings/backups");
+
+  // A release the forge could not prove against its own public URL is a card until a release does.
+  const unproven = proofNeed(input.dataDir);
+  if (unproven !== undefined) need("release", unproven.sentence, unproven.since, "/board");
 
   const apps = { serving: 0, asleep: 0, previews: 0 };
   for (const e of input.envs ?? []) {
