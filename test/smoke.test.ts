@@ -4,7 +4,21 @@ import { smoke, stylesheetHref } from "../scripts/smoke.ts";
 let server: ReturnType<typeof Bun.serve> | undefined;
 afterEach(() => server?.stop(true));
 
+const GOOD_SW = `self.addEventListener('fetch', function (e) {
+  if (e.request.mode === 'navigate') {
+    // never Response.error()
+    e.respondWith(fetch(e.request).catch(offline));
+    return;
+  }
+  e.respondWith(fetch(e.request).catch(function () { return Response.error(); }));
+});`;
+const BAD_SW = GOOD_SW.replace("catch(offline)", "catch(function () { return Response.error(); })");
+let sw: { body: string; type: string; status: number } = { body: GOOD_SW, type: "text/javascript", status: 200 };
+let version = () => "v1";
+
 function stub(cssType: string, seen: string[] = []) {
+  sw = { body: GOOD_SW, type: "text/javascript", status: 200 };
+  version = () => "v1";
   server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -17,7 +31,8 @@ function stub(cssType: string, seen: string[] = []) {
         return req.headers.get("authorization") === "Bearer t"
           ? new Response("board")
           : new Response(null, { status: 302, headers: { location: "/signin" } });
-      if (path === "/healthz") return new Response("ok");
+      if (path === "/healthz") return new Response("ok", { headers: { "x-forge-version": version() } });
+      if (path === "/sw.js") return new Response(sw.body, { status: sw.status, headers: { "content-type": sw.type } });
       return new Response("no", { status: 404 });
     },
   });
@@ -55,4 +70,38 @@ test("the CLI exits non-zero on failure and zero on success", async () => {
 test("stylesheetHref finds the link", () => {
   expect(stylesheetHref('<link rel="icon" href="/x"><link rel="stylesheet" href="/s.css">')).toBe("/s.css");
   expect(stylesheetHref("<p>none</p>")).toBeNull();
+});
+
+test("--version waits for a late version", async () => {
+  const base = stub("text/css", []);
+  let polls = 0;
+  version = () => (++polls < 3 ? "old" : "v2");
+  expect(await smoke(base, "t", { version: "v2", waitMs: 5000, pollMs: 10 })).toEqual([]);
+  expect(polls).toBeGreaterThanOrEqual(3);
+});
+
+test("a version that never arrives fails naming the last one seen", async () => {
+  const base = stub("text/css");
+  const failures = await smoke(base, "t", { version: "v9", waitMs: 100, pollMs: 10 });
+  expect(failures.length).toBe(1);
+  expect(failures[0]!.why).toContain("v9");
+  expect(failures[0]!.why).toContain("last saw v1");
+});
+
+test("a Response.error() on a navigation, a non-JS or a missing sw.js fails", async () => {
+  const base = stub("text/css");
+  sw.body = BAD_SW;
+  expect((await smoke(base, "t")).map((f) => f.why)).toEqual([expect.stringContaining("Response.error()")]);
+  sw = { body: GOOD_SW, type: "text/html", status: 200 };
+  expect((await smoke(base, "t")).map((f) => f.why)).toEqual(["expected javascript"]);
+  sw = { body: "", type: "text/javascript", status: 404 };
+  expect((await smoke(base, "t")).map((f) => f.why)).toEqual(["expected 200"]);
+});
+
+test("the CLI takes --version and --wait", async () => {
+  const base = stub("text/css");
+  const run = (...a: string[]) =>
+    Bun.spawn(["bun", "scripts/smoke.ts", base, ...a], { env: { ...process.env, FORGE_TOKEN: "t" }, stdout: "pipe", stderr: "pipe" }).exited;
+  expect(await run("--version", "v1")).toBe(0);
+  expect(await run("--version", "zz", "--wait", "0")).toBe(1);
 });
