@@ -3,6 +3,10 @@
  * the forge. Only what the whole suite must agree on belongs here.
  */
 
+import { provideCpusForTest } from "../../src/core/capacity.ts";
 import { installCheapHash } from "./cheap-hash.ts";
 
 installCheapHash();
+// Defaults sized from CPUs (#2549) read as on a 4-CPU pod — 4 shards, one
+// check at once — whatever machine runs the suite.
+provideCpusForTest(4);

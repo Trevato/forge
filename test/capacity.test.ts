@@ -22,8 +22,8 @@ import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import {
   capacityChanges,
-  capacityDefault,
   capacityCount,
+  capacityDefault,
   noteBooted,
   capacityEnv,
   capacityValue,
@@ -292,14 +292,23 @@ describe("capacity: only a forge admin reads or changes it", () => {
       body: new URLSearchParams({ key: "checks.shards", reset: "1" }),
     });
     expect(reset.status).toBe(303);
-    expect(capacityEnv(app.db)).toEqual({});
+    // Back at the default, which is sized from the CPUs it is given (#2549).
+    const fromEnv = process.env.FORGE_CHECK_SHARDS;
+    delete process.env.FORGE_CHECK_SHARDS;
+    try {
+      expect(capacityEnv(app.db, 80)).toEqual({ FORGE_CHECK_SHARDS: "4" });
+      expect(capacityEnv(app.db, 2)).toEqual({ FORGE_CHECK_SHARDS: "2" });
+    } finally {
+      if (fromEnv !== undefined) process.env.FORGE_CHECK_SHARDS = fromEnv;
+    }
+    const shardsDefault = capacityDefault("checks.shards");
 
     const changes = capacityChanges(app.db);
     expect(changes.map((c) => [c.key, c.from, c.to, c.actorName])).toEqual([
-      ["checks.shards", "3", "", "alice"],
+      ["checks.shards", "3", shardsDefault, "alice"],
       ["cells.egress", "enforce", "report", "alice"],
       ["crew.concurrency", capacityDefault("crew.concurrency"), "3", "alice"],
-      ["checks.shards", "", "3", "alice"],
+      ["checks.shards", shardsDefault, "3", "alice"],
     ]);
     const after = await (
       await fetch(`${servers.url}/settings/capacity`, { headers: { cookie } })

@@ -11,6 +11,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { runGit } from "../src/git/env.ts";
 import { restoreSnapshot } from "../src/snapshot/restore.ts";
 import { IN_FLIGHT } from "../src/snapshot/snapshot.ts";
 import { dirStore, type Store } from "../src/snapshot/store.ts";
@@ -137,6 +138,23 @@ describe("a restore reads in parallel", () => {
       return at < 0 ? 0 : (files.length - at) * 30;
     });
     await expect(restoreSnapshot(store, NAME, join(root, "data-4"))).rejects.toThrow(
+      "could not restore alice/first",
+    );
+  });
+
+  test("when clones fail at once, the one named is the manifest's earliest, not the race's winner", async () => {
+    const order = ["alice/first", "alice/second", "alice/third"];
+    const files = order.map((r) => ({ path: `repos/${r}.bundle`, bytes: 13 }));
+    const store = dirStore(join(root, "store-5"));
+    for (const f of files) await store.put(prefix + f.path, "not a bundle\n");
+    await store.put(`${prefix}manifest.json`, manifestOf(files));
+    // Every clone fails; the first entry's fails last.
+    const git: typeof runGit = async (args) => {
+      const first = args.some((a) => a.endsWith("first.bundle"));
+      await Bun.sleep(first ? 60 : 5);
+      return { ok: false, error: { code: 128, stderr: "not a bundle", args } };
+    };
+    await expect(restoreSnapshot(store, NAME, join(root, "data-5"), { git })).rejects.toThrow(
       "could not restore alice/first",
     );
   });

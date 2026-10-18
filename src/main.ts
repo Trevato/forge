@@ -333,7 +333,8 @@ const checks =
     ? undefined
     : startChecks(app, {
         forgeUrl,
-        concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, 1),
+        // Sized to the pod's CPUs unless the environment says (#2549).
+        concurrency: positive(process.env.FORGE_CHECKS_CONCURRENCY, Number(capacityDefault("checks.concurrency"))),
         redHoldMs: RED_HOLD_MS,
         // A roll lets running checks finish this long before cutting them off.
         drainMs: positive(process.env.FORGE_CHECKS_DRAIN_S, 300) * 1000,

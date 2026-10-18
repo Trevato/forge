@@ -13,7 +13,7 @@
 
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
-import { totalmem } from "node:os";
+import { availableParallelism, totalmem } from "node:os";
 
 export type CapacityKey =
   | "crew.concurrency"
@@ -34,6 +34,8 @@ interface Definition {
     | { readonly type: "choice"; readonly values: readonly string[] };
   /** What it is when neither the store nor the environment says. */
   readonly fallback: string;
+  /** The default from the pod's CPUs, in place of `fallback` (#2549). */
+  readonly sized?: (cpus: number) => number;
   readonly help: string;
 }
 
@@ -50,14 +52,16 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     env: "FORGE_CHECKS_CONCURRENCY",
     kind: { type: "count", min: 1, max: 16 },
     fallback: "1",
-    help: "How many repository checks run at once. Lowering it lets running ones finish; the next one waits.",
+    sized: (cpus) => checksForCpus(cpus),
+    help: "How many repository checks run at once. Lowering it lets running ones finish; the next one waits. Empty: the pod's CPUs over three per shard (shards × 3), from 1 to 16 — 80 CPUs give 6.",
   },
   "checks.shards": {
     label: "Test shards per check",
     env: "FORGE_CHECK_SHARDS",
     kind: { type: "count", min: 1, max: 32 },
-    fallback: "",
-    help: "How many parallel shards a check's test run uses (handed to checks and crew shells as FORGE_CHECK_SHARDS). Empty: as many as the machine has cores.",
+    fallback: "1",
+    sized: (cpus) => shardsForCpus(cpus),
+    help: "How many parallel shards a check's test run uses (handed to checks and crew shells as FORGE_CHECK_SHARDS). Empty: the pod's CPUs, at most 4 — and, in a check, no more than its cell holds.",
   },
   "children.max": {
     label: "Forges this one may send",
@@ -106,12 +110,70 @@ export function validCapacity(key: CapacityKey, value: string): boolean {
 }
 
 /** The boot default: the environment, when it holds a valid value. */
-export function capacityDefault(key: CapacityKey): string {
-  const env = process.env[CAPACITY[key].env]?.trim() ?? "";
-  if (env !== "" && validCapacity(key, env)) return env;
+export function capacityDefault(key: CapacityKey, cpus?: number): string {
+  const env = explicitDefault(key);
+  if (env !== undefined) return env;
+  const sized = CAPACITY[key].sized;
+  if (sized !== undefined) return String(sized(cpus ?? cpuLimit()));
   if (key === "children.max") return String(childrenForMemory(memoryLimitBytes()));
   if (key === "crew.concurrency") return String(crewForMemory(memoryLimitBytes()));
   return CAPACITY[key].fallback;
+}
+
+/** The environment's value for `key`, when it holds a valid one. */
+function explicitDefault(key: CapacityKey): string | undefined {
+  const env = process.env[CAPACITY[key].env]?.trim() ?? "";
+  return env !== "" && validCapacity(key, env) ? env : undefined;
+}
+
+/** Most shards a check takes by default: past four, a test run waits on git, not CPU. */
+const SHARDS_DEFAULT_MAX = 4;
+/** CPUs a shard is given by default: its bun test, the git children it starts, and the forge it boots. */
+const CPUS_PER_SHARD = 3;
+
+/** Shards per check by default: `min(4, cpus)`, at least one. 80 CPUs give 4; 2 give 2. */
+export function shardsForCpus(cpus: number): number {
+  const n = Math.floor(cpus);
+  return Number.isFinite(n) ? Math.max(1, Math.min(SHARDS_DEFAULT_MAX, n)) : 1;
+}
+
+/**
+ * Checks at once by default: `floor(cpus / (shards × 3))`, held to 1–16, so
+ * every check's shards have three CPUs each. 80 CPUs: 4 shards, 80 / 12 = 6
+ * checks; 16 CPUs: 1; 4 CPUs: 4 shards, 4 / 12 → 1 (#2549).
+ */
+export function checksForCpus(cpus: number, shards = shardsForCpus(cpus)): number {
+  const n = Math.floor(cpus / (shards * CPUS_PER_SHARD));
+  return Number.isFinite(n) ? Math.max(1, Math.min(16, n)) : 1;
+}
+
+let cpusForTest: number | undefined;
+
+/**
+ * A test's CPU count in place of the pod's, so a default sized from it is
+ * the same on a laptop and an 80-core runner; `undefined` reads the pod again.
+ */
+export function provideCpusForTest(cpus: number | undefined): void {
+  cpusForTest = cpus;
+}
+
+/**
+ * The pod's CPU limit: cgroup v2 `cpu.max` ("quota period", in µs), rounded
+ * down and never below one, else `os.availableParallelism()` — "max" (no
+ * quota), an unreadable file or anything not two numbers falls back. Never
+ * more than the machine has.
+ */
+export function cpuLimit(file = "/sys/fs/cgroup/cpu.max"): number {
+  if (cpusForTest !== undefined) return cpusForTest;
+  const machine = availableParallelism();
+  try {
+    const [quota, period] = readFileSync(file, "utf8").trim().split(/\s+/).map(Number);
+    if (quota !== undefined && period !== undefined && quota > 0 && period > 0)
+      return Math.max(1, Math.min(machine, Math.floor(quota / period)));
+  } catch {
+    // No cgroup v2 CPU controller here: the machine's count.
+  }
+  return machine;
 }
 
 const GIB = 1024 ** 3;
@@ -215,10 +277,18 @@ export function egressSetting(db: Database): "enforce" | "report" {
   return capacityValue(db, "cells.egress") === "report" ? "report" : "enforce";
 }
 
-/** What a check's commands and a crew shell are told: the shard count, when one is set. */
-export function capacityEnv(db: Database): Record<string, string> {
-  const shards = capacityValue(db, "checks.shards");
-  return shards === "" ? {} : { FORGE_CHECK_SHARDS: shards };
+/**
+ * What a check's commands and a crew shell are told: the shard count in
+ * force. An admin's value or the environment's is passed as it is; the
+ * default is sized from `cpus` — a check passes what its cell holds, so a
+ * small cell is never told the pod's count.
+ */
+export function capacityEnv(db: Database, cpus?: number): Record<string, string> {
+  const shards =
+    storedCapacity(db, "checks.shards") ??
+    explicitDefault("checks.shards") ??
+    String(shardsForCpus(cpus ?? cpuLimit()));
+  return { FORGE_CHECK_SHARDS: shards };
 }
 
 export interface CapacityChange {

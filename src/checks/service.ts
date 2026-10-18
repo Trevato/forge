@@ -61,6 +61,7 @@ import { appendRunLog } from "../runs/log.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
+import { workerCpus } from "../../scripts/shards.ts";
 import { accountActive } from "../core/accounts.ts";
 import { childEnv, runStep } from "../apps/process.ts";
 import { noteReached } from "../apps/egress_report.ts";
@@ -68,6 +69,7 @@ import {
   capacityCount,
   noteBooted,
   capacityEnv,
+  cpuLimit,
   egressSetting,
 } from "../core/capacity.ts";
 import {
@@ -241,9 +243,10 @@ export function provideChecksForTest(app: App, handle: ChecksHandle): void {
 export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
   // Read on every pick (`core/capacity.ts`): an admin's change is honoured
   // by the next check, not the next boot. `concurrency` is the boot default.
-  noteBooted(app.db, "checks.concurrency", String(options.concurrency ?? 1));
+  const booted = options.concurrency ?? 1;
+  noteBooted(app.db, "checks.concurrency", String(booted));
   const capacity = (): number =>
-    capacityCount(app.db, "checks.concurrency", options.concurrency ?? 1);
+    capacityCount(app.db, "checks.concurrency", booted);
   const gate = options.gate ?? new Gate(capacity());
   const placement = options.placement ?? placementFromEnv();
   /** Full gates on land in flight: not slots in the queue, but stopped with it. */
@@ -788,9 +791,11 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         }
       : undefined;
     try {
+      const cellCpus = resolveLimits("step", manifest.limits).cpus;
       const env = childEnv({
-        // The shard count an admin set (`core/capacity.ts`), never the pod's.
-        ...capacityEnv(app.db),
+        // The shard count an admin set (`core/capacity.ts`), else the
+        // default sized to what this check's cell holds, never the pod's.
+        ...capacityEnv(app.db, workerCpus(cpuLimit(), cellCpus)),
         CI: "1",
         FORGE_URL: options.forgeUrl,
         FORGE_CHECK: run.id,
@@ -798,7 +803,7 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
         FORGE_CHECK_IMPACT: IMPACT_FILE,
         // The cell's CPU limit, which `availableParallelism()` may not
         // report inside it; the shard count follows this (#2257).
-        FORGE_CELL_CPUS: String(resolveLimits("step", manifest.limits).cpus),
+        FORGE_CELL_CPUS: String(cellCpus),
         ...(base === undefined
           ? {}
           : {
