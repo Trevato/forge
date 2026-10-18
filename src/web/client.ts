@@ -305,9 +305,22 @@ export const studioRunJs = /* js */ `
     fetch(location.href, { credentials: 'same-origin', headers: { accept: 'text/html' } })
       .then(function (r) { return r.ok ? r.text() : ''; })
       .then(function (body) {
-        var next = new DOMParser().parseFromString(body, 'text/html').getElementById('check-steps');
+        var doc = new DOMParser().parseFromString(body, 'text/html');
+        var next = doc.getElementById('check-steps');
         var now = document.getElementById('check-steps');
         if (next && now && now.parentNode) now.parentNode.replaceChild(next, now);
+        // The pin slot is only patched, never replaced: a keyboard user
+        // reading a failure keeps focus and scroll.
+        var wrap = document.getElementById('check-progress'), pw = doc.getElementById('check-progress');
+        var slot = document.getElementById('check-pins'), ps = doc.getElementById('check-pins');
+        if (wrap && pw) wrap.setAttribute('data-state', pw.getAttribute('data-state') || '');
+        if (slot && ps) {
+          if (slot.innerHTML !== ps.innerHTML) slot.innerHTML = ps.innerHTML;
+          ['role', 'tabindex', 'aria-label'].forEach(function (a) {
+            var v = ps.getAttribute(a);
+            if (v === null) slot.removeAttribute(a); else if (slot.getAttribute(a) !== v) slot.setAttribute(a, v);
+          });
+        }
       })
       .catch(function () {});
   }
@@ -362,7 +375,7 @@ export const studioRunJs = /* js */ `
     var text = event.data;
     try { var parsed = JSON.parse(text); if (typeof parsed === 'string') text = parsed; } catch (err) {}
     add(draw(text));
-    if (/^(\\$ |test-shards: |\u2500\u2500 shard )/.test(text)) stepsSoon();
+    if (/^(\\$ |test-shards: |\\(fail\\) |\u2500\u2500 shard )/.test(text)) stepsSoon();
   });
   source.addEventListener('done', function (event) {
     source.close();

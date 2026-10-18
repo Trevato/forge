@@ -128,6 +128,28 @@ describe("the terminal's step line", () => {
     ).toBe("install passed · typecheck passed · tests failed");
   });
 
+  test("carries the tests row and the pinned failure names, withheld with the rest", () => {
+    const d = mkdtempSync(join(tmpdir(), "forge-steps-"));
+    for (const l of [
+      INSTALL,
+      CHECK,
+      "test-shards: 9 files in 3 shards",
+      "── shard 1/3: test/a.test.ts test/b.test.ts",
+      "error: boom",
+      "(fail) b breaks",
+      " 5 pass",
+      " 1 fail",
+      "── shard 1/3 done (exit 1, 2.0s)",
+    ])
+      appendRunLog(d, "r2", l);
+    const r = { ...run, id: "r2" } as Run;
+    expect(stepsLine(d, { state: "running", run: r }, true)).toBe(
+      "install passed · typecheck passed · tests running · tests 2 of 9 files started · 5 passed, 1 failed · failing: b breaks",
+    );
+    expect(stepsLine(d, { state: "running", run: r }, false)).toBe("");
+    rmSync(d, { recursive: true, force: true });
+  });
+
   test("says nothing to a reader who may not read the log, nor for a deploy", () => {
     expect(stepsLine(dir, { state: "running", run }, false)).toBe("");
     expect(

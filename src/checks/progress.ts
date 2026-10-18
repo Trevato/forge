@@ -9,6 +9,7 @@
 
 import type { CheckSummary } from "../core/runs.ts";
 import { checkSteps, stepsWords } from "./summary.ts";
+import { parseTestsRow, testsRowLine } from "./tests-row.ts";
 import { readRunLog } from "../runs/log.ts";
 
 export type CheckProgress = {
@@ -106,5 +107,7 @@ export function stepsLine(
   const run = check.run;
   if (!mayReadLog || run === null || run.kind !== "check") return "";
   const { lines, truncated } = readRunLog(dataDir, run.id);
-  return stepsWords(checkSteps({ ...run, state: check.state === "none" ? run.state : check.state }, lines, truncated));
+  const steps = stepsWords(checkSteps({ ...run, state: check.state === "none" ? run.state : check.state }, lines, truncated));
+  const tests = testsRowLine(parseTestsRow(lines));
+  return tests === "" ? steps : `${steps} · ${tests}`;
 }

@@ -877,6 +877,14 @@ form.inline { display: inline; margin-left: auto; }
 .checks-line .now { display: inline-flex; align-items: center; gap: 4px; color: var(--attn); }
 .check-steps { list-style: none; margin: 12px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .check-steps li { display: flex; justify-content: space-between; gap: 8px; padding: 8px 12px; min-height: 2.5em; border: 1px solid var(--border); border-radius: var(--radius); }
+.tests-bar { display: block; width: 100%; height: 8px; margin-top: 8px; }
+.tests-words { margin: 4px 0 0; min-height: 1.4em; }
+/* Reserved only while the run is open: pins arriving never move the log. */
+.pinned-slot { max-height: 9em; overflow-y: auto; }
+.check-progress[data-state="queued"] .pinned-slot, .check-progress[data-state="running"] .pinned-slot { height: 9em; }
+.pinned-failures { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.pinned-failures li { padding: 6px 12px; border: 1px solid var(--danger); border-radius: var(--radius); }
+.pinned-failures pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.85em; }
 @media (max-width: 480px) { .check-steps { grid-template-columns: minmax(0, 1fr); } }
 .check-steps .step-state { color: var(--faint); }
 .check-steps [data-state="ok"] .step-state { color: var(--success); }

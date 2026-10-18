@@ -9,6 +9,7 @@
  */
 
 import { checkSteps, stepWord } from "../../checks/summary.ts";
+import { parseTestsRow, testsRowWords } from "../../checks/tests-row.ts";
 import { directionNote } from "../../crew/direct.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
 import { getAppByRepo } from "../../core/apps.ts";
@@ -25,7 +26,7 @@ import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
 import { studioRunJs } from "../client.ts";
-import { html, when, type Html } from "../html.ts";
+import { html, raw, when, type Html } from "../html.ts";
 import { runLine } from "../describe.ts";
 import { page } from "../layout.ts";
 import { btn, sha } from "../ui.ts";
@@ -249,15 +250,53 @@ export async function runView(
       // Progress is read from the log, so a reader the log is hidden from
       // gets no rows either.
       run.kind === "check" && !logHidden,
-      () => html`<ol class="check-steps" id="check-steps" role="status" aria-live="polite">
-        ${checkSteps(run, lines, truncated).map(
-          (s) =>
-            html`<li data-step="${s.name}" data-state="${s.state}">
-              <span class="step-name">${s.name}</span>
-              <span class="step-state">${stepWord(s.state)}</span>
-            </li>`,
-        )}
-      </ol>`,
+      () => {
+        const steps = checkSteps(run, lines, truncated);
+        const row = parseTestsRow(lines);
+        const words = testsRowWords(row);
+        const known = row.of !== undefined && row.started !== undefined && row.started <= row.of;
+        const open = run.state === "queued" || run.state === "running";
+        const running = row.running ?? [];
+        const runningWords =
+          running.length === 0
+            ? ""
+            : `running ${running.slice(0, 2).join(", ")}${running.length > 2 ? ` +${running.length - 2}` : ""}`;
+        // While the run is open every part is rendered at a fixed size (the
+        // pin slot by CSS), so the log below never moves as numbers and pins
+        // arrive; a run that has ended reserves nothing.
+        return html`<div class="check-progress" id="check-progress" data-state="${run.state}">
+          <div id="check-steps" role="status" aria-live="polite">
+            <ol class="check-steps">
+              ${steps.map(
+                (s) =>
+                  html`<li data-step="${s.name}" data-state="${s.state}">
+                    <span class="step-name">${s.name}</span>
+                    <span class="step-state">${stepWord(s.state)}</span>
+                  </li>`,
+              )}
+            </ol>
+            ${known
+              ? html`<progress class="tests-bar" aria-label="Test files started" max="${row.of ?? 0}" value="${row.started ?? 0}"></progress>`
+              : open
+                ? html`<progress class="tests-bar" aria-label="Test files started"></progress>`
+                : ""}
+            <p class="tests-words small muted">${[words, runningWords].filter((w) => w !== "").join(" · ")}</p>
+          </div>
+          <div class="pinned-slot" id="check-pins"${row.failures.length > 0 ? raw(' role="region" tabindex="0" aria-label="Failed tests"') : ""}>
+            ${when(
+              row.failures.length > 0,
+              () => html`<ul class="pinned-failures">
+                ${row.failures.map(
+                  (f) => html`<li><strong>${f.name}</strong>${when(
+                    f.lines.length > 0,
+                    () => html`<pre>${f.lines.join("\n")}</pre>`,
+                  )}</li>`,
+                )}
+              </ul>`,
+            )}
+          </div>
+        </div>`;
+      },
     )}
     <div class="run-live" id="run-live" data-state="${run.state}">
       ${when(!logHidden, () => logBox({

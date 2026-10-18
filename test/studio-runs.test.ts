@@ -688,6 +688,76 @@ describe("working: a run's own page in the studio", () => {
     ]);
   });
 
+  test("a running check's page always has the bar and words, pins the failure outside the live region, and hides all from a reader without the log", async () => {
+    const mk = (lines: string[]) => {
+      const r = createRun(app.db, {
+        repoId: repo.id,
+        kind: "check",
+        commitOid: "c740479",
+        reason: "push",
+      });
+      claimRun(app.db, r.id);
+      for (const l of lines) appendRunLog(app.config.dataDir, r.id, l);
+      return r;
+    };
+    const run = mk([
+      "$ bun install",
+      "$ gate && tsc && bun scripts/test-shards.ts",
+      "test-shards: 9 files in 3 shards",
+      "── shard 1/3: test/a.test.ts",
+      "error: <b>boom</b>",
+      "(fail) a breaks",
+      " 4 pass",
+      " 1 fail",
+      "── shard 1/3 done (exit 1, 2.0s)",
+      "── shard 2/3: test/b.test.ts",
+    ]);
+    const page = await (await get(`/alice/engine/runs/${run.id}`, writerCookie)).text();
+    expect(page).toContain('<progress class="tests-bar" aria-label="Test files started" max="9" value="2"');
+    expect(page).toContain("2 of 9 files started · 4 passed, 1 failed · running test/b.test.ts");
+    expect(page).toContain("<strong>a breaks</strong>");
+    expect(page).toContain("error: &lt;b&gt;boom&lt;/b&gt;");
+    // The pins sit after the live region closes.
+    const live = page.indexOf('role="status"');
+    expect(live).toBeGreaterThan(-1);
+    expect(page.indexOf("pinned-failures")).toBeGreaterThan(page.indexOf("tests-words"));
+    expect(page.slice(live, page.indexOf("pinned-slot"))).not.toContain("a breaks");
+    // The replaced element (#check-steps) closes before the pin slot, which is
+    // patched in place so focus and scroll survive a refetch.
+    const at = page.indexOf('id="check-steps"');
+    expect(page.slice(at, page.indexOf('id="check-pins"'))).toContain("</div>");
+    expect(page.slice(at, page.indexOf('id="check-pins"')).match(/<div/g)?.length).toBe(
+      page.slice(at, page.indexOf('id="check-pins"')).match(/<\/div>/g)?.length,
+    );
+    // Nothing logged yet: the bar and the line are still there, empty.
+    const fresh = mk([]);
+    const quiet = await (await get(`/alice/engine/runs/${fresh.id}`, writerCookie)).text();
+    expect(quiet).toContain('<progress class="tests-bar" aria-label="Test files started"></progress>');
+    const block = quiet.slice(quiet.indexOf('id="check-steps"'), quiet.indexOf('id="run-live"'));
+    expect(block).not.toContain("value=");
+    expect(block).not.toContain("tabindex");
+    expect(block).not.toContain('role="region"');
+    // With pins, the slot is focusable and labelled; the live region holds no pin.
+    expect(page).toContain('class="pinned-slot" id="check-pins" role="region" tabindex="0" aria-label="Failed tests"');
+    expect(page.slice(live, page.indexOf("</div>", live))).toContain("tests-words");
+    expect(quiet).toContain('class="tests-words');
+    // A finished run with no known count shows no bar at all.
+    const done = mk(["$ bun install"]);
+    finishRun(app.db, done.id, { state: "failed", summary: "x" });
+    const ended = await (await get(`/alice/engine/runs/${done.id}`, writerCookie)).text();
+    expect(ended).toContain("check-progress");
+    expect(ended).not.toContain("<progress");
+    // A reader the log is hidden from gets none of it.
+    const plain = await createRepo(app, alice, { name: "plainb", visibility: "public", description: "x" });
+    if (!plain.ok) throw new Error(String(plain.error));
+    const hidden = createRun(app.db, { repoId: plain.value.id, kind: "check", commitOid: "c740479", reason: "push" });
+    claimRun(app.db, hidden.id);
+    appendRunLog(app.config.dataDir, hidden.id, "(fail) secret");
+    const hid = await (await get(`/alice/plainb/runs/${hidden.id}`, readerCookie)).text();
+    expect(hid).not.toContain("tests-bar");
+    expect(hid).not.toContain("secret");
+  });
+
   test("the page re-reads its rows as the run goes, and a reader who cannot see the log gets none", async () => {
     const script = await (
       await get(
@@ -705,6 +775,8 @@ describe("working: a run's own page in the studio", () => {
       )
     ).text();
     expect(script).toContain("getElementById('check-steps')");
+    expect(script).toContain("\\(fail\\) ");
+    expect(script).toContain("['role', 'tabindex', 'aria-label']");
     const plain = await createRepo(app, alice, {
       name: "plain",
       visibility: "public",
