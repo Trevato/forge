@@ -32,6 +32,7 @@ import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
 import { passkeyFields } from "./helpers/passkey.ts";
+import { ADMIN_TOKEN_WORDS } from "../src/core/tokens.ts";
 
 quietLogs();
 
@@ -239,6 +240,26 @@ describe("the everyday account", () => {
     expect(await page(await signIn("kim"), "/settings/tokens")).not.toContain(
       "I mean to give this token admin",
     );
+  });
+
+  test("the token page keeps a member on the page with the sentence for admin scope, and makes rw", async () => {
+    const kim = await signIn("kim");
+    const count = () =>
+      (
+        app.db
+          .query("SELECT COUNT(*) AS n FROM token WHERE user_id = ?1")
+          .get(getUserByName(app.db, "kim")!.id) as { n: number }
+      ).n;
+    const before = count();
+    expect(await page(kim, "/settings/tokens")).not.toContain('value="admin"');
+    const denied = await post(kim, "/settings/tokens", { name: "big", scope: "admin" });
+    expect(denied.status).toBe(303);
+    expect(new URL(denied.headers.get("location")!, servers.url).pathname).toBe("/settings/tokens");
+    const flash = (denied.headers.get("set-cookie") ?? "").split(";")[0]!;
+    expect(decodeURIComponent(flash.replace(/\+/g, " "))).toContain(ADMIN_TOKEN_WORDS);
+    expect(count()).toBe(before);
+    await post(kim, "/settings/tokens", { name: "small", scope: "rw" });
+    expect(count()).toBe(before + 1);
   });
 
   test("from a page's session, the API refuses an admin's token without adminConfirm", async () => {

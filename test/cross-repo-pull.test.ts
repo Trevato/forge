@@ -7,6 +7,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
+import { tokenFor } from "./helpers/tokens.ts";
 
 const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "X",
@@ -56,18 +57,7 @@ describe("cross-repo pull requests (fork → upstream)", () => {
       redirect: "manual",
     });
     const cookie = (signup.headers.get("set-cookie") ?? "").split(";")[0]!;
-    const token = await fetch(`${base}/api/v1/tokens`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ adminConfirm: true,
-        username,
-        password: "cross-repo-pass",
-        name: "c",
-        scope: "admin",
-      }),
-    })
-      .then((r) => r.json())
-      .then((j) => (j as { token: string }).token);
+    const token = tokenFor(app, username, "admin", "c");
     return { token, cookie };
   }
 

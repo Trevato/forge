@@ -26,6 +26,7 @@ import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { seedAdmin } from "./helpers/admin.ts";
+import { tokenFor } from "./helpers/tokens.ts";
 
 const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "O",
@@ -218,19 +219,9 @@ describe("orgs over HTTP", () => {
     });
     return tokenOf(username);
   }
-  async function tokenOf(username: string): Promise<string> {
-    return fetch(`${base}/api/v1/tokens`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ adminConfirm: true,
-        username,
-        password: "org-http-pass",
-        name: "c",
-        scope: "admin",
-      }),
-    })
-      .then((r) => r.json())
-      .then((j) => (j as { token: string }).token);
+  function tokenOf(username: string): string {
+    // An account that could not be made (a reserved name) has no token, as before.
+    return getUserByName(app.db, username) ? tokenFor(app, username, "admin", "c") : "";
   }
 
   beforeAll(async () => {

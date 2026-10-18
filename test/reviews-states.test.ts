@@ -6,6 +6,7 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { listEvents } from "../src/core/events.ts";
 import { seedAdmin } from "./helpers/admin.ts";
+import { tokenFor } from "./helpers/tokens.ts";
 
 /**
  * Review states: the verdict that gates a merge.
@@ -56,19 +57,7 @@ describe("review states, and the merge they gate", () => {
   }
 
   async function mintToken(username: string): Promise<void> {
-    const token = await read<{ token: string }>(
-      await fetch(`${base}/api/v1/tokens`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ adminConfirm: true,
-          username,
-          password: PASSWORD,
-          name: "t",
-          scope: "admin",
-        }),
-      }),
-    );
-    tokens[username] = token.token;
+    tokens[username] = tokenFor(app, username, "admin");
   }
 
   /** The pull number of a fresh branch with one file changed on it. */

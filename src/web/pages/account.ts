@@ -31,7 +31,7 @@ import { ABILITIES, roleOf, rowOf, type Ability } from "../../core/roles.ts";
 import { listKeys } from "../../core/keys.ts";
 import { endAccountSession } from "../../actions/signins.ts";
 import { listSessions, type SessionInfo } from "../../core/sessions.ts";
-import { listTokens, type TokenScope } from "../../core/tokens.ts";
+import { ADMIN_TOKEN_WORDS, listTokens, type TokenScope } from "../../core/tokens.ts";
 import type { CommitEmail, User } from "../../core/users.ts";
 import { cookieValue, type Ctx } from "../../http/context.ts";
 import { sshCommand } from "../../ssh/command.ts";
@@ -539,7 +539,9 @@ function tokensView(ctx: Ctx): Html {
           options: [
             { value: "rw", label: "read + write — clone, push, open issues" },
             { value: "ro", label: "read only — clone and browse" },
-            { value: "admin", label: "admin — everything, including settings" },
+            ...(ctx.auth.user?.isAdmin
+              ? [{ value: "admin", label: "admin — everything, including settings" }]
+              : []),
           ],
           hint: "A token can never mint another token, whatever its scope.",
         })}
@@ -594,6 +596,8 @@ export async function tokenCreate(ctx: Ctx): Promise<Response> {
     field(form, "name").trim() || "token",
     chosen,
   );
+  if (!minted.ok && minted.error === "forbidden")
+    return flashTo(ctx, "/settings/tokens", { tone: "danger", message: ADMIN_TOKEN_WORDS });
   if (!minted.ok) return signInFirst(ctx);
   // Post-redirect-get: the secret rides a one-shot flash, so a refresh shows
   // the list rather than minting a second token.

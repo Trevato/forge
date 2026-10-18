@@ -16,6 +16,7 @@ import {
 } from "./fake-origin.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
+import { tokenFor } from "./helpers/tokens.ts";
 
 /**
  * The fork flow: grab a repository you cannot push to, branch, edit, and
@@ -100,19 +101,7 @@ describe("the fork flow", () => {
         password: PASSWORD,
       }),
     });
-    const token = await read<{ token: string }>(
-      await fetch(`${server.url}/api/v1/tokens`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ adminConfirm: true,
-          username,
-          password: PASSWORD,
-          name: "t",
-          scope: "admin",
-        }),
-      }),
-    );
-    return token.token;
+    return tokenFor(server === originServers ? originApp : app, username, "admin");
   }
 
   /** Seed a public repo on the upstream forge with one file on `main`. */

@@ -19,6 +19,7 @@ import { serve, type Servers } from "../src/http/server.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
+import { tokenFor } from "./helpers/tokens.ts";
 
 const gitEnv = gitClientEnv({
   GIT_AUTHOR_NAME: "A",
@@ -98,12 +99,7 @@ describe("parity: full control through actions and the API", () => {
     };
   }
 
-  const mint = async (user: string, scope: string) =>
-    (
-      await call("POST", "/api/v1/tokens", {
-        body: { adminConfirm: true, username: user, password: PASS, name: scope, scope },
-      })
-    ).json.token as string;
+  const mint = async (user: string, scope: "ro" | "rw" | "admin") => tokenFor(app, user, scope, scope);
 
   const kinds = () =>
     listEvents(app.db, { limit: 1000 })

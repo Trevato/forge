@@ -17,6 +17,7 @@ import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { startCrew, type CrewHandle } from "../src/crew/dispatch.ts";
 import { seedAdmin } from "./helpers/admin.ts";
+import { tokenFor } from "./helpers/tokens.ts";
 
 /** Read from an SSE body until `predicate(buffer)` holds or we time out —
  * never to a "done" that #284's still-live stream no longer sends. */
@@ -455,20 +456,7 @@ describe("apps, runs and the crew over the API", () => {
       },
       null,
     );
-    const mallory = (
-      (await (
-        await post(
-          "/api/v1/tokens",
-          {
-            username: "mallory",
-            password: "a-good-passphrase",
-            name: "admin",
-            scope: "admin",
-          },
-          null,
-        )
-      ).json()) as { token: string }
-    ).token;
+    const mallory = tokenFor(app, "mallory", "admin", "admin");
     expect((await api(env, { token: mallory })).status).toBe(404);
     expect((await put("GREETING", "x", mallory)).status).toBe(404);
     expect(

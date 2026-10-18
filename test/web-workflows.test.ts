@@ -42,6 +42,7 @@ import { quietLogs } from "./helpers/globals.ts";
 import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
 import { proveAll } from "./helpers/verified.ts";
 import { promote } from "./helpers/members.ts";
+import { tokenFor } from "./helpers/tokens.ts";
 
 quietLogs();
 
@@ -140,17 +141,7 @@ describe("fork at the origin, and propose a change through it", () => {
     });
     proveAll(upApp);
     promote(upApp.db);
-    const made = await fetch(`${upServers.url}/api/v1/tokens`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ adminConfirm: true,
-        username,
-        password: PASSWORD,
-        name: "t",
-        scope: "admin",
-      }),
-    });
-    return ((await made.json()) as { token: string }).token;
+    return tokenFor(upApp, username, "admin");
   }
 
   const upstream = (
@@ -577,17 +568,7 @@ describe("verdicts, threads, and the gate they open", () => {
     cookies[username] = (signed.headers.get("set-cookie") ?? "").split(";")[0]!;
     proveAll(app);
     promote(app.db);
-    const token = await fetch(`${base}/api/v1/tokens`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ adminConfirm: true,
-        username,
-        password: PASSWORD,
-        name: "t",
-        scope: "admin",
-      }),
-    });
-    tokens[username] = ((await token.json()) as { token: string }).token;
+    tokens[username] = tokenFor(app, username, "admin");
   }
 
   /** The first line of the diff, as a review anchor form would name it. */

@@ -207,9 +207,11 @@ export function createToken(
   name: string,
   scope: TokenScope,
   options: { expiresAt?: string } = {},
-): Result<{ id: string; token: string }, "unauthorized"> {
+): Result<{ id: string; token: string }, "unauthorized" | "forbidden"> {
   const user = requireUser(actor);
   if (!user.ok) return user;
+  // A token that acts as admin is for an admin to hold; ro and rw are anyone's.
+  if (scope === "admin" && !user.value.isAdmin) return err("forbidden");
   const minted = mintToken(app.db, user.value.id, name, scope, options);
   app.bus.append({
     kind: "token.created",

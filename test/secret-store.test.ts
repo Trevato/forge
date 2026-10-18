@@ -20,6 +20,7 @@ import { createUser, type User } from "../src/core/users.ts";
 import { open, seal } from "../src/kernel/secret.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { quietLogs } from "./helpers/globals.ts";
+import { tokenFor } from "./helpers/tokens.ts";
 
 quietLogs();
 
@@ -49,21 +50,7 @@ describe("forge-level secrets", () => {
         "content-type": "application/json",
       },
     });
-  const mint = async (username: string): Promise<string> =>
-    (
-      (await (
-        await fetch(`${servers.url}/api/v1/tokens`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ adminConfirm: true,
-            username,
-            password: "a-good-passphrase",
-            name: "t",
-            scope: "admin",
-          }),
-        })
-      ).json()) as { token: string }
-    ).token;
+  const mint = async (username: string): Promise<string> => tokenFor(app, username, "admin");
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-secret-store-"));

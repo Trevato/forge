@@ -221,7 +221,7 @@ import {
 } from "../core/reviews.ts";
 import { createSession } from "../core/sessions.ts";
 import { mintProposal } from "../actions/proposal_tokens.ts";
-import { listTokens } from "../core/tokens.ts";
+import { ADMIN_TOKEN_WORDS, listTokens } from "../core/tokens.ts";
 import {
   headInNamespace,
   PROPOSAL_BODY_MAX,
@@ -1854,6 +1854,8 @@ export function apiRoutes(router: Router<Handler>): void {
       str(input.name) || "unnamed",
       scope,
     );
+    if (!minted.ok && minted.error === "forbidden")
+      return apiError("forbidden", 403, ADMIN_TOKEN_WORDS);
     if (!minted.ok) return unauthorized();
     return json(minted.value, 201);
   });

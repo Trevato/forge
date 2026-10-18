@@ -13,6 +13,9 @@ import { getUserById, isActive, type User } from "./users.ts";
 
 export type TokenScope = "ro" | "rw" | "admin";
 
+/** What a non-admin is told when they ask for a token that acts as admin. */
+export const ADMIN_TOKEN_WORDS = "Only an admin can make a token with admin scope; ro and rw are open to you.";
+
 const rank: Record<TokenScope, number> = { ro: 0, rw: 1, admin: 2 };
 
 export function scopeAllows(held: TokenScope, needed: TokenScope): boolean {

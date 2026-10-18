@@ -114,7 +114,10 @@ forge, at the sign-in limits (429 past them). The account made is in the audit
 as `user.created` `via: first-admin`, and the sign-in page links `/first-admin`
 only while the forge has no admin. Later tokens come from Settings → Tokens, or
 `POST /api/v1/tokens` from a signed-in session with `{"name", "scope"}`; the
-admin adds `"adminConfirm": true` to mean a token that acts as admin.
+admin adds `"adminConfirm": true` to mean a token that acts as admin. `ro` and
+`rw` are open to anyone; a member asking for `admin` gets 403 ("Only an admin
+can make a token with admin scope; ro and rw are open to you."), and the
+Settings form offers `admin` only to an admin.
 
 The same token spawns a child forge (`dryRun` is true unless `false`, so
 without it you get the plan and nothing is made). The child's admin comes
