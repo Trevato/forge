@@ -9,6 +9,7 @@
  */
 
 import { DOMAINS } from "../../src/kernel/domains.ts";
+import { UNREACHABLE, clean, linesOf, watchPolls, type Poll } from "./watch.ts";
 
 export interface DrillRun {
   domain: string;
@@ -27,49 +28,16 @@ export interface DrillRun {
 const SEEN_MAX = 8_000;
 const DEFAULT_CEILING_MS = 3_600_000;
 
-/** C0 and C1 control characters out (tab stays): the forge's words never drive the terminal. */
-export const clean = (s: string): string => s.replace(/[\x00-\x08\x0a-\x1f\x7f-\x9f]/g, "");
+export { clean };
 
-/** Every string in a JSON value, or the text's own lines when it is not JSON. */
-function linesOf(text: string, contentType: string): string[] {
-  return rawLinesOf(text, contentType).map(clean).filter((l) => l.trim() !== "");
-}
-
-function rawLinesOf(text: string, contentType: string): string[] {
-  if (contentType.includes("json")) {
-    try {
-      const out: string[] = [];
-      const walk = (v: unknown): void => {
-        if (typeof v === "string") out.push(v);
-        else if (Array.isArray(v)) v.forEach(walk);
-        else if (v && typeof v === "object") Object.values(v).forEach(walk);
-      };
-      walk(JSON.parse(text));
-      return out;
-    } catch {
-      /* fall through to plain lines */
-    }
-  }
-  return text
-    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<[^>]*>/g, "\n")
-    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"').replace(/&#0?39;/g, "'")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l !== "");
-}
-
-interface Look {
-  healthy: boolean;
-  health: string[];
-  board: string[];
-}
-
-async function look(forge: string, token: string): Promise<Look> {
+/**
+ * One look at the forge: healthy only when `/api/v1/health` reports ok and `/`
+ * answers; what each said is kept under `health` and `board`.
+ */
+export function forgePoll(forge: string, token: string, fetchIt: typeof fetch = fetch): () => Promise<Poll> {
   const get = async (path: string): Promise<{ ok: boolean; lines: string[]; json: unknown }> => {
     try {
-      const res = await fetch(`${forge}${path}`, {
+      const res = await fetchIt(`${forge}${path}`, {
         headers: { authorization: `Bearer ${token}` },
         redirect: "manual",
         signal: AbortSignal.timeout(5_000),
@@ -82,16 +50,15 @@ async function look(forge: string, token: string): Promise<Look> {
       }
       return { ok: res.status < 400, lines: linesOf(text, type), json };
     } catch {
-      return { ok: false, lines: [], json: null };
+      return { ok: false, lines: [UNREACHABLE], json: null };
     }
   };
-  const [h, b] = await Promise.all([get("/api/v1/health"), get("/")]);
-  const reported = (h.json as { ok?: unknown } | null)?.ok === true;
-  return { healthy: h.ok && b.ok && reported, health: h.lines, board: b.lines };
+  return async () => {
+    const [h, b] = await Promise.all([get("/api/v1/health"), get("/")]);
+    const reported = (h.json as { ok?: unknown } | null)?.ok === true;
+    return { healthy: h.ok && b.ok && reported, said: { health: h.lines, board: b.lines } };
+  };
 }
-
-/** A line with its numbers blanked, so a clock or a counter is not a new line. */
-const shape = (l: string): string => l.replace(/\d+/g, "#");
 
 const cap = (lines: Iterable<string>): string => [...lines].join("\n").slice(0, SEEN_MAX);
 
@@ -116,29 +83,24 @@ export async function runDrill(run: DrillRun): Promise<number> {
   run.say(`The forge should be back within ${domain.backMinutes} minutes. Press Enter when you have caused it.`);
   await run.enter();
 
-  const started = now();
-  const health = new Map<string, string>();
-  const board = new Map<string, string>();
-  let sawDown = false;
-  for (;;) {
-    const seen = await look(run.forge, run.token);
-    if (seen.healthy && sawDown) break;
-    if (!seen.healthy) {
-      sawDown = true;
-      for (const l of seen.health) if (!health.has(shape(l))) { health.set(shape(l), l); run.say(`health: ${l}`); }
-      for (const l of seen.board) if (!board.has(shape(l))) { board.set(shape(l), l); run.say(`board: ${l}`); }
-    }
-    if (now() - started >= ceilingMs) {
-      const ceilingS = Math.round(ceilingMs / 1000);
-      run.say(`The forge did not come back within the ceiling of ${ceilingS}s; nothing was posted.`);
-      run.say(JSON.stringify({ domain: domain.key, backSeconds: null, posted: false, ceilingSeconds: ceilingS }));
-      return 0;
-    }
-    await sleep(intervalMs);
+  const watched = await watchPolls({
+    poll: forgePoll(run.forge, run.token),
+    sleep,
+    limit: Infinity,
+    ceilingMs,
+    intervalMs,
+    now,
+    onLine: (l, source) => run.say(`${source}: ${l}`),
+  });
+  if (watched.timeout) {
+    const ceilingS = Math.round(ceilingMs / 1000);
+    run.say(`The forge did not come back within the ceiling of ${ceilingS}s; nothing was posted.`);
+    run.say(JSON.stringify({ domain: domain.key, backSeconds: null, posted: false, ceilingSeconds: ceilingS }));
+    return 0;
   }
-
-  const backSeconds = Math.max(0, Math.round((now() - started) / 1000));
-  const body = { domain: domain.key, seen: { health: cap(health.values()), board: cap(board.values()) }, backSeconds };
+  const { health = [], board = [] } = watched.said;
+  const backSeconds = Math.max(0, Math.round(watched.healthyAt / 1000));
+  const body = { domain: domain.key, seen: { health: cap(health), board: cap(board) }, backSeconds };
   let res: Response;
   try {
     res = await fetch(`${run.forge}/api/v1/drills`, {
