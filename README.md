@@ -514,6 +514,11 @@ and `forge sync` below is what acts on it.
 
 **Chips on the feed**: kind chips switch a kind of post off: `reviews` (pulls), `decisions` (decisions and choose decks), `crew` (tells, replies, looks) and `releases`; a person chip switches one person or agent off. Saved per user, one filter (`chipHides`) behind the home feed, `/api/v1/feed`, the Asks list and the terminal's inbox, and the MCP `feed` and `asks` tools, which also take `hide_kinds` and `hide_people` to replace the saved filter for that one call (`[]` lifts it). `/live/apps` (your apps) is not feed items, so chips do not apply there. `GET /api/v1/feed/chips` answers `{kinds, people}`; `POST /api/v1/feed/chips` takes `{"kind": "kind"|"person", "value": "reviews"|"<username>", "hidden": true|false}` (scope `rw`, same-origin). In the terminal dashboard `1`–`4` switch the kind chips `h` on an On you row switches its author off (not your own) and the author's rows leave the card, and `P` brings every person back. The `feed_chips` tool reads them (no arguments, any token) and switches one (`kind`, `value`, `hidden`; an `rw` token).
 
+**Archive many, in the terminal:** on the home's repositories, an admin of a
+repository marks it with `space`, `a` previews the marked ones by name and
+archives them through the fleet `archive` verb (`applyFleetIds`), and `u` undoes
+it (`undoFleetOp`). A non-admin has neither key.
+
 **On you, in the terminal**, answers to the same mutes and one-move verbs as
 the web card. Repositories you muted are hidden and counted ("2 repositories
 muted"). On the On you card: `space` marks a row, `x` closes the marked rows
