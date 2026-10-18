@@ -136,7 +136,11 @@ export interface ChecksHandle {
     pull: Pull,
     commitOid: string,
   ): Promise<{ ok: boolean; error: string; lines: string[] }>;
-  stop(): Promise<void>;
+  /**
+   * Stop checking. Checks under way get `drainMs` to finish unless `drain`
+   * is false (a person's Ctrl-C): then they are cut off and queued again now.
+   */
+  stop(options?: { drain?: boolean }): Promise<void>;
   /** The gate checks take their turn at; a hosted child's checks share it. */
   readonly lane: Gate;
 }
@@ -1117,14 +1121,14 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       }
     },
     lane: gate,
-    stop: async () => {
+    stop: async (stopOptions) => {
       stopped = true;
       clearInterval(timer);
       unsubscribe();
       // A roll waits for the checks under way, up to the budget, and only
       // then cuts off what is left (it is queued again, not lost).
       const running = Promise.all([...inFlight.values()].map((f) => f.promise));
-      const drainMs = options.drainMs ?? 0;
+      const drainMs = stopOptions?.drain === false ? 0 : (options.drainMs ?? 0);
       if (drainMs > 0 && inFlight.size > 0) {
         let timer: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([

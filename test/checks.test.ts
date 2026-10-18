@@ -937,6 +937,27 @@ describe("checks", () => {
     checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
   }, 60_000);
 
+  test("a person's stop cuts a running check off at once, and queues it again", async () => {
+    await checks.stop();
+    checks = startChecks(app, {
+      forgeUrl: servers.url,
+      concurrency: 1,
+      drainMs: 30_000,
+    });
+    const id = await slowCheck("sleep 3 && test -f OK.md # cut off", "A cut-off check");
+    await checks.stop({ drain: false });
+    const run = getRun(app.db, id);
+    expect(run?.state).toBe("cancelled");
+    expect(run?.summary).toContain("queued again");
+    const again = listRuns(app.db, repo.id, { kind: "check", limit: 50 }).find(
+      (r) => r.commitOid === run?.commitOid && r.state === "queued",
+    );
+    expect(again).toBeDefined();
+    checks = startChecks(app, { forgeUrl: servers.url, concurrency: 1 });
+    const done = await settled((r) => r.id === again?.id);
+    expect(done.state).toBe("ok");
+  }, 60_000);
+
   test("a check whose pull lands while it runs ends as superseded, not failed", async () => {
     const id = await slowCheck("sleep 2 && false", "A check overtaken");
     cancelRun(app.db, id, "pull landed");
