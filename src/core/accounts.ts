@@ -21,6 +21,8 @@ export interface AccountRow {
   readonly createdAt: string;
   /** How the account came: "signup", "edge", or null for one older than the record. */
   readonly via: string | null;
+  /** The linked sign-in method it came through ("open-platform.sh" for an edge-made account), else null. */
+  readonly signsInThrough: string | null;
   /** The address it signed up from, when one was recorded. */
   readonly address: string | null;
   readonly repos: number;
@@ -31,6 +33,15 @@ export interface AccountRow {
   readonly removedAt: string | null;
   /** Whether the email is proven (\`core/verify.ts\`); agents always are. */
   readonly verified: boolean;
+}
+
+/** What the platform edge's sign-in is called to the owner. */
+export const EDGE_METHOD = "open-platform.sh";
+
+/** How an account came, in words: its sign-in method, else its origin, else "crew" for an agent, else "". */
+export function originOf(a: Pick<AccountRow, "kind" | "via" | "signsInThrough">): string {
+  if (a.signsInThrough !== null) return `signs in through ${a.signsInThrough}`;
+  return a.via ?? (a.kind === "agent" ? "crew" : "");
 }
 
 /** Every person and agent, newest first. Organizations are not accounts. */
@@ -78,6 +89,7 @@ export function listAccounts(db: Database): AccountRow[] {
       isAdmin: r.is_admin === 1,
       createdAt: r.created_at,
       via: origin.via,
+      signsInThrough: origin.via === "edge" ? EDGE_METHOD : null,
       address: origin.address,
       repos: r.repos,
       apps: r.apps,

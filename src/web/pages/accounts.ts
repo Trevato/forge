@@ -20,7 +20,7 @@ import {
   revokeAccountToken,
 } from "../../actions/signins.ts";
 import { mailConfigured } from "../../actions/verify.ts";
-import type { AccountRow } from "../../core/accounts.ts";
+import { originOf, type AccountRow } from "../../core/accounts.ts";
 import {
   OWNERS_TEAM,
   ownerlessOrgs,
@@ -73,7 +73,7 @@ function standing(a: AccountRow): Html {
 function row(a: AccountRow, sole: readonly string[]): Html {
   const at = `/settings/accounts/${encodeURIComponent(a.username)}`;
   const how = [
-    a.via ?? (a.kind === "agent" ? "crew" : ""),
+    originOf(a),
     a.address ?? "",
   ].filter((s) => s !== "");
   const holds = [

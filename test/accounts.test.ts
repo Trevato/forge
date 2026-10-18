@@ -13,6 +13,7 @@ import {
 import { queueAgentRun } from "../src/crew/dispatch.ts";
 import { fetchInternal } from "../src/git/hook-address.ts";
 import { addComment, openIssue } from "../src/actions/issues.ts";
+import { newAccountLines } from "../src/actions/accounts.ts";
 import { createRepo } from "../src/actions/repos.ts";
 import { createOrg } from "../src/core/orgs.ts";
 import { getAgent } from "../src/core/agents.ts";
@@ -175,6 +176,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
       items: {
         username: string;
         via: string | null;
+        signsInThrough: string | null;
         repos: number;
         spentUsd: number;
         suspendedAt: string | null;
@@ -186,6 +188,8 @@ describe("accounts: the owner sees, suspends and removes", () => {
     expect(ada.spentUsd).toBe(0);
     expect(ada.suspendedAt).toBeNull();
     expect(items.find((i) => i.username === "edgy")?.via).toBe("edge");
+    expect(items.find((i) => i.username === "edgy")?.signsInThrough).toBe("open-platform.sh");
+    expect(ada.signsInThrough).toBeNull();
     const page = await fetch(`${base}/settings/accounts`, {
       headers: { authorization: `Bearer ${ownerToken}` },
     });
@@ -193,6 +197,12 @@ describe("accounts: the owner sees, suspends and removes", () => {
     const html = await page.text();
     expect(html).toContain("ada");
     expect(html).toContain("Suspend");
+    expect(html).toContain("signs in through open-platform.sh");
+    expect(html.match(/signs in through/g)?.length).toBe(1);
+    const owner = getUserByName(app.db, "olive")!;
+    const lines = newAccountLines(app.db, owner).map((l) => l.line);
+    expect(lines).toContain("edgy joined the forge (signs in through open-platform.sh)");
+    expect(lines).toContain("ada joined the forge (signup)");
   });
 
   test("suspending stops every credential at once", async () => {

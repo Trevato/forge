@@ -1433,6 +1433,12 @@ work here.
 - **Automation** — a JSON API covering repos, issues, forks, and orgs (the
   label-as-queue surface), a durable event outbox, and **webhooks** (HMAC-signed
   delivery with retry).
+- **Where an account came from** — `GET /api/v1/admin/accounts` lists each
+  account with `via` (`signup`, `edge`, or null) and `signsInThrough`
+  (`"open-platform.sh"` for an account the platform edge made, else null);
+  Settings → Accounts and the new-account line in the inbox say "signs in
+  through open-platform.sh" for the same accounts. The terminal and the MCP
+  have no accounts list to carry it.
 - **Removing an account** — `DELETE /api/v1/admin/accounts/:username` (admin
   only). An account that is the last owner of an organization answers 409 with
   the organizations named. Send `{"retireOrgs": true}` to preview: the answer

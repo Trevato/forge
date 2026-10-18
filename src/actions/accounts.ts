@@ -18,6 +18,7 @@ import { appsRuntime } from "../apps/runtime.ts";
 import {
   dropCredentials,
   listAccounts as readAccounts,
+  originOf,
   scrubAccount,
   setSuspended,
   type AccountRow,
@@ -331,7 +332,7 @@ export function newAccountLines(
       const id = `account:${a.username}`;
       return {
         id,
-        line: `${a.username} joined the forge${a.via === null ? "" : ` (${a.via})`}`,
+        line: `${a.username} joined the forge${originOf(a) === "" ? "" : ` (${originOf(a)})`}`,
         items: [id],
       };
     });
