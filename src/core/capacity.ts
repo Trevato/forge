@@ -43,7 +43,7 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     env: "FORGE_CREW_CONCURRENCY",
     kind: { type: "count", min: 1, max: 16 },
     fallback: "2",
-    help: "How many agent runs go at once. Lowering it lets running ones finish; the next one waits.",
+    help: "How many agent runs go at once. Empty: one per 3 GiB of memory above the forge's own 2 GiB, from the pod's limit, at least 2 and at most 16. Lowering it lets running ones finish; the next one waits.",
   },
   "checks.concurrency": {
     label: "Checks at once",
@@ -109,7 +109,9 @@ export function validCapacity(key: CapacityKey, value: string): boolean {
 export function capacityDefault(key: CapacityKey): string {
   const env = process.env[CAPACITY[key].env]?.trim() ?? "";
   if (env !== "" && validCapacity(key, env)) return env;
-  return key === "children.max" ? String(childrenForMemory(memoryLimitBytes())) : CAPACITY[key].fallback;
+  if (key === "children.max") return String(childrenForMemory(memoryLimitBytes()));
+  if (key === "crew.concurrency") return String(crewForMemory(memoryLimitBytes()));
+  return CAPACITY[key].fallback;
 }
 
 const GIB = 1024 ** 3;
@@ -125,6 +127,18 @@ export function childrenForMemory(bytes: number): number {
   return Math.min(1000, Math.max(MIN_CHILDREN, Number.isFinite(n) ? n : MIN_CHILDREN));
 }
 const MIN_CHILDREN = 5;
+
+/**
+ * One crew run per 3 GiB of room above the forge's own 2 GiB (32 GiB gives
+ * 10, 64 GiB the ceiling of 16), never fewer than two: a big machine runs
+ * the crew it can hold without an override the sentinel then flags (#2548).
+ */
+export function crewForMemory(bytes: number): number {
+  const n = Math.floor((bytes - 2 * GIB) / (3 * GIB));
+  return Math.min(MAX_CREW, Math.max(MIN_CREW, Number.isFinite(n) ? n : MIN_CREW));
+}
+const MIN_CREW = 2;
+const MAX_CREW = 16;
 
 /** The pod's memory limit (cgroup v2, then v1), else the machine's memory. */
 export function memoryLimitBytes(): number {

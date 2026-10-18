@@ -870,7 +870,7 @@ same breakdown does not ask it twice.
 The forge asks the host for one more binary: `claude`, on `PATH` or at
 `FORGE_CLAUDE`, authenticated as the operator (an `ANTHROPIC_API_KEY` in the
 forge's environment is handed to runs; the machine's own Claude Code login
-works when there is none). `FORGE_CREW_CONCURRENCY` (2) and
+works when there is none). `FORGE_CREW_CONCURRENCY` (one per 3 GiB above 2 GiB, 2–16) and
 `FORGE_CREW_BUDGET_USD` (5) bound it; `FORGE_CREW_CEILING_USD` caps what the
 crew may spend across every repository in a UTC day, whatever each
 repository's own ceiling says; `FORGE_APPS=0` turns apps and crew off. A preview whose pull nobody has

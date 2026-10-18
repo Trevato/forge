@@ -55,6 +55,7 @@ import { running } from "./kernel/version.ts";
 import { record as recordDegraded } from "./kernel/degraded_history.ts";
 import { vitals } from "./kernel/vitals.ts";
 import { snapshotPlace } from "./actions/health.ts";
+import { capacityDefault } from "./core/capacity.ts";
 
 // `forge hook <name>` re-enters here from a git hook stub. It relays to the
 // running forge over its socket and exits — it must never boot a server.
@@ -379,7 +380,7 @@ const crew = appsOn && !crewHeldOff
       forgeUrl,
       localUrl: servers.url,
       binary: process.env.FORGE_CLAUDE ?? "claude",
-      concurrency: positive(process.env.FORGE_CREW_CONCURRENCY, hosted ? 1 : 2),
+      concurrency: positive(process.env.FORGE_CREW_CONCURRENCY, hosted ? 1 : Number(capacityDefault("crew.concurrency"))),
       budgetUsd: Number(process.env.FORGE_CREW_BUDGET_USD) || 5,
       runTimeoutMs: crewRunMs,
       allowHosts: (process.env.FORGE_CREW_ALLOW_HOSTS ?? "")

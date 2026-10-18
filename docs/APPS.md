@@ -1114,7 +1114,7 @@ a link to the milestone (`docs/PLANNING.md`); its progress never does.
 | `FORGE_APP_DOMAIN`        | the host in `FORGE_URL`/`_HOST` | what app hostnames attach to (`example` or `--x`) |
 | `FORGE_APPS_CONCURRENCY`  | `2`                             | deploys running their heavy steps at once         |
 | `FORGE_PREVIEW_IDLE_DAYS` | `3`                             | days a pull may sit untouched before its preview sleeps; `0` = never |
-| `FORGE_CREW_CONCURRENCY`  | `2`                             | agent runs at once (live: Settings → Capacity)    |
+| `FORGE_CREW_CONCURRENCY`  | 1 per 3 GiB above 2 GiB, 2–16   | agent runs at once (live: Settings → Capacity)    |
 | `FORGE_CHECKS_CONCURRENCY` | `1`                            | checks at once (live: Settings → Capacity)        |
 | `FORGE_CHECKS_PLACEMENT`  | `process`                       | `job` runs a check's commands as a cluster Job (see Placement above) |
 | `FORGE_CHECKS_DRAIN_S`       | `300`                          | seconds a roll lets running checks finish first   |

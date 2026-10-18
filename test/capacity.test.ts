@@ -22,6 +22,7 @@ import { AppsRuntime } from "../src/apps/runtime.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import {
   capacityChanges,
+  capacityDefault,
   capacityCount,
   noteBooted,
   capacityEnv,
@@ -297,7 +298,7 @@ describe("capacity: only a forge admin reads or changes it", () => {
     expect(changes.map((c) => [c.key, c.from, c.to, c.actorName])).toEqual([
       ["checks.shards", "3", "", "alice"],
       ["cells.egress", "enforce", "report", "alice"],
-      ["crew.concurrency", "2", "3", "alice"],
+      ["crew.concurrency", capacityDefault("crew.concurrency"), "3", "alice"],
       ["checks.shards", "", "3", "alice"],
     ]);
     const after = await (

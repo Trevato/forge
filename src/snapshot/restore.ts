@@ -238,6 +238,9 @@ export async function restoreSnapshot(
   // hundreds of them spent the drill's minutes here, one after another.
   const git = options.git ?? runGit;
   let next = 0;
+  // Clones finish in any order; a refusal names the earliest bundle in the
+  // manifest that failed, so it reads the same however the clones raced.
+  const failed: { at: number; error: string }[] = [];
   await Promise.all(
     Array.from({ length: Math.min(CLONES, bundles.length) }, async () => {
       for (let b = bundles[next++]; b !== undefined; b = bundles[next++]) {
@@ -252,9 +255,11 @@ export async function restoreSnapshot(
         ]);
         if (!cloned.ok) {
           next = bundles.length;
-          throw new Error(
-            `could not restore ${b.owner}/${b.name}: ${cloned.error.stderr}`,
-          );
+          failed.push({
+            at: b.at,
+            error: `could not restore ${b.owner}/${b.name}: ${cloned.error.stderr}`,
+          });
+          return;
         }
         // A mirror clone remembers the bundle as its origin; the forge's
         // repositories have no origin of their own.
@@ -265,6 +270,8 @@ export async function restoreSnapshot(
       }
     }),
   );
+  if (failed.length > 0)
+    throw new Error(failed.sort((a, b) => a.at - b.at)[0]!.error);
   const { rmSync } = await import("node:fs");
   rmSync(join(dataDir, "restore-bundles"), { recursive: true, force: true });
   if (key !== undefined) {

@@ -11,6 +11,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runGit } from "../src/git/env.ts";
+import { err } from "../src/kernel/result.ts";
 import { CLONES, restoreSnapshot } from "../src/snapshot/restore.ts";
 import { dirStore, type Store } from "../src/snapshot/store.ts";
 
@@ -105,6 +106,24 @@ describe("a restore clones in parallel", () => {
     await seed(store, root, 6);
     await expect(restoreSnapshot(store, NAME, join(root, "data-2"))).rejects.toThrow(
       "could not restore alice/r6",
+    );
+  });
+
+  test("of clones that fail together, the refusal names the earliest in the manifest", async () => {
+    const store = dirStore(join(root, "store-4"));
+    await seed(store, root);
+    // r0 is refused last, r2 at once: the error still names r0.
+    const git: typeof runGit = async (args, options) => {
+      if (args[0] === "clone" && args[3]?.endsWith("alice--r0.bundle")) {
+        await Bun.sleep(60);
+        return err({ code: 128, stderr: "slow refusal", args });
+      }
+      if (args[0] === "clone" && args[3]?.endsWith("alice--r2.bundle"))
+        return err({ code: 128, stderr: "fast refusal", args });
+      return runGit(args, options);
+    };
+    await expect(restoreSnapshot(store, NAME, join(root, "data-4"), { git })).rejects.toThrow(
+      "could not restore alice/r0: slow refusal",
     );
   });
 });
