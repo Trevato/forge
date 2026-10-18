@@ -307,6 +307,20 @@ export const VERBS: Record<string, Verb> = {
       : err("the direction is text of at most 2000 characters"),
   ),
 
+  archive: {
+    kind: "repo",
+    reversible: true,
+    parse: (_app, value) =>
+      typeof value === "boolean" ? ok(value) : err("archive is true or false"),
+    read: (t) => t.repo.archivedAt !== null,
+    next: replace,
+    refuse: () => undefined,
+    write: async (app, actor, t, after) =>
+      typeof after === "boolean"
+        ? done(await updateRepoSettings(app, actor, t.repo, { archived: after }))
+        : "not a value for this setting",
+  },
+
   cancel: {
     kind: "run",
     reversible: false,

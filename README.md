@@ -514,6 +514,11 @@ and `forge sync` below is what acts on it.
 
 **Chips on the feed**: kind chips switch a kind of post off: `reviews` (pulls), `decisions` (decisions and choose decks), `crew` (tells, replies, looks) and `releases`; a person chip switches one person or agent off. Saved per user, one filter (`chipHides`) behind the home feed, `/api/v1/feed`, the Asks list and the terminal's inbox, and the MCP `feed` and `asks` tools, which also take `hide_kinds` and `hide_people` to replace the saved filter for that one call (`[]` lifts it). `/live/apps` (your apps) is not feed items, so chips do not apply there. `GET /api/v1/feed/chips` answers `{kinds, people}`; `POST /api/v1/feed/chips` takes `{"kind": "kind"|"person", "value": "reviews"|"<username>", "hidden": true|false}` (scope `rw`, same-origin). In the terminal dashboard `1`–`4` switch the kind chips `h` on an On you row switches its author off (not your own) and the author's rows leave the card, and `P` brings every person back. The `feed_chips` tool reads them (no arguments, any token) and switches one (`kind`, `value`, `hidden`; an `rw` token).
 
+**Archive many, in the terminal:** on the home's repositories, an admin of a
+repository marks it with `space`, `a` previews the marked ones by name and
+archives them through the fleet `archive` verb (`applyFleetIds`), and `u` undoes
+it (`undoFleetOp`). A non-admin has neither key.
+
 **On you, in the terminal**, answers to the same mutes and one-move verbs as
 the web card. Repositories you muted are hidden and counted ("2 repositories
 muted"). On the On you card: `space` marks a row, `x` closes the marked rows
@@ -751,6 +756,15 @@ model, a brief in its own voice and a spend budget; a repository admin puts it
 on the repository's **crew**, which is the one grant an agent can hold — it
 reads and writes that repository and administers nothing.
 
+A **planner** on the crew may also close an issue it is re-planning, in
+`actions/issues.ts` so the web, the API and the MCP agree, and only these
+ways: `split` into open issues opened since it was handed the issue (since the
+issue itself when the crew never parked it twice, or into issues of the same
+repository that all closed as done since that hand-over), `dropped` for an issue the
+crew wrote, and `done` when commits on main already name the issue. A person's
+ask is never dropped by the planner; any other close, any reopen and any edit
+to a person's issue stay refused.
+
 Assign an issue to an agent and it starts: the forge clones the repository,
 puts the agent on a branch named after the issue, and runs Claude Code
 headless with a brief that says who it is, what the task is, how to finish,
@@ -835,7 +849,8 @@ the hold; an issue handed to the planner is still owed its pass.
 Every tick says why each ready issue a builder cannot start is held, counted
 under the first filter that holds it (`crew/held.ts`): `held: running=1
 open_pull=10 stalled=12 run_cap=11` — a run on it, an open pull proposing it,
-the planner's, stalled, at its run cap, parked twice, covered by a red-main
+the planner's, found done on main and waiting for a person to close it
+(`done_on_main`, never re-planned), stalled, at its run cap, parked twice, covered by a red-main
 fix, or a setting's finding. `/flow` draws the same per autonomous app as one
 bar, and the terminal's Flow command prints it as a line per app
 (`flow/held.ts`, kept 5 s). When nothing is startable while builder slots are free and some of the
@@ -917,6 +932,7 @@ stands, taking updates, and the crew's part when both sides moved.
 
 `docs/FLEET.md` is one change across many repositories, runs or issues: a
 query, a dry-run plan of every row before → after, a receipt, and undo.
+`archive` (true or false) archives or wakes many repositories; its undo is kept a day.
 
 `docs/MCP.md` is the forge as a connector, and `docs/STANDARDS.md` is what
 it answers by default: `.well-known`, feeds, cards, the manifest.

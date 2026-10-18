@@ -23,6 +23,7 @@ import { clientAppRows } from "../../core/client-apps.ts";
 import { nextStepsFor } from "../../core/next-steps.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
 import { mayView } from "../../core/sealed.ts";
+import { applyFleetIds, previewFleetIds, undoFleetOp } from "../../actions/fleet.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
 import { getProposal } from "../../core/proposals.ts";
 import { getIssueById, listAssignedTo, type Issue } from "../../core/issues.ts";
@@ -44,6 +45,7 @@ import type { Operation } from "../../core/fleet_ops.ts";
 import { listPins, pinnedRepoIds, type Pin } from "../../core/pins.ts";
 import { listOrgsForUser } from "../../core/orgs.ts";
 import {
+  canAdmin,
   canRead,
   getRepo,
   getReposByIds,
@@ -134,6 +136,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   /** The rows marked for one verb, by issue id. */
   const marked = new Set<string>();
   let lastSet: Operation | undefined;
+  /** The repositories marked for archiving, by id; only ones the viewer administers. */
+  const markedRepos = new Set<string>();
+  /** The receipt of the last archive made here, which `u` reverses once. */
+  let lastArchive: string | undefined;
   /** Why planning is paused, for the autonomous apps where it is; as on the board. */
   let holds = new Map<string, string>();
   let forge: string[] | undefined;
@@ -210,6 +216,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             repo.ownerId === f.user?.id || orgs.includes(repo.ownerName),
         )
       : live;
+    for (const id of [...markedRepos])
+      if (!repos.some((repo) => repo.id === id)) markedRepos.delete(id);
     ctx.invalidate();
   };
 
@@ -421,6 +429,65 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         },
       }),
     );
+  };
+
+  /** Whether the viewer may archive this repository (the action decides again). */
+  const mayArchive = (repo: Repo): boolean =>
+    f.user !== undefined && f.user.kind === "user" && canAdmin(f.db, repo, f.user);
+
+  /** Archive the marked repositories: a one-line preview naming them, then the fleet `archive` verb. */
+  const archiveMarked = (): void => {
+    const picked = repos.filter((repo) => markedRepos.has(repo.id) && mayArchive(repo));
+    if (picked.length === 0 || f.user === undefined) return;
+    const ids = picked.map((repo) => repo.id);
+    const names = picked.map((repo) => `${repo.ownerName}/${repo.name}`);
+    const query = `archive ${names.join(" ")}`;
+    const action = { verb: "archive", value: true };
+    const plan = previewFleetIds(f.app, f.user, "repo", ids, query, action);
+    if (!plan.ok) {
+      ctx.toast(plan.error.message, "danger");
+      return;
+    }
+    if (plan.value.counts.change === 0) {
+      ctx.toast("nothing to archive", "attn");
+      return;
+    }
+    ctx.push(
+      confirmScreen(ctx, screen, {
+        title: `Archive ${plural(plan.value.counts.change, "repository", "repositories")}?`,
+        body: [names.join(", ")],
+        actions: [
+          { label: "Archive", variant: "danger" },
+          { label: "Cancel", variant: "ghost" },
+        ],
+        onChoose: (choice) => {
+          if (choice !== 0) return;
+          runAsync(ctx, async () => {
+            const done = await applyFleetIds(f.app, f.user, "repo", ids, query, action);
+            if (!done.ok) {
+              ctx.toast(done.error.message, "danger");
+              return;
+            }
+            const n = done.value.rows.filter((r) => r.outcome === "ok").length;
+            lastArchive = n > 0 ? done.value.id : undefined;
+            markedRepos.clear();
+            reload();
+            ctx.toast(`archived ${n} — u undoes it`, n > 0 ? "success" : "attn");
+          });
+        },
+      }),
+    );
+  };
+
+  const undoArchive = (): void => {
+    const id = lastArchive;
+    if (id === undefined) return;
+    runAsync(ctx, async () => {
+      const done = await undoFleetOp(f.app, f.user, id);
+      lastArchive = undefined;
+      reload();
+      ctx.toast(done.ok ? "undone" : done.error.message, done.ok ? "success" : "danger");
+    });
   };
 
   const undoSet = (): void => {
@@ -654,7 +721,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               binding(["S"], "ship"),
             ]
           : []),
-        ...(lastSet !== undefined ? [binding(["u"], "undo")] : []),
+        ...(lastSet !== undefined || lastArchive !== undefined ? [binding(["u"], "undo")] : []),
         ...(silenced.size > 0 ? [binding(["L"], "listen again")] : []),
         binding(["d"], "unpin", {
           disabled: focus !== "machine" || pins.length === 0,
@@ -663,6 +730,9 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         binding(["n"], "new repo", { disabled: !f.signedIn }),
         binding(["A"], "account", { disabled: !f.signedIn }),
         binding(["s"], "sign in", { disabled: f.signedIn }),
+        ...(focus === "repos" && f.user !== undefined && shown().some(mayArchive)
+          ? [binding(["space"], "mark"), ...(markedRepos.size > 0 ? [binding(["a"], "archive marked")] : [])]
+          : []),
         binding(["r"], "refresh"),
       ];
     },
@@ -799,7 +869,19 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         if (e.key === "l") return actOnWave("later"), true;
       }
       if (e.key === "B" && f.user && asideWaves.length > 0) return bringBackWaves(), true;
-      if (e.key === "u" && f.user) return undoSet(), true;
+      if (focus === "repos" && f.user !== undefined) {
+        const repo = shown()[at("repos").index];
+        if (e.key === "space" && repo !== undefined && mayArchive(repo)) {
+          if (!markedRepos.delete(repo.id)) markedRepos.add(repo.id);
+          ctx.invalidate();
+          return true;
+        }
+        if (e.key === "a") return archiveMarked(), true;
+      }
+      if (e.key === "u" && f.user) {
+        if (lastArchive !== undefined) return undoArchive(), true;
+        return undoSet(), true;
+      }
       if (e.key === "U" && f.user) return undoHand(), true;
       if (e.key === "L" && f.user) return listenAgain(), true;
       if (e.key === "C" && f.user) return ctx.push(deciderScreen(f, ctx)), true;
@@ -951,7 +1033,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       at("repos"),
       rows.map(
         (repo): ListRow => ({
-          title: `${repoMark(pinned.has(repo.id), set)}${repo.ownerName}/${repo.name}`,
+          title: `${markedRepos.has(repo.id) ? "[x] " : ""}${repoMark(pinned.has(repo.id), set)}${repo.ownerName}/${repo.name}`,
           secondary: holds.get(repo.id) ?? repo.description,
           meta: metaOf(
             repo.visibility === "private" ? "private" : "",

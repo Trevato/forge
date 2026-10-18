@@ -157,6 +157,17 @@ export class RateLimiter {
   }
 
   /**
+   * Give back one counted request on `key`: the newest, so the window keeps
+   * the older hits that free up first. For a caller that counts an attempt
+   * before knowing whether it should count (a password that proves right).
+   */
+  refund(key: string): void {
+    const times = this.hits.get(key);
+    if (times === undefined || times.length === 0) return;
+    times.pop();
+  }
+
+  /**
    * Forget keys whose whole window has passed. Without this the map grows by
    * one entry per token that ever spoke to the forge — small, but unbounded
    * is unbounded, and a fleet mints tokens.

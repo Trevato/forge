@@ -18,12 +18,13 @@ import { commitToBranch, createRepo, updateRepoSettings } from "../src/actions/r
 import { getAgentByName, setCrewRole } from "../src/core/agents.ts";
 import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
+import { DONE_NOTE } from "../src/core/done_on_main.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { driveRepo } from "../src/crew/autonomy.ts";
 import { taskPrompt } from "../src/crew/brief.ts";
 import { ISSUE_RUN_CAP } from "../src/crew/guard.ts";
-import { heldCounts, heldNow, heldWords, stuckOf } from "../src/crew/held.ts";
+import { heldCounts, heldNow, heldWords, replannable, stuckOf } from "../src/crew/held.ts";
 import { PARK_NOTE } from "../src/crew/parks.ts";
 import { keyPart } from "../src/crew/sentinel.ts";
 import { HELD_TTL_MS, readHeld } from "../src/flow/held.ts";
@@ -145,6 +146,9 @@ describe("the tick says why each ready issue cannot start", () => {
     const planned = issue(repo, "The planner's");
     expect(assignIssue(app, alice, repo, planned, atlas).ok).toBe(true);
 
+    const done = issue(repo, "Done already");
+    addComment(app, mason, repo, done, `${DONE_NOTE}${"b".repeat(40)}`);
+
     const stuck = issue(repo, "Stalled");
     ran(repo, stuck, mason, "declined: the ask is unclear");
 
@@ -185,6 +189,7 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(named("running")).toEqual([running.number]);
     expect(named("open_pull")).toEqual([proposed.number]);
     expect(named("planner")).toEqual([planned.number]);
+    expect(named("done_on_main")).toEqual([done.number]);
     expect(named("stalled")).toEqual([stuck.number]);
     expect(named("run_cap")).toEqual([capped.number]);
     expect(named("parked_twice")).toEqual([parked.number]);
@@ -192,10 +197,30 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(named("setting")).toEqual([finding.number]);
     expect(heldCounts(held).open_pull).toBe(1);
     expect(heldWords(held)).toBe(
-      "running=1 open_pull=1 planner=1 stalled=1 run_cap=1 parked_twice=1 red_fix=1 setting=1",
+      "running=1 open_pull=1 planner=1 done_on_main=1 stalled=1 run_cap=1 parked_twice=1 red_fix=1 setting=1",
     );
     // Something can start: the planner is not told the crew is stuck.
     expect(stuckOf(held)).toBeUndefined();
+  });
+
+  test("an issue found done on main is held as done_on_main, never re-planned, until the crew parks it", async () => {
+    const { repo, mason } = await crewed(app, alice, "closing");
+    const fresh = () => getRepoById(app.db, repo.id)!;
+    const done = issue(fresh(), "Already shipped");
+    addComment(app, mason, fresh(), done, `${DONE_NOTE}${"c".repeat(40)}`);
+    const held = heldNow(app, fresh());
+    expect(held.by.done_on_main.map((i) => i.number)).toEqual([done.number]);
+    expect(held.by.stalled).toHaveLength(0);
+    expect(replannable(held)).toHaveLength(0);
+    expect(heldWords(held)).toBe("done_on_main=1");
+    expect(stuckOf(held)).toBeUndefined();
+
+    addComment(app, mason, fresh(), getIssueById(app.db, done.id)!, `${PARK_NOTE}not done after all`);
+    // The builder that tried it since left without a pull: stalled, so the planner's.
+    ran(fresh(), done, mason, "declined: it is not there", 0);
+    const again = heldNow(app, fresh());
+    expect(again.by.done_on_main).toHaveLength(0);
+    expect(replannable(again).map((i) => i.number)).toEqual([done.number]);
   });
 
   test("nothing startable with a slot free asks the planner once, with the breakdown, whatever the plate", async () => {
@@ -272,6 +297,9 @@ describe("the tick says why each ready issue cannot start", () => {
     const shut = await crewed(app, alice, "shut-door");
     for (const { repo, mason } of [open, shut]) {
       ran(repo, issue(repo, "Stalled"), mason, "declined: too big", 10);
+      if (repo === open.repo) {
+        addComment(app, mason, repo, issue(repo, "Shipped"), `${DONE_NOTE}${"d".repeat(40)}`);
+      }
       const capped = issue(repo, "Capped");
       for (let n = 0; n < ISSUE_RUN_CAP; n++) ran(repo, capped, mason, `opened pull #${90 + n}`, 20 - n, "ok");
     }
@@ -290,6 +318,10 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(row).toContain('class="held-bar"');
     expect(row).toContain('<span class="mono">startable=0</span>');
     expect(row).toContain('<span class="mono">stalled=1</span>');
+    expect(row).toContain('<span class="mono">done_on_main=1</span>');
+    expect(row).toContain('data-held="done_on_main"');
+    expect(row).toContain('<rect class="held-done_on_main"');
+    expect(page).toContain(".held-done_on_main { fill:");
     expect(row).toContain('<span class="mono">run_cap=1</span>');
     expect(page).toContain('data-held-repo="alice/shut-door"');
 
@@ -297,10 +329,10 @@ describe("the tick says why each ready issue cannot start", () => {
     // reader the public one alone.
     const owner = flowLines(app.db, new Date(), [], undefined, readHeld(app, true)).join("\n");
     expect(owner).toContain("Ready, and why it waits:");
-    expect(owner).toContain("alice/open-door startable=0 stalled=1 run_cap=1");
+    expect(owner).toContain("alice/open-door startable=0 done_on_main=1 stalled=1");
     expect(owner).toContain("alice/shut-door startable=0 stalled=1 run_cap=1");
     const agent = flowLines(app.db, new Date(), [], { queues: [] }, readHeld(app, false)).join("\n");
-    expect(agent).toContain("alice/open-door startable=0 stalled=1 run_cap=1");
+    expect(agent).toContain("alice/open-door startable=0 done_on_main=1 stalled=1");
     expect(agent).not.toContain("shut-door");
     expect(heldLines([], 58)).toEqual(["Ready, and why it waits: no repository runs on its own."]);
   });

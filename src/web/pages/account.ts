@@ -10,6 +10,7 @@
  */
 
 import { resendVerification } from "../../actions/verify.ts";
+import { clientAddress } from "../../http/peer.ts";
 import { emailVerified } from "../../core/verify.ts";
 import {
   addSshKey,
@@ -394,6 +395,7 @@ export async function passwordUpdate(ctx: Ctx): Promise<Response> {
   const changed = await changePassword(ctx.app, ctx.auth.user, {
     current,
     next,
+    source: clientAddress(ctx.request),
   });
   if (!changed.ok) {
     const error =
@@ -402,7 +404,12 @@ export async function passwordUpdate(ctx: Ctx): Promise<Response> {
             field: "current" as const,
             text: "That isn't your current password.",
           }
-        : changed.error === "weak_password"
+        : changed.error === "throttled"
+          ? {
+              field: "current" as const,
+              text: "Too many attempts. Try again in a minute.",
+            }
+          : changed.error === "weak_password"
           ? {
               field: "next" as const,
               text: "Passwords need at least 10 characters.",

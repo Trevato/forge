@@ -48,6 +48,7 @@ table (#446) grows it.
 | repo  | `slots`     | 1–8                       | yes  |
 | repo  | `ceiling`   | dollars, 0–10000          | yes  |
 | repo  | `direction` | text, ≤ 2000              | yes  |
+| repo  | `archive`   | `true` archives, `false` wakes | yes, kept a day |
 | run   | `cancel`    | —                         | no   |
 | run   | `requeue`   | — (a cancelled or failed agent run) | no |
 | issue | `close`     | —                         | yes  |
@@ -78,7 +79,10 @@ operations; `GET /api/v1/fleet/ops/:id` is one receipt.
 Undo is a new operation that writes each `ok` row's value from before,
 only where the row still holds what the operation left; a row someone
 changed since is refused as `changed since: it is … now`. It writes the
-rows backwards, so what was done last is undone first.
+rows backwards, so what was done last is undone first. The undo of an
+`archive` expires 24 hours after the operation (`expired`); the other verbs'
+undo has no time limit. The same holds through the API and MCP's `limb`
+`undo`.
 
 `file` says where an issue stands in the plan: `later` puts it behind the
 Later gate and under the Later umbrella, out from under any pillar; a

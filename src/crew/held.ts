@@ -9,6 +9,8 @@
  * - `running`: a run is in flight on it.
  * - `open_pull`: an open pull already proposes it (`direct.ts`).
  * - `planner`: the planner or a reviewer holds it, not a builder.
+ * - `done_on_main`: the crew found it done on the base branch and waits for
+ *   a person to close it (`done_on_main.ts`); nothing is left to plan.
  * - `stalled`: a builder ran on it and left without a pull, and nobody
  *   who directs the crew has spoken since.
  * - `run_cap`: it has used its runs for the day (`guard.ts`).
@@ -23,7 +25,7 @@
 import type { App } from "../app.ts";
 import { listCrewRoles, type Agent, type CrewRole } from "../core/agents.ts";
 import { readyNow, repoGraph, type Ranked } from "../core/dependencies.ts";
-import { BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
+import { alreadyDone, BY_CREW, DONE_LIKE } from "../core/done_on_main.ts";
 import type { Issue } from "../core/issues.ts";
 import type { Repo } from "../core/repos.ts";
 import { listActive, type Run } from "../core/runs.ts";
@@ -40,6 +42,7 @@ export const HOLDS = [
   "running",
   "open_pull",
   "planner",
+  "done_on_main",
   "stalled",
   "run_cap",
   "parked_twice",
@@ -116,6 +119,7 @@ export function heldBy(
     if (busyIssues.has(issue.id)) return "running";
     if (proposed.has(issue.number)) return "open_pull";
     if (issue.assigneeId !== null && planners.has(issue.assigneeId)) return "planner";
+    if (alreadyDone(app.db, [issue.id]).has(issue.id)) return "done_on_main";
     if (stalled(app, repo, issue)) return "stalled";
     if (atRunCap(app, repo, issue)) return "run_cap";
     if (parkedCount(app.db, repo, issue.id) >= PARK_STRIKES) return "parked_twice";
