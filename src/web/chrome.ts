@@ -12,6 +12,7 @@ import { sshCommand } from "../ssh/command.ts";
 import { mayDirectCrew } from "../crew/direct.ts";
 import { mayReadRuns } from "../actions/runs.ts";
 import { getAppByRepo } from "../core/apps.ts";
+import { audienceFacts, audienceOf } from "../core/audience.ts";
 import { edgeLoginUrl } from "../http/edge.ts";
 import {
   canAdmin,
@@ -310,6 +311,7 @@ export function scopeHeader(
     ${facts.visibility === "private"
       ? badge("Private", { icon: "lock", variant: "secondary" })
       : badge("Public", { variant: "secondary" })}
+    ${repo === undefined ? null : audienceLine(ctx, repo, admin, base)}
     ${actions.text.trim() !== ""
       ? html`<span class="repo-actions">${actions}</span>`
       : null}`;
@@ -345,6 +347,20 @@ export function scopeHeader(
     ${studio ? studioOriginNote(repo) : whereRow(ctx, scope)}
     ${tabs(items, "Repository")}
   </header>`;
+}
+
+/**
+ * Who can see this repository, in the one sentence `audienceOf` gives, beside
+ * the badge. A link to the settings for whoever can open them, plain text for
+ * everyone else. One line: CSS truncates it, `title` keeps all of it.
+ */
+function audienceLine(ctx: Ctx, repo: Repo, admin: boolean, base: string): Html {
+  const { sentence } = audienceOf(audienceFacts(ctx.app.db, repo, ctx.auth.user));
+  return admin
+    ? html`<a class="repo-audience" href="${base}/settings" title="${sentence}"
+        >${sentence}</a
+      >`
+    : html`<span class="repo-audience" title="${sentence}">${sentence}</span>`;
 }
 
 export { hostOf };
