@@ -65,7 +65,7 @@ import { repoDir } from "../src/git/repos.ts";
 import { alreadyDone } from "../src/core/done_on_main.ts";
 import { askedIn, askedJson } from "../src/core/asked.ts";
 import {
-  handedOverAt,
+  handedOver,
   parkedTwice,
   parkReason,
   struckOut,
@@ -351,7 +351,7 @@ describe("a comment that only reads like a park", () => {
     }
     expect(parkedCount(app, e.fresh(), work.id)).toBe(0);
     expect(struckOut(app.db, e.fresh(), [work.id]).has(work.id)).toBe(false);
-    expect(handedOverAt(app.db, e.fresh(), work.id)).toBeUndefined();
+    expect(handedOver(app.db, e.fresh(), work.id)).toBeUndefined();
     expect(parkedTwice(app.db, [e.fresh()])).toEqual([]);
     // So the planner has no more say over it than over any other person's
     // issue: it may split it, never drop it.
@@ -1422,6 +1422,61 @@ describe("an issue found already done is the asker's to close, not a park", () =
     expect(settle(work, "ok", alreadyDoneSummary([oid]))).toBe(true);
     expect(alreadyDone(e.app.db, [work.id]).get(work.id)).toEqual([oid]);
     expect(listed()).toBe(false);
+  });
+
+  test("writes in one millisecond are read in the order they were written", () => {
+    // What a fast machine does by chance, every time: one timestamp for all.
+    const at = new Date().toISOString();
+    const stamp = (...on: Issue[]) => {
+      for (const one of on) {
+        e.app.db.query("UPDATE issue SET created_at = ?1 WHERE id = ?2").run(at, one.id);
+        e.app.db.query("UPDATE comment SET created_at = ?1 WHERE issue_id = ?2").run(at, one.id);
+      }
+    };
+    const now = (on: Issue): Issue => {
+      const found = getIssueById(e.app.db, on.id);
+      if (found === undefined) throw new Error(`no issue ${on.id}`);
+      return found;
+    };
+    const declined = "no changes pushed: DECLINED: out of scope";
+    const split = (on: Issue, into: Issue) => {
+      const closed = setIssueState(e.app, e.atlas, e.fresh(), now(on), "closed", {
+        reason: "split",
+        into: [into.number],
+      });
+      return closed.ok ? "closed" : closed.error;
+    };
+    // Parked twice, then found done: the note is the newest word.
+    const built = e.issue("Parked, then built");
+    e.ended(built, declined);
+    e.ended(built, declined);
+    expect(settle(built, "ok", alreadyDoneSummary([oid]))).toBe(true);
+    stamp(built);
+    expect(parkedTwice(e.app.db, [e.fresh()]).some((p) => p.issueId === built.id)).toBe(false);
+    expect(alreadyDone(e.app.db, [built.id]).get(built.id)).toEqual([oid]);
+    // Found done, then parked: the park is.
+    const undone = e.issue("Built, then parked");
+    expect(settle(undone, "ok", alreadyDoneSummary([oid]))).toBe(true);
+    e.ended(undone, declined);
+    stamp(undone);
+    expect(alreadyDone(e.app.db, [undone.id]).has(undone.id)).toBe(false);
+    // A person's word, then two parks: both count.
+    const told = e.issue("Told, then parked");
+    expect(addComment(e.app, e.alice, e.fresh(), now(told), "Try it smaller.").ok).toBe(true);
+    e.ended(told, declined);
+    e.ended(told, declined);
+    stamp(told);
+    expect(parkedCount(e.app, e.fresh(), told.id)).toBe(2);
+    // Handed over, then split into an issue opened after the hand-over.
+    const half = e.issue("Told, then parked: the first half");
+    stamp(told, half);
+    expect(split(told, half)).toBe("closed");
+    // Re-planned on its own pass: into the issue opened after it, not before.
+    const older = e.issue("Opened first");
+    const newer = e.issue("Opened second");
+    stamp(older, newer);
+    expect(split(newer, older)).toBe("forbidden");
+    expect(split(older, newer)).toBe("closed");
   });
 
   test("the planner re-planning on its own pass: splits, drops what the crew wrote, closes what is done, and no more", async () => {

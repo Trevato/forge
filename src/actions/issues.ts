@@ -55,7 +55,7 @@ import {
   unadoptedAmong,
 } from "../crew/direct.ts";
 import { laterGate } from "../crew/later.ts";
-import { handedOverAt } from "../crew/parks.ts";
+import { handedOver } from "../crew/parks.ts";
 import { alreadyDone, CLOSED_NOTE } from "../core/done_on_main.ts";
 import { listReviews } from "../core/reviews.ts";
 import {
@@ -511,7 +511,10 @@ function handedToPlanner(
   // Replacements must be newer than the hand-over when the crew handed the
   // issue over, and newer than the issue itself when the planner re-plans it
   // on its own pass.
-  const since = handedOverAt(app.db, repo, issue.id) ?? issue.createdAt;
+  const since = handedOver(app.db, repo, issue.id) ?? {
+    at: issue.createdAt,
+    id: issue.id,
+  };
   // Done on main: only when commits already name the issue, as the close
   // note keeps them.
   if (closing.reason === undefined || closing.reason === "done")
@@ -541,11 +544,17 @@ function handedToPlanner(
       (part) =>
         part.state === "closed" &&
         part.closeReason === "done" &&
-        (part.closedAt ?? "") >= since,
+        (part.closedAt ?? "") >= since.at,
     )
   )
     return true;
-  return parts.every((part) => part.state === "open" && part.createdAt > since);
+  // Opened since: in the same millisecond, the id says which came first.
+  return parts.every(
+    (part) =>
+      part.state === "open" &&
+      (part.createdAt > since.at ||
+        (part.createdAt === since.at && part.id > since.id)),
+  );
 }
 
 /** How an issue closes: done unless said otherwise; split names its children. */

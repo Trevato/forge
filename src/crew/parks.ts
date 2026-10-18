@@ -22,7 +22,13 @@
 import type { Database } from "bun:sqlite";
 import { getIssueById, standsForPerson } from "../core/issues.ts";
 import type { Repo } from "../core/repos.ts";
-import { BY_CREW, DONE_LIKE, PARK_LIKE } from "../core/done_on_main.ts";
+import {
+  BY_CREW,
+  DONE_LIKE,
+  LATER,
+  PARK_LIKE,
+  type Written,
+} from "../core/done_on_main.ts";
 import { directorsAmong, proposedWork } from "./direct.ts";
 
 /** Parks since the last word at which the clock no longer dispatches an issue. */
@@ -51,14 +57,14 @@ const COUNTED = `p.body LIKE '${PARK}' AND p.origin_author IS NULL
       JOIN issue i ON i.repo_id = rc.repo_id
       JOIN user a ON a.id = rc.user_id
      WHERE i.id = p.issue_id AND rc.user_id = p.author_id AND a.is_agent = 1))
-  AND p.created_at > COALESCE((
-    SELECT MAX(c.created_at) FROM comment c
+  AND NOT EXISTS (
+    SELECT 1 FROM comment c
      WHERE c.issue_id = p.issue_id AND c.body NOT LIKE '${PARK}'
        AND NOT EXISTS (SELECT 1 FROM comment n WHERE n.id = c.id
                         AND n.body LIKE '${DONE_LIKE}' AND ${BY_CREW})
        AND c.origin_author IS NULL
        AND c.author_id IN (SELECT value FROM json_each(?1))
-  ), '')`;
+       AND ${LATER("c", "p")})`;
 
 const CHUNK = 400;
 
@@ -95,18 +101,19 @@ export function parkedCount(db: Database, repo: Repo, issueId: string): number {
  * When the crew handed this issue over: its newest park, once it is struck
  * out. Nothing for an issue that is not.
  */
-export function handedOverAt(
+export function handedOver(
   db: Database,
   repo: Repo,
   issueId: string,
-): string | undefined {
+): Written | undefined {
   const row = db
-    .query<{ n: number; at: string | null }, [string, string]>(
-      `SELECT COUNT(*) AS n, MAX(p.created_at) AS at FROM comment p
-        WHERE p.issue_id = ?2 AND ${COUNTED}`,
+    .query<Written & { n: number }, [string, string]>(
+      `SELECT p.created_at AS at, p.id, COUNT(*) OVER () AS n FROM comment p
+        WHERE p.issue_id = ?2 AND ${COUNTED}
+        ORDER BY p.created_at DESC, p.id DESC LIMIT 1`,
     )
     .get(directors(db, repo, [issueId]), issueId);
-  return row && row.n >= PARK_STRIKES && row.at !== null ? row.at : undefined;
+  return row && row.n >= PARK_STRIKES ? { at: row.at, id: row.id } : undefined;
 }
 
 /** Of these issues, the ones struck out: parked `PARK_STRIKES` times since the last word. */
@@ -209,8 +216,9 @@ export function parkedTwice(
              WHERE d.issue_id = o.id AND b.state = 'open')
           AND NOT EXISTS (
             SELECT 1 FROM comment n WHERE n.issue_id = o.id AND n.body LIKE '${DONE_LIKE}' AND ${BY_CREW}
-               AND n.created_at > (SELECT MAX(p.created_at) FROM comment p
-                                    WHERE p.issue_id = o.id AND p.body LIKE '${PARK}'))
+               AND NOT EXISTS (SELECT 1 FROM comment p
+                                WHERE p.issue_id = o.id AND p.body LIKE '${PARK}'
+                                  AND ${LATER("p", "n")}))
           AND NOT EXISTS (
             SELECT 1 FROM run r
              WHERE r.issue_id = o.id AND r.kind = 'agent'
