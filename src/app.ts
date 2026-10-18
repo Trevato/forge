@@ -9,13 +9,14 @@ import type { Database } from "bun:sqlite";
 import type { Decider } from "./crew/decide.ts";
 import type { VerifyHuman } from "./core/turnstile.ts";
 import { randomBytes } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { migrationFiles } from "./core/schema.ts";
 import { dropLegacyNewAccountGuards } from "./core/schema.ts";
 import { EventBus } from "./core/events.ts";
 import { follow } from "./core/following.ts";
 import { enqueueForEvent } from "./core/webhooks.ts";
+import { seedSignup } from "./settings/signup.ts";
 import { openDb } from "./kernel/db.ts";
 import { id } from "./kernel/id.ts";
 import {
@@ -31,6 +32,12 @@ import { closeReadersUnder } from "./git/read.ts";
 export interface ForgeConfig {
   /** Everything lives here: index db, bare repos, the internal socket. */
   dataDir: string;
+  /**
+   * A database made by this call starts with signup = invite (`seedSignup`);
+   * one that already exists is left as it is. Off by default so a test's
+   * forge reads the setting's `open`; `main.ts` turns it on.
+   */
+  seedSignup?: boolean;
   /** The disk probe vitals reads; the volume under `dataDir` when unset. Tests give it a reading. */
   disk?: (dir: string) => { freeBytes: number; totalBytes: number };
   /** @default 3000 */
@@ -212,7 +219,10 @@ export function createApp(config: ForgeConfig): App {
   mkdirSync(reposRoot, { recursive: true });
   const socketPath = join(dataDir, `forge-${id()}.sock`);
 
-  const db = openDb(join(dataDir, "forge.db"), migrationFiles);
+  const dbPath = join(dataDir, "forge.db");
+  const fresh = !existsSync(dbPath);
+  const db = openDb(dbPath, migrationFiles);
+  if (config.seedSignup === true) seedSignup(db, fresh);
   // Hand-installed new-account guards become the `guard_new_accounts`
   // setting (default off): drop the legacy triggers once, here, on boot.
   // Idempotent — a forge without them changes nothing.

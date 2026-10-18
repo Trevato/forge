@@ -177,6 +177,8 @@ if (parentProblem !== null) {
 
 const app = createApp({
   dataDir,
+  // A new forge starts with signup = invite (FORGE_SIGNUP below still wins).
+  seedSignup: true,
   ...(parentUrl === "" ? {} : { parentUrl }),
   port: Number(process.env.PORT ?? 3000),
   ...(process.env.FORGE_HOST === undefined
