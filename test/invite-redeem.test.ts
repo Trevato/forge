@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { listInvites, mintInvite, revokeInvite } from "../src/core/invites.ts";
+import { listEvents } from "../src/core/events.ts";
 import { getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { setLimit } from "../src/settings/limits.ts";
@@ -79,6 +80,9 @@ describe("invite links redeem at signup", () => {
     expect(stateOf(invite.id)).toBe("used");
     const row = app.db.query<{ used_by: string | null }, [string]>("SELECT used_by FROM invite WHERE id = ?1").get(invite.id);
     expect(row?.used_by).toBe(getUserByName(app.db, "ivy")?.id ?? "none");
+    const used = listEvents(app.db, {}).filter((e) => e.kind === "invite.used");
+    expect(JSON.stringify(used)).toContain(invite.id);
+    expect(JSON.stringify(used)).not.toContain(token);
     expect((await form("ivy2", token)).status).toBe(403);
     expect(getUserByName(app.db, "ivy2")).toBeUndefined();
   });
@@ -105,6 +109,9 @@ describe("invite links redeem at signup", () => {
       return (await post("/signup/passkey", { username, email: `${username}@f.dev`, challenge, ...(await d.create(challenge)) })).status;
     };
     expect(await keyed("pia")).toBe(201);
+    const used = listEvents(app.db, {}).filter((e) => e.kind === "invite.used" && JSON.stringify(e).includes(invite.id));
+    expect(used.length).toBe(1);
+    expect(JSON.stringify(used)).not.toContain(token);
     expect(stateOf(invite.id)).toBe("used");
     expect(await keyed("pia2")).toBe(403);
   });

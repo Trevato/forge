@@ -120,3 +120,8 @@ export function revokeInvite(
   if (changed === 0) return err("not_found");
   return ok(view(db.query<Row, [string]>("SELECT * FROM invite WHERE id = ?1").get(inviteId)!, now));
 }
+
+/** The id of the invite an account spent, if one let it in. */
+export function inviteSpentBy(db: Database, userId: string): string | undefined {
+  return db.query<{ id: string }, [string]>("SELECT id FROM invite WHERE used_by = ?1").get(userId)?.id;
+}

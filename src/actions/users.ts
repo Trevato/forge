@@ -21,6 +21,7 @@ import {
   deleteToken as revokeToken,
   type TokenScope,
 } from "../core/tokens.ts";
+import { inviteSpentBy } from "../core/invites.ts";
 import {
   changePassword as rehash,
   cleanDisplayName,
@@ -122,6 +123,7 @@ export async function signUp(
       ...(from.address === undefined ? {} : { address: from.address }),
     },
   });
+  auditInvite(app, created.value.id);
   // The address is proven by the link it is sent; until then nothing it
   // does may create or cost.
   await welcome(app, created.value);
@@ -178,8 +180,16 @@ export async function signUpWithPasskey(
       ...(from.address === undefined ? {} : { address: from.address }),
     },
   });
+  auditInvite(app, created.value.id);
   await welcome(app, created.value);
   return created;
+}
+
+/** Using an invite link is an event: the invite's id and who it let in, never its token. */
+function auditInvite(app: App, userId: string): void {
+  const inviteId = inviteSpentBy(app.db, userId);
+  if (inviteId !== undefined)
+    app.bus.append({ kind: "invite.used", actorId: userId, payload: { id: inviteId } });
 }
 
 /**
