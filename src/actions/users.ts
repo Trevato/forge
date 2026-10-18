@@ -66,6 +66,10 @@ export function signupClosed(app: App, invite?: string): boolean {
   return newAccountsClosed(app.db, invite);
 }
 
+/** What a person with an invite link that no longer opens the door is told. */
+export const INVITE_SPENT_MESSAGE =
+  "This invite link has been used, revoked or has expired. Ask whoever sent it for a new one.";
+
 /** What anyone is told at a door that still offers a password-only sign-up. */
 export const PASSKEY_REQUIRED_MESSAGE =
   "New accounts sign up with a passkey and an email address. Open the sign-up page in a browser and choose \u201cCreate account with a passkey\u201d.";

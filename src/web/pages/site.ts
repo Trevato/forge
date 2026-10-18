@@ -15,7 +15,7 @@ import { clientAddress } from "../../http/peer.ts";
 import { verifyEmail } from "../../actions/verify.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../../actions/repos.ts";
-import { HUMAN_CHECK_MESSAGE, PASSKEY_REQUIRED_MESSAGE, SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
+import { HUMAN_CHECK_MESSAGE, INVITE_SPENT_MESSAGE, PASSKEY_REQUIRED_MESSAGE, SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
 import { listPins } from "../../core/pins.ts";
 import { getReposByIds } from "../../core/repos.ts";
@@ -418,10 +418,6 @@ export function inviteOf(ctx: Ctx): string | undefined {
   const token = ctx.url.searchParams.get("invite") ?? "";
   return token === "" ? undefined : token;
 }
-
-/** What a person with a link that no longer opens the door is told. */
-const INVITE_SPENT_MESSAGE =
-  "This invite link has been used, revoked or has expired. Ask whoever sent it for a new one.";
 
 /** The whole of `/signup` while the forge makes no new accounts: a sentence, no form. */
 function signupClosedPage(ctx: Ctx): Response {

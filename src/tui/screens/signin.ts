@@ -8,9 +8,10 @@
  * account while signup allows — not an admin; the operator makes the admin.
  */
 
-import { SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
+import { INVITE_SPENT_MESSAGE, SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
 import { SignupSlot, waitText } from "../../actions/signup-window.ts";
 import { hasAnyUser } from "../../core/users.ts";
+import { getSignup } from "../../settings/signup.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { style } from "../term/style.ts";
@@ -37,24 +38,37 @@ const CREATE: Field[] = [
   { label: "Password", secret: true, hint: "At least 10 characters." },
 ];
 
+/** While signup is `invite` the create form also asks for the link's token. */
+const INVITE_BLANK_MESSAGE = "Paste the token from your invite link.";
+const INVITE: Field = { label: "Invite", secret: true, hint: "The token from your invite link." };
+
 export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
   // "Is this forge empty?" is a existence question, not a count: `COUNT(*)`
   // walks the whole user table on the one screen every session paints.
   const first = !hasAnyUser(f.db);
   // Closed signup offers no create mode at all, as the page offers no form.
-  const closed = signupClosed(f.app);
-  let mode: "signin" | "create" = first && !closed ? "create" : "signin";
-  let values = ["", "", ""];
+  // With signup = invite the form is offered, and asks for the invite.
+  // Both are read where they are used, so the screen follows the live setting.
+  const invited = (): boolean => getSignup(f.db) === "invite";
+  const closed = (): boolean => !invited() && signupClosed(f.app);
+  let mode: "signin" | "create" = first && !closed() ? "create" : "signin";
+  let values = ["", "", "", ""];
   let focus = 0;
   let error: string | undefined;
   let busy = false;
 
-  const fields = (): Field[] => (mode === "create" ? CREATE : SIGN_IN);
+  const fields = (): Field[] => (mode === "create" ? (invited() ? [...CREATE, INVITE] : CREATE) : SIGN_IN);
 
   const submit = (): void => {
     if (busy) return;
-    if (closed && mode === "create") {
+    if (closed() && mode === "create") {
       error = SIGNUP_CLOSED_MESSAGE;
+      return;
+    }
+    const needsInvite = mode === "create" && invited();
+    if (needsInvite && (values[3] ?? "").trim() === "") {
+      error = INVITE_BLANK_MESSAGE;
+      focus = 3;
       return;
     }
     busy = true;
@@ -62,11 +76,13 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
     runAsync(ctx, async () => {
       try {
         if (mode === "create") {
-          const [username, email, password] = values as [
+          const [username, email, password, token] = values as [
+            string,
             string,
             string,
             string,
           ];
+          const invite = needsInvite ? token.trim() : "";
           const slot = SignupSlot.take(f.app, f.identity.remoteAddress);
           if (typeof slot === "number") {
             error = waitText(slot);
@@ -75,10 +91,11 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
           const created = await signUp(
             f.app,
             { username, email, password },
-            { slot, address: f.identity.remoteAddress },
+            { slot, address: f.identity.remoteAddress, ...(invite === "" ? {} : { invite }) },
           );
           if (!created.ok) {
-            error = errorText(created.error);
+            // With signup = invite a refusal means the token did not open the door.
+            error = needsInvite && created.error === "signup_closed" ? INVITE_SPENT_MESSAGE : errorText(created.error);
             return;
           }
           const adopted = f.adopt(created.value);
@@ -109,21 +126,21 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
     keys: [
       binding(["tab"], "next field"),
       binding(["enter"], mode === "create" ? "create" : "sign in"),
-      ...(closed ? [] : [binding(["ctrl+t"], first ? "sign in instead" : "create account")]),
+      ...(closed() ? [] : [binding(["ctrl+t"], first ? "sign in instead" : "create account")]),
       binding(["esc"], "back"),
     ],
     render(area, s) {
       const c = ctx.theme.c;
       const [head, body] = split(area, "v", [len(2), fill(1)]);
       segmented(s, head!, c, {
-        items: closed ? ["Sign in"] : ["Sign in", "Create account"],
+        items: closed() ? ["Sign in"] : ["Sign in", "Create account"],
         active: mode === "create" ? 1 : 0,
       });
       s.text(
         head!.x,
         head!.y + 1,
         truncate(
-          closed
+          closed()
             ? SIGNUP_CLOSED_MESSAGE
             : first
             ? "This forge has no accounts yet. The operator makes the admin."
@@ -162,9 +179,9 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
       ctx.setCursor(cursor);
     },
     key(e) {
-      if (e.ctrl && e.key === "t" && !closed) {
+      if (e.ctrl && e.key === "t" && !closed()) {
         mode = mode === "create" ? "signin" : "create";
-        values = ["", "", ""];
+        values = ["", "", "", ""];
         focus = 0;
         error = undefined;
         return true;
