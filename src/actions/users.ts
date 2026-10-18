@@ -57,11 +57,12 @@ export const SIGNUP_CLOSED_MESSAGE = "Signup is closed on this forge.";
 
 /**
  * Whether no new account may be made now. Read from the store on every call,
- * so a change takes effect on the next request. `invite` acts as closed until
- * invitations exist (#1143). The forge's first account is no exception.
+ * so a change takes effect on the next request. While signup is `invite`, an
+ * open invite link's token opens it (`core/invites.ts`). The forge's first
+ * account is no exception.
  */
-export function signupClosed(app: App): boolean {
-  return newAccountsClosed(app.db);
+export function signupClosed(app: App, invite?: string): boolean {
+  return newAccountsClosed(app.db, invite);
 }
 
 /** What anyone is told at a door that still offers a password-only sign-up. */
@@ -90,6 +91,8 @@ export async function signUp(
   from: {
     /** The place the door took in the sign-up window (`actions/signup-window.ts`). */
     slot: SignupSlot;
+    /** The token of the invite link the person came by (`core/invites.ts`). */
+    invite?: string | undefined;
     address?: string | undefined;
   },
 ): Promise<Result<User, SignUpError>> {
@@ -97,7 +100,7 @@ export async function signUp(
   // when every such account has a passkey (Settings → Passkeys shows who is
   // left) and recovery without a password exists (#1618): then delete this
   // action's password path, `verifyPasswordThrottled`'s doors and the password column.
-  if (signupClosed(app)) return err("signup_closed");
+  if (signupClosed(app, from.invite)) return err("signup_closed");
   if (app.config.passkeyOnlySignup === true) return err("passkey_required");
   const secret = app.config.turnstileSecret;
   // The terminal cannot render a widget, so with a secret set it brings no
@@ -109,7 +112,7 @@ export async function signUp(
       return err("human_check");
   }
   const { humanToken: _token, ...account } = input;
-  const created = await createUser(app.db, { ...account, origin: "signup", slot: from.slot });
+  const created = await createUser(app.db, { ...account, origin: "signup", slot: from.slot, invite: from.invite });
   if (!created.ok) return created;
   app.bus.append({
     kind: "user.created",
@@ -144,9 +147,9 @@ export interface PasskeySignUpInput {
 export async function signUpWithPasskey(
   app: App,
   input: PasskeySignUpInput,
-  from: { slot: SignupSlot; address?: string | undefined },
+  from: { slot: SignupSlot; invite?: string | undefined; address?: string | undefined },
 ): Promise<Result<User, SignUpError | "passkey_taken">> {
-  if (signupClosed(app)) return err("signup_closed");
+  if (signupClosed(app, from.invite)) return err("signup_closed");
   const secret = app.config.turnstileSecret;
   if (secret !== undefined) {
     const verify = app.config.verifyHuman ?? turnstileVerifier(secret);
@@ -159,6 +162,7 @@ export async function signUpWithPasskey(
     email: input.email,
     origin: "passkey",
     slot: from.slot,
+    invite: from.invite,
   });
   if (!created.ok) return created;
   const kept = addPasskey(app.db, created.value.id, input.passkeyName, input.passkey);

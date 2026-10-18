@@ -99,7 +99,7 @@ export const passkeyJs = /* js */ `
   wire('passkey-signup', function () {
     function val(n) { var el = doc.querySelector('[name=' + n + ']'); return el ? el.value : ''; }
     var who = { username: val('username'), email: val('email') };
-    return post('/signup/passkey/options', who).then(function (o) {
+    return post('/signup/passkey/options' + location.search, who).then(function (o) {
       return navigator.credentials.create({ publicKey: {
         challenge: bytes(o.challenge),
         rp: { id: o.rpId, name: o.rpName },

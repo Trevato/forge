@@ -12,6 +12,7 @@ import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { admitSignin } from "./signin-window.ts";
 import { getSignup } from "../settings/signup.ts";
+import { inviteOpen, redeemInvite, reopenInvite } from "./invites.ts";
 import type { SignupSlot } from "../actions/signup-window.ts";
 
 export interface User {
@@ -128,7 +129,12 @@ export type StrangerOrigin = "signup" | "passkey" | "parent";
 export type AdminOrigin = "claim" | "first-admin" | "seed";
 export type ExemptOrigin = AdminOrigin | "everyday" | "agent" | "spawn";
 export type AccountOrigin =
-  | { origin: StrangerOrigin; slot: SignupSlot }
+  /**
+   * `invite` is the token of an invite link (`core/invites.ts`): while
+   * signup is `invite` it opens the door once, spent with the account.
+   */
+  | { origin: "signup" | "passkey"; slot: SignupSlot; invite?: string | undefined }
+  | { origin: "parent"; slot: SignupSlot }
   | { origin: "edge" }
   | { origin: Exclude<ExemptOrigin, AdminOrigin> }
   | ({ origin: AdminOrigin } & AdminFields);
@@ -147,12 +153,19 @@ interface AdminFields {
 export type CreateUserInput = CreateUserFields & AccountOrigin;
 
 /**
- * Whether no stranger may make an account now: signup is not `open` (`invite`
- * acts as closed until #1143). A fresh forge's first account is held to it
- * too: no sign-up makes the admin (the operator's first-admin link or a claim
- * does), so being first earns nothing.
+ * Whether no stranger may make an account now: signup is not `open`. A fresh
+ * forge's first account is held to it too: no sign-up makes the admin (the
+ * operator's first-admin link or a claim does), so being first earns nothing.
+ * While signup is `invite`, an open invite's token lets one stranger in
+ * (`inviteNeeded` says when it must be spent).
  */
-export function newAccountsClosed(db: Database): boolean {
+export function newAccountsClosed(db: Database, invite?: string): boolean {
+  if (!inviteNeeded(db)) return false;
+  return !(getSignup(db) === "invite" && invite !== undefined && inviteOpen(db, invite));
+}
+
+/** Whether a stranger needs an invite (or cannot come in at all) now. */
+function inviteNeeded(db: Database): boolean {
   return getSignup(db) !== "open";
 }
 
@@ -203,26 +216,43 @@ interface CreateUserFields {
  * other trace is removed; anything else stays.
  */
 export function discardFreshUser(db: Database, userId: string): void {
-  db.query("DELETE FROM user WHERE id = ?1 AND password_hash = ''").run(userId);
+  const removed = db.query("DELETE FROM user WHERE id = ?1 AND password_hash = ''").run(userId).changes;
+  if (removed === 1) reopenInvite(db, userId);
 }
 
-/** What an origin is held to before its account is made: a refusal, or none. */
-function admission(db: Database, input: AccountOrigin): "signup_closed" | undefined {
+/**
+ * What an origin is held to before its account is made: refused, or let in,
+ * with the invite token to spend in the same write as the account when an
+ * invite is what let it in.
+ */
+type Admission =
+  | { readonly admitted: false }
+  | { readonly admitted: true; readonly spend: string | undefined };
+
+const ADMITTED: Admission = { admitted: true, spend: undefined };
+const REFUSED: Admission = { admitted: false };
+
+function admission(db: Database, input: AccountOrigin): Admission {
   switch (input.origin) {
     case "signup":
     case "passkey":
+      if (input.slot.spent) throw new Error("a sign-up slot makes one account");
+      if (!inviteNeeded(db)) return ADMITTED;
+      return newAccountsClosed(db, input.invite) || input.invite === undefined
+        ? REFUSED
+        : { admitted: true, spend: input.invite };
     case "parent":
       if (input.slot.spent) throw new Error("a sign-up slot makes one account");
-      return newAccountsClosed(db) ? "signup_closed" : undefined;
+      return newAccountsClosed(db) ? REFUSED : ADMITTED;
     case "edge":
-      return newAccountsClosed(db) ? "signup_closed" : undefined;
+      return newAccountsClosed(db) ? REFUSED : ADMITTED;
     case "claim":
     case "everyday":
     case "agent":
     case "spawn":
     case "first-admin":
     case "seed":
-      return undefined;
+      return ADMITTED;
     default: {
       // A new origin is a decision: tsc refuses one left out above.
       const unclassified: never = input;
@@ -247,8 +277,8 @@ export async function createUser(
   db: Database,
   input: CreateUserInput,
 ): Promise<Result<User, CreateUserError>> {
-  const refused = admission(db, input);
-  if (refused !== undefined) return err(refused);
+  const admitted = admission(db, input);
+  if (!admitted.admitted) return err("signup_closed");
   const admin = adminOf(input);
   if (!isSafeName(input.username)) return err("invalid_username");
   const agent = input.agent === true;
@@ -288,7 +318,11 @@ export async function createUser(
   // The hash above yielded the event loop, so another sign-up may have landed
   // meanwhile. Uniqueness is settled by the constraint, and "first user" by a
   // subquery in the same statement — neither is a check-then-act.
-  try {
+  // The invite is spent in the same transaction as the account: a taken
+  // name gives it back, and of two sign-ups racing for one link one wins.
+  const invite = admitted.spend;
+  const insert = db.transaction((): boolean => {
+    if (invite !== undefined && !redeemInvite(db, invite, userId)) return false;
     db.query(
       `INSERT INTO user (id, username, email, password_hash, display_name, is_admin, is_agent)
        VALUES (?1, ?2, ?3, ?4, ?5,
@@ -307,6 +341,10 @@ export async function createUser(
       admin.adminIfFirst ? 1 : 0,
       agent ? 1 : 0,
     );
+    return true;
+  });
+  try {
+    if (!insert()) return err("signup_closed");
   } catch (error) {
     if (!isUniqueViolation(error)) throw error;
     const taken = db
