@@ -18,7 +18,7 @@
  * one.
  */
 
-import { killTree, openCell } from "./contain.ts";
+import { killTree, openCell, type Cell } from "./contain.ts";
 import type { App as Forge } from "../app.ts";
 import { getAppBySlug, type AppRecord } from "../core/apps.ts";
 import { identityKey } from "./proxy.ts";
@@ -28,7 +28,7 @@ import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { SshSession } from "../ssh/server.ts";
 import { isEnvName, previewEnv, type EnvName } from "./data.ts";
-import { appEnv } from "./process.ts";
+import { appEnv, signalGroup } from "./process.ts";
 import { appsRuntime } from "./runtime.ts";
 
 const CRLF = "\r\n";
@@ -74,7 +74,7 @@ export interface TtyHost {
   write(bytes: Uint8Array): void;
   onData(cb: (chunk: Uint8Array) => void): void;
   onResize(cb: (cols: number, rows: number) => void): void;
-  /** Fires when the host is gone; the program gets `SIGHUP`. */
+  /** Fires when the host is gone; the program (and what it started) gets `SIGHUP`. */
   onClose?(cb: () => void): void;
 }
 
@@ -178,14 +178,12 @@ export async function runAppTty(
     user === undefined ? "" : canWrite(forge.db, repo, user) ? "admin" : "user";
   // The terminal is held exactly as the app is (`apps/contain.ts`).
   const cell = live.cell === undefined ? undefined : openCell(live.cell);
-  const command = `exec ${live.tty}`;
-  const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {
+  const program = startTerminal(`exec ${live.tty}`, {
     terminal,
-    env: cell?.env(env) ?? env,
+    env,
     cwd: live.dir,
+    cell,
   });
-  void proc.exited.then(() => cell?.close());
-  cell?.watch(proc.pid, () => killTree(proc.pid));
   forge.log.info("app terminal opened", {
     app: target.app.slug,
     env: target.env,
@@ -208,20 +206,67 @@ export async function runAppTty(
       /* same race, same answer */
     }
   });
+  host.onClose?.(program.hangup);
+  try {
+    // `exited`, never the pty's own exit callback (see runEditor).
+    return ok(await program.exited);
+  } finally {
+    terminal.close();
+  }
+}
+
+/** A terminal program started on a pty: its pid, its exit, and its hangup. */
+export interface TerminalProgram {
+  readonly pid: number;
+  /** Resolves with the exit code once the program, and so its group, is gone. */
+  readonly exited: Promise<number>;
+  /** The host went away: what a closing terminal sends. */
+  readonly hangup: () => void;
+}
+
+/**
+ * Start `command` (through `sh -c`) on `terminal`, held in `cell` when
+ * there is one. Without a cell the program leads a process group of its
+ * own, so a hangup reaches what it started (a server it left running, a
+ * job sent to the background), not just the program; and once the program
+ * has gone, whatever is left of its group is killed. Nothing a terminal
+ * started runs on, with the environment's secrets, after the terminal has
+ * closed. A cell's tree dies with bubblewrap.
+ */
+export function startTerminal(
+  command: string,
+  options: {
+    terminal: Bun.Terminal;
+    env: Record<string, string>;
+    cwd: string;
+    cell: Cell | undefined;
+  },
+): TerminalProgram {
+  const { cell } = options;
+  const proc = Bun.spawn(cell?.argv(command) ?? ["/bin/sh", "-c", command], {
+    terminal: options.terminal,
+    env: cell?.env(options.env) ?? options.env,
+    cwd: options.cwd,
+    detached: cell === undefined,
+  });
+  const exited = proc.exited.then((code) => {
+    cell?.close();
+    if (cell === undefined) signalGroup(proc.pid, "SIGKILL");
+    return code;
+  });
+  cell?.watch(proc.pid, () => killTree(proc.pid));
   const hangup = (): void => {
+    if (cell === undefined) {
+      signalGroup(proc.pid, "SIGHUP");
+      return;
+    }
     try {
       proc.kill("SIGHUP");
     } catch {
       /* already gone */
     }
   };
-  host.onClose?.(hangup);
-  try {
-    // `proc.exited`, never the pty's own exit callback (see runEditor).
-    return ok(await proc.exited);
-  } finally {
-    terminal.close();
-  }
+  return { pid: proc.pid, exited, hangup };
 }
 
 /**
