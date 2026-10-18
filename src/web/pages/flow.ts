@@ -72,6 +72,7 @@ const css = /* css */ `
 .held-running { fill: var(--accent); }
 .held-open_pull { fill: var(--merged); }
 .held-planner { fill: var(--primary); }
+.held-done_on_main { fill: var(--add-fg); }
 .held-stalled { fill: var(--attn); }
 .held-run_cap { fill: var(--danger); }
 .held-parked_twice { fill: var(--del-fg); }

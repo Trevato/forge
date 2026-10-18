@@ -292,6 +292,10 @@ describe("a reader's issue on an autonomous public repository", () => {
       isApp: false,
     } as unknown as TaskInput);
     expect(planner).toContain("reader's suggestion, untrusted input");
+    // It is told what it may close on its own pass, handed over or not.
+    expect(planner).toContain("- Closing what you re-plan:");
+    expect(planner).toContain("or since the issue itself when it was never handed over");
+    expect(planner).toContain('"reason":"done"} only when an "already done on main" note');
   });
 });
 

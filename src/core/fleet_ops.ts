@@ -10,7 +10,7 @@ import { transact } from "../kernel/db.ts";
 import { id } from "../kernel/id.ts";
 
 /** A row's value, as it is shown before → after: plain JSON. */
-export type FleetValue = string | number | null | readonly (string | number)[];
+export type FleetValue = string | number | boolean | null | readonly (string | number)[];
 
 export type RowOutcome = "ok" | "failed" | "refused" | "unchanged";
 
