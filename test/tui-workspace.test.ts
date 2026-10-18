@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
+import { audienceFor } from "../src/core/audience.ts";
 import { getRepo, type Repo } from "../src/core/repos.ts";
 import { listPulls } from "../src/core/pulls.ts";
 import type { User } from "../src/core/users.ts";
@@ -575,6 +576,30 @@ describe("the terminal workspace", () => {
       expect(h.text()).toContain("Lighthouse");
     } finally {
       h.stop();
+    }
+  });
+
+  test("the about card says who can see the repository, as the API does", async () => {
+    const guest = boot({
+      sshUsername: "git",
+      remoteAddress: "127.0.0.1",
+      fingerprint: "SHA256:unknown",
+    });
+    const member = boot();
+    try {
+      for (const [h, viewer] of [
+        [member, alice],
+        [guest, undefined],
+      ] as const) {
+        await h.settle();
+        await open(h);
+        await h.press("I");
+        await h.settle();
+        expect(h.text()).toContain(audienceFor(forge.db, repo, viewer).sentence);
+      }
+    } finally {
+      member.stop();
+      guest.stop();
     }
   });
 

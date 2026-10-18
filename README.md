@@ -379,6 +379,15 @@ terminal's **Chain** command; the owner severs it with the page's Sever,
 updates into a conflict opens the converge issue at every door. See
 `docs/SPAWN.md` and `docs/FOLLOWING.md`.
 
+## Who can see it
+
+Every repository page says, beside the Private/Public badge, who can see it in
+one sentence ("Private: only you and the crew."), and a writer's click goes to
+Settings. `GET /api/v1/repos/:owner/:name` returns the same words as
+`audience: { level, sentence }`, the MCP `repo` tool carries it too, and the
+terminal's About card (`I`) shows it. It gives counts, never names; site
+admins are not counted. All of them read `audienceFor` in `src/core/audience.ts`.
+
 ## Archive
 
 An admin puts a repository away from **Settings → Archive**, with

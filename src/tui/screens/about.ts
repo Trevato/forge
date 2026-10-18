@@ -15,6 +15,7 @@
  * card is an OSC 8 hyperlink besides.
  */
 
+import { audienceFor } from "../../core/audience.ts";
 import { isPinned } from "../../core/pins.ts";
 import { parentReleases, releasesSentence } from "../../core/parent_releases.ts";
 import { running } from "../../kernel/version.ts";
@@ -128,6 +129,18 @@ export function aboutScreen(
         style(description === "" ? c.faint : c.fg, c.card),
         edge,
       );
+      // Who can see it, in the web page's words (#809).
+      if (repo !== undefined)
+        s.text(
+          lead,
+          inner.y + 2,
+          truncate(
+            audienceFor(f.db, repo, f.user).sentence,
+            Math.max(0, edge - lead),
+          ),
+          style(c.mutedFg, c.card),
+          edge,
+        );
       drawFacts(
         s,
         {
