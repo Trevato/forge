@@ -575,7 +575,9 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
     notifier.stop(),
     crew?.stop({ drain: true }),
     apps?.stop(),
-    checks?.stop(),
+    // A step leads a process group of its own, so a terminal's Ctrl-C no
+    // longer ends it: a person's stop cuts checks off (queued again) at once.
+    checks?.stop({ drain: signal === "SIGTERM" }),
     looks?.stop(),
     probes?.stop(),
     snapshots.stop(),

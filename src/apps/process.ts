@@ -230,6 +230,18 @@ function truncate(line: string): string {
 }
 
 /**
+ * Signal a process group: a negative pid is the leader and everything it
+ * started that has not left the group. Nothing left of it is not an error.
+ */
+function signalGroup(leader: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-leader, signal);
+  } catch {
+    // the group is already gone
+  }
+}
+
+/**
  * Run a step to completion, streaming its output. A non-zero exit, a
  * timeout, or an abort is an Err with the reason a person would want.
  */
@@ -255,6 +267,19 @@ export async function runStep(
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
+    // Without a cell, the step leads a process group of its own, so a
+    // cancel reaches what its shell started (an install script, a test
+    // worker), not just the shell. A cell's tree dies with bubblewrap.
+    detached: cell === undefined,
+  });
+  const kill = (): void => {
+    if (cell === undefined) signalGroup(proc.pid, "SIGKILL");
+    else proc.kill("SIGKILL");
+  };
+  // Once the shell has gone, so has the rest of its group: nothing a step
+  // started runs on in the checkout after the step has ended.
+  void proc.exited.then(() => {
+    if (cell === undefined) signalGroup(proc.pid, "SIGKILL");
   });
   const recent: string[] = [];
   const dirs = spellings([options.cwd]);
@@ -272,12 +297,12 @@ export async function runStep(
   const stopReading = new AbortController();
   const timer = setTimeout(() => {
     why = `${name} took longer than ${Math.round(timeoutMs / 1000)}s`;
-    proc.kill("SIGKILL");
+    kill();
     stopReading.abort();
   }, timeoutMs);
   const onAbort = (): void => {
     why = `${name} cancelled`;
-    proc.kill("SIGKILL");
+    kill();
     stopReading.abort();
   };
   if (options.signal.aborted) onAbort();
@@ -424,21 +449,12 @@ export async function startProcess(
     // bubblewrap's, walked by `signalTree` and `killTree`.
     detached: cell === undefined,
   });
-  // A negative pid is the whole group: the app and everything it started
-  // that has not left the group. Nothing left of it is not an error.
-  const signalGroup = (signal: NodeJS.Signals): void => {
-    try {
-      process.kill(-proc.pid, signal);
-    } catch {
-      // the group is already gone
-    }
-  };
   // The cell's sockets and watch end with the process, however it ends.
   // Without a cell, so does the rest of its group: a child that outlived
   // the app, stopped or crashed, is not left running on its data.
   void proc.exited.then(() => {
     cell?.close();
-    if (cell === undefined) signalGroup("SIGKILL");
+    if (cell === undefined) signalGroup(proc.pid, "SIGKILL");
   });
   cell?.watch(proc.pid, () => killTree(proc.pid));
   // Output is pumped for the life of the process, not just the start.
@@ -469,14 +485,14 @@ export async function startProcess(
       if (proc.exitCode !== null || proc.signalCode !== null) return;
       // In a cell the pid is bubblewrap's, which passes no signal on: the
       // app itself is asked, so it shuts down the way it would anywhere.
-      if (cell === undefined) signalGroup("SIGTERM");
+      if (cell === undefined) signalGroup(proc.pid, "SIGTERM");
       else signalTree(proc.pid, "SIGTERM");
       const gone = await Promise.race([
         proc.exited.then(() => true),
         Bun.sleep(STOP_GRACE_MS).then(() => false),
       ]);
       if (!gone) {
-        if (cell === undefined) signalGroup("SIGKILL");
+        if (cell === undefined) signalGroup(proc.pid, "SIGKILL");
         else killTree(proc.pid);
         await proc.exited;
       }
