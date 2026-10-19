@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { checkTime, kpiLines, sparkText } from "../src/flow/kpi_words.ts";
 import { running } from "../src/kernel/version.ts";
+import { feedCss } from "../src/web/studio/feed_style.ts";
 import { kpiRowFor, liveNow, sparkline } from "../src/web/studio/kpi_row.ts";
 
 const hours = (n: number) => Array.from({ length: 24 }, (_, i) => (i === 3 ? n : 0));
@@ -68,6 +69,14 @@ describe("home kpi row", () => {
   test("a truncated note carries its whole text as a title", () => {
     const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, medianCheckMs: null }, null).toString();
     expect(out).toContain('title="No check finished in 24 h"');
+  });
+
+  test("the note wraps into two reserved lines instead of cutting off on a phone", () => {
+    const rule = (sel: string) => new RegExp(`\\${sel} \\{([^}]*)\\}`).exec(feedCss)![1]!;
+    expect(rule(".kpi-note")).not.toContain("nowrap");
+    expect(rule(".kpi-note")).toContain("line-height: 20px");
+    expect(rule(".kpi-note")).toContain("line-clamp: 2");
+    expect(rule(".kpi")).toContain("grid-template-rows: 20px 32px 40px 24px");
   });
 
   test("check time reads as a person would", () => {
