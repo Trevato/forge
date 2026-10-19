@@ -29,6 +29,7 @@ import {
 import { forgeHost, noreplyAddress } from "../../core/commit_identity.ts";
 import { ABILITIES, roleOf, rowOf, type Ability } from "../../core/roles.ts";
 import { linkEdgeLogin, linkedLogin, unlinkEdgeLogin } from "../../core/edge_links.ts";
+import { LAST_WAY_IN, linkedParent, parentIssuerOf, unlinkParent } from "../../core/federation.ts";
 import { activeEdgeToken, edgeIdentity } from "../../http/edge.ts";
 import { listKeys } from "../../core/keys.ts";
 import { endAccountSession } from "../../actions/signins.ts";
@@ -147,6 +148,39 @@ function edgeLinkView(ctx: Ctx): Html {
               </form>`}`,
     { head: html`<h3>open-platform.sh</h3>` },
   );
+}
+
+/** The parent forge: linked as its host, or not, with Link (a round trip through the parent) and Unlink. */
+function parentLinkView(ctx: Ctx): Html {
+  const issuer = parentIssuerOf(ctx.app.config);
+  if (issuer === undefined) return html``;
+  const host = new URL(issuer).host;
+  const linked = linkedParent(ctx.app.db, ctx.auth.user!.id, issuer) !== undefined;
+  return card(
+    linked
+      ? html`<p>${host}: linked</p>
+          <form method="post" action="/settings/parent/unlink">
+            ${btn("Unlink", { type: "submit" })}
+          </form>`
+      : html`<p>${host}: not linked</p>
+          <form method="post" action="/settings/parent/link">
+            ${btn(`Link ${host}`, { type: "submit" })}
+          </form>`,
+    { head: html`<h3>${host}</h3>` },
+  );
+}
+
+// POST /settings/parent/unlink
+export async function parentUnlink(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const issuer = parentIssuerOf(ctx.app.config);
+  const done = issuer === undefined ? undefined : unlinkParent(ctx.app.db, ctx.auth.user.id, issuer);
+  if (done === undefined || (done.ok && done.value === "none")) return flashTo(ctx, "/settings", { message: "Nothing to unlink." });
+  if (!done.ok) return flashTo(ctx, "/settings", { message: LAST_WAY_IN });
+  ctx.app.bus.append({ kind: "account.parent_unlinked", actorId: ctx.auth.user.id });
+  return flashTo(ctx, "/settings", { message: "Unlinked." });
 }
 
 // POST /settings/edge/link
@@ -303,7 +337,7 @@ export function accountPage(ctx: Ctx): Response {
     ctx,
     "profile",
     "Settings",
-    html`${pair}${profileView(ctx, currentProfile(ctx.auth.user))}${edgeLinkView(ctx)}${notifyView(ctx)}`,
+    html`${pair}${profileView(ctx, currentProfile(ctx.auth.user))}${edgeLinkView(ctx)}${parentLinkView(ctx)}${notifyView(ctx)}`,
     200,
     // The everyday form makes its account with a passkey (#1890).
     pair ? passkeyJs : undefined,

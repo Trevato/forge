@@ -7,6 +7,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { linkEdgeLogin, linkedLogin } from "../src/core/edge_links.ts";
+import { linkedParent } from "../src/core/federation.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { setMember } from "../src/core/roles.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
@@ -86,5 +87,27 @@ describe("what I can do in the terminal", () => {
     expect(after).toContain("open-platform.sh: not linked");
     expect(linkedLogin(forge.db, bob.id)).toBeUndefined();
     expect(seen).toContain("account.edge_unlinked");
+  });
+
+  test("the screen shows the parent forge link, and p unlinks it", async () => {
+    const bob = getUserByName(forge.db, "bob")!;
+    const issuer = "https://parent.example";
+    forge.db.query("INSERT INTO federated_identity (issuer, sub, user_id) VALUES (?1, 'sub1', ?2)").run(issuer, bob.id);
+    forge.config.parentUrl = issuer;
+    expect(await shown("bob")).toContain("parent.example: linked");
+    // No password and no passkey: the link is the only way in, and p refuses.
+    forge.db.query("UPDATE user SET password_hash = '' WHERE id = ?1").run(bob.id);
+    const kept = await shown("bob", ["p"]);
+    expect(kept).toContain("parent.example: linked");
+    expect(kept).toContain("Add a passkey or a password first");
+    expect(linkedParent(forge.db, bob.id, issuer)).toBe("sub1");
+    forge.db.query("UPDATE user SET password_hash = 'x' WHERE id = ?1").run(bob.id);
+    const seen: string[] = [];
+    const stop = forge.bus.subscribe((e) => seen.push(e.kind));
+    const after = await shown("bob", ["p"]);
+    stop();
+    expect(after).toContain("parent.example: not linked");
+    expect(linkedParent(forge.db, bob.id, issuer)).toBeUndefined();
+    expect(seen).toContain("account.parent_unlinked");
   });
 });

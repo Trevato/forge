@@ -22,6 +22,7 @@ import {
   startLogin,
   takeLogin,
   CALLBACK_PATH,
+  linkParent,
 } from "../core/federation.ts";
 import { readCapped } from "../origins/providers/http.ts";
 import { clientAddress } from "./peer.ts";
@@ -29,7 +30,9 @@ import { signinAllowed, signupSlot } from "../web/pages/site.ts";
 import { createSession } from "../core/sessions.ts";
 import { verifyJwt } from "../kernel/jwt.ts";
 import { html } from "../web/html.ts";
-import { page, redirect } from "../web/layout.ts";
+import { flashTo, page, redirect } from "../web/layout.ts";
+import { readForm } from "../web/form.ts";
+import { signInFirst } from "../web/chrome.ts";
 import { sessionCookie } from "../web/pages/site.ts";
 import { cookieValue, type Ctx } from "./context.ts";
 import { KeySet } from "./jwks.ts";
@@ -118,7 +121,17 @@ const cookieHeader = (value: string, maxAge: number, url: URL, forgeUrl?: string
   return `${STATE_COOKIE}=${value}; Path=/signin/parent; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure}`;
 };
 
-export async function parentStart(ctx: Ctx): Promise<Response> {
+export const parentStart = (ctx: Ctx): Promise<Response> => begin(ctx);
+
+/** POST /settings/parent/link: the same round trip, begun by a signed-in person to link, not to sign in. */
+export async function parentLinkStart(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  return begin(ctx, ctx.auth.user.id);
+}
+
+async function begin(ctx: Ctx, linkUser?: string): Promise<Response> {
   const issuer = parentIssuer(ctx.app);
   if (issuer === undefined) return failure(ctx, "This forge has no parent to sign in through.", 404);
   // Each start writes a row and the table is bounded: a flood must not push
@@ -139,7 +152,7 @@ export async function parentStart(ctx: Ctx): Promise<Response> {
   const state = rand(24);
   const verifier = rand(48);
   const nonce = rand(24);
-  startLogin(ctx.app.db, state, { verifier, nonce, issuer, redirectUri });
+  startLogin(ctx.app.db, state, { verifier, nonce, issuer, redirectUri, ...(linkUser === undefined ? {} : { linkUser }) });
   const query = new URLSearchParams({
     response_type: "code",
     client_id: client,
@@ -207,6 +220,22 @@ export async function parentCallback(ctx: Ctx): Promise<Response> {
     const sub = verified.value["sub"];
     if (typeof sub !== "string" || !SUB.test(sub))
       return refuse("The parent forge's answer did not verify.", 502);
+    if (login.linkUser !== undefined) {
+      // A link is for the account that began it, still signed in in this browser: never a sign-in, never a new account.
+      if (ctx.auth.user?.id !== login.linkUser) return refuse("Sign in again, then link from your settings.", 403);
+      const linked = linkParent(ctx.app.db, login.linkUser, login.issuer, sub);
+      const back = flashTo(ctx, "/settings", {
+        message: linked.ok
+          ? `Linked ${new URL(login.issuer).host}.`
+          : linked.error === "identity_taken"
+            ? `That ${new URL(login.issuer).host} identity belongs to another account here.`
+            : `This account is linked to another ${new URL(login.issuer).host} identity. Unlink it first.`,
+      });
+      if (linked.ok) ctx.app.bus.append({ kind: "account.parent_linked", actorId: login.linkUser });
+      back.headers.append("set-cookie", clear);
+      back.headers.set("cache-control", "no-store");
+      return back;
+    }
     const name = clean(verified.value["preferred_username"], 64);
     // A returning person is a sign-in; first sight of a sub makes an account,
     // and that is a sign-up, held to the sign-up limit before it is made.

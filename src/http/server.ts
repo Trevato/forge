@@ -11,7 +11,7 @@ import { signupOptions, signupPasskey } from "../web/pages/signup-passkey.ts";
 import { toolbarComment, toolbarPage } from "../web/studio/toolbar.ts";
 import { TOOLBAR_NAME, toolbarResponse } from "../apps/toolbar.ts";
 import { unsealReleased } from "../actions/sealed.ts";
-import { parentCallback, parentStart } from "./rp.ts";
+import { parentCallback, parentLinkStart, parentStart } from "./rp.ts";
 import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { systemPage, systemStream } from "../web/pages/system.ts";
@@ -392,6 +392,7 @@ import {
   notifyUpdate,
   edgeLink,
   edgeUnlink,
+  parentUnlink,
   accountUpdate,
   keyCreate,
   keyDelete,
@@ -761,6 +762,8 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/notify", notifyUpdate);
   router.add("POST", "/settings/edge/link", edgeLink);
   router.add("POST", "/settings/edge/unlink", edgeUnlink);
+  router.add("POST", "/settings/parent/link", parentLinkStart);
+  router.add("POST", "/settings/parent/unlink", parentUnlink);
   router.add("POST", "/settings/email/verify", resendVerifyLink);
   router.add("GET", "/settings/password", passwordPage);
   router.add("POST", "/settings/password", passwordUpdate);

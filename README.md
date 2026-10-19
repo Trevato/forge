@@ -421,6 +421,7 @@ records the login the request carries against the signed-in account, Unlink remo
 it (same-origin POSTs). An edge sign-in finds the account by its link first, then by
 name; one login links to one account, and a login that is another account's name
 cannot be linked. The terminal's "What I can do" screen shows the same line and `u` unlinks (SSH carries no edge header, so linking is on the web page only).
+On a forge with a parent, settings also show "<parent host>: linked" or "not linked". Link is a same-origin POST that runs the `/signin/parent` PKCE round trip for the signed-in account and, on return, writes its `federated_identity` row (never an account); an identity another account holds, or a second identity for this account, is refused. Unlink removes it. The terminal's "What I can do" shows the line and `p` unlinks; linking needs a browser.
 Mail out
 (the link that proves a newcomer's email) is SMTP submission over TLS,
 configured by the forge-level secrets `MAIL_SMTP_URL`

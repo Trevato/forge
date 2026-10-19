@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { sha256 } from "../kernel/hash.ts";
 import { parentUrlProblem } from "./parent_releases.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
 import { createUser, getUserById, getUserByName, isActive, type User } from "./users.ts";
 import type { SignupSlot } from "../actions/signup-window.ts";
 
@@ -44,6 +45,8 @@ export interface Login {
   readonly nonce: string;
   readonly issuer: string;
   readonly redirectUri: string;
+  /** The signed-in account this round trip links an identity to; none for a sign-in. */
+  readonly linkUser?: string;
 }
 
 export function startLogin(db: Database, state: string, login: Login, now = Date.now()): void {
@@ -53,20 +56,26 @@ export function startLogin(db: Database, state: string, login: Login, now = Date
        (SELECT state_hash FROM rp_login ORDER BY expires_at LIMIT max(0, (SELECT count(*) FROM rp_login) - ?1))`,
   ).run(LOGIN_MAX - 1);
   db.query(
-    "INSERT INTO rp_login (state_hash, verifier, nonce, issuer, redirect_uri, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-  ).run(sha256(state), login.verifier, login.nonce, login.issuer, login.redirectUri, now + LOGIN_TTL_MS);
+    "INSERT INTO rp_login (state_hash, verifier, nonce, issuer, redirect_uri, expires_at, link_user) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+  ).run(sha256(state), login.verifier, login.nonce, login.issuer, login.redirectUri, now + LOGIN_TTL_MS, login.linkUser ?? null);
 }
 
 /** The sign-in a state began, used up by asking: a state works once. */
 export function takeLogin(db: Database, state: string, now = Date.now()): Login | undefined {
   const row = db
     .query<
-      { verifier: string; nonce: string; issuer: string; redirect_uri: string; expires_at: number },
+      { verifier: string; nonce: string; issuer: string; redirect_uri: string; expires_at: number; link_user: string | null },
       [string]
-    >("DELETE FROM rp_login WHERE state_hash = ?1 RETURNING verifier, nonce, issuer, redirect_uri, expires_at")
+    >("DELETE FROM rp_login WHERE state_hash = ?1 RETURNING verifier, nonce, issuer, redirect_uri, expires_at, link_user")
     .get(sha256(state));
   if (row === null || row.expires_at <= now) return undefined;
-  return { verifier: row.verifier, nonce: row.nonce, issuer: row.issuer, redirectUri: row.redirect_uri };
+  return {
+    verifier: row.verifier,
+    nonce: row.nonce,
+    issuer: row.issuer,
+    redirectUri: row.redirect_uri,
+    ...(row.link_user === null ? {} : { linkUser: row.link_user }),
+  };
 }
 
 /** A local username for a parent's person: their name if free and fit, else made unique by their `sub`. */
@@ -170,3 +179,50 @@ export function parentIssuerOf(config: {
   if (raw === undefined || parentUrlProblem(raw, config.parentLoopback === true) !== null) return undefined;
   return new URL(raw).origin;
 }
+
+export type ParentLinkError = "already_linked" | "identity_taken";
+
+/** The parent `sub` linked to this account at this issuer, if any. */
+export function linkedParent(db: Database, userId: string, issuer: string): string | undefined {
+  return (
+    db
+      .query<{ sub: string }, [string, string]>("SELECT sub FROM federated_identity WHERE user_id = ?1 AND issuer = ?2")
+      .get(userId, issuer)?.sub ?? undefined
+  );
+}
+
+/**
+ * Record the issuer's `sub` against a signed-in account: the row a first
+ * sign-in would have made, written for an account that already exists.
+ * Refused when another account holds the `sub` or this one holds another.
+ */
+export function linkParent(db: Database, userId: string, issuer: string, sub: string): Result<"linked", ParentLinkError> {
+  const held = db
+    .query<{ user_id: string }, [string, string]>("SELECT user_id FROM federated_identity WHERE issuer = ?1 AND sub = ?2")
+    .get(issuer, sub);
+  if (held !== null) return held.user_id === userId ? ok("linked") : err("identity_taken");
+  if (linkedParent(db, userId, issuer) !== undefined) return err("already_linked");
+  db.query("INSERT INTO federated_identity (issuer, sub, user_id) VALUES (?1, ?2, ?3)").run(issuer, sub, userId);
+  return ok("linked");
+}
+
+/**
+ * Remove the account's link at this issuer. Refused with `last_way_in` when
+ * the account has no password and no passkey: an account parent sign-in made
+ * has the link as its only door, and unlinking it would strand the account.
+ * "none" when there was no link.
+ */
+export function unlinkParent(db: Database, userId: string, issuer: string): Result<"unlinked" | "none", "last_way_in"> {
+  if (linkedParent(db, userId, issuer) === undefined) return ok("none");
+  const other = db
+    .query<{ n: number }, [string]>(
+      `SELECT (SELECT count(*) FROM user WHERE id = ?1 AND password_hash <> '')
+            + (SELECT count(*) FROM passkey WHERE user_id = ?1) AS n`,
+    )
+    .get(userId);
+  if (other === null || other.n === 0) return err("last_way_in");
+  db.query("DELETE FROM federated_identity WHERE user_id = ?1 AND issuer = ?2").run(userId, issuer);
+  return ok("unlinked");
+}
+
+export const LAST_WAY_IN = "Add a passkey or a password first: this link is the only way into your account.";
