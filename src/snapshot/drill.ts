@@ -8,7 +8,9 @@
  * Plain data out: when it ran, which snapshot, how long, what it counted,
  * and a verdict. A red verdict names the step that failed; a step that
  * hangs past the budget is red too, naming the step it hung in and the
- * budget it had. The budget grows with the snapshot (`drillBudgetMs`).
+ * budget it had. The budget grows with the snapshot (`drillBudgetMs`),
+ * and the store's own deadlines and retries are held inside what is left
+ * of it (`Store.bounded`).
  */
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -22,21 +24,28 @@ import type { Store } from "./store.ts";
 
 /** The floor of every drill's budget, and the whole budget for finding the newest snapshot. */
 export const DRILL_TIMEOUT_MS = 10 * 60_000;
-/** What each GiB of snapshot adds to the budget. */
-export const DRILL_MS_PER_GIB = 60_000;
+/**
+ * What each MB (10^6 bytes) of snapshot adds to the budget: 1 s, a link of
+ * 8 Mbit/s for download, decompress and clone together. The 2026-10-14
+ * snapshot (a 334 MB database) ran out of a flat 10 min fetching one object
+ * at a time (#2667); the 60 s per GiB before this gave that snapshot 19 s
+ * more. 8 Mbit/s is about a nineteenth of the forge's shaped 150 Mbit/s
+ * downlink, so a drill that keeps to its line has the rest to spare.
+ */
+export const DRILL_MS_PER_MB = 1_000;
 /** No snapshot is given longer than this. */
 export const DRILL_MAX_MS = 45 * 60_000;
-const GIB = 1024 ** 3;
+const MB = 1_000_000;
 
 /**
  * How long a drill of a snapshot of `bytes` may take, in whole ms:
- * 10 min + 60 s per GiB (2^30 bytes), capped at 45 min. So 0 B is 10 min,
- * 4 GiB is 14 min, and anything from 35 GiB up is 45 min. A size that is
- * not a finite count of bytes counts as 0.
+ * 10 min + 1 s per MB (10^6 bytes), capped at 45 min. So 0 B is 10 min,
+ * 400 MB is 16 min 40 s, and anything from 2.1 GB up is 45 min. A size
+ * that is not a finite count of bytes counts as 0.
  */
 export function drillBudgetMs(bytes: number): number {
   const b = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
-  return Math.min(DRILL_MAX_MS, Math.round(DRILL_TIMEOUT_MS + (b / GIB) * DRILL_MS_PER_GIB));
+  return Math.min(DRILL_MAX_MS, Math.round(DRILL_TIMEOUT_MS + (b / MB) * DRILL_MS_PER_MB));
 }
 
 /** A snapshot's size from its manifest, or the sum of its files when the total is missing. */
@@ -50,6 +59,12 @@ export function formatBudget(ms: number): string {
   if (ms >= 60_000) return `${Math.round(ms / 6_000) / 10} min`;
   if (ms >= 1_000) return `${Math.round(ms / 100) / 10} s`;
   return `${Math.round(ms)} ms`;
+}
+
+/** A budget in minutes whatever its size, one decimal: "16.7 min", "0.1 min"; for the card. */
+export function formatMinutes(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0 min";
+  return `${Math.max(0.1, Math.round(ms / 6_000) / 10)} min`;
 }
 
 /** A size for people, binary units with one decimal: "4.1 GiB". */
@@ -183,7 +198,10 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
   try {
     // One clock for the whole drill, so a hang in any step ends it red.
     const left = (): number => Math.max(1, started + budgetMs - performance.now());
-    const newest = (await within(listSnapshots(deps.store), left(), budget))[0];
+    // Every get, list and retry inside the store keeps to what is left too,
+    // so a stalled store gives up within the budget instead of after it.
+    const store = deps.store.bounded?.(() => started + budgetMs - performance.now()) ?? deps.store;
+    const newest = (await within(listSnapshots(store), left(), budget))[0];
     if (newest === undefined) throw new Error("the store holds no snapshot");
     snapshotId = newest.name;
     sized = snapshotBytes(newest);
@@ -195,7 +213,7 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
     scratch = mkdtempSync(join(parent, "restore-"));
     const target = join(scratch, "data");
     await within(
-      restore(deps.store, newest.name, target, {
+      restore(store, newest.name, target, {
         passphrase: deps.passphrase,
         onProgress: (p) => {
           progress = p;

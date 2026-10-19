@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { DrillResult } from "../src/snapshot/drill.ts";
-import { drillNeed, slowSentence } from "../src/snapshot/verdict.ts";
+import { drillNeed, failedSentence, slowSentence } from "../src/snapshot/verdict.ts";
 
 const MIN = 60_000;
 const drill = (over: Partial<DrillResult>): DrillResult => ({
@@ -41,4 +41,12 @@ test("a red drill is not a slow one", () => {
 
 test("a drill with no budget says nothing", () => {
   expect(slowSentence(drill({ ms: 5 * MIN, budgetMs: 0 }))).toBeUndefined();
+});
+
+test("a red drill's card says its budget in minutes; an older one that kept none says nothing of it", () => {
+  const red = drill({ verdict: "red", failedStep: "restore", reason: "get snapshots/x failed after 5 attempts: no answer in 2 min", budgetMs: 1_000_000, phases: [] });
+  expect(failedSentence(red)).toBe(
+    "The restore drill failed at restore: get snapshots/x failed after 5 attempts: no answer in 2 min. It had 16.7 min. Snapshot snap-1; docs/RECOVERY.md says what to do.",
+  );
+  expect(failedSentence({ ...red, budgetMs: 0 })).not.toContain("It had");
 });

@@ -13,11 +13,13 @@ the newest; no object is called that.
 ## Where the verdicts are posted
 
 Sundays 09:00 UTC the forge drills a restore of the newest snapshot, boots it
-on a side port and reads `/api/v1/health`, all within 10 min plus 60 s per GiB
-of the snapshot's `bytes`, at most 45 min. One comment lands on the recovery
+on a side port and reads `/api/v1/health`, all within 10 min plus 1 s per MB
+(10^6 bytes) of the snapshot's `bytes`, at most 45 min — a 400 MB snapshot has
+16 min 40 s. Every get and its retries keep to what is left of that budget, so
+a stalled store fails the drill within it, naming the object. One comment lands on the recovery
 issue (`FORGE_RECOVERY_ISSUE` in `FORGE_RECOVERY_REPO`): snapshot, restore time,
 health, counts, pass or fail. A failed drill is an inbox card naming the step
-(fetch, restore, open, count, unseal, health) and its budget, run again at boot
+(fetch, restore, open, count, unseal, health) and its budget in minutes, run again at boot
 and every three hours until one passes. No comment this week: backups unproven.
 
 ## What a restore needs

@@ -9,7 +9,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describeTimes, formatSpan, timeByPart, type DrillResult, type DrillStep } from "./drill.ts";
+import { describeTimes, formatMinutes, formatSpan, timeByPart, type DrillResult, type DrillStep } from "./drill.ts";
 
 const STEPS: readonly DrillStep[] = ["fetch", "restore", "open", "count", "unseal", "health"];
 
@@ -39,7 +39,9 @@ export function lastVerdict(dataDir: string): DrillResult | undefined {
 export function failedSentence(r: DrillResult | undefined): string | undefined {
   if (r === undefined || r.verdict !== "red") return undefined;
   const times = describeTimes(r.phases);
-  return `The restore drill failed at ${r.failedStep ?? "an unknown step"}${r.reason ? `: ${r.reason}` : ""}${times ? ` (${times})` : ""}. Snapshot ${r.snapshotId ?? "none"}; docs/RECOVERY.md says what to do.`;
+  // An older drill kept no budget; it says none.
+  const budget = r.budgetMs > 0 ? ` It had ${formatMinutes(r.budgetMs)}.` : "";
+  return `The restore drill failed at ${r.failedStep ?? "an unknown step"}${r.reason ? `: ${r.reason}` : ""}${times ? ` (${times})` : ""}.${budget} Snapshot ${r.snapshotId ?? "none"}; docs/RECOVERY.md says what to do.`;
 }
 
 /** A green drill that used more than this share of its budget is a warning. */

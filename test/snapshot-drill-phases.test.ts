@@ -216,6 +216,13 @@ describe("the Backups page line", () => {
     expect(html).toContain(LINE);
   });
 
+  test("a drill that kept a budget but no phases still says the budget in minutes", async () => {
+    recordDrill(app.db, kept({ phases: [], ms: 75_000, budgetMs: 1_000_000 }));
+    const html = await backups();
+    expect(html).toContain("1 min 15 s of its 16.7 min budget.");
+    expect(html).not.toContain("budget:");
+  });
+
   test("a drill with no phases shows no timing", async () => {
     for (const verdict of ["green", "red"] as const) {
       recordDrill(

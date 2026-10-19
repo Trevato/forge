@@ -13,7 +13,7 @@ import { enableApp, setAppEnvVar } from "../src/actions/apps.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { createUser } from "../src/core/users.ts";
-import { drillBudgetMs, formatBudget, formatBytes, runDrill } from "../src/snapshot/drill.ts";
+import { drillBudgetMs, formatBudget, formatBytes, formatMinutes, runDrill } from "../src/snapshot/drill.ts";
 import { pack, partPath } from "../src/snapshot/parts.ts";
 import { takeSnapshot } from "../src/snapshot/snapshot.ts";
 import { dirStore } from "../src/snapshot/store.ts";
@@ -22,13 +22,20 @@ const PASS = "correct horse battery staple";
 
 describe("the drill's budget", () => {
   const GiB = 1024 ** 3;
+  const MB = 1_000_000;
   test("an empty snapshot gets the 10 min floor", () => {
     expect(drillBudgetMs(0)).toBe(600_000);
   });
-  test("4 GiB gets 10 min + 4 × 60 s = 14 min", () => {
-    expect(drillBudgetMs(4 * GiB)).toBe(840_000);
+  test("400 MB gets 10 min + 400 × 1 s = 16 min 40 s", () => {
+    expect(drillBudgetMs(400 * MB)).toBe(1_000_000);
+    expect(formatMinutes(drillBudgetMs(400 * MB))).toBe("16.7 min");
   });
-  test("100 GiB would be 110 min; it is capped at 45 min", () => {
+  test("334 MB, the database that ran out of a flat 10 min, gets 15 min 34 s", () => {
+    expect(drillBudgetMs(334 * MB)).toBe(934_000);
+  });
+  test("2.1 GB reaches the 45 min ceiling, and 100 GiB stays at it", () => {
+    expect(drillBudgetMs(2_100 * MB)).toBe(2_700_000);
+    expect(drillBudgetMs(2_099 * MB)).toBe(2_699_000);
     expect(drillBudgetMs(100 * GiB)).toBe(2_700_000);
   });
   test("a size that is not a count of bytes counts as 0", () => {
@@ -39,6 +46,12 @@ describe("the drill's budget", () => {
     expect(formatBudget(846_000)).toBe("14.1 min");
     expect(formatBudget(1500.75)).toBe("1.5 s");
     expect(formatBudget(250.4)).toBe("250 ms");
+  });
+  test("the card's budget is always in minutes", () => {
+    expect(formatMinutes(2_700_000)).toBe("45 min");
+    expect(formatMinutes(1_000_000)).toBe("16.7 min");
+    expect(formatMinutes(1_500)).toBe("0.1 min");
+    expect(formatMinutes(NaN)).toBe("0 min");
   });
   test("sizes read in binary units with one decimal", () => {
     expect(formatBytes(Math.round(4.1 * GiB))).toBe("4.1 GiB");
@@ -257,23 +270,22 @@ describe("the restore drill", () => {
     }
   }
 
-  test("with no timeout given, a hanging restore of a 4.1 GiB snapshot has 10 min + 60 s per GiB", async () => {
-    const bytes = Math.round(4.1 * 1024 ** 3);
-    // 10 + 4.1 = 14.1 min; still waiting at 14 min, red past 14.1.
-    const r = await hang({ files: [{ path: "forge.db", bytes }], bytes }, 14 * 60_000, 14.1 * 60_000 + 1);
-    expect(r.reason).toBe("restore timed out: no answer within its 14.1 min budget for a 4.1 GiB snapshot");
+  test("with no timeout given, a hanging restore of a 400 MB snapshot has 10 min + 1 s per MB", async () => {
+    const bytes = 400_000_000;
+    // 600 + 400 = 1000 s; still waiting a second before, red just after.
+    const r = await hang({ files: [{ path: "forge.db", bytes }], bytes }, 999_000, 1_000_001);
+    expect(r.reason).toBe("restore timed out: no answer within its 16.7 min budget for a 381.5 MiB snapshot");
   });
 
   test("a manifest with no total, or one that is not a number, is sized by the sum of its files", async () => {
-    const GiB = 1024 ** 3;
     const files = [
-      { path: "forge.db", bytes: 2 * GiB },
-      { path: "repos/a/b.bundle", bytes: 2 * GiB },
+      { path: "forge.db", bytes: 150_000_000 },
+      { path: "repos/a/b.bundle", bytes: 150_000_000 },
     ];
-    // 2 + 2 GiB: 10 + 4 = 14 min; still waiting just before, red just after.
-    for (const manifest of [{ files }, { files, bytes: "4 GiB" }]) {
-      const r = await hang(manifest, 14 * 60_000 - 1_000, 14 * 60_000 + 1);
-      expect(r.reason).toBe("restore timed out: no answer within its 14 min budget for a 4 GiB snapshot");
+    // 150 + 150 MB: 600 + 300 s = 15 min; still waiting just before, red just after.
+    for (const manifest of [{ files }, { files, bytes: "300 MB" }]) {
+      const r = await hang(manifest, 15 * 60_000 - 1_000, 15 * 60_000 + 1);
+      expect(r.reason).toBe("restore timed out: no answer within its 15 min budget for a 286.1 MiB snapshot");
     }
   });
 

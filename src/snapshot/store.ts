@@ -21,6 +21,12 @@ export interface Store {
   /** The next path segment under `prefix`: the "directories", not the keys. */
   names(prefix: string): Promise<string[]>;
   delete(key: string): Promise<void>;
+  /**
+   * The same store, every call of which gives up within `leftMs()`: its
+   * deadlines and retries together never outlast what is left. A store
+   * that does not retry has nothing to bound and leaves this out.
+   */
+  bounded?(leftMs: () => number): Store;
 }
 
 /** The S3 credentials as the platform hands them to an app. */
@@ -85,6 +91,12 @@ const sizeOf = (body: Uint8Array | string): number =>
  * (2026-10-17). `deadlineMs` fixes every deadline instead, for tests;
  * `floorBytesPerS` and `slackMs` scale the size rule, for tests that run a
  * slow link at a thousand times its speed.
+ *
+ * `bounded(leftMs)` is the same store inside someone else's budget (the
+ * restore drill's): each attempt's deadline is cut to an even share of
+ * what is left after the waits still to come, and none starts once
+ * nothing is, so a stalled store fails within the budget instead of
+ * holding five 180 s attempts past it.
  */
 export function withRetries(
   inner: Store,
@@ -104,35 +116,54 @@ export function withRetries(
   const putMs = (body: Uint8Array | string): number =>
     fixed ?? deadlineFor(sizeOf(body), options.floorBytesPerS, options.slackMs);
   const sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
+  // The waits still to come once attempt `n` has failed, through the last.
+  const waitsFrom = (n: number): number => {
+    let ms = 0;
+    for (let k = n; k + 1 < attempts; k++) ms += baseMs * 2 ** k;
+    return ms;
+  };
   async function tried<T>(
     what: string,
     deadlineMs: number,
     fn: () => Promise<T>,
+    leftMs?: () => number,
   ): Promise<T> {
     let last: unknown;
+    let made = 0;
     for (let n = 0; n < attempts; n++) {
+      // Bounded, each attempt gets an even share of what is left after the
+      // waits to come, so deadlines × attempts never exceed it.
+      const share =
+        leftMs === undefined ? deadlineMs : Math.floor((leftMs() - waitsFrom(n)) / (attempts - n));
+      if (share < 1) {
+        last ??= new Error("no time left in its budget");
+        break;
+      }
+      made++;
       try {
-        return await answered(fn(), deadlineMs);
+        return await answered(fn(), Math.min(deadlineMs, share));
       } catch (error) {
         last = error;
         if (n + 1 < attempts) await sleep(baseMs * 2 ** n);
       }
     }
     throw new Error(
-      `${what} failed after ${attempts} attempt${attempts === 1 ? "" : "s"}: ${String(last instanceof Error ? last.message : last)}`,
+      `${what} failed after ${made} attempt${made === 1 ? "" : "s"}: ${String(last instanceof Error ? last.message : last)}`,
     );
   }
-  return {
+  const view = (leftMs?: () => number): Store => ({
     where: inner.where,
     ...(inner.dir === undefined ? {} : { dir: inner.dir }),
     put: (key, body) =>
-      tried(`put ${key}`, putMs(body), () => inner.put(key, body)),
-    get: (key) => tried(`get ${key}`, callMs, () => inner.get(key)),
-    list: (prefix) => tried(`list ${prefix}`, callMs, () => inner.list(prefix)),
+      tried(`put ${key}`, putMs(body), () => inner.put(key, body), leftMs),
+    get: (key) => tried(`get ${key}`, callMs, () => inner.get(key), leftMs),
+    list: (prefix) => tried(`list ${prefix}`, callMs, () => inner.list(prefix), leftMs),
     names: (prefix) =>
-      tried(`names ${prefix}`, callMs, () => inner.names(prefix)),
-    delete: (key) => tried(`delete ${key}`, callMs, () => inner.delete(key)),
-  };
+      tried(`names ${prefix}`, callMs, () => inner.names(prefix), leftMs),
+    delete: (key) => tried(`delete ${key}`, callMs, () => inner.delete(key), leftMs),
+    bounded: (left) => view(left),
+  });
+  return view();
 }
 
 /**

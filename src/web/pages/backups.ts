@@ -24,7 +24,7 @@ import { listResilience, type ResilienceRow } from "../../actions/resilience.ts"
 import { mirrorSealedSet, mirrorNeed, MIRROR_SEALED } from "../../snapshot/mirror.ts";
 import { resolveDestination, sealedSet } from "../../snapshot/destination.ts";
 import { keyOf } from "../../snapshot/snapshot.ts";
-import { formatBudget, formatSpan, timeByPart, type DrillResult } from "../../snapshot/drill.ts";
+import { formatMinutes, formatSpan, timeByPart, type DrillResult } from "../../snapshot/drill.ts";
 import { lastDrill } from "../../snapshot/drills.ts";
 import { snapshotsOf } from "../../snapshot/service.ts";
 import { lastSnapshotOutcome } from "../../snapshot/outcome.ts";
@@ -96,10 +96,16 @@ function keyNote(
       </p>`;
 }
 
-/** "6 min 12 s of its 14 min budget: clone 4 min, download 58 s, ..."; empty for a drill that kept no phases. */
+/**
+ * "6 min 12 s of its 14 min budget: clone 4 min, download 58 s, ...", or
+ * "6 min 12 s of its 14 min budget" when no phase was kept; empty for an
+ * older drill that kept no budget.
+ */
 function drillTiming(d: DrillResult): string {
-  if (d.phases.length === 0 || d.budgetMs <= 0) return "";
-  return `${formatSpan(d.ms)} of its ${formatBudget(d.budgetMs)} budget: ${timeByPart(d.phases)
+  if (d.budgetMs <= 0) return "";
+  const spent = `${formatSpan(d.ms)} of its ${formatMinutes(d.budgetMs)} budget`;
+  if (d.phases.length === 0) return spent;
+  return `${spent}: ${timeByPart(d.phases)
     .map((p) => `${p.part} ${formatSpan(p.ms)}`)
     .join(", ")}`;
 }

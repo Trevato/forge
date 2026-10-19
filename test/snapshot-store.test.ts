@@ -165,3 +165,58 @@ describe("the snapshot store, with retries", () => {
     expect(f.calls).toEqual(["put k", "get k"]);
   });
 });
+
+describe("the snapshot store, inside a budget", () => {
+  /** A store whose gets never answer, and the time each attempt began. */
+  const stalled = (): { store: Store; began: number[] } => {
+    const began: number[] = [];
+    return {
+      began,
+      store: {
+        where: "stalled",
+        async put() {},
+        get: () => {
+          began.push(performance.now());
+          return new Promise<never>(() => {});
+        },
+        async list() {
+          return [];
+        },
+        async names() {
+          return [];
+        },
+        async delete() {},
+      },
+    };
+  };
+
+  test("a stalled get with 300 ms left fails within them, not after 5 × 10 s", async () => {
+    const s = stalled();
+    const store = withRetries(s.store, { attempts: 5, baseMs: 10, deadlineMs: 10_000 });
+    const start = performance.now();
+    const until = start + 300;
+    await expect(store.bounded!(() => until - performance.now()).get("snapshots/x/forge.db")).rejects.toThrow(
+      /get snapshots\/x\/forge\.db failed after 5 attempts: no answer in \d+ ms/,
+    );
+    const took = performance.now() - start;
+    expect(took).toBeLessThan(300 + 40);
+    // Each attempt had an even share: (300 − 150 ms of waits) / 5 ≈ 30 ms.
+    expect(took).toBeGreaterThan(150);
+    expect(s.began.length).toBe(5);
+  });
+
+  test("with nothing left no attempt is made", async () => {
+    const s = stalled();
+    const store = withRetries(s.store, { attempts: 5, baseMs: 10 });
+    await expect(store.bounded!(() => 0).get("k")).rejects.toThrow(
+      "get k failed after 0 attempts: no time left in its budget",
+    );
+    expect(s.began).toEqual([]);
+  });
+
+  test("unbounded, the same store keeps its own deadlines", async () => {
+    const s = stalled();
+    const store = withRetries(s.store, { attempts: 2, baseMs: 1, deadlineMs: 20, sleep: async () => {} });
+    await expect(store.get("k")).rejects.toThrow("get k failed after 2 attempts: no answer in 20 ms");
+  });
+});

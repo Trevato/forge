@@ -1019,7 +1019,9 @@ The terminal has no backups view, so it has no readout.
 into scratch, opens it, counts what is there and unseals a value; the page
 waits for it, up to 10 minutes, and the last drill shows there as one line,
 ending with the drill's time against its budget and each part's time, longest first ("6 min
-12 s of its 14 min budget: clone 4 min, download 58 s, …"); drills from before this show none.
+12 s of its 14 min budget: clone 4 min, download 58 s, …"), or only the time against the
+budget when no part was timed; drills from before this show none. The budget is 10 min
+plus 1 s per MB of snapshot, at most 45 min (`docs/RECOVERY.md`).
 The parts are download, decompress, clone, open, and start and migrate (the
 whole side-boot of the restored forge, process start included). The same words,
 slowest named, are in the drill's log line and in a red drill's card
