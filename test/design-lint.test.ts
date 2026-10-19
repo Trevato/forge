@@ -16,6 +16,13 @@ describe("design check: nothing added outside the system (#2678)", () => {
     expect(countFile("a{color:var(--fg)} // issue #2678")).toEqual({ colour: 0, size: 0 });
   });
 
+  test("an issue reference in a comment is not a colour; the same digits in code are", () => {
+    expect(countFile("// the feed (#599), whatever the mode (#625)\nx = 1;").colour).toBe(0);
+    expect(countFile("/**\n * Who may fetch a picture (#727, #738).\n */\nx = 1;").colour).toBe(0);
+    expect(countFile("a{color:#999}").colour).toBe(1);
+    expect(countFile('const u = "https://x.test/#abc";').colour).toBe(1);
+  });
+
   test("finds the classes a css template defines, and only those", () => {
     const text = "const x = a.ts; const css = /* css */ `.btn:hover, .card > .row-title { color: red }\n.new-thing { top: 0.5px }`; foo.bar";
     expect(classesIn(text).sort()).toEqual(["btn", "card", "new-thing", "row-title"]);

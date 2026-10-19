@@ -69,11 +69,21 @@ function cssBlocks(text: string): string[] {
   return out;
 }
 
+/**
+ * The text without its comments, so an issue reference (`#599`) is not read
+ * as a three-digit hex. A line comment starts a line or follows whitespace,
+ * which keeps `https://` in a string.
+ */
+export function uncommented(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/.*$/gm, "$1");
+}
+
 export function countFile(text: string): Counts {
-  const mixes = (text.match(/color-mix\([^;{}]*\)/g) ?? []).filter((m) => !m.includes("var(")).length;
+  const code = uncommented(text);
+  const mixes = (code.match(/color-mix\([^;{}]*\)/g) ?? []).filter((m) => !m.includes("var(")).length;
   const colour =
-    (text.match(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b(?![0-9a-zA-Z_-])/g) ?? []).length +
-    (text.match(/\b(?:rgba?|hsla?)\(/g) ?? []).length +
+    (code.match(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b(?![0-9a-zA-Z_-])/g) ?? []).length +
+    (code.match(/\b(?:rgba?|hsla?)\(/g) ?? []).length +
     cssBlocks(text).reduce((n, css) => n + (css.match(NAMED_RE) ?? []).length, 0) +
     mixes;
   let size = 0;

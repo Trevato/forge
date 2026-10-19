@@ -1,142 +1,18 @@
 {
   "files": {
-    "src/web/chrome.ts": {
-      "colour": 2,
-      "size": 0
-    },
-    "src/web/layout.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/pages/account.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/pages/apps.ts": {
-      "colour": 1,
-      "size": 0
-    },
     "src/web/pages/board.ts": {
-      "colour": 1,
+      "colour": 0,
       "size": 6
-    },
-    "src/web/pages/claim.ts": {
-      "colour": 1,
-      "size": 0
     },
     "src/web/pages/conflicts.ts": {
       "colour": 0,
       "size": 1
     },
-    "src/web/pages/everyday.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/pages/family.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/pages/forges.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/pages/limb.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/pages/limb_replan.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/pages/looks.ts": {
-      "colour": 6,
-      "size": 0
-    },
     "src/web/pages/map.ts": {
       "colour": 3,
       "size": 12
     },
-    "src/web/pages/milestones.ts": {
-      "colour": 2,
-      "size": 0
-    },
-    "src/web/pages/new-forge.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/pages/next-steps.ts": {
-      "colour": 2,
-      "size": 0
-    },
-    "src/web/pages/settings.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/pages/site.ts": {
-      "colour": 3,
-      "size": 0
-    },
     "src/web/standards.ts": {
-      "colour": 2,
-      "size": 0
-    },
-    "src/web/studio/app.ts": {
-      "colour": 2,
-      "size": 0
-    },
-    "src/web/studio/asks.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/studio/asks_page.ts": {
-      "colour": 2,
-      "size": 0
-    },
-    "src/web/studio/change.ts": {
-      "colour": 2,
-      "size": 0
-    },
-    "src/web/studio/cost_line.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/studio/crew.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/studio/explore.ts": {
-      "colour": 2,
-      "size": 0
-    },
-    "src/web/studio/feed.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/studio/home.ts": {
-      "colour": 7,
-      "size": 0
-    },
-    "src/web/studio/home_tabs.ts": {
-      "colour": 2,
-      "size": 0
-    },
-    "src/web/studio/make_it_yours.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/studio/nouns.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/studio/now.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/studio/previews.ts": {
-      "colour": 2,
-      "size": 0
-    },
-    "src/web/studio/shelf.ts": {
       "colour": 2,
       "size": 0
     },
@@ -144,29 +20,13 @@
       "colour": 2,
       "size": 1
     },
-    "src/web/studio/tell.ts": {
-      "colour": 1,
-      "size": 0
-    },
-    "src/web/studio/toolbar.ts": {
-      "colour": 2,
-      "size": 0
-    },
-    "src/web/studio/words.ts": {
-      "colour": 1,
-      "size": 0
-    },
     "src/web/style/components.ts": {
-      "colour": 5,
-      "size": 16
+      "colour": 3,
+      "size": 2
     },
     "src/web/style/content.ts": {
-      "colour": 23,
+      "colour": 19,
       "size": 31
-    },
-    "src/web/ui.ts": {
-      "colour": 1,
-      "size": 0
     }
   },
   "classes": [

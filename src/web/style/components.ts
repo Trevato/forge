@@ -208,17 +208,19 @@ kbd {
   min-width: 20px; height: 20px; padding: 0 5px;
   border: 1px solid var(--border); border-bottom-width: 2px;
   border-radius: var(--radius-sm); background: var(--muted);
-  font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--muted-fg);
+  font-family: var(--mono); font-size: 11.5px; font-weight: 500; color: var(--muted-fg);
 }
 
 .sha {
-  font-family: var(--mono); font-size: 12px; padding: 1px 5px;
+  font-family: var(--mono); font-size: 12.5px; padding: 1px 5px;
   border-radius: 4px; background: var(--muted); color: var(--muted-fg);
   font-variant-numeric: tabular-nums;
 }
 a.sha:hover { color: var(--accent); }
 
-/* ---- avatar ---- */
+/* ---- avatar ----
+   The hue is the person's (--hue), so it is mixed here, not a palette token;
+   the 20px and 16px circles' initials sit below the type scale on purpose. */
 .avatar {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: 20px; height: 20px; border-radius: 999px;
@@ -228,14 +230,14 @@ a.sha:hover { color: var(--accent); }
   font-size: 9.5px; font-weight: 650; letter-spacing: 0; text-transform: uppercase;
   user-select: none;
 }
-.avatar[data-size="md"] { width: 28px; height: 28px; font-size: 12px; }
-.avatar[data-size="lg"] { width: 56px; height: 56px; font-size: 22px; border-radius: var(--radius-lg); }
+.avatar[data-size="md"] { width: 28px; height: 28px; font-size: 12.5px; }
+.avatar[data-size="lg"] { width: 56px; height: 56px; font-size: 20px; border-radius: var(--radius-lg); }
 
 .byline { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
 .byline a:hover { color: var(--accent); }
 .name-mark {
   display: inline-block; padding: 0 5px; border-radius: 4px;
-  font-size: 10px; font-weight: 600; line-height: 15px; letter-spacing: 0.04em;
+  font-size: 11.5px; font-weight: 600; line-height: 15px; letter-spacing: 0.04em;
   text-transform: uppercase; white-space: nowrap; vertical-align: 1px;
   color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
@@ -350,7 +352,7 @@ a.row:hover .row-title { color: var(--accent); }
 /* ---- table ---- */
 .table { width: 100%; font-size: 13px; }
 .table th {
-  text-align: left; font-weight: 550; font-size: 12px; color: var(--muted-fg);
+  text-align: left; font-weight: 550; font-size: 12.5px; color: var(--muted-fg);
   padding: 8px 12px; border-bottom: 1px solid var(--border); white-space: nowrap;
 }
 .table td {
@@ -372,7 +374,7 @@ a.row:hover .row-title { color: var(--accent); }
   border-bottom: 1px solid var(--border);
   overflow-x: auto; scrollbar-width: none;
   scroll-snap-type: x proximity;
-  mask-image: linear-gradient(90deg, #000 0 calc(100% - 20px), transparent);
+  mask-image: linear-gradient(90deg, var(--fg) 0 calc(100% - 20px), transparent);
 }
 .tabs::-webkit-scrollbar { display: none; }
 .tabs > a {
@@ -434,7 +436,7 @@ a.row:hover .row-title { color: var(--accent); }
 @keyframes pop { from { opacity: 0; transform: translateY(-4px); } }
 .menu-title {
   display: block; padding: 6px 10px 4px;
-  font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  font-size: 11.5px; font-weight: 600; letter-spacing: .08em;
   text-transform: uppercase; color: var(--faint);
 }
 .menu-item {
@@ -523,7 +525,7 @@ a.row:hover .row-title { color: var(--accent); }
 
 /* ---- tell the crew, in place: fixed, so nothing shifts ---- */
 .tell-here { position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; width: min(620px, 100%); margin: 0 auto; padding: 8px; }
-.tell-here .comment-form { margin: 0; box-shadow: var(--shadow-lg, 0 8px 24px rgb(0 0 0 / .25)); }
+.tell-here .comment-form { margin: 0; box-shadow: var(--shadow-2); }
 
 /* ---- command palette ---- */
 /* A dialog centres itself with its own auto margins, which the reset zeroes
@@ -546,7 +548,7 @@ a.row:hover .row-title { color: var(--accent); }
 .palette-group + .palette-group { margin-top: 4px; }
 .palette-heading {
   padding: 8px 10px 4px;
-  font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  font-size: 11.5px; font-weight: 600; letter-spacing: .08em;
   text-transform: uppercase; color: var(--faint);
 }
 .palette-item {
@@ -560,14 +562,14 @@ a.row:hover .row-title { color: var(--accent); }
 .palette-item .cat {
   flex: none; max-width: 45%; margin-left: auto;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 12px; color: var(--faint);
+  font-size: 12.5px; color: var(--faint);
 }
 /* One highlight. The pointer moves it (the script listens) rather than
    painting a second one under the cursor; the finder keeps plain hover. */
 .palette-item[aria-selected="true"], .finder .palette-item:hover { background: var(--muted); }
 .palette-foot {
   display: flex; align-items: center; gap: 10px; padding: 8px 14px;
-  border-top: 1px solid var(--border); font-size: 12px; color: var(--faint);
+  border-top: 1px solid var(--border); font-size: 12.5px; color: var(--faint);
 }
 .palette-empty {
   display: flex; align-items: center; justify-content: center; gap: 6px;
@@ -580,7 +582,7 @@ a.row:hover .row-title { color: var(--accent); }
   margin: 16px 0 0; padding: 10px 12px;
   border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--card); box-shadow: var(--shadow-1);
-  font-size: 13.5px;
+  font-size: 14px;
   animation: pop 160ms var(--ease) both;
 }
 .toast .ico { margin-top: 1px; }
@@ -609,7 +611,7 @@ a.row:hover .row-title { color: var(--accent); }
   bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
   padding: 4px 8px; border-radius: var(--radius-sm);
   background: var(--primary); color: var(--primary-fg);
-  font-size: 12px; font-weight: 500; white-space: nowrap;
+  font-size: 12.5px; font-weight: 500; white-space: nowrap;
   opacity: 0; pointer-events: none; transition: opacity 120ms var(--ease);
 }
 [data-tip][data-tip-side="bottom"]::after { bottom: auto; top: calc(100% + 6px); }
@@ -688,7 +690,7 @@ a.row:hover .row-title { color: var(--accent); }
 .settings-nav a {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 0 12px; min-height: 36px; white-space: nowrap;
-  font-size: 13.5px; color: var(--muted-fg); border-radius: var(--radius-sm);
+  font-size: 14px; color: var(--muted-fg); border-radius: var(--radius-sm);
 }
 .settings-nav a:hover { background: var(--muted); color: var(--fg); }
 .settings-nav a[aria-current="page"] { color: var(--fg); font-weight: 550; background: var(--muted); }
@@ -704,7 +706,7 @@ a.row:hover .row-title { color: var(--accent); }
 /* ---- clone strip ---- */
 .clone {
   display: flex; align-items: center; gap: 6px;
-  font-family: var(--mono); font-size: 12px;
+  font-family: var(--mono); font-size: 12.5px;
   padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--muted); min-width: 0;
 }
