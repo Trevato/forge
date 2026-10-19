@@ -1,9 +1,9 @@
 /**
  * The machine as one plain object (`/system`, the `system` MCP tool and
  * `/api/v1/telemetry/system`): two raw readings in, rates and groups out.
- * Every process belongs to the cell that launched it (`check:<run>` or
- * `app:<slug>/<env>`), else to the forge itself, else to the host. The same
- * test file under two checks at once is duplicate work, and is named.
+ * Every process belongs to the cell that launched it (`check:<run>`,
+ * `app:<slug>/<env>` or `crew:<name>`), else to the forge itself, else to the
+ * host. The same test file under two checks at once is duplicate work, and is named.
  * Command lines are never kept — only `*.test.ts` arguments.
  */
 import type { Proc, Raw } from "./proc.ts";
@@ -11,7 +11,7 @@ import { TICKS_PER_SECOND } from "./proc.ts";
 
 export type Group = {
   label: string;
-  kind: "check" | "app" | "forge" | "host";
+  kind: "check" | "app" | "crew" | "forge" | "host";
   procs: number;
   cpuCores: number | null;
   rssBytes: number;
@@ -53,7 +53,15 @@ const TOP = 8;
 export type Roots = readonly { label: string; root: number; cap?: { bytes: number; by: "kernel" | "watch" } }[];
 
 const kindOf = (label: string): Group["kind"] =>
-  label.startsWith("check:") ? "check" : label.startsWith("app:") ? "app" : label === "forge" ? "forge" : "host";
+  label.startsWith("check:")
+    ? "check"
+    : label.startsWith("app:")
+      ? "app"
+      : label.startsWith("crew:")
+        ? "crew"
+        : label === "forge"
+          ? "forge"
+          : "host";
 
 /** Which group each process is in: the nearest cell root above it, the forge, or the host. */
 function groupOf(procs: readonly Proc[], roots: Roots, self: number): Map<number, string> {
@@ -184,17 +192,16 @@ export function buildSystem(prev: Raw | undefined, next: Raw, roots: Roots, self
  */
 export function forAgent(view: SystemView, visible: (label: string) => boolean): SystemView {
   const hide = new Map<string, string>();
-  const n = { check: 0, app: 0 };
+  const n = { check: 0, app: 0, crew: 0 };
   const name = (label: string): string => {
     if (visible(label) || kindOf(label) === "forge" || kindOf(label) === "host") return label;
-    const kind = kindOf(label) as "check" | "app";
+    const kind = kindOf(label) as "check" | "app" | "crew";
     return hide.get(label) ?? hide.set(label, `${kind}:private-${++n[kind]}`).get(label)!;
   };
   return {
     ...view,
     groups: view.groups.map((g) =>
-      // The forge and the host hold whatever no labelled cell claims (a crew run in a private clone,
-      // an unwatched sandbox): their counts stay, their processes and test files never leave.
+      // The forge and the host hold whatever no labelled cell claims (an unwatched sandbox): their counts stay, their processes and test files never leave.
       g.kind === "forge" || g.kind === "host"
         ? { ...g, top: [], tests: [] }
         : visible(g.label)

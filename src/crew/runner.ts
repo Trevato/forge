@@ -1159,6 +1159,7 @@ async function work(
           resume,
           env,
           sandbox: shellPolicy(),
+          label: `crew:${agent.user.username}`,
           timeoutMs: Math.max(deadline - Date.now(), 0),
           log: write,
           signal,

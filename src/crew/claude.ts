@@ -12,6 +12,7 @@
  * settings files of the operator's, a spend budget, and a deadline.
  */
 
+import { watchCrewRoot } from "./roots.ts";
 import { childEnv, pump } from "../apps/process.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import type { SandboxPolicy } from "./sandbox.ts";
@@ -27,6 +28,8 @@ export interface ClaudeInput {
   readonly resume?: string | undefined;
   readonly env: Record<string, string>;
   readonly sandbox: SandboxPolicy;
+  /** What `/system` calls this run's process tree (`crew:<name>`); unlabelled when absent. */
+  readonly label?: string | undefined;
   readonly timeoutMs: number;
   readonly log: (line: string) => void;
   readonly signal: AbortSignal;
@@ -187,6 +190,10 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     // to one pid never touches a grandchild holding stdout open.
     detached: true,
   });
+  if (input.label !== undefined) {
+    const unwatch = watchCrewRoot(input.label, proc.pid);
+    void proc.exited.finally(unwatch);
+  }
   // What the agent hears: the prompt first, then whatever a person says
   // while it works. Each is a user turn; the session ends when the forge
   // closes its stdin after a turn nobody followed.
