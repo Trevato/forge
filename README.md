@@ -1461,6 +1461,13 @@ work here.
 
 ## What works today
 
+- **A run page's live log** rides the page's one `/events` connection (its
+  `run.log` frames); it opens no stream of its own. Known gaps, both silent: a
+  frame the server cuts for size (64 lines or 16 KB) loses its omitted lines
+  until the next reconnect's catch-up read, and a run whose log was already cut
+  to its last 512 KB at render gets no catch-up read. The page says
+  "Reconnecting" while the connection is down.
+
 - **Cut a wave** — Settings → *Cut a wave* (repository admins, same-origin
   POST; web-only, the terminal's settings hand over to the web) opens a pull
   adding `waves/<next>.md`, listing the pulls merged since the last wave and

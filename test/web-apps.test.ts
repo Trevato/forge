@@ -379,7 +379,9 @@ describe("apps, runs and the crew on the web", () => {
       const html = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
       const after = isGoing();
       if (before === after) {
-        expect(html.includes("data-stream=")).toBe(before);
+        // The tail is live while the run goes: it names its run (read from /events), not a stream.
+        expect(html.includes(`data-run="${run!.id}"`)).toBe(before);
+        expect(html.includes("data-stream=")).toBe(false);
         expect(hasMetaRefresh(html)).toBe(before);
         break;
       }

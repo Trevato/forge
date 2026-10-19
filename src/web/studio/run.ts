@@ -25,7 +25,7 @@ import { getUserById } from "../../core/users.ts";
 import { repoDir } from "../../git/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, repoBase, repoHeader, repoPalette } from "../chrome.ts";
-import { studioRunJs } from "../client.ts";
+import { liveRegionsJs, studioRunJs } from "../client.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { runLine } from "../describe.ts";
 import { page } from "../layout.ts";
@@ -107,7 +107,7 @@ export async function runView(
   const all = ctx.url.searchParams.get("all") === "1";
   const held = listHeldSecrets(db, run.id);
   const carried = carriedBy(db, run.id);
-  const stream = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log?follow=1`;
+  const logPath = `/api/v1/repos/${repo.ownerName}/${repo.name}/runs/${run.id}/log`;
 
   // The pull this run's tell has become, once one exists: the tell itself
   // when the run is already a pull's own (feedback, a failed check, a
@@ -299,6 +299,16 @@ export async function runView(
       },
     )}
     <div class="run-live" id="run-live" data-state="${run.state}">
+      ${when(
+        unfinished && !logHidden,
+        // No id, so the shared script never refetches the page for it: its
+        // only job is to make \`liveRegionsJs\` open the one /events
+        // connection this log and its finish ride on.
+        () => html`<span data-live="run.finished" hidden></span>
+          <p class="muted small" id="run-conn" role="status" hidden>
+            Reconnecting; lines written meanwhile appear when it is back.
+          </p>`,
+      )}
       ${when(!logHidden, () => logBox({
         id: "run-log",
         who,
@@ -308,7 +318,18 @@ export async function runView(
         lines,
         allHref: `${base}/runs/${run.id}?all=1`,
         truncated,
-        ...(unfinished ? { stream } : {}),
+        // Lines come from the shared /events stream; `seen` lets the page
+        // tell what it already drew from what it missed before connecting
+        // (only knowable when the file was read whole).
+        ...(unfinished
+          ? {
+              live: {
+                run: run.id,
+                log: logPath,
+                ...(truncated ? {} : { seen: lines.length }),
+              },
+            }
+          : {}),
         pulse: run.state === "running",
         extra: html`<button type="button" class="run-jump" id="run-jump" hidden>
           newer below
@@ -383,7 +404,7 @@ export async function runView(
     crumbs: crumbsFor(repo),
     palette: repoPalette(ctx, repo),
     body,
-    scriptJs: studioRunJs,
+    scriptJs: `${liveRegionsJs}\n${studioRunJs}`,
     // The no-script half of a live log: with JavaScript off, the page
     // refreshes itself while the run is going (`layout.ts` writes it inside
     // `<noscript>`, so a browser running the stream above never reloads).

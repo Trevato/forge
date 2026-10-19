@@ -520,6 +520,41 @@ describe("working: a run's own page in the studio", () => {
     expect(page).not.toContain("?mode=dev");
   });
 
+  test("a running run's page reads its log from the one /events stream and opens no other", async () => {
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    appendRunLog(app.config.dataDir, run.id, "first");
+    appendRunLog(app.config.dataDir, run.id, "second");
+
+    const page = await (
+      await get(`/alice/engine/runs/${run.id}`, writerCookie)
+    ).text();
+    // Every EventSource the page's HTML and script open is /events.
+    const opened = [...page.matchAll(/new EventSource\(([^,;]*)/g)].map(
+      (m) => m[1]!,
+    );
+    expect(opened.length).toBeGreaterThan(0);
+    for (const arg of opened) expect(arg).toStartWith("'/events");
+    // The connection is really opened: liveRegionsJs only connects when the
+    // page has a [data-live] element, and a script's text proves nothing.
+    expect(page).toMatch(/<span data-live="run\.finished"[^>]*>/);
+    expect(page).toContain('id="run-conn"');
+    expect(page).not.toContain("follow=1");
+    expect(page).not.toContain("data-stream=");
+    // The run's frames arrive on that connection; the file's lines are
+    // counted so none is drawn twice.
+    expect(page).toContain("'run.log'");
+    expect(page).toContain("forge:run-log");
+    expect(page).toContain(`data-run="${run.id}"`);
+    expect(page).toContain('data-seen="2"');
+    expect(page).toContain(">second<");
+  });
+
   test("a long transcript holds its last window, and the whole of it is one step deeper at ?all=1", async () => {
     const run = createRun(app.db, {
       repoId: repo.id,

@@ -224,7 +224,6 @@ export const studioRunJs = /* js */ `
 (function () {
   var log = document.getElementById('run-log');
   if (!log) return;
-  var url = log.getAttribute('data-stream');
   var who = log.getAttribute('data-who') || 'agent';
   var cap = parseInt(log.getAttribute('data-cap') || '0', 10) || 0;
   var pulse = document.getElementById('run-pulse');
@@ -360,28 +359,52 @@ export const studioRunJs = /* js */ `
     });
   }
 
-  if (!url || typeof EventSource === 'undefined') return;
-  var source = new EventSource(url);
+  // The page opens no stream of its own: the shared /events connection
+  // (liveRegionsJs) carries this run's lines as run.log frames, handed on as
+  // forge:run-log, and its state change as the run.finished event.
+  var runId = log.getAttribute('data-run');
+  if (!runId) return;
+  var logUrl = log.getAttribute('data-log');
   var empty = document.getElementById('run-empty');
-  var seeded = false;
-  source.addEventListener('line', function (event) {
-    if (!seeded) {
-      if (event.lastEventId === '1') {
-        Array.prototype.slice.call(log.querySelectorAll('.ln:not(#run-pulse)')).forEach(function (el) { log.removeChild(el); });
-      }
-      seeded = true;
-      if (empty) empty.hidden = true;
-    }
-    var text = event.data;
-    try { var parsed = JSON.parse(text); if (typeof parsed === 'string') text = parsed; } catch (err) {}
+  // Lines on the page: those the server drew from the file, then each added
+  // here. A catch-up read of the file adds only what is past that count, and
+  // frames wait for it, so a line is never drawn twice.
+  var have = parseInt(log.getAttribute('data-seen') || '-1', 10);
+  var catching = false;
+  function put(text) {
+    if (empty) empty.hidden = true;
     add(draw(text));
+    have++;
     if (/^(\\$ |test-shards: |\\(fail\\) |\u2500\u2500 shard )/.test(text)) stepsSoon();
+  }
+  function catchUp() {
+    if (have < 0 || !logUrl || !window.fetch || catching) return;
+    catching = true;
+    fetch(logUrl, { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (body) {
+        var all = body.split('\n');
+        if (all[all.length - 1] === '') all.pop();
+        all.slice(have).forEach(put);
+      })
+      .catch(function () {})
+      .then(function () { catching = false; });
+  }
+  var conn = document.getElementById('run-conn');
+  document.addEventListener('forge:live', function (e) {
+    var st = e.detail && e.detail.state;
+    if (conn) conn.hidden = st !== 'reconnecting';
+    if (st === 'open') catchUp();
   });
-  source.addEventListener('done', function (event) {
-    source.close();
-    var run;
-    try { run = JSON.parse(event.data); } catch (err) { return; }
-    paint(run);
+  document.addEventListener('forge:run-log', function (e) {
+    var d = e.detail;
+    if (!d || d.run !== runId || catching || !Array.isArray(d.lines)) return;
+    d.lines.forEach(function (l) { if (typeof l === 'string') put(l); });
+  });
+  document.addEventListener('forge:event', function (e) {
+    var d = e.detail;
+    if (!d || d.kind !== 'run.finished' || !d.payload || d.payload.runId !== runId) return;
+    paint(d.payload);
     if (stepsTimer) { window.clearTimeout(stepsTimer); stepsTimer = 0; }
     steps();
     if (steer) {

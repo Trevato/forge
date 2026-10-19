@@ -59,6 +59,9 @@ export function logBox(opts: {
   cap: number;
   lines: readonly string[];
   stream?: string;
+  /** A run still going, read live from the shared /events stream: its id,
+   * where the plain log is read to catch up, and how many lines are drawn. */
+  live?: { run: string; log: string; seen?: number };
   pulse?: boolean;
   className?: string;
   extra?: Html;
@@ -75,6 +78,8 @@ export function logBox(opts: {
     data-who="${opts.who}"
     data-cap="${opts.cap}"
     ${opts.stream ? html`data-stream="${opts.stream}"` : null}
+    ${opts.live ? html`data-run="${opts.live.run}" data-log="${opts.live.log}"` : null}
+    ${opts.live?.seen !== undefined ? html`data-seen="${opts.live.seen}"` : null}
   >
     ${when(
       hidden > 0,
