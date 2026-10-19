@@ -6,6 +6,11 @@
  *
  * Restoring is a command, not a button: it needs an empty data directory
  * and a stopped forge, and a person at a terminal is the one who has both.
+ *
+ * Below the snapshots, each failure domain (`kernel/domains.ts`): what
+ * breaks, the words the forge says, and its last drill with the verdict —
+ * or the sentence on why it is not drilled (`actions/resilience.ts`). It
+ * was /settings/resilience, which now sends here.
  */
 
 import {
@@ -15,6 +20,7 @@ import {
   type DestinationInput,
 } from "../../actions/destination.ts";
 import { forgetMirror, saveMirror } from "../../actions/mirror.ts";
+import { listResilience, type ResilienceRow } from "../../actions/resilience.ts";
 import { mirrorSealedSet, mirrorNeed, MIRROR_SEALED } from "../../snapshot/mirror.ts";
 import { resolveDestination, sealedSet } from "../../snapshot/destination.ts";
 import { keyOf } from "../../snapshot/snapshot.ts";
@@ -26,8 +32,8 @@ import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { flashTo, page } from "../layout.ts";
-import { btn, card, empty, fileSize, icon, time } from "../ui.ts";
+import { flashTo, page, redirect } from "../layout.ts";
+import { btn, card, empty, fileSize, icon, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
 function requireAdmin(ctx: Ctx): Response | undefined {
@@ -177,11 +183,62 @@ function recoveryLine(r: Recovery): Html {
   </p>`;
 }
 
+function drilled(d: ResilienceRow): Html {
+  if (d.drill.name === null)
+    return html`<span class="muted small">Not drilled: ${d.drill.why}</span>`;
+  const last = d.drill.last;
+  if (last === null)
+    return html`<span class="muted small">${d.drill.name}: never run.</span>`;
+  return html`<span class="small"
+    >${d.drill.name}: ${time(last.at)} ·
+    <strong class="${last.green ? "ok" : "bad"}"
+      >${last.green ? "green" : "red"}</strong
+    >
+    — ${last.why} · back in ${String(last.backSeconds)}s (budget
+    ${String(d.backMinutes)} min)</span
+  >`;
+}
+
+/** Each failure domain and its last drill; nothing when the viewer may not read them. */
+function domainsCard(ctx: Ctx): Html | null {
+  if (!ctx.auth.user) return null;
+  const listed = listResilience(ctx.app, ctx.auth.user);
+  if (!listed.ok) return null;
+  const rows = listed.value.map((d) => {
+    const says =
+      d.says.length === 0
+        ? "Says nothing yet."
+        : d.says.map((s) => `“${s}”`).join(" · ");
+    return row({
+      lead: icon("activity"),
+      title: html`${d.name}`,
+      meta: html`${d.breaks}<br />${says}<br />${drilled(d)}`,
+    });
+  });
+  return html`<div id="domains">
+    ${card(
+      html`<ul class="list" id="resilience-list">
+        ${rows}
+      </ul>`,
+      {
+        head: html`${icon("activity")}
+          <h2>Failure domains</h2>`,
+        pad: false,
+      },
+    )}
+  </div>`;
+}
+
+// GET /settings/resilience — folded into this page (#2694); old links land on the card.
+export function domainsMoved(): Response {
+  return redirect("/settings/backups#domains");
+}
+
 export async function backupsPage(ctx: Ctx): Promise<Response> {
   const denied = requireAdmin(ctx);
   if (denied) return denied;
   const svc = snapshotsOf(ctx.app);
-  const form = html`${destinationCard(ctx)}${mirrorCard(ctx)}`;
+  const form = html`${destinationCard(ctx)}${mirrorCard(ctx)}${domainsCard(ctx)}`;
   const now = Date.now();
   if (svc === undefined || svc.store === undefined)
     return shell(

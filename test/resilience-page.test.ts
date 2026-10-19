@@ -7,7 +7,7 @@ import { recordDrill } from "../src/core/domain_drills.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
-describe("Settings → Failure domains", () => {
+describe("Settings → Backups → Failure domains", () => {
   let dataDir: string;
   let app: App;
   let servers: Servers;
@@ -54,7 +54,7 @@ describe("Settings → Failure domains", () => {
   });
 
   test("an admin sees a green and a red drill, escaped, and why the rest are not drilled", async () => {
-    const res = await fetch(`${servers.url}/settings/resilience`, {
+    const res = await fetch(`${servers.url}/settings/backups`, {
       headers: { cookie: await login("alice") },
     });
     expect(res.status).toBe(200);
@@ -65,18 +65,25 @@ describe("Settings → Failure domains", () => {
     expect(text).not.toContain("<b>late</b>");
     expect(text).toContain("Filling or detaching the live volume would lose writes.");
     expect(text).toContain("never run");
-    expect(text).toContain('href="/settings/resilience"');
-    expect(text).toContain("<title>Failure domains");
-    expect(text).toContain("<h1>Failure domains</h1>");
+    expect(text).toContain('id="domains"');
+    expect(text).toContain("<h2>Failure domains</h2>");
+    expect(text).not.toContain('href="/settings/resilience"');
+  });
+
+  test("the old address sends to the card on the backups page", async () => {
+    const res = await fetch(`${servers.url}/settings/resilience`, { redirect: "manual" });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/settings/backups#domains");
   });
 
   test("a non-admin is refused, an anonymous visitor sent to sign in", async () => {
-    const bob = await fetch(`${servers.url}/settings/resilience`, {
+    const bob = await fetch(`${servers.url}/settings/backups`, {
       headers: { cookie: await login("bob") },
     });
     expect(bob.status).toBe(404);
-    const anon = await fetch(`${servers.url}/settings/resilience`, { redirect: "manual" });
+    expect(await bob.text()).not.toContain("Failure domains");
+    const anon = await fetch(`${servers.url}/settings/backups`, { redirect: "manual" });
     expect(anon.status).toBe(303);
-    expect(anon.headers.get("location")).toBe("/signin?next=%2Fsettings%2Fresilience");
+    expect(anon.headers.get("location")).toBe("/signin?next=%2Fsettings%2Fbackups");
   });
 });

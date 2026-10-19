@@ -455,7 +455,7 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         hint: "provider tokens, what they are used for, today's calls",
         run: () => ctx.push(cloudScreen(session, ctx)),
       });
-    // Each failure domain and its last drill, as Settings → Failure domains says it (#1945).
+    // Each failure domain and its last drill, as Settings → Backups → Failure domains says it (#1945).
     if (session.user?.isAdmin === true && session.user.kind !== "agent")
       commands.push({
         id: "domains",

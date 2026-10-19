@@ -23,10 +23,6 @@
     "src/web/style/components.ts": {
       "colour": 3,
       "size": 2
-    },
-    "src/web/style/content.ts": {
-      "colour": 19,
-      "size": 31
     }
   },
   "classes": [

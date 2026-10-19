@@ -20,7 +20,6 @@ import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { contributePage } from "../web/pages/contribute.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
 import { usagePage } from "../web/pages/usage.ts";
-import { domainsPage } from "../web/pages/domains.ts";
 import { resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
 import { boardsPage } from "../web/pages/boards.ts";
@@ -144,6 +143,7 @@ import {
   backupsNow,
   backupsPage,
   backupsTest,
+  domainsMoved,
 } from "../web/pages/backups.ts";
 import { releasesPage, rollbackSubmit } from "../web/pages/releases.ts";
 import {
@@ -811,7 +811,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/cloud/rename", cloudRename);
   router.add("POST", "/settings/cloud/remove", cloudRemove);
   router.add("GET", "/settings/access", accessPage);
-  router.add("GET", "/settings/resilience", domainsPage);
+  router.add("GET", "/settings/resilience", domainsMoved);
   router.add("GET", "/settings/capacity", capacityPage);
   router.add("POST", "/settings/capacity", capacitySet);
   router.add("GET", "/boards", boardsList);

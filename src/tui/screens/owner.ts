@@ -1,7 +1,7 @@
 /**
  * What needs the owner, in the terminal, a forge admin's: the forge's needs,
  * where snapshots go and the newest one, and every failure domain with what
- * the owner does — `ownerView`, the action behind Settings → Failure domains
+ * the owner does — `ownerView`, the action behind Settings → Backups → Failure domains
  * and Backups. Anyone else gets an empty screen that says nothing exists.
  */
 

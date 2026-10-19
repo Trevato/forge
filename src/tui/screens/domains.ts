@@ -1,6 +1,6 @@
 /**
  * Failure domains in the terminal, a forge admin's: each failure domain and its
- * last drill — `listResilience`, the action Settings → Failure domains reads.
+ * last drill — `listResilience`, the action Settings → Backups → Failure domains reads.
  * Who may read is the action's call, not this screen's: anyone else gets an
  * empty screen that says nothing exists.
  */
