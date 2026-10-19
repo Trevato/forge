@@ -4,7 +4,7 @@
  * Two local bare repositories, no network.
  */
 
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import { listAssignedTo } from "../src/core/issues.ts";
 import { createUser } from "../src/core/users.ts";
 import { runGit } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
+import { renderMarkdown } from "../src/web/markdown.ts";
 import { checkUpstream } from "../src/spawn/upstream.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -32,10 +33,10 @@ describe("the parent moved: one card", () => {
   let work = "";
   let ownerId = "";
 
-  const commit = async (n: number) => {
+  const commit = async (n: number, subject?: string) => {
     await Bun.write(join(work, `f${n}.txt`), String(n));
     await git(work, "add", ".");
-    await git(work, "commit", "-m", `c${n}`);
+    await git(work, "commit", "-m", subject ?? `c${n}`);
     await git(work, "push", "-q", parent, "HEAD:refs/heads/main");
   };
   const link = async (patch: Record<string, unknown>) => {
@@ -111,5 +112,79 @@ describe("the parent moved: one card", () => {
     await commit(5);
     await checkUpstream(app, { remote: parent });
     expect(cards()).toHaveLength(2);
+  });
+});
+
+describe("the card lists the parent's commits", () => {
+  let dir = "";
+  let app: App;
+  let parent = "";
+  let work = "";
+  let ownerId = "";
+  const commit = async (n: number, subject: string) => {
+    await Bun.write(join(work, `g${n}.txt`), String(n));
+    await git(work, "add", ".");
+    await git(work, "commit", "-q", "-m", subject);
+    await git(work, "push", "-q", parent, "HEAD:refs/heads/main");
+  };
+  const setup = async (name: string) => {
+    dir = await mkdtemp(join(tmpdir(), "forge-uplist-"));
+    app = createApp({ dataDir: join(dir, "data"), url: "https://child.test", port: 0 });
+    parent = join(dir, "parent.git");
+    work = join(dir, "work");
+    await git(dir, "init", "-q", "--bare", "-b", "main", parent);
+    await git(dir, "init", "-q", "-b", "main", work);
+    await commit(0, "base");
+    const owner = await createUser(app.db, { origin: "seed", trusted: true, username: name, email: `${name}@x.test`, isAdmin: true });
+    if (!owner.ok) throw new Error("no owner");
+    ownerId = owner.value.id;
+    const made = await createRepo(app, owner.value, { name: "forge", visibility: "public" });
+    if (!made.ok) throw new Error("no repo");
+    await rm(repoDir(app.reposRoot, name, "forge"), { recursive: true, force: true });
+    await mkdir(join(app.reposRoot, name), { recursive: true });
+    await git(dir, "clone", "-q", "--bare", parent, repoDir(app.reposRoot, name, "forge"));
+    await Bun.write(
+      join(app.config.dataDir, "parent.json"),
+      JSON.stringify({
+        upstream: "https://parent.test",
+        forgeCode: { repo: `${name}/forge`, upstream: "root/forge", mode: "tell-me", tip: "a".repeat(40), chain: [] },
+      }),
+    );
+  };
+  const body = () => listAssignedTo(app.db, ownerId)[0]!.body;
+  afterEach(() => rm(dir, { recursive: true, force: true }));
+
+  test("3 commits, newest first", async () => {
+    await setup("three");
+    for (const n of [1, 2, 3]) await commit(n, `subject ${n}`);
+    await checkUpstream(app, { remote: parent });
+    const b = body();
+    expect(b.indexOf("subject 3")).toBeGreaterThan(0);
+    expect(b.indexOf("subject 3")).toBeLessThan(b.indexOf("subject 2"));
+    expect(b.indexOf("subject 2")).toBeLessThan(b.indexOf("subject 1"));
+    expect(b).toMatch(/\n[0-9a-f]{7,} \d{4}-\d\d-\d\d subject 3\n/);
+    expect(b).not.toContain("more");
+  });
+
+  test("12 commits show 10 and 'and 2 more'", async () => {
+    await setup("twelve");
+    for (let n = 1; n <= 12; n++) await commit(n, `subject ${n}`);
+    await checkUpstream(app, { remote: parent });
+    const b = body();
+    expect(b.match(/ subject \d+\n/g)).toHaveLength(10);
+    expect(b).toContain("subject 12");
+    expect(b).not.toContain("subject 2\n");
+    expect(b).toContain("and 2 more");
+  });
+
+  test("a hostile subject is inert and long ones are cut", async () => {
+    await setup("evil");
+    await commit(1, "<script>alert(1)</script> [x](javascript:alert(1)) ```" + "z".repeat(200));
+    await checkUpstream(app, { remote: parent });
+    const html = String(renderMarkdown(body()));
+    expect(html).not.toContain("<script");
+    expect(html).not.toContain("href=\"javascript");
+    expect(html).toContain("&lt;script&gt;");
+    expect(body()).not.toContain("z".repeat(100));
   });
 });

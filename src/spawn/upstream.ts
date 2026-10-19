@@ -164,7 +164,7 @@ async function run(app: App, options: { remote?: string; now?: number }): Promis
       (state.behind ?? 0) > 0 && state.parentTip !== state.toldTip;
     if (tell) state = { ...state, toldTip: state.parentTip };
     await keep(app, state);
-    if (tell) tellOwner(app, repo, link.repo, state.behind!);
+    if (tell) tellOwner(app, repo, link.repo, state.behind!, await newestCommits(dir, state.behind!));
     // Tell an open chain page its line changed; no actor when the timer checks.
     if (repo !== undefined)
       app.bus.append({
@@ -178,12 +178,43 @@ async function run(app: App, options: { remote?: string; now?: number }): Promis
   }
 }
 
+const LISTED = 10;
+
+/**
+ * The parent's newest commits as a fenced block for the card: short sha, date,
+ * subject (the parent's text: first line, 100 characters, no backticks, so it
+ * cannot close the fence; the fence renders as escaped plain text). Fixed
+ * arguments only. Empty when the log cannot be read: the card goes without.
+ */
+async function newestCommits(dir: string, behind: number): Promise<string> {
+  try {
+    const log = await runGit(
+      ["log", `--max-count=${LISTED}`, "--format=%h%x09%as%x09%s", "HEAD..refs/upstream/HEAD", "--"],
+      { cwd: dir },
+    );
+    if (!log.ok) return "";
+    const lines = log.value
+      .split("\n")
+      .filter((l) => l !== "")
+      .map((l) => {
+        const [sha = "", date = "", ...rest] = l.split("\t");
+        const subject = Array.from(rest.join(" ").replace(/[\p{Cc}`]/gu, " ").trim()).slice(0, 100).join("");
+        return `${sha} ${date} ${subject}`;
+      });
+    if (lines.length === 0) return "";
+    const more = behind - lines.length;
+    return `\n\n\`\`\`\n${lines.join("\n")}\n\`\`\`${more > 0 ? `\n\nand ${more} more` : ""}`;
+  } catch {
+    return "";
+  }
+}
+
 /**
  * One inbox card for the owner: an issue on the fork assigned to them, which
  * the inbox shows as "assigned to you", and which links the chain page. The
  * sentinel files it when the forge has one, so it is not the owner's own ask.
  */
-function tellOwner(app: App, repo: Repo, fork: string, behind: number): void {
+function tellOwner(app: App, repo: Repo, fork: string, behind: number, commits = ""): void {
   try {
     const owner = getUserById(app.db, repo.ownerId);
     if (owner === undefined) return;
@@ -192,7 +223,7 @@ function tellOwner(app: App, repo: Repo, fork: string, behind: number): void {
       repoId: repo.id,
       authorId: (sentinel ?? owner).id,
       title: `Your parent forge has ${behind} new commit${behind === 1 ? "" : "s"}`,
-      body: `Your parent forge's code moved. See where you stand and take it from [the chain page](/${fork}/following).`,
+      body: `Your parent forge's code moved. See where you stand and take it from [the chain page](/${fork}/following).${commits}`,
     });
     if (made.ok) setAssignee(app.db, made.value.id, owner.id);
   } catch {
