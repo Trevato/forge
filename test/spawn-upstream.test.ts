@@ -80,7 +80,7 @@ describe("looking upstream", () => {
   });
 
   test("words", () => {
-    const base = { behind: 3, parentTip: "", checkedAt: 0, error: "" };
+    const base = { behind: 3, parentTip: "", checkedAt: 0, error: "", toldTip: "" };
     const at = 12 * 60_000;
     expect(upstreamWords({ ...base }, at)).toBe("your parent has 3 new commits (checked 12 min ago)");
     expect(upstreamWords({ ...base, behind: 0 }, at)).toBe("up to date (checked 12 min ago)");

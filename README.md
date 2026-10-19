@@ -388,7 +388,7 @@ on demand, a forge that follows and has not severed fetches its parent's code in
 the count shows on the chain page, in the terminal's **Chain** (`c` checks now), and as
 `upstream` in the API and MCP payloads. `POST /:owner/forge/following/check` (a writer,
 same-origin) checks on demand; a fetch is cut at 60 s and a failure is recorded, not
-thrown. Its chain
+thrown. In `tell-me`, a new parent tip makes one inbox card for the owner (an issue on the fork assigned to them, "Your parent forge has N new commits", linking the chain page); `toldTip` in `upstream.json` keeps it to one per tip, and `take-updates` or a severed link makes none. Its chain
 to the root is at `/:owner/forge/following`, in `chain` of `GET
 /api/v1/repos/:owner/forge/following` and the MCP `following` tool, and in the
 terminal's **Chain** command; the owner severs it with the page's Sever,

@@ -13,7 +13,10 @@
 import { rename } from "node:fs/promises";
 import { join } from "node:path";
 import type { App } from "../app.ts";
-import { getRepo } from "../core/repos.ts";
+import { getAgentByName } from "../core/agents.ts";
+import { createIssue, setAssignee } from "../core/issues.ts";
+import { getRepo, type Repo } from "../core/repos.ts";
+import { getUserById, getUserByName } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { forgeLinkOf, originOf } from "./chain.ts";
@@ -31,6 +34,8 @@ export interface UpstreamState {
   readonly checkedAt: number;
   /** One line; "" when the last attempt worked. */
   readonly error: string;
+  /** The parent tip the owner was last told about; "" when never. */
+  readonly toldTip: string;
 }
 
 const statePath = (app: App): string => join(app.config.dataDir, "upstream.json");
@@ -46,6 +51,7 @@ export async function upstreamState(app: App): Promise<UpstreamState | undefined
       parentTip: typeof d["parentTip"] === "string" && TIP.test(d["parentTip"]) ? d["parentTip"] : "",
       checkedAt: d["checkedAt"],
       error: typeof d["error"] === "string" ? d["error"].slice(0, 200) : "",
+      toldTip: typeof d["toldTip"] === "string" && TIP.test(d["toldTip"]) ? d["toldTip"] : "",
     };
   } catch {
     return undefined;
@@ -108,7 +114,7 @@ async function run(app: App, options: { remote?: string; now?: number }): Promis
       const line = fetched.error.stderr.split("\n").find((l) => l.trim() !== "")?.trim();
       const error = line ?? (fetched.error.code === 137 ? "the fetch timed out after 60 s" : "the fetch failed");
       const before = await upstreamState(app);
-      state = { behind: before?.behind ?? null, parentTip: before?.parentTip ?? "", checkedAt, error: error.slice(0, 200) };
+      state = { behind: before?.behind ?? null, parentTip: before?.parentTip ?? "", checkedAt, error: error.slice(0, 200), toldTip: before?.toldTip ?? "" };
     } else {
       const tip = await runGit(["rev-parse", "--verify", "-q", "refs/upstream/HEAD"], { cwd: dir });
       const count = tip.ok
@@ -120,11 +126,17 @@ async function run(app: App, options: { remote?: string; now?: number }): Promis
         parentTip: tip.ok && TIP.test(tip.value.trim()) ? tip.value.trim() : "",
         checkedAt,
         error: Number.isSafeInteger(behind) ? "" : "the parent has no code to compare",
+        toldTip: (await upstreamState(app))?.toldTip ?? "",
       };
     }
-    await keep(app, state);
-    // Tell an open chain page its line changed; no actor when the timer checks.
     const repo = getRepo(app.db, o, n);
+    // Remember the tip before the card, so a crash between them can lose a card but never repeat one.
+    const tell = repo !== undefined && link.mode === "tell-me" && state.error === "" && state.parentTip !== "" &&
+      (state.behind ?? 0) > 0 && state.parentTip !== state.toldTip;
+    if (tell) state = { ...state, toldTip: state.parentTip };
+    await keep(app, state);
+    if (tell) tellOwner(app, repo, link.repo, state.behind!);
+    // Tell an open chain page its line changed; no actor when the timer checks.
     if (repo !== undefined)
       app.bus.append({
         kind: "forge.upstream",
@@ -133,7 +145,29 @@ async function run(app: App, options: { remote?: string; now?: number }): Promis
       });
     return state;
   } catch (e) {
-    return { behind: null, parentTip: "", checkedAt: Date.now(), error: e instanceof Error ? e.message.slice(0, 200) : "the check failed" };
+    return { behind: null, parentTip: "", checkedAt: Date.now(), error: e instanceof Error ? e.message.slice(0, 200) : "the check failed", toldTip: "" };
+  }
+}
+
+/**
+ * One inbox card for the owner: an issue on the fork assigned to them, which
+ * the inbox shows as "assigned to you", and which links the chain page. The
+ * sentinel files it when the forge has one, so it is not the owner's own ask.
+ */
+function tellOwner(app: App, repo: Repo, fork: string, behind: number): void {
+  try {
+    const owner = getUserById(app.db, repo.ownerId);
+    if (owner === undefined) return;
+    const sentinel = getAgentByName(app.db, "sentinel") === undefined ? undefined : getUserByName(app.db, "sentinel");
+    const made = createIssue(app.db, {
+      repoId: repo.id,
+      authorId: (sentinel ?? owner).id,
+      title: `Your parent forge has ${behind} new commit${behind === 1 ? "" : "s"}`,
+      body: `Your parent forge's code moved. See where you stand and take it from [the chain page](/${fork}/following).`,
+    });
+    if (made.ok) setAssignee(app.db, made.value.id, owner.id);
+  } catch {
+    // The card is a courtesy; the check must not fail on it.
   }
 }
 
