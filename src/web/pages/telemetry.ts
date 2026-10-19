@@ -5,12 +5,12 @@
 import { setTelemetryGrant } from "../../actions/telemetry.ts";
 import { grantable, recentReads } from "../../core/telemetry.ts";
 import type { Ctx } from "../../http/context.ts";
-import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
+import { notFoundPage, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html } from "../html.ts";
-import { flashTo, page } from "../layout.ts";
+import { flashTo } from "../layout.ts";
 import { btn, card, icon, row, time } from "../ui.ts";
-import { accountSections } from "./origins.ts";
+import { usageShell } from "./usage-tabs.ts";
 
 function owner(ctx: Ctx): Response | undefined {
   if (!ctx.auth.user) return signInFirst(ctx);
@@ -60,12 +60,7 @@ export function telemetryPage(ctx: Ctx): Response {
           )}</ul>`,
       { head: html`${icon("history")}<h2>Reads</h2>`, pad: false },
     )}`;
-  return page({
-    ctx,
-    title: "Telemetry",
-    body: html`<div class="page-head"><h1>Telemetry</h1></div>
-      ${settingsLayout(accountSections("telemetry", { admin: true }), body, "Account settings")}`,
-  });
+  return usageShell(ctx, "telemetry", body);
 }
 
 // POST /settings/telemetry

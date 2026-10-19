@@ -9,11 +9,11 @@ import { mayManageFlags } from "../../core/flags.ts";
 import { ROLES, SURFACES } from "../../core/usage_count.ts";
 import { routeUsage, WINDOW_DAYS } from "../../core/usage_report.ts";
 import type { Ctx } from "../../http/context.ts";
-import { settingsLayout, signInFirst } from "../chrome.ts";
+import { signInFirst } from "../chrome.ts";
 import { html } from "../html.ts";
 import { page } from "../layout.ts";
 import { btn, card, empty, icon } from "../ui.ts";
-import { accountSections } from "./origins.ts";
+import { usageShell } from "./usage-tabs.ts";
 
 const part = (counts: Readonly<Record<string, number>>, keys: readonly string[]) =>
   keys.map((k) => `${k} ${counts[k] ?? 0}`).join(" · ");
@@ -53,12 +53,7 @@ export function usagePage(ctx: Ctx, patterns: () => readonly string[]): Response
             <td class="mono">${r.last === null ? "never" : r.last.replace("T", " ") + ":00"}</td></tr>`,
         )}</tbody>
       </table>`,
-    { head: html`${icon("activity")}<h2>Usage</h2>`, pad: false },
+    { head: html`${icon("activity")}<h2>Routes</h2>`, pad: false },
   );
-  return page({
-    ctx,
-    title: "Usage",
-    body: html`<div class="page-head"><h1>Usage</h1></div>
-      ${settingsLayout(accountSections("usage", { admin: true }), body, "Account settings")}`,
-  });
+  return usageShell(ctx, "routes", body);
 }

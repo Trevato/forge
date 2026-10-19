@@ -54,9 +54,7 @@ import {
 } from "../ui.ts";
 import { whenText } from "../../crew/limits.ts";
 import { accountSections } from "./origins.ts";
-import { readSpend } from "../../actions/spend.ts";
 import { liveRegionsJs } from "../client.ts";
-import { spendView } from "./spend.ts";
 import { markOf } from "../../core/marks.ts";
 import { limitValue } from "../../settings/limits.ts";
 
@@ -385,18 +383,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
             Claude's tokenizer.
           </p>`,
       )}
-      <div class="mt" id="spend" data-live="run.*,usage.*">
-        ${card(
-          html`<details id="spend-detail" open>
-            <summary>By credential, app, agent, issue and run kind</summary>
-            ${spendView(readSpend(ctx.app, now))}
-          </details>`,
-          {
-            head: html`${icon("clock")}
-              <h2>Spend</h2>`,
-          },
-        )}
-      </div>
+      <p class="mt muted small">What these accounts spent, by credential, app, agent, issue and run kind: <a href="/settings/spend">Usage → Spend</a>.</p>
       <div class="mt">${add}</div>
       ${used === null ? null : html`<div class="mt">${used}</div>`}`,
   );

@@ -20,6 +20,7 @@ import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { contributePage } from "../web/pages/contribute.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
 import { usagePage } from "../web/pages/usage.ts";
+import { spendPage } from "../web/pages/spend-tab.ts";
 import { resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
 import { boardsPage } from "../web/pages/boards.ts";
@@ -825,6 +826,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings/flags", flagsPage);
   router.add("POST", "/settings/flags", flagsSet);
   router.add("GET", "/settings/usage", (ctx) => usagePage(ctx, knownPatterns));
+  router.add("GET", "/settings/spend", spendPage);
   router.add("GET", "/admin/limits", limitsPage);
   router.add("POST", "/admin/limits", limitsSet);
   router.add("POST", "/admin/quotas", quotasSet);

@@ -77,6 +77,7 @@ export type AccountSection =
   | "passkeys"
   | "origins"
   | "usage"
+  | "spend"
   | "crew"
   | "accounts"
   | "people"
@@ -96,6 +97,8 @@ export type AccountSection =
  * admin's section — an agent is an account that acts — so it is on the nav
  * only for one, the way the repo header hides Settings from a non-admin.
  */
+const USAGE: ReadonlySet<AccountSection> = new Set(["usage", "spend", "capacity", "telemetry"]);
+
 export function accountSections(
   current: AccountSection,
   o: { admin?: boolean } = {},
@@ -140,18 +143,6 @@ export function accountSections(
             current: current === "cloud",
           },
           {
-            label: "Capacity",
-            href: "/settings/capacity",
-            icon: "activity" as const,
-            current: current === "capacity",
-          },
-          {
-            label: "Telemetry",
-            href: "/settings/telemetry",
-            icon: "activity" as const,
-            current: current === "telemetry",
-          },
-          {
             label: "Access",
             href: "/settings/access",
             icon: "activity" as const,
@@ -171,9 +162,9 @@ export function accountSections(
           },
           {
             label: "Usage",
-            href: "/settings/usage",
+            href: "/settings/spend",
             icon: "activity" as const,
-            current: current === "usage",
+            current: USAGE.has(current),
           },
           {
             label: "Backups",

@@ -94,3 +94,22 @@ test("usage is a boards source for an admin and for nobody else", async () => {
   expect((await q("bob")).status).toBe(403);
   expect((await q("carol")).status).toBe(403); // an admin agent is refused too
 });
+
+test("Usage is one page: the four tabs on every tab, Spend admin-only, one sidebar entry", async () => {
+  const get = (path: string, who: string) =>
+    fetch(`${servers.url}${path}`, { headers: { authorization: `Bearer ${tok[who]}` } });
+  for (const [path, current] of [
+    ["/settings/spend", "Spend"],
+    ["/settings/usage", "Routes"],
+    ["/settings/capacity", "Capacity"],
+    ["/settings/telemetry", "Telemetry"],
+  ] as const) {
+    const text = await (await get(path, "admin")).text();
+    for (const label of ["Spend", "Routes", "Capacity", "Telemetry"])
+      expect(text).toMatch(new RegExp(`href="/settings/[a-z]+"[^>]*>\\s*${label}\\s*</a\\s*>`));
+    expect(text).toMatch(new RegExp(`href="${path}"\\s+aria-current="page"[^>]*>\\s*${current}\\s*</a\\s*>`));
+    expect(text.match(/data-nav/g) ?? []).not.toHaveLength(0);
+    expect(text).not.toMatch(/data-nav[^>]*>[^<]*(<svg[\s\S]*?<\/svg>)?\s*(Capacity|Telemetry)\s*</);
+  }
+  expect((await get("/settings/spend", "bob")).status).toBe(404);
+});

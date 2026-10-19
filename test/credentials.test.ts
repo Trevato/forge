@@ -333,6 +333,9 @@ describe("the board", () => {
     ).text();
     expect(subs).toContain("platform (env)");
     expect(subs).toContain("not offered to the crew");
-    expect(subs).toContain('data-by="byCredential"');
+    expect(subs).toContain('href="/settings/spend"');
+
+    const spend = await (await fetch(`${servers.url}/settings/spend`, { headers: { cookie } })).text();
+    expect(spend).toContain('data-by="byCredential"');
   });
 });
