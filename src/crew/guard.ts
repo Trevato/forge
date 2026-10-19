@@ -280,6 +280,51 @@ export function handoverOf(
     )
     .get(pullId, repo.id)!.n;
   if (crewAsked < HANDOVER_ROUNDS) return undefined;
+  return handoverSince(db, repo, pullId);
+}
+
+/** Pulls `handoversOf` counts per query: well under SQLite's bound on variables. */
+const HANDOVER_CHUNK = 500;
+
+/**
+ * `handoverOf` for many pulls at once: the cheap count is one grouped query
+ * per chunk, and only a pull with `HANDOVER_ROUNDS` crew verdicts — the rare
+ * one — reads further. Only handed-over pulls get an entry.
+ */
+export function handoversOf(
+  db: Database,
+  pulls: readonly { readonly id: string; readonly repo: Repo }[],
+): Map<string, Handover> {
+  const out = new Map<string, Handover>();
+  const repoOf = new Map(pulls.map((p) => [p.id, p.repo]));
+  const ids = [...repoOf.keys()];
+  for (let i = 0; i < ids.length; i += HANDOVER_CHUNK) {
+    const chunk = ids.slice(i, i + HANDOVER_CHUNK);
+    const rows = db
+      .query<{ issueId: string; n: number }, string[]>(
+        `SELECT r.issue_id AS issueId, COUNT(*) AS n FROM review r
+           JOIN issue i ON i.id = r.issue_id
+           JOIN repo_crew c ON c.user_id = r.author_id AND c.repo_id = i.repo_id
+          WHERE r.issue_id IN (${chunk.map((_, n) => `?${n + 1}`).join(",")})
+            AND r.state = 'changes_requested' AND c.role = 'reviewer'
+          GROUP BY r.issue_id`,
+      )
+      .all(...chunk);
+    for (const row of rows) {
+      if (row.n < HANDOVER_ROUNDS) continue;
+      const over = handoverSince(db, repoOf.get(row.issueId)!, row.issueId);
+      if (over !== undefined) out.set(row.issueId, over);
+    }
+  }
+  return out;
+}
+
+/** The hand-over, once a pull has had enough crew verdicts to have one. */
+function handoverSince(
+  db: Database,
+  repo: Repo,
+  pullId: string,
+): Handover | undefined {
   const approved =
     db
       .query<{ at: string | null }, [string]>(

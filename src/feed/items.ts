@@ -201,12 +201,14 @@ export function candidatesFor(
   viewer: User,
   now: number,
   chips?: Chips,
+  /** False when the caller shows asks itself (the home pins them): they are not read twice. */
+  withAsks = true,
 ): Candidate[] {
   const events = listEventsVisibleTo(db, viewer, { limit: EVENT_WINDOW }).filter(
     audienceFilter(db, viewer),
   );
   const writable = listReposWritableTo(db, viewer, { limit: 200 });
-  const asks = askLinesFor(db, viewer, chips);
+  const asks = withAsks ? askLinesFor(db, viewer, chips) : [];
   const decided = listDecidedIn(
     db,
     writable.map((r) => r.id),

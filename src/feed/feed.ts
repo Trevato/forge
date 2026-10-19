@@ -55,7 +55,9 @@ export function readFeed(
   );
   const boosted = new Set(shared.map((c) => c.itemId));
   const candidates = [
-    ...candidatesFor(db, viewer, now, chips).filter((c) => !boosted.has(c.id)),
+    ...candidatesFor(db, viewer, now, chips, options.withoutAsks !== true).filter(
+      (c) => !boosted.has(c.id),
+    ),
     ...shared,
   ]
     // The chips: the one filter. An ask was filtered by it in `askLinesFor`.

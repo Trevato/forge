@@ -741,6 +741,33 @@ export function activeRunFor(
   return row ? toRun(row) : undefined;
 }
 
+/**
+ * `activeRunFor` for many issues at once: each issue's earliest queued or
+ * running run of `kind`, one query per chunk. Issues with none are absent.
+ */
+export function activeRunsFor(
+  db: Database,
+  kind: RunKind,
+  issueIds: readonly string[],
+): Map<string, Run> {
+  const out = new Map<string, Run>();
+  const unique = [...new Set(issueIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<RunRow, string[]>(
+        `SELECT * FROM run WHERE state IN ('queued','running') AND kind = ?1
+           AND issue_id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
+         ORDER BY id`,
+      )
+      .all(kind, ...batch);
+    for (const row of rows)
+      if (row.issue_id && !out.has(row.issue_id)) out.set(row.issue_id, toRun(row));
+  }
+  return out;
+}
+
 /** The variant group an issue's earlier runs were started in, if any. */
 export function variantGroupOf(db: Database, issueId: string): string | undefined {
   const row = db

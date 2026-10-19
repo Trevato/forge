@@ -14,7 +14,7 @@ import { previewEnv } from "../../apps/data.ts";
 import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { crewForRepos } from "../../core/agents.ts";
 import { capacityDefault, isCapacityKey, storedCapacity } from "../../core/capacity.ts";
-import { appsForRepos, getAppByRepo } from "../../core/apps.ts";
+import { appsForRepos } from "../../core/apps.ts";
 import { latestDecision, stopStands } from "../../core/decisions.ts";
 import { getHold, holdsFor } from "../../core/holds.ts";
 import { issueTitles, proposalsFor, type Proposal } from "../../core/proposals.ts";
@@ -44,7 +44,7 @@ import {
 } from "../../core/repos.ts";
 import { listReviews } from "../../core/reviews.ts";
 import {
-  activeRunFor,
+  activeRunsFor,
   automaticRunsSince,
   latestRunsForIssues,
   type Run,
@@ -57,7 +57,7 @@ import {
 } from "../../crew/autonomy.ts";
 import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
-import { handoverLines, handoverOf, type Handover } from "../../crew/guard.ts";
+import { handoverLines, handoversOf, type Handover } from "../../crew/guard.ts";
 import { conflictsOf, isStalePull, mergesAgainSince, staleGreen } from "../../crew/stale_asks.ts";
 import { reviewAttempts, waitsForPerson, waitsForReviewer, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -134,6 +134,8 @@ export interface Decision {
   readonly likely?: { readonly option: string; readonly p: number } | undefined;
   /** The preview pictured on a phone, when the forge has taken one. */
   readonly picture?: string | undefined;
+  /** Where the pull's preview opens, when its repository is an app. */
+  readonly preview?: string | undefined;
   readonly consequence: Consequence;
   /** For "setting": the key, its value, its default, and who set it and when. */
   readonly setting?: SettingAway | undefined;
@@ -320,6 +322,15 @@ function askCandidatesFor(
     db,
     pulls.map((p) => p.id),
   );
+  const working = activeRunsFor(
+    db,
+    "agent",
+    pulls.map((p) => p.id),
+  );
+  const handedOver = handoversOf(
+    db,
+    pulls.map((p) => ({ id: p.id, repo: byId.get(p.repoId)! })),
+  );
   for (const issue of pulls) {
     const repo = byId.get(issue.repoId)!;
     const pull = joined.get(issue.id);
@@ -330,10 +341,10 @@ function askCandidatesFor(
     const check = checks.get(issue.id);
     const who = issue.authorName;
     // The crew is on it: that is working, not a question for a person.
-    if (activeRunFor(db, "agent", issue.id) !== undefined) continue;
+    if (working.has(issue.id)) continue;
     // Three reviews without an approval: the crew stopped, and says so
     // before anything about the check (`guard.ts`).
-    const over = handoverOf(db, repo, issue.id);
+    const over = handedOver.get(issue.id);
     // An autonomous repository's spent review loop is the planner's
     // (`handedOverPulls`), not a question for a person (#1655).
     // A person's pull has no planner pass to take it, so it still asks.
@@ -1203,8 +1214,13 @@ export function decisionsFor(
       short: `at its $${dollars(c.repo.autonomyCeilingUsd)} ceiling until 00:00 UTC`,
     };
   };
+  const previewOf = (c: Scored): string | undefined =>
+    c.pull === undefined || !records.has(c.repo.id)
+      ? undefined
+      : `${repoBase(c.repo)}/app/pull-${c.pull.number}/open`;
   return candidates.map((c) => ({
     ...worded(c),
+    preview: previewOf(c),
     consequence: c.consequence,
     waiting: c.waiting,
   }));
@@ -1263,12 +1279,7 @@ export function decisionActions(ctx: Ctx, d: Decision): Html {
 export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others: Html[] } {
   const base = repoBase(d.repo);
   const pull = d.pull;
-  const preview =
-    pull === undefined
-      ? undefined
-      : getAppByRepo(ctx.app.db, d.repo.id) === undefined
-        ? undefined
-        : `${base}/app/pull-${pull.number}/open`;
+  const preview = d.preview;
   if ((d.kind === "stopped" || d.kind === "handover") && pull)
     return {
       primary: btn("Tell them", {
