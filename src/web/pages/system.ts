@@ -19,7 +19,7 @@ import { live } from "../../system/live.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { card, empty } from "../ui.ts";
+import { card, empty, listCard, pill, row } from "../ui.ts";
 
 /** A group's memory, and a cell's beside its cap and who holds the cap. */
 const memoryOf = (g: { rssBytes: number; capBytes: number | null; capBy: "kernel" | "watch" | null }): Html =>
@@ -88,47 +88,46 @@ export function systemPage(ctx: Ctx): Response {
     </div>
     ${dup}
     ${card(
-      html`<div class="card-body">
-        <p id="summary">
-          CPU <strong>${pct(v.cpu.busyPct)}</strong> over ${String(v.cpu.cores.length)} cores ·
-          load ${v.load ? v.load.map((l) => l.toFixed(2)).join(" ") : "—"} ·
-          hottest ${v.hottestC === null ? "—" : `${v.hottestC.toFixed(0)}°C`} ·
-          memory ${v.memory ? `${bytes(v.memory.usedBytes)} of ${bytes(v.memory.totalBytes)}` : "—"} ·
-          ${String(v.processes)} processes
-        </p>
+      html`<div id="summary" class="row-meta">
+          ${pill(`CPU ${pct(v.cpu.busyPct)}`, v.cpu.busyPct !== null && v.cpu.busyPct >= 90 ? "danger" : undefined)}
+          ${pill(`${String(v.cpu.cores.length)} cores`)}
+          ${pill(`load ${v.load ? v.load.map((l) => l.toFixed(2)).join(" ") : "—"}`)}
+          ${pill(`hottest ${v.hottestC === null ? "—" : `${v.hottestC.toFixed(0)}°C`}`)}
+          ${pill(`memory ${v.memory ? `${bytes(v.memory.usedBytes)} of ${bytes(v.memory.totalBytes)}` : "—"}`)}
+          ${pill(`${String(v.processes)} processes`)}
+        </div>
         <p class="small" id="cores" aria-label="Per-core CPU, percent">${cores}</p>
         ${caps}
-        <p class="small mono" id="temps">${v.temps.map((t) => `${t.chip} ${t.label} ${t.celsius.toFixed(0)}°C`).join(" · ")}</p>
-      </div>`,
+        <p class="small mono" id="temps">${v.temps.map((t) => `${t.chip} ${t.label} ${t.celsius.toFixed(0)}°C`).join(" · ")}</p>`,
       { head: html`<h2>Machine</h2>` },
     )}
-    ${card(
-      html`<div class="table-scroll"><table class="table" aria-label="Disks and network">
-        <thead><tr><th scope="col">Disk / interface</th><th scope="col">Used</th><th scope="col">Total / rate</th></tr></thead>
-        <tbody>
-          ${v.disks.map(
-            (d) => html`<tr><td class="mono">${d.mount} <span class="muted small">${d.fs}</span></td>
-              <td>${String(Math.round((d.usedBytes / d.totalBytes) * 100))}%</td><td>${bytes(d.totalBytes)}</td></tr>`,
-          )}
-          ${v.net.map(
-            (n) => html`<tr><td class="mono">${n.name}</td><td>↓ ${n.rxBytesPerSecond === null ? "—" : `${bytes(n.rxBytesPerSecond)}/s`}</td>
-              <td>↑ ${n.txBytesPerSecond === null ? "—" : `${bytes(n.txBytesPerSecond)}/s`}</td></tr>`,
-          )}
-        </tbody></table></div>`,
-      { head: html`<h2>Disks and network</h2>`, pad: false },
+    ${listCard(
+      [
+        ...v.disks.map((d) =>
+          row({
+            title: html`<span class="mono">${d.mount}</span>`,
+            meta: html`${d.fs}`,
+            trail: html`${pill(`${String(Math.round((d.usedBytes / d.totalBytes) * 100))}%`)} ${bytes(d.totalBytes)}`,
+          }),
+        ),
+        ...v.net.map((n) =>
+          row({
+            title: html`<span class="mono">${n.name}</span>`,
+            trail: html`↓ ${n.rxBytesPerSecond === null ? "—" : `${bytes(n.rxBytesPerSecond)}/s`} ↑ ${n.txBytesPerSecond === null ? "—" : `${bytes(n.txBytesPerSecond)}/s`}`,
+          }),
+        ),
+      ],
+      { head: html`<h2>Disks and network</h2>` },
     )}
-    ${card(
-      html`<div class="table-scroll"><table class="table" aria-label="Processes by what launched them">
-        <thead><tr><th scope="col">Launched for</th><th scope="col">Processes</th><th scope="col">CPU (cores)</th>
-        <th scope="col">Memory</th><th scope="col">Oldest</th><th scope="col">Busiest</th></tr></thead>
-        <tbody>
-          ${v.groups.map(
-            (g) => html`<tr data-kind="${g.kind}"><td class="mono">${g.label}</td><td>${String(g.procs)}</td>
-              <td>${coresOf(g.cpuCores)}</td><td>${memoryOf(g)}</td><td>${span(g.oldestSeconds)}</td>
-              <td class="small mono">${g.top.slice(0, 3).map((p) => `${p.comm} ${coresOf(p.cpuCores)}`).join(" · ")}</td></tr>`,
-          )}
-        </tbody></table></div>`,
-      { head: html`<h2>Processes</h2>`, pad: false },
+    ${listCard(
+      v.groups.map(
+        (g) => html`<li data-kind="${g.kind}"><div class="row">
+          <span class="row-main"><span class="row-title mono">${g.label}</span>
+            <span class="row-meta">${String(g.procs)} processes · oldest ${span(g.oldestSeconds)}${g.top.length ? html` · ${g.top.slice(0, 3).map((p) => `${p.comm} ${coresOf(p.cpuCores)}`).join(" · ")}` : null}</span></span>
+          <span class="row-trail">${pill(`${coresOf(g.cpuCores)} cores`)} ${memoryOf(g)}</span>
+        </div></li>`,
+      ),
+      { head: html`<h2>Processes</h2>` },
     )}
     ${memorySection(ctx)}`;
   return page({ ctx, title: "System", body, wide: true, scriptJs: RELOAD });

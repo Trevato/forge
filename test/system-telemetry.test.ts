@@ -303,6 +303,10 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     // Each check cell's memory beside its cap, and who holds the cap (#2410).
     expect(html).toContain('data-cap="8589934592" data-cap-by="kernel">of 8.0 GiB (kernel cap)');
     expect(html).toMatch(/id="cell-caps" data-by="(kernel|watch)"/);
+    // Built from the system's own parts: pills and rows, no table, no style attribute (#2691).
+    expect(html).toMatch(/id="summary"[^>]*>\s*<span class="pill"/);
+    expect(html).toContain('<li data-kind="check"><div class="row">');
+    expect(html).not.toContain("<table");
     const flowPage = await fetch(`${servers.url}/flow`, { headers: { cookie: await login("alice") } });
     expect(await flowPage.text()).toContain('id="duplicate-work" data-count="1"');
 
