@@ -8,7 +8,6 @@
  */
 
 import { protectionNotice } from "../kernel/protection.ts";
-import { askCountFor } from "./studio/asks.ts";
 import { appsForRepos } from "../core/apps.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
@@ -460,7 +459,8 @@ function topbar(
       <span class="topbar-tools">
         ${searchBar()}
         ${user
-          ? html`<span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
+          ? html`<a class="small" href="/asks" data-shortcut="g q">Asks</a
+              ><span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
                 ctx,
                 user,
                 theme,

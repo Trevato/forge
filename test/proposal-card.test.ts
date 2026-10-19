@@ -156,7 +156,7 @@ describe("a wave proposal is one inbox card", () => {
   test("home shows the Redirect box on the card, and Later's way back", async () => {
     const id = propose("Home wave");
     const get = async () =>
-      (await (await fetch(`${servers.url}/`, { headers: { cookie: `${aliceCookie}; forge_mode=studio` } })).text());
+      (await (await fetch(`${servers.url}/asks`, { headers: { cookie: `${aliceCookie}; forge_mode=studio` } })).text());
     expect(await get()).toContain(`/asks/proposal/${id}/redirect`);
     await post(aliceCookie, `/asks/proposal/${id}/later`, [["back", "/"]]);
     const page = await get();

@@ -118,6 +118,7 @@ h3 { font-size: 14px; font-weight: 600; line-height: 1.4; }
 .wordmark:hover .mark { transform: rotate(135deg); }
 .topbar .spacer { flex: 1; }
 .topbar-tools { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
+.topbar-tools > a.small { display: inline-flex; align-items: center; min-height: 44px; padding: 0 8px; flex: none; }
 /* The page never scrolls sideways. A strip that must — the tabs, a code
    table — scrolls inside its own box; nothing else may push the page wide.
    clip, not hidden: hidden would make the body a scroll container and

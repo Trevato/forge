@@ -130,7 +130,7 @@ describe("live browsing pages", () => {
     expect(refreshApp).toContain("announceSwap");
   });
 
-  test("the studio home wires up asks, apps, now and on-you as live regions, signed in; a signed-out visitor gets neither", async () => {
+  test("the studio home wires up apps and now as live regions (the asks are a page of their own), signed in; a signed-out visitor gets neither", async () => {
     const signedOut = await (
       await fetch(`${base}/`, { headers: { cookie: "forge_mode=studio" } })
     ).text();
@@ -161,7 +161,7 @@ describe("live browsing pages", () => {
       })
     ).text();
     expect(html).toContain('id="live-apps"');
-    expect(html).toContain('id="live-on-you"');
+    expect(html).not.toContain('id="live-on-you"');
     expect(html).toContain("new EventSource('/events')");
   });
 

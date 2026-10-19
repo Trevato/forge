@@ -81,7 +81,7 @@ describe("let the decider answer a hand-over", () => {
       redirect: "manual",
     });
 
-  const home = async (path = "/"): Promise<string> =>
+  const home = async (path = "/asks"): Promise<string> =>
     (await (await fetch(`${servers.url}${path}`, { headers: { cookie } })).text()).replace(/\s+/g, " ");
 
   beforeAll(async () => {

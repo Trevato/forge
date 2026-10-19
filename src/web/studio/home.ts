@@ -45,7 +45,7 @@ import {
   terminalCard,
 } from "../pages/site.ts";
 import { writableAppsOf } from "./asks.ts";
-import { needsYouSection, type AsksTop } from "./asks_page.ts";
+import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
 import { homeTabs } from "./home_tabs.ts";
@@ -179,7 +179,7 @@ export function liveAppsFragment(ctx: Ctx): Response {
 
 /**
  * What a bulk step on the On you list answers its own script with: the
- * region as it is now and the top bar's Asks link with its new count.
+ * region as it is now and the asks page's list.
  */
 export function onYouAnswer(ctx: Ctx, user: User, note?: string): Response {
   return fragment(html`<div>${onYouRegion(ctx, user, note)}</div>`);
@@ -205,9 +205,7 @@ export function liveOnYouFragment(ctx: Ctx): Response {
 export async function studioHome(
   ctx: Ctx,
   user: User,
-  top?: AsksTop,
 ): Promise<Response> {
-  const needsYou = needsYouSection(ctx, user, top);
   const { repos: appRepos } = writableAppsOf(ctx, user);
   // A spawned forge says where it lives: the address its person shares.
   const spawned = await spawnedOrg(ctx.app);
@@ -256,7 +254,7 @@ export async function studioHome(
     ${homeTabs("feed")}
     <div class="dash">
       <div class="dash-main stack">
-        ${onYouRegion(ctx, user, undefined, needsYou.body)} ${composer(ctx, user)}
+        ${composer(ctx, user)}
         <div class="bar feed-head">
           <span class="spacer"></span>
           <a class="small muted" href="/asked">What you asked for</a>
@@ -281,7 +279,7 @@ export async function studioHome(
     ctx,
     title: "Home",
     body,
-    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}\n${needsYou.scriptJs}${ask ? `\n${passkeyJs}` : ""}`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${feedJs}${ask ? `\n${passkeyJs}` : ""}`,
   });
 }
 

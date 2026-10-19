@@ -142,7 +142,7 @@ describe("home's asks are read grouped, and once", () => {
   };
 
   const home = async () => {
-    const response = await fetch(`${servers.url}/`, { headers: { cookie } });
+    const response = await fetch(`${servers.url}/asks`, { headers: { cookie } });
     expect(response.status).toBe(200);
     return response.text();
   };

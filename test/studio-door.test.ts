@@ -606,16 +606,15 @@ describe("the studio home keeps itself current", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("Your apps and On you are each a live region, with the security floor's headers", async () => {
+  test("Your apps is a live region and the home has no On you, with the security floor's headers", async () => {
     const res = await get();
     expect(res.status).toBe(200);
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("referrer-policy")).toBe("same-origin");
     const home = await res.text();
     expect(home).toMatch(/id="live-apps"\s*\n?\s*data-live="/);
-    expect(home).toMatch(/id="live-on-you"\s*\n?\s*data-live="/);
+    expect(home).not.toContain("live-on-you");
     expect(home).toContain("new EventSource('/events')");
-    expect(home).toContain("Write the README");
   });
 
   test("chips do not touch Your apps: it lists apps, not feed items", async () => {
@@ -628,7 +627,7 @@ describe("the studio home keeps itself current", () => {
   test("each region on the home has an address of its own, answering with that region alone and 304 when it has not changed", async () => {
     const page = await (await get()).text();
     expect(page).toContain('data-live-src="/live/apps"');
-    expect(page).toContain('data-live-src="/live/on-you"');
+    expect(page).not.toContain("/live/on-you");
 
     const headers = { cookie: `${cookie}; forge_mode=studio` };
     const apps = await fetch(`${base}/live/apps`, { headers });

@@ -365,13 +365,44 @@ describe("home is the feed", () => {
     expect(second.items.map((i: any) => i.id)).toEqual(whole.slice(2, 4));
   });
 
+  test("six open asks fill /asks and leave the home bare: no titles, no section, no count", async () => {
+    const titles = ["Ask alpha", "Ask bravo", "Ask charlie", "Ask delta", "Ask echo", "Ask foxtrot"];
+    for (const title of titles) {
+      const made = openIssue(app, bob, garden, { title });
+      if (!made.ok) throw new Error("issue");
+      expect(assignIssue(app, alice, garden, made.value, alice).ok).toBe(true);
+    }
+    const page = await (await get("/", aliceCookie)).text();
+    // The timeline may still tell of a filed issue as a post; the asks are
+    // what must be gone, so the page is read up to the timeline.
+    const home = page.slice(0, page.indexOf('id="live-feed"'));
+    expect(home.length).toBeGreaterThan(0);
+    for (const title of titles) expect(home).not.toContain(title);
+    expect(page).not.toContain("live-on-you");
+    expect(home).not.toContain("things need you");
+    expect(home).not.toContain("data-pick");
+    expect(home).toContain('href="/asks"');
+    const link = home.match(/<a[^>]*href="\/asks"[^>]*>([^<]*)<\/a\s*>/);
+    expect(link).not.toBeNull();
+    expect(link![1]!.trim()).toBe("Asks");
+    // Nothing after the link, up to the next tag, is a number.
+    const after = home.slice(home.indexOf(link![0]) + link![0].length);
+    expect(after.slice(0, after.indexOf("<")).trim()).not.toMatch(/\d/);
+    // The Asks chord is its own: no two elements on the page share one.
+    const chords = [...page.matchAll(/data-shortcut="([^"]+)"/g)].map((m) => m[1]);
+    expect(chords).toContain("g q");
+    expect(new Set(chords).size).toBe(chords.length);
+    const asks = await (await get("/asks", aliceCookie)).text();
+    for (const title of titles) expect(asks).toContain(title);
+  });
+
   test("The one list can be cleared in one move: a box each, select all, by kind and by repository, one form", async () => {
     const one = openIssue(app, alice, garden, { title: "Sweep the path" });
     const two = openIssue(app, alice, vault, { title: "Oil the hinges" });
     if (!one.ok || !two.ok) throw new Error("issues");
     for (const [repo, issue] of [[garden, one.value], [vault, two.value]] as const)
       expect(assignIssue(app, alice, repo, issue, alice).ok).toBe(true);
-    const text = await (await get("/", aliceCookie)).text();
+    const text = await (await get("/asks", aliceCookie)).text();
     const card = text.slice(text.indexOf('id="live-on-you"')).replace(/\s+/g, " ");
     expect(card).toContain("things need you");
     expect(card).toContain("assigned to you");
@@ -389,7 +420,7 @@ describe("home is the feed", () => {
     expect(text).toContain("fleet.operated");
     expect(text).toContain("data-pick");
     // Alone, a single row stays a plain link.
-    const bobCard = await (await get("/", bobCookie)).text();
+    const bobCard = await (await get("/asks", bobCookie)).text();
     expect(bobCard).not.toContain('id="asks-bulk"');
   });
 });

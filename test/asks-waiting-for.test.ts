@@ -121,7 +121,7 @@ describe("the word on a row", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("the home, /api/v1/asks and MCP give the same word for the same row", async () => {
+  test("the asks page, /api/v1/asks and MCP give the same word for the same row", async () => {
     const lines = askLinesFor(app.db, alice);
     expect(lines).toHaveLength(1);
     expect(lines[0]!.waitingFor).toEqual({ word: "ready to land", on: "you" });
@@ -150,7 +150,7 @@ describe("the word on a row", () => {
     expect(text).toContain("ready to land");
     expect(text).toContain("waitingFor");
 
-    const page = await (await fetch(`${servers.url}/`, { headers: { cookie } })).text();
+    const page = await (await fetch(`${servers.url}/asks`, { headers: { cookie } })).text();
     expect(page).toContain('data-waiting="ready to land"');
     expect(page).toContain('<span class="sr-only">waiting for </span>ready to land');
     expect(page).toContain("ready to land · on you");
