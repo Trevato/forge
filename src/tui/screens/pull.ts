@@ -47,6 +47,7 @@ import {
   type EnvStatus, envsFor } from "../../apps/runtime.ts";
 import { proposedByText } from "../../core/proposal_token.ts";
 import { getAppByRepo } from "../../core/apps.ts";
+import { teamVerdicts, type TeamVerdict } from "../../core/issue_teams.ts";
 import { getIssue, type Issue } from "../../core/issues.ts";
 import { isProposed, pullMayRun } from "../../core/pull_trust.ts";
 import { runningProgress, stepsLine } from "../../checks/progress.ts";
@@ -193,6 +194,13 @@ const VERDICT_WORDS: Record<ReviewFact["state"], string> = {
   commented: "commented",
 };
 
+/** `Design: approved by quill` — one row per team the issue names, or `awaited`. */
+export function teamLine(v: TeamVerdict): string {
+  if (v.state === undefined) return `${v.name}: awaited`;
+  const words = VERDICT_WORDS[v.state] ?? v.state;
+  return `${v.name}: ${words} by ${v.by ?? ""}${v.stale ? " (on an older head)" : ""}`;
+}
+
 /** How often a pull's screen re-reads while its check is queued or running. */
 const CHECK_TICK_MS = 5000;
 
@@ -208,6 +216,8 @@ export function pullScreen(
   let diff: Diff = { files: [], additions: 0, deletions: 0 };
   let reviews: AnchoredReview[] = [];
   let threads: Thread[] = [];
+  /** Where each team the issue names stands; empty when it names none. */
+  let teams: TeamVerdict[] = [];
   /** Settled threads the reader has opened back up, for this visit only. */
   const expanded = new Set<string>();
   let lines: Span[][] = [];
@@ -298,6 +308,13 @@ export function pullScreen(
             check,
             mayReadRunLog(f.app, f.user, settings),
           );
+    teams =
+      row === undefined
+        ? []
+        : teamVerdicts(f.db, {
+            ...row,
+            headOid: row.headOid || (facts?.headOid ?? ""),
+          });
     checkOld =
       repo !== undefined &&
       row !== undefined &&
@@ -804,7 +821,8 @@ export function pullScreen(
       const boxH =
         3 +
         (standingText(standing(), requireReview) === "" ? 0 : 1) +
-        (checksLine === "" ? 0 : 1);
+        (checksLine === "" ? 0 : 1) +
+        teams.length;
       const [strip, head, previewRow, boxRow, tabRow, body, comp] = split(
         area,
         "v",
@@ -861,6 +879,7 @@ export function pullScreen(
         checksLine,
         standing: standing(),
         required: requireReview,
+        teams,
       });
       tabs(s, tabRow!, c, {
         items: [
@@ -1378,6 +1397,7 @@ function drawMergeBox(
     checksLine: string;
     standing: Standing;
     required: boolean;
+    teams: readonly TeamVerdict[];
   },
 ): void {
   const state = mergeState(issue, pull, mirrored, o.gated, o.checksGated);
@@ -1477,5 +1497,21 @@ function drawMergeBox(
       ),
       inner.x + inner.w,
     );
+    y++;
+  }
+  // The teams the issue names, one row each: who still owes a review.
+  for (const v of o.teams) {
+    if (y >= inner.y + inner.h) break;
+    s.text(
+      inner.x,
+      y,
+      truncate(teamLine(v), inner.w),
+      style(
+        v.state === "changes_requested" ? c.danger : c.mutedFg,
+        c.card,
+      ),
+      inner.x + inner.w,
+    );
+    y++;
   }
 }
