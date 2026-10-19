@@ -1450,7 +1450,7 @@ work here.
   default branches (force-push and deletion refused, honest fast-forwards
   allowed).
 - **System memory** — `/system`, for a forge admin who is a person (anyone else gets 403): the forge's RSS beside its JS heap (`heapStats()` from bun:jsc), hourly mean and max for the last 24 h, drawn on the server. Sampled once a minute into `memory_hour` in `app.db` (a week kept). RSS rising while the heap stays flat is native memory growth.  In the terminal the same admin has a **System memory** command in the palette: the last 24 hours as text rows (hour, RSS mean/max, heap mean/max in MiB), read-only. The account menu links `/system` for that admin.
-- **Boards** — `/boards/data`, for a forge admin who is a person (anyone else
+- **Boards** — `/boards` also shows the pipeline (a row per stage, the bottleneck named) and the held counts (why each autonomous repository's ready issues wait; private repositories included), for the same admin who is a person; they sit as two cards under the board list, not as panels of a board, because they are not saved queries. The terminal's Boards screen does not draw them: its door to the same rows is the **Flow** dialog. `/boards/data`, for a forge admin who is a person (anyone else
   gets a 404 on the page): the query is the URL (`?source=runs&aggregate=count&by=day&fcolumn=state&fvalue=failed`),
   drawn server-side as the chart chosen beside it (`chart=line|bar|area|number|table|heat`)
   with its points in a table; a point opens the rows behind it, keeping your filter.

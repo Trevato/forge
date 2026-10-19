@@ -20,6 +20,7 @@ import { getIssueById, type Issue } from "../src/core/issues.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { DONE_NOTE } from "../src/core/done_on_main.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
+import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { driveRepo } from "../src/crew/autonomy.ts";
 import { taskPrompt } from "../src/crew/brief.ts";
@@ -329,7 +330,7 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(getIssueById(app.db, direction.id)!.assigneeId).toBeNull();
   });
 
-  test("both doors: /flow and the terminal's Flow dialog show the counts, private ones to the owner only", async () => {
+  test("three doors: /flow, /boards and the terminal's Flow dialog show the counts, private ones to the owner only", async () => {
     const open = await crewed(app, alice, "open-door", "public");
     const shut = await crewed(app, alice, "shut-door");
     for (const { repo, mason } of [open, shut]) {
@@ -361,6 +362,39 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(page).toContain(".held-done_on_main { fill:");
     expect(row).toContain('<span class="mono">run_cap=1</span>');
     expect(page).toContain('data-held-repo="alice/shut-door"');
+
+    // /boards is the owner's: the same counts, private ones included, and a
+    // stranger is not shown the page at all.
+    const boards = await (await fetch(`${servers.url}/boards`, { headers: { cookie } })).text();
+    expect(boards).toContain('id="held"');
+    expect(boards).toContain('id="pipeline"');
+    expect(boards).toContain('data-held-repo="alice/open-door"');
+    expect(boards).toContain('data-held-repo="alice/shut-door"');
+    expect(boards).toContain('<span class="mono">run_cap=1</span>');
+    // Signed out, a signed-in non-admin and an agent token all get the
+    // not-found page: none sees the rows or the pipeline.
+    const bob = await createUser(app.db, {
+      origin: "seed", trusted: true, username: "bob", email: "bob@forge.local", password: "a-good-passphrase",
+    });
+    if (!bob.ok) throw new Error(bob.error);
+    const made = await createAgent(app, alice, { username: "scout-reader" });
+    if (!made.ok) throw new Error(String(made.error));
+    const bobIn = await fetch(`${servers.url}/signin`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded", origin: servers.url },
+      body: new URLSearchParams({ username: "bob", password: "a-good-passphrase" }),
+    });
+    const bobCookie = (bobIn.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
+    const agentToken = createToken(app.db, made.value.user.id, "t", "rw").token;
+    for (const headers of [{}, { cookie: bobCookie }, { authorization: `Bearer ${agentToken}` }]) {
+      const seen = await fetch(`${servers.url}/boards`, { headers, redirect: "manual" });
+      const text = await seen.text();
+      expect(text).not.toContain("data-held-repo");
+      expect(text).not.toContain('id="held"');
+      expect(text).not.toContain('id="pipeline"');
+      expect(text).not.toContain("alice/shut-door");
+    }
 
     // The terminal reads the same rows: the owner sees both, an agent
     // reader the public one alone.
