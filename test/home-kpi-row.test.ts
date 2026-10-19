@@ -17,9 +17,22 @@ describe("home kpi row", () => {
     expect(out).toContain("0.3");
     expect(out).toContain("6 changes in 24 h");
     expect(out).toContain("abcdef0");
-    expect(out).not.toContain("abcdef01");
+    expect(out).not.toContain(">abcdef01"); // shortened on screen; the whole id is in the title
     expect(out).toContain("3m 05s");
     for (const href of ["/board", "/releases", "/boards"]) expect(out).toContain(`href="${href}"`);
+  });
+
+  test("the whole figure is in the title and the link's label, rounded and in studio words", () => {
+    const out = kpiRowFor(
+      { landedHours: hours(7), landed: 7, live: null, medianCheckMs: 185_000 },
+      { sha: "abcdef0123456", at: "2026-10-19T11:00:00.000Z" },
+    ).toString();
+    expect(out).toContain('title="0.29"');
+    expect(out).not.toContain("0.2916");
+    expect(out).toContain('title="3m 05s"');
+    expect(out).not.toContain(" ms");
+    expect(out).toContain('aria-label="Live version: abcdef0123456, Live since 2026-10-19T11:00:00.000Z"');
+    expect(out).toContain('aria-label="Shipped per hour: 0.29, 7 changes in 24 h"');
   });
 
   test("empty figures say so", () => {

@@ -260,7 +260,7 @@ They count every repository, so only a site admin sees them, on both doors;
 nobody else does, and neither does the lean client home. On the web each is a
 card linking to `/board`, `/releases` or `/boards`. The terminal's first screen
 shows the same three as lines above the forge strip (`kpiLines` in
-`src/web/studio/kpi_row.ts`). They are read when the page or screen loads and
+`src/flow/kpi_words.ts`). They are read when the page or screen loads and
 do not refresh on their own.
 
 On a host that cannot hold cells or the crew's shell sandbox, a site admin

@@ -29,10 +29,10 @@ export function sparkline(hours: readonly number[]): Html {
   );
 }
 
-function tile(label: string, href: string, value: Html | string, note: string | Html, title: string, extra: Html | null = null): Html {
-  return html`<a class="card kpi" href="${href}">
+function tile(label: string, href: string, value: Html | string, full: string, note: string | Html, title: string, extra: Html | null = null): Html {
+  return html`<a class="card kpi" href="${href}" aria-label="${label}: ${full}, ${title}">
     <span class="small muted">${label}</span>
-    <span class="kpi-value num">${value}</span>
+    <span class="kpi-value num" title="${full}">${value}</span>
     <span class="kpi-note small muted" title="${title}">${note}</span>
     ${extra}
   </a>`;
@@ -51,6 +51,7 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null): Ht
       "Shipped per hour",
       "/board",
       rate.toFixed(1),
+      Number(rate.toFixed(2)).toString(),
       `${k.landed} ${k.landed === 1 ? "change" : "changes"} in 24 h`,
       `${k.landed} ${k.landed === 1 ? "change" : "changes"} in 24 h`,
       sparkline(k.landedHours),
@@ -59,6 +60,7 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null): Ht
       "Live version",
       "/releases",
       live === null ? "—" : sha(live.sha),
+      live === null ? "Nothing live yet" : live.sha,
       live === null ? "Nothing live yet" : html`live ${time(live.at)}`,
       live === null ? "Nothing live yet" : `Live since ${live.at}`,
     )}
@@ -66,6 +68,7 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null): Ht
       "Median check time",
       "/boards",
       checkTime(k.medianCheckMs),
+      k.medianCheckMs === null ? "No check finished in 24 h" : checkTime(k.medianCheckMs),
       k.medianCheckMs === null ? "No check finished in 24 h" : "over the last 24 h",
       k.medianCheckMs === null ? "No check finished in 24 h" : "over the last 24 h",
     )}

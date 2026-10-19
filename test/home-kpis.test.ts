@@ -15,6 +15,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { createRun } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
 import { readKpis } from "../src/flow/kpis.ts";
+import { kpiRowFor } from "../src/web/studio/kpi_row.ts";
 
 const HOUR = 3_600_000;
 const MIN = 60_000;
@@ -121,5 +122,26 @@ describe("home kpis", () => {
       const earlier = readKpis(app.db, new Date(NOW - 45 * MIN));
       expect(earlier.live?.sha).toBe("old");
     });
+  });
+});
+
+describe("home kpi row titles", () => {
+  const full = kpiRowFor(
+    { landedHours: Array.from({ length: 24 }, (_, i) => (i === 0 ? 6 : 0)), landed: 6, live: null, medianCheckMs: 185_000 },
+    { sha: "abcdef0123456789", at: "2026-10-19T11:00:00.000Z" },
+  ).toString();
+
+  test("every shortened value and note carries its whole text in a title", () => {
+    expect(full).toContain('class="kpi-value num" title="abcdef0123456789"');
+    expect(full).toContain('class="kpi-value num" title="0.25"');
+    expect(full).toContain('class="kpi-value num" title="3m 05s"');
+    expect(full).toContain('title="Live since 2026-10-19T11:00:00.000Z"');
+    expect(full).toContain('title="6 changes in 24 h"');
+  });
+
+  test("no value or note lacks a title, and none brings back a git word", () => {
+    expect(full.match(/class="kpi-(value num|note small muted)"/g)).toHaveLength(6);
+    expect(full.match(/class="kpi-(value num|note small muted)" title=/g)).toHaveLength(6);
+    expect(full).not.toMatch(/commit|merge|branch|repositor|pull request/i);
   });
 });
