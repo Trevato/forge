@@ -406,9 +406,9 @@ export const studioRunJs = /* js */ `
  * bounds what stays in the DOM as new lines arrive — a chatty run left open
  * cannot grow the page without bound. There is exactly one of these on a
  * page at once (an agent run's own work outranks a background deploy, so
- * only one of the two ever renders the id), so it opens one more stream
- * beside the app's own state stream and the page's live regions, never one
- * per row. It carries no controls of its own: Stop lives on the row, the
+ * only one of the two ever renders the id), so it opens no stream of
+ * its own: it appends the \`run.log\` frames the page's one \`/events\`
+ * connection already carries. It carries no controls of its own: Stop lives on the row, the
  * full transcript is one click away, and the row's own word — or the head
  * card's own state — swaps in once the run is over (the page's existing
  * live regions already repaint on \`run.*\`) — this only ever appends lines
@@ -417,7 +417,7 @@ export const studioRunJs = /* js */ `
 export const appTailJs = /* js */ `
 (function () {
   var tail = document.getElementById('app-run-tail');
-  if (!tail || typeof EventSource === 'undefined') return;
+  if (!tail) return;
   var url = tail.getAttribute('data-stream');
   if (!url) return;
   var who = tail.getAttribute('data-who') || 'the crew';
@@ -433,23 +433,17 @@ export const appTailJs = /* js */ `
     tail.scrollTop = tail.scrollHeight;
   }
 
-  var source = new EventSource(url);
-  var seeded = false;
-  source.addEventListener('line', function (event) {
-    if (!seeded) {
-      if (event.lastEventId === '1') {
-        Array.prototype.slice.call(tail.querySelectorAll('.ln')).forEach(function (el) { tail.removeChild(el); });
-      }
-      seeded = true;
-    }
-    var text = event.data;
-    try { var parsed = JSON.parse(text); if (typeof parsed === 'string') text = parsed; } catch (err) {}
-    add(draw(text));
+  // The run this tail follows is the one its stream URL names; the lines
+  // themselves arrive as \`run.log\` frames on the page's one \`/events\`
+  // connection (\`liveClientJs\`), so this script opens no stream of its own.
+  var named = /\\/runs\\/([^\\/?]+)\\/log/.exec(url);
+  var run = named && named[1];
+  if (!run) return;
+  document.addEventListener('forge:run-log', function (event) {
+    var d = event.detail;
+    if (!d || d.run !== run || !Array.isArray(d.lines)) return;
+    d.lines.forEach(function (text) { if (typeof text === 'string') add(draw(text)); });
   });
-  // The run is over: stop appending. The row above settles on its final
-  // word the next time the page's own "Now" region repaints, which the
-  // \`run.finished\` event this very moment triggers.
-  source.addEventListener('done', function () { source.close(); });
 })();
 `;
 
@@ -2065,6 +2059,13 @@ export const liveRegionsJs = /* js */ `
       if (source.readyState === 2 && retry === null) retry = setTimeout(connect, 3000);
     });
     source.addEventListener('forge', onForge);
+    // New lines of a run's log: not history, so no id to resume from. Handed
+    // to whoever tails a run on this page (\`appTailJs\`).
+    source.addEventListener('run.log', function (event) {
+      var data;
+      try { data = JSON.parse(event.data); } catch (err) { return; }
+      document.dispatchEvent(new CustomEvent('forge:run-log', { detail: data }));
+    });
   }
   function onForge(event) {
     if (event.lastEventId) since = event.lastEventId;
