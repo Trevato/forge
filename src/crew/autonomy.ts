@@ -111,7 +111,7 @@ import {
   markReaders,
 } from "./direct.ts";
 import { crewOffInPreview } from "./preview.ts";
-import { moveRequested } from "./requested.ts";
+import { moveRequested, tallyRequested, tallyWords } from "./requested.ts";
 import { reviewersOf, sendToReview, sweepReviews } from "./review.ts";
 
 const log = createLog("autonomy");
@@ -1140,7 +1140,7 @@ export async function autonomyTick(
         ...(requested.length === 0
           ? {}
           : {
-              requested: `${requested.filter((m) => m.did !== "not moved").length}/${requested.length} moved`,
+              requested: tallyWords(tallyRequested(requested)),
             }),
         spent: `${status.spentTodayUsd.toFixed(2)}/${status.ceilingUsd}`,
         ...(status.paused === null ? {} : { paused: status.paused }),

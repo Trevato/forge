@@ -42,6 +42,44 @@ export type RequestedMove =
   | { readonly pull: number; readonly did: "queued feedback"; readonly builder: string; readonly assigned: boolean }
   | { readonly pull: number; readonly did: "not moved"; readonly why: string };
 
+/** What a tick did across its pulls, as plain data: `moved` of `total`, the rest counted by reason. */
+export interface RequestedTally {
+  readonly moved: number;
+  readonly total: number;
+  readonly waiting: Readonly<Record<string, number>>;
+}
+
+/** The reason a pull did not move, in the few words the tick line groups by. */
+function reasonOf(why: string): string {
+  if (why === "a run is in flight" || why.startsWith("a review of the new head")) return "a run is in flight";
+  if (why === "a person holds it" || why.startsWith("held,")) return "held";
+  if (why.includes("a person")) return "handed to a person";
+  if (why === "waits for a builder slot") return "waits for a slot";
+  if (why === "the new head is not green yet") return "waits for a check";
+  if (why.startsWith("past the review rounds") || why.startsWith("a verdict is already") || why.startsWith("a run since"))
+    return "settled";
+  return "cannot move";
+}
+
+/** Count a pass's moves: moved are the runs queued or reviewers asked, the rest grouped by reason. */
+export function tallyRequested(moves: readonly RequestedMove[]): RequestedTally {
+  const waiting: Record<string, number> = {};
+  let moved = 0;
+  for (const m of moves) {
+    if (m.did !== "not moved") moved++;
+    else waiting[reasonOf(m.why)] = (waiting[reasonOf(m.why)] ?? 0) + 1;
+  }
+  return { moved, total: moves.length, waiting };
+}
+
+/** The tally as the tick line says it: `2/8 moved; 3 a run is in flight, 1 held`. */
+export function tallyWords(t: RequestedTally): string {
+  const rest = Object.entries(t.waiting)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([why, n]) => `${n} ${why}`);
+  return `${t.moved}/${t.total} moved${rest.length === 0 ? "" : `; ${rest.join(", ")}`}`;
+}
+
 /**
  * The last why-not said for a pull, so it is said once: a log dedupe, in
  * memory, keyed `repo:pull` across every repository. Each tick drops its

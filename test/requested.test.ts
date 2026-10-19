@@ -22,7 +22,7 @@ import { submitReview } from "../src/core/reviews.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { autonomyTick } from "../src/crew/autonomy.ts";
-import { moveRequested } from "../src/crew/requested.ts";
+import { moveRequested, tallyRequested, tallyWords } from "../src/crew/requested.ts";
 import { requestedSays, requestedWaits } from "../src/flow/requested.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { createToken } from "../src/core/tokens.ts";
@@ -301,5 +301,25 @@ describe("a pull with changes requested always moves", () => {
     expect(runs(stale, "review")).toHaveLength(1);
     expect(runs(current, "feedback")).toHaveLength(1);
     expect(runs(current, "feedback")[0]!.actorId).toBe(builder.id);
+  });
+
+  test("the tally counts moved pulls and groups the rest by reason", async () => {
+    app.db.query("UPDATE issue SET state = 'closed' WHERE repo_id = ?1 AND kind = 'pull'").run(repo.id);
+    clearRuns();
+    const stale = await staleShape();
+    const fresh1 = await currentShape();
+    const held = await currentShape();
+    app.db.query("UPDATE issue SET assignee_id = ?2 WHERE id = ?1").run(held.id, alice.id);
+    // Assigned to a builder: the assignment queues the run, which counts once.
+    const moves = await moveRequested(app, fresh(), 2);
+    const tally = tallyRequested(moves);
+    expect(tally).toEqual({ moved: 2, total: 3, waiting: { "handed to a person": 1 } });
+    expect(tallyWords(tally)).toBe("2/3 moved; 1 handed to a person");
+    expect(runs(fresh1, "feedback")).toHaveLength(1);
+    expect(runs(stale, "review")).toHaveLength(1);
+    // Next pass: both runs are in flight, the person's pull still waits.
+    const next = tallyRequested(await moveRequested(app, fresh(), 2));
+    expect(next).toEqual({ moved: 0, total: 3, waiting: { "a run is in flight": 2, "handed to a person": 1 } });
+    expect(tallyWords(next)).toBe("0/3 moved; 2 a run is in flight, 1 handed to a person");
   });
 });
