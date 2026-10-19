@@ -9,7 +9,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { DrillResult, DrillStep } from "./drill.ts";
+import { formatSpan, type DrillResult, type DrillStep, type PhaseTime } from "./drill.ts";
 
 const STEPS: readonly DrillStep[] = ["fetch", "restore", "open", "count", "unseal", "health"];
 
@@ -41,7 +41,23 @@ export function failedSentence(r: DrillResult | undefined): string | undefined {
   return `The restore drill failed at ${r.failedStep ?? "an unknown step"}${r.reason ? `: ${r.reason}` : ""}. Snapshot ${r.snapshotId ?? "none"}; docs/RECOVERY.md says what to do.`;
 }
 
-const firstFile = (dataDir: string): string => join(dataDir, "drill", "first-seen");
+/** A green drill that used more than this share of its budget is a warning. */
+export const DRILL_SLOW_SHARE = 0.8;
+
+/**
+ * The board's line for a green drill that came close to its budget, naming
+ * the slowest phase; undefined for a red drill, one under 80%, or an older
+ * drill that kept no budget.
+ */
+export function slowSentence(r: DrillResult | undefined): string | undefined {
+  if (r === undefined || r.verdict !== "green") return undefined;
+  if (!(r.budgetMs > 0) || !(r.ms > r.budgetMs * DRILL_SLOW_SHARE)) return undefined;
+  const slowest = r.phases.reduce<PhaseTime | undefined>((a, p) => (a === undefined || p.ms > a.ms ? p : a), undefined);
+  const spare = `${formatSpan(Math.max(0, r.budgetMs - r.ms))} to spare`;
+  return `The last restore drill passed with ${spare}${slowest ? `; ${slowest.phase} took ${formatSpan(slowest.ms)} of it` : ""}.`;
+}
+
+const firstFile =(dataDir: string): string => join(dataDir, "drill", "first-seen");
 
 /**
  * Written once at boot (`seedFirstSeen`): when this forge first ran with a
@@ -97,7 +113,10 @@ export function drillNeed(
     };
   }
   const at = Date.parse(r.at);
-  if (!(now - at > DRILL_STALE_MS)) return undefined;
+  if (!(now - at > DRILL_STALE_MS)) {
+    const slow = slowSentence(r);
+    return slow === undefined ? undefined : { key: `slow:${r.at}`, sentence: slow, since: r.at };
+  }
   return {
     key: `stale:${r.at}`,
     sentence: `No restore drill has run in ${days} days; the last one passed on ${r.at.slice(0, 10)}. docs/RECOVERY.md says how to run one.`,
