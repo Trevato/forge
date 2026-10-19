@@ -193,6 +193,21 @@ describe("the restore drill", () => {
     expect(scratchLeft()).toEqual([]);
   });
 
+  test("a restore that reports progress and then hangs names the phase and the counts", async () => {
+    const r = await runDrill(
+      deps({
+        timeoutMs: 1500,
+        restore: (async (_s: unknown, _n: unknown, _t: unknown, o: { onProgress?: (p: unknown) => void }) => {
+          o.onProgress?.({ phase: "files", done: 3, total: 3, bytes: 100 });
+          o.onProgress?.({ phase: "bundles", done: 37, total: 212, bytes: Math.round(1.8 * 1024 ** 3) });
+          await new Promise(() => {});
+        }) as never,
+      }),
+    );
+    expect(r.failedStep).toBe("restore");
+    expect(r.reason).toBe("restore timed out in bundles (37 of 212 cloned, 1.8 GiB fetched) after its 1.5 s budget");
+  });
+
   test("a step that times out names its budget and the snapshot's size, never a raw float of ms", async () => {
     const r = await runDrill(deps({ timeoutMs: 1500.75, restore: () => new Promise(() => {}) }));
     expect(r.reason).toMatch(/^restore timed out: no answer within its 1\.5 s budget for a [\d.]+ (B|KiB|MiB) snapshot$/);

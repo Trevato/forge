@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { bootRestored } from "./boot.ts";
 import { forgetKey, open } from "../kernel/secret.ts";
 import { countRows, mismatched, type DrillCounts } from "./counts.ts";
-import { restoreSnapshot } from "./restore.ts";
+import { restoreSnapshot, type Progress } from "./restore.ts";
 import { listSnapshots } from "./snapshot.ts";
 import type { Store } from "./store.ts";
 
@@ -97,6 +97,12 @@ export interface DrillResult {
 
 class StepTimeout extends Error {}
 
+/** Where a restore got to, for people: "bundles (37 of 212 cloned, 1.8 GiB fetched)". */
+export function describeProgress(p: Progress): string {
+  const unit = p.phase === "bundles" ? ["cloned", "fetched"] : ["done", "so far"];
+  return `${p.phase} (${p.done} of ${p.total} ${unit[0]}, ${formatBytes(p.bytes)} ${unit[1]})`;
+}
+
 /** Race `work` against `ms`; a loss says `budget`, the whole drill's, not what was left of it. */
 function within<T>(work: Promise<T>, ms: number, budget: () => string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
@@ -121,6 +127,7 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
   let step: DrillStep = "fetch";
   let scratch: string | undefined;
   let reason: string | null = null;
+  let progress: Progress | undefined;
   let health: DrillResult["health"] = "unreached";
   try {
     // One clock for the whole drill, so a hang in any step ends it red.
@@ -137,7 +144,12 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
     scratch = mkdtempSync(join(parent, "restore-"));
     const target = join(scratch, "data");
     await within(
-      restore(deps.store, newest.name, target, { passphrase: deps.passphrase }),
+      restore(deps.store, newest.name, target, {
+        passphrase: deps.passphrase,
+        onProgress: (p) => {
+          progress = p;
+        },
+      }),
       left(),
       budget,
     );
@@ -200,7 +212,9 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
     if (!booted.ok) throw new Error(booted.reason);
   } catch (error) {
     reason =
-      error instanceof StepTimeout
+      error instanceof StepTimeout && step === "restore" && progress !== undefined
+        ? `restore timed out in ${describeProgress(progress)} after its ${formatBudget(budgetMs)} budget`
+        : error instanceof StepTimeout
         ? `${step} timed out: ${error.message}`
         : error instanceof Error
           ? error.message

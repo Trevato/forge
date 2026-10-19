@@ -36,6 +36,7 @@ describe("the drill on the Backups page", () => {
     return (r.headers.get("set-cookie") ?? "").split(";")[0]!;
   };
 
+  let redReason = "a sealed value does not open";
   beforeAll(async () => {
     root = mkdtempSync(join(tmpdir(), "forge-drillpage-"));
     app = createApp({ dataDir: root, port: 0 });
@@ -67,7 +68,7 @@ describe("the drill on the Backups page", () => {
           health: verdict === "green" ? "ok" : "unreached",
           verdict,
           failedStep: verdict === "green" ? null : "unseal",
-          reason: verdict === "green" ? null : "a sealed value does not open",
+          reason: verdict === "green" ? null : redReason,
         };
       },
     });
@@ -103,6 +104,17 @@ describe("the drill on the Backups page", () => {
     expect(app.db.query("SELECT count(*) AS n FROM drill").get()).toEqual({ n: 1 });
   });
 
+  test("a red drill's reason shows verbatim, escaped", async () => {
+    const cookie = await login("alice", "a-good-passphrase");
+    verdict = "red";
+    redReason = "restore timed out in bundles (37 of 212 cloned, 1.8 GiB fetched) after its 14 min budget <b>x</b>";
+    await post(cookie);
+    const html = await page(cookie);
+    redReason = "a sealed value does not open";
+    expect(html).toContain("restore timed out in bundles (37 of 212 cloned, 1.8 GiB fetched) after its 14 min budget &lt;b&gt;x&lt;/b&gt;");
+    expect(html).not.toContain("<b>x</b>");
+  });
+
   test("a red drill names the failing step", async () => {
     const cookie = await login("alice", "a-good-passphrase");
     verdict = "red";
@@ -110,7 +122,7 @@ describe("the drill on the Backups page", () => {
     const html = await page(cookie);
     expect(html).toContain("failed at");
     expect(html).toContain("unseal");
-    expect(app.db.query("SELECT count(*) AS n FROM drill").get()).toEqual({ n: 2 });
+    expect(app.db.query("SELECT count(*) AS n FROM drill").get()).toEqual({ n: 3 });
   });
 
   test("a non-admin is refused, and so is a cross-origin post", async () => {
