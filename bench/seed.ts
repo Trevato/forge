@@ -126,6 +126,7 @@ export async function seed(plan: SeedPlan): Promise<SeedResult> {
     username: "bench0",
     email: "bench0@forge.test",
     password: PASSWORD,
+    origin: "seed",
     adminIfFirst: true,
   });
   if (!first.ok) throw new Error(`seed user: ${first.error}`);

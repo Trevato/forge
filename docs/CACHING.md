@@ -1,0 +1,312 @@
+# Caching: the map and home
+
+What `/map` and `/` cache, what each entry is keyed by, which writes make
+it stale, and how old it may get. Written before any of it is built
+(#2715). #2716 builds the map half, #2717 the home half, and #2718 does
+ETag/immutable for static assets, which this doc does not cover. A cache
+that is not described here is a bug. So is a write that changes a cached
+answer and is missing from the tables below.
+
+## The rules every entry here keeps
+
+1. **Access is never cached.** Which repositories a viewer may read
+   (`listReposVisibleTo`), whether they may see sealed issues
+   (`sealedScope`), and whether they are an admin are worked out on every
+   request, before any cache is read. Then that answer goes into the key.
+   A grant, a team change, a suspension or a visibility flip changes the
+   next request's key. There is nothing to invalidate, so no event can
+   arrive too late and no listener can be forgotten.
+2. **The key carries what the viewer may see.** Two viewers share an entry
+   only when their access computes to the same scope. One person's sealed
+   report, private repository or spend never reaches another person's
+   page through a shared entry.
+3. **Data is cached, not finished HTML.** Entries hold ids, numbers,
+   positions and rows. The page is still rendered for each request, so
+   escaping, the CSP nonce, relative times ("3 min ago") and the viewer's
+   own name are always the current request's.
+4. **Validated, not trusted.** An entry is used only after its key's
+   *head* has been read from the database again: the repository's latest
+   event (`MAX(event.seq)`, from the `event_repo_seq` index). That works
+   across processes. During a roll, two processes write to one database
+   (#875), and the in-process bus (`core/events.ts`) cannot wake the other
+   process's listeners. The sequence still moves, so the bus is only a way
+   to evict early, never the thing correctness depends on.
+5. **Everything is droppable.** Git is the truth and the database is
+   derived from it (CLAUDE.md, invariant 4). A cache sits one step further
+   from the truth than that. Each cache is a per-process `Map` with an
+   entry cap, LRU like `src/view/cache.ts`. A restart, an eviction or a
+   miss costs one rebuild and is never wrong.
+6. **A cache does not hide a per-row query.** The N+1 reads named under
+   "Where the time goes" get fixed (grouped helpers, the CLAUDE.md recipe)
+   whether or not a cache is put in front of them. Otherwise a cold miss
+   and the first view after every write stay slow, and
+   `test/counts.test.ts` stays right to complain.
+
+## Today's numbers
+
+`bun run bench/map-home.ts` seeds a fixture shaped like this forge as the
+API reported it on 2026-10-19:
+
+- 69 repositories.
+- One repository with 2,700 issues: 213 open, 20 open pulls, 3 sealed, and
+  5 agent runs in flight. Its graph is 926 issues and 1,699 edges (the real
+  `trevato/forge` map: 926 / 1,699).
+- Nine more plans with 68, 48, 38, 33, 30, 27, 2, 1 and 1 open issues. Two
+  of them are private to the owner.
+- 60,000 outbox events.
+
+The bench then times each case 30 times over HTTP, after one warm hit.
+The SQL counter is `bench/run.ts`'s `countStatements`, which counts every
+statement that runs, not every statement that is prepared.
+
+- **owner**: the site admin who owns every plan.
+- **stranger**: a signed-in account with no grant anywhere.
+- **anonymous**: no session at all. `/map` sends an anonymous visitor to
+  sign in; `/` shows them the door.
+
+Measured on an 80-thread Xeon Gold 6230 (shared), Bun 1.3.14, with no cache
+anywhere:
+
+| request             | p50 ms | p95 ms | SQL / request |   bytes |
+| ------------------- | -----: | -----: | ------------: | ------: |
+| `GET /map` owner    |  810.6 |  854.4 |        2684.7 | 1046463 |
+| `GET /map` stranger |  766.1 |  805.3 |        2636.7 | 1034267 |
+| `GET /map` anonymous |   0.3 |    0.4 |             0 |   (303) |
+| `GET /` owner       |   92.0 |   96.6 |        1974.3 |  103473 |
+| `GET /` stranger    |   70.6 |   75.5 |        1784.2 |   88149 |
+| `GET /` anonymous   |    1.5 |    2.9 |          10.0 |   14369 |
+
+The machine is shared, so latency varies from run to run: an earlier run of
+20 hits gave `/map` p50 527 / 491 ms and `/` p50 98 / 80 ms. The SQL counts
+were the same in both runs. Treat latency as an order of magnitude and the
+statement count as the exact figure.
+
+### Where the time goes
+
+- **`/map`: `layout` of the big lane alone takes 408 ms of the ~490 ms
+  `globalLanes` spends on all ten lanes** (timed one stage at a time on the
+  same fixture). The big lane's other stages are `readyNow` at 27 ms,
+  `marksFor` at 27 ms and `repoGraph` at 12 ms.
+  Rendering every lane's SVG takes 19 ms. `layout` is a pure function of
+  the graph's issue ids, numbers and edges (crossing reduction in `order`),
+  so it is the first thing to cache. Its key is its own input.
+- **`/map`: 2,348 of the 2,685 statements are one query**,
+  `SELECT raised_at FROM issue_raise WHERE issue_id = ?1`, run once per
+  issue by `raisedAt` (`core/thought_links.ts`) inside `repoGraph`. That is
+  a per-row read, and it gets a grouped `IN (…)` read. Next come the crew
+  role lookups (42 per request) and `SELECT * FROM user` (34–40).
+- **`/`: about 70% of the time is the feed region** (`/live/feed` alone
+  takes 77 ms of `/`'s 111 ms). It runs 840 issue reads
+  (`SELECT issue.*, … WHERE …`, one per candidate) and 600
+  `SELECT sealed, author_id FROM issue WHERE repo_id = ?1 AND number = ?2`
+  (`mayViewId`, one per item) on each request. Both get grouped reads. The
+  shelf (`/live/apps`, 2 ms) and the "On you" card (`/live/on-you`, 13 ms)
+  are not worth a cache.
+
+## The map (`/map`, `/:owner/:name/map`, `/api/v1/map`)
+
+### 1. The layout: content-addressed
+
+- **What:** a graph's `Layout` with every `Placed.issue` replaced by its id
+  (level, slot, island, routes, levels, width, islandFrom). Titles, states
+  and assignees are never in the entry. They are put back from the
+  request's own graph, so an edited title shows on the next view.
+- **Key:** `layout:` + sha256 of the graph's issues in order (`id:number`)
+  and its edges (`blockedById>issueId`). A viewer can only produce the key
+  of a graph they were allowed to read, and the entry only says where those
+  same ids sit. Two viewers with the same visible graph share the entry.
+  A viewer who sees one more sealed issue gets a different key, so sharing
+  can never place a card someone may not see.
+- **Invalidated by:** nothing. A different graph is a different key. Any
+  write that changes the graph (the lane table below) misses the old
+  entry, and the LRU evicts it.
+- **Max age:** none needed for correctness. Unused entries are evicted
+  after 1 hour, with a cap of 256 entries.
+
+### 2. The lane: one repository's map for one scope
+
+- **What:** everything `globalLanes` builds for one repository: its `Graph`,
+  `Marks`, ready list, critical path, word counts, the runs in flight that
+  the scope may see, the workers' usernames, `idle`, and the autonomy
+  status. The per-repository map page and the API read the same entry.
+- **Key:** `lane:{repoId}:{head}:{scope}:{utcDay}`.
+  - `head` is the repository's `MAX(event.seq)`. One grouped read covers
+    every lane on the page:
+    `SELECT repo_id, MAX(seq) FROM event WHERE repo_id IN (…) GROUP BY repo_id`.
+  - `scope` comes from `sealedScope(db, repo, viewer)`, worked out fresh:
+    `all` for a writer or the crew, `own:{userId}` for any other signed-in
+    active account, `none` for no one. Every part of a lane that reads
+    issues must respect it, including the reads outside `repoGraph` (the
+    runs filtered by `mayViewId`, `parkedTwice`, `proposedWork`). #2716's
+    test warms a lane as the owner and reads it as a stranger to show that
+    it does.
+  - `utcDay` is part of the key because the spend bar and its ceiling reset
+    at UTC midnight.
+- **Not cached:** which lanes the page has (`listReposVisibleTo` for the
+  viewer, worked out on every request), the order of the lanes, and the
+  HTML.
+- **Invalidated by:** every write in the table below, because each one
+  appends an event on the repository and so moves `head`. The bus listener
+  may also delete `lane:{repoId}:*` as soon as it sees such an event. That
+  frees memory sooner, but correctness never depends on it.
+- **Max age:** 60 seconds. That covers the inputs that move without an
+  event on the repository (see "Gaps") and spend reported by another
+  process.
+
+## Home (`/`)
+
+### 3. The feed's first page: per viewer
+
+- **What:** the candidate rows (`src/feed/items.ts`) after the viewer's
+  access filter and before ranking. Ranking decays with time
+  (`feed/affinity.ts`), so it is redone on every request, and so is
+  rendering.
+- **Key:** `feed:{viewerId}:{head}`. Here `head` is the forge-wide
+  `MAX(event.seq)`, because any event may be a feed item.
+- **Invalidated by:** every append to the outbox, so every write. The
+  table below does not list them one by one: the rule is "any event".
+  When the forge is busy, the hit rate is the rate at which a person
+  reloads faster than events arrive. That is why the grouped reads under
+  "Where the time goes" come first and this cache comes second.
+- **Max age:** 30 seconds. Asks and decision outcomes are read from what is
+  true now, not from events.
+
+### 4. The KPI row (after #2665): forge-wide, admin only
+
+- **What:** the numbers #2665 puts at the top of the owner's home:
+  landings per hour (24 h sparkline), the live version and when it went
+  live, the median check time, crew builders active out of slots, today's
+  spend against the ceiling, and the age of the last good off-box backup.
+  Numbers only, rendered for each request.
+- **Key:** `kpi:{head}:{utcHour}`, a single entry. It is read only **after**
+  the request has established `viewer.isAdmin`. The figures add up private
+  repositories, so the entry is admin-scoped by its gate, and a viewer who
+  is not an admin never reaches the read. #2717's test says the owner's
+  KPIs never render for another viewer.
+- **Invalidated by:** the KPI writes in the table below, by moving the
+  forge-wide `head`.
+- **Max age:** 30 seconds. The backup's age and "per hour" move with the
+  clock, not with events.
+
+### 5. Pinned board panels (after #2665): admin only, per panel
+
+- **What:** each pinned panel's query result (`boards/query.ts`), the
+  same rows `/boards` shows for it.
+- **Key:** `panel:{boardSlug}:{boardOid}:{panelIndex}:{head}`. Boards are
+  an admin's (`actions/boards.ts` refuses everyone else), and a panel runs
+  with every repository in scope. So, like the KPI row, the entry is read
+  only after the `isAdmin` check. `boardOid` is the board file's blob id
+  in the boards repository, so an edited board is a new key.
+- **Invalidated by:** any event, through `head`, plus the board writes in
+  the table below (a push to the boards repository is one of them).
+- **Max age:** 30 seconds.
+
+### Not cached on home
+
+The anonymous door (1.5 ms, 10 statements), the app shelf, and the
+"On you" card. Each costs less than its cache's key would.
+
+## The writes that invalidate
+
+Each row is an action (or, for a push, the post-receive hook, the one
+`bus.append` outside `src/actions/`), and the event it appends. The event
+is what moves the cached entry's `head`. `test/caching-doc.test.ts` reads
+these tables and checks that each named function exists in its file and
+that the file appends the event named beside it. If an action is renamed,
+or stops saying what it did, this doc goes red before the cache goes stale.
+
+### Lane writes (cache 2; every event here has the repository's id)
+
+| write                             | event                          | changes                                  |
+| --------------------------------- | ------------------------------ | ---------------------------------------- |
+| `actions/issues#openIssue`        | `issue.opened`                 | a card appears                           |
+| `actions/issues#openIssueThrough` | `issue.opened`                 | a card appears (a mirror)                |
+| `actions/issues#editIssue`        | `issue.edited`                 | a card's title                           |
+| `actions/issues#setIssueState`    | `issue.closed`                 | a card goes, a blocker frees             |
+| `actions/issues#setIssueState`    | `issue.reopened`               | a card comes back                        |
+| `actions/issues#setIssueStateThrough` | `issue.closed`             | the same, on a mirror                    |
+| `actions/issues#setIssueSealed`   | `issue.sealed`                 | who may see a card                       |
+| `actions/issues#setIssueSealed`   | `issue.unsealed`               | who may see a card                       |
+| `actions/sealed#unsealReleased`   | `issue.unsealed`               | who may see a card                       |
+| `actions/issues#assignIssue`      | `issue.assigned`               | who is on a card                         |
+| `actions/issues#setIssueLabels`   | `issue.labeled`                | pillars, the Later gate                  |
+| `actions/issues#addComment`       | `issue.commented`              | parks (`struckOut`, `parkedTwice`)       |
+| `actions/dependencies#linkIssue`  | `issue.blocked`                | an edge                                  |
+| `actions/dependencies#unlinkIssue` | `issue.unblocked`             | an edge                                  |
+| `actions/dependencies#confirmIssue` | `issue.confirmed`            | a held edge                              |
+| `actions/plan#openPlan`           | `issue.opened`                 | cards and edges at once                  |
+| `actions/pillars#followLink`      | `issue.blocked`                | an umbrella's edge                       |
+| `actions/pillars#inheritPillar`   | `issue.labeled`                | a card's pillar                          |
+| `actions/pulls#openPull`          | `pull.opened`                  | "waiting" (`proposedWork`)               |
+| `actions/pulls#mergePull`         | `pull.merged`                  | a card closes                            |
+| `actions/holds#holdPull`          | `pull.held`                    | "on hold" (`holdsFor`)                   |
+| `actions/holds#releasePull`       | `pull.released`                | "on hold"                                |
+| `actions/runs#announceRun`        | `run.queued`                   | a ringed card, the lane's crew           |
+| `actions/runs#announceRun`        | `run.started`                  | a ringed card, the lane's crew           |
+| `actions/runs#announceRun`        | `run.finished`                 | a ringed card, the lane's crew           |
+| `actions/crew#addToCrew`          | `crew.added`                   | who speaks for the crew                  |
+| `actions/crew#removeFromCrew`     | `crew.removed`                 | who speaks for the crew                  |
+| `actions/repos#updateRepoSettings` | `repo.settings_updated`       | autonomy, ceiling, slots                 |
+| `actions/repos#setCrewOutsiders`  | `repo.crew_outsiders`          | unadopted cards                          |
+| `actions/returns#reportSpend`     | `spend.reported`               | the spend bar                            |
+
+### KPI writes (cache 4)
+
+| write                                | event                  | changes                     |
+| ------------------------------------ | ---------------------- | --------------------------- |
+| `http/server#handleHook`             | `push`                 | landings per hour           |
+| `actions/pulls#mergePull`            | `pull.merged`          | landings per hour           |
+| `actions/runs#announceRun`           | `run.finished`         | median check time, builders |
+| `actions/runs#announceRun`           | `run.started`          | builders active             |
+| `actions/capacity#changeCapacity`    | `capacity.changed`     | builders' slots             |
+| `actions/returns#reportSpend`        | `spend.reported`       | today's spend               |
+| `actions/model_grant#setAccountCeilings` | `account.ceiling_set` | the ceiling                |
+
+### Panel writes (cache 5)
+
+| write                        | event           | changes                |
+| ---------------------------- | --------------- | ---------------------- |
+| `actions/boards#writeBoard`  | `board.saved`   | a panel's query        |
+| `actions/boards#changeBoard` | `board.saved`   | a panel's query        |
+| `actions/boards#deleteBoard` | `board.deleted` | a pinned panel goes    |
+| `http/server#handleHook`     | `push`          | a board edited in git  |
+
+## Gaps: writes that change a lane without an event on its repository
+
+The 60-second max age covers these until they append an event. #2716
+closes each one, either by appending an event with the repository's id or
+by adding the input to the key:
+
+- **A thought raising an issue** (`raiseIssue` from `crew/triage.ts`):
+  it writes `issue_raise`, and the only event is the forge-wide
+  `thought.received`. The ready order moves silently.
+- **A fleet "move limb"** (`moveLimb` from `fleet/verbs.ts`): it writes
+  `limb_place` through core. `fleet.operated` carries no repository id.
+- **A username change** (`user.updated`, no repository): the workers'
+  names in a lane header.
+- **The clock:** "deferred" and the spend day turn over with time. The
+  `utcDay` in the key covers the spend; the max age covers the rest.
+
+## Budgets
+
+These are what #2716 and #2717 test against, on the forge-sized fixture,
+warm:
+
+- **`/map`: p95 ≤ 50 ms on the bench, and at most 2 + 2 × lanes
+  statements.** That is one grouped head read, one grouped access read,
+  and two reads per lane for what is never cached. The test asserts the
+  statement count, which does not depend on the machine. Its wall-clock
+  bound is 200 ms p95, the floor `test/flake.test.ts` allows a request.
+- **`/`: p95 ≤ 50 ms on the bench, and a statement count that does not
+  grow with the feed's candidates** (the `test/counts.test.ts` pattern).
+  The test's wall-clock bound is 200 ms, for the same reason.
+
+## Max ages, at a glance
+
+| entry              | key carries                     | max age |
+| ------------------ | ------------------------------- | ------: |
+| map layout         | the graph's own ids and edges   | 1 h idle (LRU) |
+| map lane           | repository head, sealed scope, UTC day | 60 s |
+| home feed page     | viewer, forge head              |    30 s |
+| home KPI row       | forge head, UTC hour; admin-gated |  30 s |
+| home pinned panel  | board blob, panel, forge head; admin-gated | 30 s |

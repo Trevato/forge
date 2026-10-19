@@ -129,7 +129,7 @@ const percentile = (sorted: number[], p: number): number =>
         Math.min(sorted.length - 1, Math.floor((sorted.length * p) / 100))
       ] ?? 0);
 
-async function measure(
+export async function measure(
   name: string,
   iterations: number,
   counter: SqlCounter,
