@@ -64,7 +64,8 @@ import {
 } from "../ui.ts";
 import { previewCard } from "../pages/apps.ts";
 import { lookCard } from "../pages/looks.ts";
-import { approveHereCard, pullChecksLineFor } from "../pages/pull.ts";
+import { approveHereCard, pullChecksLineFor, teamsCard } from "../pages/pull.ts";
+import { teamVerdicts } from "../../core/issue_teams.ts";
 import { liveRegionsJs } from "../client.ts";
 import { pullState } from "../pages/pulls.ts";
 import { workSpent } from "../pages/runs.ts";
@@ -589,6 +590,7 @@ async function changeConversation(
     <div id="pull-check">${checkLine}</div>
     ${when(runLine, (l) => l)} ${holdCard(ctx, repo, pull, { act: true })}
     ${approveHereCard(ctx, repo, pull, headOid, `${thread}/approve-here`)}
+    ${teamsCard(teamVerdicts(db, { ...pull, headOid }))}
     ${when(wall, (w) => wallCard(w))} ${decisionSection}
     ${takeBackSection}
     ${when(record, (r) => lookCard(ctx, repo, r, pull, pull.headOid))}

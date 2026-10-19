@@ -295,7 +295,7 @@ export const liveClientJs = /* js */ `
 
   var KINDS = [
     'push', 'repo.created', 'repo.forked',
-    'issue.opened', 'issue.closed', 'issue.reopened', 'issue.commented', 'issue.labeled', 'issue.edited',
+    'issue.opened', 'issue.closed', 'issue.reopened', 'issue.commented', 'issue.labeled', 'issue.teams', 'issue.edited',
     'pull.opened', 'pull.closed', 'pull.reopened', 'pull.merged', 'pull.commented', 'pull.reviewed',
     'pull.held', 'pull.released', 'pull.edited', 'pull.run_granted',
     'branch.created', 'branch.deleted',

@@ -9,6 +9,9 @@
  */
 
 import { mayView } from "../../core/sealed.ts";
+import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
+import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
+import { listTeams } from "../../core/teams.ts";
 import { listCrew } from "../../actions/crew.ts";
 import {
   confirmIssue,
@@ -142,6 +145,11 @@ const EVENT_LOOK: Record<string, { icon: IconName; tone: Tone; verb: string }> =
       icon: "tag",
       tone: "default",
       verb: "changed the labels",
+    },
+    "issue.teams": {
+      icon: "tag",
+      tone: "default",
+      verb: "changed the teams",
     },
     "pull.reviewed": {
       icon: "comment",
@@ -885,6 +893,55 @@ export async function labelsSubmit(
       applied.value.length === 0
         ? "Labels cleared."
         : `Labels set to ${applied.value.map((l) => l.name).join(", ")}.`,
+  });
+}
+
+// ---- teams ----
+
+/** The teams rail of an issue (#2681): up to two, for writers a form. */
+export function issueTeamsCard(ctx: Ctx, repo: Repo, issue: Issue, action: string): Html {
+  const named = teamsOfIssue(ctx.app.db, issue.id);
+  const all = listTeams(ctx.app.db);
+  const head = html`${icon("tag")}
+    <h2>Teams</h2>`;
+  const chips =
+    named.length === 0
+      ? html`<p class="muted small">None named.</p>`
+      : html`<p>${named.map((slug) => all.find((t) => t.slug === slug)?.name ?? slug).join(", ")}</p>`;
+  if (!canWrite(ctx.app.db, repo, ctx.auth.user) || repo.origin !== null)
+    return card(chips, { head });
+  return card(
+    html`${chips}
+      <form method="post" action="${action}" class="mt">
+        <fieldset class="stack">
+          <legend class="sr-only">Teams that review the pull closing this issue (at most ${TEAMS_MAX})</legend>
+          ${all.map(
+            (t) => html`<label class="check">
+              <input type="checkbox" name="teams" value="${t.slug}" ${named.includes(t.slug) ? raw("checked") : null} />
+              ${t.name}
+            </label>`,
+          )}
+        </fieldset>
+        <div class="form-actions">${btn("Name teams", { size: "sm", variant: "primary" })}</div>
+      </form>`,
+    { head },
+  );
+}
+
+/** POST …/issues/:number/teams — replace the teams an issue names. Writers only. */
+export async function teamsSubmit(ctx: Ctx): Promise<Response> {
+  const found = threadContext(ctx, "issue");
+  if (found instanceof Response) return found;
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const dest = `${repoBase(found.repo)}/issues/${found.issue.number}`;
+  const chosen = form.getAll("teams").filter((v): v is string => typeof v === "string");
+  const set = nameTeams(ctx.app, ctx.auth.user, found.repo, found.issue, chosen);
+  if (!set.ok)
+    return flashTo(ctx, dest, { tone: "danger", message: ISSUE_TEAMS_SAY[set.error] ?? "That could not be changed." });
+  return flashTo(ctx, dest, {
+    message: set.value.length === 0 ? "Teams cleared." : `Teams set to ${set.value.join(", ")}.`,
   });
 }
 

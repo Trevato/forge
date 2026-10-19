@@ -290,6 +290,8 @@ export function queueAgentRun(
   again?: { notBefore: string; attempt: number; summary: string },
   variantGroup?: string,
   retry = false,
+  /** The run is this agent's own on the issue: another agent's run does not stand in its way (team reviews). */
+  own = false,
 ): Run | undefined {
   // A suspended or removed owner's repositories run nothing, whoever asks.
   if (!accountActive(app.db, repo.ownerId)) return undefined;
@@ -343,7 +345,7 @@ export function queueAgentRun(
   const run = transact(app.db, () => {
     // A follow-up is the builder's: a reviewer's own run on the pull, still
     // running as it posts its verdict, is not the run that hears it.
-    const mine = reason === "feedback" ? agent.user.id : undefined;
+    const mine = reason === "feedback" || own ? agent.user.id : undefined;
     const active = activeRunFor(app.db, "agent", issue.id, mine);
     // A follow-up with nothing new would only read the agent's own reply
     // and decline. With a run in flight the answer waits for it to end: the

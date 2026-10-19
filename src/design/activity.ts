@@ -95,6 +95,7 @@ const WORDS: Record<string, string> = {
   "issue.commented": "commented on an issue",
   "issue.edited": "edited an issue",
   "issue.labeled": "labelled an issue",
+  "issue.teams": "named the teams on an issue",
   "issue.sealed": "sealed a security report",
   "issue.unsealed": "unsealed a security report",
   "pull.opened": "opened a pull request",

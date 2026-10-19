@@ -19,6 +19,9 @@ import {
   setIssueLabelsThrough,
   setIssueStateThrough,
 } from "../../actions/issues.ts";
+import { ISSUE_TEAMS_SAY, nameTeams } from "../../actions/issue_teams.ts";
+import { teamsOfIssue, TEAMS_MAX } from "../../core/issue_teams.ts";
+import { listTeams } from "../../core/teams.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { alreadyDone } from "../../core/done_on_main.ts";
 import { getIssue, type Issue, type Label } from "../../core/issues.ts";
@@ -221,6 +224,7 @@ export function issueScreen(
                 disabled: detail?.issue.state !== "closed",
               }),
               binding(["l"], "labels"),
+              binding(["t"], "teams"),
             ]
           : liveBindings(src)),
         binding(["r"], "refresh"),
@@ -288,6 +292,18 @@ export function issueScreen(
           { text: label.name, color: label.color },
           right,
         );
+      // The teams that review the closing pull, shown to every reader.
+      const named = issueRow === undefined ? [] : teamsOfIssue(f.db, issueRow.id);
+      if (named.length > 0) {
+        const names = new Map(listTeams(f.db).map((t) => [t.slug, t.name]));
+        s.text(
+          x + 1,
+          head!.y + 1,
+          truncate(`teams: ${named.map((t) => names.get(t) ?? t).join(", ")}`, Math.max(0, right - x - 1)),
+          style(c.mutedFg, c.bg),
+          right,
+        );
+      }
       if (crewH > 0) {
         const inner = card(s, crewRow!, c, {
           title: `Crew · ${plural(crew.runs.length, "run")}`,
@@ -382,6 +398,25 @@ export function issueScreen(
                 if (!applied.ok) ctx.toast(errorText(applied.error), "danger");
                 else await reload();
               });
+            },
+          }),
+        );
+        return true;
+      }
+      if (e.key === "t" && mayWrite()) {
+        const at = row();
+        if (at?.issue === undefined) return true;
+        const { repo: target, issue } = at;
+        ctx.push(
+          pickerScreen(ctx, screen, {
+            title: `Teams (at most ${TEAMS_MAX})`,
+            multi: true,
+            items: listTeams(f.db).map((t) => ({ id: t.slug, label: t.name })),
+            chosen: teamsOfIssue(f.db, issue.id),
+            onPick: (slugs) => {
+              const set = nameTeams(f.app, f.user, target, issue, slugs);
+              if (!set.ok) ctx.toast(ISSUE_TEAMS_SAY[set.error] ?? errorText(set.error), "danger");
+              else ctx.toast(set.value.length === 0 ? "teams cleared" : `teams: ${set.value.join(", ")}`, "success");
             },
           }),
         );

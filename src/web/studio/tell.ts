@@ -58,6 +58,7 @@ import {
   conversation,
   dependenciesCard,
   labelsCard,
+  issueTeamsCard,
   originGlyph,
   threadContext,
 } from "../pages/thread.ts";
@@ -383,6 +384,7 @@ async function studioTell(
     <summary>Details</summary>
     ${assigneeCard(ctx, repo, issue, `${thread}/assignee`)}
     ${labelsCard(ctx, repo, issue, applied, allLabels, `${thread}/labels`)}
+    ${issueTeamsCard(ctx, repo, issue, `${thread}/teams`)}
     ${sealCard(ctx, repo, issue, `${thread}/seal`)}
   </details>`;
 

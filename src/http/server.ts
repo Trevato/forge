@@ -278,6 +278,7 @@ import { dependencySubmit } from "../web/pages/thread.ts";
 import {
   assigneeSubmit,
   labelsSubmit,
+  teamsSubmit,
   stateSubmit,
   wordsSubmit,
 } from "../web/pages/thread.ts";
@@ -1063,6 +1064,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/:owner/:name/issues/:number/labels", (ctx) =>
     labelsSubmit(ctx, "issue"),
   );
+  router.add("POST", "/:owner/:name/issues/:number/teams", (ctx) => teamsSubmit(ctx));
   router.add("POST", "/:owner/:name/issues/:number/assignee", (ctx) =>
     assigneeSubmit(ctx, "issue"),
   );

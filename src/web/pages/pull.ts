@@ -71,6 +71,7 @@ import {
   type ThreadView,
 } from "../diff-view.ts";
 import { field, readForm } from "../form.ts";
+import { teamVerdicts, type TeamVerdict } from "../../core/issue_teams.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { liveRegionsJs } from "../client.ts";
@@ -643,6 +644,31 @@ function threadStateViews(
   return views;
 }
 
+const VERDICT_WORDS: Record<string, string> = {
+  approved: "approved",
+  changes_requested: "asked for changes",
+  commented: "commented",
+};
+
+/** One line per team the closed issue names: whose verdict it is, or that it is awaited (#2681). */
+export function teamsCard(verdicts: readonly TeamVerdict[]): Html {
+  if (verdicts.length === 0) return html``;
+  return html`<section class="card team-verdicts" aria-label="Team reviews">
+    <ul>
+      ${verdicts.map(
+        (v) => html`<li>
+          <strong>${v.name}</strong>:
+          ${v.state === undefined
+            ? html`<span class="muted">awaiting a reviewer</span>`
+            : html`${VERDICT_WORDS[v.state] ?? v.state} by ${v.by ?? ""}${v.stale
+                ? html` <span class="muted">(on an older head)</span>`
+                : ""}`}
+        </li>`,
+      )}
+    </ul>
+  </section>`;
+}
+
 /**
  * The review card: pass a verdict.
  *
@@ -891,6 +917,7 @@ export async function pullFilesPage(ctx: Ctx): Promise<Response> {
     </p>
     ${when(wall, (w) => wallCard(w))}
     ${holdCard(ctx, repo, pull, { act: false })}
+    ${teamsCard(teamVerdicts(ctx.app.db, { ...pull, headOid: status.headOid }))}
     ${mergeBox(ctx, repo, pull, status, mayMerge, by, check, isApp, tier, stale)}
     <div class="split">
       <div>

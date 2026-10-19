@@ -24,6 +24,7 @@ import { getHold, holdsFor, lastReleasesFor } from "../core/holds.ts";
 import { getIssueById, LIST_LIMIT_MAX } from "../core/issues.ts";
 import { listPulls, pullDiff, type Pull, pullDir} from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
+import { teamsOfPull, teamVerdicts } from "../core/issue_teams.ts";
 import { reviewSummariesFor, reviewSummary } from "../core/reviews.ts";
 import { checksForHead } from "../core/runs.ts";
 import { getTeam } from "../core/teams.ts";
@@ -398,6 +399,10 @@ export async function sendToReview(
   if (getHold(app.db, pull.id) !== undefined) return "held";
   const reviewers = reviewersOf(app.db, repo.id);
   if (reviewers.length === 0) return "none";
+  if (teamsOfPull(app.db, pull).length > 0) {
+    const sent = await sendToTeams(app, repo, reviewers, pull, now);
+    if (sent !== undefined) return sent;
+  }
   const seen = reviewSummary(app.db, pull.id, pull.headOid);
   if (seen.approvals > 0 || seen.changesRequested > 0) return "done";
   if (handedOver(app.db, repo.id, pull) !== undefined) return "held";
@@ -438,6 +443,64 @@ export async function sendToReview(
     ...(late ? { late: true, checkMinutes: history.checkMinutes } : {}),
   });
   return "sent";
+}
+
+/**
+ * A pull whose issue names teams (#2681) is read once per team: each team
+ * without a current verdict gets a review run for one of its members who
+ * is a reviewer on the crew. A reviewer on both teams is sent one run, and
+ * their verdict answers both. When no named team has a reviewer on this
+ * crew (teams start empty) there is nobody to ask by team, and this answers
+ * undefined: the ordinary single review goes ahead. A team that cannot be
+ * asked while another can waits, and lapses to a person only with the
+ * hour (`REVIEW_LAPSE_MS`), never at the first sweep.
+ */
+async function sendToTeams(
+  app: App,
+  repo: Repo,
+  reviewers: readonly Agent[],
+  pull: Pull,
+  now: Date,
+): Promise<"done" | "sent" | "wait" | "lapsed" | "held" | undefined> {
+  const named = teamVerdicts(app.db, pull);
+  const asks = (team: string): Agent[] => {
+    const members = getTeam(app.db, team)?.members ?? [];
+    return reviewers.filter((r) => members.includes(r.user.id));
+  };
+  if (!named.some((v) => asks(v.team).length > 0)) return undefined;
+  const pending = named.filter((v) => v.state === undefined || v.stale);
+  if (pending.length === 0) return "done";
+  if (handedOver(app.db, repo.id, pull) !== undefined) return "held";
+  const history = reviewAttempts(app.db, pull);
+  const issue = getIssueById(app.db, pull.id);
+  if (history === undefined || !issue) return "wait";
+  if (now.getTime() - Date.parse(history.greenAt) >= REVIEW_LAPSE_MS) return "lapsed";
+  let sent = false;
+  // A reviewer on two pending teams is asked once: their verdict answers both.
+  const asked = new Set<string>();
+  for (const v of pending) {
+    const mine = asks(v.team);
+    if (mine.some((r) => asked.has(r.user.id))) continue;
+    const tries = (r: Agent) => history.attempts.filter((a) => a.reviewerId === r.user.id);
+    const open = mine.some((r) => {
+      const last = tries(r).at(-1);
+      return last?.active === true && now.getTime() - Date.parse(last.createdAt) < REVIEW_WAIT_MS;
+    });
+    if (open) continue;
+    const reviewer = mine.find((r) => tries(r).length < REVIEW_TRIES);
+    if (reviewer === undefined) continue;
+    if (queueAgentRun(app, repo, issue, reviewer, "review", undefined, undefined, undefined, false, true) !== undefined) {
+      sent = true;
+      asked.add(reviewer.user.id);
+      log.info("green; queued for team review", {
+        repo: `${repo.ownerName}/${repo.name}`,
+        pull: pull.number,
+        team: v.team,
+        reviewer: reviewer.user.username,
+      });
+    }
+  }
+  return sent ? "sent" : "wait";
 }
 
 /** Review runs one sweep pass sends at most: the tick stays bounded by sends, never by which pulls it looks at. */

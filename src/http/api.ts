@@ -27,6 +27,8 @@ import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
+import { ISSUE_TEAMS_SAY, nameTeams } from "../actions/issue_teams.ts";
+import { teamsOfIssue } from "../core/issue_teams.ts";
 import { changeTeam, readTeams, TEAM_SAYS } from "../actions/teams.ts";
 import { changeQuotas, readQuotas } from "../actions/quotas.ts";
 import { changeSignup, readSignup } from "../actions/signup.ts";
@@ -2831,6 +2833,30 @@ export function apiRoutes(router: Router<Handler>): void {
     "/api/v1/repos/:owner/:name/pulls/:number/labels",
     labelsHandler,
   );
+
+  // Name up to two crew teams on an issue: the pull that closes it is
+  // reviewed by each (`core/issue_teams.ts`).
+  router.add("GET", "/api/v1/repos/:owner/:name/issues/:number/teams", (ctx) => {
+    const found = loadIssue(ctx);
+    if ("error" in found) return found.error;
+    return json({ teams: teamsOfIssue(ctx.app.db, found.issue.id) });
+  });
+  router.add("PUT", "/api/v1/repos/:owner/:name/issues/:number/teams", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const found = loadIssue(ctx);
+    if ("error" in found) return found.error;
+    const input = await body(ctx.request);
+    const slugs = Array.isArray(input.teams) ? input.teams : undefined;
+    if (slugs === undefined || !slugs.every((t): t is string => typeof t === "string"))
+      return json({ error: "teams must be a list of team slugs" }, 400);
+    const set = nameTeams(ctx.app, ctx.auth.user, found.repo, found.issue, slugs);
+    if (!set.ok)
+      return set.error === "too_many" || set.error === "no_such_team"
+        ? apiError(set.error, 422, ISSUE_TEAMS_SAY[set.error]!)
+        : originAware(set.error);
+    return json({ teams: set.value });
+  });
 
   // ── issues — the label-as-queue surface automation drives ────────────
 

@@ -24,6 +24,8 @@ import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { listAccess } from "../actions/access_log.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
+import { ISSUE_TEAMS_SAY, nameTeams } from "../actions/issue_teams.ts";
+import { teamsOfIssue } from "../core/issue_teams.ts";
 import { changeTeam, planTeam, readTeams, TEAM_SAYS } from "../actions/teams.ts";
 import { addAccount, allowWrite, auditAccount, removeAccount, renameAccount, reverify, rotateAccount } from "../actions/cloud.ts";
 import { usesByVendor, type VendorUse } from "../cloud/declared.ts";
@@ -887,6 +889,38 @@ const TOOLS: readonly Tool[] = [
         says: done.value.sealed
           ? `#${done.value.number} is sealed: only writers and the crew see it.`
           : `#${done.value.number} is unsealed: every reader sees it.`,
+      });
+    },
+  },
+  {
+    name: "issue_teams",
+    description:
+      "Name the crew teams (design, data-science, security, platform) on an issue: at most two. The pull whose body closes it (`Closes #N`) is sent to review once per named team, and the pull page shows each team's verdict. `teams` replaces the set (an empty list clears it); without `teams`, the issue's teams are read. A writer's call. The same as the Teams card on the issue page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        number: { type: "integer", minimum: 1 },
+        teams: { type: "array", maxItems: 2, items: { type: "string", maxLength: 64 } },
+      },
+      required: ["repo", "number"],
+    },
+    writes: true,
+    run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const issue = issueArg(ctx, repo, args, "number");
+      if ("ok" in issue) return issue;
+      const teams = args["teams"];
+      if (teams === undefined) return good({ number: issue.number, teams: teamsOfIssue(ctx.app.db, issue.id) });
+      if (!Array.isArray(teams) || !teams.every((t) => typeof t === "string"))
+        return bad("invalid", "teams is a list of team slugs");
+      const set = nameTeams(ctx.app, user, repo, issue, teams);
+      if (!set.ok) return bad(set.error, ISSUE_TEAMS_SAY[set.error] ?? "that could not be changed");
+      return good({
+        number: issue.number,
+        teams: set.value,
+        says: set.value.length === 0 ? `#${issue.number} names no team.` : `#${issue.number} names ${set.value.join(" and ")}.`,
       });
     },
   },
