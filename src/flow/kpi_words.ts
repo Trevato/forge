@@ -26,8 +26,13 @@ export function sparkText(hours: readonly number[]): string {
     .join("");
 }
 
+/** Builders running of their slots: `2 of 4`, or an em dash when no slots are set. */
+export function buildersValue(b: Kpis["builders"]): string {
+  return b.slots === 0 ? "—" : `${b.running} of ${b.slots}`;
+}
+
 /**
- * The terminal's row: the same three figures in the same words, as plain
+ * The terminal's row: the same four figures in the same words, as plain
  * lines. Forge-wide like the web's, so the caller shows them to an admin only.
  */
 export function kpiLines(k: Kpis, live: { sha: string; since: string } | null): string[] {
@@ -35,5 +40,6 @@ export function kpiLines(k: Kpis, live: { sha: string; since: string } | null): 
     `Shipped per hour ${(k.landed / k.landedHours.length).toFixed(1)}  ${sparkText(k.landedHours)}  ${k.landed} ${k.landed === 1 ? "change" : "changes"} in 24 h`,
     `Live version ${live === null ? "— nothing live yet" : `${live.sha.slice(0, 7)}, live ${live.since}`}`,
     `Median check time ${checkTime(k.medianCheckMs)}`,
+    `Builders running ${buildersValue(k.builders)}${k.builders.slots === 0 ? ", no slots set" : ""}`,
   ];
 }

@@ -25,7 +25,7 @@ afterAll(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("home renders the three tiles; only an admin sees them", async () => {
+test("home renders the four tiles; only an admin sees them", async () => {
   const mk = async (username: string, first = false): Promise<User> => {
     const r = await createUser(app.db, {
       origin: "seed",
@@ -50,8 +50,8 @@ test("home renders the three tiles; only an admin sees them", async () => {
 
   const a = await home(admin);
   expect(a).toContain('class="kpis"');
-  expect((a.match(/class="card kpi"/g) ?? []).length).toBe(3);
-  for (const href of ["/board", "/releases", "/boards"]) expect(a).toContain(`class="card kpi" href="${href}"`);
+  expect((a.match(/class="card kpi"/g) ?? []).length).toBe(4);
+  for (const href of ["/board", "/releases", "/boards", "/settings/crew"]) expect(a).toContain(`class="card kpi" href="${href}"`);
 
   // The figures count every repository, so a non-admin sees none.
   expect(await home(bob)).not.toContain('class="kpis"');

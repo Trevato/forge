@@ -1,12 +1,13 @@
 /**
- * Home's row of three figures (#2871), from `flow/kpis.ts`: shipped per hour
- * with a day's sparkline, the live version and since when, and the median
- * check time. Server-rendered, one fixed-height card each, so nothing moves
- * when it paints. Only the studio's words: shipped, change, check time.
+ * Home's row of four figures (#2871), from `flow/kpis.ts`: shipped per hour
+ * with a day's sparkline, the live version and since when, the median check
+ * time, and the crew builders running of their slots. Server-rendered, one
+ * fixed-height card each, so nothing moves when it paints. Only the studio's
+ * words: shipped, change, check time.
  */
 
 import type { Database } from "bun:sqlite";
-import { checkTime } from "../../flow/kpi_words.ts";
+import { buildersValue, checkTime } from "../../flow/kpi_words.ts";
 import { readKpis, type Kpis } from "../../flow/kpis.ts";
 import { html, raw, type Html } from "../html.ts";
 import { BOOTED } from "../../release/gate.ts";
@@ -71,6 +72,14 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null): Ht
       k.medianCheckMs === null ? "No check finished in 24 h" : checkTime(k.medianCheckMs),
       k.medianCheckMs === null ? "No check finished in 24 h" : "over the last 24 h",
       k.medianCheckMs === null ? "No check finished in 24 h" : "over the last 24 h",
+    )}
+    ${tile(
+      "Builders running",
+      "/settings/crew",
+      buildersValue(k.builders),
+      buildersValue(k.builders),
+      k.builders.slots === 0 ? "No slots set" : "running now",
+      k.builders.slots === 0 ? "No slots set" : `Crew builders running now, of ${k.builders.slots} ${k.builders.slots === 1 ? "slot" : "slots"}`,
     )}
   </section>`;
 }

@@ -27,6 +27,8 @@ export interface Kpis {
   readonly live: { readonly sha: string; readonly at: string } | null;
   /** Median check duration in milliseconds over checks that finished in 24 h; null for none. */
   readonly medianCheckMs: number | null;
+  /** Crew builders running now, of the slots the autonomous repositories are set to. */
+  readonly builders: { readonly running: number; readonly slots: number };
 }
 
 export function readKpis(db: Database, now: Date): Kpis {
@@ -70,7 +72,15 @@ export function readKpis(db: Database, now: Date): Kpis {
     .all(since, to)
     .map((r) => Math.round(r.ms));
 
+  const builders = db
+    .query<{ running: number; slots: number }, []>(
+      `SELECT (SELECT COUNT(*) FROM run WHERE kind = 'agent' AND state = 'running') AS running,
+              (SELECT COALESCE(SUM(autonomy_slots), 0) FROM repo WHERE autonomy != 'off') AS slots`,
+    )
+    .get() ?? { running: 0, slots: 0 };
+
   return {
+    builders,
     landedHours,
     landed: landedHours.reduce((a, b) => a + b, 0),
     live: live ?? null,
