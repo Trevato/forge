@@ -47,6 +47,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hasAdmin } from "../../spawn/claim.ts";
 import { parentIssuerOf } from "../../core/federation.ts";
+import { getSignup, type SignupMode } from "../../settings/signup.ts";
 
 export function sessionCookie(
   value: string,
@@ -224,6 +225,13 @@ interface AuthErrors {
   human?: string;
 }
 
+/** What `/signin` says about new accounts in each signup mode; open says nothing. */
+const SIGNUP_SENTENCES: Record<SignupMode, string | undefined> = {
+  open: undefined,
+  invite: "This forge is invite-only: new accounts need an invite link.",
+  closed: "This forge is closed to new accounts.",
+};
+
 function authForm(
   ctx: Ctx,
   kind: "signin" | "signup",
@@ -274,7 +282,24 @@ function authForm(
   // a passkey, made in the browser (`signup-passkey.ts`).
   const byPasskey = kind === "signup" && ctx.app.config.passkeyOnlySignup === true;
 
+  // Sign-in leads with the passkey: one press, nothing typed; the password
+  // form below stays for accounts that were given one. The button needs a
+  // script and a browser with passkeys, so the block is `passkey-on`: shown
+  // only once `passkey-client.ts` marks `:root.passkey`. The form's Sign in
+  // comes in both variants, outline beside the lead and primary everywhere
+  // else, so the page always has one primary action. The sentence tells a
+  // newcomer before they look for a door that is not there.
+  const passkeyFirst = when(
+    kind === "signin",
+    () => html`<div class="passkey-on passkey-lead">
+      <button type="button" id="passkey-signin" class="btn" data-variant="primary" data-size="lg">Sign in with a passkey</button>
+      <p class="passkey-note small" id="passkey-signin-note" role="status"></p>
+    </div>
+    ${when(SIGNUP_SENTENCES[getSignup(ctx.app.db)], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
+  );
+
   const body = html`${throughEdge}
+    ${passkeyFirst}
     <form method="post" action="${action}">
       ${formField({
         label: "Username",
@@ -349,9 +374,9 @@ function authForm(
       <div class="form-actions">
         ${byPasskey
           ? html`<button type="button" id="passkey-signup" class="btn" data-variant="primary">Create account with a passkey</button>`
-          : btn(kind === "signin" ? "Sign in" : "Create account", {
-              variant: "primary",
-            })}
+          : kind === "signin"
+            ? html`${btn("Sign in", { variant: "outline", extra: "passkey-on" })}${btn("Sign in", { variant: "primary", extra: "passkey-off" })}`
+            : btn("Create account", { variant: "primary" })}
         <span class="spacer"></span>
         ${kind === "signin"
           ? btn("Need an account? Sign up", {
@@ -377,11 +402,7 @@ function authForm(
     ${card(body)}
     ${when(
       kind === "signin",
-      () => html`<p class="mt">
-        <button type="button" id="passkey-signin" class="btn" data-variant="outline">Sign in with a passkey</button>
-        <span class="error-note small" id="passkey-signin-note" role="status"></span>
-        <a class="small" href="/recover">Lost your device?</a>
-      </p>`,
+      () => html`<p class="mt"><a class="small" href="/recover">Lost your device?</a></p>`,
     )}
     ${when(
       kind === "signin" ? parentIssuerOf(ctx.app.config) : undefined,

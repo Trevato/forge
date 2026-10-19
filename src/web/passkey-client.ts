@@ -6,6 +6,8 @@
 export const passkeyJs = /* js */ `
 (function () {
   var doc = document;
+  // Controls marked passkey-on show only where a passkey can actually run.
+  if (window.PublicKeyCredential && navigator.credentials) doc.documentElement.classList.add('passkey');
   function bytes(s) {
     s = s.replace(/-/g, '+').replace(/_/g, '/');
     while (s.length % 4) s += '=';

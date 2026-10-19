@@ -138,6 +138,16 @@ fieldset.field > .check + .check { margin-top: 8px; }
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   border-radius: var(--radius-sm);
 }
+/* Where a passkey can run — a script, and a browser with WebAuthn, which
+   passkey-client.ts marks as :root.passkey — .passkey-on shows and
+   .passkey-off hides; everywhere else the other way round. Only ever hides,
+   so each element keeps its own display. */
+:root:not(.passkey) .passkey-on, :root.passkey .passkey-off { display: none; }
+/* /signin's passkey lead: a full-width button whose note takes no room until
+   it says something. */
+.passkey-lead { margin-bottom: 16px; }
+.passkey-lead > .btn { width: 100%; }
+.passkey-lead > .passkey-note:not(:empty) { margin: 8px 0 0; }
 
 /* ---- badge / label chip / pill / dot ---- */
 .badge {
