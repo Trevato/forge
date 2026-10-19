@@ -325,9 +325,7 @@ export function followingCard(
                 >; say there what to do.`
             : null;
 
-  return html`<section class="card following" id="following">
-    <div class="card-body">
-      <div class="following-head">
+  const body = html`<div class="following-head">
         <span class="following-eyebrow"
           >${icon("fork")} following
           <a href="/${parent.ownerName}/${parent.name}">${parentName}</a></span
@@ -366,9 +364,8 @@ export function followingCard(
               this one.</a
             >
           </p>`,
-      )}
-    </div>
-  </section>`;
+      )}`;
+  return card(body, { id: "following", extra: "following" });
 }
 
 /**
