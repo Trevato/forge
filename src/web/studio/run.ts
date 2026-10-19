@@ -120,7 +120,18 @@ export async function runView(
         ? getPull(db, repo.id, issue.number)
         : openPullsClosing(db, repo.id).get(issue.number);
 
-  const head = html`<div class="issue-head">
+  // The head — the run's word, cost, turns, clock and summary — is the
+  // page's live region while the run is going: any `run.*` event for this
+  // repository refetches the page and swaps the head in place, so the run
+  // finishing shows its final state without a reload. Its id stays once the
+  // run is over, so the last swap still finds its match.
+  const head = html`<div
+    class="issue-head"
+    id="run-head"
+    ${unfinished
+      ? html`data-live="run.*" data-live-repo="${repo.ownerName}/${repo.name}"`
+      : null}
+  >
     <h1>${title}</h1>
     <div class="issue-meta">
       ${wordBadge(word, "run-word")}
@@ -300,14 +311,12 @@ export async function runView(
     )}
     <div class="run-live" id="run-live" data-state="${run.state}">
       ${when(
+        // The head above is what makes \`liveRegionsJs\` open the one
+        // /events connection this log and its finish ride on.
         unfinished && !logHidden,
-        // No id, so the shared script never refetches the page for it: its
-        // only job is to make \`liveRegionsJs\` open the one /events
-        // connection this log and its finish ride on.
-        () => html`<span data-live="run.finished" hidden></span>
-          <p class="muted small" id="run-conn" role="status" hidden>
-            Reconnecting; lines written meanwhile appear when it is back.
-          </p>`,
+        () => html`<p class="muted small" id="run-conn" role="status" hidden>
+          Reconnecting; lines written meanwhile appear when it is back.
+        </p>`,
       )}
       ${when(!logHidden, () => logBox({
         id: "run-log",
@@ -405,9 +414,5 @@ export async function runView(
     palette: repoPalette(ctx, repo),
     body,
     scriptJs: `${liveRegionsJs}\n${studioRunJs}`,
-    // The no-script half of a live log: with JavaScript off, the page
-    // refreshes itself while the run is going (`layout.ts` writes it inside
-    // `<noscript>`, so a browser running the stream above never reloads).
-    ...(unfinished ? { refresh: { seconds: 5 } } : {}),
   });
 }

@@ -360,7 +360,8 @@ describe("apps, runs and the crew on the web", () => {
     // forge's own words ("checking out …") are marked as such.
     expect(page).toContain('class="ln ln-forge"');
     expect(page).toContain('id="run-elapsed"');
-    // The stream and the no-script refresh exist only while it is going.
+    // The live log exists only while it is going, and the page never
+    // reloads itself either way (#2873).
     // Match the real <meta> / data-stream= attributes — not the same
     // strings inside studioRunJs (a bare includes("http-equiv=…") stays
     // true after the meta is gone because the script still quotes it).
@@ -382,7 +383,7 @@ describe("apps, runs and the crew on the web", () => {
         // The tail is live while the run goes: it names its run (read from /events), not a stream.
         expect(html.includes(`data-run="${run!.id}"`)).toBe(before);
         expect(html.includes("data-stream=")).toBe(false);
-        expect(hasMetaRefresh(html)).toBe(before);
+        expect(hasMetaRefresh(html)).toBe(false);
         break;
       }
       if (Date.now() >= deadline) {

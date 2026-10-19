@@ -214,9 +214,8 @@ const logLineJs = /* js */ `
 
 /**
  * A run's log, live, painted in the studio's own five words. The page
- * renders every line already written and, for a run still going, refreshes
- * itself without a script; this replaces that poll with the log's own event
- * stream, so a line lands the moment it is written. \`data-cap\` on \`#run-log\` bounds how many lines a long-running
+ * renders every line already written; for a run still going, this appends
+ * each line from the page's one event stream the moment it is written. \`data-cap\` on \`#run-log\` bounds how many lines a long-running
  * agent can pile into the DOM: past it, the oldest line is dropped as a new
  * one arrives, so an hour-long run never grows without bound.
  */
@@ -228,8 +227,6 @@ export const studioRunJs = /* js */ `
   var cap = parseInt(log.getAttribute('data-cap') || '0', 10) || 0;
   var pulse = document.getElementById('run-pulse');
   var jump = document.getElementById('run-jump');
-  var word = document.getElementById('run-word');
-  var summary = document.getElementById('run-summary');
   var cancel = document.getElementById('run-cancel');
   var stop = document.getElementById('run-stop');
   var steer = document.getElementById('run-steer');
@@ -262,7 +259,11 @@ export const studioRunJs = /* js */ `
     return w === 'look' || w === 'shipped' ? 'success' : w === 'stopped' ? 'danger' : w === 'working' ? 'accent' : 'secondary';
   }
   function money(n) { return n < 0.01 ? '<$0.01' : '$' + n.toFixed(2); }
+  // The head is a live region (\`liveRegionsJs\` swaps it from the page
+  // when the run moves), so what lives in it is looked up at paint time.
   function paint(run) {
+    var word = document.getElementById('run-word');
+    var summary = document.getElementById('run-summary');
     if (word) {
       var w = studioWord(run);
       word.setAttribute('data-word', w);

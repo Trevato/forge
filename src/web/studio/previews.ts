@@ -284,7 +284,6 @@ export function appPanels(
   head: Html;
   previews: Html | null;
   deployTailing: boolean;
-  tailing: boolean;
 } {
   const db = ctx.app.db;
   const base = repoBase(repo);
@@ -347,7 +346,6 @@ export function appPanels(
     head,
     previews,
     deployTailing: tail.deploying,
-    tailing: tail.box !== undefined,
   };
 }
 

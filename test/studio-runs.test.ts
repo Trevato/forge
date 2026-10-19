@@ -542,7 +542,7 @@ describe("working: a run's own page in the studio", () => {
     for (const arg of opened) expect(arg).toStartWith("'/events");
     // The connection is really opened: liveRegionsJs only connects when the
     // page has a [data-live] element, and a script's text proves nothing.
-    expect(page).toMatch(/<span data-live="run\.finished"[^>]*>/);
+    expect(page).toMatch(/<div[^>]*id="run-head"[^>]*data-live="run\.\*"/);
     expect(page).toContain('id="run-conn"');
     expect(page).not.toContain("follow=1");
     expect(page).not.toContain("data-stream=");
@@ -553,6 +553,45 @@ describe("working: a run's own page in the studio", () => {
     expect(page).toContain(`data-run="${run.id}"`);
     expect(page).toContain('data-seen="2"');
     expect(page).toContain(">second<");
+  });
+
+  test("a running run's page never reloads itself: its head is the live region, and once over it shows the final state", async () => {
+    const run = createRun(app.db, {
+      repoId: repo.id,
+      kind: "agent",
+      actorId: scoutId,
+      reason: "assigned",
+    });
+    claimRun(app.db, run.id);
+    noteRunProgress(app.db, run.id, { costUsd: 0.25 });
+    const path = `/alice/engine/runs/${run.id}`;
+    const head = (html: string): string =>
+      html.slice(html.indexOf('id="run-head"'), html.indexOf('id="run-live"'));
+
+    const going = await (await get(path, writerCookie)).text();
+    expect(going).not.toMatch(/<meta\s+http-equiv="refresh"/);
+    // Word, cost and clock sit in one region, swapped in place on any
+    // run.* event about this repository and no other.
+    expect(going).toMatch(
+      /<div\s+class="issue-head"\s+id="run-head"\s+data-live="run\.\*"\s+data-live-repo="alice\/engine"/,
+    );
+    expect(head(going)).toContain('data-word="working"');
+    expect(head(going)).toContain("$0.25 spent");
+    expect(head(going)).toContain("running for");
+
+    finishRun(app.db, run.id, { state: "ok", summary: "planned" });
+    const over = await (await get(path, writerCookie)).text();
+    expect(over).not.toMatch(/<meta\s+http-equiv="refresh"/);
+    // The same region by id, so the swap on run.finished finds its match,
+    // carrying the final word, cost and summary; nothing is listening now.
+    expect(over).toContain('id="run-head"');
+    expect(over).not.toMatch(/id="run-head"[^>]*data-live=/);
+    expect(head(over)).toContain('data-word="planned"');
+    expect(head(over)).toContain("$0.25 spent");
+    expect(head(over)).toContain("took");
+    expect(head(over)).toContain(">planned<");
+    expect(over).not.toContain('id="run-conn"');
+    expect(over).not.toContain('id="run-stop"');
   });
 
   test("a long transcript holds its last window, and the whole of it is one step deeper at ?all=1", async () => {
@@ -954,7 +993,7 @@ describe("the app's page tails the crew's log while it works", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("the app's page carries the tail of the active run's log, bounded, and refreshes without a script", async () => {
+  test("the app's page carries the tail of the active run's log, bounded, and never reloads itself", async () => {
     const tell = openIssue(app, alice, repo, { title: "Speed up boot" });
     if (!tell.ok) throw new Error(String(tell.error));
     const run = createRun(app.db, {
@@ -978,8 +1017,12 @@ describe("the app's page tails the crew's log while it works", () => {
     expect(page).not.toContain(">line 0<");
     expect(page).toContain(">line 8<");
     expect(page).toContain("Holding the last 6 lines here");
-    // No script, no problem: the page keeps refreshing while the run goes.
-    expect(page).toContain('http-equiv="refresh"');
+    // The page never reloads itself (#2873): the Now card is a live region
+    // for this repository's runs, and the tail rides the one /events stream.
+    expect(page).not.toMatch(/<meta\s+http-equiv="refresh"/);
+    expect(page).toMatch(
+      /id="live-now"\s+data-live="run\.\*[^"]*"\s+data-live-repo="alice\/engine"/,
+    );
 
     const stream = await get(
       `/api/v1/repos/alice/engine/runs/${run.id}/log?follow=1`,
@@ -1170,9 +1213,9 @@ describe("the app's page tails the deploy that is bringing it alive", () => {
       `data-stream="/api/v1/repos/alice/kindling/runs/${deployRun.id}/log?follow=1"`,
     );
     expect(page).toContain("install …");
-    // No script, no problem: the page keeps refreshing while the deploy
-    // goes — the actual meta tag, not just the script's own selector text.
-    expect(page).toMatch(/<meta\s+http-equiv="refresh"/);
+    // The page never reloads itself while the deploy goes (#2873): the head
+    // card swaps in place on the deploy's run events.
+    expect(page).not.toMatch(/<meta\s+http-equiv="refresh"/);
     // Issue #163: the deploy is plainly going, in the head card above — "Now"
     // does not also claim nothing is happening, and it does not open a
     // second stream of the same lines to say so.
@@ -1243,8 +1286,9 @@ describe("the app's page tails the deploy that is bringing it alive", () => {
     expect(page).toContain('id="app-run-tail"');
     expect(page).not.toContain('class="run-log');
     expect(page).toContain("Production is quiet");
-    // Still nothing to fetch — the page keeps polling in case that changes.
-    expect(page).toMatch(/<meta\s+http-equiv="refresh"/);
+    // Still nothing to fetch, and the page does not reload in case that
+    // changes (#2873): the head card swaps in place when production moves.
+    expect(page).not.toMatch(/<meta\s+http-equiv="refresh"/);
   });
 });
 
@@ -1390,7 +1434,7 @@ describe("the app's page tails production's own output while it runs (#284)", ()
     expect(page).not.toContain(">serving request 0<");
     expect(page).toContain(">serving request 8<");
     expect(page).toContain("Holding the last 6 lines here");
-    expect(page).toMatch(/<meta\s+http-equiv="refresh"/);
+    expect(page).not.toMatch(/<meta\s+http-equiv="refresh"/);
 
     // Issue #284's own point: the run this reads from is long finished —
     // the tail follows the env that points at it, not the run's own state.

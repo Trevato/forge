@@ -71,7 +71,7 @@ export async function nowCard(
     /** Whether the head card is tailing production's own deploy. */
     deployTailing: boolean;
   },
-): Promise<{ card: Html; running: boolean }> {
+): Promise<{ card: Html }> {
   const db = ctx.app.db;
   const base = repoBase(repo);
   const { openPulls, builderCount, ownerFacts, wordCtx, deployTailing } = o;
@@ -327,7 +327,7 @@ export async function nowCard(
             <span class="spacer"></span>
             ${btn("Every run", { href: `${base}/runs`, size: "sm" })}`,
         });
-  return { card: now, running: activeRun !== undefined };
+  return { card: now };
 }
 
 // GET /:owner/:name/app/now — the card alone, for the region that shows it.
