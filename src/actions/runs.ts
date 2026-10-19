@@ -102,6 +102,22 @@ export function mayReadRunLog(
   );
 }
 
+/**
+ * Whether `actor` may read this run's log: the run is theirs to see (app
+ * gate, sealed report) and the log is theirs to read. The one question both
+ * the log door and the live `run.log` frames ask.
+ */
+export function mayReadLogOfRun(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  runId: string,
+): boolean {
+  return (
+    getRepoRun(app, actor, repo, runId).ok && mayReadRunLog(app, actor, repo)
+  );
+}
+
 export function listRepoRuns(
   app: App,
   actor: User | undefined,

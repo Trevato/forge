@@ -323,6 +323,8 @@ and `FORGE_APP_USER`, the forge account at the keyboard or empty for a guest
 it runs on: `POST $FORGE_URL/mcp` (`now`, `map`, `apps`, `usage` — every tool that
 does not write), the JSON API, and `GET $FORGE_URL/events`, the live stream
 of everything the owner may see, with `Authorization: Bearer $FORGE_TOKEN`.
+It also sends `run.log` frames (`{ run, lines, truncated }`), a run's new log
+lines: no id, never replayed, and dropped while the reader is behind.
 `examples/forge-live` is the worked example, and the acceptance test
 (`test/apps-token.test.ts`) deploys it.
 

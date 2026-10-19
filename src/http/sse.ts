@@ -20,6 +20,9 @@ import type { User } from "../core/users.ts";
 import { listEvents, listEventsVisibleTo } from "../core/events.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
+import { mayReadLogOfRun } from "../actions/runs.ts";
+import { getRun } from "../core/runs.ts";
+import { frameOf, tapRunLogs } from "../runs/log.ts";
 import type { ForgeEvent } from "../core/events.ts";
 
 const HEARTBEAT_MS = 25_000;
@@ -215,7 +218,7 @@ export function viewerStream(
   // admins', a person's own choices are theirs (`core/event_audience.ts`).
   const meant = audienceFilter(app.db, viewer);
   const after = resumeFrom(request);
-  return eventStream(request, (emit) => {
+  return eventStream(request, (emit, _close, ready) => {
     if (after !== undefined) {
       const missed = listEventsVisibleTo(app.db, viewer, {
         afterId: after,
@@ -224,11 +227,37 @@ export function viewerStream(
       for (const event of missed)
         if (meant(event)) emit("forge", named(event), event.id);
     }
-    return app.bus.subscribe((event: ForgeEvent) => {
+    // New log lines of a run whose log the viewer may read (`mayReadRunLog`). Not
+    // history: no id, never replayed — a late tab reads the log file.
+    const gone = new AbortController();
+    // The verdict is decided once per run per connection, like repository
+    // visibility: someone removed from the crew keeps this run's lines until
+    // they reconnect.
+    const verdicts = new Map<string, boolean>();
+    tapRunLogs((runId, lines) => {
+      let may = verdicts.get(runId);
+      if (may === undefined) {
+        const run = getRun(app.db, runId);
+        const repo = run && getRepoById(app.db, run.repoId);
+        may = repo !== undefined && mayReadLogOfRun(app, viewer, repo, runId);
+        // Bounded: a tab left open sees many runs go by.
+        if (verdicts.size >= 256) verdicts.clear();
+        verdicts.set(runId, may);
+      }
+      // Lossy by design: a reader that is behind skips the frame rather than
+      // spend the byte budget the durable `forge` frames need to stay open.
+      if (!may || !ready()) return;
+      emit("run.log", { run: runId, ...frameOf(lines) });
+    }, gone.signal);
+    const unsubscribe = app.bus.subscribe((event: ForgeEvent) => {
       if (event.repoId === null || !visible(event.repoId)) return;
       if (!meant(event)) return;
       emit("forge", named(event), event.id);
     });
+    return () => {
+      gone.abort();
+      unsubscribe();
+    };
   });
 }
 

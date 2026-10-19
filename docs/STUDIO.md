@@ -413,7 +413,10 @@ carry is the no-script fallback, written inside `<noscript>` so a browser
 running the script never even schedules it (removing the tag afterwards
 would not cancel a refresh the parser had already set). Every live region
 listens to one `EventSource` (`/events`,
-everything the viewer may see) and works like this:
+everything the viewer may see) and works like this. (The stream also carries
+`run.log` frames, `{ run, lines, truncated }`, a run's new log lines to those
+who may read its log: no id, never replayed, skipped for a reader that is
+behind. A late tab reads the log file.)
 
 - **An address of its own.** A region carries `data-live-src` — `/live/apps`
   and `/live/on-you` on the home, `<repo>/app/now` for _Now_ on the app

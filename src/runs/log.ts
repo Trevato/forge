@@ -31,6 +31,47 @@ export type LogListener = (line: string) => void;
 
 const listeners = new Map<string, Set<LogListener>>();
 
+/** Who follows every run's log at once: the forge's `/events` streams. */
+export type LogTap = (runId: string, lines: string[]) => void;
+
+const taps = new Set<LogTap>();
+
+/** Follow every run's new lines, redacted as written, until `signal` aborts. */
+export function tapRunLogs(tap: LogTap, signal: AbortSignal): void {
+  taps.add(tap);
+  if (signal.aborted) taps.delete(tap);
+  else signal.addEventListener("abort", () => taps.delete(tap), { once: true });
+}
+
+/** How many taps are open — a test seam for leaks. */
+export const runLogTapCount = (): number => taps.size;
+
+/** The most a single live frame carries. */
+export const FRAME_MAX_LINES = 64;
+export const FRAME_MAX_BYTES = 16 * 1024;
+
+/** Lines cut to one frame's size; `truncated` says something was left out. */
+export function frameOf(lines: readonly string[]): {
+  lines: string[];
+  truncated: boolean;
+} {
+  const out: string[] = [];
+  let bytes = 0;
+  for (const line of lines) {
+    const room = FRAME_MAX_BYTES - bytes;
+    const size = Buffer.byteLength(line);
+    if (out.length >= FRAME_MAX_LINES || room <= 0)
+      return { lines: out, truncated: true };
+    if (size > room) {
+      out.push(Buffer.from(line).subarray(0, room).toString("utf8"));
+      return { lines: out, truncated: true };
+    }
+    out.push(line);
+    bytes += size;
+  }
+  return { lines: out, truncated: false };
+}
+
 /** A line without its newline; a trailing newline is added on write. */
 const MAX_LINE = 16 * 1024;
 
@@ -43,6 +84,13 @@ export function appendRunLog(
   const clean = redactHeld(line.replace(/\r?\n/g, " ")).slice(0, MAX_LINE);
   mkdirSync(runsRoot(dataDir), { recursive: true });
   appendFileSync(runLogPath(dataDir, runId), `${clean}\n`);
+  for (const tap of taps) {
+    try {
+      tap(runId, [clean]);
+    } catch {
+      // A tap's failure is its own; the run keeps logging.
+    }
+  }
   const watching = listeners.get(runId);
   if (watching === undefined) return;
   for (const listener of watching) {
