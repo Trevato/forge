@@ -43,11 +43,6 @@ export const EXCLUDED: readonly Exclusion[] = [
   { file: "test/apps-sleep.test.ts", reason: "not yet admitted", issue: 261 },
   { file: "test/apps-ws.test.ts", reason: "not yet admitted", issue: 261 },
   {
-    file: "test/audit.test.ts",
-    reason: "red in random order: the page: every app the viewer can read, each in its standing",
-    issue: 2108,
-  },
-  {
     file: "test/board-windows.test.ts",
     reason:
       "red: an app with spend and nothing shipped is missing from the board",

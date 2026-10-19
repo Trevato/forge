@@ -26,6 +26,99 @@ import { openPull } from "../src/actions/pulls.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 
+/** A forge of its own with alice signed in, for a test that changes what it reads. */
+async function boot(prefix: string) {
+  const dataDir = await mkdtemp(join(tmpdir(), prefix));
+  const app = createApp({ dataDir, port: 0 });
+  const servers = await serve(app);
+  const a = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "alice",
+    email: "alice@forge.local",
+    password: "a-good-passphrase",
+    adminIfFirst: true,
+  });
+  if (!a.ok) throw new Error(a.error);
+  const signedIn = await fetch(`${servers.url}/signin`, {
+    method: "POST",
+    body: new URLSearchParams({
+      username: "alice",
+      password: "a-good-passphrase",
+    }),
+    redirect: "manual",
+  });
+  const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0]!;
+  expect(cookie).not.toBe("");
+  const stop = async () => {
+    servers.stop();
+    app.close();
+    await rm(dataDir, { recursive: true, force: true });
+  };
+  return { app, servers, alice: a.value, cookie, stop };
+}
+
+/** The four apps the audit's page reads: sound, unsound, unread, and a private one. */
+async function seedApps(app: App, alice: User) {
+  // A scaffolded app: born with a contract.
+  const notes = await newApp(app, alice, {
+    name: "notes",
+    visibility: "public",
+  });
+  if (!notes.ok) throw new Error(String(notes.error));
+
+  // An app whose contract does not hold.
+  const broken = await createRepo(app, alice, {
+    name: "broken",
+    visibility: "public",
+  });
+  if (!broken.ok) throw new Error(String(broken.error));
+  const wrote = await commitToBranch(app, alice, broken.value, {
+    message: "a contract that names a ghost",
+    files: [
+      {
+        path: "contract.json",
+        content: JSON.stringify({
+          roles: { anon: { above: [], held: { by: "everyone" } } },
+          resources: {
+            thing: {
+              can: {
+                create: "ghost",
+                read: "anon",
+                update: "anon",
+                delete: "anon",
+                list: "anon",
+              },
+            },
+          },
+        }),
+      },
+    ],
+  });
+  if (!wrote.ok) throw new Error(JSON.stringify(wrote.error));
+  expect(enableApp(app, alice, broken.value).ok).toBe(true);
+
+  // An app with no contract at all.
+  const bare = await createRepo(app, alice, {
+    name: "bare",
+    visibility: "public",
+  });
+  if (!bare.ok) throw new Error(String(bare.error));
+  const seeded = await commitToBranch(app, alice, bare.value, {
+    message: "no contract",
+    files: [{ path: "README.md", content: "# bare\n" }],
+  });
+  if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
+  expect(enableApp(app, alice, bare.value).ok).toBe(true);
+
+  // A private app: its policy is for its readers.
+  const secret = await newApp(app, alice, {
+    name: "secret",
+    visibility: "private",
+  });
+  if (!secret.ok) throw new Error(String(secret.error));
+}
+
 describe("the audit reads every app's policy from git", () => {
   let dataDir: string;
   let app: App;
@@ -56,63 +149,7 @@ describe("the audit reads every app's policy from git", () => {
     cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0]!;
     expect(cookie).not.toBe("");
 
-    // A scaffolded app: born with a contract.
-    const notes = await newApp(app, alice, {
-      name: "notes",
-      visibility: "public",
-    });
-    if (!notes.ok) throw new Error(String(notes.error));
-
-    // An app whose contract does not hold.
-    const broken = await createRepo(app, alice, {
-      name: "broken",
-      visibility: "public",
-    });
-    if (!broken.ok) throw new Error(String(broken.error));
-    const wrote = await commitToBranch(app, alice, broken.value, {
-      message: "a contract that names a ghost",
-      files: [
-        {
-          path: "contract.json",
-          content: JSON.stringify({
-            roles: { anon: { above: [], held: { by: "everyone" } } },
-            resources: {
-              thing: {
-                can: {
-                  create: "ghost",
-                  read: "anon",
-                  update: "anon",
-                  delete: "anon",
-                  list: "anon",
-                },
-              },
-            },
-          }),
-        },
-      ],
-    });
-    if (!wrote.ok) throw new Error(JSON.stringify(wrote.error));
-    expect(enableApp(app, alice, broken.value).ok).toBe(true);
-
-    // An app with no contract at all.
-    const bare = await createRepo(app, alice, {
-      name: "bare",
-      visibility: "public",
-    });
-    if (!bare.ok) throw new Error(String(bare.error));
-    const seeded = await commitToBranch(app, alice, bare.value, {
-      message: "no contract",
-      files: [{ path: "README.md", content: "# bare\n" }],
-    });
-    if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    expect(enableApp(app, alice, bare.value).ok).toBe(true);
-
-    // A private app: its policy is for its readers.
-    const secret = await newApp(app, alice, {
-      name: "secret",
-      visibility: "private",
-    });
-    if (!secret.ok) throw new Error(String(secret.error));
+    await seedApps(app, alice);
   }, 30_000);
 
   afterAll(async () => {
@@ -122,17 +159,23 @@ describe("the audit reads every app's policy from git", () => {
   });
 
   test("a scaffolded app's standing is its table", async () => {
-    const { getRepo } = await import("../src/core/repos.ts");
-    const repo = getRepo(app.db, "alice", "notes")!;
-    const a = await audit(app.reposRoot, repo);
-    expect(a.oid).toMatch(/^[0-9a-f]{40}$/);
-    expect(a.standing.kind).toBe("sound");
-    if (a.standing.kind !== "sound") return;
-    expect(a.standing.identities).toEqual(["anon", "user", "admin"]);
-    expect(a.standing.open.map((c) => `${c.resource}.${c.verb}`)).toEqual([
-      "note.read",
-      "note.list",
-    ]);
+    const { app, alice, stop } = await boot("forge-audit-standing-");
+    try {
+      const made = await newApp(app, alice, { name: "notes", visibility: "public" });
+      if (!made.ok) throw new Error(String(made.error));
+      const repo = getRepo(app.db, "alice", "notes")!;
+      const a = await audit(app.reposRoot, repo);
+      expect(a.oid).toMatch(/^[0-9a-f]{40}$/);
+      expect(a.standing.kind).toBe("sound");
+      if (a.standing.kind !== "sound") return;
+      expect(a.standing.identities).toEqual(["anon", "user", "admin"]);
+      expect(a.standing.open.map((c) => `${c.resource}.${c.verb}`)).toEqual([
+        "note.read",
+        "note.list",
+      ]);
+    } finally {
+      await stop();
+    }
   });
 
   test("what cannot be read is said, not skipped", () => {
@@ -147,25 +190,31 @@ describe("the audit reads every app's policy from git", () => {
   });
 
   test("the page: every app the viewer can read, each in its standing", async () => {
-    const res = await fetch(`${servers.url}/audit`, {
-      headers: { cookie },
-    });
-    expect(res.status).toBe(200);
-    const body = await res.text();
-    expect(body).toContain("alice/notes");
-    expect(body).toContain("alice/broken");
-    expect(body).toContain("alice/bare");
-    expect(body).toContain("alice/secret");
-    expect(body).toContain("contract unsound");
-    expect(body).toContain("needs `ghost`, which is not declared");
-    expect(body).toContain("Unread");
-    // The table's cells, as the scaffold's contract says.
-    expect(body).toMatch(/data-answer="own"/);
-    expect(body).toContain("2 doors open to anyone");
-    // The summary counts the apps with a contract and the doors they open.
-    expect(body).toContain(
-      "2 apps with a contract, 4 doors open to anyone, 1 contract unsound, 1 app unread.",
-    );
+    const { app, servers, alice, cookie, stop } = await boot("forge-audit-page-");
+    try {
+      await seedApps(app, alice);
+      const res = await fetch(`${servers.url}/audit`, {
+        headers: { cookie },
+      });
+      expect(res.status).toBe(200);
+      const body = await res.text();
+      expect(body).toContain("alice/notes");
+      expect(body).toContain("alice/broken");
+      expect(body).toContain("alice/bare");
+      expect(body).toContain("alice/secret");
+      expect(body).toContain("contract unsound");
+      expect(body).toContain("needs `ghost`, which is not declared");
+      expect(body).toContain("Unread");
+      // The table's cells, as the scaffold's contract says.
+      expect(body).toMatch(/data-answer="own"/);
+      expect(body).toContain("2 doors open to anyone");
+      // The summary counts the apps with a contract and the doors they open.
+      expect(body).toContain(
+        "2 apps with a contract, 4 doors open to anyone, 1 contract unsound, 1 app unread.",
+      );
+    } finally {
+      await stop();
+    }
   });
 
   test("a stranger sees the public apps' policies and nothing of the private", async () => {
@@ -192,131 +241,149 @@ describe("the audit reads every app's policy from git", () => {
   });
 
   test("what changed: contract commits, a crossing waiting, a verdict that flipped", async () => {
-    const notes = getRepo(app.db, "alice", "notes")!;
-    const record = getAppByRepo(app.db, notes.id)!;
-    // A commit that opens a door, then one that closes two.
-    const text = (
-      (await (
-        await fetch(
-          `${servers.url}/api/v1/repos/alice/notes/contents/contract.json`,
-        )
-      ).json()) as { content: string }
-    ).content;
-    const contract = JSON.parse(text) as {
-      resources: { note: { can: Record<string, string> } };
-    };
-    const wider = structuredClone(contract);
-    wider.resources.note.can.create = "anon";
-    const opened = await commitToBranch(app, alice, notes, {
-      message: "anyone may add",
-      files: [{ path: "contract.json", content: JSON.stringify(wider) }],
-    });
-    expect(opened.ok).toBe(true);
-    const narrower = structuredClone(wider);
-    narrower.resources.note.can.read = "user";
-    narrower.resources.note.can.list = "user";
-    const closed = await commitToBranch(app, alice, notes, {
-      message: "only the signed-in read",
-      files: [{ path: "contract.json", content: JSON.stringify(narrower) }],
-    });
-    expect(closed.ok).toBe(true);
-    const changes = await contractChanges(app.reposRoot, notes);
-    expect(changes.map((c) => c.subject)).toEqual([
-      "only the signed-in read",
-      "anyone may add",
-      expect.any(String),
-    ]);
-    expect(changes[0]!.loosened).toEqual([]);
-    expect(
-      changes[0]!.tightened.map((t) => `${t.verb}.${t.as}`).sort(),
-    ).toEqual(["list.anon", "read.anon"]);
-    expect(changes[1]!.loosened.map((l) => `${l.verb}.${l.as}`)).toEqual([
-      "create.anon",
-    ]);
-    // The first commit, the scaffold's: the floor's open cells are what was decided.
-    expect(changes[2]!.loosened.map((l) => `${l.verb}.${l.as}`).sort()).toEqual(
-      ["list.anon", "read.anon"],
+    // Its own forge: this test rewrites notes' contract, which the shared
+    // forge's other tests read as the scaffold's.
+    const { app, servers, alice, cookie, stop } = await boot(
+      "forge-audit-changes-",
     );
+    try {
+      const made = await newApp(app, alice, {
+        name: "notes",
+        visibility: "public",
+      });
+      if (!made.ok) throw new Error(String(made.error));
+      const notes = getRepo(app.db, "alice", "notes")!;
+      const record = getAppByRepo(app.db, notes.id)!;
+      // A commit that opens a door, then one that closes two.
+      const text = (
+        (await (
+          await fetch(
+            `${servers.url}/api/v1/repos/alice/notes/contents/contract.json`,
+          )
+        ).json()) as { content: string }
+      ).content;
+      const contract = JSON.parse(text) as {
+        resources: { note: { can: Record<string, string> } };
+      };
+      const wider = structuredClone(contract);
+      wider.resources.note.can.create = "anon";
+      const opened = await commitToBranch(app, alice, notes, {
+        message: "anyone may add",
+        files: [{ path: "contract.json", content: JSON.stringify(wider) }],
+      });
+      expect(opened.ok).toBe(true);
+      const narrower = structuredClone(wider);
+      narrower.resources.note.can.read = "user";
+      narrower.resources.note.can.list = "user";
+      const closed = await commitToBranch(app, alice, notes, {
+        message: "only the signed-in read",
+        files: [{ path: "contract.json", content: JSON.stringify(narrower) }],
+      });
+      expect(closed.ok).toBe(true);
+      const changes = await contractChanges(app.reposRoot, notes);
+      expect(changes.map((c) => c.subject)).toEqual([
+        "only the signed-in read",
+        "anyone may add",
+        expect.any(String),
+      ]);
+      expect(changes[0]!.loosened).toEqual([]);
+      expect(
+        changes[0]!.tightened.map((t) => `${t.verb}.${t.as}`).sort(),
+      ).toEqual(["list.anon", "read.anon"]);
+      expect(changes[1]!.loosened.map((l) => `${l.verb}.${l.as}`)).toEqual([
+        "create.anon",
+      ]);
+      // The first commit, the scaffold's: the floor's open cells are what was decided.
+      expect(
+        changes[2]!.loosened.map((l) => `${l.verb}.${l.as}`).sort(),
+      ).toEqual(["list.anon", "read.anon"]);
 
-    // A pull at the wall, as the crew would leave it.
-    const branch = await commitToBranch(app, alice, notes, {
-      branch: "wider-still",
-      message: "anyone may delete",
-      files: [
-        {
-          path: "contract.json",
-          content: JSON.stringify({
-            ...narrower,
-            resources: {
-              note: { can: { ...narrower.resources.note.can, delete: "anon" } },
-            },
-          }),
+      // A pull at the wall, as the crew would leave it.
+      const branch = await commitToBranch(app, alice, notes, {
+        branch: "wider-still",
+        message: "anyone may delete",
+        files: [
+          {
+            path: "contract.json",
+            content: JSON.stringify({
+              ...narrower,
+              resources: {
+                note: {
+                  can: { ...narrower.resources.note.can, delete: "anon" },
+                },
+              },
+            }),
+          },
+        ],
+      });
+      expect(branch.ok).toBe(true);
+      const pull = await openPull(app, alice, notes, {
+        title: "Anyone may delete",
+        baseBranch: "main",
+        headBranch: "wider-still",
+      });
+      if (!pull.ok) throw new Error(JSON.stringify(pull.error));
+      recordDecision(app.db, {
+        kind: "land",
+        repoId: notes.id,
+        issueId: pull.value.id,
+        state: {
+          head: pull.value.headOid,
+          cells: ["note.delete as anon: was no, now yes"],
         },
-      ],
-    });
-    expect(branch.ok).toBe(true);
-    const pull = await openPull(app, alice, notes, {
-      title: "Anyone may delete",
-      baseBranch: "main",
-      headBranch: "wider-still",
-    });
-    if (!pull.ok) throw new Error(JSON.stringify(pull.error));
-    recordDecision(app.db, {
-      kind: "land",
-      repoId: notes.id,
-      issueId: pull.value.id,
-      state: {
-        head: pull.value.headOid,
-        cells: ["note.delete as anon: was no, now yes"],
-      },
-      answer: "wall",
-      p: 1,
-      by: "wall",
-      ms: 0,
-    });
-    const waiting = crossingsWaiting(app.db, [notes]);
-    expect(waiting.map((c) => c.pull.title)).toEqual(["Anyone may delete"]);
-    expect(waiting[0]!.cells).toEqual(["note.delete as anon: was no, now yes"]);
+        answer: "wall",
+        p: 1,
+        by: "wall",
+        ms: 0,
+      });
+      const waiting = crossingsWaiting(app.db, [notes]);
+      expect(waiting.map((c) => c.pull.title)).toEqual(["Anyone may delete"]);
+      expect(waiting[0]!.cells).toEqual([
+        "note.delete as anon: was no, now yes",
+      ]);
 
-    // Two probes, the second disagreeing with the first.
-    recordProbe(app.db, record.id, {
-      repo: notes,
-      commitOid: "a".repeat(40),
-      at: "",
-      verdict: "ok",
-      knocks: [],
-      said: [],
-    });
-    recordProbe(app.db, record.id, {
-      repo: notes,
-      commitOid: "b".repeat(40),
-      at: "",
-      verdict: "mismatch",
-      knocks: [],
-      said: ["note.delete as anon: the table says no, the app said 404"],
-    });
-    const flips = verdictChanges(app.db, [{ repo: notes, appId: record.id }]);
-    expect(flips.map((f) => [f.from, f.to])).toEqual([
-      ["ok", "mismatch"],
-      [undefined, "ok"],
-    ]);
+      // Two probes, the second disagreeing with the first.
+      recordProbe(app.db, record.id, {
+        repo: notes,
+        commitOid: "a".repeat(40),
+        at: "",
+        verdict: "ok",
+        knocks: [],
+        said: [],
+      });
+      recordProbe(app.db, record.id, {
+        repo: notes,
+        commitOid: "b".repeat(40),
+        at: "",
+        verdict: "mismatch",
+        knocks: [],
+        said: ["note.delete as anon: the table says no, the app said 404"],
+      });
+      const flips = verdictChanges(app.db, [{ repo: notes, appId: record.id }]);
+      expect(flips.map((f) => [f.from, f.to])).toEqual([
+        ["ok", "mismatch"],
+        [undefined, "ok"],
+      ]);
 
-    const body = await (
-      await fetch(`${servers.url}/audit`, { headers: { cookie } })
-    ).text();
-    expect(body).toContain("What changed");
-    expect(body).toContain("1 pull waits");
-    expect(body).toContain("Anyone may delete");
-    expect(body).toContain("only the signed-in read");
-    expect(body).toContain("2 doors narrower");
-    expect(body).toContain("1 door wider");
-    expect(body).toContain("Doors, over time");
-    expect(body).toContain("alice/notes disobeys its table");
-    // A stranger sees the public app's history too; the ledger row is about
-    // a public pull, so the crossing is as public as the pull.
-    const anon = await (await fetch(`${servers.url}/audit`)).text();
-    expect(anon).toContain("only the signed-in read");
-  });
+      const body = await (
+        await fetch(`${servers.url}/audit`, { headers: { cookie } })
+      ).text();
+      expect(body).toContain("What changed");
+      expect(body).toContain("1 pull waits");
+      expect(body).toContain("Anyone may delete");
+      expect(body).toContain("only the signed-in read");
+      expect(body).toContain("2 doors narrower");
+      expect(body).toContain("1 door wider");
+      expect(body).toContain("Doors, over time");
+      expect(body).toContain("alice/notes disobeys its table");
+      // A stranger sees the public app's history too; the ledger row is about
+      // a public pull, so the crossing is as public as the pull.
+      const anon = await (await fetch(`${servers.url}/audit`)).text();
+      expect(anon).toContain("only the signed-in read");
+    } finally {
+      await stop();
+    }
+  }, 30_000);
 
   test("the table file: one row per cell, with what the door said", async () => {
     const res = await fetch(`${servers.url}/audit.csv`, {
