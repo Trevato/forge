@@ -12,8 +12,7 @@ import { join } from "node:path";
 import { sha256 } from "../kernel/hash.ts";
 import { parentUrlProblem } from "./parent_releases.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { createUser, getUserById, getUserByName, isActive, type User } from "./users.ts";
-import type { SignupSlot } from "../actions/signup-window.ts";
+import { getUserById, isActive, type User } from "./users.ts";
 
 /** Where the parent sends a person back; the address registered at the parent. */
 export const CALLBACK_PATH = "/signin/parent/callback";
@@ -78,79 +77,20 @@ export function takeLogin(db: Database, state: string, now = Date.now()): Login 
   };
 }
 
-/** A local username for a parent's person: their name if free and fit, else made unique by their `sub`. */
-async function makeAccount(db: Database, sub: string, preferred: string, slot: SignupSlot): Promise<User | undefined> {
-  const base = preferred.toLowerCase().replace(/[^a-z0-9.-]/g, "").replace(/^[.-]+/, "").slice(0, 30);
-  const tail = sub.toLowerCase().replace(/[^a-z0-9]/g, "").slice(-8);
-  for (const username of [base, `${base}-${tail}`, `user-${tail}`]) {
-    if (username === "" || username.startsWith("-")) continue;
-    if (getUserByName(db, username) !== undefined) continue;
-    const made = await createUser(db, {
-      username,
-      // Unique, never mailed: `.invalid` is reserved and resolves nowhere.
-      email: `${sub.toLowerCase()}@sso.invalid`,
-      displayName: preferred,
-      origin: "parent",
-      slot,
-    });
-    if (made.ok) return made.value;
-    if (made.error === "signup_closed") return undefined;
-  }
-  return undefined;
-}
-
-const making = new Map<string, Promise<User | undefined>>();
-
-/** Whether this issuer's `sub` already has a local account: a return, not a first sight. */
-export function knownIdentity(db: Database, issuer: string, sub: string): boolean {
-  return (
-    db
-      .query<{ user_id: string }, [string, string]>(
-        "SELECT user_id FROM federated_identity WHERE issuer = ?1 AND sub = ?2",
-      )
-      .get(issuer, sub) !== null
-  );
-}
-
 /**
- * The local account for an issuer's `sub`, made on first sight with no
- * password — a stranger's sign-up, so only with a place in the sign-up
- * window and while signup is open. Two returns of the same person at once
- * make one account.
+ * The local account an issuer's `sub` is linked to, if it is active. A
+ * linked method signs in an account that already exists and never makes
+ * one: an identity nobody here holds gets nothing (#2883).
  */
-export function accountFor(
-  db: Database,
-  issuer: string,
-  sub: string,
-  preferred: string,
-  slot: SignupSlot | undefined,
-): Promise<User | undefined> {
-  const key = `${issuer}\0${sub}`;
-  const pending = making.get(key);
-  if (pending !== undefined) return pending;
-  const attempt = (async (): Promise<User | undefined> => {
-    const known = db
-      .query<{ user_id: string }, [string, string]>(
-        "SELECT user_id FROM federated_identity WHERE issuer = ?1 AND sub = ?2",
-      )
-      .get(issuer, sub);
-    if (known !== null) {
-      const user = getUserById(db, known.user_id);
-      return user !== undefined && isActive(user) ? user : undefined;
-    }
-    if (slot === undefined) return undefined;
-    const made = await makeAccount(db, sub, preferred, slot);
-    if (made === undefined) return undefined;
-    db.query("INSERT INTO federated_identity (issuer, sub, user_id) VALUES (?1, ?2, ?3)").run(
-      issuer,
-      sub,
-      made.id,
-    );
-    return made;
-  })();
-  making.set(key, attempt);
-  void attempt.finally(() => making.delete(key));
-  return attempt;
+export function linkedAccount(db: Database, issuer: string, sub: string): User | undefined {
+  const known = db
+    .query<{ user_id: string }, [string, string]>(
+      "SELECT user_id FROM federated_identity WHERE issuer = ?1 AND sub = ?2",
+    )
+    .get(issuer, sub);
+  if (known === null) return undefined;
+  const user = getUserById(db, known.user_id);
+  return user !== undefined && isActive(user) ? user : undefined;
 }
 
 /** The spawn record's upstream, read once per forge: it does not change while the process runs. */

@@ -1,20 +1,20 @@
 /**
- * Continue with the parent forge (#748): this forge as a relying party of
+ * Sign in through the parent forge (#748): this forge as a relying party of
  * the OpenID provider its parent already is. `/signin/parent` registers
  * this forge at the parent once (the client id is kept), then sends the
  * person there with a state, a nonce and a PKCE challenge; the state also
  * rides in an HttpOnly cookie so only the browser that began can finish.
  * `/signin/parent/callback` trades the code, checks the id_token (state,
  * nonce, iss, aud, exp, signature against the parent's JWKS) and signs in
- * the local account the parent's `sub` maps to, made on first sight.
+ * the local account the parent's `sub` is linked to; a `sub` nobody here
+ * holds makes no account and ends on `/signup`.
  * Both are GETs that change nothing a stranger could use: a callback with
  * no matching cookie and state is refused before anything is fetched.
  */
 import { createHash, randomBytes } from "node:crypto";
 import type { App } from "../app.ts";
 import {
-  accountFor,
-  knownIdentity,
+  linkedAccount,
   clientFor,
   keepClient,
   parentIssuerOf,
@@ -26,7 +26,7 @@ import {
 } from "../core/federation.ts";
 import { readCapped } from "../origins/providers/http.ts";
 import { clientAddress } from "./peer.ts";
-import { signinAllowed, signupSlot } from "../web/pages/site.ts";
+import { signinAllowed } from "../web/pages/site.ts";
 import { createSession } from "../core/sessions.ts";
 import { verifyJwt } from "../kernel/jwt.ts";
 import { html } from "../web/html.ts";
@@ -171,10 +171,6 @@ async function begin(ctx: Ctx, linkUser?: string): Promise<Response> {
   return new Response(null, { status: 303, headers });
 }
 
-const clean = (s: unknown, max: number): string =>
-  // eslint-disable-next-line no-control-regex
-  typeof s === "string" ? s.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, max) : "";
-
 export async function parentCallback(ctx: Ctx): Promise<Response> {
   const q = ctx.url.searchParams;
   const state = q.get("state") ?? "";
@@ -236,17 +232,14 @@ export async function parentCallback(ctx: Ctx): Promise<Response> {
       back.headers.set("cache-control", "no-store");
       return back;
     }
-    const name = clean(verified.value["preferred_username"], 64);
-    // A returning person is a sign-in; first sight of a sub makes an account,
-    // and that is a sign-up, held to the sign-up limit before it is made.
-    const slot = knownIdentity(ctx.app.db, login.issuer, sub) ? undefined : signupSlot(ctx);
-    if (typeof slot === "number") {
-      const slow = refuse(`Too many new accounts from here. Try again in ${slot}s.`, 429);
-      slow.headers.set("retry-after", String(slot));
-      return slow;
+    // A linked method signs in an account that exists; it never makes one.
+    const user = linkedAccount(ctx.app.db, login.issuer, sub);
+    if (user === undefined) {
+      const done = redirect("/signup?linked=unknown");
+      done.headers.append("set-cookie", clear);
+      done.headers.set("cache-control", "no-store");
+      return done;
     }
-    const user = await accountFor(ctx.app.db, login.issuer, sub, name, slot);
-    if (user === undefined) return refuse("An account for you could not be made or is not allowed in.", 403);
     const session = createSession(ctx.app.db, user.id);
     const done = redirect("/", sessionCookie(session.token, session.expiresAt, ctx.url, ctx.app.config.url));
     done.headers.append("set-cookie", clear);

@@ -71,24 +71,19 @@ afterAll(async () => {
   for (const dir of dirs) await rm(dir, { recursive: true, force: true });
 });
 
-const shut: [SignupMode, string][] = [["closed", "alice"], ["invite", "bea"]];
-for (const [mode, name] of shut) {
+const modes: [SignupMode, string][] = [["closed", "alice"], ["invite", "bea"], ["open", "cleo"]];
+for (const [mode, name] of modes) {
   test(`signup ${mode}: a parent's person new to the child gets no account and no session`, async () => {
     setSignup(child.db, mode, owner);
+    const before = child.db.query("SELECT COUNT(*) AS n FROM user").get();
     const done = await through(name);
-    expect(done.status).toBe(403);
+    expect(done.status).toBe(303);
+    expect(done.headers.get("location")).toStartWith("/signup");
     expect(cookieOf(done, "forge_session")).toBe("");
     expect(getUserByName(child.db, name)).toBeUndefined();
+    expect(child.db.query("SELECT COUNT(*) AS n FROM user").get()).toEqual(before);
   });
 }
-
-test("signup open: the same door makes the account", async () => {
-  setSignup(child.db, "open", owner);
-  const done = await through("cleo");
-  expect(done.status).toBe(303);
-  expect(cookieOf(done, "forge_session")).not.toBe("");
-  expect(getUserByName(child.db, "cleo")).toBeDefined();
-});
 
 /** Each place in `src` that makes an account, and the origin it says. */
 async function callers(): Promise<Record<string, string[]>> {
@@ -120,7 +115,6 @@ test("every caller of createUser says where its account comes from", async () =>
     "src/actions/spawn.ts": ["spawn", "spawn"],
     "src/actions/users.ts": ["signup", "passkey"],
     "src/chaos/world.ts": ["seed"],
-    "src/core/federation.ts": ["parent"],
     "src/web/pages/claim.ts": ["claim"],
     "src/web/pages/everyday.ts": ["everyday"],
   });

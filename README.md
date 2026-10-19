@@ -346,14 +346,15 @@ The relying party is the address the browser used (or
 Sign-up is a username, an email address and a passkey (`/signup`, `src/web/pages/signup-passkey.ts`); the running server refuses a password-only sign-up on the form, `POST /api/v1/users` and the terminal (`passkeyOnlySignup`, set in `main.ts`). Accounts that already have a password still sign in. The owner claim of a spawned forge (`/claim`, `web/pages/claim.ts`) and an admin's everyday account (`web/pages/everyday.ts`) make their account with a passkey too (`web/passkey-ceremony.ts`, challenges from `POST /claim/options` and `POST /settings/everyday/options`); neither reads a password, and without JavaScript the page says a passkey needs it. A claim post with no passkey is refused and does not spend the link.
 
 A forge with a parent (`FORGE_PARENT_URL`, or the `upstream` in a spawned
-forge's `parent.json`) offers "Continue with <parent>" on `/signin`. The forge
+forge's `parent.json`) lists the parent under "Link an account you have" on `/signin`. The forge
 registers itself once at the parent's `/oauth/register` (the client id is kept
 in `rp_client`), sends the person through the parent's authorize page with
 PKCE, and on return checks state (also bound to the browser by an HttpOnly
 cookie), nonce, `iss`, `aud`, `exp` and the ES256 signature against the
 parent's JWKS (`kernel/jwt.ts`; keys are cached ten minutes and an unknown
 `kid` refetches them once a minute at most). The parent's `sub` — never the
-username — maps to a local account made on first sight with no password
+username — maps to a local account that is already linked to it; a `sub` nobody
+holds makes no user and ends on `/signup` (#2883)
 (`core/federation.ts`; `http/rp.ts` has the two routes). No dependency added.
 The parent's answers are read by bytes and refused past 16 KiB (64 KiB for the
 key set), and starting a sign-in is throttled like a password attempt.

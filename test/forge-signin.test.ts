@@ -93,6 +93,12 @@ describe("sign in through the parent forge", () => {
     });
     if (!made.ok) throw new Error(made.error);
     alice = made.value.id;
+    // A linked method signs in an account that exists: alice has one here.
+    const local = await createUser(child.db, { origin: "seed", username: "alice", email: "alice@child.local" });
+    if (!local.ok) throw new Error(local.error);
+    child.db
+      .query("INSERT INTO federated_identity (issuer, sub, user_id) VALUES (?1, ?2, ?3)")
+      .run(new URL(parentServers.url).origin, alice, local.value.id);
     aliceCookie = `forge_session=${createSession(parent.db, alice).token}`;
   });
   afterAll(async () => {
@@ -103,7 +109,9 @@ describe("sign in through the parent forge", () => {
 
   test("only a forge with a parent offers the button", async () => {
     const onChild = await (await fetch(`${childServers.url}/signin`)).text();
-    expect(onChild).toContain(`Continue with ${new URL(parentServers.url).host}`);
+    expect(onChild).toContain("Link an account you have");
+    expect(onChild).toContain(`Sign in through ${new URL(parentServers.url).host}`);
+    expect(onChild).not.toContain("Continue with");
     expect(onChild).toContain('href="/signin/parent"');
     expect(await (await fetch(`${parentServers.url}/signin`)).text()).not.toContain("Continue with");
     const none = await fetch(`${parentServers.url}/signin/parent`, { redirect: "manual" });
@@ -198,18 +206,20 @@ describe("sign in through the parent forge", () => {
     expect(tokens()).toEqual(before);
   });
 
-  test("a parent's name that is taken here does not take over the local account", async () => {
+  test("a parent's person nobody here holds gets no account, even when their name is taken here", async () => {
     const bob = await createUser(parent.db, { origin: "seed", username: "bob", email: "bob@parent.local", password: PASSWORD });
     if (!bob.ok) throw new Error(bob.error);
     const local = await createUser(child.db, { origin: "seed", username: "bob", email: "bob@child.local", password: PASSWORD });
     if (!local.ok) throw new Error(local.error);
+    const users = () => child.db.query("SELECT COUNT(*) AS n FROM user").get();
+    const before = users();
     const { callback, state } = await begin(`forge_session=${createSession(parent.db, bob.value.id).token}`);
     const done = await finish(callback, state);
     expect(done.status).toBe(303);
-    const row = child.db
-      .query<{ user_id: string }, [string]>("SELECT user_id FROM federated_identity WHERE sub = ?1")
-      .get(bob.value.id)!;
-    expect(row.user_id).not.toBe(local.value.id);
+    expect(done.headers.get("location")).toStartWith("/signup");
+    expect(cookieOf(done, "forge_session")).toBeUndefined();
+    expect(child.db.query("SELECT COUNT(*) AS n FROM federated_identity WHERE sub = ?1").get(bob.value.id)).toEqual({ n: 0 });
+    expect(users()).toEqual(before);
   });
 
   test("a callback is refused without its browser's cookie, with another state, or a second time", async () => {

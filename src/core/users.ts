@@ -124,7 +124,7 @@ export type CreateUserError =
  * code, and `seed`, which no request reaches. Every other origin makes a person who is not an admin, even on a
  * forge with no admin at all: no sign-up becomes the admin by being first.
  */
-export type StrangerOrigin = "signup" | "passkey" | "parent";
+export type StrangerOrigin = "signup" | "passkey";
 export type AdminOrigin = "claim" | "first-admin" | "seed";
 export type ExemptOrigin = AdminOrigin | "everyday" | "agent" | "spawn";
 export type AccountOrigin =
@@ -133,7 +133,6 @@ export type AccountOrigin =
    * signup is `invite` it opens the door once, spent with the account.
    */
   | { origin: "signup" | "passkey"; slot: SignupSlot; invite?: string | undefined }
-  | { origin: "parent"; slot: SignupSlot }
   | { origin: "edge" }
   | { origin: Exclude<ExemptOrigin, AdminOrigin> }
   | ({ origin: AdminOrigin } & AdminFields);
@@ -240,9 +239,6 @@ function admission(db: Database, input: AccountOrigin): Admission {
       return newAccountsClosed(db, input.invite) || input.invite === undefined
         ? REFUSED
         : { admitted: true, spend: input.invite };
-    case "parent":
-      if (input.slot.spent) throw new Error("a sign-up slot makes one account");
-      return newAccountsClosed(db) ? REFUSED : ADMITTED;
     case "edge":
       return newAccountsClosed(db) ? REFUSED : ADMITTED;
     case "claim":

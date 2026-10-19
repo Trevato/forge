@@ -96,7 +96,7 @@ test("the platform edge makes no account, so no admin", async () => {
 });
 
 test("no other origin makes the admin of a forge with none, whatever its door", async () => {
-  for (const origin of ["signup", "passkey", "parent"] as const) {
+  for (const origin of ["signup", "passkey"] as const) {
     const app = await fresh();
     const made = await createUser(app.db, { origin, slot: fixtureSlot(app), username: origin, email: `${origin}@f.test` });
     expect(made.ok && made.value.isAdmin).toBe(false);

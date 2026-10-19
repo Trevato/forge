@@ -1,8 +1,7 @@
 /**
- * First sight of a person through the parent is a sign-up: it shares the
- * sign-up window with the passkey door, is refused with the wait when the
- * window is spent, and makes no account. A returning person is a sign-in and
- * is never held to that window.
+ * The parent's sign-in makes no account, so it never touches the sign-up
+ * window the passkey door spends: a linked person signs in, an unknown one
+ * is sent to /signup.
  */
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -80,23 +79,26 @@ afterAll(async () => {
   for (const dir of dirs) await rm(dir, { recursive: true, force: true });
 });
 
-test("a new sub past the sign-up limit is refused with the wait and makes no account; a returning sub is not throttled; the passkey door shares the window", async () => {
-  expect((await through(cookies.amy!)).status).toBe(303);
-  expect(getUserByName(child.db, "amy")).toBeDefined();
-  expect((await passkeySignUp("pk1")).status).toBe(201);
+test("a linked sub signs in and is not throttled; an unknown sub makes no account and spends no sign-up window; the passkey door keeps the window", async () => {
+  const amy = await createUser(child.db, { origin: "seed", username: "amy", email: "amy@child.local", password: "a-long-family-passphrase", trusted: true });
+  if (!amy.ok) throw new Error(amy.error);
+  const amyParent = getUserByName(parent.db, "amy")!;
+  child.db
+    .query("INSERT INTO federated_identity (issuer, sub, user_id) VALUES (?1, ?2, ?3)")
+    .run(new URL(ps.url).origin, amyParent.id, amy.value.id);
+  for (let i = 0; i < 3; i++) {
+    const done = await through(cookies.amy!);
+    expect(done.status).toBe(303);
+    expect(cookieOf(done, "forge_session")).toBeDefined();
+  }
 
-  const refused = await through(cookies.ben!);
-  expect(refused.status).toBe(429);
-  expect(Number(refused.headers.get("retry-after"))).toBeGreaterThan(0);
-  expect(await refused.text()).toContain("Try again in");
+  const unknown = await through(cookies.ben!);
+  expect(unknown.status).toBe(303);
+  expect(unknown.headers.get("location")).toStartWith("/signup");
   expect(getUserByName(child.db, "ben")).toBeUndefined();
 
-  // Amy is known here: signing in again is not a sign-up.
-  const again = await through(cookies.amy!);
-  expect(again.status).toBe(303);
-  expect(cookieOf(again, "forge_session")).toBeDefined();
-  expect(child.db.query("SELECT COUNT(*) AS n FROM user WHERE username = 'amy'").get()).toEqual({ n: 1 });
-
-  // And the spent window holds the passkey door too.
-  expect((await passkeySignUp("pk2")).status).toBe(429);
+  // The window is untouched by all of that: two passkey sign-ups, then the wait.
+  expect((await passkeySignUp("pk1")).status).toBe(201);
+  expect((await passkeySignUp("pk2")).status).toBe(201);
+  expect((await passkeySignUp("pk3")).status).toBe(429);
 });

@@ -24,6 +24,7 @@ import { hasAnyUser, verifyPasswordThrottled, type User } from "../../core/users
 import { isThemeName } from "../../design/themes.ts";
 import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
+import { parentIssuerOf } from "../../core/federation.ts";
 import { activeEdgeToken, edgeIdentity, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
@@ -46,7 +47,6 @@ import {
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { hasAdmin } from "../../spawn/claim.ts";
-import { parentIssuerOf } from "../../core/federation.ts";
 import { getSignup, type SignupMode } from "../../settings/signup.ts";
 
 export function sessionCookie(
@@ -232,6 +232,23 @@ const SIGNUP_SENTENCES: Record<SignupMode, string | undefined> = {
   closed: "This forge is closed to new accounts.",
 };
 
+/**
+ * The linked sign-in methods (the platform edge, the parent forge) are doors
+ * for an account that already exists and never make one (#2883).
+ */
+function linkedMethods(edge: string | undefined, next: string | undefined, parent: string | undefined): Html | null {
+  if (edge === undefined && parent === undefined) return null;
+  return html`<section class="stack mt" id="linked-methods">
+    <h2>Link an account you have</h2>
+    <p class="muted small">These sign in an account that already exists and never make one.</p>
+    ${when(edge, (name) => html`<p class="muted small">Accounts made through ${name} sign in there and have no password here. The form above is for an account that was given one.</p>`)}
+    <div class="stack">
+      ${when(edge, (name) => btn(`Sign in through ${name}`, { href: edgeLoginUrl(next ?? "/"), variant: "outline" }))}
+      ${when(parent, (url) => btn(`Sign in through ${new URL(url).host}`, { href: "/signin/parent", variant: "outline" }))}
+    </div>
+  </section>`;
+}
+
 function authForm(
   ctx: Ctx,
   kind: "signin" | "signup",
@@ -251,32 +268,20 @@ function authForm(
   // of the whole user table — and the sign-in screen paints on every session.
   const firstAccount = kind === "signup" && !hasAnyUser(ctx.app.db);
 
-  // Behind a platform edge, that is the door: the button first, and the
-  // password form kept for the accounts that have one — an account the edge
-  // made has none, and the note says so before anyone types.
-  // A newcomer the edge vouched for is already through it: no button to go
+  // A newcomer the edge vouched for is already through it: no door to go
   // round again, and the name is theirs alone.
   const vouched = edgeStrangerLogin(ctx.request, activeEdgeToken(ctx.app), ctx.auth.user);
   const edge =
     activeEdgeToken(ctx.app) === undefined || vouched !== undefined
       ? undefined
       : (ctx.app.config.edgeName ?? "the platform");
-  const throughEdge = when(
-    edge,
-    (name) =>
-      html`<div class="stack mb">
-        ${btn(`Continue with ${name}`, {
-          href: edgeLoginUrl(next ?? "/"),
-          variant: "primary",
-          size: "lg",
-        })}
-        <p class="muted small">
-          ${kind === "signin"
-            ? `Accounts made through ${name} sign in there and have no password here. The form below is for an account that was given one.`
-            : `Signing in through ${name} does not make an account here; the form below does.`}
-        </p>
-      </div>`,
-  );
+  const unknownLink =
+    kind === "signup" && ctx.url.searchParams.get("linked") === "unknown"
+      ? html`<p class="muted small mb" id="linked-unknown" role="status">
+          No account here is linked to that sign-in, and a linked sign-in never makes one.
+          To get an account, make one with the form below.
+        </p>`
+      : null;
 
   // No door makes a password-only account: sign-up is a name, an address and
   // a passkey, made in the browser (`signup-passkey.ts`).
@@ -298,7 +303,7 @@ function authForm(
     ${when(SIGNUP_SENTENCES[getSignup(ctx.app.db)], (said) => html`<p class="muted small mb" id="signup-mode">${said}</p>`)}`,
   );
 
-  const body = html`${throughEdge}
+  const body = html`${unknownLink}
     ${passkeyFirst}
     <form method="post" action="${action}">
       ${formField({
@@ -404,15 +409,7 @@ function authForm(
       kind === "signin",
       () => html`<p class="mt"><a class="small" href="/recover">Lost your device?</a></p>`,
     )}
-    ${when(
-      kind === "signin" ? parentIssuerOf(ctx.app.config) : undefined,
-      (parent) => html`<p class="mt">
-        ${btn(`Continue with ${new URL(parent).host}`, {
-          href: "/signin/parent",
-          variant: "outline",
-        })}
-      </p>`,
-    )}
+    ${kind === "signin" ? linkedMethods(edge, next, parentIssuerOf(ctx.app.config)) : null}
     ${claimable
       ? html`<p class="muted small mt" id="claim-door">
           Was this forge made for you? <a href="/claim">Claim it with your code</a>.
@@ -484,8 +481,8 @@ export function signinAllowed(ctx: Ctx, key: string): number | undefined {
 
 /**
  * Sign-ups by the socket's peer (`actions/signup-window.ts`), asked by the
- * signup form, the API signup, the terminal's create screen, the passkey door
- * and the parent sign-in's first sight of a person, which share one window.
+ * signup form, the API signup, the terminal's create screen and
+ * the passkey door, which share one window.
  */
 export function signupAllowed(ctx: Ctx): number | undefined {
   return signupWindow(ctx.app, clientAddress(ctx.request));
