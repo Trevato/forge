@@ -266,6 +266,45 @@ keeps the verdict in `$FORGE_APP_DATA/release/proof.json`. A failure is a
 `Release X is unproven: …` card on an admin's board and on the terminal's first
 screen (the same cards), and is paged once; a later passing version clears it.
 
+**The outsider suite** (#663) is the proof a person reads before flipping signup
+to open. It adds the proof only: it removes no gate and reopens nothing.
+`signup-gate.yaml` and `outsider-gate.yaml` in `trevato-apps/gitops` stay up
+until a person deletes them there.
+
+It tries what a stranger must not do through all the doors a stranger has:
+
+- **HTTP API and web form** (`src/release/outsider.ts`): an admin token, a
+  repository or app of their own, any read of the owner's private
+  repositories, and assigning a crew member on a real issue — the JSON
+  `PUT …/issues/:n/assignee` with a token, and the form `POST
+  /:owner/:name/issues/:n/assignee` with the cookie session a browser would
+  hold. A refusal is positively seen: a 403 with its error code, a 404 only for
+  private repositories, or a redirect whose landing page says so. The issue is
+  read back and its assignee and the repository's runs must not have moved,
+  and the owner's own call to the assignee route must answer 422 so a rename
+  turns the suite red.
+- **MCP** (same module): `tell`, `make_it_yours`, `signup`, and reads of
+  private repositories through `repo`, `usage` and `apps`, each required to
+  answer as an error; `tools/list` must still name them.
+- **Terminal** (`test/helpers/outsider-tty.ts`, run by
+  `test/outsider-tty.test.ts`): the stranger drives the terminal in process,
+  asks for a new repository, searches for a private one and opens the assign
+  picker on a public issue; the screen must show the refusal and nothing may
+  change. The terminal is a client of the forge's actions, not of HTTP, so it
+  cannot be driven against a live forge: it runs in the gate only.
+
+`test/outsider-suite.test.ts` and `test/outsider-tty.test.ts` run in the gate
+and each prove the suite goes red with a door left open.
+`FORGE_TOKEN=… bun scripts/smoke.ts <url> --outsider` runs the HTTP and MCP
+doors against a live forge. **It makes a real account on that forge**, so
+point it only where that is wanted. Its result is valid for reopening signup
+only together with a green gate run of the terminal test; HTTP and MCP green
+alone do not cover the terminal door. Without `FORGE_TOKEN`, `--outsider`
+exits 2 and the suite reports `owner token` as not tried, so a partial run is
+never read as a pass. Spend and run bounds are proven in process only; this
+pull adds the proof but does not reopen signup — the gitops gate stays for a
+person.
+
 What you asked for: `Ctrl+K`, then **Asked**, is `/asked` in the terminal — your
 thoughts, then the issues you can write to that are not shipped, oldest first
 (`j`/`k` move, `enter` gives the issue's web address, `r` refreshes). It is read

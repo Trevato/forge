@@ -150,3 +150,13 @@ test("isSignInRedirect wants a redirect status and a same-origin sign-in Locatio
   expect(isSignInRedirect(at, res(303, "https://other.example/_plat/login"))).toBe(false);
   expect(isSignInRedirect(at, res(200, "/signin"))).toBe(false);
 });
+
+test("--outsider without FORGE_TOKEN exits 2 and prints no ok", async () => {
+  const base = stub("text/css");
+  const env = { ...process.env };
+  delete env["FORGE_TOKEN"];
+  const proc = Bun.spawn(["bun", "scripts/smoke.ts", base, "--outsider"], { env, stdout: "pipe", stderr: "pipe" });
+  expect(await proc.exited).toBe(2);
+  expect(await new Response(proc.stdout).text()).not.toContain("ok");
+  expect(await new Response(proc.stderr).text()).toContain("FORGE_TOKEN");
+});
