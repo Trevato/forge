@@ -51,6 +51,7 @@ import {
   updateRepoSettings,
 } from "../../actions/repos.ts";
 import { appsRuntime } from "../../apps/runtime.ts";
+import { appVitals, speedText as ms, type AppVitals } from "../../apps/vitals.ts";
 import type { PreviewData } from "../../apps/data.ts";
 import {
   getAppByRepo,
@@ -571,6 +572,7 @@ function appSettingsView(
   const domains = listAppDomains(ctx.app, ctx.auth.user, repo);
   return html`${form}
     ${when(listed?.ok === true, () => html`<div class="mt">${appMembersView(base, values.access, named)}</div>`)}
+    <div class="mt">${appVisitorsView(appVitals(ctx.app.db, record.id))}</div>
     <div class="mt">
       ${appEnvView(base, listAppEnvNames(ctx.app.db, record.id))}
     </div>
@@ -608,6 +610,24 @@ const SCOPE_WORDS: Record<AppEnvScope, string> = {
   production: "production",
   preview: "previews",
 };
+
+/** Production's visitors and the speed they saw, from the app's own beacon. */
+function appVisitorsView(v: AppVitals): Html {
+  return card(
+    html`<p class="muted small mb">
+        Counted by the beacon the template ships, through the forge: no
+        address is kept, and a visitor is the same only within a day, so the
+        7 day figure adds the days up.
+      </p>
+      <dl class="stats">
+        <div><dt>Visitors today</dt><dd>${v.today}</dd></div>
+        <div><dt>Visitors, 7 days</dt><dd>${v.week}</dd></div>
+        <div><dt>p75 load</dt><dd>${ms(v.loadP75)}</dd></div>
+        <div><dt>p75 INP</dt><dd>${ms(v.inpP75)}</dd></div>
+      </dl>`,
+    { head: html`${icon("rocket")}<h2>Visitors and speed</h2>` },
+  );
+}
 
 function appEnvView(base: string, names: AppEnvName[]): Html {
   const rows = names.map((v) =>

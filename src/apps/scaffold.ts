@@ -14,6 +14,7 @@
 
 import { readFileSync } from "node:fs";
 import type { FileWrite } from "../git/write.ts";
+import { beaconJs } from "../web/beacon.ts";
 
 /**
  * The evaluator an app decides with is the forge's own, carried as text:
@@ -24,6 +25,12 @@ const CAN_TS = readFileSync(
   new URL("../contract/can.ts", import.meta.url),
   "utf8",
 );
+
+/**
+ * The forge's own page-view beacon, posting to the door the forge proxy
+ * answers on the app's host: the app holds no secret and keeps no report.
+ */
+const BEACON_JS = beaconJs.replace("/_measure", "/__forge/measure") + "\n";
 
 export interface ScaffoldInput {
   /** The repository name; also the title on the page. */
@@ -69,6 +76,7 @@ export function scaffoldFiles(input: ScaffoldInput): FileWrite[] {
     { path: "scripts/contract-emit.ts", content: CONTRACT_EMIT_TS },
     { path: "static/app.css", content: APP_CSS },
     { path: "static/live.js", content: LIVE_JS },
+    { path: "static/beacon.js", content: BEACON_JS },
     { path: "src/who.test.ts", content: WHO_TEST },
     { path: "src/signin.test.ts", content: SIGNIN_TEST },
     { path: "src/db.test.ts", content: DB_TEST },
@@ -167,6 +175,7 @@ decide nothing themselves. \`AGENTS.md\` says how to add to it.
 | \`src/tty.ts\`                       | the terminal, over the same actions                            |
 | \`src/env.ts\`                       | what the forge told this process                               |
 | \`static/app.css\`, \`static/live.js\` | the look in the tokens' words, and the list that stays current |
+| \`static/beacon.js\`                | reports each page's load and INP to the forge, which counts visitors: no secret, no address kept |
 
 ## What every app stands on
 
@@ -1702,6 +1711,7 @@ export function layout(body: string, who: Who, path = "/"): string {
 <meta name="twitter:description" content="\${escape(description)}">
 <link rel="stylesheet" href="\${tokensHref}">
 <link rel="stylesheet" href="\${asset("app.css")}">
+<script defer src="\${asset("beacon.js")}"></script>
 <script type="module" src="\${asset("live.js")}"></script>
 <body>
 <div class="page">

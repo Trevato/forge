@@ -7,6 +7,8 @@
  * joined to `deploy_pull` in one grouped read for `carries #3 #5`.
  */
 
+import { appVisitors } from "../../actions/apps.ts";
+import { visitorsLine } from "../../apps/vitals.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { carriedByRuns, carriesText } from "../../core/carried.ts";
 import type { Repo } from "../../core/repos.ts";
@@ -37,6 +39,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   const list = new RunList(f);
   let carries = new Map<string, number[]>();
   let loaded = false;
+  let visitors = "";
 
   const read = (): void => {
     const runs = readDeploys(f, repo);
@@ -45,6 +48,8 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       f.db,
       runs.map((r) => r.id),
     );
+    const seen = appVisitors(f.app, f.user, repo);
+    visitors = seen === undefined ? "" : visitorsLine(seen);
     loaded = true;
     ctx.invalidate();
   };
@@ -61,7 +66,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     load: async () => read(),
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, body] = split(area, "v", [len(1), fill(1)]);
+      const [head, body] = split(area, "v", [len(visitors === "" ? 1 : 2), fill(1)]);
       s.text(
         head!.x,
         head!.y,
@@ -69,6 +74,8 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         style(c.mutedFg, c.bg),
         head!.x + head!.w,
       );
+      if (visitors !== "")
+        s.text(head!.x, head!.y + 1, truncate(visitors, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
       if (list.runs.length === 0) {
         emptyState(s, body!, c, {
           title: loaded ? "No deploys" : "Reading…",

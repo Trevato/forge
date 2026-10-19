@@ -35,6 +35,7 @@ import { loadKey } from "../kernel/secret.ts";
 import { previewEnv, type EnvName } from "./data.ts";
 import type { AppsRuntime, EnvStatus } from "./runtime.ts";
 import { crewNow, tellLink } from "./crew.ts";
+import { appMeasure } from "./measure.ts";
 import { rewritable, withToolbar, type PillWhere } from "./toolbar.ts";
 
 export interface AppTarget {
@@ -587,6 +588,16 @@ export async function proxyApp(
         headers: { location: report.toString(), "cache-control": "no-store" },
       });
     }
+  }
+  // The beacon's report: filed against this app, never waking it. A private
+  // app (or a sealed pull's preview) admits only the people it admits, so
+  // it keeps its visitors to itself.
+  if (url.pathname === "/__forge/measure" && !target.nested) {
+    if (target.app.access === "private" || sealedPull(runtime, target) !== undefined) {
+      const admitted = admit(runtime, request, target);
+      if (!admitted.ok) return admitted.error;
+    }
+    return appMeasure(runtime.app, request, target);
   }
   // An environment asleep wakes for the request that wants it, and the
   // request waits the second that takes rather than seeing a closed door.

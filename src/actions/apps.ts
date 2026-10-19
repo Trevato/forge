@@ -12,6 +12,7 @@ import { mayView } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAppRoom } from "./app_limit.ts";
 import type { App } from "../app.ts";
+import { appVitals, type AppVitals } from "../apps/vitals.ts";
 import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
 import { grantUrl, originFor } from "../apps/proxy.ts";
 import { scaffoldFiles } from "../apps/scaffold.ts";
@@ -47,7 +48,7 @@ import { listAllAgents } from "./crew.ts";
 import { plan, planIssueBody, planningAvailable } from "../crew/plan.ts";
 import type { Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
-import { canEnterApp, canWrite, getRepo, type Repo } from "../core/repos.ts";
+import { canAdmin, canEnterApp, canWrite, getRepo, type Repo } from "../core/repos.ts";
 import type { Run } from "../core/runs.ts";
 import { getUserByName, type User } from "../core/users.ts";
 import { resolveOid } from "../git/merge.ts";
@@ -478,6 +479,16 @@ export function appView(
     environments: envsFor(app, actor, record),
     serving: runtime !== undefined,
   });
+}
+
+/**
+ * An app's visitors and speed, for those who administer its repository: the
+ * same gate as the settings card, so every door shows them to the same people.
+ */
+export function appVisitors(app: App, actor: User | undefined, repo: Repo): AppVitals | undefined {
+  if (!canAdmin(app.db, repo, actor)) return undefined;
+  const record = getAppByRepo(app.db, repo.id);
+  return record === undefined ? undefined : appVitals(app.db, record.id);
 }
 
 export type EnvError = "not_found" | "no_runtime" | "no_such_env";

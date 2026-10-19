@@ -7,6 +7,8 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { signUp } from "../src/actions/users.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
+import { createApp as createAppRecord } from "../src/core/apps.ts";
+import { recordAppVital } from "../src/apps/vitals.ts";
 import { createRun } from "../src/core/runs.ts";
 import type { Repo } from "../src/core/repos.ts";
 import type { User } from "../src/core/users.ts";
@@ -120,4 +122,22 @@ test("a non-reader sees nothing of a private repo's deploys", async () => {
     expect(text).not.toContain("deploy production");
   }
   expect(await screenText(alice, r.value)).toContain("#77");
+});
+
+test("an admin sees the app's visitors and speed above the deploys, and a reader does not", async () => {
+  const r = await createRepo(forge, alice, { name: "shop", visibility: "public" });
+  if (!r.ok) throw new Error("repo failed");
+  const made = createAppRecord(forge.db, { repoId: r.value.id, slug: "shop", access: "public" });
+  if (!made.ok) throw new Error(made.error);
+  const record = made.value;
+  const at = Date.now();
+  recordAppVital(forge.db, record.id, { path: "/", ttfb: null, load: 420, lcp: null, inp: 80, cls: 0 }, "c", "u", at);
+  expect(await screenText(alice, r.value)).toContain("visitors 1 today, 1 in 7 days · p75 load 420 ms · p75 INP 80 ms");
+  const c = await signUp(forge, {
+    username: "carol",
+    email: "carol@forge.test",
+    password: "a-long-passphrase",
+  }, { slot: fixtureSlot(forge) });
+  if (!c.ok) throw new Error("signup failed");
+  expect(await screenText(c.value, r.value)).not.toContain("visitors");
 });

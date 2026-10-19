@@ -247,6 +247,7 @@ import { isSafeRef, isSafeTreePath } from "../git/guard.ts";
 import { listBranches } from "../git/branches.ts";
 import {
   appView,
+  appVisitors,
   deleteAppEnvVar,
   disableApp,
   enableApp,
@@ -4967,9 +4968,11 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!repo) return notFound();
     const view = appView(ctx.app, ctx.auth.user, repo);
     if (!view.ok) return notFound();
-    return json(
-      appJson(ctx, view.value.app, repo, appsRuntime(ctx.app)),
-    );
+    const vitals = appVisitors(ctx.app, ctx.auth.user, repo);
+    return json({
+      ...appJson(ctx, view.value.app, repo, appsRuntime(ctx.app)),
+      ...(vitals === undefined ? {} : { vitals }),
+    });
   });
 
   router.add("POST", "/api/v1/repos/:owner/:name/app", async (ctx) => {

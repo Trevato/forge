@@ -87,10 +87,10 @@ export function optedOut(request: Request): boolean {
   return cookie.split(";").some((pair) => pair.trim() === "forge_measure=off");
 }
 
-const dayOf = (at: number): string => new Date(at).toISOString().slice(0, 10);
+export const dayOf = (at: number): string => new Date(at).toISOString().slice(0, 10);
 
 /** Today's salt, made on first use; every other day's is deleted. */
-function saltFor(db: Database, at: number): string {
+export function saltFor(db: Database, at: number): string {
   const day = dayOf(at);
   const found = db
     .query<{ salt: string }, [string]>("SELECT salt FROM vital_salt WHERE day = ?")
