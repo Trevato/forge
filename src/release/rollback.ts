@@ -14,6 +14,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { releaseDir } from "./checkout.ts";
 import { startRelease, type SwapInput } from "./swap.ts";
+import { ownProbeHeaders } from "../kernel/probe.ts";
 
 export type Rollback = { ok: true; pid: number } | { ok: false; line: string };
 
@@ -59,5 +60,5 @@ export async function rollback(
   const live = liveSchema(dataDir);
   if (known < live)
     return { ok: false, line: `${sha} predates schema ${live}; rolling back would need a down-migration` };
-  return startRelease({ ...swap, dir, sha });
+  return startRelease({ ...swap, dir, sha, probe: ownProbeHeaders(dataDir) });
 }

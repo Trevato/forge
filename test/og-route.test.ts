@@ -273,7 +273,7 @@ describe("og cards", () => {
       }
     });
 
-    test("an agent run names its agent, thread, cost and outcome", async () => {
+    test("an agent run names its agent, thread and outcome, never its cost", async () => {
       const repo = getRepo(app.db, "alice", "shown")!;
       const alice = getUserByName(app.db, "alice")!;
       const issue = getIssue(app.db, repo.id, 1)!;
@@ -288,10 +288,10 @@ describe("og cards", () => {
       const body = await (await get(`/og/run/alice~shown~${r.id}.svg`)).text();
       expect(body).toContain("alice");
       expect(body).toContain("#1 A public issue &lt;b&gt;");
-      expect(body).toContain("$1.23");
+      expect(body).not.toContain("$1.23");
       expect(body).toContain("landed a pull");
       app.db.query("UPDATE run SET summary = 'declined: too big', state = 'ok' WHERE id = ?1").run(r.id);
-      expect(await (await get(`/og/run/alice~shown~${r.id}.svg`)).text()).toContain("declined ·");
+      expect(await (await get(`/og/run/alice~shown~${r.id}.svg`)).text()).toContain("alice · declined");
       app.db.query("UPDATE run SET state = 'failed', summary = 'boom' WHERE id = ?1").run(r.id);
       expect(await (await get(`/og/run/alice~shown~${r.id}.svg`)).text()).toContain("failed");
       app.db.query("UPDATE run SET state = 'running' WHERE id = ?1").run(r.id);

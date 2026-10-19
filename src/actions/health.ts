@@ -1,9 +1,17 @@
 /**
- * How the forge is, as it answers anyone who asks: the version and commit
- * it runs, whether it is draining, and the platform's word on its rollout
- * (`kernel/guard.ts`). A monitor has no account, so there is nothing to
- * authorize. A site admin also gets the forge's own vitals alongside, and
- * `ok` is then both.
+ * How the forge is, as it answers whoever asks. A monitor has no account,
+ * so anyone may ask; what it is told depends on who it is (#2917):
+ *
+ * - a stranger learns whether the forge is well and whether it is draining,
+ *   and nothing of the platform's incidents or rollout. It is also told the
+ *   version and commit for one release more — a running forge's swap reads
+ *   its successor's commit without a probe (`release/swap.ts` before #2917);
+ *   once that forge is gone the stranger's answer is `ok` alone.
+ * - anyone signed in, and the forge's own release machinery carrying the
+ *   probe (`kernel/probe.ts`), get the whole answer: version, commit,
+ *   rollout and the platform's incidents.
+ * - a site admin gets the whole answer and the forge's vitals alongside,
+ *   `ok` then being both.
  *
  * One answer for the API (`GET /api/v1/health`) and the MCP `health` tool.
  */
@@ -51,11 +59,23 @@ export function forgeVitals(app: App): Vitals {
   });
 }
 
+/**
+ * What a stranger is told: no incident, no rollout, no platform words.
+ * Version and commit stay for one release, while a running forge's swap
+ * reads its successor's commit without the probe; #2962 removes them.
+ */
+export type StrangerHealth = Pick<ForgeHealth, "ok" | "version" | "commit" | "draining">;
+
 export function readHealth(
   app: App,
   actor: User | undefined,
-): ForgeHealth | (Vitals & ForgeHealth) {
+  probe = false,
+): StrangerHealth | ForgeHealth | (Vitals & ForgeHealth) {
   const forge = forgeHealth();
+  if (actor === undefined && !probe) {
+    const { ok, version, commit, draining } = forge;
+    return { ok, version, commit, draining };
+  }
   if (!actor?.isAdmin) return forge;
   const v = forgeVitals(app);
   return { ...v, ...forge, ok: forge.ok && v.ok };

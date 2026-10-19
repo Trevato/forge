@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { ownProbeHeaders } from "../src/kernel/probe.ts";
 import { running } from "../src/kernel/version.ts";
 import {
   forgeHealth,
@@ -84,7 +85,9 @@ afterAll(async () => {
 });
 
 test("/api/v1/health answers anyone, from the mounted ConfigMap", async () => {
-  let res = await fetch(servers.url + "/api/v1/health");
+  // The probe is told the platform's word; a stranger only whether all is well.
+  const probe = { headers: ownProbeHeaders(app.config.dataDir) };
+  let res = await fetch(servers.url + "/api/v1/health", probe);
   expect(res.status).toBe(200);
   let body = (await res.json()) as any;
   expect(body.ok).toBe(true);
@@ -99,9 +102,18 @@ test("/api/v1/health answers anyone, from the mounted ConfigMap", async () => {
   mkdirSync(guardDir, { recursive: true });
   writeFileSync(join(guardDir, "status.json"), status({ stuck: "quota refused <b>" }));
   writeFileSync(join(guardDir, "checkedAt"), new Date().toISOString());
-  res = await fetch(servers.url + "/api/v1/health");
+  res = await fetch(servers.url + "/api/v1/health", probe);
   body = await res.json();
   expect(body.rollout).toEqual({ state: "blocked", reason: "quota refused <b>" });
   expect(body.ok).toBe(false);
   expect(body.incidents).toEqual([{ key: "stuck", message: "quota refused <b>" }]);
+
+  // A stranger, and one who guesses at the probe, hear it is not well and never why.
+  for (const headers of [{}, { "x-forge-probe": "guess" }]) {
+    const told = (await (await fetch(servers.url + "/api/v1/health", { headers })).json()) as any;
+    expect(told.ok).toBe(false);
+    expect(told.rollout).toBeUndefined();
+    expect(told.incidents).toBeUndefined();
+    expect(JSON.stringify(told)).not.toContain("quota");
+  }
 });

@@ -794,7 +794,8 @@ const FLOOR_POLICY =
   "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
 
 /**
- * The floor, on one response: never sniffed, never a referrer off-site, and
+ * The floor, on one response: never sniffed, never a referrer off-site, no
+ * powers a page does not use, https once https, and
  * — unless the body is a document with a policy of its own — inert.
  */
 function expectFloor(what: string, response: Response): void {
@@ -804,6 +805,13 @@ function expectFloor(what: string, response: Response): void {
   );
   expect(label + response.headers.get("referrer-policy")).toBe(
     label + "same-origin",
+  );
+  // No powers a page does not use, and https once https (#2917).
+  expect(label + response.headers.get("permissions-policy")).toContain(
+    label + "camera=(), microphone=(), geolocation=()",
+  );
+  expect(label + response.headers.get("strict-transport-security")).toBe(
+    label + "max-age=31536000",
   );
   const policy = response.headers.get("content-security-policy") ?? "";
   expect(label + (policy === "" ? "(none)" : "(a policy)")).toBe(

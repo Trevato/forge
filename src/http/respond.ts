@@ -119,9 +119,27 @@ const FLOOR_POLICY =
   "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
 
 /**
+ * The powers no page of the forge's uses, refused to it and to anything
+ * framed in it: a script that ever slipped through still cannot ask for a
+ * camera, a microphone, a location, a payment or a device (#2917).
+ */
+const PERMISSIONS_POLICY =
+  "camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=()";
+
+/**
+ * Once a browser has reached the forge over https, it never again asks over
+ * plain http, for a year. Sent from the forge itself rather than left to an
+ * edge that may not (#2917); a browser ignores it on an http answer, so a
+ * forge on localhost is not pinned to a scheme it cannot serve. Subdomains
+ * are not named: an app's host is not the forge's to promise.
+ */
+const HSTS = "max-age=31536000";
+
+/**
  * The security floor every response the forge writes leaves with: never
- * sniffed into another type, never a referrer sent off-site, and — unless
- * the body is a document that wrote its own policy — inert.
+ * sniffed into another type, never a referrer sent off-site, no powers a
+ * page does not use, https once https, and — unless the body is a document
+ * that wrote its own policy — inert.
  *
  * A responder that already set one of these keeps its value: `page()` has a
  * nonce'd policy that must survive, and a fragment has a sandboxed one. The
@@ -136,6 +154,10 @@ export function securityFloor(response: Response): Response {
       headers.set("x-content-type-options", "nosniff");
     if (!headers.has("referrer-policy"))
       headers.set("referrer-policy", "same-origin");
+    if (!headers.has("permissions-policy"))
+      headers.set("permissions-policy", PERMISSIONS_POLICY);
+    if (!headers.has("strict-transport-security"))
+      headers.set("strict-transport-security", HSTS);
     // What left decides, not what was asked for: an HTML body writes the
     // only policy that can name its own nonce, and `default-src 'none'`
     // over a page would strip it of its stylesheet.

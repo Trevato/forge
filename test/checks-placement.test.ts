@@ -178,7 +178,10 @@ describe("checks placed", () => {
       const run = await settled(await push("exit 0 # page"));
       expect(run.placement).toBe("job");
       const page = await (await globalThis.fetch(`${servers.url}/alice/lib/runs/${run.id}`)).text();
-      expect(page).toContain("Ran as a cluster job on n7.");
+      // A stranger reads that it was a cluster job, never on which node (#2917).
+      expect(page).toContain("Ran as a cluster job.");
+      expect(page).not.toContain("job on n7");
+      expect(String(placementLine(run))).toContain("Ran as a cluster job on n7.");
       expect(runRows([run], new Map())[0]!.meta).toContain("ran as a cluster job on n7");
       expect(runPayload(run)).toMatchObject({ placement: "job", node: "n7" });
       const plain = { ...run, placement: "process", node: "" };

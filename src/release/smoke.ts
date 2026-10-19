@@ -49,6 +49,8 @@ export function navigationBranch(source: string): string | null {
 export interface Options {
   /** Wait for `/healthz` to report this `X-Forge-Version`. */
   version?: string | undefined;
+  /** Sent with that wait: the forge tells only its probe its version (`kernel/probe.ts`). */
+  probe?: Readonly<Record<string, string>>;
   /** Longest wait for it, in milliseconds. */
   waitMs?: number;
   /** Pause between polls, in milliseconds. */
@@ -80,14 +82,14 @@ export function isSignInRedirect(url: string, res: Response): boolean {
 }
 
 /** Polls `/healthz` until it reports `version`; null when it does, else a failure. */
-async function waitForVersion(root: URL, version: string, waitMs: number, pollMs: number, fetch: typeof globalThis.fetch): Promise<Failure | null> {
+async function waitForVersion(root: URL, version: string, waitMs: number, pollMs: number, fetch: typeof globalThis.fetch, probe: Readonly<Record<string, string>>): Promise<Failure | null> {
   const url = new URL("/healthz", root).href;
   const deadline = Date.now() + waitMs;
   let seen = "none";
   let status: number | string = "error";
   for (;;) {
     try {
-      const res = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(5_000) });
+      const res = await fetch(url, { redirect: "manual", headers: probe, signal: AbortSignal.timeout(5_000) });
       await res.body?.cancel();
       status = res.status;
       seen = res.headers.get("x-forge-version") ?? "none";
@@ -109,7 +111,7 @@ export async function smoke(base: string, token = "", options: Options = {}): Pr
   const failures: Failure[] = [];
   const fetch = options.fetch ?? globalThis.fetch;
   if (options.version) {
-    const late = await waitForVersion(root, options.version, options.waitMs ?? 120_000, options.pollMs ?? 1_000, fetch);
+    const late = await waitForVersion(root, options.version, options.waitMs ?? 120_000, options.pollMs ?? 1_000, fetch, options.probe ?? {});
     if (late) return [late];
   }
 

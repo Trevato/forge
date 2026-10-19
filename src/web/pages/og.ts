@@ -264,7 +264,9 @@ function runInput(ctx: Ctx, ref: string): CardInput | undefined {
       kind: "run",
       title: run.summary || "agent run",
       lines: [repoName, ...(thread ? [thread] : [])],
-      stat: `${who ?? "agent"} · ${outcome(run)} · $${run.costUsd.toFixed(2)}`,
+      // The card is drawn for anyone a link is pasted to, so it says no
+      // cost: that is the owner's fact (`runForReader`, #2917).
+      stat: `${who ?? "agent"} · ${outcome(run)}`,
     };
   }
   return {

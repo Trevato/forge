@@ -27,6 +27,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { running } from "../kernel/version.ts";
+import { probeHeaders } from "../kernel/probe.ts";
 
 export const BOOT_BUDGET_MS = 120_000;
 const POLL_MS = 250;
@@ -66,10 +67,11 @@ export function why(stderr: string): string {
   return line.replace(/[\u0000-\u001f\u007f]+/g, " ").slice(0, 300);
 }
 
-async function versionAt(port: number): Promise<string | undefined> {
+async function versionAt(port: number, probe: Record<string, string>): Promise<string | undefined> {
   try {
+    // The probe, so a forge that tells strangers only `ok` still says what it runs.
     const res = await fetch(`http://127.0.0.1:${port}/api/v1/health`, {
-      headers: { connection: "close" },
+      headers: { connection: "close", ...probe },
       signal: AbortSignal.timeout(2_000),
     });
     if (!res.ok) return undefined;
@@ -121,7 +123,7 @@ export async function bootProof(input: BootInput): Promise<BootProof> {
         const said = why(stderr);
         return { ok: false, line: `exited with ${child.exitCode} before it answered health${said ? `: ${said}` : ""}` };
       }
-      const seen = await versionAt(port);
+      const seen = await versionAt(port, probeHeaders(input.dataDir));
       if (seen === input.version) return { ok: true, ms: Math.round(performance.now() - started) };
       if (seen !== undefined) last = `health answered as ${seen}`;
       await Bun.sleep(POLL_MS);

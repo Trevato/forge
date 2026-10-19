@@ -13,6 +13,7 @@ import {
   startDraining,
 } from "../src/http/health.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { ownProbeHeaders } from "../src/kernel/probe.ts";
 import { running } from "../src/kernel/version.ts";
 import type { Log, LogFields } from "../src/kernel/log.ts";
 
@@ -103,9 +104,16 @@ describe("the served paths", () => {
     await rm(dataDir, { recursive: true, force: true });
   });
 
-  test("/healthz names the running version and keeps the security headers", async () => {
-    const res = await fetch(`${servers.url}/healthz`);
+  test("/healthz names the running version to the probe alone and keeps the security headers", async () => {
+    const res = await fetch(`${servers.url}/healthz`, { headers: ownProbeHeaders(dataDir) });
     expect(res.headers.get("x-forge-version")).toBe(running().version);
+    // A stranger, or a guess at the probe, hears `ok` and nothing of the release (#2917).
+    for (const headers of [{}, { "x-forge-probe": "guess" }]) {
+      const told = await fetch(`${servers.url}/healthz`, { headers });
+      expect(told.status).toBe(200);
+      expect(await told.text()).toBe("ok");
+      expect(told.headers.get("x-forge-version")).toBeNull();
+    }
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("content-security-policy")).toBeTruthy();
   });

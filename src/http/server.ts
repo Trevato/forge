@@ -470,6 +470,8 @@ import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.t
 import { oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
 import { carryPeer, clientAddress, notePeer, type ProxyTrust } from "./peer.ts";
+import { isProbe } from "../kernel/probe.ts";
+import { takeStrangerRead } from "./stranger_reads.ts";
 import { parseCidrs } from "../kernel/cidr.ts";
 import {
   reportAcceptSubmit,
@@ -2375,8 +2377,10 @@ async function answerGet(
     const dbStart = performance.now();
     const live = liveResponse(() => app.db.query("select 1").get(), app.log);
     noteDbTime(request, performance.now() - dbStart);
-    // A smoke test learns which release answered, old pod or new.
-    live.headers.set("X-Forge-Version", running().version);
+    // The release proof learns which release answered, old pod or new; a
+    // stranger is told only that one did (#2917).
+    if (isProbe(request, app.config.dataDir))
+      live.headers.set("X-Forge-Version", running().version);
     return live;
   }
   if (url.pathname === "/readyz") {
@@ -2457,6 +2461,20 @@ async function answerGet(
           )
         : tooManyRequests(verdict);
     return withRateHeaders(refusal, verdict);
+  }
+  // A stranger's API reads have no token to count them by: their source does.
+  const stranger = isApiPath
+    ? takeStrangerRead(app.db, request, credential !== undefined || auth.user !== undefined)
+    : undefined;
+  if (stranger !== undefined && !stranger.allowed) {
+    return withRateHeaders(
+      apiError(
+        "rate_limited",
+        429,
+        `too many requests: ${stranger.limit} per minute from one source without a token — retry in ${stranger.retryAfter}s`,
+      ),
+      stranger,
+    );
   }
 
   const themeCookie = cookieValue(request, "forge_theme") ?? "";

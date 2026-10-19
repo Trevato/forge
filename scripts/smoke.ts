@@ -23,6 +23,7 @@
 import { smoke } from "../src/release/smoke.ts";
 import { webspec } from "../src/release/webspec.ts";
 import { outsider } from "../src/release/outsider.ts";
+import { PROBE_HEADER } from "../src/kernel/probe.ts";
 export * from "../src/release/smoke.ts";
 
 if (import.meta.main) {
@@ -41,7 +42,7 @@ if (import.meta.main) {
   const base = args[0];
   const seconds = wait === undefined ? 120 : Number(wait);
   if (!base || !Number.isFinite(seconds) || seconds < 0 || args.length > 1) {
-    console.error("usage: bun scripts/smoke.ts <url> [--version <v>] [--wait <seconds>] [--outsider] [--standards]");
+    console.error("usage: bun scripts/smoke.ts <url> [--version <v>] [--wait <seconds>] [--outsider] [--standards]  (--version needs FORGE_PROBE, the forge's probe)");
     process.exit(2);
   }
   if (withOutsider && !process.env["FORGE_TOKEN"]) {
@@ -56,7 +57,12 @@ if (import.meta.main) {
     console.log(`standards: ${findings.length} finding(s) over ${paths.length} path(s); report only`);
     process.exit(0);
   }
-  const failures = await smoke(base, process.env["FORGE_TOKEN"] ?? "", { version, waitMs: seconds * 1000 });
+  const failures = await smoke(base, process.env["FORGE_TOKEN"] ?? "", {
+    version,
+    waitMs: seconds * 1000,
+    // The forge tells only its probe its version (`src/kernel/probe.ts`).
+    ...(process.env["FORGE_PROBE"] ? { probe: { [PROBE_HEADER]: process.env["FORGE_PROBE"] } } : {}),
+  });
   for (const f of failures)
     console.error(`FAIL ${f.url} agent=${f.agent} status=${f.status} content-type=${f.contentType || "-"} (${f.why})`);
   const unrefused = withOutsider

@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRun } from "../src/core/runs.ts";
+import { createToken } from "../src/core/tokens.ts";
+import { createUser } from "../src/core/users.ts";
 import { vitals } from "../src/kernel/vitals.ts";
 import { fetchInternal } from "../src/git/hook-address.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -51,9 +53,17 @@ beforeAll(async () => {
   app = createApp({ dataDir, port: 0, disk: roomy });
   servers = await serve(app);
   await seedAdmin(app, { username: "alice", email: "alice@forge.local", password: "a-good-passphrase" });
-  await post("/api/v1/users", { username: "bob", email: "bob@forge.local", password: "a-good-passphrase" });
   admin = await mint("alice", "ro");
-  plain = await mint("bob", "admin");
+  // Bob signs in and is no admin: his token, made directly, is a reader's.
+  const bob = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "bob",
+    email: "bob@forge.local",
+    password: "a-good-passphrase",
+  });
+  if (!bob.ok) throw new Error(bob.error);
+  plain = createToken(app.db, bob.value.id, "plain", "ro").token;
   repoId = (
     app.db.query("SELECT id FROM repo").get() as { id: string } | null
   )?.id ?? "";
@@ -88,14 +98,18 @@ test("a site admin with a read-only token gets the shape; others get the short o
   expect(v.disk.totalBytes).toBeGreaterThan(0);
   expect(v.memory.rssBytes).toBeGreaterThan(0);
   expect(v.apps).toEqual({ serving: 0, asleep: 0, previews: 0 });
-  // Everyone else gets the platform's short shape, never the numbers.
-  for (const token of [plain, undefined]) {
-    const res = await health(token);
-    expect(res.status).toBe(200);
-    const short = (await res.json()) as Record<string, unknown>;
-    expect(short["disk"]).toBeUndefined();
-    expect(short["rollout"]).toBeDefined();
-  }
+  // A signed-in reader who is not an admin gets the platform's short shape,
+  // never the numbers.
+  expect(plain).not.toBe("");
+  const res2 = await health(plain);
+  expect(res2.status).toBe(200);
+  const short = (await res2.json()) as Record<string, unknown>;
+  expect(short["disk"]).toBeUndefined();
+  expect(short["memory"]).toBeUndefined();
+  expect(short["rollout"]).toBeDefined();
+  // A stranger is told whether it is well, and no more (#2917).
+  const stranger = (await (await health()).json()) as Record<string, unknown>;
+  expect(Object.keys(stranger).sort()).toEqual(["commit", "draining", "ok", "version"]);
   expect((await fetch(servers.url + "/healthz")).status).toBe(200);
 });
 

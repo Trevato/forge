@@ -59,6 +59,7 @@ import { resendVerification } from "../actions/verify.ts";
 import { CAPPED_WORDS } from "../actions/mail.ts";
 import { emailVerified } from "../core/verify.ts";
 import { readHealth } from "../actions/health.ts";
+import { isProbe } from "../kernel/probe.ts";
 import { listChildren } from "../actions/spawn.ts";
 import { forgeState, PARENT_HEADER } from "../spawn/clients.ts";
 import { familyView } from "../spawn/family.ts";
@@ -288,6 +289,7 @@ import {
   checkOfCommit,
   getRepoRun,
   listRepoRuns,
+  runForReader,
   runLog,
 } from "../actions/runs.ts";
 import {
@@ -4727,11 +4729,15 @@ export function apiRoutes(router: Router<Handler>): void {
 
   // ---- apps, runs, and the crew (docs/APPS.md) ----
 
-  // How the forge is, and the platform's word on its rollout: anyone may
-  // read it (a monitor has no account). A site admin also gets the forge's
-  // own vitals alongside, `ok` being both.
+  // How the forge is: anyone may ask (a monitor has no account), a stranger
+  // is told little, the release machinery's probe and a site admin the
+  // whole of it (`actions/health.ts`).
   router.add("GET", "/api/v1/health", (ctx) =>
-    json(readHealth(ctx.app, ctx.auth.user)),
+    json(
+      readHealth(ctx.app, ctx.auth.user, isProbe(ctx.request, ctx.app.config.dataDir)),
+      200,
+      { "cache-control": "no-store", vary: "authorization, cookie, x-forge-probe" },
+    ),
   );
 
   // Explore (#607): the rows /explore shows, for the same one line.
@@ -5370,14 +5376,6 @@ export function apiRoutes(router: Router<Handler>): void {
     return json({ url: link.value });
   });
 
-  // A run's cost and turn count are the owner's own facts (`canSeeOwnerFacts`,
-  // same predicate the studio page uses) — a viewer who can only read a
-  // public repository gets every other field, never those two.
-  const runForViewer = (ctx: Ctx, repo: Repo) =>
-    canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user)
-      ? (r: Run): Run => r
-      : (r: Run): Run => ({ ...r, costUsd: 0, turns: 0 });
-
   // What the crew's runs here spent over a window (`core/usage.ts`):
   // tokens, cost, wall time and outcome, by subscription, agent and issue.
   // Spend is the owner's own fact, so a reader who cannot write gets 403.
@@ -5473,8 +5471,9 @@ export function apiRoutes(router: Router<Handler>): void {
       limit,
     });
     if (!runs.ok) return notFound();
-    const forViewer = runForViewer(ctx, repo);
-    return json(paged(runs.value.map(forViewer), limit, (r) => r.id));
+    // Already as this reader may see them (`runForReader`): a stranger's
+    // runs carry no cost, turns, agent session or node.
+    return json(paged(runs.value, limit, (r) => r.id));
   });
 
   router.add("GET", "/api/v1/repos/:owner/:name/runs/:id", (ctx) => {
@@ -5484,7 +5483,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (!run.ok) return notFound();
     // The merged pulls a finished production deploy carries (`core/carried.ts`).
     return json({
-      ...runForViewer(ctx, repo)(run.value),
+      ...run.value,
       carries: carriedBy(ctx.app.db, run.value.id),
     });
   });
@@ -5512,9 +5511,7 @@ export function apiRoutes(router: Router<Handler>): void {
     // The cost and turn count are the owner's own facts, same as the studio
     // page beside this stream — a viewer who cannot write here never gets
     // them, whether the page renders or a fetch asks this stream directly.
-    const ownerFacts = canSeeOwnerFacts(ctx.app.db, repo, ctx.auth.user);
-    const forViewer = (r: Run): Run =>
-      ownerFacts ? r : { ...r, costUsd: 0, turns: 0 };
+    const forViewer = runForReader(ctx.app, ctx.auth.user, repo);
     // Every line carries its number, so a browser that reconnects — a
     // proxy in front of the forge cuts long responses — sends the last it
     // saw and hears only what followed, never the log again from the top.

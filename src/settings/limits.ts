@@ -35,7 +35,8 @@ export type LimitKey =
   | "signin.per_source"
   | "signin.per_forge"
   | "signup.per_source"
-  | "signup.per_forge";
+  | "signup.per_forge"
+  | "api.anonymous_per_source";
 
 export interface LimitDef {
   readonly label: string;
@@ -158,6 +159,14 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     min: 1,
     max: 100_000,
     reason: "Spread across many sources, sign-ups still cost hashes and accounts, so the forge as a whole has a ceiling.",
+  },
+  "api.anonymous_per_source": {
+    label: "API reads without a token per source a minute",
+    unit: "reads",
+    default: 300,
+    min: 1,
+    max: 100_000,
+    reason: "A token's reads are counted by the token; a stranger's have no token to count, so one source reading without one has a ceiling of its own.",
   },
 };
 

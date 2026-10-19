@@ -12,6 +12,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { smoke, type Failure } from "./smoke.ts";
 import { UNSTAMPED } from "../kernel/version.ts";
+import { ownProbeHeaders } from "../kernel/probe.ts";
 
 /** How long the public URL has to answer as the new version. */
 export const GIVE_UP_MS = 10 * 60_000;
@@ -92,7 +93,7 @@ export async function proveRelease(o: ProveOptions): Promise<Proof | undefined> 
     const deadline = now() + (o.giveUpMs ?? GIVE_UP_MS);
     for (;;) {
       try {
-        const res = await doFetch(health, { redirect: "manual", signal: AbortSignal.timeout(5_000) });
+        const res = await doFetch(health, { redirect: "manual", headers: ownProbeHeaders(o.dataDir), signal: AbortSignal.timeout(5_000) });
         await res.body?.cancel();
         if (res.headers.get("x-forge-version") === o.version) break;
       } catch {

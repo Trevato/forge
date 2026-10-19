@@ -183,7 +183,7 @@ import { COPIES_PER_DAY, makeItYours } from "../actions/make_it_yours.ts";
 import { resourceMetadataUrl } from "./oauth.ts";
 import { body, boundedBody, json } from "./respond.ts";
 import type { Router } from "./router.ts";
-import { mayReadRuns } from "../actions/runs.ts";
+import { mayReadRuns, runForReader } from "../actions/runs.ts";
 import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
 import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
@@ -991,8 +991,11 @@ const TOOLS: readonly Tool[] = [
       return good([
         ...waiting,
         ...reviewWaits,
-        ...runs.map((r) => {
-          const repo = byId.get(r.repoId)!;
+        ...runs.map((run) => {
+          const repo = byId.get(run.repoId)!;
+          // As this caller may read it (`runForReader`): cost and node are
+          // the owner's facts.
+          const r = runForReader(ctx.app, user, repo)(run);
           const issue =
             r.issueId === null
               ? undefined
@@ -1005,8 +1008,7 @@ const TOOLS: readonly Tool[] = [
             why: r.reason,
             state: r.state,
             since: r.startedAt ?? r.createdAt,
-            // What a run costs is the owner's fact (`canSeeOwnerFacts`).
-            costUsd: owned.has(r.repoId) ? r.costUsd : 0,
+            costUsd: r.costUsd,
             ...(placementWords(r) === "" ? {} : { ran: placementWords(r) }),
           };
         }),

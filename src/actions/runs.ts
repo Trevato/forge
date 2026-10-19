@@ -118,6 +118,23 @@ export function mayReadLogOfRun(
   );
 }
 
+/**
+ * A run as this actor may read it. Its cost and turns are the owner's own
+ * facts (`canSeeOwnerFacts`), and so is the machinery under it: the agent
+ * session a follow-up resumes and the node it ran on (#2917). A reader who
+ * cannot write here gets what ran, why and how it ended, never those — on
+ * every door, since every door reads runs through here.
+ */
+export function runForReader(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): (run: Run) => Run {
+  return canSeeOwnerFacts(app.db, repo, actor)
+    ? (run) => run
+    : (run) => ({ ...run, costUsd: 0, turns: 0, sessionId: "", node: "" });
+}
+
 export function listRepoRuns(
   app: App,
   actor: User | undefined,
@@ -129,9 +146,9 @@ export function listRepoRuns(
   if (!mayReadRuns(app, actor, repo)) return ok([]);
   // A run on a sealed report, or its fix, is the report's (`core/sealed.ts`).
   return ok(
-    queryRuns(app.db, repo.id, options).filter((r) =>
-      mayViewId(app.db, repo, r.issueId, actor),
-    ),
+    queryRuns(app.db, repo.id, options)
+      .filter((r) => mayViewId(app.db, repo, r.issueId, actor))
+      .map(runForReader(app, actor, repo)),
   );
 }
 
@@ -160,7 +177,7 @@ export function getRepoRun(
   const run = getRun(app.db, runId);
   if (!run || run.repoId !== repo.id) return err("not_found");
   if (!mayViewId(app.db, repo, run.issueId, actor)) return err("not_found");
-  return ok(run);
+  return ok(runForReader(app, actor, repo)(run));
 }
 
 export interface RunLogView {

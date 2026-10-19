@@ -28,6 +28,7 @@ import { failuresOf } from "./failures.ts";
 import { keepForgeGate } from "./gate_last.ts";
 import { checksFor } from "./service.ts";
 import { landVerdict, type LandVerdict } from "./tiers.ts";
+import { ownProbeHeaders } from "../kernel/probe.ts";
 
 /**
  * The full gate, once, on a commit that is what main would become — one
@@ -165,7 +166,7 @@ async function swapIn(
       );
     return;
   }
-  const swapped = await startRelease({ dir, sha, port, env: process.env,
+  const swapped = await startRelease({ dir, sha, port, env: process.env, probe: ownProbeHeaders(app.config.dataDir),
     ...(app.config.swapBudgetMs === undefined ? {} : { budgetMs: app.config.swapBudgetMs }),
   });
   endSwap(swapped.ok);

@@ -32,6 +32,8 @@ export interface SwapInput {
   /** The environment the new forge starts with: the old one's, as it is. */
   env: Record<string, string | undefined>;
   budgetMs?: number;
+  /** Sent with each health read (`kernel/probe.ts`), so the answer names its commit. */
+  probe?: Readonly<Record<string, string>>;
 }
 
 /** Whether `body` is a health answer from `sha` that is well and not leaving. */
@@ -41,10 +43,10 @@ export function healthyAs(body: unknown, sha: string): boolean {
   return h.ok === true && h.draining !== true && h.commit === sha;
 }
 
-async function readHealth(port: number): Promise<unknown> {
+async function readHealth(port: number, probe: Readonly<Record<string, string>>): Promise<unknown> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/v1/health`, {
-      headers: { connection: "close" },
+      headers: { connection: "close", ...probe },
       signal: AbortSignal.timeout(2_000),
     });
     return res.ok ? await res.json() : undefined;
@@ -77,7 +79,7 @@ export async function startRelease(input: SwapInput): Promise<Swapped> {
   while (Date.now() < deadline) {
     if (exited !== undefined)
       return { ok: false, line: `the new process exited with ${exited} before it was healthy` };
-    if (healthyAs(await readHealth(input.port), input.sha)) {
+    if (healthyAs(await readHealth(input.port, input.probe ?? {}), input.sha)) {
       proc.unref();
       return { ok: true, pid: proc.pid };
     }

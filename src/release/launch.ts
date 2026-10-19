@@ -24,6 +24,7 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Subprocess } from "bun";
+import { hkdfSync } from "node:crypto";
 
 export const READY_GRACE_MS = 150_000;
 const POLL_MS = 500;
@@ -122,10 +123,26 @@ export function rollbackNeed(dataDir: string): { sentence: string; since: string
   return { sentence: `Release ${r.from} did not become ready (${r.why}); rolled back to ${r.to}.`, since: r.at };
 }
 
-async function versionAt(port: number): Promise<string | undefined> {
+/**
+ * `kernel/probe.ts`'s `probeHeaders`, repeated: the launcher imports nothing
+ * of the forge's, so a release can never break the thing that rolls it back.
+ * The forge on `dataDir` tells its probe what it runs, a stranger only `ok`.
+ */
+export function probeHeaders(dataDir: string): Record<string, string> {
+  let key: Buffer;
+  try {
+    key = readFileSync(join(dataDir, "secret.key"));
+  } catch {
+    return {};
+  }
+  if (key.length !== 32) return {};
+  return { "x-forge-probe": Buffer.from(hkdfSync("sha256", key, "", "forge probe v1", 32)).toString("base64url") };
+}
+
+async function versionAt(port: number, probe: Record<string, string>): Promise<string | undefined> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/v1/health`, {
-      headers: { connection: "close" },
+      headers: { connection: "close", ...probe },
       signal: AbortSignal.timeout(2_000),
     });
     if (!res.ok) return undefined;
@@ -201,7 +218,7 @@ export async function launch(input: LaunchInput): Promise<Launched> {
       why = `it exited with ${release.exitCode ?? release.signalCode} before it was ready`;
       break;
     }
-    if ((await versionAt(input.port)) === input.version) {
+    if ((await versionAt(input.port, probeHeaders(input.dataDir))) === input.version) {
       try {
         keepGood(input.dataDir, input.tree, input.version, input.commit, now());
       } catch (error) {
