@@ -45,6 +45,7 @@ import { dashboardScreen } from "./screens/dashboard.ts";
 import { mayManageFlags } from "../core/flags.ts";
 import { accessScreen } from "./screens/access.ts";
 import { flagsScreen } from "./screens/flags.ts";
+import { scorecardScreen } from "./screens/scorecard.ts";
 import { cloudScreen } from "./screens/cloud.ts";
 import { crewSplitsScreen } from "./screens/crewsplits.ts";
 import { usageScreen } from "./screens/usage.ts";
@@ -374,6 +375,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Crew scorecard",
         hint: "agent runs per model and per prompt version",
         run: () => ctx.push(crewSplitsScreen(session, ctx)),
+      });
+    // Settings → Crew's scorecard per agent, as the page has it: a forge admin (#2677).
+    if (session.user?.isAdmin === true)
+      commands.push({
+        id: "scorecard",
+        title: "Crew scorecard per agent",
+        hint: "each agent's pulls landed, review rounds, red checks, reverts, time to land",
+        run: () => ctx.push(scorecardScreen(session, ctx)),
       });
     // Proposal tokens for a repository you write, as the API and MCP have them (#2148).
     if (session.user !== undefined)

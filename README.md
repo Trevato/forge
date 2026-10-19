@@ -24,6 +24,10 @@ child's own data, and `/forges` says how many are running and why any is not.
 In the terminal an admin's palette offers "Forges you sent": each forge with its
 claim state and the same apps-running note, never a claim link.
 
+Each agent's scorecard — pulls landed of opened, review rounds, red checks,
+reverts, time to land — is on Settings → Crew (`/settings/crew`) and in the
+terminal's palette as "Crew scorecard per agent"; both are a forge admin's only.
+
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and
 stays that way. The one exception is dev-only: `@anthropic-ai/sandbox-runtime`

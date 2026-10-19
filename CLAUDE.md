@@ -136,7 +136,9 @@ src/
               reviews, orgs/teams, webhooks, keys (ssh public keys), search
               (repos/issues/`git grep`, all bounded), events (outbox+bus),
               reconcile, schema, usage (what each agent run spent: tokens,
-              cost, wall time, by subscription/app/agent/issue) — pure
+              cost, wall time, by subscription/app/agent/issue), scorecard (how each
+              agent's pulls fare: review rounds, red checks, reverts, time to
+              land) — pure
               data, no authz, no events
   actions/    one function per platform mutation: authorize (access.ts tiers),
               call core, `bus.append`. API, web, and TUI are adapters over

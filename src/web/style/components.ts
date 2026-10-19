@@ -360,6 +360,11 @@ a.row:hover .row-title { color: var(--accent); }
 .table tbody tr:first-child td { border-top: none; }
 .table[data-dense] td, .table[data-dense] th { padding: 5px 10px; }
 .table-scroll { overflow-x: auto; scrollbar-width: thin; }
+/* The row's name stays in view while a narrow screen scrolls the figures. */
+.table[data-sticky-lead] th:first-child,
+.table[data-sticky-lead] td:first-child {
+  position: sticky; left: 0; z-index: 1; background: var(--card);
+}
 
 /* ---- tabs (navigation links, never role=tab) ---- */
 .tabs {

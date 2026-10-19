@@ -24,6 +24,11 @@ import {
   type AgentTotals,
   type SplitTotals,
 } from "../../core/runs.ts";
+import {
+  crewScorecards,
+  spanText,
+  type Scorecard,
+} from "../../core/scorecard.ts";
 import { crewFor } from "../../crew/dispatch.ts";
 import { MODELS } from "../../crew/models.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -222,6 +227,79 @@ function totalsCells(t: AgentTotals | undefined): Html {
     </td>`;
 }
 
+/**
+ * The scorecard: how each agent's pulls fare once opened — so the owner
+ * can tune who does what. What they cost is the table above's ("Per
+ * landed"), not repeated here. An agent with no pull yet is a row of
+ * dashes, never a row of misleading zeros. The agent's name stays in view
+ * while a phone scrolls the figures sideways.
+ */
+function scorecardCard(
+  agents: readonly Agent[],
+  cards: ReadonlyMap<string, Scorecard>,
+): Html {
+  const dash = html`<td class="num muted">—</td>`;
+  return card(
+    html`<div class="table-scroll">
+      <table class="table" id="crew-scorecard" data-sticky-lead>
+        <thead>
+          <tr>
+            <th>Agent</th>
+            <th>Pulls landed</th>
+            <th>Review rounds</th>
+            <th>Red checks</th>
+            <th>Reverts</th>
+            <th>Time to land</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${agents.map((agent) => {
+            const s = cards.get(agent.user.id);
+            return html`<tr>
+              <td>
+                ${userLink(agent.user.username, {
+                  avatar: false,
+                  mark: markOf(agent.user),
+                })}
+              </td>
+              ${s === undefined
+                ? html`${dash}${dash}${dash}${dash}${dash}`
+                : html`<td class="num">
+                      ${s.landed}
+                      <span class="muted small">of ${s.opened}</span>
+                    </td>
+                    ${s.reviewRounds === null
+                      ? dash
+                      : html`<td class="num">${s.reviewRounds.toFixed(1)}</td>`}
+                    ${s.redCheckRate === null
+                      ? dash
+                      : html`<td class="num">
+                          ${Math.round(100 * s.redCheckRate)}%
+                        </td>`}
+                    <td class="num">${s.reverts}</td>
+                    ${s.meanLandMs === null
+                      ? dash
+                      : html`<td class="num">${spanText(s.meanLandMs)}</td>`}`}
+            </tr>`;
+          })}
+        </tbody>
+      </table>
+    </div>`,
+    {
+      pad: false,
+      extra: "mt mb",
+      head: html`${icon("activity")}
+        <h2>Scorecard</h2>
+        <span class="muted small"
+          >Over every pull each agent opened: review rounds are change
+          requests per landed pull, red checks the share of finished checks
+          that failed, reverts the landed pulls a merged pull took back, time
+          to land the mean from opening to merge.</span
+        >`,
+    },
+  );
+}
+
 /** Today's spend against each ceiling: the drain, and the knob for it. */
 function spendingCard(
   spending: readonly { repo: Repo; status: AutonomyStatus }[],
@@ -284,6 +362,7 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
   const listed = listAllAgents(ctx.app, ctx.auth.user);
   const agents = listed.ok ? listed.value : [];
   const totals = agentTotals(ctx.app.db);
+  const scorecards = crewScorecards(ctx.app.db);
   // Where the money goes today: every app running on its own, its spend
   // against its ceiling. The ceilings are the one control on the drain, and
   // this is the page where the crew is wielded, so they are read here.
@@ -381,6 +460,7 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
         </div>`,
         { pad: false },
       )}
+  ${when(agents.length > 0, () => scorecardCard(agents, scorecards))}
   ${splitsCard(
     "Per model",
     "Model",
