@@ -33,33 +33,135 @@ their own vocabulary instead of composing the named one.
 
 ## Finding 2 — the pages, and what each is for
 
-Judged by the question "what would the owner do here that they cannot do
-elsewhere?". Page sizes are source lines, a rough proxy for how much each
-invented.
+There are 59 top-level pages, one entry each: every static `GET` route in `src/http/server.ts`
+that returns a page (`test/design-audit.test.ts` holds this list to the router,
+both ways). Each entry reads `route` — module · what it is for · what
+duplicates it · what breaks `docs/DESIGN.md`. "Breaks" counts colour literals
+(§2) and off-scale `font-size`s (§3) in the module as of
+`docs/design/baseline.json`; "none seen" means the lint finds nothing, not that
+the page was looked at (no screenshots here). Page-local classes are not
+repeated per page: the module's share of the 619 is the stylesheet it uses.
 
-| page               | for                                             | verdict                                                             |
-| ------------------ | ----------------------------------------------- | ------------------------------------------------------------------- |
-| `/` (studio home)  | where I am, what needs me                       | keep; redo as KPIs the owner pins, not a to-do list (#2665)         |
-| `/boards`          | saved queries as panels                         | keep; selectors unusable (#2666); becomes the home's panel source   |
-| `/system`          | realtime machine state (btop)                   | keep; redo on the system (#2678 plan item 4)                        |
-| `/flow`            | pipeline and bottleneck (topbar button, admin)  | overlaps `/system` and boards: merge as a board panel set           |
-| `/settings/usage`, `/settings/capacity`, `/settings/telemetry`, spend | four pages about "how much is being used" | one page, tabs by `tabs()` — usage and spend are the same question |
-| `/settings/model`, `/settings/cloud`, `/settings/backups`, `/settings/resilience` | machine/provider/recovery configuration | keep as settings sections; resilience (51 lines) folds into backups |
-| `/map`             | 1,806 lines, 12 off-scale sizes, own colours    | the largest private vocabulary; review what it shows that `/boards` and the issue dependency list do not |
-| `/audit`, `waves`, `variants`, `looks`, `returns`, `chain` | operator views of the crew's work | each needs a stated reason to be a page rather than a board panel |
-| `/settings/*` rest | account, keys, tokens, origins, crew            | fine as one settings shell (`settingsLayout()`); no change          |
+Machine routes are not pages and have no entry: `/audit.csv`,
+`/fleet/graph/live`, `/fleet/graph.csv`, `/settings/origins/callback`.
 
-Duplication to resolve: three places answer "what is the forge doing right now"
-(home, `/flow`, `/system`); four answer "what does it cost / how full is it".
+### Home, work and the crew
+
+- `/` — `pages/site.ts` (`home`, studio mode in `studio/home.ts`) · where I am, what needs me · `/front` (same page for anyone), `/board`, `/asks` · colours 3 in `site.ts`, 7 in `studio/home.ts`.
+- `/front` — `studio/home.ts` (`studioDoor`) · the signed-out door, and the site admin's controls over it · `/` for a signed-out reader · colours 7.
+- `/explore` — `studio/explore.ts` · browse what the forge holds · `/search`, `/apps` · colours 2.
+- `/board` — `pages/board.ts` (1,231 lines) · every app the viewer can see, with a wall mode · `/boards` (saved queries as panels), `/flow`, `/` · colour 1, sizes 6.
+- `/board/returns` — `pages/returns.ts` · what the window's dollars bought · `/settings/subscriptions` spend tables, `/settings/usage` · none seen.
+- `/big` — `pages/board.ts` (`bigRedirect`) · a redirect kept for old addresses into the board's wall mode · it is `/board` · none (no page of its own).
+- `/boards` — `pages/boards-view.ts` · saved queries as panels · `/board` · none seen.
+- `/boards/data` — `pages/boards.ts` · the boards' query/data surface · `/board` · none seen.
+- `/asks` — `studio/asks_page.ts` · what the crew is waiting on me for · `/` "needs me" list · colours 2.
+- `/asked` — `studio/asked_page.ts` · what I answered, as a record · `/asks` · none seen.
+- `/flow` — `pages/flow.ts` · the pipeline from ready issue to live deploy, and the bottleneck · `/system`, `/board`, `/` · none seen. A topbar button points here.
+- `/map` — `pages/map.ts` (1,806 lines) · the dependency map of work across the forge · `/board`, issue dependency lists, `/:owner/:name/map` · colours 3, sizes 12: the largest private vocabulary.
+- `/audit` — `pages/audit.ts` · every app's contract, who can do what · the app page's one-line policy · none seen. Names the audit of apps, not this document.
+- `/releases` — `pages/releases.ts` · the forge's kept releases and rollback · `/settings/backups` (both are "go back") · none seen.
+- `/contribute` — `pages/contribute.ts` · what this forge is and where outside work is welcome, open to anyone · `/llms.txt`, MCP `contribute` tool · none seen.
+- `/search` — `pages/search.ts` · find across what I can read · the palette (`palette.ts`) · none seen.
+- `/-/confirm` — `pages/search.ts` (`confirmPage`) · the "are you sure" step for a destructive action · none · none seen.
+
+### Making things
+
+- `/new` — `pages/site.ts` (`newRepoPage`) · make a repository · `/apps/new`, `/migrate` · colours 3 (file).
+- `/apps` — `pages/apps.ts` · the apps the forge runs · `/audit`, `/explore` · colour 1.
+- `/apps/new` — `pages/apps.ts` (`newAppPage`) · make an app from the template · `/new` · colour 1.
+- `/apps/open` — `pages/apps.ts` (`appsOpen`) · a door from a name to a running app · `/apps` · colour 1.
+- `/organizations/new` — `pages/org.ts` · make an organization · none · none seen.
+- `/migrate` — `pages/migrate.ts` · bring a repository in from elsewhere · `/settings/origins` (mirror jobs) · none seen.
+
+### Forges (the family)
+
+- `/forges` — `pages/forges.ts` · the forges this one sent, as a client list · `/family` · colour 1.
+- `/forges/new` — `pages/new-forge.ts` · send a new forge · none · colour 1.
+- `/family` — `pages/family.ts` · parent, this forge and children as a tree · `/forges` (the same children) · colour 1.
+- `/claim` — `pages/claim.ts` · claim a forge that was sent to me · none · colour 1.
+- `/first-admin` — `pages/first-admin.ts` · the first person becomes admin · none · none seen.
+- `/fleet/graph` — `pages/fleet-graph.ts` · the fleet as a graph · `/family`, `/forges` · none seen.
+
+### Machine and operation (admin)
+
+- `/system` — `pages/system.ts` · the machine as it is now: cores, load, memory, processes · `/flow`, `/` · none seen; its own refresh script.
+- `/resilience` — `pages/resilience.ts` · each protection in `docs/THREATS.md` against the last gate's tests · `/settings/resilience` (similar name, different content) · none seen.
+- `/admin/limits` — `pages/admin-limits.ts` · every limit with value, default and reason · `/settings/capacity` (also a numbers-you-can-change page) · none seen.
+- `/settings/capacity` — `pages/capacity.ts` · how many runs and checks go at once · `/admin/limits`, `/settings/usage` · none seen.
+- `/settings/usage` — `pages/usage.ts` · route patterns by use, unused first · `/settings/telemetry`, `/board/returns` · none seen. Not about cost, despite the name.
+- `/settings/telemetry` — `pages/telemetry.ts` · which agents may read telemetry · `/settings/crew` (agent grants) · none seen.
+- `/settings/resilience` — `pages/domains.ts` · failure domains and their last drill · `/resilience` · none seen.
+- `/settings/backups` — `pages/backups.ts` (621 lines) · backups and restore · `/settings/resilience`, `/releases` · none seen.
+- `/settings/flags` — `pages/flags.ts` · the forge's switches · none · none seen.
+- `/settings/model` — `pages/model.ts` · which model the crew runs on · `/settings/crew` · none seen.
+- `/settings/cloud` — `pages/cloud.ts` · cloud provider connection · none · none seen.
+- `/settings/cloud/audit` — `pages/cloud.ts` · what the cloud connection did · `/audit` (different subject, same word) · none seen.
+- `/settings/access` — `pages/access.ts` · who may reach the forge · `/settings/people`, `/settings/accounts` · none seen.
+
+### Sign-in and account
+
+- `/signin` — `pages/site.ts` · sign in · `/signin/parent` · colours 3 (file).
+- `/signin/parent` — `http/rp.ts` · sign in with the forge that sent this one · `/signin` · no page (redirect).
+- `/signin/parent/callback` — `http/rp.ts` · the return leg of that sign-in · none · no page (redirect).
+- `/signup` — `pages/site.ts` · make an account · `/signup` passkey flow (`signup-passkey.ts`) · colours 3 (file).
+- `/verify` — `pages/site.ts` · confirm an email address · none · colours 3 (file).
+- `/recover` — `pages/passkeys.ts` · get back in without a password · `/settings/passkeys` · none seen.
+- `/settings` — `pages/account.ts` · my account · the rest of settings · colour 1.
+- `/settings/password` — `pages/account.ts` · change password · `/settings/passkeys` · colour 1.
+- `/settings/tokens` — `pages/account.ts` · my API tokens · `/settings/keys` (credentials of two kinds on two pages) · colour 1.
+- `/settings/keys` — `pages/account.ts` · my SSH keys · `/settings/tokens` · colour 1.
+- `/settings/passkeys` — `pages/passkeys.ts` · my passkeys · `/settings/password` · none seen.
+- `/settings/secrets` — `pages/secrets.ts` · secrets apps may read · none · none seen.
+- `/settings/subscriptions` — `pages/subscriptions.ts` (624 lines) · the model subscriptions the crew spends from, with spend tables (`pages/spend.ts`) · `/board/returns` · none seen.
+- `/settings/accounts` — `pages/accounts.ts` · every account on the forge · `/settings/people` · none seen.
+- `/settings/people` — `pages/people.ts` · people and their roles · `/settings/accounts`, `/settings/crew` · none seen.
+- `/settings/crew` — `pages/crew.ts` · the named agents and what each may do · `/settings/model`, `/settings/telemetry` · none seen.
+- `/settings/origins` — `pages/origins.ts` (1,497 lines) · other forges this one reads and mirrors from · `/migrate` · none seen.
+
+## Finding 2b — what the pages do wrong, in sum
+
+- Four pages answer "how full / what does it cost": `/settings/usage` (request
+  use), `/settings/capacity`, `/settings/subscriptions` (spend), `/board/returns`.
+  Two answer "what is the forge doing now": `/flow`, `/system`, plus `/`.
+- Two pages are named "resilience" and mean different things (`/resilience`,
+  `/settings/resilience`); two are named "audit" (`/audit`, `/settings/cloud/audit`).
+- Two pages hold the same lists under different names: `/settings/accounts` and
+  `/settings/people`; `/forges` and `/family`.
+- The module that invents most: `pages/map.ts` (colours 3, sizes 12), then
+  `pages/board.ts` (colour 1, sizes 6); the colour literals are spread thin over
+  the studio and the site pages (see the table above).
+- Repository pages (`/:owner/:name/*`) are not listed: the repo header and tabs
+  already unify them.
 
 ## Finding 3 — what the clean app template does better
 
 - One page, one purpose, one primary action. The forge's top bar carries
   Flow, search, help, theme, New, user — six controls before the page begins.
-- It has no page-local CSS. Every forge page file that carries colour or size
+- It has no page-local CSS. Its stylesheet uses only token words
+  (`font-size: var(--text-sm)`, no literal) and is linked by content hash and
+  cached for a year. Every forge page file that carries colour or size
   literals (list above) is a page that reinvented a token.
 - First paint is the product. Several forge pages are tables of everything;
   the template shows three numbers and a list.
+
+## Merge or retire
+
+These match the filed issues; each is a decision for its pull, not done here.
+
+- **#2692** — usage, capacity, subscriptions' spend and the telemetry switch
+  become one "Usage" page with `tabs()`. `/board/returns` stays: it is the
+  board's tokens line opened.
+- **#2693** — `/flow` folds into the board as panels; the topbar Flow button goes.
+- **#2694** — `/resilience` folds into `/settings/backups` with
+  `/settings/resilience`'s failure domains.
+- **#2695** — `/map` is accounted for: keep only what `/board` and an issue's
+  dependency list cannot show; move its 12 sizes and 3 colours onto tokens.
+- **#2696** — operator views (`/audit`, waves, variants, looks, returns,
+  following) each state why they are a page or become board panels.
+- Not filed yet, noticed here: `/settings/people` into `/settings/accounts`;
+  `/family` into `/forges`; `/settings/tokens` and `/settings/keys` into one
+  credentials page; `/big` can be deleted once nothing links it.
 
 ## Not covered
 
