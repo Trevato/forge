@@ -20,8 +20,9 @@
  * `FORGE_SNAPSHOT_DIR` for a directory store.
  *
  * A file that went up compressed in parts (the database, `parts.ts`)
- * comes back whole: its parts read in order, joined, unpacked, and checked
- * against the size the manifest gives it.
+ * comes back whole: its parts decompressed as they arrive, in order, into
+ * the file, and checked against the size the manifest gives it. No whole
+ * compressed copy is held or written.
  *
  * The key comes back only from its wrapped form and the operator's
  * passphrase (`FORGE_SNAPSHOT_PASSPHRASE`). A wrong passphrase refuses the
@@ -46,7 +47,7 @@ import {
   type Manifest,
 } from "./snapshot.ts";
 import { unwrapKey, WRAPPED_KEY } from "./wrap.ts";
-import { isPackedFile, partPaths, unpack, type PackedFile } from "./parts.ts";
+import { isPackedFile, partPaths, unpacker, type PackedFile, type Unpacker } from "./parts.ts";
 import { resolveDestination } from "./destination.ts";
 import type { Store } from "./store.ts";
 
@@ -121,6 +122,7 @@ async function fetchAll(
   each: (entry: { readonly path: string; readonly bytes: number }, body: Uint8Array, at: number) => Promise<void>,
   name: string,
   maxBytes: number,
+  onFailure: () => void,
 ): Promise<void> {
   const pending = new Set<Promise<void>>();
   let failure: unknown;
@@ -146,6 +148,8 @@ async function fetchAll(
     })()
       .catch((error: unknown) => {
         failure ??= error;
+        // Parts held for an earlier one would wait for ever.
+        onFailure();
       })
       .finally(() => {
         held -= entry.bytes;
@@ -204,12 +208,42 @@ export async function restoreSnapshot(
   const packed: readonly unknown[] = manifest.packed ?? [];
   if (!packed.every(isPackedFile))
     throw new Error(`snapshot ${name}: a packed file in its manifest does not read whole`);
-  const partOf = new Map<string, { file: PackedFile; n: number }>();
+  // A part the manifest does not list is refused before anything is written.
+  const listed = new Set(manifest.files.map((f) => f.path));
   for (const file of packed)
-    for (const [n, path] of partPaths(file).entries())
-      partOf.set(path, { file, n });
-  const gathered = new Map<string, Uint8Array[]>();
+    for (const path of partPaths(file))
+      if (!listed.has(path)) throw new Error(`snapshot ${name} is missing ${path}`);
+  // Each packed file unpacks as its parts arrive, in order, to disk.
   mkdirSync(dataDir, { recursive: true });
+  const unpackers: { file: PackedFile; unpacker: Unpacker }[] = [];
+  const partOf = new Map<string, { file: PackedFile; unpacker: Unpacker; n: number }>();
+  for (const file of packed) {
+    const target = join(dataDir, file.path);
+    mkdirSync(dirname(target), { recursive: true });
+    const made = unpacker(file, target);
+    unpackers.push({ file, unpacker: made });
+    for (const [n, path] of partPaths(file).entries())
+      partOf.set(path, { file, unpacker: made, n });
+  }
+  const abandon = (): void => {
+    for (const u of unpackers) u.unpacker.abort();
+  };
+  // A part waits in memory for the parts before it, so the parts are read
+  // in part order: a manifest that lists them otherwise cannot stall the reads.
+  const order = [...manifest.files];
+  const slots = order.flatMap((f, i) => (partOf.has(f.path) ? [i] : []));
+  const inPartOrder = slots
+    .map((i) => order[i])
+    .sort((x, y) => {
+      const px = partOf.get(x?.path ?? "");
+      const py = partOf.get(y?.path ?? "");
+      if (px === undefined || py === undefined) return 0;
+      return px.file.path === py.file.path ? px.n - py.n : px.file.path < py.file.path ? -1 : 1;
+    });
+  for (const [k, i] of slots.entries()) {
+    const entry = inPartOrder[k];
+    if (entry !== undefined) order[i] = entry;
+  }
 
   let files = 0;
   let repos = 0;
@@ -217,65 +251,63 @@ export async function restoreSnapshot(
   let fetched = 0;
   let fetchedBytes = 0;
   say("files", 0, manifest.files.length, 0);
-  await fetchAll(store, prefix, manifest.files, async (entry, body, at) => {
-    fetched++;
-    fetchedBytes += entry.bytes;
-    say("files", fetched, manifest.files.length, fetchedBytes);
-    if (entry.path === WRAPPED_KEY) return;
-    // A part waits for the rest of its file.
-    const part = partOf.get(entry.path);
-    if (part !== undefined) {
-      const got = gathered.get(part.file.path) ?? [];
-      got[part.n] = body;
-      gathered.set(part.file.path, got);
-      return;
-    }
-    // A day's run logs in one object come back as the logs they were.
-    if (isRunBundle(entry.path)) {
-      for (const run of unpackRuns(body)) {
-        const out = join(dataDir, "runs", run.path);
-        mkdirSync(dirname(out), { recursive: true });
-        await Bun.write(out, run.body);
-        files++;
+  try {
+    await fetchAll(store, prefix, order, async (entry, body, at) => {
+      fetched++;
+      fetchedBytes += entry.bytes;
+      say("files", fetched, manifest.files.length, fetchedBytes);
+      if (entry.path === WRAPPED_KEY) return;
+      // A part goes into its file's decompression as soon as its turn comes.
+      const part = partOf.get(entry.path);
+      if (part !== undefined) {
+        await part.unpacker.feed(part.n, body);
+        return;
       }
-      return;
-    }
-    const bundle = entry.path.match(/^repos\/([^/]+)\/([^/]+)\.bundle$/);
-    // A bundle is not a file of the forge's; it becomes a repository below.
-    const target = bundle
-      ? join(dataDir, "restore-bundles", `${bundle[1]}--${bundle[2]}.bundle`)
-      : join(dataDir, entry.path);
-    mkdirSync(dirname(target), { recursive: true });
-    await Bun.write(target, body);
-    // A key the rest of the machine could read is one the forge refuses to
-    // use; the snapshot carries bytes, not modes, so the modes are set here.
-    if (entry.path === "secret.key" || entry.path.startsWith("ssh/"))
-      chmodSync(target, 0o600);
-    files++;
-    if (bundle)
-      bundles.push({ at, owner: bundle[1]!, name: bundle[2]!, file: target });
-  }, name, options.inFlightBytes ?? IN_FLIGHT_BYTES);
+      // A day's run logs in one object come back as the logs they were.
+      if (isRunBundle(entry.path)) {
+        for (const run of unpackRuns(body)) {
+          const out = join(dataDir, "runs", run.path);
+          mkdirSync(dirname(out), { recursive: true });
+          await Bun.write(out, run.body);
+          files++;
+        }
+        return;
+      }
+      const bundle = entry.path.match(/^repos\/([^/]+)\/([^/]+)\.bundle$/);
+      // A bundle is not a file of the forge's; it becomes a repository below.
+      const target = bundle
+        ? join(dataDir, "restore-bundles", `${bundle[1]}--${bundle[2]}.bundle`)
+        : join(dataDir, entry.path);
+      mkdirSync(dirname(target), { recursive: true });
+      await Bun.write(target, body);
+      // A key the rest of the machine could read is one the forge refuses to
+      // use; the snapshot carries bytes, not modes, so the modes are set here.
+      if (entry.path === "secret.key" || entry.path.startsWith("ssh/"))
+        chmodSync(target, 0o600);
+      files++;
+      if (bundle)
+        bundles.push({ at, owner: bundle[1]!, name: bundle[2]!, file: target });
+    }, name, options.inFlightBytes ?? IN_FLIGHT_BYTES, abandon);
+  } catch (error) {
+    abandon();
+    throw error;
+  }
   // Reads land in any order; repositories come back in the manifest's.
   bundles.sort((a, b) => a.at - b.at);
   let unpacked = 0;
   let unpackedBytes = 0;
   say("unpack", 0, packed.length, 0);
-  for (const file of packed) {
-    const got = gathered.get(file.path) ?? [];
-    const parts = partPaths(file).map((path, n) => {
-      const body = got[n];
-      if (body === undefined)
-        throw new Error(`snapshot ${name} is missing ${path}`);
-      return body;
-    });
-    gathered.delete(file.path);
-    const target = join(dataDir, file.path);
-    mkdirSync(dirname(target), { recursive: true });
-    const whole = await unpack(file, parts);
-    await Bun.write(target, whole);
+  for (const { unpacker: u } of unpackers) {
+    let whole: number;
+    try {
+      whole = await u.finish();
+    } catch (error) {
+      abandon();
+      throw error;
+    }
     files++;
     unpacked++;
-    unpackedBytes += whole.byteLength;
+    unpackedBytes += whole;
     say("unpack", unpacked, packed.length, unpackedBytes);
   }
   // Each repository is its own clone, so several at once: a forge of

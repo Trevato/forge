@@ -11,8 +11,11 @@
  * the parts back in order, joins them, and unpacks to exactly the bytes
  * that went in, or refuses.
  *
- * Plain data in, plain data out: no store, no files.
+ * Plain data in, plain data out: `pack` and `unpack` touch no store and no files; `unpacker` writes the one file it is given.
  */
+
+import { createWriteStream, renameSync, rmSync } from "node:fs";
+import { createZstdDecompress } from "node:zlib";
 
 /** A part's size: one put carries it within its own deadline at the floor rate (27 s at 5 Mbit/s). */
 export const PART_BYTES = 16 * 1_048_576;
@@ -90,6 +93,110 @@ export async function unpack(
   if (body.byteLength !== p.bytes)
     throw new Error(`${p.path} unpacks to ${body.byteLength} bytes, not ${p.bytes}`);
   return body;
+}
+
+export interface Unpacker {
+  /** Hand over part `n`; resolves once part `n` itself is written, which waits for every part before it. */
+  feed(n: number, body: Uint8Array): Promise<void>;
+  /** Close the file, check its size, and put it at `target`; the bytes it unpacked to. */
+  finish(): Promise<number>;
+  /** Drop what was written, after a failure elsewhere. */
+  abort(): void;
+}
+
+/**
+ * A packed file unpacking as its parts arrive: each part, once every part
+ * before it has come, goes into a zstd stream that writes the file out. No
+ * whole compressed copy is held or written, only the parts waiting on an
+ * earlier one; the file is written beside its target and renamed into place
+ * when it checks out, so a refusal leaves nothing at `target`.
+ */
+export function unpacker(p: PackedFile, target: string): Unpacker {
+  const partial = `${target}.partial`;
+  const waiting = new Map<number, Uint8Array>();
+  const waiters = new Map<number, { ok: () => void; no: (e: unknown) => void }>();
+  const dec = createZstdDecompress();
+  const out = createWriteStream(partial);
+  let failure: unknown;
+  // The first failure stands; every part still waiting for its turn hears of it.
+  const fail = (e: unknown): void => {
+    failure ??= e;
+    for (const w of waiters.values()) w.no(failure);
+    waiters.clear();
+    waiting.clear();
+    drop();
+  };
+  // Nothing of a refused file stays: the stream may still be opening, so the
+  // file goes again once it has closed.
+  const drop = (): void => {
+    dec.destroy();
+    out.destroy();
+    out.once("close", () => rmSync(partial, { force: true }));
+    rmSync(partial, { force: true });
+  };
+  dec.on("error", fail);
+  out.on("error", fail);
+  dec.pipe(out);
+  let next = 0;
+  let packedSoFar = 0;
+  let chain: Promise<void> = Promise.resolve();
+  const write = (body: Uint8Array): Promise<void> =>
+    new Promise((resolve, reject) => {
+      if (failure !== undefined) return reject(failure);
+      dec.write(body, (e) => (e ? reject(e) : resolve()));
+    });
+  const drain = async (): Promise<void> => {
+    for (let b = waiting.get(next); b !== undefined; b = waiting.get(next)) {
+      const n = next++;
+      waiting.delete(n);
+      packedSoFar += b.byteLength;
+      await write(b);
+      waiters.get(n)?.ok();
+      waiters.delete(n);
+    }
+  };
+  const abort = (): void => {
+    fail(new Error(`${p.path} was abandoned`));
+  };
+  return {
+    feed(n, body) {
+      if (!Number.isSafeInteger(n) || n < 0 || n >= p.parts)
+        return Promise.reject(new Error(`${p.path} has no part ${n}`));
+      if (n < next || waiting.has(n))
+        return Promise.reject(new Error(`${p.path} part ${n} came twice`));
+      if (failure !== undefined) return Promise.reject(failure);
+      return new Promise<void>((ok, no) => {
+        waiters.set(n, { ok, no });
+        waiting.set(n, body);
+        // The chain never rejects: a failure is `failure`, told to every waiter.
+        chain = chain.then(drain).catch(fail);
+      });
+    },
+    async finish() {
+      try {
+        await chain;
+        if (failure !== undefined) throw failure;
+        if (next !== p.parts)
+          throw new Error(`${p.path} came back in ${next} parts, not ${p.parts}`);
+        if (packedSoFar !== p.packedBytes)
+          throw new Error(`${p.path}'s parts are ${packedSoFar} bytes, not ${p.packedBytes}`);
+        await new Promise<void>((resolve, reject) => {
+          out.on("finish", resolve);
+          out.on("error", reject);
+          dec.on("error", reject);
+          dec.end();
+        });
+        if (out.bytesWritten !== p.bytes)
+          throw new Error(`${p.path} unpacks to ${out.bytesWritten} bytes, not ${p.bytes}`);
+        renameSync(partial, target);
+        return out.bytesWritten;
+      } catch (error) {
+        abort();
+        throw error;
+      }
+    },
+    abort,
+  };
 }
 
 /** Whether a manifest's `packed` entry reads whole: the restore trusts nothing else. */
