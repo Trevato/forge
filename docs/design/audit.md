@@ -119,6 +119,17 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings/crew` — `pages/crew.ts` · the named agents and what each may do · `/settings/model`, `/settings/telemetry` · none seen.
 - `/settings/origins` — `pages/origins.ts` (1,497 lines) · other forges this one reads and mirrors from · `/migrate` · none seen.
 
+## Operator views — why each is a page (#2696)
+
+One line each; none is retired, and the reason it is not a board panel is the line.
+
+- **`/audit`** — a page: a table of every app's contract, wide and exportable (`/audit.csv`); the board shows one row per app, not who can do what.
+- **`/:owner/:name/waves`** — a page: one repository's notes by version, linked file by file; the board has no repository scope to hold it.
+- **`/:owner/:name/variants/:group`** — a page: a deck is a decision (a vote post, a swipe) among the sibling pulls of one group; a panel could list the pulls, not decide among them.
+- **`/:owner/:name/following`** — a page: the chain of forges this forge's code descends from, with the owner's one way out (sever); a destructive step with a record needs room and the `/-/confirm` step.
+- **`/board/returns`** — a page, for now: the board's tokens line opened (see #2692); not a duplicate of the spend tables.
+- **looks** (`/:owner/:name/looks/:env/:commit/:kind.png`) — not a page: a picture route, cached by commit, embedded by the pull page, the ask row and the app head. Nothing to retire.
+
 ## Finding 2b — what the pages do wrong, in sum
 
 - Four pages answer "how full / what does it cost": `/settings/usage` (request

@@ -49,3 +49,9 @@ test("the audit names no route that does not exist", () => {
 test("each entry is written once", () => {
   expect(entries.length).toBe(new Set(entries).size);
 });
+
+test("each operator view states why it is a page (#2696)", () => {
+  const section = doc.split("## Operator views")[1]?.split("\n## ")[0] ?? "";
+  for (const r of ["/audit", "/waves", "/variants/", "/following", "/board/returns", "/looks/"])
+    expect(section).toContain(r);
+});
