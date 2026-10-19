@@ -256,7 +256,8 @@ export async function settingsPage(ctx: Ctx): Promise<Response> {
             ${repo.protectDefault ? html`checked` : null}
           />
           <span
-            >Protect the default branch — no force-push, no deletion. Enforced
+            >Protect the default branch — no force-push, no deletion, and only
+            its admins push it; everyone else lands through a pull. Enforced
             by the pre-receive hook, so it holds for every client.</span
           >
         </label>

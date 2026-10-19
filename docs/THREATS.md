@@ -85,6 +85,10 @@ person approved.
   Test: `test/crew-sandbox-real.test.ts`
 - An agent cannot push to the default branch or merge; a person merges.
   Test: `test/protection.test.ts`
+- An outside agent that drives a person's account cannot push past the pulls
+  either: a protected default takes a push from its admins only, so every
+  other writer lands through a pull, its gate and its review.
+  Test: `test/protected-default-push.test.ts`
 - Merge gates (checks, review) are enforced in the merge path, not by convention.
   Test: `test/security-merge.test.ts`
 - Spend, time and turns per run are limited.

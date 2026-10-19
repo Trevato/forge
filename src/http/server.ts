@@ -51,7 +51,13 @@ import {
   REQUEST_MAX,
   settleBody,
 } from "./limits.ts";
-import { canRead, canWrite, getRepo, getRepoById } from "../core/repos.ts";
+import {
+  canAdmin,
+  canRead,
+  canWrite,
+  getRepo,
+  getRepoById,
+} from "../core/repos.ts";
 import { trackPullHead } from "../core/pulls.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../actions/repos.ts";
 import { sessionOf } from "../core/sessions.ts";
@@ -1764,6 +1770,15 @@ async function handleHook(app: App, request: Request): Promise<Response> {
             {
               status: 403,
             },
+          );
+        }
+        // A protected default takes commits from its admins only, as the web
+        // editor's (`actions/contents.ts`): every other writer lands through
+        // a pull. A merge moves the ref itself and never comes here.
+        if (!canAdmin(app.db, repo, actor)) {
+          return new Response(
+            `${repo.defaultBranch} is protected: only its admins push it; open a pull from a branch`,
+            { status: 403 },
           );
         }
         if (!ZERO_OID.test(update.oldOid)) {
