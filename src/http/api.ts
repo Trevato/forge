@@ -280,6 +280,7 @@ import {
 } from "../actions/migrate.ts";
 import {
   cancelRepoRun,
+  checkOfCommit,
   getRepoRun,
   listRepoRuns,
   runLog,
@@ -2581,6 +2582,16 @@ export function apiRoutes(router: Router<Handler>): void {
       ...commit,
       diff: diff.ok ? diff.value : { files: [], additions: 0, deletions: 0 },
     });
+  });
+
+  // The default branch's own check of a full commit id: what a release
+  // waits on before it builds (#2794). Never cached: `pending` turns.
+  router.add("GET", "/api/v1/repos/:owner/:name/commits/:oid/check", (ctx) => {
+    const repo = loadRepo(ctx);
+    if (!repo) return notFound();
+    const found = checkOfCommit(ctx.app, ctx.auth.user, repo, ctx.params.oid ?? "");
+    if (!found.ok) return notFound();
+    return json(found.value, 200, { "cache-control": "no-store" });
   });
 
   // The path is optional: no path lists the root tree; a directory lists its

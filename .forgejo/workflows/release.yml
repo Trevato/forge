@@ -1,6 +1,8 @@
 name: release
-# A version tag ships: build the image from the Dockerfile, sign it, push the
-# chart. Flux rolls the new chart version to prod once the platform pins it.
+# A version tag ships: wait for the forge's own check of the tagged commit,
+# build the image from the Dockerfile (which boots what it built), sign it,
+# push the chart. Flux rolls the new chart version to prod once the platform
+# pins it. This is the release's one gate (#2794); docs/ops/ROLL.md says the rest.
 on:
   push:
     tags: ["v*"]
@@ -53,6 +55,51 @@ jobs:
           set -eu
           git clone --depth 1 --branch "$GITHUB_REF_NAME" \
             "http://x-access-token:$TOKEN@$REGISTRY/$OWNER/$APP.git" src
+
+      # The gate of record (#2794), half one: the forge's own full check —
+      # the one every push to main runs — green on this very commit. Nothing
+      # on this runner re-runs the suite: its copy held four good releases on
+      # runner-only reds and caught none of the real failures. Half two is
+      # the build below: the Dockerfile boots the image it built
+      # (src/release/boot.ts) and fails the build if it does not answer.
+      # Reads the two settings the flake hunt already needs on the mirror:
+      # variable FORGE_URL (the forge's origin) and secret FORGE_TOKEN.
+      - name: the forge's own check is green on this commit
+        env:
+          FORGE_URL: ${{ vars.FORGE_URL }}
+          FORGE_TOKEN: ${{ secrets.FORGE_TOKEN }}
+        run: |
+          set -eu
+          [ -n "${FORGE_URL:-}" ] || { echo "FATAL: variable FORGE_URL is not set on the mirror"; exit 1; }
+          URL="${FORGE_URL%/}"
+          REPO="$OWNER/$APP"
+          SHA=$(git -C src rev-parse HEAD)
+          read_check() {
+            if [ -n "${FORGE_TOKEN:-}" ]; then
+              curl -fsS -H "authorization: Bearer $FORGE_TOKEN" "$URL/api/v1/repos/$REPO/commits/$SHA/check"
+            else
+              curl -fsS "$URL/api/v1/repos/$REPO/commits/$SHA/check"
+            fi
+          }
+          # main's check takes minutes; the tag can be cut before it ends.
+          # Two hours is forge.json's check timeout. A push to main queues
+          # its check at once, so a commit still unchecked after ten minutes
+          # was never main's: that is not worth the two hours.
+          START=$(date +%s)
+          DEADLINE=$(( START + 7200 ))
+          while :; do
+            BODY=$(read_check || echo '{"state":"unreachable"}')
+            STATE=$(printf '%s' "$BODY" | sed -n 's/.*"state":"\([a-z]*\)".*/\1/p')
+            case "$STATE" in
+              ok) echo "$REPO@$SHA: $(printf '%s' "$BODY" | sed -n 's/.*"summary":"\([^"]*\)".*/\1/p')"; exit 0 ;;
+              failed) echo "FATAL: the forge's own check failed on $SHA: $URL/$REPO/runs/$(printf '%s' "$BODY" | sed -n 's/.*"runId":"\([^"]*\)".*/\1/p')"; exit 1 ;;
+              superseded) echo "FATAL: main's check of $SHA was superseded and will not run; tag a commit main has checked"; exit 1 ;;
+              none) [ $(( $(date +%s) - START )) -lt 600 ] || { echo "FATAL: main never checked $SHA in 10 min; tag a commit on main"; exit 1; } ;;
+            esac
+            [ "$(date +%s)" -lt "$DEADLINE" ] || { echo "FATAL: no green check of $SHA on $URL/$REPO in 2 h (last: ${STATE:-unreadable})"; exit 1; }
+            echo "waiting: the forge's check of $SHA is ${STATE:-unreadable}"
+            sleep 30
+          done
 
       - name: build & push image (rootless buildkit)
         run: |

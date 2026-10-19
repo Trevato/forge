@@ -8,6 +8,7 @@
  * the system's own voice and takes no actor.
  */
 
+import { commitCheck, isCommitId, type CommitCheck } from "../checks/commit_check.ts";
 import { mayViewId } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAbility } from "./roles.ts";
@@ -116,6 +117,20 @@ export function listRepoRuns(
       mayViewId(app.db, repo, r.issueId, actor),
     ),
   );
+}
+
+/**
+ * The default branch's own check of one commit (`checks/commit_check.ts`),
+ * for whoever may read the repository's runs: what a release waits on.
+ */
+export function checkOfCommit(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  oid: string,
+): Result<CommitCheck, "not_found"> {
+  if (!isCommitId(oid) || !mayReadRuns(app, actor, repo)) return err("not_found");
+  return ok(commitCheck(app.db, repo.id, repo.defaultBranch, oid));
 }
 
 /** A run by id, only if it belongs to a repository the actor can see. */

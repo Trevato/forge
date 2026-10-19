@@ -1565,6 +1565,8 @@ Under the rows, once the tests have begun, the run page shows a progress bar of 
 
 While the default branch's own last check is red, the forge holds its pulls' checks queued rather than fail each one on the same test (`src/checks/red_main.ts`): the vitals carry one card naming the failing test and how many checks wait, and main going green releases them. A check a person asks for again runs at once, and no check is held more than 20 minutes, so the pull that fixes main can always show green.
 
+`GET /api/v1/repos/:owner/:name/commits/:oid/check` answers the default branch's own check of one full commit id, `{commit, state, runId, summary, finishedAt}` with `state` `ok`, `failed`, `pending`, `superseded` (every check of it was cancelled, as when main moved on before it ran, and none will follow) or `none`, to whoever may read the repository's runs (`src/checks/commit_check.ts`). It is half of the forge's release gate: the release workflow builds only once it reads `ok` for the tagged commit, and the build boots the image it made (`docs/ops/ROLL.md`, "The gate of record").
+
 A test file the shard gate clears because it passed alone is still a failure: when the default branch's own check log says `fails only beside others: <files> (shard-mates: <files>)`, the runner opens one issue per file (at most 5 per run, the rest named in the log as not filed) or comments on the one already open. The issue is authored as the repository owner and its body says it was filed by the check runner. A pull or other branch's check files nothing.
 
 ## Flags

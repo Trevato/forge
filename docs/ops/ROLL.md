@@ -142,6 +142,41 @@ request routed to it in that beat is refused.
 Release as the release workflow does. Nothing in this recipe changes the
 workflow or the chart.
 
+## The gate of record (#2794)
+
+A release ships on two proofs, and nothing else holds it:
+
+1. **The forge's own full check, green on the release commit.** The check
+   every push to `main` runs (`forge.json` `check.run`, never a pull's fast
+   tier), read from the forge by full commit id:
+   `GET /api/v1/repos/:owner/:name/commits/:oid/check` answers
+   `{commit, state, runId, summary, finishedAt}`, where `state` is `ok`,
+   `failed`, `pending` (queued or running), `superseded` or `none` (main
+   never checked it). The newest of main's own checks of that commit
+   decides; a cancelled one is passed over when another check of the commit
+   stands (a restart queues it again), and is `superseded` when none does:
+   main moved on while it waited, and nothing will check that commit again.
+   `release.yml`'s first gated step polls it every 30 s for up to two hours
+   and builds only on `ok`; `failed` stops the release with the run's link,
+   `superseded` stops it at once, and `none` stops it after ten minutes (a
+   push to main queues its check at once). Tag a commit main has checked. It reads the mirror's variable
+   `FORGE_URL` and secret `FORGE_TOKEN`, the two the flake hunt already
+   needs.
+2. **The built image boots.** The Dockerfile runs `bun src/release/boot.ts`
+   on the image it just built (below); a refusal fails the build and nothing
+   is pushed.
+
+An image in the registry has therefore passed both. The mirror runs no copy
+of the suite on a push, a pull or a tag: its `check.yml` held 0.7.170–0.7.173
+on reds only that runner saw and caught none of the failures that reached
+production, so it is gone (`test/release-gate.test.ts` keeps it gone). The
+nightly `flake-hunt.yml` and `outside-gate.yml` stay: they file issues, they
+gate nothing.
+
+After the roll, a version not ready in `FORGE_READY_GRACE_S` is rolled back
+to the last good one by the launcher, with no one asked (below). Until the
+forge deploys itself (#1432), this is how a release ships.
+
 ## A release that does not boot (#2652)
 
 Three guards stand between a release that cannot start and production, all

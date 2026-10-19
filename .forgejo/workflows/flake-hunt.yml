@@ -7,8 +7,8 @@ name: flake-hunt
 # proposes that as a pull. Nobody hand-edits the list.
 #
 # Flakiness is judged per file across runs, so the gate splits into slices
-# and each slice hunts on its own: the isolated runner cuts a job at ~30m
-# (see check.yml), and five loaded runs of the whole gate is hours.
+# and each slice hunts on its own: the isolated runner cuts a job at ~30m,
+# and five loaded runs of the whole gate is hours.
 #
 # Needs two settings on the mirror: secret FORGE_TOKEN (a forge token with
 # write on the repository) and variable FORGE_URL (the forge's origin).
