@@ -33,7 +33,7 @@ import { changeSignup, readSignup } from "../actions/signup.ts";
 import { SIGNUP_MODES } from "../settings/signup.ts";
 import { QUOTA_KEYS } from "../settings/quotas.ts";
 import { LIMIT_KEYS } from "../settings/limits.ts";
-import { convergeWords, FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeOrTell } from "../actions/follow.ts";
+import { convergeWords, FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords, takeOrTell } from "../actions/follow.ts";
 import { relationOf } from "../actions/forks.ts";
 import { chainOfRepo, FOLLOW_MODES, forgeLinkOf } from "../spawn/chain.ts";
 import { watchMilestone } from "../actions/watches.ts";
@@ -1534,7 +1534,7 @@ const TOOLS: readonly Tool[] = [
   {
     name: "take_updates",
     description:
-      "Take the parent's updates into a fork: a fast-forward, or a merge when git merges cleanly. A conflict is refused with its files, and the crew is told: the converge issue is opened (or found) and named in the answer.",
+      "Take the parent's updates into a fork: on a spawned forge's code repository, the parent forge's new commits open as one pull (the default branch never moves); otherwise a fast-forward, or a merge when git merges cleanly. A conflict is refused with its files, and the crew is told: the converge issue is opened (or found) and named in the answer.",
     inputSchema: {
       type: "object",
       properties: { repo: REPO_ARG },
@@ -1544,6 +1544,14 @@ const TOOLS: readonly Tool[] = [
     async run(ctx, user, args) {
       const repo = repoArg(ctx, user, args);
       if (isAnswer(repo)) return repo;
+      // No parent in this forge but a chain across forges: the parent's code comes as a pull.
+      if (forkParentFor(ctx.app.db, repo, user) === undefined && (await chainOfRepo(ctx.app, repo)) !== undefined) {
+        const across = await takeForgeCode(ctx.app, user, repo);
+        if (across.ok) return good({ ...across.value, ...takeForgeWords(across.value) });
+        return across.error === "not_following"
+          ? bad("not_following", "this repository follows nothing across forges")
+          : bad(across.error, "only this repository's admin can take the parent forge's code");
+      }
       const took = await takeOrTell(ctx.app, user, repo);
       if (took.ok)
         return good({

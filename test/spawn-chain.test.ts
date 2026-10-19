@@ -280,6 +280,42 @@ describe("the chain of forges", () => {
     expect(await tip()).toBe(before);
   });
 
+  test("MCP: following carries upstream, and take_updates opens the take pull for the admin alone", async () => {
+    const owner = getUserByName(grand.db, "alice")!;
+    const rpc = async (id: string, name: string) => {
+      const res = await fetch(`${servers.url}/mcp`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${createToken(grand.db, id, "mcp", "rw").token}`,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { repo: "tot/forge" } } }),
+      });
+      const r = ((await res.json()) as any).result;
+      return { isError: r.isError === true, value: r.isError === true ? r.content[0].text : JSON.parse(r.content[0].text) };
+    };
+    const dir = repoDir(grand.reposRoot, "tot", "forge");
+    const tip = async () => {
+      const r = await runGit(["rev-parse", "refs/heads/main"], { cwd: dir });
+      return r.ok ? r.value.trim() : "";
+    };
+    const before = await tip();
+    const stands = await rpc(owner.id, "following");
+    expect(stands.value.upstream?.behind).toBe(1);
+
+    const reader = await createUser(grand.db, { origin: "seed", trusted: true, username: "mcpreader", email: "mr@x.test" });
+    if (!reader.ok) throw new Error("reader");
+    expect((await rpc(reader.value.id, "take_updates")).isError).toBe(true);
+
+    const took = await rpc(owner.id, "take_updates");
+    expect(took.isError).toBe(false);
+    const pull = pullForBranch(grand.db, getRepo(grand.db, "tot", "forge")!.id, TAKE_BRANCH);
+    expect(took.value.kind).toBe("pull");
+    expect(took.value.message).toBe(`1 commit from your parent is in pull #${pull!.number}.`);
+    expect(await tip()).toBe(before);
+  });
+
   test("take: the terminal's t key is the owner's alone, shown when behind, and toasts the pull", async () => {
     const owner = getUserByName(grand.db, "alice")!;
     const reader = await createUser(grand.db, { origin: "seed", trusted: true, username: "ttyreader", email: "tty@x.test" });
