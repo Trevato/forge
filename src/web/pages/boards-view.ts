@@ -70,8 +70,8 @@ const denied = (ctx: Ctx) => {
 export async function boardsList(ctx: Ctx): Promise<Response> {
   const listed = await listAllBoards(ctx.app, ctx.auth.user);
   if (!listed.ok) return notFoundPage(ctx);
-  const make = html`<form method="post" action="/boards/new" class="row-actions">
-    <input class="input" name="title" required maxlength="${String(MAX_TITLE)}" placeholder="New board's title" aria-label="Title of the new board" />
+  const make = html`<form method="post" action="/boards/new" class="bform">
+    <label class="qf"><span>New board</span><input class="input" name="title" required maxlength="${String(MAX_TITLE)}" placeholder="Title" /></label>
     ${btn("Make board", { variant: "primary" })}
   </form>`;
   const body =
@@ -98,15 +98,15 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
 }
 
 function panelForm(slug: string, op: string, p: Panel | undefined, index: number, fields: Html): Html {
-  return html`<form method="post" action="/boards/${slug}/${op}" class="row-actions">
+  return html`<form method="post" action="/boards/${slug}/${op}" class="bform">
     ${op === "edit" ? html`<input type="hidden" name="index" value="${String(index)}" />` : null}
-    <input class="input" name="title" required maxlength="${String(MAX_TITLE)}" value="${p?.title ?? ""}" placeholder="Panel title" aria-label="Panel title" />
-    <select class="input" name="w" aria-label="Width in columns">
+    <label class="qf"><span>Panel title</span><input class="input" name="title" required maxlength="${String(MAX_TITLE)}" value="${p?.title ?? ""}" placeholder="Panel title" /></label>
+    <label class="qf"><span>Width</span><select class="input" name="w">
       ${[1, 2, 3].slice(0, MAX_W).map((n) => html`<option value="${String(n)}" ${n === (p?.w ?? 1) ? raw("selected") : null}>${String(n)} wide</option>`)}
-    </select>
-    <select class="input" name="h" aria-label="Height">
+    </select></label>
+    <label class="qf"><span>Height</span><select class="input" name="h">
       ${[1, 2, 3].slice(0, MAX_H).map((n) => html`<option value="${String(n)}" ${n === (p?.h ?? 1) ? raw("selected") : null}>${String(n)} high</option>`)}
-    </select>
+    </select></label>
     ${fields}
     ${btn(op === "edit" ? "Save panel" : "Add panel", { variant: "primary" })}
   </form>`;
@@ -137,17 +137,17 @@ function manage(slug: string, board: Board, adding: Html): Html {
       () => card(panelForm(slug, "add", undefined, 0, adding), { head: html`<h2>Add a panel</h2>` }),
     )}
     ${card(
-      html`<form method="post" action="/boards/${slug}/rename" class="row-actions">
-          <input class="input" name="title" required maxlength="${String(MAX_TITLE)}" value="${board.title}" aria-label="Board title" />
+      html`<form method="post" action="/boards/${slug}/rename" class="bform">
+          <label class="qf"><span>Board title</span><input class="input" name="title" required maxlength="${String(MAX_TITLE)}" value="${board.title}" /></label>
           ${btn("Rename")}
         </form>
-        <form method="post" action="/boards/${slug}/settings" class="row-actions">
-          <select class="input" name="range" aria-label="Range">${RANGES.map((r) => option(r, r === board.range))}</select>
-          <select class="input" name="refresh" aria-label="Refresh">${REFRESHES.map((r) => option(r, r === board.refresh))}</select>
+        <form method="post" action="/boards/${slug}/settings" class="bform">
+          <label class="qf"><span>Range</span><select class="input" name="range">${RANGES.map((r) => option(r, r === board.range))}</select></label>
+          <label class="qf"><span>Refresh</span><select class="input" name="refresh">${REFRESHES.map((r) => option(r, r === board.refresh))}</select></label>
           ${btn("Save settings")}
         </form>
-        <form method="post" action="/boards/${slug}/duplicate" class="row-actions">${btn("Duplicate")}</form>
-        <form method="post" action="/boards/${slug}/delete" class="row-actions">${btn("Delete this board", { variant: "danger" })}</form>`,
+        <form method="post" action="/boards/${slug}/duplicate" class="bform">${btn("Duplicate")}</form>
+        <form method="post" action="/boards/${slug}/delete" class="bform">${btn("Delete this board", { variant: "danger" })}</form>`,
       { head: html`<h2>Board</h2>` },
     )}`;
 }

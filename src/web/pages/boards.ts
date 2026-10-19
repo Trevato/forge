@@ -155,37 +155,59 @@ export function queryFields(p: Params) {
   const src = Object.hasOwn(SOURCES, p.source) ? SOURCES[p.source]! : undefined;
   const cols = src ? Object.keys(src.columns) : [];
   return html`
-      <select class="input" name="chart" aria-label="Chart">
-      ${CHARTS.map((c) => option(c, CHART_NAMES[c], c === p.chart))}
-    </select>
-    <select class="input" name="source" aria-label="Source">
-      ${Object.keys(SOURCES).map((n) => option(n, n, n === p.source))}
-    </select>
-    <select class="input" name="aggregate" aria-label="Aggregate">
-      ${AGGREGATES.map((a) => option(a, a, a === p.aggregate))}
-    </select>
-    <select class="input" name="column" aria-label="Column to aggregate">
-      ${option("", "(rows)", p.column === "")}
-      ${cols.filter((c) => src!.columns[c] === "number").map((c) => option(c, c, c === p.column))}
-    </select>
-    <select class="input" name="by" aria-label="Group by">
-      ${(Object.keys(BUCKET_MS) as Bucket[]).map((b) => option(b, `per ${b}`, b === p.by))}
-      ${cols.map((c) => option(c, `by ${c}`, c === p.by))}
-    </select>
-    <select class="input" name="series" aria-label="Series (stacked area, heat strip, table)">
-      ${option("", "(one series)", p.series === "")}
-      ${cols.map((c) => option(c, `split by ${c}`, c === p.series))}
-    </select>
-    <input class="input mono" name="from" value="${p.from}" placeholder="from 2026-10-01" aria-label="From" maxlength="${MAX_PARAM}" />
-    <input class="input mono" name="to" value="${p.to}" placeholder="to 2026-10-08" aria-label="To" maxlength="${MAX_PARAM}" />
-    <select class="input" name="fcolumn" aria-label="Filter column">
-      ${option("", "(no filter)", p.fcolumn === "")}
-      ${cols.map((c) => option(c, c, c === p.fcolumn))}
-    </select>
-    <select class="input" name="fop" aria-label="Filter operator">
-      ${OPS.map((o) => option(o, o, o === p.fop))}
-    </select>
-    <input class="input mono" name="fvalue" value="${p.fvalue}" placeholder="value" aria-label="Filter value" maxlength="${MAX_PARAM}" />
+      <label class="qf"><span>Chart</span>
+      <select class="input" name="chart">
+        ${CHARTS.map((c) => option(c, CHART_NAMES[c], c === p.chart))}
+      </select>
+    </label>
+    <label class="qf"><span>Source</span>
+      <select class="input" name="source">
+        ${Object.keys(SOURCES).map((n) => option(n, n, n === p.source))}
+      </select>
+    </label>
+    <label class="qf"><span>Aggregate</span>
+      <select class="input" name="aggregate">
+        ${AGGREGATES.map((a) => option(a, a, a === p.aggregate))}
+      </select>
+    </label>
+    <label class="qf" title="Column to aggregate"><span>Column</span>
+      <select class="input" name="column">
+        ${option("", "(rows)", p.column === "")}
+        ${cols.filter((c) => src!.columns[c] === "number").map((c) => option(c, c, c === p.column))}
+      </select>
+    </label>
+    <label class="qf" title="Group by"><span>Group by</span>
+      <select class="input" name="by">
+        ${(Object.keys(BUCKET_MS) as Bucket[]).map((b) => option(b, `per ${b}`, b === p.by))}
+        ${cols.map((c) => option(c, `by ${c}`, c === p.by))}
+      </select>
+    </label>
+    <label class="qf" title="Series (stacked area, heat strip, table)"><span>Series</span>
+      <select class="input" name="series">
+        ${option("", "(one series)", p.series === "")}
+        ${cols.map((c) => option(c, `split by ${c}`, c === p.series))}
+      </select>
+    </label>
+    <label class="qf"><span>From</span>
+      <input class="input mono" name="from" value="${p.from}" placeholder="from 2026-10-01" maxlength="${MAX_PARAM}" />
+    </label>
+    <label class="qf"><span>To</span>
+      <input class="input mono" name="to" value="${p.to}" placeholder="to 2026-10-08" maxlength="${MAX_PARAM}" />
+    </label>
+    <label class="qf"><span>Filter column</span>
+      <select class="input" name="fcolumn">
+        ${option("", "(no filter)", p.fcolumn === "")}
+        ${cols.map((c) => option(c, c, c === p.fcolumn))}
+      </select>
+    </label>
+    <label class="qf"><span>Filter operator</span>
+      <select class="input" name="fop">
+        ${OPS.map((o) => option(o, o, o === p.fop))}
+      </select>
+    </label>
+    <label class="qf"><span>Filter value</span>
+      <input class="input mono" name="fvalue" value="${p.fvalue}" placeholder="value" maxlength="${MAX_PARAM}" />
+    </label>
 `;
 }
 
@@ -234,7 +256,7 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
   );
 
   const form = card(
-    html`<form method="get" action="/boards/data" class="row-actions">
+    html`<form method="get" action="/boards/data" class="bform">
       ${queryFields(p)}
       ${btn("Draw", { variant: "primary" })}
     </form>`,
@@ -275,15 +297,15 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
     boards.length === 0 || !answer.ok
       ? null
       : card(
-          html`<form method="post" action="/boards/pin" class="row-actions">
+          html`<form method="post" action="/boards/pin" class="bform">
             ${PANEL_FIELDS.map(
               (k) => html`<input type="hidden" name="${k}" value="${p[k as keyof Params]}" />`,
             )}
             <input type="hidden" name="w" value="1" /><input type="hidden" name="h" value="1" />
-            <select class="input" name="slug" aria-label="Board">
+            <label class="qf"><span>Board</span><select class="input" name="slug">
               ${boards.map((b) => html`<option value="${b.slug}">${b.board.title}</option>`)}
-            </select>
-            <input class="input" name="title" required maxlength="80" value="${`${p.aggregate} of ${p.source}`}" aria-label="Panel title" />
+            </select></label>
+            <label class="qf"><span>Panel title</span><input class="input" name="title" required maxlength="80" value="${`${p.aggregate} of ${p.source}`}" /></label>
             ${btn("Pin to board")}
           </form>`,
           { head: html`<h2>Pin this query</h2>` },
