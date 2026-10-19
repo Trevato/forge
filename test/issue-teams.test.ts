@@ -163,6 +163,20 @@ describe("cross-team work", () => {
     expect(reviewRuns(pull)).toHaveLength(0);
   });
 
+  test("one reviewer on both named teams is asked once", async () => {
+    const agent = await createAgent(app, alice, { username: "ember" });
+    if (!agent.ok) throw new Error(String(agent.error));
+    addToCrew(app, alice, repo, "ember");
+    setCrewRole(app.db, repo.id, id("ember"), "reviewer");
+    saveTeam(app.db, "security", { charter: "", dial: 0, members: [id("ember")] });
+    saveTeam(app.db, "platform", { charter: "", dial: 0, members: [id("ember")] });
+    const pull = await pullClosing(issueNaming(["security", "platform"]));
+    expect(await sendToReview(app, fresh(), pull)).toBe("sent");
+    expect(reviewRuns(pull).map((r) => r.actorId)).toEqual([id("ember")]);
+    expect(await sendToReview(app, fresh(), pull)).toBe("wait");
+    expect(reviewRuns(pull)).toHaveLength(1);
+  });
+
   test("an issue naming no team is reviewed as before", async () => {
     const pull = await pullClosing(issueNaming([]));
     expect(await sendToReview(app, fresh(), pull)).toBe("sent");
