@@ -20,7 +20,7 @@ import { getUserById, getUserByName } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { forgeLinkOf, originOf } from "./chain.ts";
-import { takeFromParent, type Taken } from "./take.ts";
+import { newestCommits, takeFromParent, type Taken } from "./take.ts";
 
 export const CHECK_MS = 60 * 60_000;
 export const FETCH_TIMEOUT_MS = 60_000;
@@ -175,37 +175,6 @@ async function run(app: App, options: { remote?: string; now?: number }): Promis
     return state;
   } catch (e) {
     return { behind: null, parentTip: "", checkedAt: Date.now(), error: e instanceof Error ? e.message.slice(0, 200) : "the check failed", toldTip: "" };
-  }
-}
-
-const LISTED = 10;
-
-/**
- * The parent's newest commits as a fenced block for the card: short sha, date,
- * subject (the parent's text: first line, 100 characters, no backticks, so it
- * cannot close the fence; the fence renders as escaped plain text). Fixed
- * arguments only. Empty when the log cannot be read: the card goes without.
- */
-async function newestCommits(dir: string, behind: number): Promise<string> {
-  try {
-    const log = await runGit(
-      ["log", `--max-count=${LISTED}`, "--format=%h%x09%as%x09%s", "HEAD..refs/upstream/HEAD", "--"],
-      { cwd: dir },
-    );
-    if (!log.ok) return "";
-    const lines = log.value
-      .split("\n")
-      .filter((l) => l !== "")
-      .map((l) => {
-        const [sha = "", date = "", ...rest] = l.split("\t");
-        const subject = Array.from(rest.join(" ").replace(/[\p{Cc}`]/gu, " ").trim()).slice(0, 100).join("");
-        return `${sha} ${date} ${subject}`;
-      });
-    if (lines.length === 0) return "";
-    const more = behind - lines.length;
-    return `\n\n\`\`\`\n${lines.join("\n")}\n\`\`\`${more > 0 ? `\n\nand ${more} more` : ""}`;
-  } catch {
-    return "";
   }
 }
 

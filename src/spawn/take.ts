@@ -9,10 +9,12 @@
  * A conflict changes nothing; it opens (or finds) one issue naming the files.
  */
 
+import { join } from "node:path";
+import { rename } from "node:fs/promises";
 import type { App } from "../app.ts";
 import { openPull } from "../actions/pulls.ts";
 import { commitIdentity, forgeHost, noreplyAddress } from "../core/commit_identity.ts";
-import { createIssue, listIssues } from "../core/issues.ts";
+import { createIssue, listIssues, updateIssueText } from "../core/issues.ts";
 import { pullForBranch, trackPullHead } from "../core/pulls.ts";
 import { getRepo } from "../core/repos.ts";
 import { getUserById } from "../core/users.ts";
@@ -30,6 +32,68 @@ export const takeTitle = (upstream: string): string => `Take updates from ${upst
 
 /** The one branch the parent's code is put on. */
 export const TAKE_BRANCH = "forge/take-updates";
+
+const LISTED = 10;
+
+/**
+ * The parent's newest commits as a fenced block for the card: short sha, date,
+ * subject (the parent's text: first line, 100 characters, no backticks, so it
+ * cannot close the fence; the fence renders as escaped plain text). Fixed
+ * arguments only (`range` is two oids or fixed refs, never user text). Empty when the log cannot be read: the card goes without.
+ */
+export async function newestCommits(dir: string, behind: number, range = "HEAD..refs/upstream/HEAD"): Promise<string> {
+  try {
+    const log = await runGit(
+      ["log", `--max-count=${LISTED}`, "--format=%h%x09%as%x09%s", range, "--"],
+      { cwd: dir },
+    );
+    if (!log.ok) return "";
+    const lines = log.value
+      .split("\n")
+      .filter((l) => l !== "")
+      .map((l) => {
+        const [sha = "", date = "", ...rest] = l.split("\t");
+        const subject = Array.from(rest.join(" ").replace(/[\p{Cc}`]/gu, " ").trim()).slice(0, 100).join("");
+        return `${sha} ${date} ${subject}`;
+      });
+    if (lines.length === 0) return "";
+    const more = behind - lines.length;
+    return `\n\n\`\`\`\n${lines.join("\n")}\n\`\`\`${more > 0 ? `\n\nand ${more} more` : ""}`;
+  } catch {
+    return "";
+  }
+}
+
+/** The pull body the forge writes: the count and the list, then what the pull does and does not do. */
+async function takeBody(dir: string, link: ForgeLink, head: string, up: string, commits: number): Promise<string> {
+  const list = await newestCommits(dir, commits, `${head}..${up}`);
+  return [
+    `${commits} new commit${commits === 1 ? "" : "s"} from ${link.upstream}, put on \`${TAKE_BRANCH}\`.${list}`,
+    "",
+    "Nothing was changed on the default branch. Merge this pull when its check is green; it is never merged for you.",
+  ].join("\n");
+}
+
+/** The body last written, with its pull: a pull whose body differs was edited by a person. */
+const wrote = (app: App) => join(app.config.dataDir, "take-body.json");
+
+async function lastWrote(app: App): Promise<{ number: number; body: string } | undefined> {
+  try {
+    const v = (await Bun.file(wrote(app)).json()) as Record<string, unknown>;
+    return typeof v["number"] === "number" && typeof v["body"] === "string" ? { number: v["number"], body: v["body"] } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function keepWrote(app: App, number: number, body: string): Promise<void> {
+  try {
+    await Bun.write(`${wrote(app)}.tmp`, JSON.stringify({ number, body }));
+    await rename(`${wrote(app)}.tmp`, wrote(app));
+  } catch {
+    // Nothing to keep it in: the body is then left alone next time.
+  }
+}
 
 /** The all-zero old oid: the ref must not exist yet. */
 const ZERO = "0".repeat(40);
@@ -102,20 +166,23 @@ export async function takeFromParent(app: App, link: ForgeLink): Promise<Taken |
       payload: { number: live.number, headOid: to, branch: TAKE_BRANCH },
     });
     number = live.number;
+    const last = await lastWrote(app);
+    if (last !== undefined && last.number === live.number && last.body === live.body) {
+      const body = await takeBody(dir, link, head, up, commits);
+      if (body !== live.body && updateIssueText(app.db, live.id, { body }).ok) await keepWrote(app, live.number, body);
+    }
   } else {
     if (had === to && open !== undefined) return undefined; // closed unmerged and nothing new since
+    const body = await takeBody(dir, link, head, up, commits);
     const opened = await openPull(app, owner, repo, {
       title: takeTitle(link.upstream),
-      body: [
-        `${commits} new commit${commits === 1 ? "" : "s"} from ${link.upstream}, put on \`${TAKE_BRANCH}\`.`,
-        "",
-        "Nothing was changed on the default branch. Merge this pull when its check is green; it is never merged for you.",
-      ].join("\n"),
+      body,
       baseBranch: branch,
       headBranch: TAKE_BRANCH,
     });
     if (!opened.ok) return undefined;
     number = opened.value.number;
+    await keepWrote(app, number, body);
   }
   app.bus.append({
     kind: "forge.updates_taken",
