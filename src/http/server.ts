@@ -445,6 +445,13 @@ import { feedRoutes } from "./feed.ts";
 import type { Database } from "bun:sqlite";
 import { mcpRoutes } from "./mcp.ts";
 import { createUsageCounter, type UsageCounter } from "../core/usage_count.ts";
+import {
+  createRouteTiming,
+  noteDbTime,
+  serverTiming,
+  takeDbTime,
+  type RouteTiming,
+} from "../core/route_timing.ts";
 import { methodOf, noteUsage, roleOf, surfaceOf, takeUsage } from "./usage_tag.ts";
 import { oauthRoutes } from "./oauth.ts";
 import { flushAccess, recordAccess } from "./access_log.ts";
@@ -2038,8 +2045,30 @@ export async function serve(app: App): Promise<Servers> {
   // One counter per database: a hosted child counts in its own. `count` is a
   // map increment; a refused event would be a programming error, not worth a 500.
   const counters = new Map<Database, UsageCounter>();
-  const counted = (owner: App, request: Request, response: Response): void => {
+  const timings = new Map<Database, RouteTiming>();
+  const counted = (
+    owner: App,
+    request: Request,
+    response: Response,
+    started: number,
+  ): void => {
     const tag = takeUsage(request);
+    const ms = performance.now() - started;
+    try {
+      response.headers.set("server-timing", serverTiming(ms, takeDbTime(request)));
+    } catch {
+      // A response the forge is only carrying keeps the headers it came with.
+    }
+    try {
+      let timing = timings.get(owner.db);
+      if (timing === undefined) {
+        timing = createRouteTiming(owner.db);
+        timings.set(owner.db, timing);
+      }
+      timing.record(tag.pattern, ms);
+    } catch (error) {
+      owner.log.warn("could not time a request", { error: String(error) });
+    }
     try {
       let counter = counters.get(owner.db);
       if (counter === undefined) {
@@ -2133,7 +2162,7 @@ export async function serve(app: App): Promise<Servers> {
           notePeer(request, server.requestIP(request)?.address, trust);
           armClose(request, () => server.timeout(request, 1));
           const response = await answered(child, request, () => http.handle(request));
-          counted(child, request, response);
+          counted(child, request, response, started);
           logged(key, request, response, started);
           await settleBody(request);
           if (!mustClose(request)) return response;
@@ -2152,7 +2181,7 @@ export async function serve(app: App): Promise<Servers> {
       const response = await answered(app, request, () =>
         answer(app, router, apiRouter, limiter, request),
       );
-      counted(app, request, response);
+      counted(app, request, response, started);
       logged(app.config.dataDir, request, response, started);
       await settleBody(request);
       if (!mustClose(request)) return response;
@@ -2229,6 +2258,14 @@ export async function serve(app: App): Promise<Servers> {
         }
       }
       counters.clear();
+      for (const timing of timings.values()) {
+        try {
+          timing.stop();
+        } catch (error) {
+          app.log.warn("could not flush route timings", { error: String(error) });
+        }
+      }
+      timings.clear();
       for (const http of childHttps.values()) http.close();
       childHttps.clear();
       closeHostedChildren(app);
@@ -2275,7 +2312,9 @@ async function answerGet(
   const url = publicUrl(request, app.config.url);
   if (url.pathname === "/healthz") {
     noteUsage(request, { pattern: "/healthz", role: "anon" });
+    const dbStart = performance.now();
     const live = liveResponse(() => app.db.query("select 1").get(), app.log);
+    noteDbTime(request, performance.now() - dbStart);
     // A smoke test learns which release answered, old pod or new.
     live.headers.set("X-Forge-Version", running().version);
     return live;
