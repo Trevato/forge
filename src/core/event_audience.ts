@@ -26,7 +26,7 @@ import {
 import type { Database } from "bun:sqlite";
 import type { ForgeEvent } from "./events.ts";
 import { getAppByRepo } from "./apps.ts";
-import { canAdmin, canEnterApp, getRepoById } from "./repos.ts";
+import { canAdmin, canEnterApp, canSeeOwnerFacts, getRepoById } from "./repos.ts";
 import type { User } from "./users.ts";
 
 export type EventAudience = "readers" | "admins" | "actor" | "app";
@@ -157,5 +157,36 @@ export function audienceFilter(
           ? viewer?.isAdmin === true && isActive(viewer)
           : isAdmin(event.repoId);
     }
+  };
+}
+
+/** What a run event says about spend and placement: the owner's own facts. */
+const RUN_OWNER_FIELDS = ["costUsd", "turns", "placement", "node"] as const;
+
+/**
+ * An event as this reader may see it. A `run.*` payload carries its cost,
+ * turns and node, which are owner facts (`canSeeOwnerFacts`) like the same
+ * fields on a run; the rest of the event is unchanged. Webhooks do not pass
+ * through here: they go to admins and keep the full payload.
+ */
+export function eventForReader(
+  db: Database,
+  viewer: User | undefined,
+): (event: ForgeEvent) => ForgeEvent {
+  const owners = new Map<string, boolean>();
+  const isOwner = (repoId: string): boolean => {
+    const known = owners.get(repoId);
+    if (known !== undefined) return known;
+    const repo = getRepoById(db, repoId);
+    const yes = repo !== undefined && canSeeOwnerFacts(db, repo, viewer);
+    owners.set(repoId, yes);
+    return yes;
+  };
+  return (event) => {
+    if (!event.kind.startsWith("run.")) return event;
+    if (event.repoId !== null && isOwner(event.repoId)) return event;
+    const payload = { ...event.payload };
+    for (const field of RUN_OWNER_FIELDS) delete payload[field];
+    return { ...event, payload };
   };
 }

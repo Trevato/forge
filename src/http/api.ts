@@ -166,7 +166,7 @@ import {
 } from "../actions/users.ts";
 import { listEvents } from "../core/events.ts";
 import { audienceFor } from "../core/audience.ts";
-import { audienceFilter } from "../core/event_audience.ts";
+import { audienceFilter, eventForReader } from "../core/event_audience.ts";
 import {
   forkParentFor,
   getReposByIds,
@@ -2304,7 +2304,7 @@ export function apiRoutes(router: Router<Handler>): void {
     return json(
       listEvents(ctx.app.db, { repoId: repo.id }).filter(
         audienceFilter(ctx.app.db, ctx.auth.user),
-      ),
+      ).map(eventForReader(ctx.app.db, ctx.auth.user)),
     );
   });
 

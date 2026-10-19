@@ -152,6 +152,37 @@ describe("who an event is for", () => {
     expect(admin).toContain("app.env_set");
   });
 
+  test("a run event tells a stranger no cost, turns or node, and the owner all of it", async () => {
+    app.bus.append({
+      kind: "run.finished",
+      repoId: repo.id,
+      payload: {
+        runId: "r1",
+        state: "succeeded",
+        costUsd: 1.25,
+        turns: 7,
+        placement: "job",
+        node: "vx-secret-node",
+      },
+    });
+    const read = (headers: Record<string, string>) =>
+      fetch(`${base}/api/v1/repos/alice/open/events`, { headers })
+        .then((r) => r.json() as Promise<{ kind: string; payload: Record<string, unknown> }[]>)
+        .then((all) => all.find((e) => e.kind === "run.finished")!);
+    for (const headers of [{}, { authorization: `Bearer ${bobToken}` }]) {
+      const seen = await read(headers);
+      expect(seen.payload["runId"]).toBe("r1");
+      expect(seen.payload["state"]).toBe("succeeded");
+      for (const f of ["costUsd", "turns", "placement", "node"])
+        expect(f in seen.payload).toBe(false);
+    }
+    const owner = await read({ authorization: `Bearer ${aliceToken}` });
+    expect(owner.payload["costUsd"]).toBe(1.25);
+    expect(owner.payload["turns"]).toBe(7);
+    expect(owner.payload["placement"]).toBe("job");
+    expect(owner.payload["node"]).toBe("vx-secret-node");
+  });
+
   test("the activity rail on the front page says nothing of it to a visitor", async () => {
     const page = await fetch(`${base}/`, {
       headers: { accept: "text/html" },
@@ -215,6 +246,68 @@ describe("who an event is for", () => {
       expect(stranger).not.toContain("hooks.example.test");
       const admin = await read(path, { authorization: `Bearer ${aliceToken}` });
       expect(admin).toContain("hooks.example.test");
+    }
+  }, 20_000);
+
+  test("the streams tell a stranger no run cost, turns or node, in replay and live, and the owner all of it", async () => {
+    const run = (runId: string) =>
+      app.bus.append({
+        kind: "run.finished",
+        repoId: repo.id,
+        payload: {
+          runId,
+          state: "succeeded",
+          costUsd: 3.5,
+          turns: 9,
+          placement: "job",
+          node: "vx-stream-node",
+        },
+      });
+    const before = listEvents(app.db, { repoId: repo.id, limit: 500 })
+      .map((e) => e.id)
+      .sort()[0]!;
+    run("replayed-run");
+    const read = async (path: string, headers: Record<string, string>) => {
+      const controller = new AbortController();
+      const res = await fetch(`${base}${path}`, {
+        headers: {
+          accept: "text/event-stream",
+          "last-event-id": before,
+          ...headers,
+        },
+        signal: controller.signal,
+      });
+      const reader = res.body!.getReader();
+      let text = "";
+      const pump = (async () => {
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            text += new TextDecoder().decode(value);
+          }
+        } catch {
+          // aborted
+        }
+      })();
+      await Bun.sleep(150);
+      run("live-run");
+      await Bun.sleep(300);
+      controller.abort();
+      await pump;
+      return text;
+    };
+    for (const path of ["/alice/open/stream", "/events"]) {
+      const stranger = await read(path, {});
+      expect(stranger).toContain("replayed-run");
+      expect(stranger).toContain("live-run");
+      for (const f of ["costUsd", "turns", "placement", "vx-stream-node"])
+        expect(stranger).not.toContain(f);
+      const owner = await read(path, { authorization: `Bearer ${aliceToken}` });
+      expect(owner).toContain("replayed-run");
+      expect(owner).toContain("live-run");
+      for (const f of ["costUsd", "turns", "placement", "vx-stream-node"])
+        expect(owner).toContain(f);
     }
   }, 20_000);
 });

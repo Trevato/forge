@@ -20,7 +20,7 @@ import { holdStream, tooManyStrangers } from "./strangers.ts";
 import type { App } from "../app.ts";
 import type { User } from "../core/users.ts";
 import { listEvents, listEventsVisibleTo } from "../core/events.ts";
-import { audienceFilter } from "../core/event_audience.ts";
+import { audienceFilter, eventForReader } from "../core/event_audience.ts";
 import { canRead, getRepoById } from "../core/repos.ts";
 import { mayReadLogOfRun } from "../actions/runs.ts";
 import { getRun } from "../core/runs.ts";
@@ -214,7 +214,12 @@ export function viewerStream(
     seen.set(repoId, ok);
     return ok;
   };
-  const named = (event: ForgeEvent): Record<string, unknown> => {
+  // Readable is not the same as meant-for: configuration events are the
+  // admins', a person's own choices are theirs (`core/event_audience.ts`).
+  const meant = audienceFilter(app.db, viewer);
+  const redact = eventForReader(app.db, viewer);
+  const named = (raw: ForgeEvent): Record<string, unknown> => {
+    const event = redact(raw);
     const repo =
       event.repoId === null ? undefined : getRepoById(app.db, event.repoId);
     return {
@@ -225,9 +230,6 @@ export function viewerStream(
       at: event.createdAt,
     };
   };
-  // Readable is not the same as meant-for: configuration events are the
-  // admins', a person's own choices are theirs (`core/event_audience.ts`).
-  const meant = audienceFilter(app.db, viewer);
   const after = resumeFrom(request);
   return eventStream(app, request, (emit, _close, ready) => {
     if (after !== undefined) {
@@ -279,6 +281,7 @@ export function sseStream(
   viewer: User | undefined,
 ): Response {
   const meant = audienceFilter(app.db, viewer);
+  const redact = eventForReader(app.db, viewer);
   const after = resumeFrom(request);
   return eventStream(app, request, (emit) => {
     // The event id doubles as the SSE id, so a reconnecting client resumes
@@ -289,10 +292,10 @@ export function sseStream(
         afterId: after,
         limit: 200,
       }).reverse())
-        if (meant(event)) emit(event.kind, event, event.id);
+        if (meant(event)) emit(event.kind, redact(event), event.id);
     return app.bus.subscribe((event: ForgeEvent) => {
       if (event.repoId === repoId && meant(event))
-        emit(event.kind, event, event.id);
+        emit(event.kind, redact(event), event.id);
     });
   });
 }
