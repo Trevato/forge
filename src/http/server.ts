@@ -16,6 +16,7 @@ import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { flowPage } from "../web/pages/flow.ts";
 import { systemPage, systemStream } from "../web/pages/system.ts";
+import { teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts";
 import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { contributePage } from "../web/pages/contribute.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
@@ -882,6 +883,9 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/settings/accounts/:username/verify", accountAct("verify"));
   router.add("GET", "/settings/crew", crewPage);
   router.add("POST", "/settings/crew", agentCreate);
+  router.add("GET", "/settings/teams", teamsPage);
+  router.add("GET", "/settings/teams/stream", teamsStream);
+  router.add("POST", "/settings/teams/:slug", teamSet);
   router.add("GET", "/settings/crew/:username", agentPage);
   router.add("POST", "/settings/crew/:username", agentUpdate);
   router.add("POST", "/settings/crew/:username/delete", agentDelete);

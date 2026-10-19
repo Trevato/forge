@@ -231,6 +231,7 @@ describe("the forge over MCP", () => {
       "system",
       "contribute",
       "limits",
+      "teams",
       "cloud_accounts",
       "cloud_account",
       "quotas",

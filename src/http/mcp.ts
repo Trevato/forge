@@ -24,6 +24,7 @@ import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { listAccess } from "../actions/access_log.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
+import { changeTeam, planTeam, readTeams, TEAM_SAYS } from "../actions/teams.ts";
 import { addAccount, allowWrite, auditAccount, removeAccount, renameAccount, reverify, rotateAccount } from "../actions/cloud.ts";
 import { usesByVendor, type VendorUse } from "../cloud/declared.ts";
 import { cloudOverview } from "../cloud/overview.ts";
@@ -2703,6 +2704,56 @@ const TOOLS: readonly Tool[] = [
         says: `${key}: ${changed.value.from} → ${changed.value.to}, from the next use on.`,
         ...changed.value,
       });
+    },
+  },
+  {
+    name: "teams",
+    description:
+      "Crew teams, for a forge admin who is a person: each team's charter, dial (its share, a whole number from 0 to 100; all dials together may not pass 100) and member agents. Without `slug`, the teams. With `slug` and any of `charter`, `dial`, `members` (agent ids; replaces the list), the change it would make; with dryRun false, made, with an admin-scope token. Nothing reads the dials yet. The same as /settings/teams and /api/v1/admin/teams.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        slug: { type: "string", maxLength: 64 },
+        charter: { type: "string", maxLength: 2000 },
+        dial: { type: "integer", minimum: 0, maximum: 100 },
+        members: { type: "array", maxItems: 500, items: { type: "string", maxLength: 64 } },
+        dryRun: { type: "boolean", description: "Plan only (the default). Send false to change it." },
+      },
+    },
+    writes: true,
+    dryByDefault: true,
+    run(ctx, user, args) {
+      const read = readTeams(ctx.app, user);
+      if (!read.ok) return bad("not_found", "no such tool here");
+      const slug = args["slug"];
+      if (slug === undefined) return good({ teams: read.value.teams });
+      const team = typeof slug === "string" ? read.value.teams.find((t) => t.slug === slug) : undefined;
+      if (!team) return bad("not_found", `no team ${String(slug)}`);
+      const { charter, dial, members } = args;
+      if (
+        (charter !== undefined && typeof charter !== "string") ||
+        (dial !== undefined && typeof dial !== "number") ||
+        (members !== undefined && (!Array.isArray(members) || !members.every((m) => typeof m === "string")))
+      )
+        return bad("invalid_body", "charter is text, dial a whole number, members a list of agent ids");
+      const change = {
+        ...(charter === undefined ? {} : { charter: charter as string }),
+        ...(dial === undefined ? {} : { dial: String(dial) }),
+        ...(members === undefined ? {} : { members: members as string[] }),
+      };
+      if (args["dryRun"] !== false) {
+        // The plan is the real call's answer: the same checks, the same refusal.
+        const plan = planTeam(ctx.app, user, team.slug, change);
+        if (!plan.ok) return bad(plan.error, TEAM_SAYS[plan.error]);
+        return good({
+          says: `Would change ${team.name}${dial === undefined ? "" : ` from ${team.dial}% to ${String(dial)}%`}. Send dryRun: false to change it.`,
+        });
+      }
+      if (!scopeAllows(ctx.auth.scope ?? "ro", "admin"))
+        return bad("forbidden", "changing a team needs an admin-scope token");
+      const changed = changeTeam(ctx.app, user, team.slug, change);
+      if (!changed.ok) return bad(changed.error, TEAM_SAYS[changed.error]);
+      return good({ says: `${changed.value.name} saved at ${changed.value.dial}%.`, ...changed.value });
     },
   },
   {

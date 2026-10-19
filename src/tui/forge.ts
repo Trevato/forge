@@ -55,6 +55,7 @@ import { modelCeilingPrompt, modelGrantPrompt, modelScreen } from "./screens/mod
 import { proposalTokensPrompt } from "./screens/proposal_tokens.ts";
 import { invitesScreen } from "./screens/invites.ts";
 import { quotasScreen } from "./screens/quotas.ts";
+import { teamsScreen } from "./screens/teams.ts";
 import { domainsScreen } from "./screens/domains.ts";
 import { ownerScreen } from "./screens/owner.ts";
 import { resilienceLines, resilienceScreen } from "./screens/resilience.ts";
@@ -438,6 +439,14 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
         title: "Account quotas",
         hint: "what one account may own, and who changed it",
         run: () => ctx.push(quotasScreen(session, ctx)),
+      });
+    // Crew teams, as /settings/teams has them: an admin who is not an agent (#2679).
+    if (session.user?.isAdmin === true && session.user.kind !== "agent")
+      commands.push({
+        id: "teams",
+        title: "Crew teams",
+        hint: "each team's charter, dial and members",
+        run: () => ctx.push(teamsScreen(session, ctx)),
       });
     // Invite links, as /admin/limits has them: an admin who is a person (#2337).
     if (session.user?.isAdmin === true && session.user.kind === "user")

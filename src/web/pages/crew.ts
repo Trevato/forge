@@ -493,6 +493,7 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
       ${agentFields(values, usernameError === undefined ? error : undefined)}
       <div class="form-actions">
         ${btn("Create agent", { variant: "primary", icon: "bot" })}
+        ${btn("Teams", { href: "/settings/teams", variant: "ghost" })}
       </div>
     </form>`,
     {

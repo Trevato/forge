@@ -33,7 +33,7 @@ their own vocabulary instead of composing the named one.
 
 ## Finding 2 — the pages, and what each is for
 
-There are 60 top-level pages, one entry each: every static `GET` route in `src/http/server.ts`
+There are 61 top-level pages, one entry each: every static `GET` route in `src/http/server.ts`
 that returns a page (`test/design-audit.test.ts` holds this list to the router,
 both ways). Each entry reads `route` — module · what it is for · what
 duplicates it · what breaks `docs/DESIGN.md`. "Breaks" counts colour literals
@@ -118,6 +118,7 @@ Machine routes are not pages and have no entry: `/audit.csv`,
 - `/settings/accounts` — `pages/accounts.ts` · every account on the forge · `/settings/people` · none seen.
 - `/settings/people` — `pages/people.ts` · people and their roles · `/settings/accounts`, `/settings/crew` · none seen.
 - `/settings/crew` — `pages/crew.ts` · the named agents and what each may do · `/settings/model`, `/settings/telemetry` · none seen.
+- `/settings/teams` — `pages/teams.ts` · the named crew teams, each with a charter, a dial and members · `/settings/crew` · none seen.
 - `/settings/origins` — `pages/origins.ts` (1,497 lines) · other forges this one reads and mirrors from · `/migrate` · none seen.
 
 ## Operator views — why each is a page (#2696)

@@ -27,6 +27,7 @@ import { askCheck } from "../checks/again.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
 import { changeCapacity, listCapacity } from "../actions/capacity.ts";
 import { changeLimit, listLimits } from "../actions/limits.ts";
+import { changeTeam, readTeams, TEAM_SAYS } from "../actions/teams.ts";
 import { changeQuotas, readQuotas } from "../actions/quotas.ts";
 import { changeSignup, readSignup } from "../actions/signup.ts";
 import {
@@ -1565,6 +1566,36 @@ export function apiRoutes(router: Router<Handler>): void {
         ? "no such limit"
         : changed.error.message,
     );
+  });
+
+  // Crew teams (`core/teams.ts`): a forge admin who is a person; the page's door.
+  router.add("GET", "/api/v1/admin/teams", (ctx) => {
+    const denied = accountAdmin(ctx, "ro");
+    if (denied) return denied;
+    const read = readTeams(ctx.app, ctx.auth.user);
+    return read.ok ? json({ teams: read.value.teams }) : notFound();
+  });
+
+  router.add("PUT", "/api/v1/admin/teams/:slug", async (ctx) => {
+    const denied = accountAdmin(ctx, "admin");
+    if (denied) return denied;
+    const input = await body(ctx.request);
+    const { charter, dial, members } = input;
+    if (
+      (charter !== undefined && typeof charter !== "string") ||
+      (dial !== undefined && typeof dial !== "number" && typeof dial !== "string") ||
+      (members !== undefined &&
+        (!Array.isArray(members) || !members.every((m) => typeof m === "string")))
+    )
+      return apiError("invalid_body", 422, "send charter (text), dial (a whole number) and members (agent ids)");
+    const changed = changeTeam(ctx.app, ctx.auth.user, ctx.params.slug ?? "", {
+      ...(charter === undefined ? {} : { charter: charter as string }),
+      ...(dial === undefined ? {} : { dial: String(dial) }),
+      ...(members === undefined ? {} : { members: members as string[] }),
+    });
+    if (changed.ok) return json(changed.value);
+    if (changed.error === "not_found") return notFound();
+    return apiError(changed.error, 422, TEAM_SAYS[changed.error]);
   });
 
   // Per-account quotas (`core/quotas.ts`): null is no limit. Nothing
