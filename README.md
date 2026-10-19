@@ -254,6 +254,15 @@ settings until asked. `/?all=1` is the whole home, and its "Just my apps" link
 comes back. The terminal's first screen opens with the same lines, from the
 same query (`src/core/client-apps.ts`).
 
+Home shows three figures first, from `src/flow/kpis.ts`: shipped per hour (with
+a 24 h sparkline), the live version and since when, and the median check time.
+They count every repository, so only a site admin sees them, on both doors;
+nobody else does, and neither does the lean client home. On the web each is a
+card linking to `/board`, `/releases` or `/boards`. The terminal's first screen
+shows the same three as lines above the forge strip (`kpiLines` in
+`src/web/studio/kpi_row.ts`). They are read when the page or screen loads and
+do not refresh on their own.
+
 On a host that cannot hold cells or the crew's shell sandbox, a site admin
 sees `Reduced protection: …` in one line, under the filter on the terminal's
 first screen and in the web footer; nobody else does, and a fully protected

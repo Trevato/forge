@@ -69,6 +69,7 @@ import {
   ISSUE_MARK,
   ListState,
   PIN_MARK,
+  ago,
   PULL_MARK,
   confirmScreen,
   countsColumn,
@@ -83,6 +84,10 @@ import {
   promptScreen,
   plural,
 } from "./common.ts";
+import { readKpis } from "../../flow/kpis.ts";
+import { kpiLines } from "../../flow/kpi_words.ts";
+import { BOOTED } from "../../release/gate.ts";
+import { running } from "../../kernel/version.ts";
 import { deciderLine, deciderScreen } from "./decider.ts";
 import { issueScreen } from "./issue.ts";
 import { newRepoScreen } from "./newrepo.ts";
@@ -149,6 +154,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let lane: string | null = null;
   /** What the decider did today, the board's Today line; null on a quiet day or for a reader. */
   let decider: string | null = null;
+  /** Home's three figures, as the web's row says them; empty unless an admin looks (they count every repository). */
+  let figures: string[] = [];
   const filter = new Filter();
   /** One cursor per pane: moving in one must never move another. */
   const cursors: Record<PaneId, ListState> = {
@@ -161,6 +168,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   const loadClientLines = async (): Promise<void> => {
     clientLines = [];
     if (!f.user || (await nextStepsFor(f.app, f.user)) === undefined) return;
+    // A client's home never carries the forge-wide figures, on either door.
+    figures = [];
     const apps = await clientAppRows(f.app, f.user);
     clientLines =
       apps.length === 0
@@ -203,6 +212,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     }
     lane = forgeLane(f.app, f.user);
     decider = deciderLine(f.app, f.user);
+    figures = f.user?.isAdmin !== true ? [] : kpiLines(readKpis(f.db, now), running().commit === null ? null : { sha: running().commit!, since: ago(BOOTED) });
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.
     const orgs = f.user
@@ -760,6 +770,13 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
             style(c.fg, c.bg),
             strip!.x + strip!.w,
           ),
+        );
+        body = rest!;
+      }
+      if (figures.length > 0) {
+        const [strip, rest] = split(body, "v", [len(figures.length), fill(1)]);
+        figures.forEach((line, i) =>
+          s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(c.mutedFg, c.bg), strip!.x + strip!.w),
         );
         body = rest!;
       }

@@ -48,6 +48,7 @@ import { writableAppsOf } from "./asks.ts";
 import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
+import { kpiRow } from "./kpi_row.ts";
 import { homeTabs } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
 import { everydayCard } from "../pages/everyday.ts";
@@ -243,8 +244,9 @@ export async function studioHome(
     });
   }
   const ask = firstSteps ?? everydayCard(ctx, user);
+  const figures = user.isAdmin && steps === undefined;
   const body = html`<h1 class="sr-only">Home</h1>
-    ${ask} ${address} ${liveLine(ctx)}
+    ${ask} ${address} ${figures ? kpiRow(ctx.app.db) : liveLine(ctx)}
     ${when(
       steps,
       () => html`<p class="small muted" id="lean-home">

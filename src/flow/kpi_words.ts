@@ -1,0 +1,39 @@
+/**
+ * The figures row in words (#2871): shared by home and the terminal, which
+ * must not depend on each other. Plain data in, plain strings out.
+ */
+
+import type { Kpis } from "./kpis.ts";
+
+/** A duration the way a person reads a check: `45s`, `3m 05s`, `1h 02m`. */
+export function checkTime(ms: number | null): string {
+  if (ms === null) return "—";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+
+const BLOCKS = "▁▂▃▄▅▆▇█";
+
+/** The terminal's sparkline: the same 24 hours, oldest on the left, one block each. */
+export function sparkText(hours: readonly number[]): string {
+  const top = Math.max(1, ...hours);
+  return [...hours]
+    .reverse()
+    .map((v) => (v === 0 ? BLOCKS[0]! : BLOCKS[Math.min(BLOCKS.length - 1, Math.ceil((v / top) * (BLOCKS.length - 1)))]!))
+    .join("");
+}
+
+/**
+ * The terminal's row: the same three figures in the same words, as plain
+ * lines. Forge-wide like the web's, so the caller shows them to an admin only.
+ */
+export function kpiLines(k: Kpis, live: { sha: string; since: string } | null): string[] {
+  return [
+    `Shipped per hour ${(k.landed / k.landedHours.length).toFixed(1)}  ${sparkText(k.landedHours)}  ${k.landed} ${k.landed === 1 ? "change" : "changes"} in 24 h`,
+    `Live version ${live === null ? "— nothing live yet" : `${live.sha.slice(0, 7)}, live ${live.since}`}`,
+    `Median check time ${checkTime(k.medianCheckMs)}`,
+  ];
+}

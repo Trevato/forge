@@ -241,6 +241,11 @@ describe("a client's first screen", () => {
     expect(all).toContain('href="/"');
   });
 
+  test("a client sees no forge-wide figures, lean or whole", async () => {
+    expect(await page(owner)).not.toContain('class="kpis"');
+    expect(await page(owner, "/?all=1")).not.toContain('class="kpis"');
+  });
+
   test("queued agents and no running ones read as about to start", async () => {
     const repo = child.db
       .query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'bakery'")
@@ -283,6 +288,7 @@ describe("a client's first screen", () => {
     app.start();
     await settleApp(app);
     expect(app.screen.toText()).toContain("bakery: Its agents are waiting for something to do.");
+    expect(app.screen.toText()).not.toContain("Shipped per hour");
     app.stop();
   });
 });

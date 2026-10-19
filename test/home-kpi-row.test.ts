@@ -1,0 +1,83 @@
+/** Home's figures row (#2871): the three tiles, their links, studio words only, a sparkline of 24 points. */
+import { describe, expect, test } from "bun:test";
+import { checkTime, kpiLines, sparkText } from "../src/flow/kpi_words.ts";
+import { running } from "../src/kernel/version.ts";
+import { kpiRowFor, liveNow, sparkline } from "../src/web/studio/kpi_row.ts";
+
+const hours = (n: number) => Array.from({ length: 24 }, (_, i) => (i === 3 ? n : 0));
+
+describe("home kpi row", () => {
+  test("three tiles with their links and figures", () => {
+    const out = kpiRowFor(
+      { landedHours: hours(6), landed: 6, live: null, medianCheckMs: 185_000 },
+      { sha: "abcdef0123456", at: "2026-10-19T11:00:00.000Z" },
+    ).toString();
+    expect(out).toContain('<span class="sha">abcdef0</span>');
+    expect(out).toContain("Shipped per hour");
+    expect(out).toContain("0.3");
+    expect(out).toContain("6 changes in 24 h");
+    expect(out).toContain("abcdef0");
+    expect(out).not.toContain("abcdef01");
+    expect(out).toContain("3m 05s");
+    for (const href of ["/board", "/releases", "/boards"]) expect(out).toContain(`href="${href}"`);
+  });
+
+  test("empty figures say so", () => {
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, medianCheckMs: null }, null).toString();
+    expect(out).toContain("Nothing live yet");
+    expect(out).toContain("No check finished in 24 h");
+  });
+
+  test("no git words render, not even in a title or label", () => {
+    const out = kpiRowFor({ landedHours: hours(1), landed: 1, live: null, medianCheckMs: 1000 }, null).toString();
+    expect(out).not.toMatch(/commit|merge|branch|repositor|pull request|checks (passed|failed)/i);
+  });
+
+  test("the sparkline has one point per hour, oldest first", () => {
+    const svg = sparkline(hours(4)).toString();
+    const pts = /points="([^"]+)"/.exec(svg)![1]!.split(" ");
+    expect(pts).toHaveLength(24);
+    expect(pts[20]!.endsWith(",2.0")).toBe(true); // hour 3 ago is index 20, at the top
+  });
+
+  test("the live tile is the running commit, the same as /releases", () => {
+    const prev = process.env["FORGE_COMMIT"];
+    process.env["FORGE_COMMIT"] = "1234567abcdef";
+    try {
+      expect(liveNow()?.sha).toBe(running().commit!);
+      expect(liveNow()?.sha).toBe("1234567abcdef");
+    } finally {
+      if (prev === undefined) delete process.env["FORGE_COMMIT"];
+      else process.env["FORGE_COMMIT"] = prev;
+    }
+  });
+
+  test("a truncated note carries its whole text as a title", () => {
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, medianCheckMs: null }, null).toString();
+    expect(out).toContain('title="No check finished in 24 h"');
+  });
+
+  test("check time reads as a person would", () => {
+    expect(checkTime(null)).toBe("—");
+    expect(checkTime(45_000)).toBe("45s");
+    expect(checkTime(3_720_000)).toBe("1h 02m");
+  });
+});
+
+describe("the terminal's figures", () => {
+  const k = { landedHours: hours(6), landed: 6, live: { sha: "abcdef0123456", at: new Date().toISOString() }, medianCheckMs: 185_000 };
+  test("the same three figures in the same words", () => {
+    const lines = kpiLines(k, { sha: "abcdef0123456", since: "5m ago" });
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toContain("Shipped per hour 0.3");
+    expect(lines[0]).toContain("6 changes in 24 h");
+    expect(lines[1]).toContain("Live version abcdef0");
+    expect(lines[2]).toBe("Median check time 3m 05s");
+    expect(lines.join(" ")).not.toMatch(/commit|merge|branch|repositor|pull request/i);
+  });
+  test("the block sparkline has 24 cells, the busy hour tallest", () => {
+    const s = sparkText(hours(4));
+    expect([...s]).toHaveLength(24);
+    expect(s[20]).toBe("█");
+  });
+});

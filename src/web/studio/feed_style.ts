@@ -24,6 +24,13 @@ export const feedCss = /* css */ `
 .composer textarea { width: 100%; min-height: 64px; resize: vertical; }
 .composer-bar { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .composer-bar select { min-width: 0; max-width: 60%; }
+/* The figures row: three cards at a fixed height, so first paint is final. */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.kpi { display: grid; grid-template-rows: 20px 32px 20px 24px; align-content: start; gap: 2px; padding: 12px 14px; color: inherit; text-decoration: none; }
+.kpi:hover { border-color: var(--border-strong); }
+.kpi-value { font-size: 16px; line-height: 32px; font-weight: 600; }
+.kpi-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kpi-spark { display: block; color: var(--muted-fg); max-width: 100%; }
 /* Your apps: a narrow column on a desk, a tab away on a phone. */
 .home-tabs { display: none; margin-bottom: 12px; }
 .home-app { gap: 8px; }
