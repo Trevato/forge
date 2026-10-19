@@ -94,8 +94,12 @@ export async function outsider(base: string, options: OutsiderOptions = {}): Pro
   const cookies = { cookie: session.headers.getSetCookie().map((c) => c.split(";")[0]!).join("; ") };
   if (!cookies.cookie.includes("forge_session=")) bad.push({ check: "sign in", why: `the fresh account got no session (${session.status})` });
 
-  // One MCP tools/call as the stranger: an error answer is a refusal.
-  const mcp = async (tool: string, args: Json, as = token): Promise<{ error: boolean; text: string }> => {
+  // One MCP tools/call as the stranger. Only an answer that names not-a-member,
+  // unverified or forbidden counts as a refusal (an argument error is not one);
+  // `hides` also accepts the not_found a door gives where hiding is the intent:
+  // "repo" for a repository the stranger may not see, "tool" for the admin tool
+  // `signup` (tools/list is checked to still name it, so a moved tool is red).
+  const mcp = async (tool: string, args: Json, as = token, hides?: "repo" | "tool"): Promise<{ error: boolean; text: string }> => {
     const res = await doFetch(new URL("/mcp", root).href, {
       method: "POST",
       redirect: "manual",
@@ -107,8 +111,9 @@ export async function outsider(base: string, options: OutsiderOptions = {}): Pro
     try {
       const result = (JSON.parse(text) as { result?: { isError?: boolean; content?: { text?: string }[] } }).result;
       const said = result?.content?.[0]?.text ?? "";
-      // A tool that does not exist refuses everything; that is a moved door, not a closed one.
-      return { error: res.status === 200 && result?.isError === true && /^(not_member|not.a.member|unverified|forbidden|not_found|not_admin|admin_only|unauthorized)\b/i.test(said), text: said };
+      // A tool that does not exist refuses everything; that is a moved door, not a closed one
+      // (only `signup`, whose presence tools/list proves, may answer no such tool).
+      return { error: res.status === 200 && result?.isError === true && (/^(not_member|not.a.member|unverified|forbidden)\b/i.test(said) || (hides === "repo" && /^not_found: no such app or repository\b/i.test(said)) || (hides === "tool" && /^not_found: no such tool\b/i.test(said))), text: said };
     } catch {
       return { error: false, text };
     }
@@ -128,14 +133,14 @@ export async function outsider(base: string, options: OutsiderOptions = {}): Pro
   await refused("no repository of its own", "/api/v1/repos", token, { method: "POST", statuses: [403], error: ["unverified", "not_member"], json: { name: `${username}-repo` } });
   await refused("no app of its own", "/api/v1/apps", token, { method: "POST", statuses: [403], error: ["unverified", "not_member"], json: { name: `${username}-app` } });
 
-  const opened = await mcp("signup", { mode: "open", dryRun: false });
+  const opened = await mcp("signup", { mode: "open", dryRun: false }, token, "tool");
   if (!opened.error) bad.push({ check: "no admin tool (MCP signup)", why: `signup answered a stranger: ${opened.text.slice(0, 80)}` });
 
   if (options.ownerToken) {
     const owned = options.ownerToken;
-    const listed = await call("/api/v1/repos?limit=100", owned);
-    const items = Array.isArray(listed.body["items"]) ? (listed.body["items"] as Json[]) : [];
-    if (listed.status !== 200) bad.push({ check: "owner token", why: `GET /api/v1/repos answered ${listed.status} for the owner's token` });
+    const ownedRepos = await call("/api/v1/repos?limit=100", owned);
+    const items = Array.isArray(ownedRepos.body["items"]) ? (ownedRepos.body["items"] as Json[]) : [];
+    if (ownedRepos.status !== 200) bad.push({ check: "owner token", why: `GET /api/v1/repos answered ${ownedRepos.status} for the owner's token` });
     let aimed = 0;
     for (const repo of items.slice(0, 50)) {
       const owner = String(repo["owner"] ?? repo["ownerName"] ?? "");
@@ -148,7 +153,7 @@ export async function outsider(base: string, options: OutsiderOptions = {}): Pro
         for (const sub of ["", "/issues", "/usage", "/runs", "/crew"])
           await refused(`no read of private ${label}`, at + sub, token, { statuses: [404] });
         for (const tool of ["repo", "usage"]) {
-          const got = await mcp(tool, { repo: label });
+          const got = await mcp(tool, { repo: label }, token, "repo");
           if (!got.error) bad.push({ check: `no read of private ${label} (MCP ${tool})`, why: `${tool} answered a stranger: ${got.text.slice(0, 80)}` });
         }
         const listing = await mcp("apps", {});
@@ -158,7 +163,7 @@ export async function outsider(base: string, options: OutsiderOptions = {}): Pro
       // Steering: an assignment would start a crew run. Aim at a real issue
       // and a real crew member, through the JSON door and the form door, and
       // read the issue back as the owner: it must not have moved.
-      const mine = await mcp("make_it_yours", { repo: label, dryRun: false });
+      const mine = await mcp("make_it_yours", { repo: label, dryRun: false }, token, "repo");
       if (!mine.error) bad.push({ check: `no copy of ${label} (MCP make_it_yours)`, why: `make_it_yours answered a stranger: ${mine.text.slice(0, 80)}` });
       const issues = await call(`${at}/issues?limit=1`, owned);
       const issue = Array.isArray(issues.body["items"]) ? (issues.body["items"] as Json[])[0] : undefined;
@@ -203,7 +208,7 @@ export async function outsider(base: string, options: OutsiderOptions = {}): Pro
       if (hidden && form.status !== 404 && form.status !== 403)
         bad.push({ check: `no steering of ${label} (form)`, why: `a private repository's form answered ${form.status}, wanted 404` });
       // The MCP door: the tools that tell the crew or copy an app.
-      const told = await mcp("tell", { repo: label, text: "outsider suite: please change something" });
+      const told = await mcp("tell", { repo: label, text: "outsider suite: please change something" }, token, hidden ? "repo" : undefined);
       if (!told.error) bad.push({ check: `no steering of ${label} (MCP tell)`, why: "tell was accepted from a stranger" });
       const after = await call(`${at}/issues?limit=1`, owned);
       const runsNow = await call(`${at}/runs?limit=100`, owned);

@@ -143,6 +143,38 @@ describe("outsider suite", () => {
     expect(got.map((r) => r.check)).toContain("owner token");
   });
 
+  test("an MCP error that is not a refusal is not counted as one", async () => {
+    const said = (text: string) =>
+      (async (input: Request | string | URL, init?: RequestInit) => {
+        if (new URL(input instanceof Request ? input.url : String(input)).pathname === "/mcp" && String(init?.body).includes('"name":"tell"') && String(init?.body).includes("rowan/lawn"))
+          return Response.json({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text }] } });
+        return fetch(input, init);
+      }) as typeof fetch;
+    for (const text of ["unauthorized: x", "not_found: nothing"]) {
+      const got = await outsider(servers.url, { ownerToken, fetch: said(text), username: `stranger-err-${text.slice(0, 4)}` });
+      expect(got.map((r) => r.check)).toEqual(["no steering of rowan/lawn (MCP tell)"]);
+    }
+  });
+
+  test("a tool that has vanished is a moved door, not a refusal", async () => {
+    const gone = (async (input: Request | string | URL, init?: RequestInit) => {
+      if (new URL(input instanceof Request ? input.url : String(input)).pathname === "/mcp" && String(init?.body).includes('"name":"make_it_yours"'))
+        return Response.json({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text: "not_found: no such tool here" }] } });
+      return fetch(input, init);
+    }) as typeof fetch;
+    const got = await outsider(servers.url, { ownerToken, fetch: gone, username: "stranger-gone" });
+    expect(got.map((r) => r.check)).toEqual(["no copy of rowan/lawn (MCP make_it_yours)", "no copy of rowan/vault (MCP make_it_yours)"]);
+  });
+
+  test("a hiding door that answers not_found still counts as refused", async () => {
+    const hides = (async (input: Request | string | URL, init?: RequestInit) => {
+      if (new URL(input instanceof Request ? input.url : String(input)).pathname === "/mcp" && String(init?.body).includes('"name":"repo"'))
+        return Response.json({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [{ type: "text", text: "not_found: no such app or repository (owner/name)" }] } });
+      return fetch(input, init);
+    }) as typeof fetch;
+    expect(await outsider(servers.url, { ownerToken, fetch: hides, username: "stranger-hides" })).toEqual([]);
+  });
+
   test("it says so when no account can be made", async () => {
     setSignup(app.db, "closed", "test");
     const got = await outsider(servers.url, { username: "stranger3" });
