@@ -8,6 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { getUserByName } from "../src/core/users.ts";
+import { emailVerified } from "../src/core/verify.ts";
+import { SIGNUP_WEAK_MESSAGE } from "../src/tui/screens/signin.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import type { TuiIdentity } from "../src/tui/session.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -55,5 +57,40 @@ test("with an edge token the terminal sign-up makes no row", async () => {
     expect(getUserByName(forge.db, "mallory")).toBeFalsy();
   } finally {
     app.stop();
+  }
+});
+
+test("without an edge the terminal signs up with a blank email, unverified, and refuses 11 characters", async () => {
+  const plain = createApp({ dataDir: await mkdtemp(join(tmpdir(), "forge-tui-signup-")), port: 0, url: "https://forge.example", disk: () => ({ freeBytes: 95, totalBytes: 100 }) });
+  const identity: TuiIdentity = { sshUsername: "git", remoteAddress: "198.51.100.8", fingerprint: "SHA256:y", publicKey: KEY };
+  const { app } = createForgeApp(plain, identity, { terminal: headlessTerminal(120, 32), exitHooks: false });
+  app.start();
+  const key = (k: string, ctrl = false): void =>
+    app.dispatch({ type: "key", key: k, ctrl, alt: false, shift: false });
+  const type = (t: string): void => [...t].forEach((c) => key(c));
+  try {
+    await settleApp(app);
+    key("s");
+    await settleApp(app);
+    // The forge has no accounts, so the form opens in create mode.
+    expect(app.screen.toText()).toContain("Email");
+    type("nora");
+    key("tab");
+    key("tab"); // email left blank
+    type("elevenchars");
+    key("enter");
+    await settleApp(app);
+    expect(app.screen.toText()).toContain(SIGNUP_WEAK_MESSAGE);
+    expect(getUserByName(plain.db, "nora")).toBeFalsy();
+    type("1"); // twelve now
+    key("enter");
+    await settleApp(app);
+    const user = getUserByName(plain.db, "nora");
+    expect(user).toBeTruthy();
+    expect(emailVerified(plain.db, user!.id)).toBe(false);
+    expect(app.screen.toText()).toContain("signed in as nora");
+  } finally {
+    app.stop();
+    plain.close();
   }
 });

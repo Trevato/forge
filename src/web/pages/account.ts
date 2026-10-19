@@ -36,6 +36,7 @@ import { endAccountSession } from "../../actions/signins.ts";
 import { listSessions, type SessionInfo } from "../../core/sessions.ts";
 import { ADMIN_TOKEN_WORDS, listTokens, type TokenScope } from "../../core/tokens.ts";
 import type { CommitEmail, User } from "../../core/users.ts";
+import { isStandInEmail } from "../../core/users.ts";
 import { cookieValue, type Ctx } from "../../http/context.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import {
@@ -100,7 +101,7 @@ interface ProfileForm {
 /** The profile form as the account stands now. */
 const currentProfile = (user: User): ProfileForm => ({
   displayName: user.displayName,
-  email: user.email,
+  email: isStandInEmail(user.email) ? "" : user.email,
   commitEmail: user.commitEmail,
 });
 
@@ -224,12 +225,16 @@ function unverifiedNotice(ctx: Ctx): Html {
   return card(
     html`<p>
         Your email is not verified yet. Until it is, you can read and talk,
-        but not make repositories, apps or runs. Follow the link we sent to
-        <strong>${user.email}</strong>, or ask for another.
+        but not make repositories, apps or runs.
+        ${isStandInEmail(user.email)
+          ? html`Add your email below and follow the link we send to it.`
+          : html`Follow the link we sent to <strong>${user.email}</strong>, or ask for another.`}
       </p>
-      <form method="post" action="/settings/email/verify">
+      ${isStandInEmail(user.email)
+        ? html``
+        : html`<form method="post" action="/settings/email/verify">
         ${btn("Send another link", { type: "submit" })}
-      </form>`,
+      </form>`}`,
     { tone: "attn" },
   );
 }

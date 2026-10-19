@@ -283,8 +283,8 @@ function authForm(
         </p>`
       : null;
 
-  // No door makes a password-only account: sign-up is a name, an address and
-  // a passkey, made in the browser (`signup-passkey.ts`).
+  // Only an operator who set `passkeyOnlySignup` gets a form with no
+  // password: a name, an address and a passkey (`signup-passkey.ts`).
   const byPasskey = kind === "signup" && ctx.app.config.passkeyOnlySignup === true;
 
   // Sign-in leads with the passkey: one press, nothing typed; the password
@@ -331,7 +331,7 @@ function authForm(
           type: "email",
           value: values.email ?? "",
           autocomplete: "email",
-          required: true,
+          hint: "Optional. Given, we send a link to prove it.",
           // A pinned name is not editable, so the keyboard goes to the email.
           ...(vouched !== undefined ? { autofocus: true } : {}),
           ...(errors.email ? { error: errors.email } : {}),
@@ -345,7 +345,7 @@ function authForm(
           autocomplete: kind === "signin" ? "current-password" : "new-password",
           required: true,
           ...(kind === "signup"
-            ? { minlength: 10, hint: "At least 10 characters." }
+            ? { minlength: 12, hint: "At least 12 characters." }
             : {}),
           ...(errors.password ? { error: errors.password } : {}),
         }),
@@ -363,6 +363,17 @@ function authForm(
         </p>
         <p class="error-note mb" id="passkey-signup-note" role="alert">${errors.password ?? ""}</p>
         <noscript><p class="muted small">Signing up needs JavaScript for the passkey.</p></noscript>`,
+      )}
+      ${when(
+        kind === "signup" && !byPasskey,
+        () => html`<div class="passkey-on">
+          <p class="muted small mb">
+            Or skip the password: a passkey signs you in with a fingerprint,
+            face or device PIN. It needs an email address above.
+          </p>
+          <p class="error-note mb" id="passkey-signup-note" role="alert"></p>
+          <button type="button" id="passkey-signup" class="btn" data-variant="outline">Create account with a passkey</button>
+        </div>`,
       )}
       ${when(
         errors.human,
@@ -466,7 +477,7 @@ export function signupPage(ctx: Ctx): Response {
     title: "Sign up",
     body: authForm(ctx, "signup"),
     turnstile: siteKey(ctx) !== undefined,
-    ...(ctx.app.config.passkeyOnlySignup === true ? { scriptJs: passkeyJs } : {}),
+    scriptJs: passkeyJs,
   });
 }
 
@@ -624,7 +635,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
           },
         }),
         turnstile: siteKey(ctx) !== undefined,
-        ...(ctx.app.config.passkeyOnlySignup === true ? { scriptJs: passkeyJs } : {}),
+        scriptJs: passkeyJs,
       },
       429,
     );
@@ -650,7 +661,8 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
       username_taken: { username: "That username is taken." },
       username_reserved: { username: "That name is reserved." },
       email_taken: { email: "That email already has an account." },
-      weak_password: { password: "Passwords need at least 10 characters." },
+      weak_password: { password: "Passwords need at least 12 characters." },
+      invalid_email: { email: "That does not look like an email address." },
       human_check: { human: HUMAN_CHECK_MESSAGE },
       passkey_required: { human: PASSKEY_REQUIRED_MESSAGE },
     }[created.error] ?? { username: "Something went wrong." };
@@ -660,7 +672,7 @@ export async function signupSubmit(ctx: Ctx): Promise<Response> {
         title: "Sign up",
         body: authForm(ctx, "signup", { values: { username, email }, errors }),
         turnstile: siteKey(ctx) !== undefined,
-        ...(ctx.app.config.passkeyOnlySignup === true ? { scriptJs: passkeyJs } : {}),
+        scriptJs: passkeyJs,
       },
       422,
     );

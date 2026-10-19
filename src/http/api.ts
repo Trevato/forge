@@ -1216,6 +1216,8 @@ export function apiRoutes(router: Router<Handler>): void {
   // ── accounts ─────────────────────────────────────────────────────────
 
   router.add("POST", "/api/v1/users", async (ctx) => {
+    // A page on another site cannot sign a visitor up from here.
+    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     const slot = signupSlot(ctx);
     if (typeof slot === "number")
       return json(

@@ -137,9 +137,8 @@ export interface ForgeConfig {
   /**
    * Refuse every sign-up that would make an account with only a password:
    * the web form, `POST /api/v1/users` and the terminal answer in words,
-   * and `signUpWithPasskey` is the one way in. `main.ts` sets it; the
-   * library default is off so a test can still seed accounts with a
-   * password.
+   * and `signUpWithPasskey` is the one way in. An operator's choice, off
+   * by default: a username and a password sign up (#2923).
    */
   passkeyOnlySignup?: boolean;
   /**

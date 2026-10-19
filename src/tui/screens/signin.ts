@@ -35,9 +35,12 @@ const SIGN_IN: Field[] = [
 
 const CREATE: Field[] = [
   { label: "Username" },
-  { label: "Email" },
-  { label: "Password", secret: true, hint: "At least 10 characters." },
+  { label: "Email", hint: "Optional." },
+  { label: "Password", secret: true, hint: "At least 12 characters." },
 ];
+
+/** What sign-up says to a short password; the password change form keeps its own wording. */
+export const SIGNUP_WEAK_MESSAGE = "the password is too short (sign-up needs 12 characters)";
 
 /** While signup is `invite` the create form also asks for the link's token. */
 const INVITE_BLANK_MESSAGE = "Paste the token from your invite link.";
@@ -109,7 +112,9 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
           );
           if (!created.ok) {
             // With signup = invite a refusal means the token did not open the door.
-            error = needsInvite && created.error === "signup_closed" ? INVITE_SPENT_MESSAGE : errorText(created.error);
+            if (needsInvite && created.error === "signup_closed") error = INVITE_SPENT_MESSAGE;
+            else if (created.error === "weak_password") error = SIGNUP_WEAK_MESSAGE;
+            else error = errorText(created.error);
             return;
           }
           const adopted = f.adopt(created.value);

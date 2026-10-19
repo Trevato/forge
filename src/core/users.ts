@@ -384,6 +384,9 @@ export type UpdateProfileError =
   | "invalid_commit_email"
   | "no_such_user";
 
+/** Whether an address is a stand-in (`.invalid`): no mail reaches it, no person gave it. */
+export const isStandInEmail = (email: string): boolean => /\.invalid$/i.test(email.trim());
+
 /** Change the mutable profile fields. Absent keys are left untouched. */
 export function updateProfile(
   db: Database,
@@ -392,10 +395,14 @@ export function updateProfile(
 ): Result<User, UpdateProfileError> {
   const current = getUserById(db, userId);
   if (!current || current.kind === "org") return err("no_such_user");
-  const email = patch.email?.trim() ?? current.email;
+  let email = patch.email?.trim() ?? current.email;
+  // The form shows a stand-in as empty; leaving it so keeps it.
+  if (email === "" && isStandInEmail(current.email)) email = current.email;
   if (email === "" || email.length > MAX_EMAIL || !email.includes("@"))
     return err("invalid_email");
   if (email.toLowerCase() !== current.email.toLowerCase()) {
+    // Stand-ins belong to the accounts that gave no address; nobody may take one.
+    if (isStandInEmail(email)) return err("invalid_email");
     const taken = db
       .query("SELECT 1 FROM user WHERE email = ?1 COLLATE NOCASE AND id != ?2")
       .get(email, userId);

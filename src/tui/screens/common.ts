@@ -840,7 +840,7 @@ const MESSAGES: Record<string, string> = {
   email_taken: "that email address is taken",
   key_exists: "that key is already registered",
   taken: "that name is taken",
-  weak_password: "the password must be at least 10 characters",
+  weak_password: "the password is too short (10 characters at least)",
   bad_credentials: "wrong username or password",
   throttled: "too many attempts: try again in a minute",
   already_forked: "you already have a fork of this repo",

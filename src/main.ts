@@ -219,8 +219,6 @@ const app = createApp({
   Number(process.env.FORGE_MAIL_DAILY) > 0
     ? { mailDailyCap: Number(process.env.FORGE_MAIL_DAILY) }
     : {}),
-  // No door makes a password-only account (#1996).
-  passkeyOnlySignup: true,
   // Signup asks Cloudflare Turnstile when its secret is set.
   ...(turnstileSecret === ""
     ? {}

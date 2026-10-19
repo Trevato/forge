@@ -192,7 +192,8 @@ describe("turnstile doors", () => {
   test("off, the page has no widget and the policy is unchanged", async () => {
     const { base } = await boot();
     const response = await fetch(`${base}/signup`);
-    expect(await response.text()).not.toContain("cf-turnstile");
+    // The passkey script always names the token field; the widget is the div.
+    expect(await response.text()).not.toContain("class=\"cf-turnstile");
     expect(response.headers.get("content-security-policy")).not.toContain("cloudflare");
   });
 

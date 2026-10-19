@@ -34,6 +34,7 @@ import {
   type ProfilePatch,
   type UpdateProfileError,
   type User,
+  isStandInEmail,
 } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { requireUser } from "./access.ts";
@@ -41,7 +42,8 @@ import type { SignupSlot } from "./signup-window.ts";
 
 export interface SignUpInput {
   username: string;
-  email: string;
+  /** Optional: absent or blank, the account has none and nothing is mailed. */
+  email?: string;
   password: string;
   /** The Turnstile token the browser's widget gave; read only when a secret is set. */
   humanToken?: string;
@@ -50,6 +52,7 @@ export interface SignUpInput {
 export type SignUpError =
   | CreateUserError
   | "human_check"
+  | "invalid_email"
   | "passkey_required"
   | "signup_closed";
 
@@ -79,6 +82,19 @@ export function plausibleEmail(email: string): boolean {
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+/** The shortest password a sign-up takes. */
+export const MIN_SIGNUP_PASSWORD = 12;
+
+/**
+ * Stands in for the address of an account that gave none: the column is
+ * unique and never empty, and `.invalid` is a name no mail can reach
+ * (the same device the crew's addresses use).
+ */
+const noEmail = (username: string): string => `${username.toLowerCase()}@no-email.invalid`;
+
+/** Whether an address is one a person could have given: plausible and not a stand-in. */
+const givenEmail = (email: string): boolean => plausibleEmail(email) && !isStandInEmail(email);
+
 /** What a person is told when the check fails. */
 export const HUMAN_CHECK_MESSAGE =
   "We could not tell you are a person. Reload the page and try again.";
@@ -101,12 +117,15 @@ export async function signUp(
     address?: string | undefined;
   },
 ): Promise<Result<User, SignUpError>> {
-  // Password sign-in stays for the accounts that have a password. It can go
-  // when every such account has a passkey (Settings → Passkeys shows who is
-  // left) and recovery without a password exists (#1618): then delete this
-  // action's password path, `verifyPasswordThrottled`'s doors and the password column.
+  // A username and a password is a way in that stays, beside the passkey
+  // (#2923; it once was to go, #1618). Email is optional: given, the verify
+  // link goes to it. Either way the account starts unproven: adding and
+  // proving an address in settings is what lets it create and cost.
   if (signupClosed(app, from.invite)) return err("signup_closed");
   if (app.config.passkeyOnlySignup === true) return err("passkey_required");
+  const email = (input.email ?? "").trim();
+  if (email !== "" && !givenEmail(email)) return err("invalid_email");
+  if (input.password.length < MIN_SIGNUP_PASSWORD) return err("weak_password");
   const secret = app.config.turnstileSecret;
   // The terminal cannot render a widget, so with a secret set it brings no
   // token and is refused, the forge's first account too: sign up on the web page.
@@ -116,8 +135,14 @@ export async function signUp(
     if (!(await verify(input.humanToken ?? "", from.address)))
       return err("human_check");
   }
-  const { humanToken: _token, ...account } = input;
-  const created = await createUser(app.db, { ...account, origin: "signup", slot: from.slot, invite: from.invite });
+  const created = await createUser(app.db, {
+    username: input.username,
+    password: input.password,
+    email: email === "" ? noEmail(input.username) : email,
+    origin: "signup",
+    slot: from.slot,
+    invite: from.invite,
+  });
   if (!created.ok) return created;
   app.bus.append({
     kind: "user.created",
@@ -130,7 +155,7 @@ export async function signUp(
   auditInvite(app, created.value.id);
   // The address is proven by the link it is sent; until then nothing it
   // does may create or cost.
-  await welcome(app, created.value);
+  if (email !== "") await welcome(app, created.value);
   return created;
 }
 
