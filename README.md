@@ -787,6 +787,15 @@ off: no autonomy tick, no dispatch, no spend; checks still run and everything
 can still be read. The boot log and the studio's crew card say so. Set
 `FORGE_CREW_IN_PREVIEW=1` to run it anyway.
 
+**Per model, per prompt version.** Every agent run records the model it ran on
+and a prompt version: a short hash of the agent's brief, its crew role and the
+standing system-prompt text (not the issue or branch, so two runs on one brief
+share a version and editing the brief starts a new one). Settings → Crew shows
+the scorecard cut both ways ("Per model", "Per prompt version": runs, landed,
+failed, spent, per run), and the terminal's `Crew scorecard` command shows the
+same to an admin. Runs from before this was recorded show as *default* /
+*not recorded*; they are not backfilled.
+
 **Tell the crew from any page.** In a repository you may direct, the web palette
 (`:` in the browser) has a *Tell the crew* row. With the script it opens the thread's own
 comment box over the page you are on, without leaving it: `enter` sends (shift+

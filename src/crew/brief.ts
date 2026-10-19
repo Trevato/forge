@@ -69,6 +69,20 @@ export const SANDBOX_LINES = [
   "It cannot: reach any host but the forge and the package registry, write outside the clone and `$TMPDIR`, read the forge's data or the machine's, bind a unix socket, or signal a process started in an earlier command. Never leave the sandbox: it cannot be asked to. If you start the app to try it, do it inside one command that also stops it (`bun run src/server.ts & pid=$!; sleep 2; curl …; kill $pid`). Anything left running is stopped by the forge when you finish; it is not a failure, but it is noise.",
 ];
 
+/**
+ * A short name for the prompt an agent ran on: a hash of its brief, its
+ * role and the standing system-prompt text. Per-run facts (issue, branch)
+ * are left out, so two runs on one brief share a version and an edited
+ * brief starts a new one.
+ */
+export function promptVersion(agent: Agent, role?: CrewRole): string {
+  const hasher = new Bun.CryptoHasher("sha256");
+  hasher.update(
+    JSON.stringify([agent.brief.trim(), role ?? "", SANDBOX_LINES]),
+  );
+  return hasher.digest("hex").slice(0, 10);
+}
+
 export function systemPrompt(input: BriefInput): string {
   const { agent, repo } = input;
   const lines = [

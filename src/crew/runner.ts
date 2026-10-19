@@ -85,6 +85,7 @@ import { appendRunLog, readRunLog } from "../runs/log.ts";
 import {
   branchFor,
   issueOfBranch,
+  promptVersion,
   systemPrompt,
   taskPrompt,
   wrapUpPrompt,
@@ -1186,6 +1187,8 @@ async function work(
       `claude: budget $${budget.toFixed(2)}, $${reserve.toFixed(2)} of it kept for the wrap-up${brief.resuming ? `, resuming ${previous?.sessionId}` : ""}`,
     );
     noteRunProgress(app.db, run.id, {
+      model: agent.model,
+      promptVersion: promptVersion(agent, brief.role),
       sandbox: {
         enforced: sandbox.enforced,
         note: options.sandboxNote ?? "",

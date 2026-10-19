@@ -18,7 +18,12 @@ import {
   MODEL_MAX,
   type Agent,
 } from "../../core/agents.ts";
-import { agentTotals, type AgentTotals } from "../../core/runs.ts";
+import {
+  agentSplits,
+  agentTotals,
+  type AgentTotals,
+  type SplitTotals,
+} from "../../core/runs.ts";
 import { crewFor } from "../../crew/dispatch.ts";
 import { MODELS } from "../../crew/models.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -376,6 +381,18 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
         </div>`,
         { pad: false },
       )}
+  ${splitsCard(
+    "Per model",
+    "Model",
+    agentSplits(ctx.app.db, "model"),
+    () => html`<span class="muted">default</span>`,
+  )}
+  ${splitsCard(
+    "Per prompt version",
+    "Prompt version",
+    agentSplits(ctx.app.db, "prompt_version"),
+    () => html`<span class="muted">not recorded</span>`,
+  )}
   ${card(
     html`<form method="post" action="/settings/crew">
       ${uiField({
@@ -403,6 +420,45 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
         <h3>New agent</h3>`,
     },
   )}`;
+}
+
+/** The scorecard cut by one thing the runs ran on; nothing before a first run. */
+function splitsCard(
+  title: string,
+  column: string,
+  rows: readonly SplitTotals[],
+  blank: (key: string) => Html,
+): Html {
+  if (rows.length === 0) return html``;
+  return card(
+    html`<div class="table-scroll">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>${column}</th>
+            <th>Runs</th>
+            <th>Landed</th>
+            <th>Failed</th>
+            <th>Spent</th>
+            <th>Per run</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(
+            (r) => html`<tr>
+              <td class="mono">${r.key === "" ? blank(r.key) : r.key}</td>
+              <td class="num">${r.runs}</td>
+              <td class="num">${r.ok}</td>
+              <td class="num">${r.failed}</td>
+              <td class="num">$${r.spentUsd.toFixed(2)}</td>
+              <td class="num">$${(r.spentUsd / r.runs).toFixed(2)}</td>
+            </tr>`,
+          )}
+        </tbody>
+      </table>
+    </div>`,
+    { pad: false, head: html`<h3>${title}</h3>` },
+  );
 }
 
 const EMPTY: AgentValues = {

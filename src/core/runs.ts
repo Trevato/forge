@@ -372,6 +372,9 @@ export function noteRunProgress(
     /** Where a check ran, and the node when a cluster Job did. */
     placement?: string | undefined;
     node?: string | undefined;
+    /** The model an agent run ran on (empty: the runner's default), and its prompt version. */
+    model?: string | undefined;
+    promptVersion?: string | undefined;
   },
 ): void {
   db.query(
@@ -380,7 +383,9 @@ export function noteRunProgress(
        sandbox_enforced = COALESCE(?6, sandbox_enforced),
        sandbox_note = COALESCE(?7, sandbox_note),
        placement = COALESCE(?8, placement),
-       node = COALESCE(?9, node)
+       node = COALESCE(?9, node),
+       model = COALESCE(?10, model),
+       prompt_version = COALESCE(?11, prompt_version)
      WHERE id = ?1`,
   ).run(
     runId,
@@ -392,6 +397,8 @@ export function noteRunProgress(
     progress.sandbox?.note.slice(0, 300) ?? null,
     progress.placement?.slice(0, 20) ?? null,
     progress.node?.slice(0, 253) ?? null,
+    progress.model?.slice(0, 100) ?? null,
+    progress.promptVersion?.slice(0, 40) ?? null,
   );
 }
 
@@ -935,6 +942,42 @@ export function agentTotals(db: Database): Map<string, AgentTotals> {
       },
     ]),
   );
+}
+
+/** Agent runs of one model or one prompt version, in the scorecard's terms. */
+export interface SplitTotals {
+  /** The model or the prompt version; empty for runs from before it was recorded. */
+  readonly key: string;
+  readonly runs: number;
+  readonly ok: number;
+  readonly failed: number;
+  readonly spentUsd: number;
+}
+
+/** Agent runs grouped by what they ran on: `model` or `prompt_version`. */
+export function agentSplits(
+  db: Database,
+  by: "model" | "prompt_version",
+): SplitTotals[] {
+  // `by` is one of two literals, never user text.
+  return db
+    .query<
+      { key: string; runs: number; ok: number; failed: number; spent: number },
+      []
+    >(
+      `SELECT ${by} AS key, COUNT(*) AS runs, SUM(state = 'ok') AS ok,
+              SUM(state = 'failed') AS failed, COALESCE(SUM(cost_usd), 0) AS spent
+         FROM run WHERE kind = 'agent' AND actor_id IS NOT NULL
+        GROUP BY ${by} ORDER BY runs DESC, key`,
+    )
+    .all()
+    .map((r) => ({
+      key: r.key,
+      runs: r.runs,
+      ok: r.ok,
+      failed: r.failed,
+      spentUsd: r.spent,
+    }));
 }
 
 /** One repository's agent runs over a window: what "this week" is made of. */

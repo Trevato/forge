@@ -1,0 +1,54 @@
+/**
+ * The crew scorecard in the terminal, a forge admin's (#2682): agent runs
+ * cut by the model they ran on and by prompt version, as Settings → Crew
+ * has them (`agentSplits`). The gate is the page's: an admin.
+ */
+
+import { agentSplits, type SplitTotals } from "../../core/runs.ts";
+import type { Ctx, Screen } from "../app/app.ts";
+import { binding } from "../app/keys.ts";
+import { style } from "../term/style.ts";
+import { truncate } from "../term/width.ts";
+import type { Session } from "../session.ts";
+import { fill, len, split } from "../ui/layout.ts";
+import { ListState, drawList, type ListRow } from "./common.ts";
+
+export function splitRows(
+  label: string,
+  blank: string,
+  splits: readonly SplitTotals[],
+): ListRow[] {
+  return splits.map((r) => ({
+    title: `${label}: ${r.key === "" ? blank : r.key}`,
+    secondary: `${r.runs} runs`,
+    meta: `${r.ok} landed  ${r.failed} failed  $${r.spentUsd.toFixed(2)} spent  $${(r.spentUsd / r.runs).toFixed(2)} per run`,
+  }));
+}
+
+export function crewSplitsScreen(f: Session, ctx: Ctx): Screen {
+  const state = new ListState();
+  const allowed = f.user?.isAdmin === true;
+  // Read once when the screen opens, not per frame.
+  const rows: ListRow[] = allowed
+    ? [
+        ...splitRows("model", "default", agentSplits(f.db, "model")),
+        ...splitRows("prompt", "not recorded", agentSplits(f.db, "prompt_version")),
+      ]
+    : [];
+  return {
+    title: "Crew scorecard",
+    keys: [binding(["j", "k"], "move cursor")],
+    render(area, s) {
+      const c = ctx.theme.c;
+      const [head, list] = split(area, "v", [len(1), fill(1)]);
+      const text = !allowed
+        ? "The crew scorecard is read by a forge admin."
+        : rows.length === 0
+          ? "No agent runs yet."
+          : "Agent runs per model, then per prompt version.";
+      s.text(head!.x, head!.y, truncate(text, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
+      drawList(s, list!, c, state, rows);
+    },
+    key: (e) => state.key(e, rows.length),
+  };
+}
