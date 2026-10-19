@@ -15,6 +15,8 @@ import { canRead, getRepoById } from "../core/repos.ts";
 import { deliveredFor, drainQueue, senderWeight } from "../core/shares.ts";
 import { getUserById, type User } from "../core/users.ts";
 import { candidatesFor, type Candidate } from "./items.ts";
+import { writeStamp } from "../core/write_clock.ts";
+import { Stamped } from "../kernel/stamped.ts";
 import { rank, type FeedItem } from "./rank.ts";
 
 export const FEED_LIMIT_DEFAULT = 20;
@@ -23,6 +25,47 @@ export const FEED_LIMIT_MAX = 50;
 const CURSOR = /^(-?\d{1,6}(?:\.\d{1,6})?)\|([a-z]{2,12}:[A-Za-z0-9_.:-]{1,160})$/;
 
 export const cursorOf = (item: FeedItem): string => `${item.score}|${item.id}`;
+
+/**
+ * One viewer's candidates, read again only after a write (docs/CACHING.md).
+ * Keyed by the viewer, their chips and whether asks are in — never shared between two people,
+ * since what an event says depends on who may read it — and stamped with
+ * the forge's write clock, so any write anywhere recomputes it. The max age bounds
+ * what no clock sees: candidates stamped with "now", and the windows of
+ * watched and frozen items.
+ */
+const feedCaches = new WeakMap<Database, Stamped<Candidate[]>>();
+
+export const FEED_CANDIDATES_MAX_AGE_MS = 30_000;
+
+/** The candidate cache of `db`: for tests and the bench, which count its hits. */
+export function feedCandidateCache(db: Database): Stamped<Candidate[]> {
+  let cache = feedCaches.get(db);
+  if (cache === undefined) {
+    cache = new Stamped<Candidate[]>({
+      maxEntries: 200,
+      maxAgeMs: FEED_CANDIDATES_MAX_AGE_MS,
+    });
+    feedCaches.set(db, cache);
+  }
+  return cache;
+}
+
+function viewerCandidates(
+  db: Database,
+  viewer: User,
+  now: number,
+  chips: Chips,
+  withAsks: boolean,
+): readonly Candidate[] {
+  const stamp = writeStamp(db);
+  if (stamp === undefined) return candidatesFor(db, viewer, now, chips, withAsks);
+  // Home asks without its asks (it pins them above): a different list, a different key.
+  const key = `${viewer.id}|${withAsks ? "asks" : "no-asks"}|${[...chips.kinds].sort().join(",")}|${[...chips.people].sort().join(",")}`;
+  return feedCandidateCache(db).get(key, stamp, () =>
+    candidatesFor(db, viewer, now, chips, withAsks),
+  );
+}
 
 /** A cursor as it was issued, or undefined for anything else. */
 export function parseCursor(
@@ -55,9 +98,10 @@ export function readFeed(
   );
   const boosted = new Set(shared.map((c) => c.itemId));
   const candidates = [
-    ...candidatesFor(db, viewer, now, chips, options.withoutAsks !== true).filter(
-      (c) => !boosted.has(c.id),
-    ),
+    ...(options.now === undefined
+      ? viewerCandidates(db, viewer, now, chips, options.withoutAsks !== true)
+      : candidatesFor(db, viewer, now, chips, options.withoutAsks !== true)
+    ).filter((c) => !boosted.has(c.id)),
     ...shared,
   ]
     // The chips: the one filter. An ask was filtered by it in `askLinesFor`.

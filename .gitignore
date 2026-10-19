@@ -37,3 +37,6 @@ typesafe-api-key
 /.mcp.json
 /.ripgreprc
 /.claude/
+# where a sandboxed `bun install` keeps its temp files and package cache
+# when the default temp directory is read-only (#2706)
+/.bun-tmp/

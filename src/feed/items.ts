@@ -11,13 +11,13 @@ import type { Chips } from "../core/feed_chips.ts";
 import { listDecidedIn } from "../core/decisions.ts";
 import { audienceFilter } from "../core/event_audience.ts";
 import { listEventsVisibleTo, type ForgeEvent } from "../core/events.ts";
-import { getIssue } from "../core/issues.ts";
+import { getIssuesByNumbers, numberKey, type Issue } from "../core/issues.ts";
 import {
   listDetachedMirrors,
   listOrigins,
   mirrorsByOrigin,
 } from "../core/origins.ts";
-import { getPull, toldBy } from "../core/pulls.ts";
+import { joinMany, toldBy, type Pull } from "../core/pulls.ts";
 import {
   canSeeOwnerFacts,
   getReposByIds,
@@ -204,9 +204,8 @@ export function candidatesFor(
   /** False when the caller shows asks itself (the home pins them): they are not read twice. */
   withAsks = true,
 ): Candidate[] {
-  const events = listEventsVisibleTo(db, viewer, { limit: EVENT_WINDOW }).filter(
-    audienceFilter(db, viewer),
-  );
+  const recent = listEventsVisibleTo(db, viewer, { limit: EVENT_WINDOW });
+  const events = recent.filter(audienceFilter(db, viewer, recent));
   const writable = listReposWritableTo(db, viewer, { limit: 200 });
   const asks = withAsks ? askLinesFor(db, viewer, chips) : [];
   const decided = listDecidedIn(
@@ -232,11 +231,34 @@ export function candidatesFor(
     return owner.get(repo.id)!;
   };
 
+  // Every event's subject in one read, not two per event (#2675).
+  const issues = getIssuesByNumbers(
+    db,
+    events.flatMap((e) =>
+      typeof e.payload["number"] === "number" && e.repoId !== null
+        ? [{ repoId: e.repoId, number: e.payload["number"] }]
+        : [],
+    ),
+  );
+  const pulls = new Map(
+    joinMany(
+      db,
+      [...issues.values()].filter((i) => i.kind === "pull"),
+    ).map((p) => [p.id, p]),
+  );
+  const subjects: Subjects = {
+    issue: (repoId, number) => issues.get(numberKey(repoId, number)),
+    pull: (repoId, number) => {
+      const issue = issues.get(numberKey(repoId, number));
+      return issue === undefined ? undefined : pulls.get(issue.id);
+    },
+  };
+
   const out: Candidate[] = [];
   for (const e of events) {
     const repo = repos.get(e.repoId!);
     if (!repo) continue;
-    const c = fromEvent(db, e, repo, owns(repo));
+    const c = fromEvent(db, e, repo, owns(repo), subjects);
     if (c) out.push({ ...c, actor: nameOf(e.actorId) });
   }
   for (const a of asks) {
@@ -287,11 +309,18 @@ export function candidatesFor(
 
 type Partial = Omit<Candidate, "actor">;
 
+/** The conversations the window's events name, read once for all of them. */
+interface Subjects {
+  issue(repoId: string, number: number): Issue | undefined;
+  pull(repoId: string, number: number): Pull | undefined;
+}
+
 function fromEvent(
   db: Database,
   e: ForgeEvent,
   repo: Repo,
   ownerFacts: boolean,
+  subjects: Subjects,
 ): Partial | undefined {
   const common = {
     id: `event:${e.id}`,
@@ -303,7 +332,7 @@ function fromEvent(
   };
   const p = e.payload;
   const number = typeof p["number"] === "number" ? p["number"] : undefined;
-  const pull = number === undefined ? undefined : getPull(db, repo.id, number);
+  const pull = number === undefined ? undefined : subjects.pull(repo.id, number);
   const title = pull?.title ?? "";
   const told = pull === undefined ? null : toldBy(db, pull);
   const toldParts = [
@@ -347,7 +376,7 @@ function fromEvent(
     // A tell is a post; a comment is a reply under it, in its own words.
     case "issue.opened": {
       if (number === undefined) return undefined;
-      const told = getIssue(db, repo.id, number)?.title ?? "";
+      const told = subjects.issue(repo.id, number)?.title ?? "";
       return {
         ...common,
         kind: "tell",
@@ -361,7 +390,7 @@ function fromEvent(
       const said = typeof p["body"] === "string" ? p["body"].trim() : "";
       // A reply names what it answers: the tell's or the change's title.
       const on = clip(
-        (e.kind === "issue.commented" ? getIssue(db, repo.id, number)?.title : title) ??
+        (e.kind === "issue.commented" ? subjects.issue(repo.id, number)?.title : title) ??
           `#${number}`,
         60,
       );

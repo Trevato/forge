@@ -18,7 +18,9 @@ import { isActive } from "./users.ts";
 import {
   canSeeSealed,
   eventRow,
+  eventRows,
   eventSubject,
+  subjectKey,
   type SealedRow,
 } from "./sealed.ts";
 import type { Database } from "bun:sqlite";
@@ -75,6 +77,11 @@ export function eventAudience(kind: string): EventAudience {
 export function audienceFilter(
   db: Database,
   viewer: User | undefined,
+  /**
+   * The events about to be filtered, when the caller has them all: their
+   * subjects are read in one query per chunk instead of one per subject.
+   */
+  batch?: readonly ForgeEvent[],
 ): (event: ForgeEvent) => boolean {
   const admins = new Map<string, boolean>();
   const isAdmin = (repoId: string): boolean => {
@@ -111,11 +118,19 @@ export function audienceFilter(
   };
   // Its reporter follows it too, for that one issue (`mayView`).
   const subjects = new Map<string, SealedRow | null>();
+  if (batch !== undefined) {
+    const rows = eventRows(db, batch);
+    for (const event of batch) {
+      const subject = eventSubject(event);
+      if (subject === undefined) continue;
+      const key = subjectKey(subject);
+      subjects.set(key, rows.get(key) ?? null);
+    }
+  }
   const hidden = (event: ForgeEvent): boolean => {
     const subject = eventSubject(event);
     if (subject === undefined) return false;
-    const key =
-      "id" in subject ? subject.id : `${subject.repoId}#${subject.number}`;
+    const key = subjectKey(subject);
     let row = subjects.get(key);
     if (row === undefined) {
       row = eventRow(db, event) ?? null;

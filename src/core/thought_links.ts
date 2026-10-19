@@ -45,13 +45,22 @@ export function raiseIssue(db: Database, issueId: string, now = new Date()): voi
   ).run(issueId, now.toISOString());
 }
 
-/** When each of these issues was last raised. */
+/**
+ * When each of these issues was last raised: one query per chunk, never one
+ * per issue — the map asks this for every open issue it draws (#2675).
+ */
 export function raisedAt(db: Database, issueIds: readonly string[]): Map<string, string> {
   const out = new Map<string, string>();
-  const get = db.query<{ raised_at: string }, [string]>("SELECT raised_at FROM issue_raise WHERE issue_id = ?1");
-  for (const id of issueIds) {
-    const r = get.get(id);
-    if (r) out.set(id, r.raised_at);
+  const unique = [...new Set(issueIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ issue_id: string; raised_at: string }, string[]>(
+        `SELECT issue_id, raised_at FROM issue_raise WHERE issue_id IN (${batch.map(() => "?").join(",")})`,
+      )
+      .all(...batch);
+    for (const r of rows) out.set(r.issue_id, r.raised_at);
   }
   return out;
 }

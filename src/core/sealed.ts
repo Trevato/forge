@@ -112,6 +112,63 @@ export function sealedByNumber(
   return sealedRowByNumber(db, repoId, number)?.sealed === true;
 }
 
+/**
+ * The rows `eventRow` would read for each of these events, in one query per
+ * chunk and kind of reference, keyed the way `subjectKey` names a subject.
+ * A subject with no row is absent: the same answer `eventRow` gives.
+ */
+export function eventRows(
+  db: Database,
+  events: readonly Parameters<typeof eventSubject>[0][],
+): Map<string, SealedRow> {
+  const out = new Map<string, SealedRow>();
+  const ids = new Set<string>();
+  const numbered = new Map<string, { repoId: string; number: number }>();
+  for (const event of events) {
+    const subject = eventSubject(event);
+    if (subject === undefined) continue;
+    if ("id" in subject) ids.add(subject.id);
+    else numbered.set(subjectKey(subject), subject);
+  }
+  const CHUNK = 200;
+  const idList = [...ids];
+  for (let i = 0; i < idList.length; i += CHUNK) {
+    const batch = idList.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ id: string; sealed: number; author_id: string }, string[]>(
+        `SELECT id, sealed, author_id FROM issue WHERE id IN (${batch.map(() => "?").join(",")})`,
+      )
+      .all(...batch);
+    for (const r of rows)
+      out.set(r.id, { sealed: r.sealed === 1, authorId: r.author_id });
+  }
+  const refs = [...numbered.values()];
+  for (let i = 0; i < refs.length; i += CHUNK) {
+    const batch = refs.slice(i, i + CHUNK);
+    const rows = db
+      .query<
+        { repo_id: string; number: number; sealed: number; author_id: string },
+        (string | number)[]
+      >(
+        `SELECT repo_id, number, sealed, author_id FROM issue
+          WHERE (repo_id, number) IN (VALUES ${batch.map(() => "(?, ?)").join(",")})`,
+      )
+      .all(...batch.flatMap((r) => [r.repoId, r.number]));
+    for (const r of rows)
+      out.set(subjectKey({ repoId: r.repo_id, number: r.number }), {
+        sealed: r.sealed === 1,
+        authorId: r.author_id,
+      });
+  }
+  return out;
+}
+
+/** One string for an event's subject, by id or by repository and number. */
+export const subjectKey = (
+  subject: { id: string } | { repoId: string; number: number },
+): string =>
+  "id" in subject ? subject.id : `${subject.repoId}#${subject.number}`;
+
 /** Whether `user` may see a run, a decision or an event about issue `issueId`. */
 export function mayViewId(
   db: Database,

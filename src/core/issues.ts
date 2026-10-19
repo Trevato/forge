@@ -165,6 +165,41 @@ export function getIssuesByIds(
   return out;
 }
 
+/** The key `getIssuesByNumbers` files a conversation under. */
+export const numberKey = (repoId: string, number: number): string =>
+  `${repoId}#${number}`;
+
+/**
+ * Several conversations by repository and number, in one query per chunk —
+ * what a feed of events (which name their subject by number) needs to title
+ * each line without a read per event (#2675). Keyed by `numberKey`.
+ */
+export function getIssuesByNumbers(
+  db: Database,
+  refs: readonly { readonly repoId: string; readonly number: number }[],
+): Map<string, Issue> {
+  const out = new Map<string, Issue>();
+  const unique = [
+    ...new Map(refs.map((r) => [numberKey(r.repoId, r.number), r])).values(),
+  ];
+  const CHUNK = 200;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<IssueRow, (string | number)[]>(
+        `${SELECT} WHERE (issue.repo_id, issue.number) IN (VALUES ${batch
+          .map((_, n) => `(?${2 * n + 1}, ?${2 * n + 2})`)
+          .join(",")})`,
+      )
+      .all(...batch.flatMap((r) => [r.repoId, r.number]));
+    for (const row of rows) {
+      const issue = toIssue(row);
+      out.set(numberKey(issue.repoId, issue.number), issue);
+    }
+  }
+  return out;
+}
+
 /**
  * Open pulls the crew has proposed, in repositories the viewer can see,
  * newest activity first — the "needs you" inbox, as one bounded query. The

@@ -10,6 +10,7 @@
 
 import { criticalPath, readyNow, type Graph } from "../../core/dependencies.ts";
 import { countWords, layout, wordFor, type Marks, type Word } from "../pages/map.ts";
+import { cachedLayout } from "../map_cache.ts";
 import type { CardInput } from "./card.ts";
 import type { GraphEdge, GraphFigure, GraphNode } from "./graph.ts";
 
@@ -28,7 +29,7 @@ export function graphFigure(
   words: ReadonlyMap<string, Word>,
   critical: readonly string[],
 ): GraphFigure | undefined {
-  const placed = layout(graph);
+  const placed = cachedLayout(graph, layout);
   const chained = placed.islandFrom > 0;
   const drawn = placed.nodes.filter((n) => (chained ? !n.island : n.level < ISLAND_ROWS));
   if (drawn.length === 0) return undefined;

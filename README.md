@@ -990,6 +990,14 @@ The terminal also has an Access command (`:` → Access), a site admin's: it rea
 In the terminal, `:` → System shows the same view (the owner's only): per-core CPU with a block-character history, memory, swap, disk and network rates, and each group's top two processes (no sort; the dialog is read-only), and `:` → Telemetry lists the agents and flips `telemetry:read` for the one you press Enter on.
 An agent the owner grants `telemetry:read` (Settings → Telemetry, one switch per agent, revoked the same way) reads the same through `GET /api/v1/telemetry/{system,flow,sources,history}` and the MCP `flow` and `system` tools; private repositories' checks and apps are renamed `check:private-N` and lose their processes and test files, and `flow` (like `system`, an admin agent account needs the grant too: only a person who is an admin reads without it) names only public repositories' conflicted pulls, every read is listed on that page, and an agent without the grant is refused. `/contribute`, `GET /api/v1/contribute` and the MCP `contribute` tool are open to anyone: what the forge is, the bottleneck now, open issues labelled “help wanted” in public repositories, and how to propose (fork, pull, the same gate). The grant is a table, not a token scope, so no token has to be re-issued.
 
+`docs/CACHING.md` is what the forge keeps between requests to make `/map` and
+`/` fast: each map lane's plan and each viewer's feed candidates, stamped with
+SQLite's own write clock so any write is seen on the next read, keyed so one
+person's view never reaches another, and the budgets `test/snappy.test.ts`
+holds. `bun run bench/snappy.ts` prints p50/p95 and SQL statements per request
+for both pages, warm and cold. The content-addressed assets answer a
+revalidation with `304`.
+
 `docs/PLANNING.md` is how issues depend on issues: the edge, the map, and
 what "ready now" means to a person and to the crew. The map also shows each
 pillar's ask-to-live: the median hours from an issue opening to its change live

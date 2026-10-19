@@ -327,3 +327,59 @@ warm:
 | home feed page     | viewer, forge head              |    30 s |
 | home KPI row       | forge head, UTC hour; admin-gated |  30 s |
 | home pinned panel  | board blob, panel, forge head; admin-gated | 30 s |
+
+## What is built (#2675)
+
+The map half is #2716's (`web/map_cache.ts`, numbers above). #2675 adds
+the grouped reads under both pages and the home half.
+
+**Grouped reads** (rule 6), which serve a cold miss as well as a warm hit:
+
+- `raisedAt` (`core/thought_links.ts`) runs one `IN (…)` per 400 issues.
+  It was the 2,348-statement query on `/map`.
+- The feed reads every event's subject once per window
+  (`getIssuesByNumbers` + `joinMany` in `feed/items.ts`). It was 840 issue
+  reads.
+- `audienceFilter` reads every sealed row once per window when its caller
+  has the window (`eventRows` in `core/sealed.ts`). It was 600 reads.
+
+**Cache 3, the feed**, is `viewerCandidates` in `feed/feed.ts`, built with
+one difference from the design. The key is viewer and chips, the max age is
+30 s, and the bound is 200 entries (`kernel/stamped.ts`). The stamp is not
+the forge-wide `MAX(event.seq)` but `writeStamp` (`core/write_clock.ts`):
+SQLite's `total_changes()` and `PRAGMA data_version`, read in one statement.
+
+- **Why it differs.** The feed's asks and decision outcomes are read from
+  what is true now, not from events (the design says so under cache 3). A
+  clock that moves on every row written catches those writes at once,
+  rather than at the max age. `data_version` moves when another process
+  commits, as rule 4 asks.
+- **What it costs.** Any write invalidates every viewer's entry. Since any
+  event already does under the design, the hit rate barely changes.
+- **Transactions.** Inside an open transaction there is no stamp, and
+  nothing is cached: a rolled-back write leaves `total_changes` moved.
+- **Triggers were tried and removed.** Per-repository trigger counters
+  break bun's `changes`, which counts a trigger's rows, and every
+  `changes === 1` compare-and-swap in the codebase with it.
+
+Measured on `bench/snappy.ts`'s smaller fixture (12 apps of 24 issues), 100
+requests, before the map half landed:
+
+| request             | before p50 / p95 | before SQL | after p50 / p95 | after SQL |
+| ------------------- | ---------------- | ---------: | --------------- | --------: |
+| `/` owner           | 73.1 / 97.7 ms   |       1892 | 19.5 / 29.9 ms  |       135 |
+| `/` member          | 31.8 / 35.9 ms   |        743 | 9.4 / 11.7 ms   |       113 |
+| `/` owner, cold     | 73.1 / 97.7 ms   |       1892 | 26.5 / 34.7 ms  |       192 |
+
+The asks' per-pull reads that remained after this (#2772) are grouped by
+#2780, and home now reads its asks once. The feed cache's key says whether
+asks are in, because home asks for the feed without them.
+
+`test/snappy.test.ts` holds both pages' budgets on that fixture, warm and
+cold (a write before each request). It also checks:
+
+- a write through an action is on the next map and the next feed;
+- a sealed card and one viewer's feed never reach another viewer,
+  whichever order warmed the cache;
+- there is no stamp inside a transaction, and another connection's write
+  moves it.
