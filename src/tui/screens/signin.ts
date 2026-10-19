@@ -42,6 +42,9 @@ const CREATE: Field[] = [
 const INVITE_BLANK_MESSAGE = "Paste the token from your invite link.";
 const INVITE: Field = { label: "Invite", secret: true, hint: "The token from your invite link." };
 
+/** Behind an edge the terminal cannot know the login the edge will vouch for. */
+const EDGE_SIGNUP_MESSAGE = "Sign up on the page: accounts here are tied to the login the edge vouches for.";
+
 export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
   // "Is this forge empty?" is a existence question, not a count: `COUNT(*)`
   // walks the whole user table on the one screen every session paints.
@@ -50,7 +53,11 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
   // With signup = invite the form is offered, and asks for the invite.
   // Both are read where they are used, so the screen follows the live setting.
   const invited = (): boolean => getSignup(f.db) === "invite";
-  const closed = (): boolean => !invited() && signupClosed(f.app);
+  // Behind an edge no account is made here: it would be one the edge may later
+  // sign a platform user of the same name into. Sign-in is unchanged.
+  const edge = f.app.config.edgeToken !== undefined;
+  const closed = (): boolean => edge || (!invited() && signupClosed(f.app));
+  const closedText = (): string => (edge ? EDGE_SIGNUP_MESSAGE : SIGNUP_CLOSED_MESSAGE);
   let mode: "signin" | "create" = first && !closed() ? "create" : "signin";
   let values = ["", "", "", ""];
   let focus = 0;
@@ -62,7 +69,7 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
   const submit = (): void => {
     if (busy) return;
     if (closed() && mode === "create") {
-      error = SIGNUP_CLOSED_MESSAGE;
+      error = closedText();
       return;
     }
     const needsInvite = mode === "create" && invited();
@@ -141,7 +148,7 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
         head!.y + 1,
         truncate(
           closed()
-            ? SIGNUP_CLOSED_MESSAGE
+            ? closedText()
             : first
             ? "This forge has no accounts yet. The operator makes the admin."
             : `Connected from ${f.identity.remoteAddress} with ${f.identity.fingerprint ?? "no key"}`,
