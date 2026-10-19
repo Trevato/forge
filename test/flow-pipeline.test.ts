@@ -239,7 +239,7 @@ describe("/flow: the forge shows its own bottleneck", () => {
 
   test("an admin reads the stages as rows under the one sentence, linked from the header", async () => {
     const cookie = await login("alice");
-    const res = await get("/flow", cookie);
+    const res = await get("/boards", cookie);
     expect(res.status).toBe(200);
     const page = await res.text();
     expect(page).toContain('id="bottleneck" data-stage="check-queue"');

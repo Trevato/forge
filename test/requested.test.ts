@@ -236,7 +236,7 @@ describe("a pull with changes requested always moves", () => {
     app.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(pull.id);
   });
 
-  test("both shapes move within one tick, and /flow tells them apart", async () => {
+  test("both shapes move within one tick, and /boards tells them apart", async () => {
     // Every earlier pull is settled: only these two are in play.
     app.db.query("UPDATE issue SET state = 'closed' WHERE repo_id = ?1 AND kind = 'pull'").run(repo.id);
     const stale = await staleShape();
@@ -259,7 +259,7 @@ describe("a pull with changes requested always moves", () => {
       body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
     });
     const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
-    const page = await (await fetch(`${servers.url}/flow`, { headers: { cookie } })).text();
+    const page = await (await fetch(`${servers.url}/boards`, { headers: { cookie } })).text();
     expect(page).toContain(`id="requested-builder"`);
     expect(page).toContain(`waits on a reviewer, oldest first: alice/garden#${stale.number} `);
 

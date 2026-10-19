@@ -1,17 +1,14 @@
 /**
- * The pipeline and the held counts as a panel of `/boards`: one row per
- * stage (`flow/pipeline.ts`) and, per autonomous repository, its ready list
- * as one bar with the count each filter holds (`flow/held.ts`). /flow draws
- * the same held card from here. A private repository is in the rows for the
- * owner only.
+ * Why ready issues wait, per autonomous repository: its ready list as one bar
+ * with the count each filter holds (`flow/held.ts`). The flow panel
+ * (`flow-panel.ts`), on `/boards` and `/flow`, draws it from here. A private
+ * repository is in the rows for the owner only.
  */
 
-import type { App } from "../../app.ts";
 import { HOLDS } from "../../crew/held.ts";
-import { readHeld, type HeldRow } from "../../flow/held.ts";
-import { bottleneck, readPipeline, STAGE_HOLDS, STAGE_LABEL, verdict, waited } from "../../flow/pipeline.ts";
+import type { HeldRow } from "../../flow/held.ts";
 import { html, type Html } from "../html.ts";
-import { badge, card } from "../ui.ts";
+import { card } from "../ui.ts";
 
 export const heldCss = /* css */ `
 .held-bar { width: 100%; height: 12px; display: block; }
@@ -80,47 +77,4 @@ export function heldCard(rows: readonly HeldRow[]): Html {
           )}`,
     { id: "held" },
   );
-}
-
-/** The pipeline, a row per stage, under the sentence naming the bottleneck. */
-function pipelineCard(app: App, now: number): Html {
-  const stages = readPipeline(app.db, new Date(now));
-  const worst = bottleneck(stages);
-  return card(
-    html`<p data-stage="${worst?.key ?? ""}"><strong>${verdict(stages, now)}</strong></p>
-      <div class="table-scroll">
-        <table class="table" aria-label="Pipeline stages">
-          <thead>
-            <tr>
-              <th scope="col">Stage</th>
-              <th scope="col">Waiting</th>
-              <th scope="col">Active</th>
-              <th scope="col">Oldest wait</th>
-              <th scope="col">Capacity</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${stages.map(
-              (s) => html`<tr data-stage="${s.key}" ${s === worst ? html`data-bottleneck="true"` : null}>
-                <th scope="row">
-                  ${STAGE_LABEL[s.key]}
-                  ${s === worst ? badge("bottleneck", { tone: "danger" }) : null}
-                  <div class="muted small">${STAGE_HOLDS[s.key]}</div>
-                </th>
-                <td class="mono">${String(s.waiting)}</td>
-                <td class="mono">${String(s.active)}</td>
-                <td class="mono">${waited(s, now) ?? "—"}</td>
-                <td class="small">${s.capacity ?? "—"}</td>
-              </tr>`,
-            )}
-          </tbody>
-        </table>
-      </div>`,
-    { head: html`<h2>Pipeline</h2>`, id: "pipeline", pad: false },
-  );
-}
-
-/** The pipeline and the held counts; `owner` adds the private repositories. */
-export function pipelinePanel(app: App, owner: boolean, now = Date.now()): Html {
-  return html`${pipelineCard(app, now)}${heldCard(readHeld(app, owner, now))}`;
 }

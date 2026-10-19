@@ -17,7 +17,7 @@ import { notFoundPage } from "../chrome.ts";
 import { html, raw, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
 import { btn, card, empty } from "../ui.ts";
-import { heldCss, pipelinePanel } from "./boards-held.ts";
+import { flowPanel, flowPanelCss } from "./flow-panel.ts";
 import { cellsOf, chartBox, paramsOf, queryFields, readParams, runFor } from "./boards.ts";
 
 const RANGE_MS = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 } as const;
@@ -94,8 +94,8 @@ export async function boardsList(ctx: Ctx): Promise<Response> {
     title: "Boards",
     body: html`<div class="page-head"><h1>Boards</h1>
         ${btn("Explore the data", { href: "/boards/data", variant: "ghost" })}</div>
-      ${card(make)} ${body} ${pipelinePanel(ctx.app, true)}`,
-    styleCss: heldCss,
+      ${card(make)} ${body} ${flowPanel(ctx.app, { kind: "owner" }, ctx.url, "/boards")}`,
+    styleCss: flowPanelCss,
   });
 }
 

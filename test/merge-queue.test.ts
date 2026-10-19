@@ -288,7 +288,7 @@ describe("the merge queue", () => {
     expect(released).toEqual([{ pull: pulls[1]!.number, tip: `tip-${pulls[1]!.number}` }]);
   });
 
-  test("the queue shows through every door: /flow, the terminal and MCP, while gating and after", async () => {
+  test("the queue shows through every door: /boards, the terminal and MCP, while gating and after", async () => {
     const repo = await autonomousRepo("on-flow");
     const first = await greenPull(repo, "first.ts");
     const second = await greenPull(repo, "second.ts");
@@ -302,7 +302,7 @@ describe("the merge queue", () => {
     while (!queueStatus().some((q) => q.repoId === repo.id && q.queued === 2)) await Bun.sleep(5);
     const row = readQueues(app.db, new Date()).find((r) => r.repo === `alice/${repo.name}`);
     expect(row).toMatchObject({ queued: 2, gating: 1 });
-    const res = await fetch(`${servers.url}/flow`, {
+    const res = await fetch(`${servers.url}/boards`, {
       headers: { cookie: await login() },
       redirect: "manual",
     });

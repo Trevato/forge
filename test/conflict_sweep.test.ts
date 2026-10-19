@@ -31,7 +31,7 @@ let alice: User;
 let repo: Repo;
 const fresh = () => getRepoById(app.db, repo.id)!;
 
-/** /flow as the admin, and the MCP flow tool's `conflicted` field. */
+/** /boards as the admin, and the MCP flow tool's `conflicted` field. */
 async function flowDoors() {
   const signin = await fetch(`${servers.url}/signin`, {
     method: "POST",
@@ -43,7 +43,7 @@ async function flowDoors() {
     body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
   });
   const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
-  const page = await (await fetch(`${servers.url}/flow`, { headers: { cookie } })).text();
+  const page = await (await fetch(`${servers.url}/boards`, { headers: { cookie } })).text();
   const res = await fetch(`${servers.url}/mcp`, {
     method: "POST",
     headers: {

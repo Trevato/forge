@@ -330,7 +330,7 @@ describe("the tick says why each ready issue cannot start", () => {
     expect(getIssueById(app.db, direction.id)!.assigneeId).toBeNull();
   });
 
-  test("three doors: /flow, /boards and the terminal's Flow dialog show the counts, private ones to the owner only", async () => {
+  test("three doors: /boards, /flow and the terminal's Flow dialog show the counts, private ones to the owner only", async () => {
     const open = await crewed(app, alice, "open-door", "public");
     const shut = await crewed(app, alice, "shut-door");
     for (const { repo, mason } of [open, shut]) {
@@ -348,7 +348,7 @@ describe("the tick says why each ready issue cannot start", () => {
       body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
     });
     const cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
-    const res = await fetch(`${servers.url}/flow`, { headers: { cookie } });
+    const res = await fetch(`${servers.url}/boards`, { headers: { cookie } });
     expect(res.status).toBe(200);
     const page = await res.text();
     expect(page).toContain('id="held"');

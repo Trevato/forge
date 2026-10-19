@@ -307,7 +307,7 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     expect(html).toMatch(/id="summary"[^>]*>\s*<span class="pill"/);
     expect(html).toContain('<tbody data-kind="check"');
     expect(html).not.toMatch(/<[a-z]+ [^>]*\bstyle="/);
-    const flowPage = await fetch(`${servers.url}/flow`, { headers: { cookie: await login("alice") } });
+    const flowPage = await fetch(`${servers.url}/boards`, { headers: { cookie: await login("alice") } });
     expect(await flowPage.text()).toContain('id="duplicate-work" data-count="1"');
 
     const reads = recentReads(app.db).filter((r) => r.username === "muse");

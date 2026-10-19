@@ -176,7 +176,7 @@ describe("/flow: actual throughput per stage", () => {
   });
 
   test("the page says it in the headline and beside each stage, and every count links to its items", async () => {
-    const res = await get("/flow");
+    const res = await get("/boards");
     expect(res.status).toBe(200);
     const page = await res.text();
     const headline = page.match(/<p id="throughput">([\s\S]*?)<\/p>/)?.[1] ?? "";
@@ -186,15 +186,15 @@ describe("/flow: actual throughput per stage", () => {
     expect(throughputSays(readThroughput(app.db, PIPELINE, new Date(NOW)))).toBe(
       "landed 2 in the last hour · 6 in 24 h · median ask→live 3.5 h (24 h)",
     );
-    expect(headline).toContain('href="/flow?out=landed&amp;hour=0#out"');
-    expect(page).toMatch(/data-out="landed">\s*<a class="mono" href="\/flow\?out=landed&amp;hour=0#out" data-hour="0">2<\/a>/);
+    expect(headline).toContain('href="/boards?out=landed&amp;hour=0#out"');
+    expect(page).toMatch(/data-out="landed">\s*<a class="mono" href="\/boards\?out=landed&amp;hour=0#out" data-hour="0">2<\/a>/);
     expect(page).toContain('data-day="6">6 in 24 h');
     expect(page).toContain("2 passed · 1 failed");
     expect((page.match(/class="flow-bar"/g) ?? []).length).toBe(PIPELINE.length * 24);
   });
 
   test("each sparkline is a picture only: hidden from assistive tech, no links or tab stops of its own", async () => {
-    const page = await (await get("/flow")).text();
+    const page = await (await get("/boards")).text();
     const svgs = page.match(/<svg[\s\S]*?<\/svg>/g) ?? [];
     const sparks = svgs.filter((s) => s.includes('class="flow-bar"'));
     expect(sparks).toHaveLength(PIPELINE.length);
@@ -208,8 +208,8 @@ describe("/flow: actual throughput per stage", () => {
     for (const key of PIPELINE) {
       const out = { ready: "started", building: "opened", "check-queue": "check-started", checking: "checked",
         review: "reviewed", approved: "landed", landed: "released", live: "live" }[key];
-      expect(page).toContain(`href="/flow?out=${out}&amp;hour=0#out" data-hour="0"`);
-      expect(page).toMatch(new RegExp(`href="/flow\\?out=${out}#out" data-day=`));
+      expect(page).toContain(`href="/boards?out=${out}&amp;hour=0#out" data-hour="0"`);
+      expect(page).toMatch(new RegExp(`href="/boards\\?out=${out}#out" data-day=`));
     }
   });
 
@@ -268,15 +268,15 @@ describe("/flow: actual throughput per stage", () => {
   });
 
   test("following a count lists the items it counted; a bad ask lists nothing", async () => {
-    const hour = await (await get("/flow?out=landed&hour=0")).text();
+    const hour = await (await get("/boards?out=landed&hour=0")).text();
     expect(hour).toContain('id="out"');
     expect(hour).toContain("2 landed in the last hour");
     expect(hour).toContain('href="/alice/shop/pulls/2"');
     expect(hour).toContain('href="/alice/shop/pulls/4"');
     expect(hour).not.toContain('href="/alice/shop/pulls/6"');
-    const day = await (await get("/flow?out=landed")).text();
+    const day = await (await get("/boards?out=landed")).text();
     expect(day).toContain("6 landed in the last 24 hours");
     for (const bad of ["?out=nope", "?out=landed&hour=24", "?out=landed&hour=-1", "?out=landed&hour=1e1"])
-      expect(await (await get(`/flow${bad}`)).text()).not.toContain('id="out"');
+      expect(await (await get(`/boards${bad}`)).text()).not.toContain('id="out"');
   });
 });
