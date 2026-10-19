@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { classesIn, compare, countFile, documentedClasses, registeredClasses, scan } from "../scripts/design-lint.ts";
+import { classesIn, compare, countFile, documentedClasses, registeredClasses, scan, webCss } from "../scripts/design-lint.ts";
 
 /** A DESIGN.md in miniature: the §5 table, a §5d register, and a §6 that names a class too. */
 const DESIGN = [
@@ -35,6 +35,24 @@ describe("design check: nothing added outside the system (#2678)", () => {
     expect(countFile("/**\n * Who may fetch a picture (#727, #738).\n */\nx = 1;").colour).toBe(0);
     expect(countFile("a{color:#999}").colour).toBe(1);
     expect(countFile('const u = "https://x.test/#abc";').colour).toBe(1);
+  });
+
+  test("counts the website-spec stylesheet rules (#2939)", () => {
+    const css = (c: string) => webCss("x = /* css */ `" + c + "`");
+    expect(css("a{transition:color .2s} @keyframes s{}").motion).toBe(2);
+    expect(css("a{transition:color .2s} @media (prefers-reduced-motion: reduce){a{transition:none}}").motion).toBe(0);
+    expect(css("a:focus{outline:2px solid var(--fg)}")).toMatchObject({ forced: 1, focus: 1 });
+    expect(css("a:focus-visible{outline:2px solid var(--fg)} @media (forced-colors: active){a:focus-visible{outline-color:Highlight}}")).toMatchObject({ forced: 0, focus: 0 });
+    expect(css("input{font-size:14px} textarea{font-size:16px} p{font-size:12px}").input).toBe(1);
+    expect(css("button{height:20px} .btn{min-width:24px} div{height:8px} a{width:10px}").target).toBe(2);
+  });
+
+  test("a pull may not raise a website-spec count, and may lower it (#2939)", () => {
+    const base = { files: { "src/web/x.ts": { colour: 0, size: 0, motion: 2 } } };
+    const now = { classes: ["btn", "run-log", "x-card", "x-row", "x-wrapped"], files: { "src/web/x.ts": { colour: 0, size: 0, motion: 3 } } };
+    expect(compare(base, now, DESIGN)[0]).toContain("prefers-reduced-motion");
+    expect(compare(base, { ...now, files: { "src/web/x.ts": { colour: 0, size: 0, motion: 1 } } }, DESIGN)).toEqual([]);
+    expect(compare(base, { ...now, files: { "src/web/y.ts": { colour: 0, size: 0, target: 1 } } }, DESIGN)[0]).toContain("WCAG 2.5.8");
   });
 
   test("finds the classes a css template defines, and only those", () => {

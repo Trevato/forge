@@ -2,19 +2,84 @@
   "files": {
     "src/web/pages/board.ts": {
       "colour": 0,
-      "size": 6
+      "size": 6,
+      "motion": 3,
+      "forced": 0,
+      "focus": 0,
+      "input": 0,
+      "target": 0
     },
     "src/web/pages/conflicts.ts": {
       "colour": 0,
-      "size": 1
+      "size": 1,
+      "motion": 0,
+      "forced": 0,
+      "focus": 0,
+      "input": 0,
+      "target": 0
+    },
+    "src/web/pages/map.ts": {
+      "colour": 0,
+      "size": 0,
+      "motion": 3,
+      "forced": 1,
+      "focus": 0,
+      "input": 0,
+      "target": 0
     },
     "src/web/standards.ts": {
       "colour": 2,
-      "size": 0
+      "size": 0,
+      "motion": 0,
+      "forced": 0,
+      "focus": 0,
+      "input": 0,
+      "target": 0
+    },
+    "src/web/studio/feed_style.ts": {
+      "colour": 0,
+      "size": 0,
+      "motion": 0,
+      "forced": 1,
+      "focus": 0,
+      "input": 0,
+      "target": 0
+    },
+    "src/web/studio/style.ts": {
+      "colour": 0,
+      "size": 0,
+      "motion": 3,
+      "forced": 0,
+      "focus": 0,
+      "input": 0,
+      "target": 0
+    },
+    "src/web/style/base.ts": {
+      "colour": 0,
+      "size": 0,
+      "motion": 4,
+      "forced": 1,
+      "focus": 0,
+      "input": 0,
+      "target": 0
     },
     "src/web/style/components.ts": {
       "colour": 3,
-      "size": 2
+      "size": 2,
+      "motion": 20,
+      "forced": 1,
+      "focus": 2,
+      "input": 1,
+      "target": 1
+    },
+    "src/web/style/content.ts": {
+      "colour": 0,
+      "size": 0,
+      "motion": 13,
+      "forced": 1,
+      "focus": 1,
+      "input": 2,
+      "target": 2
     }
   }
 }

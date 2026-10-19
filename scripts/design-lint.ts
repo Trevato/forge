@@ -15,6 +15,21 @@
  *           registers the page-local classes that predate the rule; a name
  *           it keeps after its last rule is gone fails too, so it only shrinks
  *
+ * Five more counts hold the website specification's stylesheet rules
+ * (#2939, specification.website, the same ratchet: today's count is the
+ * ceiling). Each is counted per `/* css *\/` template (`webCss`):
+ *
+ *   motion   an animation/transition/@keyframes in a block with no
+ *            `prefers-reduced-motion` (specification.website, motion)
+ *   forced   a block that styles `:focus` and has no `forced-colors: active`
+ *            (specification.website, forced colours)
+ *   focus    a `:focus` selector that is not `:focus-visible`/`:focus-within`
+ *            (specification.website, focus)
+ *   input    an input, select or textarea under 16px, which zooms iOS
+ *            (specification.website, input size)
+ *   target   a button, link, input or select under 24px wide or high, WCAG 2.5.8
+ *            (specification.website, target size)
+ *
  * Known gaps, so nobody mistakes the gate for more than it is: colours built
  * in JS strings other than the forms above, `oklch()`,
  * `lab()` and system colours are not seen; sizes in `rem`/`em` are not
@@ -41,7 +56,16 @@ const NAMED_RE = new RegExp(
   "gi",
 );
 
-export type Counts = { colour: number; size: number };
+export type Counts = { colour: number; size: number } & Partial<WebCounts>;
+export type WebCounts = { motion: number; forced: number; focus: number; input: number; target: number };
+const WEB_KEYS = ["motion", "forced", "focus", "input", "target"] as const;
+const WEB_MESSAGE: Record<(typeof WEB_KEYS)[number], string> = {
+  motion: "animation without a prefers-reduced-motion guard (specification.website, motion)",
+  forced: "custom focus styling without @media (forced-colors: active) (specification.website, forced colours)",
+  focus: ":focus styled without :focus-visible (specification.website, focus)",
+  input: "form input under 16px, which zooms iOS (specification.website, input size)",
+  target: "interactive target under 24x24 CSS px, WCAG 2.5.8 (specification.website, target size)",
+};
 export type Baseline = { files: Record<string, Counts> };
 export type Scan = Baseline & { classes: string[] };
 
@@ -90,6 +114,30 @@ export function countFile(text: string): Counts {
     if (!TYPE_SCALE.includes(Number(m[1]))) size++;
   }
   return { colour, size };
+}
+
+const INTERACTIVE = /(^|[\s,>+~])(a|button|input|select|summary)\b|\.btn\b|\[role=["']?button/i;
+const FIELD = /(^|[\s,>+~])(input|select|textarea)\b/i;
+
+/** The five specification.website stylesheet counts for one file's css templates. */
+export function webCss(text: string): WebCounts {
+  const n: WebCounts = { motion: 0, forced: 0, focus: 0, input: 0, target: 0 };
+  for (const css of cssBlocks(text)) {
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    if (!/prefers-reduced-motion/.test(bare)) n.motion += (bare.match(/(?<![\w-])(?:animation|transition)(?:-name)?\s*:|@keyframes\b/g) ?? []).length;
+    if (/:focus(?!-visible|-within)|:focus-visible/.test(bare) && !/forced-colors/.test(bare)) n.forced++;
+    n.focus += (bare.match(/:focus(?![-\w])/g) ?? []).length;
+    for (const r of bare.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const sel = r[1]!, body = r[2]!;
+      if (FIELD.test(sel)) {
+        for (const f of body.matchAll(/font-size:\s*([0-9.]+)px/g)) if (Number(f[1]) < 16) n.input++;
+      }
+      if (INTERACTIVE.test(sel)) {
+        for (const d of body.matchAll(/(?<![\w-])(?:min-)?(?:width|height)\s*:\s*([0-9.]+)px/g)) if (Number(d[1]) < 24) n.target++;
+      }
+    }
+  }
+  return n;
 }
 
 export function classesIn(text: string): string[] {
@@ -147,8 +195,8 @@ export function scan(root: string): Scan {
   const classes = new Set<string>();
   for (const f of sourceFiles(root)) {
     const text = readFileSync(f, "utf8");
-    const c = countFile(text);
-    if (c.colour || c.size) files[relative(root, f)] = c;
+    const c: Counts = { ...countFile(text), ...webCss(text) };
+    if (c.colour || c.size || WEB_KEYS.some((k) => c[k])) files[relative(root, f)] = c;
     for (const k of classesIn(text)) classes.add(k);
   }
   return { files, classes: [...classes].sort() };
@@ -159,6 +207,9 @@ export function compare(base: Baseline, now: Scan, design: string): string[] {
   const out: string[] = [];
   for (const [file, c] of Object.entries(now.files)) {
     const b = base.files[file] ?? { colour: 0, size: 0 };
+    for (const k of WEB_KEYS) {
+      if ((c[k] ?? 0) > (b[k] ?? 0)) out.push(`${file}: ${(c[k] ?? 0) - (b[k] ?? 0)} new ${WEB_MESSAGE[k]}`);
+    }
     if (c.colour > b.colour) out.push(`${file}: ${c.colour - b.colour} new colour literal(s) — use a token from themes.ts (var(--…))`);
     if (c.size > b.size) out.push(`${file}: ${c.size - b.size} new off-scale font-size — the scale is ${TYPE_SCALE.join(", ")}px`);
   }
