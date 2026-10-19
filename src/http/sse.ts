@@ -82,7 +82,7 @@ export type Emit = (event: string, data: unknown, id?: string) => void;
  */
 export function eventStream(
   request: Request,
-  register: (emit: Emit, close: () => void) => () => void,
+  register: (emit: Emit, close: () => void, ready: () => boolean) => () => void,
 ): Response {
   const encoder = new TextEncoder();
   let cleanup = () => {};
@@ -116,6 +116,10 @@ export function eventStream(
           );
         };
 
+        // A source of samples (the latest wins, older ones are worthless)
+        // skips a frame while the reader is behind instead of queueing it.
+        const ready = () => open && (controller.desiredSize ?? 0) > MAX_BUFFERED_BYTES / 2;
+
         const heartbeat = setInterval(() => write(`: ping\n\n`), HEARTBEAT_MS);
         // Assigned before `register` runs: a source that finishes immediately
         // (a job that is already done) must find a cleanup that works.
@@ -148,7 +152,7 @@ export function eventStream(
         request.signal.addEventListener("abort", cleanup);
         release = holdForCaller(request, () => cleanup());
         write(`: connected\n\n`);
-        unsubscribe = register(emit, () => cleanup());
+        unsubscribe = register(emit, () => cleanup(), ready);
         // A registration that closed the stream synchronously leaves an
         // unsubscribe nobody has run yet.
         if (!open) unsubscribe();

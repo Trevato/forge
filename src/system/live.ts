@@ -12,18 +12,53 @@ import { buildSystem, forAgent, type Roots, type SystemView } from "./view.ts";
 
 const FRESH_MS = 1_000;
 
+/** How often a watched reading is pushed: only while someone is subscribed. */
+export const PUSH_MS = 2_000;
+
 export type Live = {
   read(now?: number): SystemView;
+  /** Hear every sample pushed; the first subscriber starts the clock, the last stops it. */
+  subscribe(listener: (view: SystemView) => void): () => void;
+  /** Whether the push clock is running: only while someone is subscribed. */
+  running(): boolean;
+  /** Hand a sample to every subscriber (the clock does this; a test may too). */
+  publish(view: SystemView): void;
 };
 
-export function createLive(options: { paths?: Paths; roots?: () => Roots; self?: number } = {}): Live {
+export function createLive(options: { paths?: Paths; roots?: () => Roots; self?: number; pushMs?: number } = {}): Live {
   const paths = options.paths ?? HOST;
   const roots = options.roots ?? cellRoots;
   const self = options.self ?? process.pid;
   let prev: Raw | undefined;
   let last: Raw | undefined;
   let view: SystemView | undefined;
-  return {
+  const listeners = new Set<(view: SystemView) => void>();
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const self_: Live = {
+    subscribe(listener) {
+      listeners.add(listener);
+      if (timer === undefined) {
+        timer = setInterval(() => self_.publish(self_.read()), options.pushMs ?? PUSH_MS);
+        timer.unref?.();
+      }
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0 && timer !== undefined) {
+          clearInterval(timer);
+          timer = undefined;
+        }
+      };
+    },
+    running: () => timer !== undefined,
+    publish(sample) {
+      for (const listener of [...listeners]) {
+        try {
+          listener(sample);
+        } catch {
+          // one broken viewer never starves the others
+        }
+      }
+    },
     read(now = Date.now()) {
       if (view !== undefined && last !== undefined && now - last.at < FRESH_MS) return view;
       const raw = readRaw(paths, now);
@@ -34,6 +69,7 @@ export function createLive(options: { paths?: Paths; roots?: () => Roots; self?:
       return view;
     },
   };
+  return self_;
 }
 
 let shared = createLive();

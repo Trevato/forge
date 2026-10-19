@@ -15,7 +15,7 @@ import { parentCallback, parentStart } from "./rp.ts";
 import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
 import { flowPage } from "../web/pages/flow.ts";
-import { systemPage } from "../web/pages/system.ts";
+import { systemPage, systemStream } from "../web/pages/system.ts";
 import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
 import { contributePage } from "../web/pages/contribute.ts";
 import { flagsPage, flagsSet } from "../web/pages/flags.ts";
@@ -730,6 +730,7 @@ export function buildRouter(): Router<Handler> {
   // The pipeline's stages and its bottleneck, for a forge admin (#1554); literal, above /:owner.
   router.add("GET", "/flow", flowPage);
   router.add("GET", "/system", systemPage);
+  router.add("GET", "/system/stream", systemStream);
   router.add("GET", "/contribute", contributePage);
   router.add("GET", "/settings/telemetry", telemetryPage);
   router.add("POST", "/settings/telemetry", telemetrySet);
