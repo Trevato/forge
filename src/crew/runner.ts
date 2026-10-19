@@ -90,6 +90,7 @@ import {
   systemPrompt,
   taskPrompt,
   wrapUpPrompt,
+  type LastTry,
   type RunReason,
 } from "./brief.ts";
 import { policyBrief } from "../contract/audit.ts";
@@ -139,7 +140,7 @@ import { historyHolds, scrubTree } from "./leak.ts";
 import { workdirFor } from "./workdir.ts";
 import { readersAmong, voiceOf } from "./direct.ts";
 import { feedbackSince } from "./news.ts";
-import { handedOverPulls, SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
+import { handedOverPulls, RETRY_SUMMARY, SKIP_SUMMARY, skipsFeedback } from "./guard.ts";
 import { passportEnv } from "./passport_env.ts";
 
 const log = createLog("crew");
@@ -296,6 +297,7 @@ export async function executeAgentRun(
     run.reason === "feedback" &&
     run.attempt === 0 &&
     run.startedAt === null &&
+    run.summary !== RETRY_SUMMARY &&
     skipsQueued(app, run)
   ) {
     const skipped = cancelRun(app.db, run.id, SKIP_SUMMARY);
@@ -447,6 +449,25 @@ async function pullHeadOf(
     getPull(app.db, repo.id, issue.number)?.headOid ??
     pull.headOid
   );
+}
+
+/** What a retried follow-up is told: the latest verdict asking for changes, and the last builder run's final answer. */
+function lastTryOf(
+  app: App,
+  pullId: string,
+  run: Run,
+  reviews: readonly { state: string; authorName: string; body: string }[],
+): LastTry | undefined {
+  const verdict = reviews.findLast((r) => r.state === "changes_requested");
+  if (verdict === undefined) return undefined;
+  const answer = app.db
+    .query<{ summary: string }, [string, string]>(
+      `SELECT summary FROM run WHERE issue_id = ?1 AND kind = 'agent' AND reason != 'review'
+          AND id <> ?2 AND summary NOT LIKE 'skipped: %'
+        ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(pullId, run.id);
+  return { reviewer: verdict.authorName, verdict: verdict.body, answer: answer?.summary ?? "" };
 }
 
 /** Whether a queued follow-up would find nothing new (`news.ts`): recorded as a skip. */
@@ -942,6 +963,10 @@ async function work(
         ),
       ),
       since,
+      lastTry:
+        reason === "feedback" && run.summary === RETRY_SUMMARY
+          ? lastTryOf(app, issue.id, run, reviews)
+          : undefined,
       checkSummary: failedCheck?.run?.summary,
       resolution:
         reason === "resolve" && pull

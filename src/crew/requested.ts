@@ -12,16 +12,19 @@
  *   started since the verdict: a feedback run is queued to the pull's
  *   builder, one being assigned when the pull has none. One run per pull,
  *   and each takes a builder slot — `free` is how many the tick has.
+ *   When that run ended without a push, one more is queued carrying the
+ *   verdict and the run's final answer; when that one too ended without
+ *   one, the pull is handed to a person and the pass stops.
  *
  * Every pull it passes over gets one line saying why, said once until the
  * reason changes, so a stall is never silent and never a flood.
  */
 
 import type { App } from "../app.ts";
-import { assignIssue } from "../actions/issues.ts";
+import { addComment, assignIssue } from "../actions/issues.ts";
 import { getAgent, listCrewRoles, type Agent } from "../core/agents.ts";
 import { getHold } from "../core/holds.ts";
-import { getIssueById } from "../core/issues.ts";
+import { getIssueById, listComments, type Issue } from "../core/issues.ts";
 import { getPull } from "../core/pulls.ts";
 import type { Repo } from "../core/repos.ts";
 import { requestedPulls, verdictIsStale, type RequestedPull } from "../core/requested.ts";
@@ -30,11 +33,14 @@ import { activeRunFor } from "../core/runs.ts";
 import { getUserById } from "../core/users.ts";
 import { createLog } from "../kernel/log.ts";
 import { queueAgentRun } from "./dispatch.ts";
-import { handoverOf } from "./guard.ts";
+import { HANDOVER_NOTE, handoverOf } from "./guard.ts";
 import { greenHead, sendToReview } from "./review.ts";
 import { pickBuilder } from "./route.ts";
 
 const log = createLog("crew");
+
+/** The runs a verdict gets from this pass before a person has it: the first, and one more with its words. */
+const FOLLOW_UPS = 2;
 
 /** What the tick did with one pull: moved it, or why not. */
 export type RequestedMove =
@@ -170,8 +176,10 @@ function followUp(
     return notMoved(requested, "past the review rounds; the verdict is advice");
   if (activeRunFor(app.db, "agent", pull.id) !== undefined)
     return notMoved(requested, "a run is in flight");
-  if (startedSince(app, pull.id, requested.at))
-    return notMoved(requested, "a run since the verdict ended without a push");
+  // A push ends the verdict's turn (the reviewer reads the new head), so every
+  // run counted here ended without one: one is asked again, two go to a person.
+  const tried = startedSince(app, pull.id, requested.at);
+  if (tried >= FOLLOW_UPS) return handOverPushless(app, repo, requested, issue);
   if (builders.length === 0) return notMoved(requested, "no builder on the crew");
   const assignee = issue.assigneeId;
   let builder = builders.find((b) => b.user.id === assignee);
@@ -194,7 +202,7 @@ function followUp(
   const current = getIssueById(app.db, issue.id) ?? issue;
   // The assignment may already have queued the builder's run; either is the one.
   const run =
-    queueAgentRun(app, repo, current, builder, "feedback") ??
+    queueAgentRun(app, repo, current, builder, "feedback", undefined, undefined, undefined, tried > 0) ??
     activeRunFor(app.db, "agent", pull.id, builder.user.id);
   if (run === undefined)
     return notMoved(requested, `${builder.user.username}'s run was not queued (ceiling, cap or breaker)`);
@@ -206,17 +214,42 @@ function followUp(
   };
 }
 
-/** Whether a run other than a review started on the pull after the verdict. */
-function startedSince(app: App, pullId: string, at: string): boolean {
-  return (
-    app.db
-      .query<{ n: number }, [string, string]>(
-        `SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1 AND kind = 'agent'
-           AND reason != 'review' AND created_at > ?2
-           AND summary NOT LIKE 'skipped: %'`,
-      )
-      .get(pullId, at)!.n > 0
+/** How many runs other than a review started on the pull after the verdict. */
+function startedSince(app: App, pullId: string, at: string): number {
+  return app.db
+    .query<{ n: number }, [string, string]>(
+      `SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1 AND kind = 'agent'
+         AND reason != 'review' AND created_at > ?2
+         AND summary NOT LIKE 'skipped: %'`,
+    )
+    .get(pullId, at)!.n;
+}
+
+/** The builder has had its follow-ups and pushed nothing: one note, from the reviewer, and no more runs. */
+function handOverPushless(
+  app: App,
+  repo: Repo,
+  requested: RequestedPull,
+  issue: Issue,
+): RequestedMove {
+  const said = listComments(app.db, issue.id).some(
+    (c) => c.body.startsWith(HANDOVER_NOTE) && c.createdAt >= requested.at,
   );
+  const reviewer = getUserById(app.db, requested.reviewerId);
+  if (!said && reviewer !== undefined) {
+    addComment(
+      app,
+      reviewer,
+      repo,
+      issue,
+      `${HANDOVER_NOTE} two follow-up runs on the review's changes ended without a push, so no more start here until you say what to try. (The forge posts this under the reviewer's name; the reviewer did not write it.)`,
+    );
+    log.info("handed to a person after two follow-ups without a push", {
+      repo: `${repo.ownerName}/${repo.name}`,
+      pull: issue.number,
+    });
+  }
+  return notMoved(requested, "handed to a person after two follow-ups ended without a push");
 }
 
 /** A move is always said; a why-not once, until it changes. */

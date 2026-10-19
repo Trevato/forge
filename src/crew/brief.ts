@@ -201,6 +201,8 @@ export interface TaskInput extends BriefInput {
   readonly retry?: boolean | undefined;
   /** For `review`: pictures of the preview at this head, phone and desktop. */
   readonly looks?: readonly string[] | undefined;
+  /** For a feedback run asked again: why the last try did not land (`requested.ts`). */
+  readonly lastTry?: LastTry | undefined;
   /** For a planner: the issues the crew parked twice, with why. */
   readonly parkedTwice?: readonly HandedOver[] | undefined;
   /** For a planner: the limbs a person handed over to re-plan as fewer, larger pieces. */
@@ -211,6 +213,13 @@ export interface TaskInput extends BriefInput {
   readonly stuck?: Stuck | undefined;
   /** For a planner: each team with a dial above zero and the work it holds (`team_share.ts`). */
   readonly owed?: readonly Owed[] | undefined;
+}
+
+/** The reviewer's latest verdict, and the final answer of the run that did not push for it. */
+export interface LastTry {
+  readonly reviewer: string;
+  readonly verdict: string;
+  readonly answer: string;
 }
 
 /** Ready issues no builder can start, as the planner is told of them (#2244). */
@@ -506,9 +515,25 @@ function taskBody(input: TaskInput): string {
   for (const c of news.comments) out.push("", quote(c.authorName, c.body));
   // A hand-over is the news, in words, whether or not anyone wrote.
   if (handed.length > 0) out.push("", ...handed);
+  const tried = input.lastTry;
+  if (tried !== undefined) {
+    out.push(
+      "",
+      "Your last try on this did not land: the run ended without a push, and the review still asks for changes. This is the last one before a person takes over.",
+      "",
+      `${said(tried.reviewer)}'s latest verdict asked for changes${tried.verdict.trim() === "" ? "." : ":"}`,
+    );
+    if (tried.verdict.trim() !== "") out.push(indent(tried.verdict));
+    out.push(
+      "",
+      "Your last run's final answer:",
+      indent(tried.answer.trim() === "" ? "(none)" : tried.answer),
+    );
+  }
   if (
     news.comments.length + news.reviews.length + news.lines.length === 0 &&
     handed.length === 0 &&
+    tried === undefined &&
     input.paused !== true
   ) {
     out.push(

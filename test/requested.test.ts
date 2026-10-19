@@ -15,13 +15,14 @@ import { openPull } from "../src/actions/pulls.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { setCrewRole } from "../src/core/agents.ts";
-import { getIssueById } from "../src/core/issues.ts";
+import { getIssueById, listComments } from "../src/core/issues.ts";
 import { getPull, type Pull } from "../src/core/pulls.ts";
 import { getRepoById, type Repo } from "../src/core/repos.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { claimRun, createRun, finishRun, listRuns } from "../src/core/runs.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { autonomyTick } from "../src/crew/autonomy.ts";
+import { HANDOVER_NOTE } from "../src/crew/guard.ts";
 import { moveRequested, tallyRequested, tallyWords } from "../src/crew/requested.ts";
 import { requestedSays, requestedWaits } from "../src/flow/requested.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -215,11 +216,47 @@ describe("a pull with changes requested always moves", () => {
       did: "not moved",
       why: "a run is in flight",
     });
-    // A run that answered nothing is not asked again.
-    clearRuns();
-    const after = await moveRequested(app, fresh(), 1);
-    expect(after.find((m) => m.pull === pull.number)?.did).toBe("not moved");
+    app.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(pull.id);
+  });
+
+  test("a run that ended without a push is asked once more with the verdict and its answer, then a person has it", async () => {
+    const pull = await currentShape();
+    await moveRequested(app, fresh(), 1);
     expect(runs(pull, "feedback")).toHaveLength(1);
+    // The first try ends without a push, saying why.
+    app.db
+      .query("UPDATE run SET state = 'ok', started_at = created_at, finished_at = created_at, summary = 'I could not reproduce it.' WHERE issue_id = ?1 AND reason = 'feedback'")
+      .run(pull.id);
+
+    // Exactly one new run within one tick; a second tick starts no other.
+    const second = await moveRequested(app, fresh(), 1);
+    expect(second).toContainEqual({
+      pull: pull.number,
+      did: "queued feedback",
+      builder: "mason",
+      assigned: false,
+    });
+    expect(runs(pull, "feedback")).toHaveLength(2);
+    const again = await moveRequested(app, fresh(), 1);
+    expect(again.find((m) => m.pull === pull.number)).toEqual({
+      pull: pull.number,
+      did: "not moved",
+      why: "a run is in flight",
+    });
+    expect(runs(pull, "feedback")).toHaveLength(2);
+    // After the second also ends without a push: handed over, once, and no third run.
+    clearRuns();
+    for (let i = 0; i < 2; i++) {
+      const over = await moveRequested(app, fresh(), 1);
+      expect(over.find((m) => m.pull === pull.number)).toEqual({
+        pull: pull.number,
+        did: "not moved",
+        why: "handed to a person after two follow-ups ended without a push",
+      });
+    }
+    expect(runs(pull, "feedback")).toHaveLength(2);
+    const notes = listComments(app.db, pull.id).filter((c) => c.body.startsWith(HANDOVER_NOTE));
+    expect(notes).toHaveLength(1);
     app.db.query("UPDATE issue SET state = 'closed' WHERE id = ?1").run(pull.id);
   });
 

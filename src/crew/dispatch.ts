@@ -65,6 +65,7 @@ import {
   capNoted,
   capReached,
   HANDOVER_NOTE,
+  RETRY_SUMMARY,
   handoverNote,
   handoverOf,
   type Handover,
@@ -288,6 +289,7 @@ export function queueAgentRun(
   actorId?: string,
   again?: { notBefore: string; attempt: number; summary: string },
   variantGroup?: string,
+  retry = false,
 ): Run | undefined {
   // A suspended or removed owner's repositories run nothing, whoever asks.
   if (!accountActive(app.db, repo.ownerId)) return undefined;
@@ -348,6 +350,7 @@ export function queueAgentRun(
     // queued run asks again as it starts (`runner.ts`).
     if (
       reason === "feedback" &&
+      !retry &&
       again === undefined &&
       active === undefined &&
       skipsFeedback(app.db, repo, issue, agent)
@@ -369,6 +372,7 @@ export function queueAgentRun(
       issueId: issue.id,
       actorId: agent.user.id,
       reason,
+      ...(retry ? { summary: RETRY_SUMMARY } : {}),
       ...again,
       // A run queued again (a restart, a pause, the sweep) stays in the
       // group its issue was started in.

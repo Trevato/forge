@@ -54,6 +54,13 @@ export const CAP_NOTE =
 /** What a skipped follow-up records, and what its run says when one was already queued. */
 export const SKIP_SUMMARY = "skipped: nothing new to act on since the last run";
 
+/**
+ * What the second follow-up on a verdict carries as its summary while it
+ * waits: the run that asks again because the last try pushed nothing
+ * (`requested.ts`). It is never skipped for having nothing new.
+ */
+export const RETRY_SUMMARY = "retry: the last follow-up ended without a push";
+
 /** A follow-up for `agent` on `issue` that would find nothing new: skip it. */
 export function skipsFeedback(
   db: Database,
