@@ -495,6 +495,7 @@ import {
   prefersHtml,
   securityFloor,
 } from "./respond.ts";
+import { compress } from "./compress.ts";
 import { RateLimiter, type Verdict } from "../core/ratelimit.ts";
 import {
   MAX_KEY_LENGTH,
@@ -2162,7 +2163,7 @@ export async function serve(app: App): Promise<Servers> {
     if (request.signal.aborted) onAbort();
     else request.signal.addEventListener("abort", onAbort, { once: true });
     const work = run().then(
-      (response) => securityFloor(response),
+      (response) => compress(request, response).then(securityFloor),
       (error) => failure(owner, error),
     );
     try {

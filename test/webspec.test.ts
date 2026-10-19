@@ -143,3 +143,22 @@ test("every fetch carries a timeout signal", async () => {
   expect(seen.length).toBeGreaterThan(3);
   expect(seen.every(Boolean)).toBe(true);
 });
+
+test("compression: a big page and stylesheet must leave encoded with Vary", async () => {
+  const big = GOOD_HTML.replace("</head>", `<link rel="stylesheet" href="/a.css"></head>`).replace(">hi<", `>${"x".repeat(2000)}<`);
+  const fetcher = (encoded: boolean) => async (input: string, init?: RequestInit) => {
+    const u = new URL(input);
+    const h = new Headers(init?.headers);
+    if (u.pathname === "/icon.svg" || u.pathname === "/m.json") return new Response("x");
+    if (h.get("if-none-match")) return new Response(null, { status: 304 });
+    expect(h.get("accept-encoding")).toBe("br, gzip");
+    const enc: Record<string, string> = encoded ? { "content-encoding": "br", vary: "Accept-Encoding" } : {};
+    if (u.pathname === "/a.css") return new Response("a{}".repeat(500), { headers: enc });
+    return new Response(big, { headers: { ...GOOD_HEADERS, ...enc } });
+  };
+  expect(await webspec("https://x.test", ["/"], fetcher(true))).toEqual([]);
+  const found = await webspec("https://x.test", ["/"], fetcher(false));
+  expect(found.map((f) => f.check)).toEqual(["compression", "compression"]);
+  expect(found[1]!.message).toContain("/a.css");
+  expect(found[0]!.section).toBe("https://specification.website/");
+});

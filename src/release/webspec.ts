@@ -1,5 +1,5 @@
 /**
- * The website specification as a report (#2915, checks 1 and 2). `webspec()`
+ * The website specification as a report (#2915, checks 1, 2 and 7). `webspec()`
  * fetches each path of a site once and returns what the page's head and
  * response headers get wrong, each finding citing its specification.website
  * section. It reports; it never throws on a bad page and never fails a run.
@@ -106,6 +106,32 @@ export function headerProblems(h: Headers, https: boolean): Problem[] {
   return out;
 }
 
+const COMPRESS_MIN = 1024;
+const ACCEPT_ENCODING = "br, gzip";
+
+/** The stylesheets the head links, as absolute URLs. */
+function stylesheetTargets(html: string, pageUrl: string): string[] {
+  const out: string[] = [];
+  for (const t of links(html, "stylesheet")) {
+    try {
+      const u = new URL(attr(t, "href") ?? "", pageUrl).href;
+      if (!out.includes(u)) out.push(u);
+    } catch {}
+  }
+  return out;
+}
+
+/** A text body big enough to be worth it must leave encoded, and say it varies. */
+export function encodingProblems(h: Headers, bodyBytes: number): Problem[] {
+  if (bodyBytes < COMPRESS_MIN) return [];
+  const out: Problem[] = [];
+  const encoding = (h.get("content-encoding") ?? "").toLowerCase();
+  if (encoding !== "br" && encoding !== "gzip")
+    out.push({ check: "compression", message: `a ${bodyBytes}-byte body was sent without br or gzip though Accept-Encoding: ${ACCEPT_ENCODING}`, section: SPEC, edge: true });
+  else if (!/accept-encoding/i.test(h.get("vary") ?? "")) out.push({ check: "compression", message: "a compressed response has no Vary: Accept-Encoding", section: SPEC, edge: true });
+  return out;
+}
+
 /** Fetches `paths` of `base` and reports head and header findings. */
 export async function webspec(base: string, paths: string[], fetcher: Fetcher = fetch): Promise<Finding[]> {
   const findings: Finding[] = [];
@@ -122,9 +148,11 @@ export async function webspec(base: string, paths: string[], fetcher: Fetcher = 
     }
     let res: Response;
     let html: string;
+    let htmlBytes = 0;
     try {
-      res = await fetcher(url, { headers: { accept: "text/html" }, redirect: "manual", signal: AbortSignal.timeout(TIMEOUT_MS) });
+      res = await fetcher(url, { headers: { accept: "text/html", "accept-encoding": ACCEPT_ENCODING }, redirect: "manual", signal: AbortSignal.timeout(TIMEOUT_MS) });
       html = await res.text();
+      htmlBytes = new TextEncoder().encode(html).length;
     } catch (e) {
       report([{ check: "fetch", message: `could not fetch ${url}: ${e instanceof Error ? e.message : String(e)}`, section: SPEC }]);
       continue;
@@ -134,6 +162,14 @@ export async function webspec(base: string, paths: string[], fetcher: Fetcher = 
       continue;
     }
     report(headProblems(html));
+    report(encodingProblems(res.headers, htmlBytes));
+    for (const sheet of stylesheetTargets(html, url)) {
+      try {
+        const r = await fetcher(sheet, { headers: { "accept-encoding": ACCEPT_ENCODING }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+        const size = new TextEncoder().encode(await r.text()).length;
+        if (r.ok) report(encodingProblems(r.headers, size).map((p) => ({ ...p, message: `${sheet}: ${p.message}` })));
+      } catch {}
+    }
     const { urls, bad } = headTargets(html, url);
     for (const h of bad) report([{ check: "head-links", message: `"${h}" is not a URL`, section: s("icons") }]);
     for (const target of urls) {

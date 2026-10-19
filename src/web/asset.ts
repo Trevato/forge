@@ -17,6 +17,7 @@
  */
 
 import { sha256 } from "../kernel/hash.ts";
+import { encodeOnce, MIN_BYTES, negotiate } from "../http/compress.ts";
 import { createLog } from "../kernel/log.ts";
 import { beaconJs } from "./beacon.ts";
 import { shellJs } from "./client.ts";
@@ -73,15 +74,20 @@ async function build(): Promise<BuiltAsset | null> {
  * immutable.
  */
 export function staticResponse(request: Request, body: string, type: string, etag: string): Response {
-  const headers = {
+  const headers: Record<string, string> = {
     "content-type": type,
     "cache-control": "public, max-age=31536000, immutable",
     "x-content-type-options": "nosniff",
+    vary: "Accept-Encoding",
     etag,
   };
   if (matches(request.headers.get("if-none-match"), etag))
     return new Response(null, { status: 304, headers });
-  return new Response(body, { headers });
+  const encoding = negotiate(request.headers.get("accept-encoding"));
+  const bytes = new TextEncoder().encode(body);
+  if (encoding === null || bytes.length < MIN_BYTES || request.method === "HEAD") return new Response(body, { headers });
+  // Hashed, so the encoded bytes are as immutable as the plain ones: made once.
+  return new Response(encodeOnce(etag, bytes, encoding), { headers: { ...headers, "content-encoding": encoding } });
 }
 
 function matches(header: string | null, etag: string): boolean {
