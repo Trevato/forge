@@ -2,11 +2,11 @@
  * The chain of forges this forge's code descends from, in a card. The gate is
  * the page's: only someone who can read `<org>/forge` sees it, and only that
  * repository's owner is offered Sever, which asks for the same typed word,
- * and `m`, which flips the follow mode.
+ * `m`, which flips the follow mode, and `t`, which takes the new commits as a pull.
  */
 
 import type { App as Forge } from "../../app.ts";
-import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge } from "../../actions/follow.ts";
+import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
 import { forgeProposalLine, forgeProposals, proposeToParentForge } from "../../actions/upstream.ts";
 import { checkUpstream, upstreamState, upstreamWords } from "../../spawn/upstream.ts";
 import { parentCredential } from "../../spawn/parent_credential.ts";
@@ -50,12 +50,15 @@ export async function chainScreen(app: Forge, user: User | undefined, ctx: Ctx):
       : []),
   ];
   let rows = await linesOf();
+  // The page's condition: the owner, not severed, and the parent has something.
+  let behind = owner ? ((await upstreamState(app))?.behind ?? 0) : 0;
   if (!owner && !writer) return familyScreen(ctx, rows, "Chain");
   const self: Screen = {
     title: "Chain",
     keys: [
       ...(writer ? [binding(["c"], "check now")] : []),
       ...(writer && proposing ? [binding(["p"], "propose")] : []),
+      ...(behind > 0 ? [binding(["t"], `take ${behind} new commit${behind === 1 ? "" : "s"}`)] : []),
       ...(owner ? [binding(["m"], "follow mode"), binding(["s"], "sever")] : []),
       binding(["esc"], "close"),
     ],
@@ -92,6 +95,13 @@ export async function chainScreen(app: Forge, user: User | undefined, ctx: Ctx):
           }
           rows = await linesOf();
           ctx.toast(`Proposed to the parent forge as #${made.value.number}`, "success");
+        });
+      else if (e.key === "t" && owner && behind > 0)
+        void takeForgeCode(app, user, repo).then(async (took) => {
+          if (!took.ok) return ctx.toast(`Not taken: ${took.error}`, "danger");
+          const said = takeForgeWords(took.value);
+          rows = await linesOf();
+          ctx.toast(said.message, said.tone ?? "success");
         });
       else if (e.key === "m" && owner)
         void forgeLinkOf(app).then(async (link) => {

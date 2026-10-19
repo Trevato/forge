@@ -128,7 +128,7 @@ import {
   signinPasskey,
 } from "../web/pages/passkeys.ts";
 import { confirmPage, searchPage } from "../web/pages/search.ts";
-import { chainPage, checkSubmit, modeSubmit, proposeParentSubmit, severSubmit } from "../web/pages/chain.ts";
+import { chainPage, checkSubmit, modeSubmit, proposeParentSubmit, severSubmit, takeSubmit } from "../web/pages/chain.ts";
 import { followingSubmit } from "../web/pages/following.ts";
 import { reconnectSubmit } from "../web/pages/frozen.ts";
 import { activityAtom } from "../web/feeds.ts";
@@ -1273,6 +1273,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/:owner/:name/following", chainPage);
   router.add("POST", "/:owner/:name/following/sever", severSubmit);
   router.add("POST", "/:owner/:name/following/mode", modeSubmit);
+  router.add("POST", "/:owner/:name/following/take", takeSubmit);
   router.add("POST", "/:owner/:name/following/propose", proposeParentSubmit);
   router.add("POST", "/:owner/:name/following/check", checkSubmit);
   // A mirror pulls on demand; a pin says "keep this on my machine". Both are

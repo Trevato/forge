@@ -194,6 +194,12 @@ record in `parent.json` is rewritten atomically and a `forge.follow_mode` event
 is appended. A non-admin is refused (403), a value outside the two modes is
 422, and a severed forge is 409; each leaves `parent.json` untouched.
 
+**Take the N new commits** (shown to the admin on `/<org>/forge/following` when
+the parent is ahead, `POST /api/v1/repos/:owner/:name/following/take`, or `t` on
+the chain screen in the terminal) opens, or updates, the one `forge/take-updates`
+pull whatever the follow mode, and never moves the default branch; a conflict
+opens the converge issue instead, and nothing behind answers "Already up to date."
+
 The page and `GET …/following/proposals` show each proposal as open, merged or
 closed, read from the parent (the token may read back only pulls it opened) and
 cached for a minute (only a signed-in viewer makes the parent get asked); a merged or closed one is final. A parent that does not

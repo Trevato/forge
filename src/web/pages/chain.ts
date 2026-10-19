@@ -5,7 +5,7 @@
  * sever. A severed forge says so with the date and nothing is deleted.
  */
 
-import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge } from "../../actions/follow.ts";
+import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords } from "../../actions/follow.ts";
 import { forgeProposals, proposeToParentForge, type ForgeProposal } from "../../actions/upstream.ts";
 import { canAdmin, canWrite } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -44,7 +44,7 @@ function modeCard(base: string, current: FollowMode | null): Html {
   );
 }
 
-const MODE_WORDS = { "tell-me": "tell me", "take-updates": "take updates (recorded; nothing applies them yet)" } as const;
+const MODE_WORDS = { "tell-me": "tell me", "take-updates": "take updates (as a pull you merge)" } as const;
 
 function lineRow(l: ChainLine, upstream?: string): Html {
   const where = l.host === "" ? "" : ` on ${l.host}`;
@@ -141,6 +141,13 @@ export async function chainPage(ctx: Ctx): Promise<Response> {
             <div class="form-actions">${btn("Check the parent now", { type: "submit" })}</div>
           </form>`
         : null}
+      ${owner && view.severedAt === null && (state?.behind ?? 0) > 0
+        ? html`<form method="post" action="${base}/following/take" class="mt">
+            <div class="form-actions">
+              ${btn(`Take the ${state!.behind} new commit${state!.behind === 1 ? "" : "s"}`, { type: "submit", icon: "merge" })}
+            </div>
+          </form>`
+        : null}
       ${owner && view.severedAt === null ? modeCard(base, view.lines[view.lines.length - 1]?.mode ?? null) : null}
       ${proposing ? proposalCard(base, proposals, writer) : null}
       ${view.severedAt !== null
@@ -202,6 +209,23 @@ export async function checkSubmit(ctx: Ctx): Promise<Response> {
   const state = await checkUpstream(ctx.app);
   if (state === undefined) return flashOrJson(ctx, to, { tone: "danger", message: "This forge follows nothing." });
   return flashOrJson(ctx, to, state.error === "" ? { message: upstreamWords(state) } : { tone: "danger", message: upstreamWords(state) });
+}
+
+/** POST /:owner/:name/following/take: the parent's new code as one pull; the owner only. */
+export async function takeSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const to = `${repoBase(repo)}/following`;
+  const took = await takeForgeCode(ctx.app, ctx.auth.user, repo);
+  if (!took.ok)
+    return flashOrJson(ctx, to, {
+      tone: "danger",
+      message: took.error === "not_following" ? "This repository follows nothing." : "Only this forge's owner can take updates.",
+    });
+  return flashOrJson(ctx, to, takeForgeWords(took.value));
 }
 
 /** POST /:owner/:name/following/mode {mode}; the owner only. */

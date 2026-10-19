@@ -63,7 +63,7 @@ import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { forgeProposals, proposeToParentForge, proposeUpstream } from "../actions/upstream.ts";
-import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeOrTell } from "../actions/follow.ts";
+import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeForgeCode, takeForgeWords, takeOrTell } from "../actions/follow.ts";
 import { relationOf } from "../actions/forks.ts";
 import { chainOfRepo, forgeLinkOf } from "../spawn/chain.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
@@ -2336,7 +2336,14 @@ export function apiRoutes(router: Router<Handler>): void {
       if (denied) return denied;
       const repo = loadRepo(ctx);
       if (!repo) return notFound();
-      return respondTake(ctx, repo);
+      // The repository that carries this forge's code takes as a pull; any other fork merges.
+      if ((await forgeLinkOf(ctx.app))?.repo !== `${repo.ownerName}/${repo.name}`) return respondTake(ctx, repo);
+      const took = await takeForgeCode(ctx.app, ctx.auth.user, repo);
+      if (!took.ok)
+        return took.error === "not_following"
+          ? apiError("not_following", 404, "this repository follows nothing across forges")
+          : respondAccess(took.error, 403);
+      return json({ ...took.value, ...takeForgeWords(took.value) });
     },
   );
 

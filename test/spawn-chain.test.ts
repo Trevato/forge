@@ -20,7 +20,10 @@ import { runGit } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { commitFiles } from "../src/git/write.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { upstreamState } from "../src/spawn/upstream.ts";
+import { chainScreen } from "../src/tui/screens/chain.ts";
+import { pullForBranch } from "../src/core/pulls.ts";
+import { TAKE_BRANCH } from "../src/spawn/take.ts";
+import { checkUpstream, upstreamState } from "../src/spawn/upstream.ts";
 import { chainLines, chainView, forgeLinkOf, severChain } from "../src/spawn/chain.ts";
 import { parseBeat, sendBeat, standing } from "../src/spawn/heartbeat.ts";
 import { planSpawn } from "../src/spawn/plan.ts";
@@ -136,7 +139,7 @@ describe("the chain of forges", () => {
     const page = (await (await fetch(`${servers.url}/tot/forge/following`, { headers: { cookie } })).text()).replace(/\s+/g, " ");
     expect(page).toContain("alice/forge-code");
     expect(page).toContain("kid/forge");
-    expect(page).toContain("take updates (recorded");
+    expect(page).toContain("take updates (as a pull you merge)");
     expect(page).toContain("tell me · ");
     expect(page).toContain("not checked yet");
     expect(page).toContain("1 of its own");
@@ -206,6 +209,91 @@ describe("the chain of forges", () => {
     const owner = getUserByName(grand.db, "alice")!;
     const got = (await (await fetch(`${servers.url}/api/v1/repos/tot/forge/following`, { headers: { authorization: `Bearer ${createToken(grand.db, owner.id, "t2", "rw").token}` } })).json()) as any;
     expect(got.upstream).toBeNull();
+  });
+
+  test("take: an admin's press opens one pull and never moves main; a reader is refused; nothing behind is up to date", async () => {
+    const owner = getUserByName(grand.db, "alice")!;
+    const bearer = (id: string) => ({ authorization: `Bearer ${createToken(grand.db, id, "take", "rw").token}` });
+    const take = (headers: Record<string, string>) =>
+      fetch(`${servers.url}/api/v1/repos/tot/forge/following/take`, { method: "POST", headers });
+    const dir = repoDir(grand.reposRoot, "tot", "forge");
+    const tip = async () => {
+      const r = await runGit(["rev-parse", "refs/heads/main"], { cwd: dir });
+      return r.ok ? r.value.trim() : "";
+    };
+    const before = await tip();
+
+    const none = await take(bearer(owner.id));
+    expect(none.status).toBe(200);
+    const nothing = (await none.json()) as any;
+    expect(nothing.kind).toBe("current");
+    expect(nothing.message).toBe("Already up to date.");
+    expect(pullForBranch(grand.db, getRepo(grand.db, "tot", "forge")!.id, TAKE_BRANCH)).toBeUndefined();
+
+    const reader = await createUser(grand.db, { origin: "seed", trusted: true, username: "takereader", email: "tr@x.test" });
+    if (!reader.ok) throw new Error("reader");
+    expect([401, 403]).toContain((await take(bearer(reader.value.id))).status);
+    expect((await take({})).status).toBe(401);
+
+    // The parent moves; the grandchild looks (its remote is the child's repository on disk).
+    const moved = await commitFiles(repoDir(child.reposRoot, "kid", "forge"), {
+      branch: "main",
+      message: "kid moves",
+      files: [{ path: "NEWS.md", content: "news\n" }],
+      author,
+    });
+    if (!moved.ok) throw new Error("kid commit");
+    const state = await checkUpstream(grand, { remote: repoDir(child.reposRoot, "kid", "forge") });
+    expect(state?.behind).toBe(1);
+    const page = (await (await fetch(`${servers.url}/tot/forge/following`, { headers: { cookie } })).text()).replace(/\s+/g, " ");
+    expect(page).toContain("Take the 1 new commit");
+    expect(page).toContain('action="/tot/forge/following/take"');
+
+    expect([401, 403]).toContain((await take(bearer(reader.value.id))).status);
+    expect(pullForBranch(grand.db, getRepo(grand.db, "tot", "forge")!.id, TAKE_BRANCH)).toBeUndefined();
+    const cross = await fetch(`${servers.url}/tot/forge/following/take`, {
+      method: "POST",
+      headers: { cookie, origin: "https://evil.test" },
+      body: new URLSearchParams({}),
+      redirect: "manual",
+    });
+    expect(cross.status).toBeGreaterThanOrEqual(400);
+    expect(pullForBranch(grand.db, getRepo(grand.db, "tot", "forge")!.id, TAKE_BRANCH)).toBeUndefined();
+
+    const first = await fetch(`${servers.url}/tot/forge/following/take`, {
+      method: "POST",
+      headers: { cookie, origin: servers.url },
+      body: new URLSearchParams({}),
+      redirect: "manual",
+    });
+    expect(first.status).toBe(303);
+    const pull = pullForBranch(grand.db, getRepo(grand.db, "tot", "forge")!.id, TAKE_BRANCH);
+    expect(pull?.state).toBe("open");
+    expect(decodeURIComponent(first.headers.get("set-cookie") ?? "")).toContain(`in pull #${pull!.number}`);
+    expect(await tip()).toBe(before);
+
+    // Again, by the API, finds the same pull.
+    const again = (await (await take(bearer(owner.id))).json()) as any;
+    expect(again.kind).toBe("pull");
+    expect(again.number).toBe(pull!.number);
+    expect(again.message).toBe(`1 commit from your parent is in pull #${pull!.number}.`);
+    expect(await tip()).toBe(before);
+  });
+
+  test("take: the terminal's t key is the owner's alone, shown when behind, and toasts the pull", async () => {
+    const owner = getUserByName(grand.db, "alice")!;
+    const reader = await createUser(grand.db, { origin: "seed", trusted: true, username: "ttyreader", email: "tty@x.test" });
+    if (!reader.ok) throw new Error("reader");
+    const toasts: string[] = [];
+    const ctx = { toast: (m: string) => toasts.push(m), pop() {}, push() {}, theme: {} } as any;
+    const keysOf = (screen: any) => screen.keys.map((k: any) => k.keys?.[0] ?? k[0]);
+    expect(keysOf(await chainScreen(grand, owner, ctx))).toContain("t");
+    expect(keysOf(await chainScreen(grand, reader.value, ctx))).not.toContain("t");
+    const screen = await chainScreen(grand, owner, ctx);
+    screen.key({ key: "t" } as any);
+    await Bun.sleep(500);
+    const pull = pullForBranch(grand.db, getRepo(grand.db, "tot", "forge")!.id, TAKE_BRANCH);
+    expect(toasts).toEqual([`1 commit from your parent is in pull #${pull!.number}.`]);
   });
 
   test("sever needs the owner, a same-origin post and the word; it deletes nothing", async () => {

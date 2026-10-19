@@ -12,8 +12,9 @@ import { convergeFork, type Converge } from "../crew/converge.ts";
 import { ARCHIVED_WHY, canAdmin, canWrite, forkParentFor, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { chainOfRepo, FOLLOW_MODES, isFollowMode, setChainMode, severChain, type FollowMode } from "../spawn/chain.ts";
+import { chainOfRepo, forgeLinkOf, FOLLOW_MODES, isFollowMode, setChainMode, severChain, type FollowMode } from "../spawn/chain.ts";
 import { requireUser } from "./access.ts";
+import { takeFromParent, type Taken } from "../spawn/take.ts";
 import { takeUpdates, type ForkSync, type TakeUpdatesError } from "./forks.ts";
 
 export type TakeOrTell = Result<ForkSync & { merged: boolean }, TakeUpdatesError | Conflict>;
@@ -60,6 +61,39 @@ export async function severForge(
     payload: { repo: `${repo.ownerName}/${repo.name}`, at: cut.value },
   });
   return ok(cut.value);
+}
+
+export type TakeForgeResult = Taken | { readonly kind: "current" };
+
+/**
+ * Bring the parent's new code as the one take pull (`takeFromParent`), by
+ * hand and whatever the mode: the repository's admin only. A conflict opens
+ * the converge issue; nothing behind is `current`. The default branch never moves.
+ */
+export async function takeForgeCode(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+): Promise<Result<TakeForgeResult, SeverError>> {
+  const who = requireUser(actor);
+  if (!who.ok) return err("unauthorized");
+  const link = await forgeLinkOf(app);
+  if (link === undefined || link.severedAt !== undefined || link.repo !== `${repo.ownerName}/${repo.name}`)
+    return err("not_following");
+  if (!canAdmin(app.db, repo, who.value) || !canWrite(app.db, repo, who.value)) return err("forbidden");
+  return ok((await takeFromParent(app, link)) ?? { kind: "current" });
+}
+
+/** What a take did, in a sentence; `danger` for a conflict. */
+export function takeForgeWords(r: TakeForgeResult): { tone?: "danger"; message: string } {
+  if (r.kind === "pull")
+    return { message: `${r.commits} commit${r.commits === 1 ? "" : "s"} from your parent ${r.commits === 1 ? "is" : "are"} in pull #${r.number}.` };
+  if (r.kind === "conflict")
+    return {
+      tone: "danger",
+      message: `Your parent's new code conflicts in ${r.files.join(", ")}${r.issue === null ? "" : `; see issue #${r.issue}`}.`,
+    };
+  return { message: "Already up to date." };
 }
 
 export type FollowModeError = SeverError | "invalid_mode" | "severed";
