@@ -14,7 +14,6 @@ import { unsealReleased } from "../actions/sealed.ts";
 import { parentCallback, parentStart } from "./rp.ts";
 import { accessPage } from "../web/pages/access.ts";
 import { capacityPage, capacitySet } from "../web/pages/capacity.ts";
-import { flowPage } from "../web/pages/flow.ts";
 import { systemPage, systemStream } from "../web/pages/system.ts";
 import { teamSet, teamsPage, teamsStream } from "../web/pages/teams.ts";
 import { telemetryPage, telemetrySet } from "../web/pages/telemetry.ts";
@@ -735,8 +734,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/migrate/jobs/:job", migrationJobPage);
   // Every app on one canvas; a literal route, so it must sit above /:owner.
   router.add("GET", "/map", globalMapPage);
-  // The pipeline's stages and its bottleneck, for a forge admin (#1554); literal, above /:owner.
-  router.add("GET", "/flow", flowPage);
+  // The pipeline moved to a panel on /boards (#2774); the old address follows it. Literal, above /:owner.
+  router.add("GET", "/flow", (ctx) => new Response(null, { status: 301, headers: { location: `/boards${ctx.url.search}` } }));
   router.add("GET", "/system", systemPage);
   router.add("GET", "/system/stream", systemStream);
   router.add("GET", "/contribute", contributePage);

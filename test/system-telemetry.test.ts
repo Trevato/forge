@@ -345,8 +345,11 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
   test("the funnel is open to anyone and names the bottleneck, the welcoming issues and the gate", async () => {
     const res = await get(undefined, "/api/v1/contribute");
     expect(res.status).toBe(200);
-    const w = (await res.json()) as { bottleneck: { says: string }; propose: string[]; issues: unknown[] };
+    const w = (await res.json()) as { bottleneck: { says: string; see: string }; telemetry: string; propose: string[]; issues: unknown[] };
     expect(w.bottleneck.says.length).toBeGreaterThan(0);
+    expect(w.bottleneck.see).toContain("/api/v1/telemetry/flow");
+    expect(w.bottleneck.see.startsWith("/flow")).toBe(false);
+    expect(w.telemetry).not.toContain("read /flow");
     expect(w.propose.join(" ")).toContain("bun test");
     const html = await (await get(undefined, "/contribute")).text();
     expect(html).toContain("How to propose");
@@ -385,21 +388,26 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
       const session = new Session(app, { sshUsername: "zadminbot", remoteAddress: "127.0.0.1", fingerprint: "SHA256:t", user: adminbot });
       return forgeCommands(session)(ctx).find((c) => c.id === "flow");
     };
-    expect((await get(token, "/flow")).status).toBe(404);
     expect(flowCommand()).toBeUndefined();
 
     expect(setTelemetryGrant(app, alice, "zadminbot", true).ok).toBe(true);
-    const page = await get(token, "/flow");
-    expect(page.status).toBe(200);
-    const text = await page.text();
-    // (the page's palette index lists every repo an admin can open; the telemetry body must not)
-    expect(text).not.toContain("/alice/vault-of-secrets/pulls");
-    expect(text).not.toContain("RUN1");
-    expect(flowCommand()).toBeDefined();
+    const flow = flowCommand();
+    expect(flow).toBeDefined();
+    flow!.run?.();
     expect(recentReads(app.db).some((r) => r.username === "zadminbot" && r.what === "flow")).toBe(true);
     // Revoked, the door closes again.
     setTelemetryGrant(app, alice, "zadminbot", false);
-    expect((await get(token, "/flow")).status).toBe(404);
+    expect(flowCommand()).toBeUndefined();
+  });
+
+  test("GET /flow is a permanent redirect to /boards, for anyone", async () => {
+    for (const token of [undefined, tokens["alice"]]) {
+      const res = await fetch(`${servers.url}/flow`, { redirect: "manual", headers: token ? { authorization: `Bearer ${token}` } : {} });
+      expect(res.status).toBe(301);
+      expect(res.headers.get("location")).toBe("/boards");
+    }
+    const drill = await fetch(`${servers.url}/flow?out=approved&hour=3`, { redirect: "manual" });
+    expect(drill.headers.get("location")).toBe("/boards?out=approved&hour=3");
   });
 
   test("in the terminal, the owner is offered System and Telemetry; nobody else is", () => {

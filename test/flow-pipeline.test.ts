@@ -252,11 +252,15 @@ describe("/flow: the forge shows its own bottleneck", () => {
     expect(await (await get("/", cookie)).text()).not.toContain('href="/flow"');
   });
 
-  test("nobody but a forge admin reads it", async () => {
+  test("/flow is a permanent redirect to /boards, and /boards is for a forge admin", async () => {
     const bob = await login("bob");
-    expect((await get("/flow", bob)).status).toBe(404);
+    for (const cookie of [bob, ""]) {
+      const res = await get("/flow", cookie);
+      expect(res.status).toBe(301);
+      expect(res.headers.get("location")).toBe("/boards");
+    }
+    expect((await get("/boards", bob)).status).toBe(404);
     expect(await (await get("/", bob)).text()).not.toContain('href="/flow"');
-    expect((await get("/flow", "")).status).not.toBe(200);
   });
 
   test("the top bar holds search, New and the user menu; Flow, help and theme live in menus", async () => {

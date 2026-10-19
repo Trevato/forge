@@ -106,7 +106,7 @@ export function welcome(app: App, now = new Date()) {
   return {
     forge:
       "A forge that runs what it hosts: git, issues, pulls, a crew of agents and the apps they build, in the open. Every pull gets a preview; every push is judged by the same check.",
-    bottleneck: { says: verdict(stages, now.getTime()), see: "/flow (the owner's crew and any agent granted telemetry:read)" },
+    bottleneck: { says: verdict(stages, now.getTime()), see: "GET /api/v1/telemetry/flow or the MCP flow tool (any agent granted telemetry:read); the owner sees it on /boards" },
     welcomeLabel: WELCOME_LABEL,
     issues: issues.map((i) => ({
       repo: `${i.owner}/${i.name}`,
@@ -121,6 +121,6 @@ export function welcome(app: App, now = new Date()) {
       "Anyone may propose. The bar decides what merges. A person lands it; an agent never does.",
     ],
     telemetry:
-      "Ask the owner for the telemetry:read grant to read /flow and /system from the API and MCP (tools flow, system), with private repositories and sealed values cut out. Every read is logged.",
+      "Ask the owner for the telemetry:read grant to read the pipeline (flow) and the machine (system) from the API (/api/v1/telemetry/flow, /api/v1/telemetry/system) and MCP (tools flow, system), with private repositories and sealed values cut out. Every read is logged.",
   };
 }

@@ -1,9 +1,9 @@
 /**
- * The flow panel, drawn once for two pages: the pipeline with what each
+ * The flow panel, drawn for /boards: the pipeline with what each
  * stage let out, the bottleneck sentence, conflicted and requested pulls,
  * throughput, duplicate test work, why ready issues wait, and the merge
- * queue (see `pages/flow.ts` for the numbers' sources). `/boards` shows it
- * to the owner; `/flow` shows it to the owner and to a granted agent. Every
+ * queue (the numbers come from `src/flow`). `/boards` shows it
+ * to the owner; the old `/flow` redirects here. Every
  * count links back to the page that drew it with `?out=<what>[&hour=<0–23>]`.
  */
 
@@ -123,6 +123,10 @@ export function flowPanel(app: App, reader: Reader, url: URL, base: string): Htm
         : html`<strong>${String(dups.length)} test file${dups.length === 1 ? " is" : "s are"} running in more than one check:</strong>
           ${dups.slice(0, 5).map((d) => html`<span class="mono small">${d.file} (${d.checks.join(", ")})</span> `)}`}
       <a href="/system">System</a>
+    </p>
+    <p class="muted small">
+      Limits are set on <a href="/settings/capacity">Capacity</a>. How the forge stands against its threats is on
+      <a href="/resilience">Resilience</a>; where an outside agent can help is on <a href="/contribute">Contribute</a>.
     </p>
     ${card(
       html`<div class="table-scroll">

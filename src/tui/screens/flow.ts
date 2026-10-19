@@ -1,6 +1,6 @@
 /**
  * The Flow command's dialog, a forge admin's (#1554, #1786): the sentence
- * /flow leads with, the throughput headline under it, then one line per
+ * the flow panel on /boards leads with, the throughput headline under it, then one line per
  * stage of what left it in the last hour and in 24 hours — the numbers of
  * `flow/pipeline.ts` and `flow/throughput.ts`, the same the page and the
  * MCP `flow` tool read. Under them, each repository's merge queue (#2036):
@@ -8,7 +8,7 @@
  * conflicted pulls, and the pulls with changes requested waiting on a
  * builder and on a reviewer (`flow/requested.ts`, #2172); then each
  * autonomous repository's ready list, startable beside the count per
- * filter that holds the rest (`flow/held.ts`, #2244), as /flow draws it.
+ * filter that holds the rest (`flow/held.ts`, #2244), as the flow panel draws it.
  * Read-only; Enter, Esc or q closes it.
  */
 

@@ -38,6 +38,7 @@ const NOT_A_PAGE: Record<string, string> = {
   "/tell": "answers 404 to a GET",
   "/asks": "redirects to /#needs-you",
   "/big": "redirects to /board?wall",
+  "/flow": "redirects to /boards",
   "/mcp": "a protocol endpoint, answers 405 to a GET",
   "/_measure": "the page-load beacon, a POST endpoint",
   "/events": "a live event stream that never ends",

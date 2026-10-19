@@ -3,7 +3,7 @@
     "api.anthropic.com"
   ],
   "app": {
-    "looks": ["/", "/forges", "/family", "/front", "/explore", "/board", "/boards", "/asked", "/search", "/new", "/audit", "/releases", "/apps", "/migrate", "/map", "/flow", "/system", "/contribute", "/resilience", "/settings"],
+    "looks": ["/", "/forges", "/family", "/front", "/explore", "/board", "/boards", "/asked", "/search", "/new", "/audit", "/releases", "/apps", "/migrate", "/map", "/system", "/contribute", "/resilience", "/settings"],
     "run": "bun run src/main.ts",
     "install": "",
     "health": "/healthz",

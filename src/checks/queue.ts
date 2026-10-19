@@ -12,7 +12,7 @@
  *
  * What is queued is not stored: it is the pulls `landIfGreen` admitted, and
  * every sweep admits them again. The queue only orders them and remembers
- * how many there are, for /flow.
+ * how many there are, for the flow panel on /boards.
  */
 
 import type { Pull } from "../core/pulls.ts";
@@ -132,7 +132,7 @@ export function enqueue(
   return Promise.all(answers);
 }
 
-/** What /flow shows of each repository's line. */
+/** What the flow panel shows of each repository's line. */
 export interface QueueStatus {
   readonly repoId: string;
   readonly queued: number;
