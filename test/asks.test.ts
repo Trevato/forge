@@ -104,16 +104,22 @@ describe("the asks page", () => {
   });
 
   test("when nothing asks, it says All fine, and so does the header", async () => {
-    const page = await get(alice, "/");
+    const page = await get(alice, "/asks");
     expect(sentence(page)).toBe("All fine");
     expect(headerCount(page)).toBe(0);
-    expect(await get(alice, "/")).not.toContain('<section id="needs-you"');
+    expect(await get(alice, "/asks")).not.toContain('<section id="needs-you"');
   });
 
-  test("/asks lands on the home's pinned needs-you, and a signed-out reader there gets the door, no asks", async () => {
+  test("/asks is its own page: the needs-you section in its live region, and a signed-out reader is sent to sign in, no asks", async () => {
     const response = await fetch(`${servers.url}/asks`, { redirect: "manual" });
     expect(response.status).toBe(303);
-    expect(response.headers.get("location")).toBe("/#needs-you");
+    expect(response.headers.get("location")).toContain("/signin");
+    const page = await get(alice, "/asks");
+    expect(page).toContain('id="live-on-you"');
+    expect(page).toContain('data-live-src="/live/on-you"');
+    expect(page).toContain("<title>");
+    expect(page).toContain('<h1 class="sr-only">Asks</h1>');
+    expect(page).toContain('id="asks-sentence"');
     const door = await (await fetch(`${servers.url}/`)).text();
     expect(door).not.toContain('id="needs-you"');
     expect(door).not.toContain('id="asks-sentence"');
@@ -146,7 +152,7 @@ describe("the asks page", () => {
     claimRun(app.db, run.id);
     finishRun(app.db, run.id, { state: "failed", summary: "red" });
     // Failed but the crew is still trying: that is working, not an ask.
-    expect(sentence(await get(alice, "/"))).toBe("All fine");
+    expect(sentence(await get(alice, "/asks"))).toBe("All fine");
     recordDecision(app.db, {
       kind: "retry",
       repoId: repo.id,
@@ -157,16 +163,16 @@ describe("the asks page", () => {
       by: "rule",
       ms: 1,
     });
-    const page = await get(alice, "/");
+    const page = await get(alice, "/asks");
     expect(sentence(page)).toBe("1 thing needs you");
     expect(page).toContain("Bot did a thing");
     expect(headerCount(page)).toBe(1);
     // The home counts it in the header's Asks link; the dev dashboard's
     // own "needs you" line went with the dashboard (#625).
-    const home = await get(alice, "/");
+    const home = await get(alice, "/asks");
     expect(headerCount(home)).toBe(1);
     // Bob can read the public repository but cannot write it: not his ask.
-    expect(sentence(await get(bob, "/"))).toBe("All fine");
+    expect(sentence(await get(bob, "/asks"))).toBe("All fine");
   });
 
   test("a forge health problem is a card for an admin and for no one else", async () => {
@@ -174,11 +180,11 @@ describe("the asks page", () => {
     app.db
       .query("UPDATE run SET created_at = ?1 WHERE state = 'queued'")
       .run(new Date(Date.now() - 3 * 3_600_000).toISOString());
-    const admin = await get(alice, "/");
+    const admin = await get(alice, "/asks");
     expect(admin).toContain("behind one lane");
     expect(sentence(admin)).toBe("2 things need you");
     expect(headerCount(admin)).toBe(2);
-    const other = await get(bob, "/");
+    const other = await get(bob, "/asks");
     expect(other).not.toContain("behind one lane");
     expect(sentence(other)).toBe("All fine");
   });
@@ -224,17 +230,17 @@ describe("the asks page", () => {
       ms: 1,
     });
     const card = `id="ask-stopped:${pull.id}"`;
-    expect(await get(alice, "/")).toContain(card);
+    expect(await get(alice, "/asks")).toContain(card);
     // The re-run passes: the stop is answered, and the pull is green.
     check("ok");
     resolveOpen(app.db, pull.id, "retry", "green");
-    const green = await get(alice, "/");
+    const green = await get(alice, "/asks");
     expect(green).not.toContain(card);
     expect(green).toContain(`id="ask-look:${pull.id}"`);
     // Red again, before anything new is decided: the old stop is spent, and
     // the crew's tries are what the card is counted from.
     check("failed");
-    expect(await get(alice, "/")).not.toContain(card);
+    expect(await get(alice, "/asks")).not.toContain(card);
   });
 
   test("a green change's card says what its tests did", async () => {
@@ -309,11 +315,11 @@ describe("the asks page", () => {
       expect(card.says).toContain("alice");
       expect(card.says).toContain("checks.concurrency");
       expect(ASK_WORDS.setting.options).toEqual(["Keep", "Put back"]);
-      const page = await get(alice, "/");
+      const page = await get(alice, "/asks");
       expect(page).toContain("Keep");
       expect(page).toContain("Put back");
       // not for a person who cannot put it back
-      expect(await get(bob, "/")).not.toContain("Put back");
+      expect(await get(bob, "/asks")).not.toContain("Put back");
       expect(listEvents(app.db, { kind: "issue.assigned" }).length).toBe(0);
     });
 

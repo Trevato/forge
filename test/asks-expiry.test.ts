@@ -126,7 +126,7 @@ describe("asks that expire, hold and collapse", () => {
     pears = await botPull("pears", [{ path: "PEARS.md", content: "pears\n" }]);
     green(apples);
     green(pears);
-    const page = await get("/");
+    const page = await get("/asks");
     expect(sentence(page)).toBe("1 thing needs you");
     expect(headerCount(page)).toBe(1);
     expect(page).toContain("2 green changes wait for your look");
@@ -152,7 +152,7 @@ describe("asks that expire, hold and collapse", () => {
     // card at all, so there is nothing to mute.
     const fragment = await get("/live/feed");
     expect(fragment).not.toContain('data-kind="ask"');
-    const home = await get("/");
+    const home = await get("/asks");
     expect(home).toContain('<section id="needs-you"');
     const at = home.indexOf('<section id="needs-you"');
     expect(home.slice(at, home.indexOf("</section>", at))).not.toContain(
@@ -169,7 +169,7 @@ describe("asks that expire, hold and collapse", () => {
       repoId: repo.id,
       actorId: null,
     });
-    let page = await get("/");
+    let page = await get("/asks");
     expect(sentence(page)).toBe("All fine");
     expect(headerCount(page)).toBe(0);
     expect(askLinesFor(app.db, aliceUser)).toHaveLength(0);
@@ -179,7 +179,7 @@ describe("asks that expire, hold and collapse", () => {
     // A new check on one of them: that one asks again, on its own.
     await tick();
     green(apples);
-    page = await get("/");
+    page = await get("/asks");
     expect(sentence(page)).toBe("1 thing needs you");
     const pinned = page.slice(
       page.indexOf('<section id="needs-you"'),
@@ -203,7 +203,7 @@ describe("asks that expire, hold and collapse", () => {
       repoId: repo.id,
       actorId: null,
     });
-    expect(sentence(await get("/"))).toBe("All fine");
+    expect(sentence(await get("/asks"))).toBe("All fine");
     // The merge box is the change's Files step (#628).
     const change = await get(
       `/${repo.ownerName}/${repo.name}/pulls/${apples.number}/files`,
@@ -231,7 +231,7 @@ describe("asks that expire, hold and collapse", () => {
     });
     await sweepStaleAsks(app);
     expect(askLinesFor(app.db, aliceUser)).toHaveLength(0);
-    expect(sentence(await get("/"))).toBe("All fine");
+    expect(sentence(await get("/asks"))).toBe("All fine");
     // The feed and the MCP's asks carry no green line for it either.
     expect(
       readFeed(app.db, aliceUser, { limit: 50 }).items.some(
@@ -241,7 +241,7 @@ describe("asks that expire, hold and collapse", () => {
     expect(JSON.stringify(asksAnswer({ app, auth: { user: aliceUser } } as never, aliceUser))).not.toContain("is green");
     // Assigned to alice, the home's one list says it conflicts, never ready.
     setAssignee(app.db, plums.id, aliceUser.id);
-    const home = await get("/");
+    const home = await get("/asks");
     expect(home).toContain("conflicts with main");
     expect(askLinesFor(app.db, aliceUser).map((l) => l.waitingFor.word)).toEqual(["conflicts with main"]);
     // Its own page still says why it cannot ship.

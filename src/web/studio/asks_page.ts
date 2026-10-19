@@ -27,7 +27,9 @@ import { needLine } from "../../actions/health.ts";
 import type { Degraded } from "../../kernel/vitals.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { User } from "../../core/users.ts";
-import { onYouAnswer, studioHome } from "./home.ts";
+import { onYouAnswer, onYouRegion } from "./home.ts";
+import { liveRegionsJs } from "../client.ts";
+import { liveClientJs } from "../live.ts";
 import { notFoundPage, repoBase, signInFirst } from "../chrome.ts";
 import { backTo, field, readForm } from "../form.ts";
 import { MAX_BODY } from "../../core/issues.ts";
@@ -40,7 +42,7 @@ import {
   ownerFactRepoIds,
 } from "../../core/repos.ts";
 import { html, type Html } from "../html.ts";
-import { redirect } from "../layout.ts";
+import { page, redirect } from "../layout.ts";
 import { btn, card, icon, row } from "../ui.ts";
 import {
   askAnchor,
@@ -332,15 +334,23 @@ export interface AsksTop {
   readonly reason?: string;
 }
 
-/** GET /asks — the home, scrolled to what needs you; `?op=<id>` (a bulk
- * action's receipt) rides along. */
+/** GET /asks — what needs you as its own page: the home's section and its
+ * live script; `?op=<id>` (a bulk action's receipt) rides along. */
 export function asksPage(ctx: Ctx): Response {
-  const op = ctx.url.searchParams.get("op");
-  return redirect(
-    op === null
-      ? "/#needs-you"
-      : `/?op=${encodeURIComponent(op)}#asks-bulk-result`,
-  );
+  return renderAsks(ctx, homeTop(ctx));
+}
+
+/** The asks page, with a bulk step's preview or receipt on top. */
+function renderAsks(ctx: Ctx, top: AsksTop | undefined): Response {
+  const user = ctx.auth.user;
+  if (!user) return signInFirst(ctx);
+  const section = needsYouSection(ctx, user, top);
+  return page({
+    ctx,
+    title: "Asks",
+    body: html`<main class="stack"><h1 class="sr-only">Asks</h1>${onYouRegion(ctx, user, undefined, section.body)}</main>`,
+    scriptJs: `${liveClientJs}\n${liveRegionsJs}\n${section.scriptJs}`,
+  });
 }
 
 /** The receipt `?op=<id>` names on the home, when it is the viewer's own. */
@@ -487,12 +497,9 @@ export function needsYouSection(
   return { body, scriptJs: SELECT_JS };
 }
 
-/** The home with a bulk step's preview or receipt on top of what needs
- * you — where every bulk answer lands. */
+/** The asks page with a bulk step's preview or receipt on top — where every bulk answer lands. */
 async function asksScreen(ctx: Ctx, top: AsksTop): Promise<Response> {
-  const user = ctx.auth.user;
-  if (!user) return signInFirst(ctx);
-  return await studioHome(ctx, user, top);
+  return renderAsks(ctx, top);
 }
 
 // ---- many at once: select, preview, do it, undo — all on this screen ----
@@ -641,7 +648,7 @@ export async function asksBulkSubmit(ctx: Ctx): Promise<Response> {
           : `${why.length} not done: ${[...new Set(why.filter((w) => w !== ""))].join("; ") || "refused"}`;
       return onYouAnswer(ctx, ctx.auth.user, note);
     }
-    return redirect(`/?op=${op.value.id}#asks-bulk-result`);
+    return redirect(`/asks?op=${op.value.id}#asks-bulk-result`);
   }
   const plan = previewAsksBulk(ctx.app, ctx.auth.user, action, items, reason);
   if (!plan.ok) return await asksScreen(ctx, nothingDone(plan.error.message));
@@ -675,7 +682,7 @@ export async function asksBulkUndo(ctx: Ctx): Promise<Response> {
     return op.error.code === "not_found"
       ? notFoundPage(ctx)
       : await asksScreen(ctx, nothingDone(op.error.message));
-  return redirect(`/?op=${op.value.id}#asks-bulk-result`);
+  return redirect(`/asks?op=${op.value.id}#asks-bulk-result`);
 }
 
 /** POST /asks/decide — hand one hand-over card to the decider; the ledger keeps what it saw. */
@@ -685,7 +692,7 @@ export async function asksDecide(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const done = await decideAsk(ctx.app, ctx.auth.user, field(form, "ask"));
   if (!done.ok) return await asksScreen(ctx, nothingDone(done.error.message));
-  return redirect(`/?decided=${done.value.id}#asks-bulk-result`);
+  return redirect(`/asks?decided=${done.value.id}#asks-bulk-result`);
 }
 
 /** POST /asks/proposal/:id/(approve|redirect|later|again) — one wave proposal, then back to the page the person came from. */
@@ -701,7 +708,7 @@ export function asksProposal(verb: ProposalVerb) {
         : done.error.code === "forbidden" || done.error.code === "unauthorized"
           ? new Response("forbidden", { status: 403 })
           : await asksScreen(ctx, nothingDone(done.error.message));
-    return redirect(backTo(form, "/"));
+    return redirect(backTo(form, "/asks"));
   };
 }
 
@@ -719,7 +726,7 @@ export async function asksSetting(ctx: Ctx): Promise<Response> {
     };
     return await asksScreen(ctx, nothingDone(why[done.error] ?? "it no longer asks you"));
   }
-  return redirect("/");
+  return redirect("/asks");
 }
 
 /** POST /asks/decide/:id/undo — put a set-aside card back on the board, within a day. */
@@ -732,7 +739,7 @@ export async function asksDecideUndo(ctx: Ctx): Promise<Response> {
     return undone.error.code === "not_found"
       ? notFoundPage(ctx)
       : await asksScreen(ctx, nothingDone(undone.error.message));
-  return redirect(`/?decided=${undone.value.id}#asks-bulk-result`);
+  return redirect(`/asks?decided=${undone.value.id}#asks-bulk-result`);
 }
 
 /** POST /asks/listen — take back the viewer's own mute of the repositories named. */
@@ -745,7 +752,7 @@ export async function asksListen(ctx: Ctx): Promise<Response> {
     .filter((r): r is string => typeof r === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(r))
     .slice(0, BULK_MAX);
   removeMutes(ctx.app.db, ctx.auth.user.id, repos.map((r) => `repo:${r}`));
-  return redirect("/");
+  return redirect("/asks");
 }
 
 /** POST /asks/mute — the viewer mutes one repository they can read: its asks leave their home, inbox and phone. */
@@ -759,5 +766,5 @@ export async function asksMute(ctx: Ctx): Promise<Response> {
   const repo = getRepoById(ctx.app.db, id);
   if (!repo || !canRead(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
   muteRepo(ctx.app.db, ctx.auth.user.id, repo.id);
-  return redirect("/");
+  return redirect("/asks");
 }

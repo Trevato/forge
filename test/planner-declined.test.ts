@@ -183,7 +183,7 @@ describe("the planner declined, waiting for a person", () => {
     expect(board).toContain(
       `action="/alice/garden/issues/${direction.number}/comments"`,
     );
-    const asks = await page(aliceCookie, "/");
+    const asks = await page(aliceCookie, "/asks");
     expect(asks).toContain("The planner declined the direction");
     expect(asks).toContain(
       `/alice/garden/issues/${direction.number}#comment-body`,

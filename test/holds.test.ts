@@ -741,7 +741,7 @@ describe("a hold is set, shown and lifted", () => {
     // What needs you, pinned on the home (#634), is the part to read: the
     // feed below it may well mention the change as news.
     const asks = async (cookie: string) => {
-      const home = await page("/", cookie);
+      const home = await page("/asks", cookie);
       const at = home.indexOf('<section id="needs-you"');
       return at === -1 ? "" : home.slice(at, home.indexOf("</section>", at));
     };

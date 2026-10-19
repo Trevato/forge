@@ -394,7 +394,7 @@ function reviewStrip(ctx: Ctx, scope: BoardScope): Html | null {
     if (!none && waits.length === 0) return [];
     const oldest = waits.map((w) => w.since).sort()[0];
     return [
-      html`<a class="board-asks" href="/#needs-you"
+      html`<a class="board-asks" href="/asks"
         ><b>${repo.name}</b>: ${none ? "No reviewer: agent pulls wait for you" : "agent pulls wait for your review"}${waits.length === 0
           ? null
           : html` · <b>${waits.length}</b> waiting since ${oldest!.slice(0, 10)}`}</a
@@ -421,7 +421,7 @@ function asksStrip(ctx: Ctx): Html | null {
   const since = new Date(Date.now() - ASKS_WINDOW_DAYS * 86_400_000).toISOString();
   const m = askMeasure(ctx.app.db, user.id, since);
   if (m.raised + m.acted + m.dismissed + m.expired === 0) return null;
-  return html`<a class="board-asks" id="asks-measure" href="/#needs-you"
+  return html`<a class="board-asks" id="asks-measure" href="/asks"
     >Asks, ${ASKS_WINDOW_DAYS} days: <b>${m.raised}</b> raised · <b>${m.acted}</b> acted
     on · <b>${m.dismissed}</b> dismissed · <b>${m.expired}</b> went by themselves</a
   >`;

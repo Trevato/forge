@@ -76,7 +76,7 @@ describe("acting on many asks at once", () => {
     });
     const location = res.headers.get("location");
     if (res.status === 303 && location !== null) {
-      expect(location).toStartWith("/?op=");
+      expect(location).toStartWith("/asks?op=");
       const next = await fetch(`${servers.url}${location}`, { headers, redirect: "manual" });
       expect(next.status).toBe(200);
       return (await next.text()).replace(/\s+/g, " ");

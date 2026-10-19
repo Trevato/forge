@@ -824,11 +824,11 @@ describe("apps, runs and the crew on the web", () => {
       form: { assignee: "alice" },
     });
     expect(assigned.status).toBe(303);
-    const dash = await bodyOf(alice, "/");
+    const dash = await bodyOf(alice, "/asks");
     expect(dash).toContain('<section id="needs-you"');
     expect(dash).toMatch(/<h2 id="asks-sentence">\d+ things? needs? you<\/h2>/);
     expect(dash).toContain("Say hello");
-    expect(await bodyOf(bob, "/")).not.toContain('<section id="needs-you"');
+    expect(await bodyOf(bob, "/asks")).not.toContain('<section id="needs-you"');
 
     // Needs you: a pull the crew opened, in a repository alice can write.
     expect(addToCrew(app, aliceUser, hello, "bot").ok).toBe(true);
@@ -849,7 +849,7 @@ describe("apps, runs and the crew on the web", () => {
     // racing to finish here: when it does, the dashboard links to /asks
     // rather than listing it (test/asks.test.ts holds that page to account).
     // Bob can read the public repo but not write it: not his inbox.
-    expect(await bodyOf(bob, "/")).not.toContain('<section id="needs-you"');
+    expect(await bodyOf(bob, "/asks")).not.toContain('<section id="needs-you"');
   });
 
   test("the assignee select offers the people who can read the repository", async () => {

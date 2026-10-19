@@ -204,7 +204,7 @@ describe("asks that earn their place", () => {
       expect(row.words).toEqual(ASK_WORDS.look);
       expect(row.words.options.length).toBeGreaterThan(0);
     }
-    const asks = await page("/");
+    const asks = await page("/asks");
     expect(asks).toContain("If nobody acts, it waits; nothing ships.");
     expect(asks).toContain("<b>security</b>");
     // The long sentence the card used to repeat is gone.
@@ -236,7 +236,7 @@ describe("asks that earn their place", () => {
     for (const name of ["r4", "r5", "r6"])
       await greenPull(name, `Work in ${name}`);
     // What needs you is pinned on the home (#634): count its own cards.
-    const home = await page("/");
+    const home = await page("/asks");
     const asks = home.slice(home.indexOf('<section id="needs-you"'));
     const cards = (s: string) => (s.match(/class="card[" ]/g) ?? []).length;
     // Two before the phone's "more", three more inside it before the wide
@@ -340,7 +340,7 @@ describe("asks that earn their place", () => {
     expect((await mcpAsks()).measure.raised).toBe(6);
   });
   test("a phone's ask is a full-width row: kind and repo on one line, the decider apart, the rest behind More", async () => {
-    const home = await page("/");
+    const home = await page("/asks");
     const asks = home.slice(home.indexOf('<section id="needs-you"'));
     expect(asks).toContain("ask-card");
     expect(asks).toContain('<b class="ask-kind">');
@@ -357,7 +357,7 @@ describe("asks that earn their place", () => {
     // The security pull went red above; a new green one joins it in a row of two.
     check(security, "ok");
     await greenPull("security", "Another change here");
-    const asks = await page("/");
+    const asks = await page("/asks");
     expect(asks).toContain("2 green changes wait for your look");
     expect(asks).toContain("<b>security</b>: \u201cWiden the board id\u201d");
     // On a phone the row is its head line, its two asks one tap away; a

@@ -155,7 +155,7 @@ const appsRegion = (ctx: Ctx, user: User): Html =>
     ${yourApps(ctx, user)}
   </div>`;
 
-const onYouRegion = (
+export const onYouRegion = (
   ctx: Ctx,
   user: User,
   note?: string,

@@ -34,7 +34,7 @@ describe("a green agent pull and its reviewer", () => {
 
   const home = async (): Promise<string> =>
     (
-      await (await fetch(`${servers.url}/`, { headers: { cookie } })).text()
+      await (await fetch(`${servers.url}/asks`, { headers: { cookie } })).text()
     ).replace(/\s+/g, " ");
   const wordCtx = (): WordCtx => ({ db: app.db }) as unknown as WordCtx;
 

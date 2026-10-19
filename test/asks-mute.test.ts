@@ -60,7 +60,7 @@ describe("muting a repository's asks", () => {
     return ((await res.json()) as { rows: unknown[] }).rows;
   };
   const home = async () =>
-    await fetch(`${servers.url}/`, { headers: headers(cookie) }).then((r) => r.text());
+    await fetch(`${servers.url}/asks`, { headers: headers(cookie) }).then((r) => r.text());
 
   const signIn = async (username: string) => {
     const res = await fetch(`${servers.url}/signin`, {
@@ -141,6 +141,7 @@ describe("muting a repository's asks", () => {
 
     const res = await post(cookie, "/asks/mute", [["repo", repo.id]]);
     expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/asks");
     expect(mutedRepos(app.db, alice.id).has(repo.id)).toBe(true);
     // Idempotent: twice is the same as once.
     await post(cookie, "/asks/mute", [["repo", repo.id]]);
