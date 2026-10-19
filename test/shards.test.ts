@@ -799,6 +799,10 @@ describe("a failing file is run once more alone", () => {
   const filler = join(scratch, "shard-filler.test.ts");
   writeFileSync(filler, `import { test } from "bun:test";\ntest("filler", () => {});\n// ${"padding ".repeat(4000)}\n`);
   afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+  // The split must not follow the host: pin the count and the cell's CPUs, and
+  // drop any FORGE_CHECK_* the surrounding gate exported (#2726).
+  const env = { ...process.env, FORGE_CHECK_SHARDS: "2", FORGE_CELL_CPUS: "4" } as Record<string, string | undefined>;
+  for (const name of Object.keys(env)) if (name.startsWith("FORGE_CHECK_") && name !== "FORGE_CHECK_SHARDS") delete env[name];
   const run = async (names: string[]) => {
     const child = Bun.spawn(
       ["bun", script, ...names.map((name) => (name === "filler" ? filler : `${dir}/shard-${name}.test.ts`))],
@@ -806,7 +810,7 @@ describe("a failing file is run once more alone", () => {
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, FORGE_CHECK_SHARDS: "2" },
+        env,
       },
     );
     const [out] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text()]);
