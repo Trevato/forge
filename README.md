@@ -381,7 +381,14 @@ taking a release is not done here. This forge publishes its own
 forge can be a parent. The terminal shows the count, not the release names.
 
 A spawned forge's own code is a fork of its parent's (`<org>/forge`, chosen
-`followMode` `tell-me` or `take-updates`; recorded, not yet acted on). Its chain
+`followMode` `tell-me` or `take-updates`; recorded: the mode does not yet apply anything). Once an hour, and
+on demand, a forge that follows and has not severed fetches its parent's code into
+`refs/upstream/*` of its own `<org>/forge` (no branch of the fork moves) and keeps
+`{ behind, parentTip, checkedAt, error }` in `upstream.json` under `FORGE_APP_DATA`;
+the count shows on the chain page, in the terminal's **Chain** (`c` checks now), and as
+`upstream` in the API and MCP payloads. `POST /:owner/forge/following/check` (a writer,
+same-origin) checks on demand; a fetch is cut at 60 s and a failure is recorded, not
+thrown. Its chain
 to the root is at `/:owner/forge/following`, in `chain` of `GET
 /api/v1/repos/:owner/forge/following` and the MCP `following` tool, and in the
 terminal's **Chain** command; the owner severs it with the page's Sever,

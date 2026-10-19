@@ -10,6 +10,7 @@ import { forgeProposals, proposeToParentForge, type ForgeProposal } from "../../
 import { canAdmin, canWrite } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
 import { chainView, FOLLOW_MODES, forgeLinkOf, type ChainLine, type FollowMode } from "../../spawn/chain.ts";
+import { checkUpstream, upstreamState, upstreamWords } from "../../spawn/upstream.ts";
 import { parentCredential } from "../../spawn/parent_credential.ts";
 import { loadRepo, notFoundPage, pageHead, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -18,7 +19,7 @@ import { flashOrJson, page, redirect } from "../layout.ts";
 import { btn, card } from "../ui.ts";
 
 /** The events that change what the chain page says. */
-export const CHAIN_LIVE = "forge.severed,forge.proposal,forge.follow_mode";
+export const CHAIN_LIVE = "forge.severed,forge.proposal,forge.follow_mode,forge.upstream";
 
 const MODE_LABELS: Record<FollowMode, string> = {
   "tell-me": "Tell me when the parent has something new",
@@ -43,9 +44,9 @@ function modeCard(base: string, current: FollowMode | null): Html {
   );
 }
 
-const MODE_WORDS = { "tell-me": "recorded: tell me (nothing tells it yet)", "take-updates": "recorded: take updates (nothing acts on it yet)" } as const;
+const MODE_WORDS = { "tell-me": "tell me", "take-updates": "take updates (recorded; nothing applies them yet)" } as const;
 
-function lineRow(l: ChainLine): Html {
+function lineRow(l: ChainLine, upstream?: string): Html {
   const where = l.host === "" ? "" : ` on ${l.host}`;
   const how =
     l.severedAt !== null
@@ -62,7 +63,7 @@ function lineRow(l: ChainLine): Html {
         <span class="row-title"
           >${l.repo}${where}${l.here ? html` <span class="lineage-here">you are here</span>` : null}</span
         >
-        <span class="row-meta">${how}${ahead}</span>
+        <span class="row-meta">${how}${ahead}${upstream === undefined ? null : ` · ${upstream}`}</span>
       </span>
     </div>
   </li>`;
@@ -116,6 +117,7 @@ export async function chainPage(ctx: Ctx): Promise<Response> {
   const proposing = view.severedAt === null && (await parentCredential(ctx.app)) !== undefined;
   const proposals = proposing ? await forgeProposals(ctx.app, repo, Date.now(), ctx.auth.user !== undefined) : [];
   const writer = canWrite(ctx.app.db, repo, ctx.auth.user);
+  const state = await upstreamState(ctx.app);
   return page({
     ctx,
     title: "Following",
@@ -130,10 +132,15 @@ export async function chainPage(ctx: Ctx): Promise<Response> {
       >
       ${card(
         html`<ul class="list lineage" aria-label="Forges, root first">
-          ${view.lines.map(lineRow)}
+          ${view.lines.map((l) => lineRow(l, l.here && l.mode !== null ? upstreamWords(state) : undefined))}
         </ul>`,
         { pad: false },
       )}
+      ${writer && view.severedAt === null
+        ? html`<form method="post" action="${base}/following/check" class="mt">
+            <div class="form-actions">${btn("Check the parent now", { type: "submit" })}</div>
+          </form>`
+        : null}
       ${owner && view.severedAt === null ? modeCard(base, view.lines[view.lines.length - 1]?.mode ?? null) : null}
       ${proposing ? proposalCard(base, proposals, writer) : null}
       ${view.severedAt !== null
@@ -180,6 +187,21 @@ export async function severSubmit(ctx: Ctx): Promise<Response> {
       message: cut.error === "forbidden" ? "Only this forge's owner can sever it." : "This repository follows nothing.",
     });
   return flashOrJson(ctx, to, { message: `Severed: following nothing since ${cut.value.slice(0, 10)}. Nothing was deleted.` });
+}
+
+/** POST /:owner/:name/following/check: fetch the parent's code now; a writer only. */
+export async function checkSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const to = `${repoBase(repo)}/following`;
+  if (!canWrite(ctx.app.db, repo, ctx.auth.user) || !(await carriesChain(ctx)))
+    return flashOrJson(ctx, to, { tone: "danger", message: "You need write access to a forge that follows." });
+  const state = await checkUpstream(ctx.app);
+  if (state === undefined) return flashOrJson(ctx, to, { tone: "danger", message: "This forge follows nothing." });
+  return flashOrJson(ctx, to, state.error === "" ? { message: upstreamWords(state) } : { tone: "danger", message: upstreamWords(state) });
 }
 
 /** POST /:owner/:name/following/mode {mode}; the owner only. */

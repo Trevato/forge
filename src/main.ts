@@ -20,6 +20,7 @@ import { syncAllPillars } from "./actions/pillars.ts";
 import { bootHostedChildren } from "./spawn/host.ts";
 import { firstBoot } from "./spawn/first-boot.ts";
 import { startHeartbeat } from "./spawn/heartbeat.ts";
+import { startUpstreamWatch } from "./spawn/upstream.ts";
 import { pruneSessions } from "./core/sessions.ts";
 import { runDelivery } from "./core/webhooks.ts";
 import { isHookName, runHookClient } from "./git/hooks.ts";
@@ -406,6 +407,8 @@ void bootHostedChildren(app);
 await firstBoot(app);
 // A spawned child reports its standing to its parent (spawn/heartbeat.ts).
 const heartbeatTimer = startHeartbeat(app);
+// ...and looks upstream once an hour (spawn/upstream.ts).
+const upstreamTimer = startUpstreamWatch(app);
 // Prompts from Instagram (docs/APPS.md): once a day, for each repository
 // that connected an account, the top comment on its latest Reel is told to
 // the crew. A minute's clock; nothing leaves the box until a source exists.
@@ -595,6 +598,7 @@ function drain(signal: NodeJS.Signals): Promise<unknown> {
   drainStreams();
   clearInterval(deliveryTimer);
   clearInterval(heartbeatTimer);
+  clearInterval(upstreamTimer);
   clearInterval(syncTimer);
   clearInterval(staleTimer);
   clearInterval(leaseTimer);

@@ -27,7 +27,10 @@ import { runGit } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { proposalLimiter } from "../src/http/proposal_gate.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { Screen } from "../src/tui/term/screen.ts";
+import { theme } from "../src/tui/ui/theme.ts";
 import { chainScreen } from "../src/tui/screens/chain.ts";
+import { checkUpstream, upstreamState } from "../src/spawn/upstream.ts";
 import { keepParentCredential } from "../src/spawn/parent_credential.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -387,5 +390,51 @@ describe("a child forge proposes to its parent forge", () => {
     });
     expect(api.status).toBe(502);
     expect(((await api.json()) as { error: { code?: string } | string }).error).toBeDefined();
+  });
+
+  test("a check tells the chain page, and the terminal shows and runs it for a writer only", async () => {
+    const remote = repoDir(parent.reposRoot, "alice", "lib");
+    const heard: any[] = [];
+    const off = child.bus.subscribe((e) => e.kind === "forge.upstream" && heard.push(e));
+    const toasts: string[] = [];
+    const ctx = { toast: (m: string) => toasts.push(m), pop() {}, push() {}, theme: theme("dark") } as any;
+    const keysOf = (screen: any) => screen.keys.map((k: any) => k.keys?.[0] ?? k[0]);
+    const text = (screen: any) => {
+      const grid = new Screen(100, 30);
+      screen.render({ x: 0, y: 0, w: 100, h: 30 }, grid);
+      return grid.toText();
+    };
+
+    const writer = await chainScreen(child, kid, ctx);
+    expect(keysOf(writer)).toContain("c");
+    expect(text(writer)).toContain("not checked yet");
+    await checkUpstream(child, { remote });
+    expect(heard).toHaveLength(1);
+    expect(heard[0].repoId).toBe(forge.id);
+    expect(heard[0].actorId ?? null).toBeNull();
+    expect(heard[0].payload).toMatchObject({ repo: "kid/forge", error: "" });
+
+    writer.key({ key: "c" } as any);
+    await Bun.sleep(300);
+    off();
+    expect(heard.length).toBeGreaterThanOrEqual(1);
+    expect(toasts.join("\n")).toMatch(/checked|up to date|new commit|could not check/);
+
+    const reader = await person(child, "looker");
+    const read = await chainScreen(child, reader, ctx);
+    expect(keysOf(read)).not.toContain("c");
+    expect(text(read)).toContain("upstream");
+    expect(keysOf(await chainScreen(child, undefined, ctx))).not.toContain("c");
+
+    // Severed: neither the row nor the key.
+    const file = join(child.config.dataDir, "parent.json");
+    const doc = JSON.parse(await Bun.file(file).text());
+    doc.forgeCode.severedAt = new Date().toISOString();
+    await Bun.write(file, JSON.stringify(doc));
+    const cut = await chainScreen(child, kid, ctx);
+    expect(keysOf(cut)).not.toContain("c");
+    expect(text(cut)).not.toContain("upstream");
+    expect(await checkUpstream(child, { remote })).toBeUndefined();
+    expect(await upstreamState(child)).toBeDefined();
   });
 });

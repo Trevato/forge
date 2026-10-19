@@ -8,6 +8,7 @@
 import type { App as Forge } from "../../app.ts";
 import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge } from "../../actions/follow.ts";
 import { forgeProposalLine, forgeProposals, proposeToParentForge } from "../../actions/upstream.ts";
+import { checkUpstream, upstreamState, upstreamWords } from "../../spawn/upstream.ts";
 import { parentCredential } from "../../spawn/parent_credential.ts";
 import { canAdmin, canRead, canWrite, getRepo, type Repo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
@@ -41,6 +42,7 @@ export async function chainScreen(app: Forge, user: User | undefined, ctx: Ctx):
   const proposing = view.severedAt === null && (await parentCredential(app)) !== undefined;
   const linesOf = async (): Promise<[string, string][]> => [
     ...chainLines((await chainOfRepo(app, repo)) ?? view),
+    ...(view.lines.find((l) => l.here)?.mode != null ? [["upstream", upstreamWords(await upstreamState(app))] as [string, string]] : []),
     ...(proposing
       ? (await forgeProposals(app, repo, Date.now(), user !== undefined)).map(
           (p): [string, string] => ["proposal", forgeProposalLine(p)],
@@ -52,6 +54,7 @@ export async function chainScreen(app: Forge, user: User | undefined, ctx: Ctx):
   const self: Screen = {
     title: "Chain",
     keys: [
+      ...(writer ? [binding(["c"], "check now")] : []),
       ...(writer && proposing ? [binding(["p"], "propose")] : []),
       ...(owner ? [binding(["m"], "follow mode"), binding(["s"], "sever")] : []),
       binding(["esc"], "close"),
@@ -66,6 +69,12 @@ export async function chainScreen(app: Forge, user: User | undefined, ctx: Ctx):
     },
     key(e) {
       if (e.key === "esc" || e.key === "q") ctx.pop();
+      else if (e.key === "c" && writer)
+        void checkUpstream(app).then(async (state) => {
+          if (state === undefined) return ctx.toast("This forge follows nothing", "danger");
+          rows = await linesOf();
+          ctx.toast(upstreamWords(state), state.error === "" ? "success" : "danger");
+        });
       else if (e.key === "p" && writer && proposing)
         void proposeToParentForge(app, user, repo).then(async (made) => {
           if (!made.ok) {

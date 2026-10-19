@@ -20,6 +20,7 @@ import { runGit } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { commitFiles } from "../src/git/write.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { upstreamState } from "../src/spawn/upstream.ts";
 import { chainLines, chainView, forgeLinkOf, severChain } from "../src/spawn/chain.ts";
 import { parseBeat, sendBeat, standing } from "../src/spawn/heartbeat.ts";
 import { planSpawn } from "../src/spawn/plan.ts";
@@ -135,8 +136,9 @@ describe("the chain of forges", () => {
     const page = (await (await fetch(`${servers.url}/tot/forge/following`, { headers: { cookie } })).text()).replace(/\s+/g, " ");
     expect(page).toContain("alice/forge-code");
     expect(page).toContain("kid/forge");
-    expect(page).toContain("recorded: take updates");
-    expect(page).toContain("recorded: tell me");
+    expect(page).toContain("take updates (recorded");
+    expect(page).toContain("tell me · ");
+    expect(page).toContain("not checked yet");
     expect(page).toContain("1 of its own");
   });
 
@@ -178,6 +180,32 @@ describe("the chain of forges", () => {
     const res = await fetch(`${servers.url}/tot/forge/following`, { headers: { cookie } });
     expect(res.status).toBe(200);
     expect(await res.text()).toContain("alice/forge-code");
+  });
+
+  test("check-now needs a writer and a same-origin post; nothing is fetched without them", async () => {
+    const url = `${servers.url}/tot/forge/following/check`;
+    const post = (headers: Record<string, string>) => fetch(url, { method: "POST", headers, body: new URLSearchParams({}), redirect: "manual" });
+    const guest = await post({ origin: servers.url });
+    expect(guest.status).toBeGreaterThanOrEqual(300);
+    expect(guest.headers.get("location") ?? "").toContain("/signin");
+    const cross = await post({ cookie, origin: "https://evil.test" });
+    expect(cross.status).toBeGreaterThanOrEqual(400);
+    const reader = await createUser(grand.db, { origin: "seed", trusted: true, username: "checkreader", email: "cr@x.test" });
+    if (!reader.ok) throw new Error("reader");
+    const theirs = `forge_session=${createSession(grand.db, reader.value.id).token}`;
+    const denied = await post({ cookie: theirs, origin: servers.url });
+    expect(denied.status).toBeGreaterThanOrEqual(300);
+    expect(denied.status).toBeLessThan(400);
+    expect(denied.headers.get("location") ?? "").toContain("/tot/forge/following");
+    expect(decodeURIComponent(denied.headers.get("set-cookie") ?? "")).toContain("write access");
+    // Each of the three would have fetched, and so left a state behind.
+    expect(await upstreamState(grand)).toBeUndefined();
+  });
+
+  test("the API carries the upstream state, null before the first check", async () => {
+    const owner = getUserByName(grand.db, "alice")!;
+    const got = (await (await fetch(`${servers.url}/api/v1/repos/tot/forge/following`, { headers: { authorization: `Bearer ${createToken(grand.db, owner.id, "t2", "rw").token}` } })).json()) as any;
+    expect(got.upstream).toBeNull();
   });
 
   test("sever needs the owner, a same-origin post and the word; it deletes nothing", async () => {

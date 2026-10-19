@@ -17,6 +17,7 @@
  * no page. `ro` tokens read; `rw` tokens act.
  */
 
+import { upstreamPayload } from "../spawn/upstream.ts";
 import { NOT_A_MEMBER } from "../core/roles.ts";
 import { voteVariant } from "../actions/variants.ts";
 import { mayView, mayViewId, sealedScope } from "../core/sealed.ts";
@@ -1395,7 +1396,7 @@ const TOOLS: readonly Tool[] = [
       if (relation === undefined)
         return chain === undefined
           ? bad("not_a_fork", "this repository follows nothing")
-          : good({ chain: chain.lines, severedAt: chain.severedAt });
+          : good({ chain: chain.lines, severedAt: chain.severedAt, upstream: await upstreamPayload(ctx.app) });
       const converge =
         relation.state === "diverged" && !relation.clean
           ? convergeState(ctx.app, repo, relation.parent)
@@ -1403,6 +1404,7 @@ const TOOLS: readonly Tool[] = [
       return good({
         chain: chain?.lines ?? null,
         severedAt: chain?.severedAt ?? null,
+        upstream: chain === undefined ? null : await upstreamPayload(ctx.app),
         parent: `${relation.parent.ownerName}/${relation.parent.name}`,
         state: relation.state,
         behind: relation.behind,

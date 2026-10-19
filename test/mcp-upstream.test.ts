@@ -20,6 +20,7 @@ import { runGit } from "../src/git/env.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { proposalLimiter } from "../src/http/proposal_gate.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { checkUpstream } from "../src/spawn/upstream.ts";
 import { keepParentCredential } from "../src/spawn/parent_credential.ts";
 import { quietLogs } from "./helpers/globals.ts";
 
@@ -163,6 +164,16 @@ describe("MCP proposes to the parent forge and lists proposals", () => {
     const text = body.result.content[0].text as string;
     return { error: body.result.isError === true, text };
   };
+
+  test("the following tool carries the upstream state, null before a check", async () => {
+    const token = createToken(child.db, kid.id, "rw", "rw").token;
+    expect(JSON.parse((await call(token, "following")).text).upstream).toBeNull();
+    await checkUpstream(child, { remote: repoDir(parent.reposRoot, "alice", "lib") });
+    const got = JSON.parse((await call(token, "following")).text).upstream;
+    expect(got).toMatchObject({ error: "" });
+    expect(typeof got.behind).toBe("number");
+    expect(got.parentTip).toMatch(/^[0-9a-f]{40,64}$/);
+  });
 
   test("tools/list names both", async () => {
     const token = createToken(child.db, kid.id, "rw", "rw").token;

@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { upstreamPayload } from "../spawn/upstream.ts";
 import { setRole } from "../actions/roles.ts";
 import { listPeople, NOT_A_MEMBER } from "../core/roles.ts";
 import { setAccountCeilings, setAccountGrant } from "../actions/model_grant.ts";
@@ -2283,7 +2284,7 @@ export function apiRoutes(router: Router<Handler>): void {
     if (relation === undefined)
       return chain === undefined
         ? apiError("not_a_fork", 404, "this repository follows nothing")
-        : json({ chain: chain.lines, severedAt: chain.severedAt });
+        : json({ chain: chain.lines, severedAt: chain.severedAt, upstream: await upstreamPayload(ctx.app) });
     const converge =
       relation.state === "diverged" && !relation.clean
         ? convergeState(ctx.app, repo, relation.parent)
@@ -2291,6 +2292,7 @@ export function apiRoutes(router: Router<Handler>): void {
     return json({
       chain: chain?.lines ?? null,
       severedAt: chain?.severedAt ?? null,
+      upstream: chain === undefined ? null : await upstreamPayload(ctx.app),
       parent: `${relation.parent.ownerName}/${relation.parent.name}`,
       parentBranch: relation.parent.defaultBranch,
       // A parent whose origin was disconnected: the counts below are against
