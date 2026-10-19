@@ -5,7 +5,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
@@ -327,5 +327,83 @@ describe("family heartbeats", () => {
     const after = (await family(adminCookie)).replace(/\s+/g, " ");
     expect(after).toContain("follows nothing since 2030-02-03");
     expect(after).not.toContain("code at");
+  });
+
+  test("a beat may say how the child follows: mode, commits behind, conflict", async () => {
+    const good = (o: Record<string, unknown>) => parseBeat(beat(o));
+    expect(good({})?.mode).toBeUndefined();
+    expect(good({ mode: "take-updates", upstreamBehind: 3, conflict: true })).toMatchObject({
+      mode: "take-updates",
+      upstreamBehind: 3,
+      conflict: true,
+    });
+    expect(good({ mode: "tell-me", upstreamBehind: null, conflict: false })?.upstreamBehind).toBeNull();
+    for (const bad of [
+      { upstreamBehind: -1 },
+      { upstreamBehind: 1.5 },
+      { upstreamBehind: "3" },
+      { mode: "yolo" },
+      { mode: 1 },
+      { conflict: "yes" },
+    ])
+      expect(good(bad)).toBeUndefined();
+
+    const send = async (o: Record<string, unknown>) => {
+      const body = beat({ at: Date.now() + 5000, ...o });
+      expect((await post(body, sign(key, body))).status).toBeLessThan(300);
+    };
+    await send({ mode: "take-updates", upstreamBehind: 3, conflict: true });
+    const text = (await family(adminCookie)).replace(/\s+/g, " ");
+    expect(text).toContain("takes updates · 3 commits behind · conflict open");
+    const api = (await (await fetch(`${servers.url}/api/v1/family`, { headers: { cookie: adminCookie } })).json()) as {
+      children: { mode: string; upstreamBehind: number; conflict: boolean }[];
+    };
+    expect(api.children[0]).toMatchObject({ mode: "take-updates", upstreamBehind: 3, conflict: true });
+
+    // The terminal's copy: the same line for an admin, nothing for a guest.
+    const word = "takes updates · 3 commits behind · conflict open";
+    expect(familyLines(await familyView(parent, true)).some(([k, v]) => k === "" && v === word)).toBe(true);
+    expect(JSON.stringify(familyLines(await familyView(parent, false)))).not.toContain("commits behind");
+  });
+  test("a fork child puts its mode, commits behind and conflict on the wire; an ordinary child sends none", async () => {
+    const dataDir = child.config.dataDir;
+    const parentJson = join(dataDir, "parent.json");
+    const original = await readFile(parentJson, "utf8");
+    const bodyOf = async () => {
+      let body = "";
+      await sendBeat(child, async (_url, init) => {
+        body = String(init?.body);
+        return new Response("{}");
+      });
+      return JSON.parse(body) as Record<string, unknown>;
+    };
+    const upstream = (behind: number, taken: unknown) =>
+      writeFile(join(dataDir, "upstream.json"), JSON.stringify({ behind, checkedAt: Date.now(), taken }));
+    await mkdir(repoDir(child.reposRoot, "kid", "forge"), { recursive: true });
+    const keys = ["mode", "upstreamBehind", "conflict"];
+    try {
+      const ordinary = await bodyOf();
+      for (const k of keys) expect(k in ordinary).toBe(false);
+
+      const doc = JSON.parse(original) as Record<string, unknown>;
+      const fork = (mode: string) =>
+        writeFile(
+          parentJson,
+          JSON.stringify({ ...doc, forgeCode: { repo: "kid/forge", upstream: "alice/lib", mode, tip: "", chain: [] } }),
+        );
+      await fork("take-updates");
+      await upstream(3, { kind: "conflict", files: ["a.ts"], issue: 7 });
+      expect(await bodyOf()).toMatchObject({ mode: "take-updates", upstreamBehind: 3, conflict: true });
+
+      await upstream(2_000_000, { kind: "conflict", files: ["a.ts"], issue: null });
+      expect(await bodyOf()).toMatchObject({ upstreamBehind: 1_000_000, conflict: false });
+
+      await fork("tell-me");
+      await rm(join(dataDir, "upstream.json"));
+      expect(await bodyOf()).toMatchObject({ mode: "tell-me", upstreamBehind: null, conflict: false });
+    } finally {
+      await writeFile(parentJson, original);
+      await rm(join(dataDir, "upstream.json"), { force: true });
+    }
   });
 });

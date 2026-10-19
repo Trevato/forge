@@ -19,7 +19,8 @@ import { join } from "node:path";
 import type { App } from "../app.ts";
 import { beatKeyOf, listChildren } from "../actions/spawn.ts";
 import releases from "../core/releases.json" with { type: "json" };
-import { forgeLinkOf, forgeTipOf } from "./chain.ts";
+import { forgeLinkOf, forgeTipOf, FOLLOW_MODES, type FollowMode, type ForgeLink } from "./chain.ts";
+import { upstreamState } from "./upstream.ts";
 import { running } from "../kernel/version.ts";
 
 export const SIGNATURE_HEADER = "x-forge-signature";
@@ -46,7 +47,15 @@ export interface Beat {
   readonly forgeTip?: string | null;
   /** When the child cut its upstream link; null while it follows. */
   readonly severedAt?: string | null;
+  /** How the child follows its parent's code (`parent.json`); absent from an older child. */
+  readonly mode?: FollowMode;
+  /** Commits behind the parent's code (`upstream.json`); null when unknown, absent from an older child. */
+  readonly upstreamBehind?: number | null;
+  /** True while a converge issue is open on the child; absent from an older child. */
+  readonly conflict?: boolean;
 }
+
+const OPTIONAL = new Set(["forgeTip", "severedAt", "mode", "upstreamBehind", "conflict"]);
 
 export function sign(key: string, body: string): string {
   return createHmac("sha256", key).update(body).digest("hex");
@@ -72,17 +81,20 @@ export function parseBeat(raw: string): Beat | undefined {
   if (typeof doc !== "object" || doc === null || Array.isArray(doc)) return undefined;
   const d = doc as Record<string, unknown>;
   const keys = Object.keys(d)
-    .filter((k) => k !== "forgeTip" && k !== "severedAt")
+    .filter((k) => !OPTIONAL.has(k))
     .sort()
     .join(",");
   if (keys !== "at,children,name,openProposals,version") return undefined;
-  const { name, at, version, openProposals, children, forgeTip, severedAt } = d;
+  const { name, at, version, openProposals, children, forgeTip, severedAt, mode, upstreamBehind, conflict } = d;
   const tipOk = forgeTip === undefined || forgeTip === null || (typeof forgeTip === "string" && /^[0-9a-f]{40,64}$/.test(forgeTip));
   const sevOk =
     severedAt === undefined ||
     severedAt === null ||
     (typeof severedAt === "string" && severedAt.length <= 40 && !Number.isNaN(Date.parse(severedAt)));
   if (!tipOk || !sevOk) return undefined;
+  if (mode !== undefined && !(typeof mode === "string" && (FOLLOW_MODES as readonly string[]).includes(mode))) return undefined;
+  if (upstreamBehind !== undefined && upstreamBehind !== null && !count(upstreamBehind)) return undefined;
+  if (conflict !== undefined && typeof conflict !== "boolean") return undefined;
   if (typeof name !== "string" || !NAME.test(name)) return undefined;
   if (typeof at !== "number" || !Number.isSafeInteger(at) || at <= 0) return undefined;
   if (typeof version !== "string" || !VERSION.test(version)) return undefined;
@@ -95,6 +107,9 @@ export function parseBeat(raw: string): Beat | undefined {
     children,
     ...(forgeTip === undefined ? {} : { forgeTip: forgeTip as string | null }),
     ...(severedAt === undefined ? {} : { severedAt: severedAt as string | null }),
+    ...(mode === undefined ? {} : { mode: mode as FollowMode }),
+    ...(upstreamBehind === undefined ? {} : { upstreamBehind: upstreamBehind as number | null }),
+    ...(conflict === undefined ? {} : { conflict }),
   };
 }
 
@@ -199,6 +214,19 @@ export function standing(app: App, name: string, at = Date.now()): Beat {
   };
 }
 
+/** What a fork says of how it follows: its tip, whether it cut the link, and how far behind it is. */
+async function forkReport(app: App, forge: ForgeLink) {
+  const up = await upstreamState(app);
+  const behind = up?.behind ?? null;
+  return {
+    forgeTip: await forgeTipOf(app),
+    severedAt: forge.severedAt ?? null,
+    mode: forge.mode,
+    upstreamBehind: behind === null ? null : Math.min(behind, COUNT_MAX),
+    conflict: up?.taken?.kind === "conflict" && up.taken.issue !== null,
+  };
+}
+
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 let lastAt = 0;
 
@@ -220,7 +248,7 @@ export async function sendBeat(
     // Only a forge that carries a fork of its parent's code has these to say.
     ...(forge === undefined
       ? {}
-      : { forgeTip: await forgeTipOf(app), severedAt: forge.severedAt ?? null }),
+      : await forkReport(app, forge)),
   });
   try {
     const res = await fetcher(`${link.upstream}/api/v1/heartbeat`, {
@@ -259,6 +287,12 @@ export interface ChildStanding {
   readonly forgeTip: string | null;
   /** When the child cut its link to this forge's code; null while it follows or when unheard. */
   readonly severedAt: string | null;
+  /** How the child follows this forge's code; null when it did not say. */
+  readonly mode: FollowMode | null;
+  /** Commits the child's code is behind this forge's; null when unknown or unsaid. */
+  readonly upstreamBehind: number | null;
+  /** A converge issue is open on the child; false when none or unsaid. */
+  readonly conflict: boolean;
 }
 
 /** How many releases of this forge are newer than `version`; null when it is not one of them. */
@@ -287,6 +321,9 @@ export async function childStandings(
       ownChildren: heard?.beat.children ?? null,
       forgeTip: heard?.beat.forgeTip ?? null,
       severedAt: heard?.beat.severedAt ?? null,
+      mode: heard?.beat.mode ?? null,
+      upstreamBehind: heard?.beat.upstreamBehind ?? null,
+      conflict: heard?.beat.conflict ?? false,
     });
   }
   return { items, more: Math.max(0, all.length - MAX_CHILDREN) };

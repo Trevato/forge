@@ -9,7 +9,7 @@
 
 import type { Ctx } from "../../http/context.ts";
 import type { ChildAppsSummary } from "../../spawn/child-apps.ts";
-import { familyView, type FamilyChild } from "../../spawn/family.ts";
+import { familyView, followLine, type FamilyChild } from "../../spawn/family.ts";
 import { hostedChildApps } from "../../spawn/host.ts";
 import { MAX_DEPTH } from "../../spawn/heartbeat.ts";
 import { pageHead } from "../chrome.ts";
@@ -45,6 +45,8 @@ function standingNode(c: FamilyChild): Node {
     if (c.ownChildren !== null && c.ownChildren > 0)
       meta.push(html`${plural(c.ownChildren, "forge")} of its own`);
   }
+  const follow = followLine(c);
+  if (follow !== null) meta.push(html`<span data-follow>${follow}</span>`);
   if (c.apps !== null) meta.push(html`<span data-apps>${c.apps}</span>`);
   return {
     label: c.name,

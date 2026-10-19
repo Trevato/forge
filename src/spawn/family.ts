@@ -33,6 +33,16 @@ export function appsLine(s: ChildAppsSummary | undefined | null): string | null 
   return `${head} — ${s.notRunning.map((n) => `${n.slug} ${reason(n.why)}`).join("; ")}`;
 }
 
+/** "takes updates · 3 commits behind · conflict open", or null when the child said nothing of it. */
+export function followLine(c: ChildStanding): string | null {
+  const bits: string[] = [];
+  if (c.mode !== null) bits.push(c.mode === "take-updates" ? "takes updates" : "tells its owner");
+  if (c.upstreamBehind !== null)
+    bits.push(c.upstreamBehind === 0 ? "up to date" : `${c.upstreamBehind} ${c.upstreamBehind === 1 ? "commit" : "commits"} behind`);
+  if (c.conflict) bits.push("conflict open");
+  return bits.length === 0 ? null : bits.join(" · ");
+}
+
 export interface FamilyView {
   readonly parent: { readonly url: string; readonly host: string; readonly behind: number | null } | null;
   readonly here: { readonly host: string | null; readonly version: string };
@@ -82,6 +92,8 @@ export function familyLines(view: FamilyView): [string, string][] {
             c.openProposals === null ? "" : `${c.openProposals} open`,
           ].filter((b) => b !== "");
     out.push([`child ${c.name}`, bits.join(" · ")]);
+    const follow = followLine(c);
+    if (follow !== null) out.push(["", follow]);
     if (c.apps !== null) out.push(["", c.apps]);
   }
   if (view.more > 0) out.push(["", `${view.more} more not shown`]);

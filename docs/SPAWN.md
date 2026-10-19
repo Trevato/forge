@@ -96,8 +96,12 @@ Every door reads and cuts the chain the same way: the page
 MCP `following` and `sever` tools, and the terminal's **Chain** command.
 Sever's one implementation is `severForge` in `src/actions/follow.ts`.
 
-A child's heartbeat adds `forgeTip` and `severedAt` when it carries a fork;
-`/family` on the parent shows `code at <tip>` or `follows nothing since …`.
+A child's heartbeat adds `forgeTip`, `severedAt`, `mode`, `upstreamBehind`
+and `conflict` when it carries a fork; `/family` on the parent shows
+`code at <tip>` or `follows nothing since …`, and a line such as `takes
+updates · 3 commits behind · conflict open` (`tells its owner` for
+`tell-me`, `up to date` at zero behind). `conflict` is the state at the
+child's last hourly check, not a live look at whether the issue is still open.
 
 ## Following the parent forge
 
