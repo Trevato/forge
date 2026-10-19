@@ -24,7 +24,7 @@ function rank(items, key, kinds) {
 export const systemLiveJs = /* js */ `
 (function () {
   ${procSortJs}
-  var KINDS = ['forge', 'check', 'app', 'host'], key = 'cpu';
+  var KINDS = ['forge', 'crew', 'check', 'app', 'host'], key = 'cpu';
   function read(el) {
     return { el: el, kind: el.getAttribute('data-kind'), cpu: Number(el.getAttribute('data-cpu')) || 0, mem: Number(el.getAttribute('data-mem')) || 0 };
   }

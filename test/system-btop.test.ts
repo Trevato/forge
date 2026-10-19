@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLive } from "../src/system/live.ts";
 import { parseDiskstats, type Proc, type Raw } from "../src/system/proc.ts";
-import { buildSystem } from "../src/system/view.ts";
+import { buildSystem, forAgent } from "../src/system/view.ts";
 import { regions } from "../src/web/pages/system.ts";
 import { systemLines } from "../src/tui/screens/system.ts";
 import { procSortJs, systemLiveJs } from "../src/web/system-live.ts";
@@ -52,6 +52,21 @@ describe("/system as btop", () => {
     for (const label of ["forge", "check:RUN1", "app:other/production", "app:notes/production"]) expect(html).toContain(label);
     for (const comm of ["bun", "claude", "node"]) expect(html).toContain(`<td class="mono">${comm}</td>`);
     expect(html).toMatch(/data-cpu="[\d.]+" data-mem="\d+"/);
+  });
+
+  test("crew:<name> is its own kind, after forge, and another agent never sees its name", () => {
+    const r = raw(2000, 300);
+    r.procs.push(proc(500, 1, "bwrap", 0, 1 << 20), proc(501, 500, "claude", 10, 80 << 20));
+    const v = buildSystem(undefined, r, [...roots.slice(0, 2), { label: "crew:atlas", root: 500 }], 1);
+    const html = regions(v)["sys-procs"]!;
+    const kinds = [...html.matchAll(/<tbody data-kind="(\w+)"/g)].map((m) => m[1]);
+    expect(kinds).toEqual(["forge", "crew", "check", "app"]);
+    expect(v.groups.find((g) => g.label === "crew:atlas")?.kind).toBe("crew");
+    const hidden = forAgent(v, () => false);
+    expect(JSON.stringify(hidden)).not.toContain("atlas");
+    expect(hidden.groups.find((g) => g.kind === "crew")?.label).toBe("crew:private-1");
+    expect(hidden.groups.find((g) => g.kind === "crew")?.top).toEqual([]);
+    expect(JSON.stringify(forAgent(v, (l) => l === "crew:atlas"))).toContain("crew:atlas");
   });
 
   test("cores, memory, swap, load, disk and network rates are drawn from the sample", () => {

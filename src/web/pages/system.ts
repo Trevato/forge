@@ -42,8 +42,8 @@ const meterRow = (name: string, value: number | null, max: number, figure: strin
     <meter class="bt-bar" aria-label="${name} ${figure}" min="0" max="${String(max)}" high="${String(max * 0.85)}" value="${String(value ?? 0)}">${figure}</meter>
     <span class="bt-val">${figure}</span>${history ? html`<span class="bt-hist" aria-hidden="true">${history}</span>` : null}</div>`;
 
-/** Processes grouped forge, check, app, host; the client re-sorts them by CPU or memory (`system-live.ts`). */
-const KIND_ORDER = ["forge", "check", "app", "host"] as const;
+/** Processes grouped forge, crew, check, app, host; the client re-sorts them by CPU or memory (`system-live.ts`). */
+const KIND_ORDER = ["forge", "crew", "check", "app", "host"] as const;
 function procTable(v: SystemView): Html {
   const groups = KIND_ORDER.flatMap((k) => v.groups.filter((g) => g.kind === k));
   return html`<div class="table-wrap"><table class="table bt-procs" aria-label="Processes by what launched them">
