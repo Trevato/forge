@@ -314,6 +314,13 @@ never read as a pass. Spend and run bounds are proven in process only; this
 pull adds the proof but does not reopen signup — the gitops gate stays for a
 person.
 
+`bun scripts/smoke.ts <url> --standards` prints the website-specification
+report (`src/release/webspec.ts`): it fetches each path in forge.json's
+`app.looks` from `<url>` and prints one line per head or header finding with
+the specification.website section it cites. It only reports and always exits
+0. `(edge)` marks a finding the edge in front of the app may own (HSTS), so
+fix it there rather than in the app. Each fetch gives up after 10 seconds.
+
 What you asked for: `Ctrl+K`, then **Asked**, is `/asked` in the terminal — your
 thoughts, then the issues you can write to that are not shipped, oldest first
 (`j`/`k` move, `enter` gives the issue's web address, `r` refreshes). It is read
