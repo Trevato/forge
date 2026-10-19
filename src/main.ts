@@ -55,6 +55,8 @@ import { running } from "./kernel/version.ts";
 import { record as recordDegraded } from "./kernel/degraded_history.ts";
 import { vitals } from "./kernel/vitals.ts";
 import { proveRelease } from "./release/prove.ts";
+import { CHECK_EVERY_MS, readNewest, setBehind, watchBehind } from "./release/behind.ts";
+import { repoDir } from "./git/repos.ts";
 import { snapshotPlace } from "./actions/health.ts";
 import { capacityDefault } from "./core/capacity.ts";
 
@@ -490,6 +492,24 @@ void proveRelease({
   url: forgeUrl,
   token: process.env["FORGE_TOKEN"],
 }).then((p) => p && app.log.info("release proof", { version: p.version, ok: String(p.ok), ...(p.failure ? { failure: p.failure } : {}) }));
+// Production behind main's newest release for over an hour is a card (release/behind.ts).
+if (app.config.forgeRepo) {
+  const [owner, name] = app.config.forgeRepo.split("/");
+  const watch = watchBehind({
+    live: () => running().version,
+    read: async () => {
+      const row = app.db
+        .query<{ default_branch: string }, [string, string]>(
+          "SELECT repo.default_branch FROM repo JOIN user u ON u.id = repo.owner_id WHERE u.username = ?1 AND repo.name = ?2",
+        )
+        .get(owner ?? "", name ?? "");
+      return row ? readNewest(repoDir(app.reposRoot, owner!, name!), row.default_branch) : undefined;
+    },
+  });
+  setBehind(watch);
+  void watch.tick();
+  setInterval(() => void watch.tick(), CHECK_EVERY_MS);
+}
 // Only an agent is on a crew (the `repo_crew_agents_only` trigger refuses anyone else). A person
 // put on one before that is reported here for the owner to take off — the
 // forge never removes it on its own.

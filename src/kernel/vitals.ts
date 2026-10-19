@@ -26,6 +26,7 @@ import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
 import { lastSnapshotOutcome, snapshotNeed } from "../snapshot/outcome.ts";
 import { drillNeed, firstSeen as drillFirstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { proofNeed } from "../release/prove.ts";
+import { behindStanding } from "../release/behind.ts";
 import { newestDrills } from "../core/domain_drills.ts";
 import { DOMAINS } from "./domains.ts";
 import { domainDrillNeeds } from "./domain_drill.ts";
@@ -397,6 +398,10 @@ export function vitals(input: VitalsInput): Vitals {
   // A release the forge could not prove against its own public URL is a card until a release does.
   const unproven = proofNeed(input.dataDir);
   if (unproven !== undefined) need("release", unproven.sentence, unproven.since, "/board");
+
+  // Production serving a version older than a release main has had over an hour is a card until they match.
+  const lagging = behindStanding(now);
+  if (lagging !== undefined) need("release:behind", `${lagging.sentence}.`, lagging.since, "/board");
 
   const apps = { serving: 0, asleep: 0, previews: 0 };
   for (const e of input.envs ?? []) {
