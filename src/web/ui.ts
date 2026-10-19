@@ -1002,6 +1002,7 @@ export interface FieldOptions {
   error?: string;
   required?: boolean;
   autofocus?: boolean;
+  readonly?: boolean;
   autocomplete?: string;
   placeholder?: string;
   pattern?: string;
@@ -1023,6 +1024,7 @@ export function field(o: FieldOptions): Html {
   ${o.error ? raw('aria-invalid="true"') : null}
   ${o.required ? raw("required") : null}
   ${o.autofocus ? raw("autofocus") : null}
+  ${o.readonly ? raw("readonly") : null}
   ${o.placeholder ? html`placeholder="${o.placeholder}"` : null}`;
   const control =
     o.type === "textarea"

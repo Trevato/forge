@@ -9,6 +9,7 @@
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
+import type { User } from "../core/users.ts";
 import type { App } from "../app.ts";
 import { edgeSigninOn } from "../core/capacity.ts";
 
@@ -31,6 +32,15 @@ export function edgeIdentity(
   if (!sameSecret(presented, edgeToken)) return undefined;
   const login = (request.headers.get("x-plat-user") ?? "").trim();
   return login === "" ? undefined : login;
+}
+
+/** The login the edge vouched for on this request when no account answered to it. */
+export function edgeStrangerLogin(
+  request: Request,
+  edgeToken: string | undefined,
+  user: User | undefined,
+): string | undefined {
+  return user === undefined ? edgeIdentity(request, edgeToken) : undefined;
 }
 
 // Compared as fixed-width digests, so neither the time taken nor the

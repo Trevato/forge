@@ -25,7 +25,7 @@ import { isThemeName } from "../../design/themes.ts";
 import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
 import { homeTop } from "../studio/asks_page.ts";
-import { activeEdgeToken, edgeLoginUrl } from "../../http/edge.ts";
+import { activeEdgeToken, edgeIdentity, edgeLoginUrl, edgeStrangerLogin } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
 import { SignupSlot, signupWindow } from "../../actions/signup-window.ts";
@@ -247,8 +247,11 @@ function authForm(
   // Behind a platform edge, that is the door: the button first, and the
   // password form kept for the accounts that have one — an account the edge
   // made has none, and the note says so before anyone types.
+  // A newcomer the edge vouched for is already through it: no button to go
+  // round again, and the name is theirs alone.
+  const vouched = edgeStrangerLogin(ctx.request, activeEdgeToken(ctx.app), ctx.auth.user);
   const edge =
-    activeEdgeToken(ctx.app) === undefined
+    activeEdgeToken(ctx.app) === undefined || vouched !== undefined
       ? undefined
       : (ctx.app.config.edgeName ?? "the platform");
   const throughEdge = when(
@@ -263,7 +266,7 @@ function authForm(
         <p class="muted small">
           ${kind === "signin"
             ? `Accounts made through ${name} sign in there and have no password here. The form below is for an account that was given one.`
-            : `Signing in through ${name} makes your account on first sight; the form below makes one with a password instead.`}
+            : `Signing in through ${name} does not make an account here; the form below does.`}
         </p>
       </div>`,
   );
@@ -277,10 +280,13 @@ function authForm(
       ${formField({
         label: "Username",
         name: "username",
-        value: values.username ?? "",
+        value: (kind === "signup" ? vouched : undefined) ?? values.username ?? "",
         autocomplete: "username",
         required: true,
-        autofocus: true,
+        ...(vouched === undefined || kind !== "signup" ? { autofocus: true } : {}),
+        ...(kind === "signup" && vouched !== undefined
+          ? { readonly: true }
+          : {}),
         ...(kind === "signup"
           ? {
               hint: "Letters, digits, dots and dashes.",
@@ -297,6 +303,8 @@ function authForm(
           value: values.email ?? "",
           autocomplete: "email",
           required: true,
+          // A pinned name is not editable, so the keyboard goes to the email.
+          ...(vouched !== undefined ? { autofocus: true } : {}),
           ...(errors.email ? { error: errors.email } : {}),
         }),
       )}
@@ -434,6 +442,8 @@ function signupClosedPage(ctx: Ctx): Response {
 
 export function signupPage(ctx: Ctx): Response {
   if (signupClosed(ctx.app, inviteOf(ctx))) return signupClosedPage(ctx);
+  const first = throughEdgeFirst(ctx);
+  if (first) return first;
   return page({
     ctx,
     title: "Sign up",
@@ -538,12 +548,51 @@ export function verifyPage(ctx: Ctx): Response {
   );
 }
 
+export const EDGE_NAME_MESSAGE = "Sign up under the name your platform sign-in gave you.";
+
+/**
+ * Whether `username` is free to sign up. `invite` is the one the caller hands
+ * to `signUp`, so closed-ness is decided from the same token on every door.
+ * Behind an edge the edge's login is
+ * the only name a newcomer may take, and one it has not vouched for takes
+ * none: a name made here first would sign the platform's user of that name
+ * into someone else's account.
+ */
+export function pinnedTo(ctx: Ctx, username: string, invite: string | undefined): boolean {
+  const token = activeEdgeToken(ctx.app);
+  // A closed door refuses on its own, and says so in its own words.
+  if (token === undefined || signupClosed(ctx.app, invite)) return true;
+  const vouched = edgeIdentity(ctx.request, token);
+  return vouched !== undefined && vouched.toLowerCase() === username.toLowerCase();
+}
+
+/** Behind an edge, a visitor it has not vouched for goes through it first. */
+function throughEdgeFirst(ctx: Ctx): Response | undefined {
+  const token = activeEdgeToken(ctx.app);
+  if (token === undefined || edgeIdentity(ctx.request, token) !== undefined) return undefined;
+  const invite = inviteOf(ctx);
+  if (signupClosed(ctx.app, invite)) return undefined;
+  const query = invite === undefined ? "" : `?invite=${encodeURIComponent(invite)}`;
+  return redirect(edgeLoginUrl(`/signup${query}`));
+}
+
 export async function signupSubmit(ctx: Ctx): Promise<Response> {
   // Posted by people with no account yet: a stranger's form.
   const form = await readForm(ctx, undefined, STRANGER_MAX);
   if (form instanceof Response) return form;
   const username = field(form, "username");
   const email = field(form, "email");
+  const first = throughEdgeFirst(ctx);
+  if (first) return first;
+  if (!pinnedTo(ctx, username, inviteOf(ctx)))
+    return page(
+      {
+        ctx,
+        title: "Sign up",
+        body: authForm(ctx, "signup", { values: { email }, errors: { username: EDGE_NAME_MESSAGE } }),
+      },
+      422,
+    );
   const slot = signupSlot(ctx);
   if (typeof slot === "number") {
     const wait = slot;

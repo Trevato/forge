@@ -154,11 +154,11 @@ describe("reserved names", () => {
   });
 
   test("the edge cannot bring in a reserved name", async () => {
-    expect(await ensureEdgeUser(app.db, "sc0ut", "f.dev")).toBeUndefined();
-    expect(await ensureEdgeUser(app.db, "admin", "f.dev")).toBeUndefined();
+    expect(ensureEdgeUser(app.db, "sc0ut")).toBeUndefined();
+    expect(ensureEdgeUser(app.db, "admin")).toBeUndefined();
     expect(getUserByName(app.db, "sc0ut")).toBeUndefined();
     // An account that already exists still signs in by its own name.
-    expect((await ensureEdgeUser(app.db, "trevato", "f.dev"))?.username).toBe(
+    expect(ensureEdgeUser(app.db, "trevato")?.username).toBe(
       "trevato",
     );
   });

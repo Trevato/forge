@@ -168,7 +168,12 @@ describe("signup closed (#2166)", () => {
   const post = (body: unknown) =>
     fetch(`${servers.url}/api/v1/users`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        // Behind an edge a newcomer signs up as the login it vouched for.
+        "x-plat-user": String((body as { username?: string }).username ?? ""),
+        "x-plat-edge-token": EDGE,
+      },
       body: JSON.stringify(body),
     });
   const edge = (user: string) =>
@@ -265,6 +270,8 @@ describe("signup closed (#2166)", () => {
 
   test("existing accounts still sign in by the edge while closed", async () => {
     setSignup(app.db, "open", "boot");
+    const old = await createUser(app.db, { origin: "edge", username: "returning", email: "returning@forge.local" });
+    expect(old.ok).toBe(true);
     expect((await edge("returning")).status).toBe(200);
     setSignup(app.db, "closed", "boot");
     expect((await edge("returning")).status).toBe(200);
@@ -272,7 +279,9 @@ describe("signup closed (#2166)", () => {
 
   test("open: page has the form and the API makes the account", async () => {
     setSignup(app.db, "open", "boot");
-    const text = await fetch(`${servers.url}/signup`).then((r) => r.text());
+    const text = await fetch(`${servers.url}/signup`, {
+      headers: { "x-plat-user": "pager", "x-plat-edge-token": EDGE },
+    }).then((r) => r.text());
     expect(text).toContain('name="password"');
     expect((await post(newcomer())).status).toBe(201);
   });
@@ -282,6 +291,7 @@ describe("signup closed (#2166)", () => {
     expect((await post(newcomer())).status).toBe(403);
     setSignup(app.db, "open", "boot");
     expect((await post(newcomer())).status).toBe(201);
-    expect((await edge("latecomer")).status).toBe(200);
+    expect((await edge("latecomer")).status).toBe(401);
+    expect(getUserByName(app.db, "latecomer")).toBeUndefined();
   });
 });

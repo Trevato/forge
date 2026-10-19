@@ -121,7 +121,6 @@ test("every caller of createUser says where its account comes from", async () =>
     "src/actions/users.ts": ["signup", "passkey"],
     "src/chaos/world.ts": ["seed"],
     "src/core/federation.ts": ["parent"],
-    "src/core/users.ts": ["edge"],
     "src/web/pages/claim.ts": ["claim"],
     "src/web/pages/everyday.ts": ["everyday"],
   });

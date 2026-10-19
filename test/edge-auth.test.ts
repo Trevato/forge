@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { edgeIdentity, edgeLoginUrl, edgeLogoutUrl } from "../src/http/edge.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { createUser, getUserByName } from "../src/core/users.ts";
+import { mintInvite } from "../src/core/invites.ts";
+import { setSignup } from "../src/settings/signup.ts";
 import { seedAdmin } from "./helpers/admin.ts";
 
 const TOKEN = "edge-secret-0123456789";
@@ -69,6 +72,9 @@ describe("a forge behind the platform edge", () => {
     base = servers.url;
     const olive = await seedAdmin(app, { username: "olive", email: "olive@forge.example" });
     if (!olive.ok) throw new Error(olive.error);
+    // An account the edge made when it still did.
+    const ada = await createUser(app.db, { origin: "edge", username: "ada", email: "ada@forge.example" });
+    if (!ada.ok) throw new Error(ada.error);
   });
 
   afterAll(async () => {
@@ -83,7 +89,68 @@ describe("a forge behind the platform edge", () => {
     expect(page).not.toContain('href="/signin"');
   });
 
-  test("the first person the edge vouches for is made on sight, not as admin", async () => {
+  test("an unknown edge login creates no user and is offered /signup", async () => {
+    const stranger = { "x-plat-user": "newcomer", "x-plat-edge-token": TOKEN };
+    expect((await fetch(`${base}/api/v1/user`, { headers: stranger })).status).toBe(401);
+    expect(getUserByName(app.db, "newcomer")).toBeUndefined();
+    const page = await fetch(`${base}/`, { headers: stranger }).then((r) => r.text());
+    expect(page).toContain('href="/signup"');
+    expect(page).not.toContain("Sign out");
+    const gated = await fetch(`${base}/new`, { headers: stranger, redirect: "manual" });
+    expect(gated.headers.get("location")).toBe("/signup");
+    expect(getUserByName(app.db, "newcomer")).toBeUndefined();
+  });
+
+  test("a vouched newcomer's pages drop the edge button and pin the name", async () => {
+    const stranger = { "x-plat-user": "newcomer", "x-plat-edge-token": TOKEN };
+    const home = await fetch(`${base}/`, { headers: stranger }).then((r) => r.text());
+    expect(home).toContain('href="/signup"');
+    expect(home).not.toContain("/_plat/login");
+    const signup = await fetch(`${base}/signup`, { headers: stranger }).then((r) => r.text());
+    expect(signup).not.toContain("/_plat/login");
+    expect(signup).toContain('value="newcomer"');
+    expect(signup).toContain("readonly");
+  });
+
+  test("a vouched newcomer cannot sign up under another name", async () => {
+    const stranger = {
+      "x-plat-user": "newcomer",
+      "x-plat-edge-token": TOKEN,
+      "content-type": "application/x-www-form-urlencoded",
+      origin: "https://forge.example",
+    };
+    const form = (username: string) =>
+      new URLSearchParams({ username, email: "x@forge.example", password: "correct horse battery" }).toString();
+    const res = await fetch(`${base}/signup`, { method: "POST", headers: stranger, body: form("grace") });
+    expect(res.status).toBe(422);
+    expect(await res.text()).toContain("Sign up under the name");
+    expect(getUserByName(app.db, "grace")).toBeUndefined();
+    const key = await fetch(`${base}/signup/passkey/options`, {
+      method: "POST",
+      headers: { ...stranger, "content-type": "application/json" },
+      body: JSON.stringify({ username: "grace", email: "x@forge.example" }),
+    });
+    expect(key.status).toBe(422);
+  });
+
+  test("a visitor the edge has not vouched for cannot sign up behind an edge", async () => {
+    const headers = { "content-type": "application/x-www-form-urlencoded", origin: "https://forge.example" };
+    const body = new URLSearchParams({ username: "alice", email: "a@forge.example", password: "correct horse battery" }).toString();
+    const res = await fetch(`${base}/signup`, { method: "POST", headers, body, redirect: "manual" });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toContain("/_plat/login");
+    expect(getUserByName(app.db, "alice")).toBeUndefined();
+    const key = await fetch(`${base}/signup/passkey/options`, {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ username: "alice", email: "a@forge.example" }),
+    });
+    expect(key.status).toBe(422);
+    const get = await fetch(`${base}/signup`, { redirect: "manual" });
+    expect(get.headers.get("location")).toContain("/_plat/login");
+  });
+
+  test("an account the edge made earlier still signs in, not as admin", async () => {
     const me = await fetch(`${base}/api/v1/user`, { headers: asAda });
     expect(me.status).toBe(200);
     const body = (await me.json()) as { username: string; isAdmin: boolean };
@@ -157,5 +224,26 @@ describe("a forge behind the platform edge", () => {
       headers: { "x-plat-user": "ADA", "x-plat-edge-token": TOKEN },
     });
     expect(((await me.json()) as { username: string }).username).toBe("ada");
+  });
+
+  test("with signup by invite, a body invite does not lift the name pin", async () => {
+    const olive = getUserByName(app.db, "olive")!;
+    setSignup(app.db, "invite", olive.id);
+    try {
+      const join = (headers: Record<string, string>) => {
+        const { token } = mintInvite(app.db, olive.id);
+        return fetch(`${base}/api/v1/users`, {
+          method: "POST",
+          headers: { ...headers, origin: "https://forge.example" },
+          body: JSON.stringify({ username: "dave", email: "dave@forge.example", password: "correct horse battery", invite: token }),
+        });
+      };
+      // A vouched carol may not take dave's name, nor may a visitor nobody vouched for.
+      expect((await join({ "x-plat-user": "carol", "x-plat-edge-token": TOKEN })).status).toBe(403);
+      expect((await join({})).status).toBe(403);
+      expect(getUserByName(app.db, "dave")).toBeUndefined();
+    } finally {
+      setSignup(app.db, "open", olive.id);
+    }
   });
 });

@@ -63,7 +63,6 @@ import { trackPullHead } from "../core/pulls.ts";
 import { createRepo, repositoryLimitMessage, resolveOwner } from "../actions/repos.ts";
 import { sessionOf } from "../core/sessions.ts";
 import { scopeAllows, verifyToken } from "../core/tokens.ts";
-import { forgeHost } from "../core/commit_identity.ts";
 import {
   ensureEdgeUser,
   getUserByName,
@@ -71,7 +70,6 @@ import {
   verifyPasswordThrottled,
 } from "../core/users.ts";
 import { activeEdgeToken, edgeIdentity } from "./edge.ts";
-import { signupClosed } from "../actions/users.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { running } from "../kernel/version.ts";
 import { runGit } from "../git/env.ts";
@@ -516,23 +514,9 @@ async function resolveAuth(app: App, request: Request): Promise<Auth> {
   // in; its word outranks a cookie of ours.
   const login = edgeIdentity(request, activeEdgeToken(app));
   if (login !== undefined) {
-    const existed = getUserByName(app.db, login) !== undefined;
-    // Existing accounts sign in; a new one is made only while signup allows.
-    const user =
-      !existed && signupClosed(app)
-        ? undefined
-        : await ensureEdgeUser(app.db, login, forgeHost(app.config));
-    if (user) {
-      // An account the edge made is audited like one made at /signup.
-      if (!existed) {
-        app.bus.append({
-          kind: "user.created",
-          actorId: user.id,
-          payload: { via: "edge", address: clientAddress(request) },
-        });
-      }
-      return { user, scope: "admin", via: "edge" };
-    }
+    // Existing accounts sign in; an unknown login is signed out (/signup).
+    const user = ensureEdgeUser(app.db, login);
+    if (user) return { user, scope: "admin", via: "edge" };
   }
 
   const session = cookieValue(request, "forge_session");

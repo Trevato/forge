@@ -13,7 +13,7 @@ import { mayDirectCrew } from "../crew/direct.ts";
 import { mayReadRuns } from "../actions/runs.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import { audienceFacts, audienceOf } from "../core/audience.ts";
-import { activeEdgeToken, edgeLoginUrl } from "../http/edge.ts";
+import { activeEdgeToken, edgeLoginUrl, edgeStrangerLogin } from "../http/edge.ts";
 import {
   canAdmin,
   canRead,
@@ -94,6 +94,8 @@ export function signInHref(ctx: Ctx): string {
   const next = ctx.url.pathname + ctx.url.search;
   // Behind a platform edge the edge is how people sign in; an account it
   // made has no password here, so the password form would only refuse them.
+  if (edgeStrangerLogin(ctx.request, activeEdgeToken(ctx.app), ctx.auth.user) !== undefined)
+    return "/signup";
   if (activeEdgeToken(ctx.app) !== undefined) return edgeLoginUrl(next);
   return `/signin?next=${encodeURIComponent(next)}`;
 }

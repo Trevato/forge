@@ -370,7 +370,7 @@ import {
   undoFleetOp,
   type FleetError,
 } from "../actions/fleet.ts";
-import { sessionCookie, signupSlot } from "../web/pages/site.ts";
+import { EDGE_NAME_MESSAGE, pinnedTo, sessionCookie, signupSlot } from "../web/pages/site.ts";
 import {
   FIRST_ADMIN_TOKEN_MAX_S,
   FIRST_ADMIN_TOKEN_MIN_S,
@@ -1224,6 +1224,10 @@ export function apiRoutes(router: Router<Handler>): void {
     const input = await boundedBody(ctx.request, STRANGER_MAX);
     if (input === "too_large")
       return apiError("too_large", 413, `at most ${STRANGER_MAX} bytes`);
+    // The token of an invite link (`core/invites.ts`), when signup is `invite`.
+    const invite = str(input.invite) === "" ? undefined : str(input.invite);
+    if (!pinnedTo(ctx, str(input.username).trim(), invite))
+      return apiError("forbidden", 403, EDGE_NAME_MESSAGE);
     const created = await signUp(
       ctx.app,
       {
@@ -1234,8 +1238,7 @@ export function apiRoutes(router: Router<Handler>): void {
       },
       {
         slot,
-        // The token of an invite link (`core/invites.ts`), when signup is `invite`.
-        invite: str(input.invite) === "" ? undefined : str(input.invite),
+        invite,
         address: clientAddress(ctx.request),
       },
     );

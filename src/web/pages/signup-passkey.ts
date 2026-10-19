@@ -11,12 +11,13 @@ import { plausibleEmail, signUpWithPasskey, signupClosed, HUMAN_CHECK_MESSAGE, S
 import { createSession } from "../../core/sessions.ts";
 import { getUserByName } from "../../core/users.ts";
 import { isSafeName } from "../../git/guard.ts";
+import { edgeStrangerLogin } from "../../http/edge.ts";
 import { crossOrigin, type Ctx } from "../../http/context.ts";
 import { STRANGER_MAX } from "../../http/limits.ts";
 import { clientAddress } from "../../http/peer.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
 import { relying, store } from "./passkeys.ts";
-import { inviteOf, safeNext, sessionCookie, signinAllowed, signupSlot } from "./site.ts";
+import { EDGE_NAME_MESSAGE, inviteOf, pinnedTo, safeNext, sessionCookie, signinAllowed, signupSlot } from "./site.ts";
 
 const refuse = (status: number, message: string) =>
   json({ error: "refused", message }, status);
@@ -28,6 +29,7 @@ const WORDS: Record<string, string> = {
   username_reserved: "That name is reserved.",
   email_taken: "That email already has an account.",
   invalid_email: "That does not look like an email address.",
+  edge_name: EDGE_NAME_MESSAGE,
   human_check: HUMAN_CHECK_MESSAGE,
   passkey_taken: "That passkey is already registered.",
   signup_closed: SIGNUP_CLOSED_MESSAGE,
@@ -36,6 +38,7 @@ const WORDS: Record<string, string> = {
 /** Whether the name and address are fit to sign up with; else the words. */
 function problem(ctx: Ctx, username: string, email: string): string | undefined {
   if (!isSafeName(username)) return WORDS.invalid_username;
+  if (!pinnedTo(ctx, username, inviteOf(ctx))) return WORDS.edge_name;
   if (!plausibleEmail(email)) return WORDS.invalid_email;
   if (getUserByName(ctx.app.db, username)) return WORDS.username_taken;
   return undefined;

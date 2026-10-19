@@ -355,7 +355,12 @@ adds `FORGE_URL` (the canonical public base URL, needed for OAuth callbacks),
 `FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN). Behind a
 platform edge that signs people in for every app it serves, `FORGE_EDGE_TOKEN`
 is the edge's secret: a request carrying it and `X-Plat-User` is that person,
-signed in by the platform, with an account made on first sight. Setting
+signed in by the platform if an account of that name exists. An unknown login
+makes none: it is sent to `/signup`, where the `signup` setting decides, and
+the name there is pinned to the login the edge vouched for (a visitor the edge
+has not vouched for is sent through it first), so a platform user's name can
+never be taken by someone else. The terminal cannot see `X-Plat-User`, so
+behind an edge sign-up is on the web page only and the terminal says so. Setting
 `signin.edge` to `off` (Settings → Capacity → "Sign in through the platform
 edge", boot default `FORGE_SIGNIN_EDGE`, also `/api/v1/admin/capacity` and the
 MCP `capacity` tool) makes the forge ignore `X-Plat-User` even when the secret

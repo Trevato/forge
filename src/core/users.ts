@@ -6,7 +6,6 @@
 import { markUnproven, markVerified } from "./verify.ts";
 import type { Database } from "bun:sqlite";
 import { isSafeName } from "../git/guard.ts";
-import { noreplyAddress } from "./commit_identity.ts";
 import { reservedName } from "./reserved.ts";
 import { id } from "../kernel/id.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -452,31 +451,16 @@ export function getUserByName(
 
 /**
  * The person behind an identity the platform edge vouched for: found by
- * name, or made on first sight — with no password, because the edge is how
- * they sign in, and a noreply address until they set one. Like a sign-up,
- * it is never the admin, first or not. A name that is an
- * organization or a crew member here is nobody's login.
+ * name, never made. The edge vouches for a login, not for a right to an
+ * account here, so an unknown login is signed out and goes to /signup, where
+ * the `signup` setting decides. Accounts the edge made before still sign in.
+ * A name that is an organization or a crew member here is nobody's login.
  */
-export async function ensureEdgeUser(
-  db: Database,
-  login: string,
-  host: string,
-): Promise<User | undefined> {
+export function ensureEdgeUser(db: Database, login: string): User | undefined {
   const existing = getUserByName(db, login);
-  if (existing)
-    return existing.kind === "user" && isActive(existing) ? existing : undefined;
-  // The edge vouches for a login, not for its right to a name: createUser
-  // refuses a reserved one, so a platform account called after the crew or
-  // the owner is not let in under it.
-  const made = await createUser(db, {
-    username: login,
-    email: noreplyAddress(login, host),
-    origin: "edge",
-  });
-  if (!made.ok) return undefined;
-  // A newcomer through the edge starts unproven like one through /signup
-  // (its placeholder is no address at all).
-  return made.value;
+  return existing && existing.kind === "user" && isActive(existing)
+    ? existing
+    : undefined;
 }
 
 /** Why a password was not accepted: wrong, or tried too often to check. */

@@ -32,6 +32,9 @@ describe("signin.edge", () => {
     });
     if (!made.ok) throw new Error(made.error);
     olive = made.value;
+    // An account the edge made before, with no password: it still signs in.
+    const ada = await seedAdmin(app, { username: "ada", email: "ada@forge.example" });
+    if (!ada.ok) throw new Error(ada.error);
   });
 
   afterAll(async () => {
@@ -43,7 +46,7 @@ describe("signin.edge", () => {
   const who = (headers: Record<string, string>) =>
     fetch(`${base}/api/v1/user`, { headers });
 
-  test("on by default; the edge makes an account and signs it in", async () => {
+  test("on by default; the edge signs in an account that exists", async () => {
     expect(capacityValue(app.db, "signin.edge")).toBe("on");
     expect((await who(asAda)).status).toBe(200);
     const page = await fetch(`${base}/`).then((r) => r.text());

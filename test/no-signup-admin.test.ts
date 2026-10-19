@@ -88,9 +88,10 @@ test("the first account from the terminal's sign-up is not an admin", async () =
   expect(admins(app)).toBe(0);
 });
 
-test("the first account the platform edge makes is not an admin", async () => {
+test("the platform edge makes no account, so no admin", async () => {
   const app = await fresh();
-  expect((await ensureEdgeUser(app.db, "edgy", "f.test"))?.isAdmin).toBe(false);
+  expect(ensureEdgeUser(app.db, "edgy")).toBeUndefined();
+  expect(getUserByName(app.db, "edgy")).toBeUndefined();
   expect(admins(app)).toBe(0);
 });
 

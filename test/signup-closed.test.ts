@@ -11,7 +11,7 @@ import { createApp, type App } from "../src/app.ts";
 import { setLimit } from "../src/settings/limits.ts";
 import { setSignup, type SignupMode } from "../src/settings/signup.ts";
 import { signUp, signUpWithPasskey } from "../src/actions/users.ts";
-import { getUserByName } from "../src/core/users.ts";
+import { createUser, getUserByName } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
 
@@ -29,6 +29,9 @@ describe("closed signup", () => {
     app = createApp({ dataDir, port: 0, url: "https://forge.example", edgeToken: TOKEN });
     servers = await serve(app);
     setLimit(app.db, "signup.per_source", 1000, "setup");
+    // Accounts the edge made when it still did; they keep signing in.
+    for (const name of ["founder", "edgy"])
+      await createUser(app.db, { origin: "edge", username: name, email: `${name}@forge.example` });
     base = servers.url;
   });
   afterAll(async () => {
@@ -41,16 +44,18 @@ describe("closed signup", () => {
   const post = (username: string) =>
     fetch(`${base}/api/v1/users`, {
       method: "POST",
-      headers: { "content-type": "application/json", origin: "https://forge.example" },
+      headers: { "content-type": "application/json", origin: "https://forge.example", ...edge(username) },
       body: JSON.stringify({ username, email: `${username}@example.com`, password: "a-good-passphrase" }),
     });
   const me = (login: string) => fetch(`${base}/api/v1/user`, { headers: edge(login) });
 
-  test("a fresh forge's first account is refused while closed, like any other", async () => {
+  test("closed: an unknown edge login is signed out and told signup is closed", async () => {
     mode("closed");
-    expect((await me("founder")).status).toBe(401);
-    expect((await post("founder")).status).toBe(403);
-    expect(getUserByName(app.db, "founder")).toBeUndefined();
+    expect((await me("stranger")).status).toBe(401);
+    const page = await fetch(`${base}/signup`, { headers: edge("stranger") }).then((r) => r.text());
+    expect(page).toContain("Signup is closed on this forge.");
+    expect(page).not.toContain("Sign out");
+    expect(getUserByName(app.db, "stranger")).toBeUndefined();
   });
 
   for (const closed of ["closed", "invite"] as const) {
@@ -82,9 +87,10 @@ describe("closed signup", () => {
 
   test("open makes accounts; switching takes effect on the next request", async () => {
     mode("open");
-    expect(await (await fetch(`${base}/signup`)).text()).toContain('name="password"');
+    expect(await (await fetch(`${base}/signup`, { headers: edge("newcomer") })).text()).toContain('name="password"');
     expect((await post("newcomer")).status).toBe(201);
     expect((await me("edgy")).status).toBe(200);
+    expect((await me("later")).status).toBe(401);
     mode("closed");
     expect((await post("late")).status).toBe(403);
     expect((await me("later")).status).toBe(401);

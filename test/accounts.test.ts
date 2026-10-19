@@ -97,6 +97,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
   const outsider = async (name: string) => {
     const res = await api("/api/v1/users", {
       method: "POST",
+      headers: { "x-plat-user": name, "x-plat-edge-token": EDGE },
       body: JSON.stringify({
         username: name,
         email: `${name}@outsider.test`,
@@ -121,16 +122,24 @@ describe("accounts: the owner sees, suspends and removes", () => {
     expect(typeof made?.payload["address"]).toBe("string");
   });
 
-  test("an account the edge makes is audited too", async () => {
-    const res = await fetch(`${base}/api/v1/user`, {
-      headers: { "x-plat-user": "edgy", "x-plat-edge-token": EDGE },
+  test("an unknown edge login makes no account and no audit record; an old edge account still signs in", async () => {
+    const as = (login: string) =>
+      fetch(`${base}/api/v1/user`, {
+        headers: { "x-plat-user": login, "x-plat-edge-token": EDGE },
+      });
+    const before = listEvents(app.db, { kind: "user.created" }).length;
+    expect((await as("edgy")).status).toBe(401);
+    expect(getUserByName(app.db, "edgy")).toBeUndefined();
+    expect(listEvents(app.db, { kind: "user.created" }).length).toBe(before);
+    // An account the edge made when it still did, audited as it was then.
+    const old = await insertAgent(app.db, {
+      origin: "edge",
+      username: "edgy",
+      email: "edgy@forge.example",
     });
-    expect(res.status).toBe(200);
-    const user = getUserByName(app.db, "edgy")!;
-    const made = listEvents(app.db, { kind: "user.created" }).find(
-      (e) => e.actorId === user.id,
-    );
-    expect(made?.payload["via"]).toBe("edge");
+    if (!old.ok) throw new Error(old.error);
+    app.bus.append({ kind: "user.created", actorId: old.value.id, payload: { via: "edge", address: "127.0.0.1" } });
+    expect((await as("edgy")).status).toBe(200);
   });
 
   test("the owner hears of a new account once", async () => {
@@ -474,6 +483,7 @@ describe("accounts: the owner sees, suspends and removes", () => {
     // The name stays taken, so nobody can step into it.
     const again = await api("/api/v1/users", {
       method: "POST",
+      headers: { "x-plat-user": "oscar", "x-plat-edge-token": EDGE },
       body: JSON.stringify({
         username: "oscar",
         email: "oscar2@outsider.test",

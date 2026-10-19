@@ -220,12 +220,11 @@ describe("verified email", () => {
       edgeToken: "edge-secret",
       mailer: async () => true,
     });
-    const { ensureEdgeUser } = await import("../src/core/users.ts");
-    const first = await ensureEdgeUser(edged.db, "founder", "forge.example");
-    const second = await ensureEdgeUser(edged.db, "newcomer", "forge.example");
-    // The first is no admin, so it is not proven by being first.
-    expect(emailVerified(edged.db, first!.id)).toBe(false);
-    expect(emailVerified(edged.db, second!.id)).toBe(false);
+    const { createUser, ensureEdgeUser } = await import("../src/core/users.ts");
+    // The edge makes none now; an account it made earlier is still unproven.
+    expect(ensureEdgeUser(edged.db, "founder")).toBeUndefined();
+    const made = await createUser(edged.db, { origin: "edge", username: "founder", email: "founder@forge.example" });
+    expect(made.ok && emailVerified(edged.db, made.value.id)).toBe(false);
     edged.close();
   });
 

@@ -8,6 +8,7 @@
  * account while signup allows — not an admin; the operator makes the admin.
  */
 
+import { activeEdgeToken } from "../../http/edge.ts";
 import { INVITE_SPENT_MESSAGE, SIGNUP_CLOSED_MESSAGE, signUp, signupClosed } from "../../actions/users.ts";
 import { SignupSlot, waitText } from "../../actions/signup-window.ts";
 import { hasAnyUser } from "../../core/users.ts";
@@ -42,8 +43,14 @@ const CREATE: Field[] = [
 const INVITE_BLANK_MESSAGE = "Paste the token from your invite link.";
 const INVITE: Field = { label: "Invite", secret: true, hint: "The token from your invite link." };
 
-/** Behind an edge the terminal cannot know the login the edge will vouch for. */
-const EDGE_SIGNUP_MESSAGE = "Sign up on the page: accounts here are tied to the login the edge vouches for.";
+/**
+ * Behind an edge the terminal cannot see the login the edge vouches for, so
+ * sign-up is on the web page only, where the name is pinned to that login.
+ */
+const edgeSignupMessage = (f: Session): string =>
+  f.app.config.url === undefined
+    ? "Sign up on the web page only."
+    : `Sign up on the web page only: ${f.app.config.url}/signup`;
 
 export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
   // "Is this forge empty?" is a existence question, not a count: `COUNT(*)`
@@ -55,9 +62,9 @@ export function signInScreen(f: Session, ctx: Ctx, onDone: () => void): Screen {
   const invited = (): boolean => getSignup(f.db) === "invite";
   // Behind an edge no account is made here: it would be one the edge may later
   // sign a platform user of the same name into. Sign-in is unchanged.
-  const edge = f.app.config.edgeToken !== undefined;
+  const edge = activeEdgeToken(f.app) !== undefined;
   const closed = (): boolean => edge || (!invited() && signupClosed(f.app));
-  const closedText = (): string => (edge ? EDGE_SIGNUP_MESSAGE : SIGNUP_CLOSED_MESSAGE);
+  const closedText = (): string => (edge ? edgeSignupMessage(f) : SIGNUP_CLOSED_MESSAGE);
   let mode: "signin" | "create" = first && !closed() ? "create" : "signin";
   let values = ["", "", "", ""];
   let focus = 0;

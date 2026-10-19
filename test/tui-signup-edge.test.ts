@@ -24,7 +24,7 @@ let forge: Forge;
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "forge-tui-edge-signup-"));
-  forge = createApp({ dataDir: dir, port: 0, edgeToken: "edge-secret", disk: () => ({ freeBytes: 95, totalBytes: 100 }) });
+  forge = createApp({ dataDir: dir, port: 0, url: "https://forge.example", edgeToken: "edge-secret", disk: () => ({ freeBytes: 95, totalBytes: 100 }) });
 });
 afterAll(async () => {
   forge.close();
@@ -45,7 +45,8 @@ test("with an edge token the terminal sign-up makes no row", async () => {
     key("t", true); // no create mode to switch to
     await settleApp(app);
     expect(app.screen.toText()).not.toContain("Email");
-    expect(app.screen.toText()).toContain("Sign up on the page");
+    expect(app.screen.toText()).toContain("Sign up on the web page only");
+    expect(app.screen.toText()).toContain("https://forge.example/signup");
     type("mallory");
     key("tab");
     type("a-long-passphrase");
