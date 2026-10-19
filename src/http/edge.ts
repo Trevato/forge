@@ -9,6 +9,17 @@
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
+import type { App } from "../app.ts";
+import { edgeSigninOn } from "../core/capacity.ts";
+
+/**
+ * The edge secret in force: the configured one while the `signin.edge`
+ * setting is on, nothing while it is off — so every door, the reading of
+ * the headers and the buttons that lead to the edge, goes quiet together.
+ */
+export function activeEdgeToken(app: App): string | undefined {
+  return edgeSigninOn(app.db) ? app.config.edgeToken : undefined;
+}
 
 /** The account the edge vouches for on this request, if it does. */
 export function edgeIdentity(

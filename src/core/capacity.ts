@@ -21,7 +21,8 @@ export type CapacityKey =
   | "checks.shards"
   | "children.max"
   | "cells.egress"
-  | "guard_new_accounts";
+  | "guard_new_accounts"
+  | "signin.edge";
 
 interface Definition {
   /** What the settings page and the API call it. */
@@ -83,6 +84,13 @@ export const CAPACITY: Record<CapacityKey, Definition> = {
     kind: { type: "choice", values: ["on", "off"] },
     fallback: "off",
     help: "on refuses repository creation and forks for accounts younger than 7 days (agents and admins are exempt); off leaves it to the usual permissions. Takes effect immediately. Replaces the hand-installed database trigger that used to do this with no toggle.",
+  },
+  "signin.edge": {
+    label: "Sign in through the platform edge",
+    env: "FORGE_SIGNIN_EDGE",
+    kind: { type: "choice", values: ["on", "off"] },
+    fallback: "on",
+    help: "on reads the platform edge's identity headers (when the forge has an edge secret) and offers its sign-in; off ignores them on every door, so people sign in with the forge's own methods — password and passkey. Accounts the edge made keep their names but have no password until they set one. Takes effect on the next request.",
   },
 };
 
@@ -295,6 +303,11 @@ export function maxChildren(db: Database): number {
 /** The egress mode a cell starts with now. */
 export function egressSetting(db: Database): "enforce" | "report" {
   return capacityValue(db, "cells.egress") === "report" ? "report" : "enforce";
+}
+
+/** Whether the platform edge's identity is read at all; on every request. */
+export function edgeSigninOn(db: Database): boolean {
+  return capacityValue(db, "signin.edge") !== "off";
 }
 
 /**

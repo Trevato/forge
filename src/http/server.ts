@@ -70,7 +70,7 @@ import {
   isActive,
   verifyPasswordThrottled,
 } from "../core/users.ts";
-import { edgeIdentity } from "./edge.ts";
+import { activeEdgeToken, edgeIdentity } from "./edge.ts";
 import { signupClosed } from "../actions/users.ts";
 import { liveResponse, readyResponse } from "./health.ts";
 import { running } from "../kernel/version.ts";
@@ -514,7 +514,7 @@ const NO_AUTH: Auth = { user: undefined, scope: undefined, via: "none" };
 async function resolveAuth(app: App, request: Request): Promise<Auth> {
   // The platform edge, when there is one, has already signed this person
   // in; its word outranks a cookie of ours.
-  const login = edgeIdentity(request, app.config.edgeToken);
+  const login = edgeIdentity(request, activeEdgeToken(app));
   if (login !== undefined) {
     const existed = getUserByName(app.db, login) !== undefined;
     // Existing accounts sign in; a new one is made only while signup allows.

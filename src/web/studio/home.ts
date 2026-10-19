@@ -22,7 +22,7 @@ import { LOOK_SIZES } from "../../core/looks.ts";
 import { canRead, getRepo, type Repo } from "../../core/repos.ts";
 import { type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
-import { edgeLoginUrl } from "../../http/edge.ts";
+import { activeEdgeToken, edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
@@ -488,7 +488,7 @@ export function studioDoor(ctx: Ctx): Response {
       <div class="bar">
         ${ctx.auth.user !== undefined
           ? null
-          : ctx.app.config.edgeToken === undefined
+          : activeEdgeToken(ctx.app) === undefined
             ? html`${btn("Create an account", {
                 href: `/signup${nextQuery}`,
                 variant: "primary",

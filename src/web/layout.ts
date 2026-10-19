@@ -13,7 +13,7 @@ import { appsForRepos } from "../core/apps.ts";
 import { listReposVisibleTo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import type { Ctx } from "../http/context.ts";
-import { edgeLoginUrl, edgeLogoutUrl } from "../http/edge.ts";
+import { activeEdgeToken, edgeLoginUrl, edgeLogoutUrl } from "../http/edge.ts";
 import { json } from "../http/respond.ts";
 import { sha256 } from "../kernel/hash.ts";
 import { secret } from "../kernel/id.ts";
@@ -478,7 +478,7 @@ function topbar(
               )}`
           : html`${guestMenu(theme)}${btn("Sign in", {
               href:
-                ctx.app.config.edgeToken === undefined
+                activeEdgeToken(ctx.app) === undefined
                   ? "/signin"
                   : edgeLoginUrl(ctx.url.pathname + ctx.url.search),
             })}`}

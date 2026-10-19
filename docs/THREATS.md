@@ -136,7 +136,7 @@ How each part proves itself to the next, today.
 | runner → forge | the run's scoped token (`FORGE_TOKEN`) and a few-minute passport (`FORGE_PASSPORT`) | `test/passport-edge.test.ts` |
 | git hook → forge | per-boot secret in `x-forge-hook-secret` on the internal listener; a call without it is refused and counted | none yet |
 | cell → proxy | the proxy's Unix socket bound into the cell's own network namespace; no credential, the namespace is the identity | `test/contain.test.ts` |
-| edge → pod | `X-Plat-Edge-Token` equal to `FORGE_EDGE_TOKEN`, compared as fixed-width digests; without it `X-Plat-User` is ignored | `test/edge-auth.test.ts` |
+| edge → pod | `X-Plat-Edge-Token` equal to `FORGE_EDGE_TOKEN`, compared as fixed-width digests; without it `X-Plat-User` is ignored; the `signin.edge` setting (admin, refused for an admin with no password or passkey) turns the edge's identity off on every door | `test/edge-auth.test.ts` |
 | child → parent | none at call time: `parent.json` names the parent's address and the child pulls over public git; the claim link (sha256 kept, 24 hours, single use) hands the child to its person | `test/spawn-first-boot.test.ts` |
 
 Gaps: edge → pod and runner → forge ride a shared secret, not a per-call

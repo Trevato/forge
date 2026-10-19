@@ -2597,13 +2597,13 @@ const TOOLS: readonly Tool[] = [
   {
     name: "capacity",
     description:
-      "The forge's capacity and guards, live: crew runs at once (crew.concurrency), checks at once (checks.concurrency), test shards per check (checks.shards), whether a cell's undeclared egress is refused or reported (cells.egress), and whether new accounts may create repositories and forks (guard_new_accounts: on refuses accounts younger than 7 days, off is the default). Without `key`, each setting, its value and where it comes from, and the recent changes. With `key` and `value` (\"\" goes back to the boot default), the change it would make; with dryRun false, made, by a forge admin with an admin-scope token, never an agent. A change is honoured by the next run, check or cell, never by a restart. The same as Settings → Capacity and /api/v1/admin/capacity.",
+      "The forge's capacity and guards, live: crew runs at once (crew.concurrency), checks at once (checks.concurrency), test shards per check (checks.shards), whether a cell's undeclared egress is refused or reported (cells.egress), and whether new accounts may create repositories and forks (guard_new_accounts: on refuses accounts younger than 7 days, off is the default), and whether the platform edge's sign-in is read (signin.edge: on is the default, off ignores the edge's identity on every door). Without `key`, each setting, its value and where it comes from, and the recent changes. With `key` and `value` (\"\" goes back to the boot default), the change it would make; with dryRun false, made, by a forge admin with an admin-scope token, never an agent. A change is honoured by the next run, check or cell, never by a restart. The same as Settings → Capacity and /api/v1/admin/capacity.",
     inputSchema: {
       type: "object",
       properties: {
         key: {
           type: "string",
-          enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress", "guard_new_accounts"],
+          enum: ["crew.concurrency", "checks.concurrency", "checks.shards", "cells.egress", "guard_new_accounts", "signin.edge"],
         },
         value: { type: "string", maxLength: 16 },
         dryRun: { type: "boolean", description: "Plan only (the default). Send false to change it." },

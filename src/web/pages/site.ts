@@ -25,7 +25,7 @@ import { isThemeName } from "../../design/themes.ts";
 import { cookieValue, crossOrigin, type Ctx } from "../../http/context.ts";
 import { studioDoor, studioHome } from "../studio/home.ts";
 import { homeTop } from "../studio/asks_page.ts";
-import { edgeLoginUrl } from "../../http/edge.ts";
+import { activeEdgeToken, edgeLoginUrl } from "../../http/edge.ts";
 import { sshCommand } from "../../ssh/command.ts";
 import { hostOf, pageHead, signInFirst } from "../chrome.ts";
 import { SignupSlot, signupWindow } from "../../actions/signup-window.ts";
@@ -248,7 +248,7 @@ function authForm(
   // password form kept for the accounts that have one — an account the edge
   // made has none, and the note says so before anyone types.
   const edge =
-    ctx.app.config.edgeToken === undefined
+    activeEdgeToken(ctx.app) === undefined
       ? undefined
       : (ctx.app.config.edgeName ?? "the platform");
   const throughEdge = when(
@@ -503,7 +503,7 @@ export async function signinSubmit(ctx: Ctx): Promise<Response> {
           values: { username },
           errors: {
             password:
-              ctx.app.config.edgeToken === undefined
+              activeEdgeToken(ctx.app) === undefined
                 ? "That username and password don't match."
                 : `That username and password don't match. An account made through ${ctx.app.config.edgeName ?? "the platform"} has no password here — use the button above.`,
           },

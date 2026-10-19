@@ -351,7 +351,15 @@ adds `FORGE_URL` (the canonical public base URL, needed for OAuth callbacks),
 `FORGE_ORIGIN_ALLOW` (hosts an operator vouches for on a LAN). Behind a
 platform edge that signs people in for every app it serves, `FORGE_EDGE_TOKEN`
 is the edge's secret: a request carrying it and `X-Plat-User` is that person,
-signed in by the platform, with an account made on first sight. Mail out
+signed in by the platform, with an account made on first sight. Setting
+`signin.edge` to `off` (Settings → Capacity → "Sign in through the platform
+edge", boot default `FORGE_SIGNIN_EDGE`, also `/api/v1/admin/capacity` and the
+MCP `capacity` tool) makes the forge ignore `X-Plat-User` even when the secret
+matches; people then sign in with a password or a passkey. An admin with
+neither is refused, so no one locks themselves out. Accounts the edge made
+cannot sign in while it is off until they add a passkey (a password-less
+account cannot set a password: `/settings/password` asks for the current one).
+Mail out
 (the link that proves a newcomer's email) is SMTP submission over TLS,
 configured by the forge-level secrets `MAIL_SMTP_URL`
 (`smtps://user:pass@host:465`) and `MAIL_FROM`, set live under Settings →

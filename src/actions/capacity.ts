@@ -21,6 +21,7 @@ import {
   type CapacityChange,
   type CapacityKey,
 } from "../core/capacity.ts";
+import { passkeyIds } from "../core/passkeys.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -61,6 +62,17 @@ export function listCapacity(
   });
 }
 
+/**
+ * Whether the account can sign in without the platform edge: a password or
+ * a passkey. Turning the edge off for an admin who has neither locks them out.
+ */
+function hasOwnCredential(app: App, userId: string): boolean {
+  const row = app.db
+    .query<{ password_hash: string }, [string]>("SELECT password_hash FROM user WHERE id = ?1")
+    .get(userId);
+  return (row?.password_hash ?? "") !== "" || passkeyIds(app.db, userId).length > 0;
+}
+
 /** Set `key` to `value`; `null` or `""` goes back to the boot default. */
 export function changeCapacity(
   app: App,
@@ -69,7 +81,7 @@ export function changeCapacity(
   value: string | null,
 ): Result<
   { key: CapacityKey; from: string; to: string },
-  "not_found" | "no_such_setting" | "invalid_value"
+  "not_found" | "no_such_setting" | "invalid_value" | "no_credential"
 > {
   const who = admin(actor);
   if (!who.ok) return who;
@@ -77,6 +89,8 @@ export function changeCapacity(
   const next = value === null ? null : value.trim();
   if (next !== null && next !== "" && !validCapacity(key, next))
     return err("invalid_value");
+  if (key === "signin.edge" && next === "off" && !hasOwnCredential(app, who.value.id))
+    return err("no_credential");
   const changed = setCapacity(
     app.db,
     key,

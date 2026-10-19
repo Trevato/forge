@@ -175,6 +175,8 @@ export function capacityPage(ctx: Ctx): Response {
 const ERRORS: Record<string, string> = {
   no_such_setting: "There is no such setting.",
   invalid_value: "That value is outside what this setting takes.",
+  no_credential:
+    "Add a passkey (or a password) to your own account first: with the edge off, you would be signed out for good.",
 };
 
 // POST /settings/capacity
