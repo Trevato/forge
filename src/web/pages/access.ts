@@ -42,7 +42,7 @@ export function accessPage(ctx: Ctx): Response {
           sign-up). Tokens, cookies and query strings are never kept; the
           hash stands for one caller for one day.
         </p>
-        <form class="row-actions" method="get" action="/settings/access">
+        <form class="row-fields" method="get" action="/settings/access">
           <input
             class="input"
             name="ua"

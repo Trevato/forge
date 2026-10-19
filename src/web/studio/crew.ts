@@ -158,7 +158,7 @@ function crewCard(ctx: Ctx, repo: Repo, base: string, admin: boolean): Html {
               ...(admin
                 ? {
                     trail: html`<form
-                        class="row-actions"
+                        class="row-fields"
                         method="post"
                         action="${base}/settings/crew/${encodeURIComponent(
                           c.agent.user.username,

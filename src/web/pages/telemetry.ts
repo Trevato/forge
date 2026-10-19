@@ -30,7 +30,7 @@ export function telemetryPage(ctx: Ctx): Response {
         private repositories and sealed values cut out. Revoke at any time;
         every read is listed below.
       </p></div>
-      <ul class="list">
+      <ul class="list setting-list">
         ${agents.length === 0
           ? html`<li class="muted small">No agent accounts yet.</li>`
           : agents.map((a) =>
@@ -38,7 +38,7 @@ export function telemetryPage(ctx: Ctx): Response {
                 lead: icon("bot"),
                 title: html`${a.username} <span class="muted small mono">telemetry:read</span>`,
                 meta: html`${a.granted ? "Granted" : "Not granted"}`,
-                trail: html`<form class="row-actions" method="post" action="/settings/telemetry">
+                trail: html`<form class="row-fields" method="post" action="/settings/telemetry">
                   <input type="hidden" name="agent" value="${a.username}" />
                   <input type="hidden" name="on" value="${a.granted ? "0" : "1"}" />
                   ${btn(a.granted ? "Revoke" : "Grant", {

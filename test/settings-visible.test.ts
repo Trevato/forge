@@ -107,3 +107,17 @@ test("the stylesheet never hides settings controls", () => {
   }
   expect(mine.join("}")).toMatch(/\.setting-list \.row-meta[^}]*white-space:\s*normal/);
 });
+
+// #2918: the primary control of every other settings row is visible at rest too.
+test("settings pages keep their primary forms out of .row-actions", async () => {
+  const { readFile } = await import("node:fs/promises");
+  for (const f of ["flags", "telemetry", "people", "cloud", "access"]) {
+    const src = await readFile(join(import.meta.dir, "..", "src/web/pages", `${f}.ts`), "utf8");
+    expect(src, f).not.toContain("row-actions");
+    expect(src, f).toContain("row-fields");
+  }
+  const subs = await readFile(join(import.meta.dir, "..", "src/web/pages/subscriptions.ts"), "utf8");
+  expect(subs).not.toMatch(/headroom row-actions/);
+  const flags = await get("/settings/flags");
+  expect(flags).not.toContain("row-actions");
+});

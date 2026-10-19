@@ -57,7 +57,7 @@ function accountsCard(reads: CloudRead[], uses: Map<string, VendorUse[]>, ctx: C
       meta: html`${a.summary}<br />${usedFor(uses.get(VENDOR_OF[a.provider]))}<br />${HOME[a.provider]}<br />verified ${a.verifiedAt ? time(a.verifiedAt) : "never"} ·
         ${last ? html`last used ${time(last.at)} by ${runWords(last.run)}` : "never used"} ·
         ${a.writeAllowed ? "writes allowed" : "read-only"}`,
-      trail: html`<div class="row-actions">
+      trail: html`<div class="row-fields">
         <form method="post" action="/settings/cloud/verify">
           ${hidden(a.provider, a.name)}${btn("Verify", { size: "sm", label: `Verify ${a.name}` })}
         </form>
@@ -66,19 +66,19 @@ function accountsCard(reads: CloudRead[], uses: Map<string, VendorUse[]>, ctx: C
           <input type="hidden" name="allowed" value="${a.writeAllowed ? "0" : "1"}" />
           ${btn(a.writeAllowed ? "Turn writes off" : "Allow writes", { size: "sm", label: `Write switch for ${a.name}` })}
         </form>
-        <form method="post" action="/settings/cloud/audit" class="row-actions">
+        <form method="post" action="/settings/cloud/audit" class="row-fields">
           ${hidden(a.provider, a.name)}
           <input class="input" type="text" name="repo" placeholder="owner/repo for findings"
             aria-label="Repository for audit findings" maxlength="200" required />
           ${btn("Audit", { size: "sm", label: `Audit ${a.name}` })}
         </form>
-        <form method="post" action="/settings/cloud/rotate" class="row-actions">
+        <form method="post" action="/settings/cloud/rotate" class="row-fields">
           ${hidden(a.provider, a.name)}
           <input class="input" type="password" name="value" placeholder="New credential"
             aria-label="New credential for ${a.name}" autocomplete="off" required />
           ${btn("Rotate", { size: "sm", label: `Rotate ${a.name}` })}
         </form>
-        <form method="post" action="/settings/cloud/rename" class="row-actions">
+        <form method="post" action="/settings/cloud/rename" class="row-fields">
           ${hidden(a.provider, a.name)}
           <input class="input mono" type="text" name="to" placeholder="new name"
             aria-label="New name for ${a.name}" pattern="[a-z][a-z0-9_]{0,31}" maxlength="32"
@@ -102,7 +102,7 @@ function accountsCard(reads: CloudRead[], uses: Map<string, VendorUse[]>, ctx: C
           provider key less powerful than it already is.
         </p>
       </div>
-      ${when(rows.length > 0, () => html`<ul class="list">${rows}</ul>`)}
+      ${when(rows.length > 0, () => html`<ul class="list setting-list">${rows}</ul>`)}
       <form class="edit-row" method="post" action="/settings/cloud">
         <select class="input" name="provider" aria-label="Provider" required>
           ${PROVIDERS.map((p) => html`<option value="${p}">${LABEL[p]}</option>`)}

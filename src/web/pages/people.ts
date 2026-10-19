@@ -29,13 +29,13 @@ export function peoplePage(ctx: Ctx): Response {
       role === "admin"
         ? null
         : role === "guest"
-          ? html`<form class="row-actions" method="post" action="${at}">
+          ? html`<form class="row-fields" method="post" action="${at}">
               <input type="hidden" name="role" value="member" />
               <input class="input" name="usd" inputmode="decimal" autocomplete="off"
                 aria-label="Starter allowance, dollars a month" placeholder="$ a month, none" size="12" />
               ${btn("Make member", { type: "submit", size: "sm", variant: "primary" })}
             </form>`
-          : html`<form class="row-actions" method="post" action="${at}">
+          : html`<form class="row-fields" method="post" action="${at}">
               <input type="hidden" name="role" value="guest" />
               ${btn("Make guest", { type: "submit", size: "sm" })}
             </form>`;

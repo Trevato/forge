@@ -211,7 +211,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
                 st !== undefined,
                 () =>
                   html`<form
-                    class="headroom row-actions"
+                    class="headroom row-fields"
                     method="post"
                     action="${POOL}/${s.id}/headroom"
                   >
@@ -235,7 +235,7 @@ export function subscriptionsPage(ctx: Ctx): Response {
                 s.id !== PLATFORM,
                 () =>
                   html`<form
-                    class="headroom row-actions"
+                    class="headroom row-fields"
                     method="post"
                     action="${POOL}/${s.id}/budget"
                   >
