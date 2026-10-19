@@ -8,10 +8,6 @@
       "colour": 0,
       "size": 1
     },
-    "src/web/pages/map.ts": {
-      "colour": 3,
-      "size": 12
-    },
     "src/web/standards.ts": {
       "colour": 2,
       "size": 0

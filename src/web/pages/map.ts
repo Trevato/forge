@@ -59,7 +59,7 @@ import {
 import { liveRegionsJs } from "../client.ts";
 import { html, type Html } from "../html.ts";
 import { page } from "../layout.ts";
-import { avatar, hueOf, icon } from "../ui.ts";
+import { avatar, icon } from "../ui.ts";
 import { autonomyStatus, type AutonomyStatus } from "../../crew/autonomy.ts";
 import {
   parkedTwice,
@@ -712,7 +712,7 @@ function node(
     </text>
     <text class="map-meta" x="${left}" y="${bottom}">${number}</text>
     ${who
-      ? html`<g class="map-who" data-h="${hueOf(who)}">
+      ? html`<g class="map-who">
           <circle cx="${whoX + 7}" cy="${bottom - 4}" r="7" />
           <text class="map-who-i" x="${whoX + 7}" y="${bottom - 1}"
             >${who[0]}</text
@@ -1090,11 +1090,6 @@ function chart(points: DayPoint[]): Html {
   </section>`;
 }
 
-const hueRules = Array.from(
-  { length: 12 },
-  (_, i) => `.map-who[data-h="${i}"] { --hue: ${i * 30 + 8}; }`,
-).join("\n");
-
 export const mapCss = /* css */ `
 .map-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 24px; align-items: start; margin-top: 4px; }
 @media (max-width: 860px) { .map-wrap { grid-template-columns: 1fr; } }
@@ -1111,7 +1106,7 @@ export const mapCss = /* css */ `
 .map-canvas.is-view .map-svg { height: 100%; }
 .map-svg text { font-family: var(--font); pointer-events: none; }
 .map-tools { position: absolute; top: 8px; right: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--card); box-shadow: var(--shadow-1); overflow: hidden; }
-.map-tool { min-width: 26px; height: 24px; padding: 0 7px; border: 0; background: transparent; color: var(--muted-fg); font-size: 12px; font-weight: 550; line-height: 1; cursor: pointer; }
+.map-tool { min-width: 26px; height: 24px; padding: 0 7px; border: 0; background: transparent; color: var(--muted-fg); font-size: 12.5px; font-weight: 550; line-height: 1; cursor: pointer; }
 .map-tool + .map-tool { border-left: 1px solid var(--border); }
 .map-tool:hover { background: var(--muted); color: var(--fg); }
 .map-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -1137,12 +1132,12 @@ export const mapCss = /* css */ `
 .map-node[data-state="deferred"] .map-card { fill: none; stroke-dasharray: 4 3; }
 .map-node[data-state="deferred"] .map-title { fill: var(--muted-fg); }
 .map-node[data-state="blocked"] .map-title { fill: var(--muted-fg); }
-.map-meta { font-size: 11px; fill: var(--faint); font-variant-numeric: tabular-nums; }
-.map-who circle { fill: color-mix(in srgb, hsl(var(--hue, 220) 62% 52%) 22%, var(--card)); stroke: color-mix(in srgb, hsl(var(--hue, 220) 62% 52%) 30%, transparent); }
-.map-who-i { font-size: 8px; font-weight: 650; text-transform: uppercase; fill: color-mix(in srgb, hsl(var(--hue, 220) 62% 42%) 88%, var(--fg)); }
-.map-who-n { font-size: 11px; fill: var(--muted-fg); }
-.map-word { font-size: 11px; font-weight: 550; fill: var(--muted-fg); }
-.map-word .map-dot { font-size: 7px; fill: var(--faint); }
+.map-meta { font-size: 11.5px; fill: var(--faint); font-variant-numeric: tabular-nums; }
+.map-who circle { fill: var(--muted); stroke: var(--border); }
+.map-who-i { font-size: 11.5px; font-weight: 650; text-transform: uppercase; fill: var(--fg); }
+.map-who-n { font-size: 11.5px; fill: var(--muted-fg); }
+.map-word { font-size: 11.5px; font-weight: 550; fill: var(--muted-fg); }
+.map-word .map-dot { font-size: 11.5px; fill: var(--faint); }
 .map-node[data-state="ready"] .map-dot { fill: var(--success); }
 .map-node[data-state="working"] .map-dot { fill: var(--accent); }
 .map-node[data-state="working"] .map-word { fill: var(--accent); }
@@ -1158,10 +1153,10 @@ export const mapCss = /* css */ `
 .map-edge-crit { stroke: var(--accent); }
 .map-edge-done { opacity: .45; }
 .map-rule line { stroke: var(--border); stroke-width: 1; }
-.map-rule text { font-size: 10.5px; fill: var(--faint); letter-spacing: .02em; }
+.map-rule text { font-size: 11.5px; fill: var(--faint); letter-spacing: .02em; }
 
 /* ---- the line under a drawing ---- */
-.map-counts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 2px 0; font-size: 12px; color: var(--muted-fg); }
+.map-counts { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 2px 0; font-size: 12.5px; color: var(--muted-fg); }
 .map-counts b { font-weight: 550; color: var(--fg); font-variant-numeric: tabular-nums; }
 .map-counts i { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; background: var(--faint); }
 .map-counts i[data-state="ready"] { background: var(--success); }
@@ -1173,12 +1168,12 @@ export const mapCss = /* css */ `
 
 /* ---- beside the drawing ---- */
 .map-list h2 { font-size: 13px; margin: 0 0 6px; }
-.map-list ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 13.5px; list-style: decimal; }
+.map-list ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; list-style: decimal; }
 .map-list ol li::marker { color: var(--faint); font-variant-numeric: tabular-nums; }
 .map-list li span { display: block; }
 .map-list + .map-list { margin-top: 18px; }
 .map-ask { display: block; }
-.map-pillars ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13.5px; }
+.map-pillars ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 14px; }
 .map-chart { width: 100%; height: auto; display: block; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
 .map-level { fill: none; stroke: var(--accent); stroke-width: 1.5; }
 .map-flow { fill: color-mix(in srgb, var(--fg) 14%, transparent); }
@@ -1194,9 +1189,9 @@ export const mapCss = /* css */ `
 .map-lane[open] > .map-lane-head .map-lane-caret { transform: rotate(90deg); }
 .map-lane-name { font-weight: 620; font-size: 15px; letter-spacing: -0.01em; }
 .map-lane-name .muted { font-weight: 500; }
-.map-lane-word { font-size: 12px; color: var(--muted-fg); padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; line-height: 18px; }
+.map-lane-word { font-size: 12.5px; color: var(--muted-fg); padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; line-height: 18px; }
 .map-lane-word[data-autonomy="autonomous"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
-.map-spend { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+.map-spend { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
 .map-spend svg { width: 72px; height: 4px; border-radius: 2px; overflow: hidden; }
 .map-spend-track { fill: var(--muted); }
 .map-spend-fill { fill: var(--muted-fg); }
@@ -1210,7 +1205,6 @@ export const mapCss = /* css */ `
   .map-lane-head { gap: 6px 10px; }
   .map-lane-head .map-counts { margin-left: 0; flex-basis: 100%; }
 }
-${hueRules}
 `;
 
 /**
