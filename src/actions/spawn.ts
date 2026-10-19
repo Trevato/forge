@@ -94,6 +94,8 @@ export interface SpawnDeps {
   readonly modelKey?: string;
   /** Anthropic-compatible API base URL sealed with the starter key (OpenRouter, etc.). */
   readonly modelEndpoint?: string;
+  /** The nightly drill's own forge: its spawn events carry `drill`, so the boards keep it as its own series. */
+  readonly drill?: boolean;
 }
 
 interface Ledger {
@@ -122,6 +124,12 @@ const SAFE_ID = /^[A-Za-z0-9_-]{1,80}$/;
 /** The name the child's sealed model key goes by. */
 export const STARTER_KEY = "starter";
 const inFlight = new Set<string>();
+
+/** A failure the boards count: the step that broke (a fixed few), never its words. */
+function failed(app: App, deps: SpawnDeps, step: "place" | "copy" | "health", message: string) {
+  app.bus.append({ kind: "forge.spawn.failed", payload: { step, ...(deps.drill === true ? { drill: 1 } : {}) } });
+  return fail(message);
+}
 
 const fail = (message: string) => err<SpawnError>({ kind: "failed", message });
 
@@ -228,12 +236,14 @@ async function make(
       ledger.beatKey ??= secret();
       await writeLedger(app, ledger);
     }
+    // A retry of an unfinished child is a new attempt: its failure has a start.
+    app.bus.append({ kind: "forge.spawn.started", payload: { ...(deps.drill === true ? { drill: 1 } : {}) } });
   } else {
     const placed = await deps.placement.place(plan);
     if (!placed.ok) return err({ kind: "refused", ...placed.error });
     if (!SAFE_ID.test(placed.value.bodyId)) {
       await deps.placement.retire(placed.value.bodyId);
-      return fail("placement returned an unusable body id");
+      return failed(app, deps, "place", "placement returned an unusable body id");
     }
     ledger = {
       name: plan.name,
@@ -248,10 +258,11 @@ async function make(
       beatKey: secret(),
     };
     await writeLedger(app, ledger);
+    app.bus.append({ kind: "forge.spawn.started", payload: { ...(deps.drill === true ? { drill: 1 } : {}) } });
   }
 
   const copied = await copyInto(app, owner, plan, ledger, deps.modelKey, deps.modelEndpoint);
-  if (!copied.ok) return fail(copied.error);
+  if (!copied.ok) return failed(app, deps, "copy", copied.error);
   const claimUrl = claimLink(liveChildUrl(app, plan.name), copied.value);
 
   ledger.done = true;

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createAgent } from "../src/actions/crew.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { spawnWords, usePlacement } from "../src/spawn/door.ts";
+import { spawnWords, usePlacement, useProbe } from "../src/spawn/door.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -61,6 +61,7 @@ describe("spawn over the API and MCP", () => {
     await commitToBranch(app, a.value, repo.value, { message: "seed", files: [{ path: "a.txt", content: "a" }] });
     const agent = await createAgent(app, a.value, { username: "scout", brief: "ship small" });
     if (!agent.ok) throw new Error(`agent ${JSON.stringify(agent.error)}`);
+    useProbe(app, () => async () => true);
     usePlacement(app, {
       place: async (plan) => ok({ url: `https://${plan.name}.fake.test`, bodyId: `fake-${++placed}` }),
       retire: async () => ok(),

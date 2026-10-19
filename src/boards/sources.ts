@@ -43,6 +43,23 @@ const percentile = (name: string, column: string, p: number) =>
   `COUNT(*) OVER (PARTITION BY route, day) AS n FROM page_vital WHERE ${column} IS NOT NULL) ` +
   `WHERE rn = (n * ${p} + 99) / 100`;
 
+/** The budget a spawned forge has to answer its `/healthz`: three minutes (#2914). */
+export const SPAWN_BUDGET_MS = 180_000;
+
+/** A spawn event's payload fields, as a drill or a person's forge, read in place of the `event` table. */
+const SPAWN_SERIES = "CASE WHEN json_extract(payload, '$.drill') = 1 THEN 'drill' ELSE 'forge' END";
+const SPAWN_KINDS = "kind IN ('forge.spawn.started', 'forge.spawn.live', 'forge.spawn.failed')";
+const SPAWN_DAY = "substr(created_at, 1, 10) || 'T00:00:00.000Z'";
+
+/** Nearest-rank percentile `p` of the ms to live, per series per day, as rows of the `spawnTime` source. */
+const spawnPercentile = (name: string, p: number) =>
+  `SELECT '${name}' AS metric, series, at, ms AS value FROM (` +
+  `SELECT ${SPAWN_SERIES} AS series, ${SPAWN_DAY} AS at, json_extract(payload, '$.ms') AS ms, ` +
+  `ROW_NUMBER() OVER (PARTITION BY ${SPAWN_SERIES}, ${SPAWN_DAY} ORDER BY json_extract(payload, '$.ms')) AS rn, ` +
+  `COUNT(*) OVER (PARTITION BY ${SPAWN_SERIES}, ${SPAWN_DAY}) AS n ` +
+  `FROM event WHERE kind = 'forge.spawn.live' AND json_extract(payload, '$.ms') IS NOT NULL) ` +
+  `WHERE rn = (n * ${p} + 99) / 100`;
+
 export const SOURCES: Readonly<Record<string, Source>> = {
   runs: {
     table: "run",
@@ -230,6 +247,44 @@ export const SOURCES: Readonly<Record<string, Source>> = {
       route: "the route pattern, never the path; empty for visitors and accounts",
       at: "the day (UTC) for visitors and the percentiles; now for the account counts, which are not kept per day",
       value: "the count, or the percentile (nearest rank) of that route that day",
+    },
+  },
+  // Forges made by the one-click path (#2914): one row per spawn event
+  // (`actions/spawn.ts`, `spawn/live.ts`). The forge's name and the failure's
+  // words are not listed; the step is one of a fixed few.
+  spawns: {
+    table: "spawn",
+    owner: "admin",
+    select:
+      `SELECT substr(kind, 13) AS outcome, ${SPAWN_SERIES} AS series, json_extract(payload, '$.step') AS step, ` +
+      `json_extract(payload, '$.ms') AS ms, created_at AS at FROM event WHERE ${SPAWN_KINDS}`,
+    time: "at",
+    columns: { outcome: "text", series: "text", step: "text", ms: "number", at: "time" },
+    docs: {
+      outcome: "started, live (its /healthz first answered) or failed",
+      series: "forge (a person's) or drill (the nightly drill's own forge)",
+      step: "failed only: place, copy or health",
+      ms: "live only: milliseconds from started to the first /healthz answer",
+    },
+  },
+  // Time to live per day: p50 and p95 of the spawns that went live, and the
+  // budget as a third row so a line chart shows the margin.
+  spawnTime: {
+    table: "spawn_time",
+    owner: "admin",
+    select: [
+      spawnPercentile("p50", 50),
+      spawnPercentile("p95", 95),
+      `SELECT 'budget', series, at, ${SPAWN_BUDGET_MS} FROM (SELECT DISTINCT ${SPAWN_SERIES} AS series, ${SPAWN_DAY} AS at ` +
+        `FROM event WHERE ${SPAWN_KINDS})`,
+    ].join(" UNION ALL "),
+    time: "at",
+    columns: { metric: "text", series: "text", at: "time", value: "number" },
+    docs: {
+      metric: "p50 or p95 (nearest rank) of the ms to live that day, or budget",
+      series: "forge (a person's) or drill (the nightly drill's own forge)",
+      at: "the day, UTC",
+      value: "milliseconds; the budget is 180000 (three minutes)",
     },
   },
   // Items entering each stage from issue to live, one row per entry, read

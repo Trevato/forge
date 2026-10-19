@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createUser, type User } from "../src/core/users.ts";
-import { usePlacement } from "../src/spawn/door.ts";
+import { usePlacement, useProbe } from "../src/spawn/door.ts";
 import { hostedPlacement } from "../src/spawn/placement.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
 import { newForgeScreen } from "../src/tui/screens/newforge.ts";
@@ -57,6 +57,7 @@ beforeAll(async () => {
   bob = await mk("bob", false);
   const repo = await createRepo(app, admin, { name: "bakery", visibility: "public" });
   if (!repo.ok) throw new Error("repo");
+  useProbe(app, () => async () => true);
   usePlacement(app, hostedPlacement({ host: "forge.test" }));
 });
 afterAll(async () => {

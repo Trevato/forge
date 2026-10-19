@@ -204,6 +204,8 @@ export interface App {
   readonly hookAddress: { current: string };
   /** Per-boot secret every internal request must carry (`FORGE_HOOK_SECRET` in a hook's env). */
   readonly hookSecret: string;
+  /** Aborted by `close()`: background pollers stop on it and write nothing after. */
+  readonly closing: AbortController;
   /** What `vitals` turns into needs: this forge's own, not the process's. */
   readonly signals: { errors: ErrorLedger; refused: RefusedLedger };
   close(): void;
@@ -228,6 +230,7 @@ export function createApp(config: ForgeConfig): App {
   // Idempotent — a forge without them changes nothing.
   dropLegacyNewAccountGuards(db);
   const bus = new EventBus(db);
+  const closing = new AbortController();
 
   // Every event durably enqueues webhook deliveries; the worker (main.ts)
   // sends them. Listener throws are swallowed by the bus, so this can never
@@ -251,7 +254,9 @@ export function createApp(config: ForgeConfig): App {
     socketPath,
     hookAddress: { current: socketPath },
     hookSecret: randomBytes(32).toString("hex"),
+    closing,
     close: () => {
+      closing.abort();
       // The pooled `cat-file` readers for this forge's repos are processes,
       // and processes outlive a closed database unless somebody says
       // otherwise. One data dir is one forge, so closing the forge is where

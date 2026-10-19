@@ -1201,6 +1201,19 @@ leaves its series absent, never zero, and `/boards/data?source=machine`
 names each one. Its rows belong to no repo, so only an every-repo scope
 reads them; the sources list carries each column's unit in `docs`.
 
+The `spawns` and `spawnTime` sources (admin only) read the one-click path's
+events: `forge.spawn.started`, `forge.spawn.live` (`ms` since started, when the
+child's `/healthz` first answers; `spawn/live.ts`) and `forge.spawn.failed`
+(`step`: place, copy or health). A payload `drill: 1` makes it the `drill`
+series, so the nightly drill never mixes into a person's numbers. The Forges
+starting board shows forges made per day, p50/p95 time to live against the
+3-minute budget, and failures by step. The watcher that waits for `/healthz`
+lives in the process: a restart mid-spawn leaves a `started` with no outcome,
+and that spawn is simply never counted live or failed. A retry of an
+unfinished child appends its own `started`, so every `failed` has one. The
+watchers poll every second, then every five after 30 seconds, stop when the
+forge closes, and at most 20 run at once; a spawn past that is made, not timed.
+
 The `stages` source counts items moving from issue to live: one row per
 item entering a stage, with `stage` one of `1 issue` (opened), `2 run` (a
 builder first started on the issue; a retry is not a second item), `3 pull`

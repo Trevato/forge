@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
-import { usePlacement } from "../src/spawn/door.ts";
+import { usePlacement, useProbe } from "../src/spawn/door.ts";
 import { resetAnonSpawns } from "../src/spawn/rate.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser } from "../src/core/users.ts";
@@ -69,6 +69,7 @@ describe("anonymous spawn", () => {
     });
     const priv = await createRepo(app, a.value, { name: "diary", visibility: "private" });
     if (!priv.ok) throw new Error("private repo");
+    useProbe(app, () => async () => true);
     usePlacement(app, {
       place: async (plan) => ok({ url: `https://${plan.name}.fake.test`, bodyId: `fake-${++placed}` }),
       retire: async () => ok(),

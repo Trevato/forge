@@ -1,5 +1,5 @@
 /**
- * The boards the forge offers a new install: Usage, Crew, Releases, Apps, Security and Throughput. They are plain
+ * The boards the forge offers a new install: Usage, Crew, Releases, Apps, Security, Throughput and Forges. They are plain
  * boards in `forge/boards` once written, so a person edits or deletes them
  * like any other; `.offered` (a JSON list of slugs, committed with the
  * boards) records what was offered so a deletion sticks and an edit is
@@ -17,6 +17,13 @@ const panel = (title: string, chart: Panel["chart"], query: Record<string, unkno
 });
 const MINUTE = { bucket: "minute" };
 const HOUR = { bucket: "hour" };
+const DAY = { bucket: "day" };
+const SPAWNS = { source: "spawns", aggregate: "count" };
+const started = { column: "outcome", op: "eq", value: "started" };
+const timeToLive = (series: string) => ({
+  source: "spawnTime", aggregate: "max", column: "value", groupBy: DAY, series: "metric",
+  filter: [{ column: "series", op: "eq", value: series }],
+});
 const STAGES = { source: "stages", aggregate: "count" };
 const machine = (op: "eq" | "starts", value: string, column: string) => ({
   source: "machine", aggregate: "avg", column, groupBy: MINUTE, filter: [{ column: "target", op, value }],
@@ -103,6 +110,19 @@ export const STARTING_BOARDS: Readonly<Record<string, Board>> = {
       panel("Items entering each stage per hour", "bar", { ...STAGES, groupBy: HOUR, series: "stage" }, 3),
       panel("Entered each stage", "bar", { ...STAGES, groupBy: "stage" }),
       panel("Stages by hour", "heat", { ...STAGES, groupBy: HOUR, series: "stage" }, 2),
+    ],
+  },
+  forges: {
+    title: "Forges",
+    range: "30d",
+    refresh: "1m",
+    panels: [
+      panel("Forges made per day", "bar", { ...SPAWNS, groupBy: DAY, series: "series", filter: [started] }, 2),
+      panel("Forges live per day", "bar", { ...SPAWNS, groupBy: DAY, series: "series", filter: [{ column: "outcome", op: "eq", value: "live" }] }, 2),
+      panel("Time to live (ms): p50, p95, budget 3 min", "line", timeToLive("forge"), 2),
+      panel("The drill's time to live (ms): p50, p95, budget 3 min", "line", timeToLive("drill"), 2),
+      panel("Failures by step", "bar", { ...SPAWNS, groupBy: "step", series: "series", filter: [{ column: "outcome", op: "eq", value: "failed" }] }, 2),
+      panel("Failures per day", "bar", { ...SPAWNS, groupBy: DAY, series: "step", filter: [{ column: "outcome", op: "eq", value: "failed" }] }, 2),
     ],
   },
 };

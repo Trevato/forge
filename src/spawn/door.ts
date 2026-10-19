@@ -6,6 +6,7 @@
  * the caller says `false` — returns the plan and changes nothing.
  */
 
+import { startWatch, probeOf, type Probe } from "./live.ts";
 import { listChildren, reissueClaim, spawnForge, type SpawnError } from "../actions/spawn.ts";
 import type { App } from "../app.ts";
 import { maxChildren } from "../core/capacity.ts";
@@ -38,6 +39,12 @@ export interface Door {
 
 const MAX_CREW = 100;
 const placements = new WeakMap<App, Placement>();
+const probes = new WeakMap<App, (url: string) => Probe>();
+
+/** Tests swap how a new child is asked whether it is live. */
+export function useProbe(app: App, probe: (url: string) => Probe): void {
+  probes.set(app, probe);
+}
 
 /** Tests (and an external placement, one day) swap where children live. */
 export function usePlacement(app: App, placement: Placement): void {
@@ -278,6 +285,7 @@ export async function spawnDoor(
         },
       };
   }
+  const startedAt = Date.now();
   const made = await spawnForge(ctx.app, user, input, source, {
     placement: placementFor(ctx.app),
     request: ctx.request,
@@ -288,7 +296,10 @@ export async function spawnDoor(
   if (!made.ok) return spawnWords(made.error);
   if (anon && !made.value.existed) noteAnonSpawn(ctx.request);
   // Its apps come up now, so the first visit after a claim finds them awake.
-  if (!made.value.existed) void bootHostedChild(ctx.app, made.value.name);
+  if (!made.value.existed) {
+    void bootHostedChild(ctx.app, made.value.name);
+    startWatch(ctx.app, { name: made.value.name, startedAt, probe: (probes.get(ctx.app) ?? probeOf)(made.value.url) });
+  }
   return {
     status: made.value.existed ? 200 : 201,
     body: {

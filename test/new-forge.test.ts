@@ -16,7 +16,7 @@ import { createUser } from "../src/core/users.ts";
 import { commitFiles } from "../src/git/write.ts";
 import { repoDir } from "../src/git/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { usePlacement } from "../src/spawn/door.ts";
+import { usePlacement, useProbe } from "../src/spawn/door.ts";
 import { childrenForMemory, maxChildren, setCapacity } from "../src/core/capacity.ts";
 import { hostedPlacement, memoryBodies } from "../src/spawn/placement.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -302,6 +302,7 @@ describe("+ New forge", () => {
   });
 
   test("a forge at its depth limit shows no door, and its page says why", async () => {
+    useProbe(app, () => async () => true);
     usePlacement(app, hostedPlacement({ host: "forge.test", depth: 2 }));
     expect(await (await get(admin, "/")).text()).not.toContain('href="/forges/new"');
     const html = await (await get(admin, "/forges/new")).text();
@@ -312,6 +313,7 @@ describe("+ New forge", () => {
   test("at the room limit the door stays, disabled, with the sentence; raising the setting reopens it", async () => {
     const store = memoryBodies();
     store.add({ bodyId: "b1", name: "one", url: "https://one--forge.test", depth: 1, agents: 1, ssh: false });
+    useProbe(app, () => async () => true);
     usePlacement(app, hostedPlacement({ host: "forge.test", store, maxChildren: () => maxChildren(app.db) }));
     setCapacity(app.db, "children.max", "1", "system");
     const sentence = "1 of 1 forges sent on this node — retire one, or raise the room in settings";
