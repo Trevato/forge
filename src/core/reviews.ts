@@ -337,10 +337,12 @@ export function latestReviewByAuthor(
   db: Database,
   issueId: string,
 ): Map<string, Review> {
+  return latestByAuthor(listReviews(db, issueId));
+}
+
+function latestByAuthor(reviews: readonly Review[]): Map<string, Review> {
   const latest = new Map<string, Review>();
-  for (const review of listReviews(db, issueId)) {
-    latest.set(review.originAuthor ?? review.authorId, review);
-  }
+  for (const review of reviews) latest.set(review.originAuthor ?? review.authorId, review);
   return latest;
 }
 
@@ -364,12 +366,72 @@ export function reviewSummary(
   issueId: string,
   headOid: string,
 ): ReviewSummary {
-  const agents = agentVerdicts(db, issueId);
+  return summarize(listReviews(db, issueId), verdictsOf(agentVerdictRows(db, [issueId])), headOid);
+}
+
+/**
+ * `reviewSummary` for many pulls at once, by pull: the reviews and the
+ * agents' verdicts read in one query per chunk each, counted by the same
+ * rule as the singular.
+ */
+export function reviewSummariesFor(
+  db: Database,
+  pulls: readonly { readonly id: string; readonly headOid: string }[],
+): Map<string, ReviewSummary> {
+  const ids = pulls.map((p) => p.id);
+  const reviews = listReviewsFor(db, ids);
+  const rows = new Map<string, AgentVerdictRow[]>();
+  for (const row of agentVerdictRows(db, ids)) {
+    const list = rows.get(row.issue_id);
+    if (list) list.push(row);
+    else rows.set(row.issue_id, [row]);
+  }
+  return new Map(
+    pulls.map((p) => [
+      p.id,
+      summarize(reviews.get(p.id) ?? [], verdictsOf(rows.get(p.id) ?? []), p.headOid),
+    ]),
+  );
+}
+
+/** Every verdict on each of these pulls, oldest first, by pull: one query per chunk. */
+export function listReviewsFor(
+  db: Database,
+  issueIds: readonly string[],
+): Map<string, Review[]> {
+  const out = new Map<string, Review[]>();
+  const unique = [...new Set(issueIds)];
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<ReviewRowRaw & { issue_id: string }, string[]>(
+        `${REVIEW_SELECT.replace("SELECT ", "SELECT review.issue_id, ")}
+         WHERE review.issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
+         ORDER BY review.id`,
+      )
+      .all(...batch);
+    for (const row of rows) {
+      const list = out.get(row.issue_id);
+      if (list) list.push(toReview(row));
+      else out.set(row.issue_id, [toReview(row)]);
+    }
+  }
+  return out;
+}
+
+const CHUNK = 400;
+
+/** Where a pull's verdicts stand at `headOid`, from its reviews and its agents' verdicts. */
+function summarize(
+  reviews: readonly Review[],
+  agents: AgentVerdicts,
+  headOid: string,
+): ReviewSummary {
   let approvals = 0;
   let changesRequested = 0;
   let commented = 0;
   let stale = 0;
-  for (const review of latestReviewByAuthor(db, issueId).values()) {
+  for (const review of latestByAuthor(reviews).values()) {
     if (review.commitOid !== headOid) {
       if (review.state !== "commented") stale++;
       continue;
@@ -407,27 +469,43 @@ export const REVIEW_ROUNDS = 2;
  * pull: whether each is a reviewer on the pull's crew now, and on how many
  * heads other than a given one an agent asked for changes.
  */
-function agentVerdicts(
-  db: Database,
-  issueId: string,
-): {
-  authors: Map<string, { reviewer: boolean }>;
-  earlierRounds: (headOid: string) => number;
-} {
-  const rows = db
-    .query<
-      { author_id: string; role: string | null; commit_oid: string; state: string },
-      [string]
-    >(
-      `SELECT review.author_id, repo_crew.role, review.commit_oid, review.state
-       FROM review
-       JOIN issue ON issue.id = review.issue_id
-       JOIN user ON user.id = review.author_id AND user.is_agent = 1
-       LEFT JOIN repo_crew ON repo_crew.repo_id = issue.repo_id
-                          AND repo_crew.user_id = review.author_id
-       WHERE review.issue_id = ?1`,
-    )
-    .all(issueId);
+interface AgentVerdicts {
+  readonly authors: Map<string, { reviewer: boolean }>;
+  readonly earlierRounds: (headOid: string) => number;
+}
+
+interface AgentVerdictRow {
+  issue_id: string;
+  author_id: string;
+  role: string | null;
+  commit_oid: string;
+  state: string;
+}
+
+/** The agents' verdicts on these pulls, with each agent's role on the pull's crew. */
+function agentVerdictRows(db: Database, issueIds: readonly string[]): AgentVerdictRow[] {
+  const unique = [...new Set(issueIds)];
+  const out: AgentVerdictRow[] = [];
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    out.push(
+      ...db
+        .query<AgentVerdictRow, string[]>(
+          `SELECT review.issue_id, review.author_id, repo_crew.role, review.commit_oid, review.state
+           FROM review
+           JOIN issue ON issue.id = review.issue_id
+           JOIN user ON user.id = review.author_id AND user.is_agent = 1
+           LEFT JOIN repo_crew ON repo_crew.repo_id = issue.repo_id
+                              AND repo_crew.user_id = review.author_id
+           WHERE review.issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})`,
+        )
+        .all(...batch),
+    );
+  }
+  return out;
+}
+
+function verdictsOf(rows: readonly AgentVerdictRow[]): AgentVerdicts {
   const authors = new Map(
     rows.map((r) => [r.author_id, { reviewer: r.role === "reviewer" }]),
   );

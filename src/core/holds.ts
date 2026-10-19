@@ -131,3 +131,24 @@ export function lastRelease(db: Database, pullId: string): string | undefined {
       .get(pullId)?.at ?? undefined
   );
 }
+
+/** `lastRelease` for many pulls at once, by pull: one read per chunk. A pull never let go is absent. */
+export function lastReleasesFor(
+  db: Database,
+  pullIds: readonly string[],
+): Map<string, string> {
+  const out = new Map<string, string>();
+  const CHUNK = 400;
+  for (let i = 0; i < pullIds.length; i += CHUNK) {
+    const batch = pullIds.slice(i, i + CHUNK);
+    for (const row of db
+      .query<{ issue_id: string; at: string }, string[]>(
+        `SELECT issue_id, MAX(released_at) AS at FROM pull_hold
+          WHERE released_at IS NOT NULL AND issue_id IN (${batch.map((_, n) => `?${n + 1}`).join(",")})
+          GROUP BY issue_id`,
+      )
+      .all(...batch))
+      out.set(row.issue_id, row.at);
+  }
+  return out;
+}

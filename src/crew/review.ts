@@ -19,18 +19,18 @@
 
 import type { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
-import { listCrewRoles, type Agent } from "../core/agents.ts";
-import { getHold, lastRelease } from "../core/holds.ts";
+import { crewWithRole, type Agent } from "../core/agents.ts";
+import { getHold, holdsFor, lastReleasesFor } from "../core/holds.ts";
 import { getIssueById, LIST_LIMIT_MAX } from "../core/issues.ts";
 import { listPulls, pullDiff, type Pull, pullDir} from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
-import { reviewSummary } from "../core/reviews.ts";
+import { reviewSummariesFor, reviewSummary } from "../core/reviews.ts";
 import { checksForHead } from "../core/runs.ts";
 import { getTeam } from "../core/teams.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { queueAgentRun } from "./dispatch.ts";
-import { type Handover, handoverOf } from "./guard.ts";
+import { type Handover, handoverOf, handoversOf } from "./guard.ts";
 
 const log = createLog("crew");
 
@@ -77,9 +77,11 @@ export function pickReviewer(
 
 /** The crew's reviewers on a repository. */
 export const reviewersOf = (db: Database, repoId: string): Agent[] =>
-  listCrewRoles(db, repoId)
-    .filter((c) => c.role === "reviewer")
-    .map((c) => c.agent);
+  reviewersForRepos(db, [repoId]).get(repoId) ?? [];
+
+/** `reviewersOf` for many repositories at once, by repo; one with none is absent. */
+export const reviewersForRepos = (db: Database, repoIds: readonly string[]): Map<string, Agent[]> =>
+  crewWithRole(db, repoIds, "reviewer");
 
 /** Whether every check on the pull's head ran and passed. */
 export function greenHead(db: Database, pull: Pull): boolean {
@@ -142,48 +144,80 @@ export function reviewAttempts(
   db: Database,
   pull: Pull,
 ): ReviewHistory | undefined {
-  // Review is owed from the check's green: a preview deploy finishes in
-  // seconds, a check may queue for an hour. A deploy counts only where the
-  // head has no check at all.
-  const hasCheck =
-    db
-      .query<{ n: number }, [string, string]>(
-        `SELECT COUNT(*) AS n FROM run WHERE issue_id = ?1 AND commit_oid = ?2 AND kind = 'check'`,
+  return reviewAttemptsFor(db, [pull]).get(pull.id);
+}
+
+/**
+ * `reviewAttempts` for many pulls at once, by pull: each head's checks and
+ * deploys, the releases and the review runs are one query per chunk each.
+ * A pull whose head has not gone green is absent.
+ */
+export function reviewAttemptsFor(
+  db: Database,
+  pulls: readonly Pull[],
+): Map<string, ReviewHistory> {
+  const out = new Map<string, ReviewHistory>();
+  const CHUNK = 400;
+  for (let i = 0; i < pulls.length; i += CHUNK) {
+    const batch = pulls.slice(i, i + CHUNK);
+    const ids = batch.map((p) => p.id);
+    const heads = db
+      .query<
+        { issue_id: string; kind: string; state: string; finished_at: string | null; created_at: string },
+        string[]
+      >(
+        `WITH head (issue_id, oid) AS (VALUES ${batch.map((_, n) => `(?${2 * n + 1}, ?${2 * n + 2})`).join(",")})
+         SELECT run.issue_id, run.kind, run.state, run.finished_at, run.created_at
+           FROM run JOIN head ON head.issue_id = run.issue_id AND head.oid = run.commit_oid
+          WHERE run.kind IN ('check','deploy')`,
       )
-      .get(pull.id, pull.headOid)!.n > 0;
-  const greenRun = db
-    .query<{ at: string | null; created: string | null }, [string, string, string]>(
-      `SELECT MIN(finished_at) AS at, created_at AS created FROM run
-         WHERE issue_id = ?1 AND commit_oid = ?2 AND kind = ?3 AND state = 'ok'`,
-    )
-    .get(pull.id, pull.headOid, hasCheck ? "check" : "deploy");
-  const green = greenRun?.at;
-  if (green === null || green === undefined) return undefined;
-  const checkMs = hasCheck
-    ? Date.parse(green) - Date.parse(greenRun?.created ?? green)
-    : 0;
-  const released = lastRelease(db, pull.id);
-  const since = released !== undefined && released > green ? released : green;
-  const attempts = db
-    .query<
-      { created_at: string; state: string; actor_id: string | null },
-      [string, string]
-    >(
-      `SELECT created_at, state, actor_id FROM run WHERE issue_id = ?1 AND kind = 'agent'
-         AND reason = 'review' AND created_at >= ?2 ORDER BY created_at, id`,
-    )
-    .all(pull.id, since)
-    .map((r) => ({
-      createdAt: r.created_at,
-      active: r.state === "queued" || r.state === "running",
-      reviewerId: r.actor_id,
-    }));
-  const first = attempts[0];
-  const lateAt =
-    first !== undefined && Date.parse(first.createdAt) - Date.parse(since) >= REVIEW_LAPSE_MS
-      ? first.createdAt
-      : undefined;
-  return { greenAt: since, attempts, lateAt, checkMinutes: Math.round(checkMs / 60_000) };
+      .all(...batch.flatMap((p) => [p.id, p.headOid]));
+    const released = lastReleasesFor(db, ids);
+    const reviews = new Map<string, { createdAt: string; active: boolean; reviewerId: string | null }[]>();
+    for (const r of db
+      .query<{ issue_id: string; created_at: string; state: string; actor_id: string | null }, string[]>(
+        `SELECT issue_id, created_at, state, actor_id FROM run
+          WHERE kind = 'agent' AND reason = 'review'
+            AND issue_id IN (${ids.map((_, n) => `?${n + 1}`).join(",")})
+          ORDER BY created_at, id`,
+      )
+      .all(...ids)) {
+      const attempt = {
+        createdAt: r.created_at,
+        active: r.state === "queued" || r.state === "running",
+        reviewerId: r.actor_id,
+      };
+      const list = reviews.get(r.issue_id);
+      if (list) list.push(attempt);
+      else reviews.set(r.issue_id, [attempt]);
+    }
+    for (const pull of batch) {
+      const runs = heads.filter((r) => r.issue_id === pull.id);
+      // Review is owed from the check's green: a preview deploy finishes in
+      // seconds, a check may queue for an hour. A deploy counts only where the
+      // head has no check at all.
+      const hasCheck = runs.some((r) => r.kind === "check");
+      const greenRun = runs
+        .filter((r) => r.kind === (hasCheck ? "check" : "deploy") && r.state === "ok" && r.finished_at !== null)
+        .reduce<(typeof runs)[number] | undefined>(
+          (first, r) => (first === undefined || r.finished_at! < first.finished_at! ? r : first),
+          undefined,
+        );
+      if (greenRun === undefined) continue;
+      const green = greenRun.finished_at!;
+      const checkMs = hasCheck ? Date.parse(green) - Date.parse(greenRun.created_at) : 0;
+      const release = released.get(pull.id);
+      const since = release !== undefined && release > green ? release : green;
+      const attempts = (reviews.get(pull.id) ?? []).filter((a) => a.createdAt >= since);
+      const first = attempts[0];
+      const lateAt =
+        first !== undefined && Date.parse(first.createdAt) - Date.parse(since) >= REVIEW_LAPSE_MS
+          ? first.createdAt
+          : undefined;
+      out.set(pull.id, { greenAt: since, attempts, lateAt, checkMinutes: Math.round(checkMs / 60_000) });
+    }
+  }
+  return out;
 }
 
 /** What the run table says about review on a head. */
@@ -211,17 +245,6 @@ export function stageOf(
   return reviewStage(history.lateAt ?? history.greenAt, history.attempts, now);
 }
 
-/**
- * Whether the crew's review loop on this agent pull is spent: the one rule
- * is `handoverOf` (`guard.ts`), so the card, the thread note and the held
- * state cannot answer differently.
- */
-function handedOver(db: Database, repoId: string, pull: Pull): Handover | undefined {
-  if (!pull.authorIsAgent) return undefined;
-  const repo = getRepoById(db, repoId);
-  return repo ? handoverOf(db, repo, pull.id) : undefined;
-}
-
 /** Why an agent's green pull waits for a person, and since when. */
 export interface ReviewWait {
   readonly why: "no reviewer" | "lapsed" | "rounds";
@@ -229,6 +252,16 @@ export interface ReviewWait {
   readonly since: string;
   /** Minutes the check took, when the review was sent late because of it. */
   readonly lateCheckMinutes?: number;
+}
+
+/** Where review stands on an agent's green pull: who it waits for, if anyone, and its history. */
+export interface ReviewWaits {
+  /** The crew reviewer it waits for, by name (`waitsForReviewer`). */
+  readonly reviewer: string | undefined;
+  /** Why it waits for a person, and since when (`waitsForPerson`). */
+  readonly person: ReviewWait | undefined;
+  /** The review runs sent for its head (`reviewAttempts`). */
+  readonly history: ReviewHistory | undefined;
 }
 
 /**
@@ -245,24 +278,7 @@ export function waitsForPerson(
   pull: Pull,
   now = new Date(),
 ): ReviewWait | undefined {
-  if (!pull.authorIsAgent || getHold(db, pull.id) !== undefined) return undefined;
-  const seen = reviewSummary(db, pull.id, pull.headOid);
-  if (seen.approvals > 0 || seen.changesRequested > 0) return undefined;
-  const over = handedOver(db, repoId, pull);
-  if (over !== undefined) return { why: "rounds", since: over.at };
-  const history = reviewAttempts(db, pull);
-  if (history === undefined) return undefined;
-  if (reviewersOf(db, repoId).length === 0)
-    return { why: "no reviewer", since: history.greenAt };
-  return stageOf(history, now) === "lapsed"
-    ? {
-        why: "lapsed",
-        since: history.greenAt,
-        ...(history.lateAt === undefined
-          ? {}
-          : { lateCheckMinutes: history.checkMinutes }),
-      }
-    : undefined;
+  return waitsOne(db, repoId, pull, now)?.person;
 }
 
 /**
@@ -279,16 +295,86 @@ export function waitsForReviewer(
   pull: Pull,
   now = new Date(),
 ): string | undefined {
-  if (!pull.authorIsAgent || getHold(db, pull.id) !== undefined) return undefined;
-  const seen = reviewSummary(db, pull.id, pull.headOid);
-  if (seen.approvals > 0 || seen.changesRequested > 0) return undefined;
-  const reviewers = reviewersOf(db, repoId);
-  if (reviewers.length === 0 || handedOver(db, repoId, pull) !== undefined) return undefined;
-  const history = reviewAttempts(db, pull);
-  if (history === undefined || stageOf(history, now) === "lapsed") return undefined;
-  const sent = history.attempts.at(-1)?.reviewerId;
-  const who = reviewers.find((r) => r.user.id === sent) ?? reviewers[0]!;
-  return who.user.username;
+  return waitsOne(db, repoId, pull, now)?.reviewer;
+}
+
+function waitsOne(db: Database, repoId: string, pull: Pull, now: Date): ReviewWaits | undefined {
+  if (!pull.authorIsAgent) return undefined;
+  const repo = getRepoById(db, repoId);
+  return repo ? reviewWaitsFor(db, [{ repo, pull }], now).get(pull.id) : undefined;
+}
+
+/**
+ * `waitsForPerson`, `waitsForReviewer` and `reviewAttempts` for many pulls
+ * at once, by pull, by the one rule: holds, verdicts, hand-overs, review
+ * runs and reviewers are each read once for the set, and only for the
+ * pulls still in question after the read before. A person's pull, a held
+ * one, or one with a verdict on its head waits for nobody, and is absent.
+ * A caller that has already read these pulls' hand-overs (`handoversOf`)
+ * hands them in, and they are not read again.
+ */
+export function reviewWaitsFor(
+  db: Database,
+  pulls: readonly { readonly repo: Repo; readonly pull: Pull }[],
+  now = new Date(),
+  handovers?: ReadonlyMap<string, Handover>,
+): Map<string, ReviewWaits> {
+  const out = new Map<string, ReviewWaits>();
+  const agents = pulls.filter((p) => p.pull.authorIsAgent);
+  const held = holdsFor(db, agents.map((p) => p.pull.id));
+  const unheld = agents.filter((p) => !held.has(p.pull.id));
+  const seen = reviewSummariesFor(db, unheld.map((p) => p.pull));
+  // A verdict on the head is the gate's answer: nobody waits.
+  const open = unheld.filter((p) => {
+    const s = seen.get(p.pull.id)!;
+    return s.approvals === 0 && s.changesRequested === 0;
+  });
+  // The crew's review loop is spent: the one rule is `handoverOf`
+  // (`guard.ts`), so the card, the thread note and the held state cannot
+  // answer differently.
+  const over = handovers ?? handoversOf(db, open.map((p) => ({ id: p.pull.id, repo: p.repo })));
+  const histories = reviewAttemptsFor(db, open.map((p) => p.pull));
+  const reviewers = reviewersForRepos(db, open.map((p) => p.repo.id));
+  for (const { repo, pull } of open) {
+    const handover = over.get(pull.id);
+    const history = histories.get(pull.id);
+    const crew = reviewers.get(repo.id) ?? [];
+    const stage = history === undefined ? undefined : stageOf(history, now);
+    const person: ReviewWait | undefined =
+      handover !== undefined
+        ? { why: "rounds", since: handover.at }
+        : history === undefined
+          ? undefined
+          : crew.length === 0
+            ? { why: "no reviewer", since: history.greenAt }
+            : stage === "lapsed"
+              ? {
+                  why: "lapsed",
+                  since: history.greenAt,
+                  ...(history.lateAt === undefined
+                    ? {}
+                    : { lateCheckMinutes: history.checkMinutes }),
+                }
+              : undefined;
+    const sent = history?.attempts.at(-1)?.reviewerId;
+    const reviewer =
+      crew.length === 0 || handover !== undefined || history === undefined || stage === "lapsed"
+        ? undefined
+        : (crew.find((r) => r.user.id === sent) ?? crew[0]!).user.username;
+    out.set(pull.id, { reviewer, person, history });
+  }
+  return out;
+}
+
+/**
+ * Whether the crew's review loop on this agent pull is spent: the one rule
+ * is `handoverOf` (`guard.ts`), so the card, the thread note and the held
+ * state cannot answer differently.
+ */
+function handedOver(db: Database, repoId: string, pull: Pull): Handover | undefined {
+  if (!pull.authorIsAgent) return undefined;
+  const repo = getRepoById(db, repoId);
+  return repo ? handoverOf(db, repo, pull.id) : undefined;
 }
 
 /**

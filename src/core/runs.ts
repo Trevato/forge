@@ -898,6 +898,33 @@ export function automaticRunsSince(
   return row?.n ?? 0;
 }
 
+/**
+ * `automaticRunsSince` for many pulls at once, each from its own moment,
+ * by pull: one query per chunk. A pull with none is absent.
+ */
+export function automaticRunsSinceFor(
+  db: Database,
+  since: ReadonlyMap<string, string>,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  const pairs = [...since];
+  const CHUNK = 400;
+  for (let i = 0; i < pairs.length; i += CHUNK) {
+    const batch = pairs.slice(i, i + CHUNK);
+    const rows = db
+      .query<{ issue_id: string; n: number }, string[]>(
+        `WITH since (issue_id, at) AS (VALUES ${batch.map((_, n) => `(?${2 * n + 1}, ?${2 * n + 2})`).join(",")})
+         SELECT run.issue_id, COUNT(*) AS n FROM run JOIN since ON since.issue_id = run.issue_id
+         WHERE run.kind = 'agent' AND run.created_at > since.at
+           AND run.reason IN ('check_failed','conflict')
+         GROUP BY run.issue_id`,
+      )
+      .all(...batch.flat());
+    for (const row of rows) out.set(row.issue_id, row.n);
+  }
+  return out;
+}
+
 /** What an agent has done, in totals: the number a person weighs a crew by. */
 export interface AgentTotals {
   readonly runs: number;

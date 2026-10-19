@@ -173,6 +173,31 @@ export function latestDecision(
   return row ? toDecision(row) : undefined;
 }
 
+/** `latestDecision` for many issues at once, by issue: one query per chunk. */
+export function latestDecisionsFor(
+  db: Database,
+  issueIds: readonly string[],
+  kind: DecisionKind,
+): Map<string, Decision> {
+  const out = new Map<string, Decision>();
+  const unique = [...new Set(issueIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    const rows = db
+      .query<Row, string[]>(
+        `SELECT * FROM (
+           SELECT *, ROW_NUMBER() OVER (PARTITION BY issue_id ORDER BY created_at DESC, id DESC) AS nth
+           FROM decision
+           WHERE kind = ?1 AND issue_id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
+         ) WHERE nth = 1`,
+      )
+      .all(kind, ...batch);
+    for (const row of rows) if (row.issue_id) out.set(row.issue_id, toDecision(row));
+  }
+  return out;
+}
+
 /**
  * Whether a `retry` decision still stops its pull. The crew's stop is its
  * answer to a red check (the check is in what it saw), so a check that

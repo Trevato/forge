@@ -280,7 +280,7 @@ export function handoverOf(
     )
     .get(pullId, repo.id)!.n;
   if (crewAsked < HANDOVER_ROUNDS) return undefined;
-  return handoverSince(db, repo, pullId);
+  return handoversSince(db, [{ id: pullId, repo }]).get(pullId);
 }
 
 /** Pulls `handoversOf` counts per query: well under SQLite's bound on variables. */
@@ -310,61 +310,82 @@ export function handoversOf(
           GROUP BY r.issue_id`,
       )
       .all(...chunk);
-    for (const row of rows) {
-      if (row.n < HANDOVER_ROUNDS) continue;
-      const over = handoverSince(db, repoOf.get(row.issueId)!, row.issueId);
-      if (over !== undefined) out.set(row.issueId, over);
-    }
+    const enough = rows
+      .filter((row) => row.n >= HANDOVER_ROUNDS)
+      .map((row) => ({ id: row.issueId, repo: repoOf.get(row.issueId)! }));
+    for (const [id, over] of handoversSince(db, enough)) out.set(id, over);
   }
   return out;
 }
 
-/** The hand-over, once a pull has had enough crew verdicts to have one. */
-function handoverSince(
+/**
+ * The hand-overs of pulls that have had enough crew verdicts to have one,
+ * by pull: the approvals, the people's words and the crew's rounds are one
+ * query each for the set, and who may direct the crew is asked once per
+ * repository for everyone who spoke there.
+ */
+function handoversSince(
   db: Database,
-  repo: Repo,
-  pullId: string,
-): Handover | undefined {
-  const approved =
+  pulls: readonly { readonly id: string; readonly repo: Repo }[],
+): Map<string, Handover> {
+  const out = new Map<string, Handover>();
+  if (pulls.length === 0) return out;
+  const ids = pulls.map((p) => p.id);
+  const marks = ids.map((_, n) => `?${n + 2}`).join(",");
+  const approved = new Map(
     db
-      .query<{ at: string | null }, [string]>(
-        "SELECT MAX(created_at) AS at FROM review WHERE issue_id = ?1 AND state = 'approved'",
+      .query<{ issueId: string; at: string }, string[]>(
+        `SELECT issue_id AS issueId, MAX(created_at) AS at FROM review
+          WHERE issue_id IN (${ids.map((_, n) => `?${n + 1}`).join(",")}) AND state = 'approved'
+          GROUP BY issue_id`,
       )
-      .get(pullId)?.at ?? "";
-  const spoke = db
-    .query<{ id: string; at: string }, [string, string]>(
-      `SELECT author_id AS id, MAX(created_at) AS at FROM comment
-        WHERE issue_id = ?1 AND origin_author IS NULL AND kind != 'review'
-          AND body NOT LIKE ?2
-        GROUP BY author_id`,
-    )
-    .all(pullId, `${HANDOVER_NOTE}%`);
-  const directors = new Set(
-    directorsAmong(
-      db,
-      repo,
-      spoke.map((s) => s.id),
-    ),
+      .all(...ids)
+      .map((r) => [r.issueId, r.at]),
   );
-  const since = spoke
-    .filter((s) => directors.has(s.id))
-    .map((s) => s.at)
-    .reduce((a, b) => (a > b ? a : b), approved);
-  const rounds = db
-    .query<
-      { id: string; author: string; body: string; at: string },
-      [string, string, string]
-    >(
-      `SELECT r.id AS id, u.username AS author, r.body AS body, r.created_at AS at
+  const spoke = db
+    .query<{ issueId: string; id: string; at: string }, string[]>(
+      `SELECT issue_id AS issueId, author_id AS id, MAX(created_at) AS at FROM comment
+        WHERE issue_id IN (${marks}) AND origin_author IS NULL AND kind != 'review'
+          AND body NOT LIKE ?1
+        GROUP BY issue_id, author_id`,
+    )
+    .all(`${HANDOVER_NOTE}%`, ...ids);
+  const byRepo = new Map<string, { repo: Repo; ids: Set<string> }>();
+  const repoOf = new Map(pulls.map((p) => [p.id, p.repo]));
+  for (const s of spoke) {
+    const repo = repoOf.get(s.issueId)!;
+    const entry = byRepo.get(repo.id) ?? { repo, ids: new Set<string>() };
+    entry.ids.add(s.id);
+    byRepo.set(repo.id, entry);
+  }
+  const directors = new Map(
+    [...byRepo].map(([repoId, { repo, ids }]) => [repoId, new Set(directorsAmong(db, repo, ids))]),
+  );
+  const since = new Map(ids.map((id) => [id, approved.get(id) ?? ""]));
+  for (const s of spoke)
+    if (directors.get(repoOf.get(s.issueId)!.id)?.has(s.id) && s.at > since.get(s.issueId)!)
+      since.set(s.issueId, s.at);
+  const rounds = new Map<string, { id: string; author: string; body: string; at: string }[]>();
+  for (const r of db
+    .query<{ issueId: string; id: string; author: string; body: string; at: string }, string[]>(
+      `SELECT r.issue_id AS issueId, r.id AS id, u.username AS author, r.body AS body, r.created_at AS at
          FROM review r JOIN user u ON u.id = r.author_id
-         JOIN repo_crew c ON c.user_id = r.author_id AND c.repo_id = ?3
-        WHERE r.issue_id = ?1 AND r.state = 'changes_requested'
-          AND r.created_at > ?2 AND c.role = 'reviewer'
+         JOIN issue i ON i.id = r.issue_id
+         JOIN repo_crew c ON c.user_id = r.author_id AND c.repo_id = i.repo_id
+        WHERE r.issue_id IN (${ids.map((_, n) => `?${n + 1}`).join(",")})
+          AND r.state = 'changes_requested' AND c.role = 'reviewer'
         ORDER BY r.created_at, r.id`,
     )
-    .all(pullId, since, repo.id);
-  if (rounds.length < HANDOVER_ROUNDS) return undefined;
-  return { reviews: rounds, at: rounds[HANDOVER_ROUNDS - 1]!.at };
+    .all(...ids)) {
+    if (r.at <= since.get(r.issueId)!) continue;
+    const { issueId, ...round } = r;
+    const list = rounds.get(issueId);
+    if (list) list.push(round);
+    else rounds.set(issueId, [round]);
+  }
+  for (const [id, list] of rounds)
+    if (list.length >= HANDOVER_ROUNDS) out.set(id, { reviews: list, at: list[HANDOVER_ROUNDS - 1]!.at });
+  return out;
 }
 
 /** One line per review, for the card and the thread: who asked, and the first line of what. */

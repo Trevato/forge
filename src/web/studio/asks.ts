@@ -15,7 +15,7 @@ import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { crewForRepos } from "../../core/agents.ts";
 import { capacityDefault, isCapacityKey, storedCapacity } from "../../core/capacity.ts";
 import { appsForRepos } from "../../core/apps.ts";
-import { latestDecision, stopStands } from "../../core/decisions.ts";
+import { latestDecision, latestDecisionsFor, stopStands } from "../../core/decisions.ts";
 import { getHold, holdsFor } from "../../core/holds.ts";
 import { issueTitles, proposalsFor, type Proposal } from "../../core/proposals.ts";
 import { chipsOf, type Chips } from "../../core/feed_chips.ts";
@@ -42,14 +42,13 @@ import {
   ownerFactRepoIds,
   type Repo,
 } from "../../core/repos.ts";
-import { listReviews } from "../../core/reviews.ts";
 import {
   activeRunsFor,
-  automaticRunsSince,
+  automaticRunsSinceFor,
   latestRunsForIssues,
   type Run,
 } from "../../core/runs.ts";
-import { getUserById, type User } from "../../core/users.ts";
+import { getUserById, getUsersByIds, type User } from "../../core/users.ts";
 import {
   isPausedAtCeiling,
   plannerDeclines,
@@ -59,7 +58,7 @@ import { breakerParked, WAITING_NOTES } from "../../crew/breaker.ts";
 import { CHECK_FAILED_LIMIT } from "../../crew/dispatch.ts";
 import { handoverLines, handoversOf, type Handover } from "../../crew/guard.ts";
 import { conflictsOf, isStalePull, mergesAgainSince, staleGreen } from "../../crew/stale_asks.ts";
-import { reviewAttempts, waitsForPerson, waitsForReviewer, type ReviewWait } from "../../crew/review.ts";
+import { reviewWaitsFor, type ReviewWait } from "../../crew/review.ts";
 import type { Ctx } from "../../http/context.ts";
 import { repoBase } from "../chrome.ts";
 import { html, type Html } from "../html.ts";
@@ -238,16 +237,32 @@ export const KIND_TIER: Readonly<Record<DecisionKind, Consequence>> = {
   setting: { score: 35, why: "a setting away from its default needs your word" },
 };
 
-/** When a person last spoke on a conversation, or its start. */
-function lastHumanWord(db: Database, issue: Issue, agentName: string): string {
-  let latest = issue.createdAt;
-  for (const c of listComments(db, issue.id))
-    if (c.authorName !== agentName && c.createdAt > latest)
-      latest = c.createdAt;
-  for (const r of listReviews(db, issue.id))
-    if (r.authorName !== agentName && r.createdAt > latest)
-      latest = r.createdAt;
-  return latest;
+/**
+ * When a person last spoke on each of these conversations, or its start,
+ * by issue: anyone but its author, in a comment or a review — one query
+ * per chunk each, never a read per conversation.
+ */
+function lastHumanWords(db: Database, issues: readonly Issue[]): Map<string, string> {
+  const out = new Map(issues.map((i) => [i.id, i.createdAt]));
+  const author = new Map(issues.map((i) => [i.id, i.authorName]));
+  const ids = [...out.keys()];
+  const CHUNK = 400;
+  for (let n = 0; n < ids.length; n += CHUNK) {
+    const batch = ids.slice(n, n + CHUNK);
+    const marks = batch.map((_, k) => `?${k + 1}`).join(",");
+    for (const table of ["comment", "review"] as const)
+      for (const row of db
+        .query<{ issue_id: string; name: string; at: string }, string[]>(
+          `SELECT ${table}.issue_id, user.username AS name, MAX(${table}.created_at) AS at
+             FROM ${table} JOIN user ON user.id = ${table}.author_id
+            WHERE ${table}.issue_id IN (${marks})
+            GROUP BY ${table}.issue_id, user.username`,
+        )
+        .all(...batch))
+        if (row.name !== author.get(row.issue_id) && row.at > out.get(row.issue_id)!)
+          out.set(row.issue_id, row.at);
+  }
+  return out;
 }
 
 /**
@@ -331,6 +346,32 @@ function askCandidatesFor(
     db,
     pulls.map((p) => ({ id: p.id, repo: byId.get(p.repoId)! })),
   );
+  // What a pull with a check result reads on its way to a card, read once
+  // for every pull that could reach it: the crew's red pulls' tries and
+  // stops, and the green pulls' wait for review.
+  const settled = pulls.filter(
+    (p) =>
+      joined.has(p.id) &&
+      held.get(p.id)?.heldBy !== user.id &&
+      !working.has(p.id) &&
+      !handedOver.has(p.id),
+  );
+  const red = settled.filter((p) => p.authorIsAgent && checks.get(p.id)?.state === "failed");
+  const spoke = lastHumanWords(db, red);
+  const tried = automaticRunsSinceFor(db, spoke);
+  const retries = latestDecisionsFor(db, red.map((p) => p.id), "retry");
+  const waits = reviewWaitsFor(
+    db,
+    settled.flatMap((p) => {
+      const pull = joined.get(p.id)!;
+      const check = checks.get(p.id);
+      return check?.state === "ok" && !isStalePull(db, pull.id, pull.headOid) && !staleGreen(db, pull, check)
+        ? [{ repo: byId.get(p.repoId)!, pull }]
+        : [];
+    }),
+    new Date(),
+    handedOver,
+  );
   for (const issue of pulls) {
     const repo = byId.get(issue.repoId)!;
     const pull = joined.get(issue.id);
@@ -368,9 +409,8 @@ function askCandidatesFor(
       // own machinery — a person's own failing pull never accrues tries,
       // so it never earns a "stopped" card; it just stays waiting.
       if (!issue.authorIsAgent) continue;
-      const since = lastHumanWord(db, issue, who);
-      const tries = automaticRunsSince(db, issue.id, since);
-      const stopped = stopStands(latestDecision(db, issue.id, "retry"));
+      const tries = tried.get(issue.id) ?? 0;
+      const stopped = stopStands(retries.get(issue.id));
       // A repository on its own parks what it cannot finish and moves on;
       // only an assisted one stops here for a person.
       if (
@@ -399,7 +439,7 @@ function askCandidatesFor(
     ) {
       // An agent's green pull waits for its reviewer first: it is the
       // crew's to wait on, and reaches the owner with the verdict (#1602).
-      if (waitsForReviewer(db, repo.id, pull) !== undefined) continue;
+      if (waits.get(pull.id)?.reviewer !== undefined) continue;
       // Autonomous repositories look at their own green pulls: the decider,
       // then the crew's reviewer. Everything else waits for a person —
       // whoever opened it, since a green change asks to be looked at
@@ -425,11 +465,11 @@ function askCandidatesFor(
       // An autonomous repository lands its own green pulls once reviewed;
       // an agent's change with no reviewer, or whose review lapsed, waits
       // for a person — and so asks one (#597).
-      const wait = waitsForPerson(db, repo.id, pull);
+      const wait = waits.get(pull.id)?.person;
       // A review nobody answered is the sweep's to send, whatever its age
       // (`sendToReview`); every other wait is still a person's.
       const resent =
-        wait?.why === "lapsed" && reviewAttempts(db, pull)?.attempts.length === 0;
+        wait?.why === "lapsed" && waits.get(pull.id)?.history?.attempts.length === 0;
       if (wait !== undefined && !resent)
         out.push({
           kind: "review",
@@ -554,10 +594,19 @@ function consequencesOf(
 ): Map<string, Consequence> {
   // What a pull says it closes is its author's free text: it counts only
   // when the author could have written the issue's labels themselves.
+  // A person's pull reads its author once for the set, and whether they
+  // write here once per repository and author.
+  const authors = getUsersByIds(
+    db,
+    asks.flatMap((a) => (a.pull && !a.pull.authorIsAgent ? [a.pull.authorId] : [])),
+  );
+  const writes = new Map<string, boolean>();
   const trusted = (pull: Pull, repo: Repo): number[] => {
     if (!pull.authorIsAgent) {
-      const author = getUserById(db, pull.authorId);
-      if (author === undefined || !canWrite(db, repo, author)) return [];
+      const author = authors.get(pull.authorId);
+      const key = `${repo.id}:${pull.authorId}`;
+      if (author !== undefined && !writes.has(key)) writes.set(key, canWrite(db, repo, author));
+      if (author === undefined || !writes.get(key)) return [];
     }
     return closesFromBody(pull.body);
   };

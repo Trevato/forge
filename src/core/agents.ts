@@ -9,7 +9,7 @@
 
 import type { Database } from "bun:sqlite";
 import { limitValue } from "../settings/limits.ts";
-import { getUserById, type User } from "./users.ts";
+import { getUserById, getUsersByIds, type User } from "./users.ts";
 
 export interface Agent {
   readonly user: User;
@@ -37,7 +37,10 @@ export const BRIEF_MAX = 4_000;
 
 function toAgent(db: Database, row: AgentRow): Agent | undefined {
   const user = getUserById(db, row.user_id);
-  if (!user) return undefined;
+  return user ? agentOf(user, row) : undefined;
+}
+
+function agentOf(user: User, row: AgentRow): Agent {
   return {
     user,
     model: row.model,
@@ -333,6 +336,47 @@ export function listCrewRoles(
     agent,
     role: roles.get(agent.user.id) ?? "builder",
   }));
+}
+
+/**
+ * The crew members holding `role` on each of these repositories, by repo,
+ * in `listCrew`'s order — the agents and their accounts one query per chunk
+ * each, never one per repository or per member.
+ */
+export function crewWithRole(
+  db: Database,
+  repoIds: readonly string[],
+  role: CrewRole,
+): Map<string, Agent[]> {
+  const rows: (AgentRow & { repo_id: string })[] = [];
+  const unique = [...new Set(repoIds)];
+  const CHUNK = 400;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const batch = unique.slice(i, i + CHUNK);
+    rows.push(
+      ...db
+        .query<AgentRow & { repo_id: string }, string[]>(
+          `SELECT repo_crew.repo_id, agent.* FROM repo_crew
+           JOIN agent ON agent.user_id = repo_crew.user_id
+           JOIN user ON user.id = agent.user_id
+           WHERE repo_crew.role = ?1
+             AND repo_crew.repo_id IN (${batch.map((_, n) => `?${n + 2}`).join(",")})
+           ORDER BY user.username COLLATE NOCASE`,
+        )
+        .all(role, ...batch),
+    );
+  }
+  const users = getUsersByIds(db, rows.map((r) => r.user_id));
+  const out = new Map<string, Agent[]>();
+  for (const row of rows) {
+    const user = users.get(row.user_id);
+    if (!user) continue;
+    const agent = agentOf(user, row);
+    const list = out.get(row.repo_id);
+    if (list) list.push(agent);
+    else out.set(row.repo_id, [agent]);
+  }
+  return out;
 }
 
 /**
