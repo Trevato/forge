@@ -69,8 +69,8 @@ import {
   ISSUE_MARK,
   ListState,
   PIN_MARK,
-  ago,
   PULL_MARK,
+  ago,
   confirmScreen,
   countsColumn,
   metaOf,
@@ -212,7 +212,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     }
     lane = forgeLane(f.app, f.user);
     decider = deciderLine(f.app, f.user);
-    figures = f.user?.isAdmin !== true ? [] : kpiLines(readKpis(f.db, now), running().commit === null ? null : { sha: running().commit!, since: ago(BOOTED) });
+    const commit = running().commit;
+    figures =
+      f.user?.isAdmin !== true
+        ? []
+        : kpiLines(readKpis(f.db, now), commit === null ? null : { sha: commit, since: ago(BOOTED) });
     // "Yours" is ownership plus the orgs you are on a team of; typing in the
     // filter reaches every repository you can see.
     const orgs = f.user

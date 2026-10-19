@@ -16,6 +16,10 @@ import { createRun } from "../src/core/runs.ts";
 import { createUser } from "../src/core/users.ts";
 import { readKpis } from "../src/flow/kpis.ts";
 import { kpiRowFor } from "../src/web/studio/kpi_row.ts";
+import { createForgeApp } from "../src/tui/forge.ts";
+import { dashboardScreen } from "../src/tui/screens/dashboard.ts";
+import { headlessTerminal } from "../src/tui/term/terminal.ts";
+import { settleApp } from "./helpers/tui.ts";
 
 const HOUR = 3_600_000;
 const MIN = 60_000;
@@ -143,5 +147,45 @@ describe("home kpi row titles", () => {
     expect(full.match(/class="kpi-(value num|note small muted)"/g)).toHaveLength(6);
     expect(full.match(/class="kpi-(value num|note small muted)" title=/g)).toHaveLength(6);
     expect(full).not.toMatch(/commit|merge|branch|repositor|pull request/i);
+  });
+});
+
+describe("terminal dashboard figures", () => {
+  test("an admin with no running version still gets the figures, and the live line says so", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-kpis-tui-"));
+    const tuiApp = createApp({ dataDir: dir, port: 0 });
+    const saved = { c: process.env["FORGE_COMMIT"], a: process.env["FORGE_APP_COMMIT"] };
+    delete process.env["FORGE_COMMIT"];
+    delete process.env["FORGE_APP_COMMIT"];
+    try {
+      const made = await createUser(tuiApp.db, {
+        origin: "seed",
+        trusted: true,
+        username: "alice",
+        email: "alice@forge.local",
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      if (!made.ok) throw new Error(made.error);
+      const terminal = headlessTerminal(120, 30);
+      const { app: tui, session } = createForgeApp(
+        tuiApp,
+        { sshUsername: "alice", remoteAddress: "127.0.0.1", fingerprint: "SHA256:test", user: made.value },
+        { terminal, exitHooks: false },
+      );
+      tui.start();
+      tui.ctx.push(dashboardScreen(session, tui.ctx));
+      await settleApp(tui);
+      const text = tui.screen.toText();
+      tui.stop?.();
+      expect(text).toContain("Shipped per hour");
+      expect(text).toContain("nothing live yet");
+      expect(text).toContain("Median check time");
+    } finally {
+      if (saved.c !== undefined) process.env["FORGE_COMMIT"] = saved.c;
+      if (saved.a !== undefined) process.env["FORGE_APP_COMMIT"] = saved.a;
+      tuiApp.db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
