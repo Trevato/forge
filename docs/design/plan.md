@@ -1,10 +1,11 @@
 # Design plan (#2678)
 
 The line is held by `bun scripts/design-lint.ts`: a pull may not add a colour
-literal, an off-scale `font-size`, or a component class beyond
-`docs/design/baseline.json`. Paying down lowers the baseline
-(`bun scripts/design-lint.ts --update`, reviewed in the pull); it never rises
-without a DESIGN.md §5 entry first.
+literal or an off-scale `font-size` beyond `docs/design/baseline.json`, nor
+define a class DESIGN.md §5 does not name. Paying down lowers the baseline
+(`bun scripts/design-lint.ts --update`, reviewed in the pull) and strikes
+retired classes from the §5d register; neither ever grows back without a §5
+entry first.
 
 Each item is one filed issue, small enough for one run; items 4–9 wait for the screenshot sweep (#2690) in the map.
 
@@ -23,4 +24,4 @@ Each item is one filed issue, small enough for one run; items 4–9 wait for the
 10. **#2697 Tokenise `style/content.ts`** — 23 colours, 31 sizes; the largest debt.
 11. **#2698 Tokenise `style/components.ts`, `studio/home.ts`, `pages/looks.ts`, `pages/site.ts`.**
 12. **#2699 Top bar diet** — at most search, New, and the user menu on the left of the fold.
-13. **#2700 Class rule against DESIGN.md §5** — the baseline holds 619 grandfathered classes, so today the check stops new ones, not old ones.
+13. **#2700 Class rule against DESIGN.md §5** — done: 13 classes no page drew are gone, the other 505 page-local ones are registered in DESIGN.md §5d, and the check reads §5 rather than the baseline. Items 4–12 retire §5d entries as they redo each page.

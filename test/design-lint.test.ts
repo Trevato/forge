@@ -1,11 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { classesIn, compare, countFile, scan } from "../scripts/design-lint.ts";
+import { classesIn, compare, countFile, documentedClasses, registeredClasses, scan } from "../scripts/design-lint.ts";
+
+/** A DESIGN.md in miniature: the §5 table, a §5d register, and a §6 that names a class too. */
+const DESIGN = [
+  "## 4. Space",
+  "`.spacing-only` is named before §5.",
+  "## 5. The component vocabulary",
+  "| **button** | `.btn` | in `src/web/ui.ts` |",
+  "| **run log** | `pre.run-log` (`.byline.origin-by`) | at `hello.localhost`, `status.reviews` |",
+  "### 5d. Page-local classes",
+  "- **`pages/x.ts`** — the x page: `.x-card` `.x-wrapped",
+  "` `.x-row`",
+  "## 6. Keyboard",
+  "`.keys-only` is named after §5.",
+].join("\n");
 
 describe("design check: nothing added outside the system (#2678)", () => {
   test("the tree is no worse than its baseline", () => {
     const base = JSON.parse(readFileSync("docs/design/baseline.json", "utf8"));
-    expect(compare(base, scan("."))).toEqual([]);
+    expect(compare(base, scan("."), readFileSync("docs/DESIGN.md", "utf8"))).toEqual([]);
   });
 
   test("counts colour literals and off-scale sizes, not on-scale ones", () => {
@@ -28,12 +42,32 @@ describe("design check: nothing added outside the system (#2678)", () => {
     expect(classesIn(text).sort()).toEqual(["btn", "card", "new-thing", "row-title"]);
   });
 
+  test("§5 names a class in a code span, as a selector, wrapped or not — and only §5 does (#2700)", () => {
+    expect(documentedClasses(DESIGN)).toEqual(["btn", "byline", "origin-by", "run-log", "x-card", "x-row", "x-wrapped"]);
+    expect(registeredClasses(DESIGN)).toEqual(["x-card", "x-row", "x-wrapped"]);
+    expect(documentedClasses("## 4. Space\n`.a`")).toEqual([]);
+  });
+
   test("fails a pull that adds a colour, a size or a component", () => {
-    const base = { files: { "src/web/x.ts": { colour: 1, size: 1 } }, classes: ["btn"] };
-    expect(compare(base, base)).toEqual([]);
-    expect(compare(base, { files: { "src/web/x.ts": { colour: 0, size: 0 } }, classes: ["btn"] })).toEqual([]);
-    expect(compare(base, { ...base, files: { "src/web/x.ts": { colour: 2, size: 1 } } })).toHaveLength(1);
-    expect(compare(base, { ...base, files: { "src/web/y.ts": { colour: 0, size: 1 } } })).toHaveLength(1);
-    expect(compare(base, { ...base, classes: ["btn", "gizmo"] })[0]).toContain(".gizmo");
+    const base = { files: { "src/web/x.ts": { colour: 1, size: 1 } } };
+    const now = { ...base, classes: ["btn", "run-log", "x-card", "x-row", "x-wrapped"] };
+    expect(compare(base, now, DESIGN)).toEqual([]);
+    expect(compare(base, { ...now, files: { "src/web/x.ts": { colour: 0, size: 0 } } }, DESIGN)).toEqual([]);
+    expect(compare(base, { ...now, files: { "src/web/x.ts": { colour: 2, size: 1 } } }, DESIGN)).toHaveLength(1);
+    expect(compare(base, { ...now, files: { "src/web/y.ts": { colour: 0, size: 1 } } }, DESIGN)).toHaveLength(1);
+    expect(compare(base, { ...now, classes: [...now.classes, "gizmo"] }, DESIGN)[0]).toContain(".gizmo");
+    // Named outside §5 is not named: §4 and §6 are not the vocabulary.
+    expect(compare(base, { ...now, classes: [...now.classes, "keys-only", "spacing-only"] }, DESIGN)).toHaveLength(2);
+  });
+
+  test("fails a register entry whose last rule is gone, so §5d only shrinks (#2700)", () => {
+    const base = { files: {} };
+    const problems = compare(base, { files: {}, classes: ["btn", "x-card", "x-wrapped"] }, DESIGN);
+    expect(problems).toEqual([".x-row: no stylesheet defines it any more — strike it from docs/DESIGN.md §5d"]);
+  });
+
+  test("every class the stylesheets define is one DESIGN.md §5 names (#2700)", () => {
+    const named = new Set(documentedClasses(readFileSync("docs/DESIGN.md", "utf8")));
+    expect(scan(".").classes.filter((k) => !named.has(k))).toEqual([]);
   });
 });

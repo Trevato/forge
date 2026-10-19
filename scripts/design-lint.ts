@@ -10,18 +10,19 @@
  *   colour  a hex, rgb(), hsl() or named-colour literal, or a color-mix() that
  *           mixes no `var(--token)`, in src/web — a colour is a token
  *   size    a font-size in px off the type scale (§3)
- *   class   a class defined in a `/* css *\/` template that the baseline does
- *           not know — a new component must be named in DESIGN.md first
+ *   class   a class defined in a `/* css *\/` template that DESIGN.md §5 does
+ *           not name — a new component is named there first (#2700). §5d
+ *           registers the page-local classes that predate the rule; a name
+ *           it keeps after its last rule is gone fails too, so it only shrinks
  *
- * Known gaps, so nobody mistakes the gate for more than it is: the class rule
- * checks the baseline, not DESIGN.md §5 (619 classes are grandfathered until
- * #2700); colours built in JS strings other than the forms above, `oklch()`,
+ * Known gaps, so nobody mistakes the gate for more than it is: colours built
+ * in JS strings other than the forms above, `oklch()`,
  * `lab()` and system colours are not seen; sizes in `rem`/`em` are not
  * counted. Stricter patterns belong here, with a baseline update.
  *
  * The theme palettes (`src/design/themes.ts`) are where colours live and are
  * not scanned. Plain data in, plain data out: `scan` takes files, `compare`
- * takes two scans.
+ * takes the baseline, a scan and the text of DESIGN.md.
  */
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -41,10 +42,8 @@ const NAMED_RE = new RegExp(
 );
 
 export type Counts = { colour: number; size: number };
-export type Scan = {
-  files: Record<string, Counts>;
-  classes: string[];
-};
+export type Baseline = { files: Record<string, Counts> };
+export type Scan = Baseline & { classes: string[] };
 
 const SKIP = /(^|\/)(og\/vendor)\//;
 
@@ -105,6 +104,44 @@ export function classesIn(text: string): string[] {
   return [...set];
 }
 
+/** The section of DESIGN.md from the heading starting `## <n>.` to the next `## `. */
+function section(design: string, n: string): string {
+  const start = design.search(new RegExp(`^## ${n.replace(".", "\\.")}`, "m"));
+  if (start < 0) return "";
+  const end = design.slice(start + 1).search(/^## /m);
+  return end < 0 ? design.slice(start) : design.slice(start, start + 1 + end);
+}
+
+/** The classes a stretch of DESIGN.md names: a selector's `.name` chain inside
+ * a code span (which, as in Markdown, may wrap a line but not a paragraph),
+ * bare or after an element (`pre.run-log`). A dotted word that is not a
+ * selector — `ui.ts`, `codeberg.org`, `status.reviews` — names nothing. */
+const SELECTOR = /(?<![\w/.$-])(?:(?:a|button|details|div|fieldset|form|input|label|li|ol|pre|section|select|span|table|textarea|ul)(?=\.))?((?:\.[a-z][a-z0-9_-]*)+)/gi;
+
+function namedIn(text: string): string[] {
+  const set = new Set<string>();
+  for (const span of text.matchAll(/`((?:[^`\n]|\n(?!\n))+)`/g)) {
+    for (const chain of span[1]!.matchAll(SELECTOR)) {
+      for (const c of chain[1]!.split(".").slice(1)) set.add(c);
+    }
+  }
+  return [...set].sort();
+}
+
+/** Every class DESIGN.md §5 names, its subsections and the §5d register included. */
+export function documentedClasses(design: string): string[] {
+  return namedIn(section(design, "5."));
+}
+
+/** The §5d register alone: the page-local classes that predate the rule. */
+export function registeredClasses(design: string): string[] {
+  const s5 = section(design, "5.");
+  const start = s5.search(/^### 5d\./m);
+  if (start < 0) return [];
+  const end = s5.slice(start).search(/\n##+ /);
+  return namedIn(end < 0 ? s5.slice(start) : s5.slice(start, start + end));
+}
+
 export function scan(root: string): Scan {
   const files: Record<string, Counts> = {};
   const classes = new Set<string>();
@@ -118,30 +155,37 @@ export function scan(root: string): Scan {
 }
 
 /** What a pull made worse, one line each. Empty means the check passes. */
-export function compare(base: Scan, now: Scan): string[] {
+export function compare(base: Baseline, now: Scan, design: string): string[] {
   const out: string[] = [];
   for (const [file, c] of Object.entries(now.files)) {
     const b = base.files[file] ?? { colour: 0, size: 0 };
     if (c.colour > b.colour) out.push(`${file}: ${c.colour - b.colour} new colour literal(s) — use a token from themes.ts (var(--…))`);
     if (c.size > b.size) out.push(`${file}: ${c.size - b.size} new off-scale font-size — the scale is ${TYPE_SCALE.join(", ")}px`);
   }
-  const known = new Set(base.classes);
+  const named = new Set(documentedClasses(design));
   for (const k of now.classes) {
-    if (!known.has(k)) out.push(`.${k}: a component class the design system does not have — name it in docs/DESIGN.md §5, then run --update`);
+    if (!named.has(k)) out.push(`.${k}: a component class the design system does not have — use one docs/DESIGN.md §5 names, or name it there first`);
+  }
+  const defined = new Set(now.classes);
+  for (const k of registeredClasses(design)) {
+    if (!defined.has(k)) out.push(`.${k}: no stylesheet defines it any more — strike it from docs/DESIGN.md §5d`);
   }
   return out;
 }
 
 const BASELINE = "docs/design/baseline.json";
+const DESIGN = "docs/DESIGN.md";
 
 if (import.meta.main) {
   const root = process.cwd();
   const now = scan(root);
   if (process.argv.includes("--update")) {
-    writeFileSync(join(root, BASELINE), JSON.stringify(now, null, 2) + "\n");
+    const baseline: Baseline = { files: now.files };
+    writeFileSync(join(root, BASELINE), JSON.stringify(baseline, null, 2) + "\n");
     console.log(`wrote ${BASELINE}`);
   } else {
-    const problems = compare(JSON.parse(readFileSync(join(root, BASELINE), "utf8")), now);
+    const base: Baseline = JSON.parse(readFileSync(join(root, BASELINE), "utf8"));
+    const problems = compare(base, now, readFileSync(join(root, DESIGN), "utf8"));
     for (const p of problems) console.error(p);
     if (problems.length) process.exit(1);
     console.log("design: no colour, size or component added outside the system");

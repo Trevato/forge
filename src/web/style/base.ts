@@ -116,8 +116,6 @@ h3 { font-size: 14px; font-weight: 600; line-height: 1.4; }
 }
 .wordmark:hover { color: var(--fg); }
 .wordmark:hover .mark { transform: rotate(135deg); }
-.topbar-asks { display: inline-flex; flex: none; text-decoration: none; }
-.topbar-asks:hover .pill { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 .topbar .spacer { flex: 1; }
 .topbar-tools { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; }
 /* The page never scrolls sideways. A strip that must — the tabs, a code

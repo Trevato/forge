@@ -9,27 +9,10 @@
  * win from: nothing else in the sheet styles a `.studio-*` selector, and the
  * few rules that reach a shared class (`.badge`, `.row-lead`, `.env-facts`)
  * set properties those components do not.
- *
- * `shell` and `rail` hold rules nothing in this directory draws any more,
- * and `rows` all but two of them. They are kept exactly as they were because
- * this is a pure move — deleting a rule changes what is served, and that is
- * its own issue.
  */
 
 /** A part as written, without the newlines the template literal adds. */
 const part = (css: string): string => css.trim();
-
-/** The first studio's own two-column shell, and the preview box it drew. */
-const shell = part(/* css */ `
-.studio { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 22px; margin-top: 16px; }
-@media (max-width: 860px) { .studio { grid-template-columns: 1fr; } }
-.studio-main { display: grid; gap: 18px; }
-.studio-preview { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--muted); }
-.studio-preview-head { display: flex; align-items: center; gap: 12px; }
-.studio-live { font-family: var(--mono); font-size: 11.5px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); }
-.studio-live[data-state="running"] { color: var(--merged); border-color: var(--merged); }
-.studio-live[data-state="failed"] { color: var(--danger, #c33); }
-`);
 
 /** The box a person tells the crew from (`app.ts`). */
 const tellBox = part(/* css */ `
@@ -59,36 +42,19 @@ const wordBadges = part(/* css */ `
 .badge[data-word="working"] svg { animation: spin 1.1s linear infinite; }
 `);
 
-/** The first studio's word rows, and the word itself where a row's meta
- * line still carries one (`home.ts`). */
+/** The word itself where a row's meta line still carries one, and the
+ * shelf row's meta line (`shelf.ts`). */
 const rows = part(/* css */ `
-.studio-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.studio-list li { display: grid; grid-template-columns: 18px 84px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 14px; }
-.studio-list li svg { vertical-align: -3px; }
-.studio-who { font-weight: 600; }
 .studio-word { font-family: var(--mono); font-size: 11.5px; opacity: .8; white-space: nowrap; }
 .shelf-meta { display: flex; gap: 0 4px; min-width: 0; }
 .shelf-desc { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shelf-facts { flex: 0 0 auto; max-width: 100%; }
 .row-meta .studio-word { font-family: inherit; font-size: inherit; opacity: 1; font-weight: 560; }
-.studio-list li[data-word="working"] .studio-word { color: var(--accent); opacity: 1; }
-.studio-list li[data-word="look"] .studio-word { color: var(--merged); opacity: 1; }
-.studio-list li[data-word="stopped"] .studio-word { color: var(--danger, #c33); opacity: 1; }
 `);
 
 /** The row of controls beside a list row: a stop, a change's buttons. */
 const rowActions = part(/* css */ `
 .studio-ask-actions { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-`);
-
-/** The first studio's rail, and the crew list it held. */
-const rail = part(/* css */ `
-.studio-rail { display: grid; gap: 18px; align-content: start; }
-.studio-rail h3 { font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; opacity: .7; margin: 0 0 6px; font-weight: 600; }
-.studio-crew { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: 13.5px; }
-.studio-crew li { display: grid; grid-template-columns: 74px 1fr; gap: 8px; }
-.studio-crew li b { font-weight: 600; }
-.studio-crew li span { opacity: .85; }
 `);
 
 /** The phone: one document, narrower. Each rule belongs to a component above
@@ -105,10 +71,7 @@ const phone = part(/* css */ `
   .studio-tell .bar .btn, .studio-ask-actions .btn { min-height: 44px; }
   .fcard-acts .btn, .fcard-form .btn { min-height: 44px; }
   .studio-ask-actions { display: flex; flex-direction: column; align-items: stretch; white-space: normal; width: 100%; }
-  .studio-list li { grid-template-columns: 18px minmax(0, 1fr); row-gap: 2px; }
-  .studio-list li > :nth-child(n+3) { grid-column: 2; }
   .studio-word { white-space: normal; }
-  .studio .row-meta, .studio-list .row-meta { white-space: normal; overflow-wrap: anywhere; }
   .shelf-meta { flex-wrap: wrap; }
   .shelf-desc { flex: 1 1 100%; }
   .studio-tell textarea, .studio-tell .input { font-size: 16px; }
@@ -118,14 +81,12 @@ const phone = part(/* css */ `
 import { feedCss } from "./feed_style.ts";
 
 export const studioCss = `@layer components {\n${[
-  shell,
   tellBox,
   appHead,
   justChanged,
   wordBadges,
   rows,
   rowActions,
-  rail,
   part(feedCss),
   phone,
 ].join("\n\n")}\n}`;

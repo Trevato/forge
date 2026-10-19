@@ -824,8 +824,6 @@ form.inline { display: inline; margin-left: auto; }
 .reviews-chip .ico { width: 14px; height: 14px; }
 .reviews-chip .ok { display: inline-flex; align-items: center; gap: 4px; color: var(--success); }
 .reviews-chip .bad { display: inline-flex; align-items: center; gap: 4px; color: var(--danger); }
-.files-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.files-head h2 { margin-bottom: 0; }
 
 /* ---- apps, runs, and the crew ---- */
 /* The strip a repo home wears when it runs: state, commit, URL, previews,
@@ -942,7 +940,6 @@ form.inline { display: inline; margin-left: auto; }
 .log-tail-row { padding: 0 14px 10px; }
 .run-log.log-tail { max-height: 8.5em; min-height: 0; margin: 6px 0 0; font-size: 12.5px; }
 .table .truncate { max-width: 34ch; display: inline-block; vertical-align: bottom; }
-.agent-brief { white-space: pre-wrap; font-size: 13px; color: var(--muted-fg); max-height: 6.5em; overflow: hidden; }
 
 /* ---- proposing a change ---- */
 /* The editor's commit block, when the commit is a contribution: the whole
@@ -1184,8 +1181,6 @@ textarea.editor:focus { outline: none; }
   background: var(--card); min-height: 12rem;
 }
 .editor-commit { margin-top: 12px; }
-.editor-hint { margin: 6px 2px 0; font-size: 12.5px; color: var(--faint); }
-.editor-hint kbd { margin: 0 2px; }
 .editor-target { border: 0; padding: 0; margin: 4px 0 0; }
 .editor-target legend { font-weight: 600; margin-bottom: 6px; }
 .editor-target .check { display: flex; }

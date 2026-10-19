@@ -1218,19 +1218,20 @@ forge icon.
 
 ```sh
 bun test              # protocol-level + adversarial suite
-bun scripts/design-lint.ts   # no colour, off-scale font-size or component class beyond docs/design/baseline.json
+bun scripts/design-lint.ts   # no colour or off-scale font-size beyond docs/design/baseline.json, no class docs/DESIGN.md §5 does not name
 bun x tsc --noEmit    # zero type errors is the standard
 bun run check         # exactly what the forge runs against every push
 bun run check:record  # the same, and rewrites scripts/test-times.json
 ```
 
 The design check (`test/design-lint.test.ts`, run in the gate) fails a pull that
-adds a colour literal, an off-scale `font-size` or a component class beyond
-`docs/design/baseline.json`; the message names the file. The way out is to use
-a token (`var(--…)`) or a named component from `docs/DESIGN.md`; when a change
-lowers the counts or adds a component to DESIGN.md §5, run
-`bun scripts/design-lint.ts --update` and commit the baseline. See
-`docs/design/plan.md`.
+adds a colour literal or an off-scale `font-size` beyond
+`docs/design/baseline.json`, or defines a class `docs/DESIGN.md` §5 does not
+name; the message names the file or the class. The way out is to use a token
+(`var(--…)`) or a component §5 names; a new component goes into the §5 table
+first. When a change lowers the counts, run `bun scripts/design-lint.ts
+--update` and commit the baseline; when it deletes the last rule for a class
+in the §5d register, strike the name there too. See `docs/design/plan.md`.
 
 `bun run check` is the gate: the same command `forge.json` declares, so what
 it says here is what the deploy will say. It type-checks once, then runs the
