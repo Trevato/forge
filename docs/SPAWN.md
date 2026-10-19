@@ -128,3 +128,27 @@ type `sever`) writes `severedAt` into `forgeCode` and nothing else: the
 fork, its history and the record of where it came from stay, and nothing
 leaves. The page and the parent's tree then say it follows nothing since
 the date.
+
+## One click from a stranger to their own forge (#2914)
+
+The program: a stranger makes an account with a username and a password (email
+optional, no open-platform, Forgejo or edge account anywhere in the path),
+presses "Make my forge", names it and picks a size, and lands as the first
+admin of a live forge, with any public app of this forge included, in under
+three minutes. An agent with a token does the same by API or MCP. What is
+already here: the anonymous door and its rate limit, the claim link, public
+apps as forks, and the MCP `spawn`. What is missing is built as linked issues:
+
+| issue | what                                                              | waits for    |
+| ----- | ----------------------------------------------------------------- | ------------ |
+| #2923 | sign up with username + password, email optional                  |              |
+| #2924 | the claim takes username + password, email optional               | #2923        |
+| #2925 | sizes small/medium/large in the plan, with a host quota           |              |
+| #2926 | a `cell` placement: each child its own process, held to its size  | #2925        |
+| #2927 | "Make my forge" for any signed-in person, per-account limit       | #2925        |
+| #2928 | the door ends signed in on the child, no code to copy             | #2927, #2924 |
+| #2929 | an agent does it all unattended by API and MCP                    | #2923, #2927 |
+| #2930 | end-to-end test, each step named when it breaks                   | #2928, #2929 |
+| #2931 | nightly drill of the same path on the vxrail                      | #2930        |
+| #2932 | /boards: forges made, time to live, failures                      |              |
+| #2933 | /forges: an owner's forges side by side, use against size         | #2925, #2926 |
