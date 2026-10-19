@@ -702,6 +702,16 @@ function watchTree(
   };
 }
 
+/**
+ * Watch the process tree under `pid` as `label`, for a process launched
+ * outside `openCell` (a crew run). It is counted in `cellCounters` and
+ * `cellRoots` like a cell, but no limit is enforced. Returns the unwatch.
+ */
+export function watchLabelled(pid: number, label: string): () => void {
+  const unlimited: Limits = { memoryMiB: Infinity, cpus: Infinity, diskMiB: Infinity };
+  return watchTree(pid, unlimited, { bytes: Infinity, by: "watch" }, [], label, () => {});
+}
+
 interface ProcessRow {
   ppid: number;
   ticks: number;
