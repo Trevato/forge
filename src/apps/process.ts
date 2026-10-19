@@ -233,7 +233,7 @@ function truncate(line: string): string {
  * Signal a process group: a negative pid is the leader and everything it
  * started that has not left the group. Nothing left of it is not an error.
  */
-function signalGroup(leader: number, signal: NodeJS.Signals): void {
+export function signalGroup(leader: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-leader, signal);
   } catch {
