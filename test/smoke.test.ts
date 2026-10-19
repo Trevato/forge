@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { smoke, stylesheetHref } from "../scripts/smoke.ts";
+import { isSignInRedirect, smoke, stylesheetHref } from "../scripts/smoke.ts";
 
 let server: ReturnType<typeof Bun.serve> | undefined;
 afterEach(() => server?.stop(true));
@@ -15,10 +15,12 @@ const GOOD_SW = `self.addEventListener('fetch', function (e) {
 const BAD_SW = GOOD_SW.replace("catch(offline)", "catch(function () { return Response.error(); })");
 let sw: { body: string; type: string; status: number } = { body: GOOD_SW, type: "text/javascript", status: 200 };
 let version = () => "v1";
+let anonymousBoard = { status: 302, location: "/signin" };
 
 function stub(cssType: string, seen: string[] = []) {
   sw = { body: GOOD_SW, type: "text/javascript", status: 200 };
   version = () => "v1";
+  anonymousBoard = { status: 302, location: "/signin" };
   server = Bun.serve({
     port: 0,
     hostname: "127.0.0.1",
@@ -30,7 +32,7 @@ function stub(cssType: string, seen: string[] = []) {
       if (path === "/board")
         return req.headers.get("authorization") === "Bearer t"
           ? new Response("board")
-          : new Response(null, { status: 302, headers: { location: "/signin" } });
+          : new Response(null, { status: anonymousBoard.status, headers: { location: anonymousBoard.location } });
       if (path === "/healthz") return new Response("ok", { headers: { "x-forge-version": version() } });
       if (path === "/sw.js") return new Response(sw.body, { status: sw.status, headers: { "content-type": sw.type } });
       return new Response("no", { status: 404 });
@@ -111,4 +113,40 @@ test("anonymousBoard: a 302 from /board passes with no token, and only then", as
   expect(await smoke(base, "", { anonymousBoard: true })).toEqual([]);
   expect((await smoke(base, "", {})).map((f) => f.status)).toEqual([302, 302]);
   expect((await smoke(base, "wrong", { anonymousBoard: true })).map((f) => f.status)).toEqual([302, 302]);
+});
+
+test("anonymousBoard: a 302, 303 or 307 to the forge's or the edge's sign-in is sign-in (#2673)", async () => {
+  const base = stub("text/css");
+  for (const [status, location] of [
+    [302, "/signin?next=%2Fboard"],
+    [303, "/signin?next=%2Fboard"],
+    [303, `${base}/_plat/login?rd=%2Fboard`],
+    [307, "/_plat/login?rd=%2Fboard"],
+  ] as const) {
+    anonymousBoard = { status, location };
+    expect(await smoke(base, "", { anonymousBoard: true })).toEqual([]);
+  }
+});
+
+test("anonymousBoard: a 303 anywhere but sign-in is still a failure", async () => {
+  const base = stub("text/css");
+  for (const location of ["/elsewhere", "https://evil.example/signin", "/signin/parent"]) {
+    anonymousBoard = { status: 303, location };
+    const failures = await smoke(base, "", { anonymousBoard: true });
+    expect(failures.map((f) => f.status)).toEqual([303, 303]);
+    expect(failures[0]!.why).toBe("expected 200 (or a redirect to sign-in)");
+  }
+  anonymousBoard = { status: 301, location: "/signin" };
+  expect((await smoke(base, "", { anonymousBoard: true })).map((f) => f.status)).toEqual([301, 301]);
+});
+
+test("isSignInRedirect wants a redirect status and a same-origin sign-in Location", () => {
+  const at = "https://forge.example/board";
+  const res = (status: number, location?: string) =>
+    new Response(null, { status, headers: location === undefined ? {} : { location } });
+  expect(isSignInRedirect(at, res(303, "https://forge.example/_plat/login?rd=%2Fboard"))).toBe(true);
+  expect(isSignInRedirect(at, res(302, "/signin"))).toBe(true);
+  expect(isSignInRedirect(at, res(303))).toBe(false);
+  expect(isSignInRedirect(at, res(303, "https://other.example/_plat/login"))).toBe(false);
+  expect(isSignInRedirect(at, res(200, "/signin"))).toBe(false);
 });

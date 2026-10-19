@@ -55,8 +55,28 @@ export interface Options {
   pollMs?: number;
   /** The fetch to use; the global one unless a caller (the forge proving itself, a test) gives its own. */
   fetch?: typeof fetch;
-  /** Accept a redirect from `/board` as the sign-in it is, for a caller holding no token. */
+  /** Accept a redirect from `/board` to sign-in as the sign-in it is, for a caller holding no token. */
   anonymousBoard?: boolean;
+}
+
+/** The redirect statuses a sign-in answers with. */
+const REDIRECTS = new Set([302, 303, 307]);
+
+/**
+ * Is `res`, fetched from `url`, a redirect to sign in on the same host: the
+ * forge's own `/signin` or the platform edge's `/_plat/login` (#2673)?
+ */
+export function isSignInRedirect(url: string, res: Response): boolean {
+  if (!REDIRECTS.has(res.status)) return false;
+  const location = res.headers.get("location");
+  if (!location) return false;
+  let to: URL;
+  try {
+    to = new URL(location, url);
+  } catch {
+    return false;
+  }
+  return to.origin === new URL(url).origin && (to.pathname === "/signin" || to.pathname === "/_plat/login");
 }
 
 /** Polls `/healthz` until it reports `version`; null when it does, else a failure. */
@@ -130,8 +150,8 @@ export async function smoke(base: string, token = "", options: Options = {}): Pr
       }
     }
     const board = await get("/board", agent, auth);
-    const signIn = options.anonymousBoard && !token && board?.res.status === 302;
-    if (board && board.res.status !== 200 && !signIn) fail(board.url, agent, board.res, "expected 200 (a 302 is sign-in)");
+    const signIn = options.anonymousBoard && !token && !!board && isSignInRedirect(board.url, board.res);
+    if (board && board.res.status !== 200 && !signIn) fail(board.url, agent, board.res, "expected 200 (or a redirect to sign-in)");
     const health = await get("/healthz", agent);
     if (health && health.res.status !== 200) fail(health.url, agent, health.res, "expected 200");
   }
