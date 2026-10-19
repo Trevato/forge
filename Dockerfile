@@ -14,6 +14,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY package.json tsconfig.json ./
 COPY src ./src
+# src/ imports from scripts/ (checks/service.ts, release/prove.ts): without it the image cannot boot (0.7.166).
+COPY scripts ./scripts
 
 # What the running forge says it is (src/kernel/version.ts): the release
 # passes the tag it is building as VERSION and the commit as COMMIT, and the
