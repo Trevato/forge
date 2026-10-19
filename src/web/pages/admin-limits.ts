@@ -29,14 +29,14 @@ export function limitsPage(ctx: Ctx): Response {
     row({
       lead: icon("activity"),
       title: html`${l.label} <span class="muted small mono">${l.key}</span>`,
-      meta: html`${l.reason} <br />${l.isSet
+      meta: html`${l.reason} <br />Now <span class="mono">${String(l.value)}</span>. ${l.isSet
           ? html`Set here; the default is
               <span class="mono">${String(l.defaultValue)}</span>.`
           : html`The default.`}
         Whole number, ${l.unit}, from
         <span class="mono">${String(l.min)}</span> to
         <span class="mono">${String(l.max)}</span>.`,
-      trail: html`<form class="row-actions" method="post" action="/admin/limits">
+      trail: html`<form class="row-fields" method="post" action="/admin/limits">
         <input type="hidden" name="key" value="${l.key}" />
         <input
           class="input mono"
@@ -93,7 +93,7 @@ export function limitsPage(ctx: Ctx): Response {
         repositories plus app data). Empty is no limit; a forge admin is
         never held to any of them.
       </p>
-      <form class="row-actions" method="post" action="/admin/quotas">
+      <form class="row-fields" method="post" action="/admin/quotas">
         ${QUOTA_KEYS.map(
           (k) => html`<label class="small">${k === "storage" ? "storage (MB)" : k}
             <input
@@ -132,7 +132,7 @@ export function limitsPage(ctx: Ctx): Response {
       <p class="muted small">
         Who may sign up: open, invite or closed. Nothing reads this yet.
       </p>
-      <form class="row-actions" method="post" action="/admin/signup">
+      <form class="row-fields" method="post" action="/admin/signup">
         <label class="small">signup
           <select class="input mono" name="signup">
             ${SIGNUP_MODES.map(
@@ -160,7 +160,7 @@ export function limitsPage(ctx: Ctx): Response {
       meta: html`Made ${time(i.createdAt)} · expires ${time(i.expiresAt)}`,
       trail:
         i.state === "open"
-          ? html`<form class="row-actions" method="post" action="/admin/invites/${i.id}/revoke">
+          ? html`<form class="row-fields" method="post" action="/admin/invites/${i.id}/revoke">
               ${btn("Revoke", { size: "sm", label: `Revoke invite ${i.id}` })}
             </form>`
           : html``,
@@ -172,7 +172,7 @@ export function limitsPage(ctx: Ctx): Response {
         A link is shown once, when it is made, and is good for one signup.
         Nothing reads these yet.
       </p>
-      <form class="row-actions" method="post" action="/admin/invites">
+      <form class="row-fields" method="post" action="/admin/invites">
         <label class="small">expires in (days)
           <input
             class="input mono"
@@ -203,7 +203,7 @@ export function limitsPage(ctx: Ctx): Response {
             the next request that meets the limit; nothing needs a restart.
           </p>
         </div>
-        <ul class="list">
+        <ul class="list setting-list">
           ${rows}
         </ul>`,
       {

@@ -59,13 +59,13 @@ export function capacityPage(ctx: Ctx): Response {
     row({
       lead: icon("activity"),
       title: html`${s.label} <span class="muted small mono">${s.key}</span>`,
-      meta: html`${s.help} <br />${s.source === "setting"
+      meta: html`${s.help} <br />Now <span class="mono">${s.value === "" ? "auto" : s.value}</span>. ${s.source === "setting"
           ? html`Set here; the boot default is
               <span class="mono">${s.default === "" ? "auto" : s.default}</span>
               (<span class="mono">${s.env}</span>).`
           : html`The boot default, from <span class="mono">${s.env}</span>.`}`,
       trail: html`<form
-        class="row-actions"
+        class="row-fields"
         method="post"
         action="/settings/capacity"
       >
@@ -146,7 +146,7 @@ export function capacityPage(ctx: Ctx): Response {
           and never needs a restart.
         </p>
       </div>
-      <ul class="list">
+      <ul class="list setting-list">
         ${rows}
       </ul>`,
     {
