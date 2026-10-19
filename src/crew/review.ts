@@ -26,6 +26,7 @@ import { listPulls, pullDiff, type Pull, pullDir} from "../core/pulls.ts";
 import { getRepoById, type Repo } from "../core/repos.ts";
 import { reviewSummary } from "../core/reviews.ts";
 import { checksForHead } from "../core/runs.ts";
+import { getTeam } from "../core/teams.ts";
 import { repoDir } from "../git/repos.ts";
 import { createLog } from "../kernel/log.ts";
 import { queueAgentRun } from "./dispatch.ts";
@@ -39,6 +40,10 @@ const SECURITY_PATH = /auth|token|secret|sandbox|http/i;
 export const touchesSecurity = (paths: readonly string[]): boolean =>
   paths.some((p) => SECURITY_PATH.test(p));
 
+/** Paths whose change is a page's look: a page, the ui vocabulary or the style. */
+export const touchesDesign = (paths: readonly string[]): boolean =>
+  paths.some((p) => p.startsWith("src/web/"));
+
 /** What an agent says it is: its brief's first paragraph. */
 const focusOf = (brief: string): string =>
   brief.trim().split(/\n\s*\n/)[0] ?? "";
@@ -50,12 +55,20 @@ export const watchesSecurity = (agent: Agent): boolean =>
 /**
  * The reviewer for a change to these paths: the security reviewer when
  * the change touches what it watches, the experience reviewer otherwise,
- * and whichever reviewer there is when the crew has only one kind.
+ * and whichever reviewer there is when the crew has only one kind. A
+ * change to `src/web/` that is not security's goes to a reviewer on the
+ * design team (`design`, user ids) when the crew has one, and its brief
+ * holds it to docs/DESIGN.md (`touchesDesign`).
  */
 export function pickReviewer(
   reviewers: readonly Agent[],
   paths: readonly string[],
+  design: readonly string[] = [],
 ): Agent | undefined {
+  if (touchesDesign(paths) && !touchesSecurity(paths)) {
+    const member = reviewers.find((r) => design.includes(r.user.id));
+    if (member !== undefined) return member;
+  }
   const security = reviewers.filter(watchesSecurity);
   const experience = reviewers.filter((r) => !watchesSecurity(r));
   const preferred = touchesSecurity(paths) ? security : experience;
@@ -326,6 +339,7 @@ export async function sendToReview(
   const reviewer = pickReviewer(
     others.length > 0 ? others : reviewers,
     diff.files.map((f) => f.path),
+    getTeam(app.db, "design")?.members,
   );
   if (reviewer === undefined) return "wait";
   if (queueAgentRun(app, repo, issue, reviewer, "review") === undefined)

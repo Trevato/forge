@@ -868,6 +868,12 @@ feedback on the pull — a comment, a request for changes, a line comment — an
 the agent picks it up in the background, resuming its session. A failed check re-engages it too, a bounded number of
 times before a person must speak.
 
+**Design review.** A pull that changes anything under `src/web/` (a page, the ui
+vocabulary, the style) is sent to a crew reviewer on the Design team when there
+is one, and its review brief holds the change to `docs/DESIGN.md`. A security
+change still goes to the security reviewer; a change only under `src/core/` is
+not a design matter.
+
 **Three rounds, then a person.** When the crew reviewer has asked for
 changes three times on one pull with no approval and no word from a person
 who may direct the crew between, no more feedback runs start on it. The

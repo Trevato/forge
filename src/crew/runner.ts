@@ -77,6 +77,7 @@ import { bar } from "../cloud/gate.ts";
 import { declarationsOf } from "../cloud/declared.ts";
 import { accountOfSecret } from "../core/cloud_account.ts";
 import { alreadyDoneSummary, namedCommits, onBase } from "./already.ts";
+import { touchesDesign } from "./review.ts";
 import { BUDGETS, budgetSummary } from "../kernel/budgets.ts";
 import { createLog, redactValues } from "../kernel/log.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -191,16 +192,22 @@ export function steerRun(app: App, runId: string, text: string): boolean {
 }
 
 /** What a reviewer reads: the pull's diff against its base, and its pictures. */
-async function reviewInputs(
+export async function reviewInputs(
   app: App,
   repo: Repo,
   pull: Pull,
   record: AppRecord | undefined,
   bare: string,
-): Promise<{ reviewDiff: string; looks: string[] }> {
+): Promise<{ reviewDiff: string; looks: string[]; design: boolean }> {
   const base = (await resolveOid(bare, `refs/heads/${pull.baseBranch}`)) ?? "";
   let reviewDiff = "(no diff available)";
+  let design = false;
   if (base !== "") {
+    const names = await runGitCapture(
+      ["diff", "--name-only", `${base}...${pull.headOid}`],
+      { cwd: bare },
+    );
+    design = touchesDesign(names.stdout.toString().split("\n").filter((n) => n !== ""));
     const out = await runGitCapture(
       ["diff", "--stat", "-p", `${base}...${pull.headOid}`],
       { cwd: bare },
@@ -228,7 +235,7 @@ async function reviewInputs(
           .map((l) =>
             l.path.startsWith("/") ? l.path : join(app.config.dataDir, l.path),
           );
-  return { reviewDiff, looks };
+  return { reviewDiff, looks, design };
 }
 
 const REVIEW_DIFF_MAX = 60 * 1024;

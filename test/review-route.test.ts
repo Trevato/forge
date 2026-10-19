@@ -27,6 +27,7 @@ import {
   reviewStage,
   SWEEP_SENDS,
   sweepReviews,
+  touchesDesign,
   touchesSecurity,
   watchesSecurity,
 } from "../src/crew/review.ts";
@@ -263,4 +264,30 @@ describe("every green pull an agent wrote is sent to review", () => {
     expect(reviewer(pulls[SWEEP_SENDS]!)).toEqual([]);
     expect(reviewer(pulls[59]!)).toEqual([]);
   }, 120_000);
+});
+
+describe("the design team reviews a change to a page", () => {
+  const designer = {
+    user: { id: "d1", username: "designer" },
+    brief: `I am Designer. I review the look.\n\n${SHARED}`,
+  } as unknown as Agent;
+  const team = ["d1"];
+
+  test("src/web/ is design's; src/core/ is not", () => {
+    expect(touchesDesign(["src/web/pages/x.ts"])).toBe(true);
+    expect(touchesDesign(["src/web/ui/button.ts"])).toBe(true);
+    expect(touchesDesign(["src/core/x.ts", "docs/DESIGN.md"])).toBe(false);
+  });
+
+  test("a pull changing src/web/pages/x.ts goes to a design-team member; src/core/ only does not", () => {
+    const crew = [{ user: { id: "j1" }, brief: juniper.brief } as unknown as Agent, designer];
+    expect(pickReviewer(crew, ["src/web/pages/x.ts"], team)).toBe(designer);
+    expect(pickReviewer(crew, ["src/core/x.ts"], team)).toBe(crew[0]);
+  });
+
+  test("security still outranks design, and a crew with no designer keeps its reviewer", () => {
+    const crew = [sentinel, designer];
+    expect(pickReviewer(crew, ["src/web/auth.ts"], team)).toBe(sentinel);
+    expect(pickReviewer([juniper], ["src/web/pages/x.ts"], team)).toBe(juniper);
+  });
 });

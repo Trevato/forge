@@ -195,6 +195,8 @@ export interface TaskInput extends BriefInput {
     | undefined;
   /** For `review`: the pull's diff against its base, capped. */
   readonly reviewDiff?: string | undefined;
+  /** For `review`: the change touches `src/web/`, so the review is held to docs/DESIGN.md. */
+  readonly design?: boolean | undefined;
   /** For `review`: an earlier review run on this pull ended with no verdict. */
   readonly retry?: boolean | undefined;
   /** For `review`: pictures of the preview at this head, phone and desktop. */
@@ -355,6 +357,11 @@ function taskBody(input: TaskInput): string {
       "- Tests: every behaviour the change adds has a test that would fail without it, and `bun test` is green in the diff.",
       "- Both doors: what a person can do on the page they can do in `src/tty.ts` too, and the README says how to use it.",
       "- Clean: small modules named after one concept, no dead code, no commented-out code, no TODOs left as work, no new dependency without a reason in the pull.",
+      ...(input.design === true
+        ? [
+            "- The design system: this change touches src/web/, so you read it as the design team. Read docs/DESIGN.md first, then hold the change to it strictly — tokens and the named components rather than hand-rolled markup, one accent per page, anything that navigates an <a> and anything that mutates a <button> in a post form, everything working with JavaScript off. A page that departs from docs/DESIGN.md is a change request, whatever else it does well.",
+          ]
+        : []),
       "- True to the direction: it does what the issue asked and nothing the direction did not, and the preview shows it working.",
       ...(input.policy === undefined
         ? []
