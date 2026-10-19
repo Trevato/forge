@@ -12,14 +12,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runGit } from "../src/git/env.ts";
 import { err } from "../src/kernel/result.ts";
-import { CLONES, restoreSnapshot } from "../src/snapshot/restore.ts";
+import { defaultClones, parseClones, restoreSnapshot } from "../src/snapshot/restore.ts";
 import { dirStore, type Store } from "../src/snapshot/store.ts";
 
 const NAME = "2026-10-18T08-00-00Z";
 const prefix = `snapshots/${NAME}/`;
 const REPOS = 11;
+const MANY = 20;
 
-async function seed(store: Store, root: string, broken?: number): Promise<void> {
+async function seed(store: Store, root: string, broken?: number, count = REPOS): Promise<void> {
   const src = join(root, "src");
   if (!existsSync(src)) {
     await runGit(["init", "--quiet", src]);
@@ -30,7 +31,7 @@ async function seed(store: Store, root: string, broken?: number): Promise<void> 
   }
   const good = new Uint8Array(await Bun.file(join(root, "ok.bundle")).arrayBuffer());
   const files: { path: string; bytes: number }[] = [];
-  for (let n = 0; n < REPOS; n++) {
+  for (let n = 0; n < count; n++) {
     const path = `repos/alice/r${n}.bundle`;
     const body = n === broken ? new TextEncoder().encode("not a bundle") : good;
     await store.put(prefix + path, body);
@@ -43,7 +44,7 @@ async function seed(store: Store, root: string, broken?: number): Promise<void> 
       startedAt: "2026-10-18T08:00:00.000Z",
       finishedAt: "2026-10-18T08:01:00.000Z",
       version: "t",
-      repos: REPOS,
+      repos: count,
       apps: 0,
       files,
       bytes: files.reduce((s, f) => s + f.bytes, 0),
@@ -77,9 +78,9 @@ describe("a restore clones in parallel", () => {
     expect(readFileSync(join(dataDir, "repos", "alice", "r0.git", "HEAD"), "utf8")).toContain("ref:");
   });
 
-  test("several clones run at once, never more than CLONES", async () => {
+  test("clones: 6 never runs more than 6 at once, and reaches 6 with 20 bundles", async () => {
     const store = dirStore(join(root, "store-3"));
-    await seed(store, root);
+    await seed(store, root, undefined, MANY);
     let open = 0;
     let most = 0;
     const git: typeof runGit = async (args, options) => {
@@ -95,10 +96,31 @@ describe("a restore clones in parallel", () => {
         if (cloning) open--;
       }
     };
-    const done = await restoreSnapshot(store, NAME, join(root, "data-3"), { git });
-    expect(done.repos).toBe(REPOS);
-    expect(CLONES).toBe(4);
-    expect(most).toBe(4);
+    const done = await restoreSnapshot(store, NAME, join(root, "data-3"), { git, clones: 6 });
+    expect(done.repos).toBe(MANY);
+    expect(most).toBe(6);
+  });
+
+  test("the default follows the cores, from 2 to 16", () => {
+    expect(defaultClones()).toBeGreaterThanOrEqual(2);
+    expect(defaultClones()).toBeLessThanOrEqual(16);
+  });
+
+  test("--clones takes 1 to 32 and nothing else", () => {
+    expect(parseClones("1")).toBe(1);
+    expect(parseClones("32")).toBe(32);
+    for (const bad of ["0", "x", "33", "-1", "4.5", "", "004"]) expect(parseClones(bad)).toBeUndefined();
+  });
+
+  test("the command refuses --clones 0 and --clones x", async () => {
+    for (const bad of ["0", "x"]) {
+      const run = Bun.spawn(
+        ["bun", "run", join(import.meta.dir, "../src/snapshot/restore.ts"), "latest", join(root, "never"), "--clones", bad],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      expect(await run.exited).toBe(2);
+      expect(await new Response(run.stderr).text()).toContain("--clones takes a whole number from 1 to 32");
+    }
   });
 
   test("a bundle git refuses fails the restore, by name", async () => {

@@ -8,7 +8,10 @@
  * It refuses a data directory that is not empty: a restore over a live
  * forge is not a restore, it is a mess.
  *
- *   bun run src/snapshot/restore.ts <snapshot-name|latest> <data-dir>
+ *   bun run src/snapshot/restore.ts <snapshot-name|latest> <data-dir> [--clones N]
+ *
+ * `--clones N` (1–32) sets how many repositories clone at once; the
+ * default follows the machine's cores.
  *
  * `latest` is the newest snapshot the store holds, for the person at a
  * fresh machine who does not know the name (`docs/RESTORE.md`).
@@ -27,6 +30,7 @@
  */
 
 import { chmodSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 import { runGit } from "../git/env.ts";
 import { installHooks } from "../git/hooks.ts";
@@ -64,8 +68,19 @@ export interface Progress {
   readonly bytes: number;
 }
 
-/** Repositories cloned at once while restoring. */
-export const CLONES = 4;
+/** Repositories cloned at once unless told otherwise: the machine's cores less one, 2 to 16. */
+export const defaultClones = (): number =>
+  Math.max(2, Math.min(16, availableParallelism() - 1));
+
+/** The most clones a restore may be asked to run at once. */
+export const MAX_CLONES = 32;
+
+/** `--clones` text as a count from 1 to `MAX_CLONES`, or undefined when it is not one. */
+export function parseClones(text: string): number | undefined {
+  if (!/^[0-9]{1,2}$/.test(text)) return undefined;
+  const n = Number(text);
+  return n >= 1 && n <= MAX_CLONES ? n : undefined;
+}
 
 /** Names of every sealed value in a restored database; never the values. */
 async function sealedNames(dbFile: string): Promise<string[]> {
@@ -152,6 +167,8 @@ export async function restoreSnapshot(
     readonly inFlightBytes?: number | undefined;
     /** Test seam: the git runner the clones go through. */
     readonly git?: typeof runGit | undefined;
+    /** Repositories cloned at once; `defaultClones()` when unset. */
+    readonly clones?: number | undefined;
     /** Told when each phase starts and after each file or bundle finishes. */
     readonly onProgress?: ((p: Progress) => void) | undefined;
   } = {},
@@ -273,7 +290,7 @@ export async function restoreSnapshot(
   // manifest that failed, so it reads the same however the clones raced.
   const failed: { at: number; error: string }[] = [];
   await Promise.all(
-    Array.from({ length: Math.min(CLONES, bundles.length) }, async () => {
+    Array.from({ length: Math.min(options.clones ?? defaultClones(), bundles.length) }, async () => {
       for (let b = bundles[next++]; b !== undefined; b = bundles[next++]) {
         const dir = repoDir(join(dataDir, "repos"), b.owner, b.name);
         mkdirSync(dirname(dir), { recursive: true });
@@ -325,11 +342,23 @@ export async function restoreSnapshot(
 }
 
 if (import.meta.main) {
-  const [name, dataDir] = process.argv.slice(2);
-  if (!name || !dataDir) {
+  const args = process.argv.slice(2);
+  let clones: number | undefined;
+  const at = args.indexOf("--clones");
+  if (at >= 0) {
+    clones = parseClones(args[at + 1] ?? "");
+    if (clones === undefined) {
+      // CLI message on stderr for the person at the terminal.
+      console.error(`--clones takes a whole number from 1 to ${MAX_CLONES}`);
+      process.exit(2);
+    }
+    args.splice(at, 2);
+  }
+  const [name, dataDir] = args;
+  if (!name || !dataDir || args.length > 2) {
     // CLI usage on stderr for the person at the terminal, not a forge event.
     console.error(
-      "usage: bun run src/snapshot/restore.ts <snapshot-name|latest> <data-dir>",
+      "usage: bun run src/snapshot/restore.ts <snapshot-name|latest> <data-dir> [--clones N]",
     );
     process.exit(2);
   }
@@ -353,6 +382,7 @@ if (import.meta.main) {
   let began = performance.now();
   const done = await restoreSnapshot(store, newest?.name ?? name, dataDir, {
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
+    clones,
     onProgress: (p) => {
       if (p.done < p.total) return;
       const seconds = ((performance.now() - began) / 1000).toFixed(1);
