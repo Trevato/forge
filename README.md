@@ -249,7 +249,7 @@ forge shows nothing.
 
 A new version proves itself once per version: after a boot that changes
 `FORGE_VERSION`, the forge waits (up to 10 minutes) for its public URL to
-answer `/healthz` as that version, then runs `scripts/smoke.ts` against it and
+answer `/healthz` as that version, then runs the smoke checks (`src/release/smoke.ts`) against it and
 keeps the verdict in `$FORGE_APP_DATA/release/proof.json`. A failure is a
 `Release X is unproven: …` card on an admin's board and on the terminal's first
 screen (the same cards), and is paged once; a later passing version clears it.

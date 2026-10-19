@@ -1,0 +1,65 @@
+{{/*
+The promote preflight (#2652): before an upgrade touches the Deployment, the
+new image boots beside the running forge on a copy of its data
+(`src/release/boot.ts --from /data`) and must answer health as its version.
+A refusal fails the upgrade, so the old pod is never taken down for a
+release that cannot start. The volume is local-path, bound to its node, so
+this pod schedules where the forge is; it reads the volume, writes only its
+own scratch directory on it, and removes that.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-boot-proof
+  labels:
+    app: {{ .Release.Name }}-boot-proof
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "0"
+    # A failed proof is kept for its log until the next upgrade replaces it.
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-boot-proof
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: boot-proof
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          command: ["bun", "src/release/boot.ts", "--from", "/data", "--budget", "180"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          # A forge with no crew, no apps and no SSH: a fraction of the
+          # running one, so it fits beside it where a surge pod may not.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-data

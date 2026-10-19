@@ -61,7 +61,7 @@ import { appendRunLog } from "../runs/log.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { exportTree, readFileAt } from "../apps/checkout.ts";
 import { parseCheck } from "../apps/manifest.ts";
-import { workerCpus } from "../../scripts/shards.ts";
+import { workerCpus } from "../core/capacity.ts";
 import { accountActive } from "../core/accounts.ts";
 import { childEnv, runStep } from "../apps/process.ts";
 import { noteReached } from "../apps/egress_report.ts";

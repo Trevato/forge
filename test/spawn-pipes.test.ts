@@ -28,6 +28,7 @@ const PIPING: Record<string, { sites: string[]; reason: string }> = {
   "src/git/smart-ssh.ts": { sites: ["stdout+stderr"], reason: "pump() drains stdout and stderr into the channel" },
   "src/kernel/data_home.ts": { sites: ["stdout"], reason: "spawnSync buffers stdout; stderr ignored" },
   "src/looks/capture.ts": { sites: ["stderr"], reason: "stderr read in a background loop; stdout ignored" },
+  "src/release/boot.ts": { sites: ["stderr"], reason: "stderr read to its end in a background loop, awaited before the reason is read; stdout ignored" },
   "src/release/checkout.ts": { sites: ["stdout+stderr"], reason: "stdout and stderr both read via Response.text()" },
   "src/cli/config.ts": { sites: ["stdout"], reason: "stdout awaited with the exit; stderr ignored" },
 };

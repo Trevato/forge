@@ -31,6 +31,7 @@ import { getUserById, type User } from "../core/users.ts";
 import { landedLines } from "../core/watches.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { lastMirror, mirrorNeed } from "../snapshot/mirror.ts";
+import { markRollbackPaged, rollbackNeed, rolledBack } from "../release/launch.ts";
 import { drillNeed, firstSeen, lastVerdict } from "../snapshot/verdict.ts";
 import { health } from "../http/health.ts";
 import { forgeVitals } from "../actions/health.ts";
@@ -309,6 +310,28 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
     }
   }
 
+  /**
+   * A roll the image's launcher undid (`release/launch.ts`) is news once,
+   * ever: it happened before this process began, so no baseline would page
+   * it. Marked on disk once it reached an admin, or when no admin can be
+   * reached; a page the backoff held is tried again on the pager's tick.
+   */
+  async function pageRollback(): Promise<void> {
+    const dataDir = app.config.dataDir;
+    const need = rollbackNeed(dataDir);
+    if (need === undefined || rolledBack(dataDir)?.paged !== false) return;
+    let reachable = false;
+    let delivered = false;
+    for (const id of people()) {
+      const user = getUserById(app.db, id);
+      const url = notifyUrlOf(app.db, id);
+      if (user === undefined || url === undefined || !user.isAdmin || user.kind !== "user") continue;
+      reachable = true;
+      if (await push(id, url, need.sentence)) delivered = true;
+    }
+    if (delivered || !reachable) markRollbackPaged(dataDir);
+  }
+
   async function pageDrain(userId: string, url: string, baseline: boolean): Promise<void> {
     const current = drainIncident(drainStart(), now());
     if (baseline || !paged.has(userId)) {
@@ -409,6 +432,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
       await tell(id, true).catch(() => undefined);
       await page(id, true).catch(() => undefined);
     }
+    await pageRollback().catch(() => undefined);
   });
 
   // Eight days of silence is no event: the clock wakes the notifier too.
@@ -428,6 +452,7 @@ export function startNotifier(app: App, options: NotifyOptions): Notifier {
     queue = queue.then(async () => {
       try {
         for (const id of people()) await page(id, false);
+        await pageRollback();
       } catch (error) {
         app.log.error("notify failed", { error: String(error) });
       }

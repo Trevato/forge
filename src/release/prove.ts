@@ -1,7 +1,7 @@
 /**
  * Is this release so: once per version, after a boot that changed it, the
  * forge waits for its own public URL to answer `/healthz` as that version,
- * then runs the smoke checks (`scripts/smoke.ts`) against it. The verdict is
+ * then runs the smoke checks (`release/smoke.ts`) against it. The verdict is
  * one small file under the data directory (`release/proof.json`), so a
  * restart of the same version never runs it again and vitals reads it
  * without the network. A failure is a `release` card, paged once by the
@@ -10,7 +10,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { smoke, type Failure } from "../../scripts/smoke.ts";
+import { smoke, type Failure } from "./smoke.ts";
 import { UNSTAMPED } from "../kernel/version.ts";
 
 /** How long the public URL has to answer as the new version. */

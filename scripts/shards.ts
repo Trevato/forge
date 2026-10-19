@@ -24,25 +24,10 @@ export const SHARDS_MAX = 32;
  */
 export const WORKER_MEMORY_BYTES = 512 * 1024 * 1024;
 
-/**
- * The share of a check cell's declared CPUs the workers are sized to. The
- * cell's watchdog (`src/apps/contain.ts`) stops a check whose tree averages
- * more than `check.limits.cpus` cores over 30 s, and a worker is more than
- * one core at its peaks (Bun's own threads, git children, a booted forge):
- * one worker per declared CPU averaged 16.1 of 16 and stopped main (#2161).
- */
-export const CELL_CPU_SHARE = 3 / 4;
-
-/**
- * The CPUs the gate sizes its workers to: the machine's, held under
- * {@link CELL_CPU_SHARE} of the cell's CPU limit (`FORGE_CELL_CPUS`) when
- * there is one, at least one. `availableParallelism()` sees the host, not
- * the cell: the cell is a watchdog, not a CPU quota the process can read.
- */
-export function workerCpus(machine: number, declared: number | undefined): number {
-  if (declared === undefined || !Number.isFinite(declared) || declared <= 0) return machine;
-  return Math.max(1, Math.min(machine, Math.floor(declared * CELL_CPU_SHARE)));
-}
+// Lives in src/ because the running forge sizes its checks with it, and the
+// image ships src/ alone (#2652).
+export { CELL_CPU_SHARE, workerCpus } from "../src/core/capacity.ts";
+import { workerCpus } from "../src/core/capacity.ts";
 
 /**
  * How many shards: one per CPU the process may use, no more than its

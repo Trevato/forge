@@ -141,3 +141,25 @@ request routed to it in that beat is refused.
 
 Release as the release workflow does. Nothing in this recipe changes the
 workflow or the chart.
+
+## A release that does not boot (#2652)
+
+Three guards stand between a release that cannot start and production, all
+in `src/release/`:
+
+- **At build.** The Dockerfile runs `bun src/release/boot.ts` on the image it
+  just built: `src/main.ts` on an empty data directory must answer
+  `/api/v1/health` as `$VERSION` within two minutes, or the build fails and
+  nothing is pushed. The image ships `src/` alone; `test/src-imports.test.ts`
+  refuses any import from `scripts/` or `test/`.
+- **Before the roll.** The chart's pre-upgrade hook
+  (`charts/app/templates/boot-proof.yaml`) runs the new image's
+  `boot.ts --from /data` beside the running forge, on a copy of its database
+  and top-level files. A refusal fails the upgrade while the old pod serves;
+  the failed Job is kept for its log (`kubectl -n "$NS" logs job/$REL-boot-proof`).
+- **After the roll.** The image starts `src/release/launch.ts`, which runs
+  `src/main.ts` and, when that version exits or is not ready within
+  `FORGE_READY_GRACE_S` (150 s, inside the startup probe), starts the last
+  version that was ready, kept on the volume under `release/good/`. The forge
+  that comes up shows a `release:rolled-back` card and pages the admins once.
+  The next version that reads ready clears it.

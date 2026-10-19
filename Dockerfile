@@ -14,8 +14,8 @@ RUN apt-get update \
 WORKDIR /app
 COPY package.json tsconfig.json ./
 COPY src ./src
-# src/ imports from scripts/ (checks/service.ts, release/prove.ts): without it the image cannot boot (0.7.166).
-COPY scripts ./scripts
+# src/ alone: nothing under it imports scripts/ or test/ (test/src-imports.test.ts),
+# and the boot proof below fails the build if that ever stops being so (#2652).
 
 # What the running forge says it is (src/kernel/version.ts): the release
 # passes the tag it is building as VERSION and the commit as COMMIT, and the
@@ -29,7 +29,15 @@ ENV FORGE_VERSION=$VERSION FORGE_COMMIT=$COMMIT
 ENV FORGE_DATA=/data PORT=8080 FORGE_SSH_PORT=2222
 EXPOSE 8080 2222
 USER bun
+# The build boots what it built (#2652): `src/main.ts` on an empty data
+# directory must answer /api/v1/health as $VERSION, or the build fails and
+# nothing is pushed. 0.7.166 passed its check from the repository and crashed
+# at import from this image.
+RUN bun src/release/boot.ts
 # tini reaps what an agent run leaves behind: a claude run spawns git, bun,
 # the app under test, and their children.
 ENTRYPOINT ["tini", "--"]
-CMD ["bun", "src/main.ts"]
+# The launcher runs src/main.ts, and when this version does not answer health
+# within FORGE_READY_GRACE_S (150), runs the last version that did, kept on
+# the volume (src/release/launch.ts, #2652).
+CMD ["bun", "src/release/launch.ts"]
