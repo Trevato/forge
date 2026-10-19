@@ -33,6 +33,7 @@ import { accountActive } from "../core/accounts.ts";
 import { runningLimitSentence, runningRuns } from "../settings/quotas.ts";
 import { appendRunLog } from "../runs/log.ts";
 import { decideAndRecord } from "./ledger.ts";
+import { byDials } from "./team_share.ts";
 import { ARCHIVED_WHY, getRepoById, type Repo } from "../core/repos.ts";
 import { listReviews } from "../core/reviews.ts";
 import {
@@ -1138,7 +1139,8 @@ function pump(
   const started: string[] = [];
   const noted = notedBy.get(app) ?? new Set<string>();
   notedBy.set(app, noted);
-  for (const queued of listQueued(app.db, "agent", 50)) {
+  // Builder starts go to teams in proportion to their dials (`team_share.ts`).
+  for (const queued of byDials(app.db, listQueued(app.db, "agent", 50))) {
     if (queued.issueId !== null && runningIssues.has(queued.issueId)) continue;
     const fresh = getRun(app.db, queued.id);
     if (!fresh || fresh.state !== "queued") continue;

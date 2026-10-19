@@ -112,6 +112,7 @@ import { laterGate } from "./later.ts";
 import { handedLimbs } from "./handed_limbs.ts";
 import { parkedTwice } from "./parks.ts";
 import { heldNow, stuckOf } from "./held.ts";
+import { owed } from "./team_share.ts";
 import { noteLimit } from "../core/standing.ts";
 import { pauseReason } from "./pacing.ts";
 import { grantLeft } from "../core/model_grant.ts";
@@ -979,6 +980,7 @@ async function work(
             limbs: handedLimbs(app, repo),
             laterGate: laterGate(app.db, repo.id),
             stuck: stuckOf(heldNow(app, repo)),
+            owed: owed(app.db, repo.id),
           }
         : {}),
       checkKind:
