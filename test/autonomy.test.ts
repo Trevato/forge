@@ -581,11 +581,17 @@ describe("a repository on its own", () => {
       })
     ).text();
     expect(crew).toContain("reviewer");
+    // Today's spend against the new ceiling is the forge's crew page's; the
+    // map only draws what waits for what.
+    const forgeCrew = await (
+      await fetch(`${servers.url}/settings/crew`, { headers: { cookie } })
+    ).text();
+    expect(forgeCrew).toMatch(/alice\/engine[\s\S]*?assisted/);
+    expect(forgeCrew).toMatch(/\/ \$25 today/);
     const map = await (
       await fetch(`${servers.url}/alice/engine/map`, { headers: { cookie } })
     ).text();
-    expect(map).toContain("Assisted");
-    expect(map).toContain("of $25 today");
+    expect(map).not.toContain("of $25 today");
   });
 
   test("the forge's own ceiling holds every repository, whatever each one's says", async () => {

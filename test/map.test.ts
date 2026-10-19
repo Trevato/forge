@@ -299,7 +299,7 @@ describe("the map, per app and across the forge", () => {
     const dormant = await repoOf(alice, "dormant", ["Rewrite the loader"]);
     park(alice, dormant.issues[0]!);
     // bob/secret: bob's own, which alice cannot see and bob can; assisted,
-    // with no crew, so the spend bar has a ceiling to draw against.
+    // with no crew, so it has a ceiling its lane no longer draws.
     const secret = await repoOf(bob, "secret", ["Rotate the keys"]);
     const on = await updateRepoSettings(app, bob, secret.repo, {
       autonomy: "assisted",
@@ -351,9 +351,13 @@ describe("the map, per app and across the forge", () => {
     expect(page).toContain('<i data-state="done"></i>done <b>1</b>');
     expect(page).toContain('<i data-state="waiting"></i>waiting <b>1</b>');
     expect(page).toContain('<i data-state="parked"></i>parked <b>1</b>');
-    // The lists beside it still read the graph.
+    // The lists beside it still read the graph; the critical path is the
+    // accent on the canvas alone, and spend and flow live on their boards.
     expect(page).toContain("Ready now");
-    expect(page).toContain("Critical path");
+    expect(page).toContain("Blocked on");
+    expect(page).not.toContain("Critical path");
+    expect(page).not.toContain("Two weeks");
+    expect(page).not.toContain("map-autonomy");
   });
 
   test("the drawing is a live region scoped to its repository, fits, and pans", async () => {
@@ -417,11 +421,11 @@ describe("the map, per app and across the forge", () => {
     // A repository with nothing to draw is not a lane.
     expect(page).not.toContain('href="/alice/bare/map"');
     // The forge's admin reads every repository, so bob's is a lane here,
-    // with today's spend drawn against its ceiling …
+    // saying its mode; today's spend is the board's, not the lane's …
     expect(page).toContain('href="/bob/secret/map"');
     expect(page).toContain('data-autonomy="assisted"');
-    expect(page).toContain('class="map-spend-fill" width="0.0"');
-    expect(page).toContain("$0.00 of $10");
+    expect(page).not.toContain("map-spend");
+    expect(page).not.toContain("$0.00 of $10");
 
     // … and bob, who is nobody's admin, sees his own and not alice's.
     const bobs = await (

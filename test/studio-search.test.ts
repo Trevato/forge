@@ -455,7 +455,7 @@ describe("the studio home says what the crew cost you today", () => {
     const html = await home(aliceCookie);
     expect(html).toContain("$8.00 spent today across 2 apps you can write");
     expect(html).toContain("1 paused at");
-    expect(html).toMatch(/<a href="\/map">their ceiling<\/a>/);
+    expect(html).toMatch(/<a href="\/board">their ceiling<\/a>/);
   });
 
   test("a viewer who can only read sees no figure at all", async () => {

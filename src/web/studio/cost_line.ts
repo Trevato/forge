@@ -22,6 +22,6 @@ export function costLine(db: Database, writable: readonly Repo[]): Html | null {
   const noun = `app${writable.length === 1 ? "" : "s"}`;
   const sentence = `$${spentUsd.toFixed(2)} spent today across ${writable.length} ${noun} you can write`;
   return html`<p class="small muted studio-cost">
-    ${sentence} · ${paused} paused at <a href="/map">their ceiling</a>
+    ${sentence} · ${paused} paused at <a href="/board">their ceiling</a>
   </p>`;
 }

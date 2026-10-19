@@ -3,9 +3,8 @@
  * a card one level below everything it is blocked by, so the top edge is
  * what is ready now and the longest open chain runs down the page in the
  * accent. Issues that wait for nothing and hold nothing up stand apart
- * below, under a rule. Beside the drawing: the three lists the crew and a
- * person both read — ready now, blocked on, the critical path — and two
- * weeks of open count over closed-per-day.
+ * below, under a rule. Beside the drawing: open work by pillar and the two
+ * lists the crew and a person both read — ready now and blocked on.
  *
  * One language for every map. A card says its title, who is on it, and one
  * word: ready, working, blocked, done, parked, or waiting. Edges are calm
@@ -27,10 +26,8 @@ import {
   blockedOn,
   criticalPath,
   idleFurniture,
-  levelAndFlow,
   readyNow,
   repoGraph,
-  type DayPoint,
   type Edge,
   type Graph,
   type Ranked,
@@ -67,7 +64,6 @@ import {
   type ParkedTwice,
 } from "../../crew/parks.ts";
 import {
-  OUTSIDERS_NOTE,
   proposedWork,
   READER_SUGGESTION,
 } from "../../crew/direct.ts";
@@ -1042,60 +1038,10 @@ function pillarList(repo: Repo, rows: readonly PillarRow[]): Html {
   </section>`;
 }
 
-function chart(points: DayPoint[]): Html {
-  const w = 300;
-  const h = 84;
-  const pad = 6;
-  const maxOpen = Math.max(1, ...points.map((p) => p.open));
-  const maxClosed = Math.max(1, ...points.map((p) => p.closed));
-  const step = (w - pad * 2) / Math.max(1, points.length - 1);
-  const line = points
-    .map(
-      (p, i) =>
-        `${i === 0 ? "M" : "L"}${(pad + i * step).toFixed(1)} ${(
-          pad +
-          (h - pad * 2) * (1 - p.open / maxOpen)
-        ).toFixed(1)}`,
-    )
-    .join(" ");
-  const barW = Math.max(3, step * 0.55);
-  const bars = points.map((p, i) => {
-    const bh = (h - pad * 2) * (p.closed / maxClosed);
-    return html`<rect
-      class="map-flow"
-      x="${(pad + i * step - barW / 2).toFixed(1)}"
-      y="${(h - pad - bh).toFixed(1)}"
-      width="${barW.toFixed(1)}"
-      height="${bh.toFixed(1)}"
-      rx="1.5"
-    />`;
-  });
-  const last = points.at(-1);
-  const closedTotal = points.reduce((s, p) => s + p.closed, 0);
-  return html`<section class="map-list">
-    <h2>Two weeks</h2>
-    <svg
-      class="map-chart"
-      viewBox="0 0 ${w} ${h}"
-      role="img"
-      aria-label="Open issues as a line over issues closed per day as bars"
-    >
-      ${bars}
-      <path class="map-level" d="${line}" />
-    </svg>
-    <p class="muted small">
-      <span class="num">${last?.open ?? 0}</span> open now ·
-      <span class="num">${closedTotal}</span> closed in 14 days
-    </p>
-  </section>`;
-}
-
 export const mapCss = /* css */ `
 .map-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 272px; gap: 24px; align-items: start; margin-top: 4px; }
 @media (max-width: 860px) { .map-wrap { grid-template-columns: 1fr; } }
 .map-main { min-width: 0; }
-.map-autonomy { flex-basis: 100%; color: var(--muted-fg); text-wrap: pretty; }
-.map-autonomy .ico { color: var(--faint); vertical-align: -3px; margin-right: 2px; }
 
 /* ---- the canvas ---- */
 .map-canvas { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); touch-action: pan-y; user-select: none; -webkit-user-select: none; }
@@ -1174,9 +1120,6 @@ export const mapCss = /* css */ `
 .map-list + .map-list { margin-top: 18px; }
 .map-ask { display: block; }
 .map-pillars ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 14px; }
-.map-chart { width: 100%; height: auto; display: block; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); }
-.map-level { fill: none; stroke: var(--accent); stroke-width: 1.5; }
-.map-flow { fill: color-mix(in srgb, var(--fg) 14%, transparent); }
 .map-empty { display: grid; justify-items: center; gap: 8px; padding: 40px 16px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted-fg); text-align: center; }
 
 /* ---- lanes ---- */
@@ -1191,11 +1134,6 @@ export const mapCss = /* css */ `
 .map-lane-name .muted { font-weight: 500; }
 .map-lane-word { font-size: 12.5px; color: var(--muted-fg); padding: 1px 8px; border: 1px solid var(--border); border-radius: 999px; line-height: 18px; }
 .map-lane-word[data-autonomy="autonomous"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); }
-.map-spend { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
-.map-spend svg { width: 72px; height: 4px; border-radius: 2px; overflow: hidden; }
-.map-spend-track { fill: var(--muted); }
-.map-spend-fill { fill: var(--muted-fg); }
-.map-spend[data-near="1"] .map-spend-fill { fill: var(--attn); }
 .map-lane-crew { display: inline-flex; align-items: center; gap: 4px; }
 .map-lane-crew .avatar { box-shadow: 0 0 0 2px var(--card); }
 .map-lane-head .map-counts { margin: 0 0 0 auto; }
@@ -1363,28 +1301,6 @@ export const mapViewJs = /* js */ `
 })();
 `;
 
-/** One line on how the repository runs itself, when it does. */
-function autonomyLine(ctx: Ctx, repo: Repo): Html | null {
-  if (repo.autonomy === "off")
-    return repo.crewOutsiders
-      ? html`<p class="small map-autonomy">${OUTSIDERS_NOTE}</p>`
-      : null;
-  const s = autonomyStatus(ctx.app, repo);
-  const paused =
-    s.paused === "ceiling"
-      ? " · paused at the ceiling until 00:00 UTC"
-      : s.paused === "no crew"
-        ? " · paused: no crew"
-        : s.paused === "nobody"
-          ? " · paused: nobody to act as"
-          : "";
-  const line = `${repo.autonomy === "autonomous" ? "Autonomous" : "Assisted"} · $${s.spentTodayUsd.toFixed(2)} of $${s.ceilingUsd.toFixed(0)} today · ${s.active} of ${s.slots} slots${paused} · ${repo.crewOutsiders ? "anyone signed in directs the crew" : "only writers direct the crew"}`;
-  return html`<p class="small map-autonomy">
-    ${icon("play")} ${line} ·
-    <a href="${repoBase(repo)}/settings/autonomy">settings</a>
-  </p>`;
-}
-
 const LIVE_KINDS = "run.*,issue.*,pull.*";
 
 /** The empty state in the studio's own words, pointing at the app page's
@@ -1423,7 +1339,6 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
         is the least work that still has to happen in order.
         <a href="${repoBase(repo)}/milestones">How far each milestone is</a>.
       </p>
-      ${autonomyLine(ctx, repo)}
     </div>
     <div
       class="map-wrap"
@@ -1468,22 +1383,6 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
           "Nothing open holds anything up.",
           issueHref,
         )}
-        ${critical.length > 1
-          ? html`<section class="map-list">
-              <h2>Critical path</h2>
-              <ol>
-                ${critical.map(
-                  (i) =>
-                    html`<li>
-                      <a href="${issueHref(repoBase(repo), i.number)}"
-                        >${i.title}</a
-                      >
-                    </li>`,
-                )}
-              </ol>
-            </section>`
-          : null}
-        ${chart(levelAndFlow(db, repo.id))}
       </aside>
     </div>`;
   return page({
@@ -1730,29 +1629,7 @@ export function globalLanes(app: App, viewer: User | undefined): Lane[] {
   );
 }
 
-/** "$1.20 of $10", as one string so nothing wraps inside it. */
-function spendWords(status: AutonomyStatus): string {
-  return `$${status.spentTodayUsd.toFixed(2)} of $${status.ceilingUsd.toFixed(0)}`;
-}
-
-function spendBar(status: AutonomyStatus): Html {
-  const share =
-    status.ceilingUsd > 0 ? status.spentTodayUsd / status.ceilingUsd : 0;
-  const pct = Math.max(0, Math.min(100, share * 100));
-  return html`<span
-    class="map-spend"
-    ${share >= 0.9 ? html`data-near="1"` : null}
-    title="Spent today against the day's ceiling"
-  >
-    <svg viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true">
-      <rect class="map-spend-track" width="100" height="4" />
-      <rect class="map-spend-fill" width="${pct.toFixed(1)}" height="4" />
-    </svg>
-    <span>${spendWords(status)}</span>
-  </span>`;
-}
-
-/** A lane: the repository's name, how it runs itself, who is on it, and its map. */
+/** A lane: the repository's name, its autonomy mode, who is on it, and its map. */
 export function laneHtml(lane: Lane, width: number): Html {
   const { repo } = lane;
   const id = `lane-${repo.ownerName}-${repo.name}`;
@@ -1771,7 +1648,6 @@ export function laneHtml(lane: Lane, width: number): Html {
       <span class="map-lane-word" data-autonomy="${repo.autonomy}"
         >${repo.autonomy}</span
       >
-      ${lane.status === undefined ? null : spendBar(lane.status)}
       ${lane.workers.length === 0
         ? null
         : html`<span

@@ -16,7 +16,6 @@ import {
   blockedOn,
   criticalPath,
   dependenciesOf,
-  levelAndFlow,
   readyNow,
   removeDependency,
   repoGraph,
@@ -154,7 +153,7 @@ describe("dependencies", () => {
     expect(placed.islandFrom).toBe(4);
   });
 
-  test("closing a blocker frees what waited; the level falls and the flow ticks", () => {
+  test("closing a blocker frees what waited and shortens the critical path", () => {
     const closed = setIssueState(app, alice, repo, issue(1), "closed");
     expect(closed.ok).toBe(true);
     const graph = repoGraph(app.db, repo.id);
@@ -163,10 +162,6 @@ describe("dependencies", () => {
     expect(ready).not.toContain(4); // still waits for 2
     // 2 → 4 → 5 → 6 is now the longest open chain: 4 still waits for 2.
     expect(criticalPath(graph).map((i) => i.number)).toEqual([2, 4, 5, 6]);
-    const points = levelAndFlow(app.db, repo.id, 3);
-    expect(points).toHaveLength(3);
-    expect(points.at(-1)!.open).toBe(6);
-    expect(points.at(-1)!.closed).toBe(1);
     const closedNow = getIssue(app.db, repo.id, 1)!;
     expect(setIssueState(app, alice, repo, closedNow, "open").ok).toBe(true);
     expect(getIssue(app.db, repo.id, 1)?.state).toBe("open");
@@ -293,7 +288,7 @@ describe("dependencies", () => {
       await fetch(`${base}/alice/engine/map`, { headers: { cookie } })
     ).text();
     expect(map).toContain("Ready now");
-    expect(map).toContain("Critical path");
+    expect(map).not.toContain("Critical path");
     expect(map).toContain('data-state="ready"');
     expect(map).toContain("Extract renderer");
     expect(map).toContain("finishing it frees 4");

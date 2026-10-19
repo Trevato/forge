@@ -2,7 +2,7 @@
 
 Part of #2695. A reading of `src/web/pages/map.ts`, section by section: does a
 board or an issue's dependency list already show it, and keep or cut. This
-document changes no code; each **cut** is a follow-up issue, not done here.
+document changed no code; #2770 made the cuts.
 
 An issue's dependency list shows one issue's direct edges. A board shows
 work by state, per app, with a "merged by pillar" line. Neither draws the
@@ -28,4 +28,7 @@ whole graph or follows a chain more than one hop.
 
 Cutting `Autonomy line`, `Critical path` list, `Two weeks` and `Spend bar`
 leaves the canvas, counts, pillars, ready and blocked: what only the graph
-can say.
+can say. Done in #2770: today's spend against each app's ceiling is read on
+`/board` (the home's "their ceiling" link goes there), the mode on
+`settings/autonomy`, and an issue's place in a chain on its dependency list.
+`GET /api/v1/map` still carries `critical` and each lane's spend for the crew.

@@ -1,7 +1,8 @@
 /**
- * docs/design/map.md names every section of the map page, and each one is
- * still in the page source (#2768). Each entry is a backticked name leading a
- * bullet; this maps it to the text the page carries for it.
+ * docs/design/map.md names every section of the map page and says keep or
+ * cut (#2768): each one kept is in the page source, each one cut is gone
+ * from it (#2770). Each entry is a backticked name leading a bullet; this
+ * maps it to the text the page carried for it.
  */
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -28,8 +29,24 @@ test("the doc names every section it knows, and no other", () => {
   expect(named.sort()).toEqual(Object.keys(MARKERS).sort());
 });
 
-test("every section the doc names is in the page source", () => {
-  for (const name of named) expect(src).toContain(MARKERS[name]!);
+const verdicts = new Map(
+  [...doc.matchAll(/^- `([^`]+)` —.*\*\*(Keep|Cut)\*\*/gm)].map((m) => [
+    m[1]!,
+    m[2]!,
+  ]),
+);
+
+test("every section the doc keeps is in the page source", () => {
+  for (const name of named)
+    if (verdicts.get(name) === "Keep") expect(src).toContain(MARKERS[name]!);
+});
+
+test("every section the doc cuts is gone from the page source", () => {
+  const cut = named.filter((name) => verdicts.get(name) === "Cut");
+  expect(cut.sort()).toEqual(
+    ["Autonomy line", "Critical path", "Spend bar", "Two weeks"].sort(),
+  );
+  for (const name of cut) expect(src).not.toContain(MARKERS[name]!);
 });
 
 test("every section says keep or cut", () => {
