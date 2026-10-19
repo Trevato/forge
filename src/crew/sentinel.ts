@@ -15,7 +15,7 @@
 
 import { Database } from "bun:sqlite";
 import type { App } from "../app.ts";
-import { addComment, openIssue } from "../actions/issues.ts";
+import { addComment, openIssue, setIssueState } from "../actions/issues.ts";
 import {
   CAPACITY_KEYS,
   capacityDefault,
@@ -667,6 +667,60 @@ function continuesDone(app: App, repo: Repo, actor: User, f: Finding, evidence: 
 }
 
 /**
+ * A finding backed by an incident whose cause has stayed out of the degraded
+ * history for a day is done: the sentinel says since when and closes it. Not a
+ * setting (its own rule), and not one a person has spoken on — they decide.
+ * `active` are the keys found now; a finding that is there is not held.
+ */
+function closeHeld(app: App, repo: Repo, actor: User, active: ReadonlySet<string>, now: number): void {
+  const open = app.db
+    .query<{ key: string; issue_id: string }, []>(
+      `SELECT t.key, t.issue_id FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
+        WHERE i.state = 'open' AND t.key LIKE 'degraded:%'`,
+    )
+    .all();
+  if (open.length === 0) return;
+  const history = spans(app.db, now - 30 * DAY_MS, now);
+  for (const t of open) {
+    try {
+      if (active.has(t.key)) continue;
+      let since = -Infinity;
+      let live = false;
+      for (const s of history) {
+        if (`degraded:${keyPart(s.cause)}` !== t.key) continue;
+        if (s.closedAt === null) live = true;
+        else since = Math.max(since, s.closedAt);
+      }
+      if (live || since === -Infinity || now - since < DAY_MS) continue;
+      const spoke = app.db
+        .query<{ n: number }, [string]>(
+          `SELECT COUNT(*) AS n FROM comment c JOIN user u ON u.id = c.author_id
+            WHERE c.issue_id = ?1 AND u.is_agent = 0 AND u.kind = 'user'`,
+        )
+        .get(t.issue_id);
+      if (spoke !== null && spoke.n > 0) continue;
+      const issue = getIssueById(app.db, t.issue_id);
+      if (issue === undefined || issue.repoId !== repo.id) continue;
+      const said = addComment(
+        app,
+        actor,
+        repo,
+        issue,
+        `Held since ${new Date(since).toISOString()}: no new incident on this cause for over a day. Closing as done; if it comes back it is filed again.`,
+      );
+      if (!said.ok) {
+        log.warn("sentinel could not comment", { key: t.key, error: String(said.error) });
+        continue;
+      }
+      const closed = setIssueState(app, actor, repo, issue, "closed", { reason: "done" });
+      if (!closed.ok) log.warn("sentinel could not close", { key: t.key, error: String(closed.error) });
+    } catch (error) {
+      log.error("sentinel close failed", { key: t.key, error: String(error) });
+    }
+  }
+}
+
+/**
  * Read, file, record. One open issue per finding: a tracked finding whose
  * issue is open is commented on only when its evidence changed; one whose
  * issue is closed and returns is a new issue — except a setting a person
@@ -746,6 +800,8 @@ export function hunt(
       }
     }
   }
+  if (repo !== undefined && actor !== undefined)
+    closeHeld(app, repo, actor, new Set(findings.map((f) => f.key)), now);
   // A hunt with nowhere to file is recorded as such, never as a quiet one.
   const unfiled = repo === undefined || actor === undefined;
   app.db

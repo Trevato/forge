@@ -813,3 +813,66 @@ describe("a degraded incident whose issue closed as done", () => {
     expect(r.commented).toBe(0);
   });
 });
+
+// ---- a finding held for a day is closed as done (#2635) ----
+
+describe("a degraded finding whose cause has stayed closed", () => {
+  let hdir: string;
+  let happ: App;
+  let hrepo: Repo;
+  let halice: User;
+  const T0 = Date.parse("2026-10-18T12:00:00.000Z");
+  const plant = (cause: string, closedAt: number): void => {
+    happ.db
+      .query("INSERT INTO degraded_span (cause, sentence, href, opened_at, closed_at) VALUES (?1, 'It is slow.', '/x', ?2, ?3)")
+      .run(cause, closedAt - 40 * D_MIN, closedAt);
+  };
+  const state = (title: string): string =>
+    happ.db.query<{ state: string }, [string]>("SELECT state FROM issue WHERE title LIKE ?1").get(`%${title}%`)!.state;
+  beforeAll(async () => {
+    hdir = await mkdtemp(join(tmpdir(), "forge-sentinel-held-"));
+    happ = createApp({ dataDir: hdir, port: 0 });
+    const a = await createUser(happ.db, { origin: "seed", trusted: true, username: "alice", email: "alice@forge.local", password: "a-good-passphrase", adminIfFirst: true });
+    if (!a.ok) throw new Error(a.error);
+    halice = a.value;
+    const made = await createRepo(happ, halice, { name: "forge", visibility: "private" });
+    if (!made.ok) throw new Error(String(made.error));
+    hrepo = made.value;
+    // Two incidents, both closed at T0; one will get a person's comment.
+    plant("drill", T0);
+    plant("disk", T0);
+    expect(hunt(happ, "alice/forge", T0 + 5 * D_MIN).filed).toBe(2);
+  });
+  afterAll(async () => {
+    happ.db.close();
+    await rm(hdir, { recursive: true, force: true });
+  });
+
+  test("23 hours closed stays open; a person's comment and a setting keep theirs at 25", () => {
+    // A setting finding, tracked as the sentinel would.
+    const s = createIssue(happ.db, { repoId: hrepo.id, authorId: halice.id, title: "Sentinel: Setting x" });
+    if (!s.ok) throw new Error(String(s.error));
+    happ.db.query("INSERT INTO sentinel_finding (key, issue_id, evidence, first_seen, last_seen) VALUES ('setting:x', ?1, '', 'a', 'a')").run(s.value.id);
+    const disk = happ.db.query<{ id: string }, []>("SELECT id FROM issue WHERE title LIKE '%disk%'").get()!;
+    addComment(happ.db, { issueId: disk.id, authorId: halice.id, body: "looking" });
+
+    hunt(happ, "alice/forge", T0 + 23 * HOUR);
+    expect(state("drill")).toBe("open");
+
+    hunt(happ, "alice/forge", T0 + 25 * HOUR);
+    expect(state("drill")).toBe("closed");
+    const drill = happ.db.query<{ id: string; close_reason: string }, []>("SELECT id, close_reason FROM issue WHERE title LIKE '%drill%'").get()!;
+    expect(drill.close_reason).toBe("done");
+    const said = listComments(happ.db, drill.id).filter((c) => c.body.startsWith("Held since "));
+    expect(said.length).toBe(1);
+    expect(said[0]!.body).toContain(new Date(T0).toISOString());
+    expect(state("disk")).toBe("open");
+    expect(state("Setting x")).toBe("open");
+  });
+
+  test("a finding that comes back is a new issue", () => {
+    const t = T0 + 3 * DAY;
+    happ.db.query("INSERT INTO degraded_span (cause, sentence, href, opened_at, closed_at) VALUES ('drill', 'It is slow.', '/x', ?1, ?2)").run(t - HOUR, t - 20 * D_MIN);
+    expect(hunt(happ, "alice/forge", t).filed).toBe(1);
+  });
+});
