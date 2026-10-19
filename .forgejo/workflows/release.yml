@@ -74,6 +74,11 @@ jobs:
           URL="${FORGE_URL%/}"
           REPO="$OWNER/$APP"
           SHA=$(git -C src rev-parse HEAD)
+          # Bootstrapping: a live forge older than this route answers no_route. Then
+          # there is nothing to ask; the build's own boot proof still guards the image.
+          if curl -sS "$URL/api/v1/repos/$REPO/commits/$SHA/check" | grep -q '"error":"no_route"'; then
+            echo "warning: the live forge has no commit-check route yet (older release); relying on the boot proof"; exit 0
+          fi
           read_check() {
             if [ -n "${FORGE_TOKEN:-}" ]; then
               curl -fsS -H "authorization: Bearer $FORGE_TOKEN" "$URL/api/v1/repos/$REPO/commits/$SHA/check"
