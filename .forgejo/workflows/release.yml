@@ -67,12 +67,14 @@ jobs:
       - name: the forge's own check is green on this commit
         env:
           FORGE_URL: ${{ vars.FORGE_URL }}
+          FORGE_REPO: ${{ vars.FORGE_REPO }}
           FORGE_TOKEN: ${{ secrets.FORGE_TOKEN }}
         run: |
           set -eu
           [ -n "${FORGE_URL:-}" ] || { echo "FATAL: variable FORGE_URL is not set on the mirror"; exit 1; }
           URL="${FORGE_URL%/}"
-          REPO="$OWNER/$APP"
+          # The forge names the repository its own way (trevato/forge), not as the mirror does (trevato-apps/forge).
+          REPO="${FORGE_REPO:-$OWNER/$APP}"
           SHA=$(git -C src rev-parse HEAD)
           # Bootstrapping: a live forge older than this route answers no_route. Then
           # there is nothing to ask; the build's own boot proof still guards the image.
