@@ -19,7 +19,7 @@ import { flashOrJson, page, redirect } from "../layout.ts";
 import { btn, card } from "../ui.ts";
 
 /** The events that change what the chain page says. */
-export const CHAIN_LIVE = "forge.severed,forge.proposal,forge.follow_mode,forge.upstream";
+export const CHAIN_LIVE = "forge.severed,forge.proposal,forge.follow_mode,forge.upstream,forge.updates_taken";
 
 const MODE_LABELS: Record<FollowMode, string> = {
   "tell-me": "Tell me when the parent has something new",

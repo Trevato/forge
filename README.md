@@ -381,14 +381,17 @@ taking a release is not done here. This forge publishes its own
 forge can be a parent. The terminal shows the count, not the release names.
 
 A spawned forge's own code is a fork of its parent's (`<org>/forge`, chosen
-`followMode` `tell-me` or `take-updates`; recorded: the mode does not yet apply anything). Once an hour, and
+`followMode` `tell-me` or `take-updates`; in `take-updates` the hourly check merges what the parent gained). Once an hour, and
 on demand, a forge that follows and has not severed fetches its parent's code into
 `refs/upstream/*` of its own `<org>/forge` (no branch of the fork moves) and keeps
 `{ behind, parentTip, checkedAt, error }` in `upstream.json` under `FORGE_APP_DATA`;
 the count shows on the chain page, in the terminal's **Chain** (`c` checks now), and as
 `upstream` in the API and MCP payloads. `POST /:owner/forge/following/check` (a writer,
 same-origin) checks on demand; a fetch is cut at 60 s and a failure is recorded, not
-thrown. In `tell-me`, a new parent tip makes one inbox card for the owner (an issue on the fork assigned to them, "Your parent forge has N new commits", linking the chain page); `toldTip` in `upstream.json` keeps it to one per tip, and `take-updates` or a severed link makes none. Its chain
+thrown. In `take-updates` the check then fast-forwards or cleanly merges `refs/upstream/HEAD`
+into the fork's main (`spawn/take.ts`), records it as `taken` in `upstream.json` (shown on the chain line) and as a
+`forge.updates_taken` event; on a conflict main is untouched and one open issue,
+"Take updates from <parent>", names the files. It never deploys. In `tell-me`, a new parent tip makes one inbox card for the owner (an issue on the fork assigned to them, "Your parent forge has N new commits", linking the chain page); `toldTip` in `upstream.json` keeps it to one per tip, and `take-updates` or a severed link makes none. Its chain
 to the root is at `/:owner/forge/following`, in `chain` of `GET
 /api/v1/repos/:owner/forge/following` and the MCP `following` tool, and in the
 terminal's **Chain** command; the owner severs it with the page's Sever,

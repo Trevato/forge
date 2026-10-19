@@ -20,6 +20,7 @@ import { getUserById, getUserByName } from "../core/users.ts";
 import { runGit } from "../git/env.ts";
 import { repoDir } from "../git/repos.ts";
 import { forgeLinkOf, originOf } from "./chain.ts";
+import { takeFromParent, type Taken } from "./take.ts";
 
 export const CHECK_MS = 60 * 60_000;
 export const FETCH_TIMEOUT_MS = 60_000;
@@ -34,6 +35,8 @@ export interface UpstreamState {
   readonly checkedAt: number;
   /** One line; "" when the last attempt worked. */
   readonly error: string;
+  /** What `take-updates` did with the parent's new commits at that check; absent when nothing. */
+  readonly taken?: Taken;
   /** The parent tip the owner was last told about; "" when never. */
   readonly toldTip: string;
 }
@@ -51,11 +54,28 @@ export async function upstreamState(app: App): Promise<UpstreamState | undefined
       parentTip: typeof d["parentTip"] === "string" && TIP.test(d["parentTip"]) ? d["parentTip"] : "",
       checkedAt: d["checkedAt"],
       error: typeof d["error"] === "string" ? d["error"].slice(0, 200) : "",
+      ...readTaken(d["taken"]),
       toldTip: typeof d["toldTip"] === "string" && TIP.test(d["toldTip"]) ? d["toldTip"] : "",
     };
   } catch {
     return undefined;
   }
+}
+
+function readTaken(v: unknown): { taken?: Taken } {
+  if (typeof v !== "object" || v === null) return {};
+  const t = v as Record<string, unknown>;
+  if (t["kind"] === "took" && typeof t["to"] === "string" && TIP.test(t["to"]) && typeof t["commits"] === "number")
+    return { taken: { kind: "took", to: t["to"], commits: t["commits"], merged: t["merged"] === true } };
+  if (t["kind"] === "conflict" && Array.isArray(t["files"]))
+    return {
+      taken: {
+        kind: "conflict",
+        files: t["files"].filter((f): f is string => typeof f === "string").slice(0, 20).map((f) => f.slice(0, 200)),
+        issue: typeof t["issue"] === "number" ? t["issue"] : null,
+      },
+    };
+  return {};
 }
 
 async function keep(app: App, s: UpstreamState): Promise<void> {
@@ -129,6 +149,15 @@ async function run(app: App, options: { remote?: string; now?: number }): Promis
         toldTip: (await upstreamState(app))?.toldTip ?? "",
       };
     }
+    // The parent is ahead and this forge takes updates: merge it or tell.
+    if (state.error === "" && state.behind !== null && state.behind > 0 && link.mode === "take-updates") {
+      const taken = await takeFromParent(app, link);
+      if (taken !== undefined) {
+        const left = await runGit(["rev-list", "--count", "HEAD..refs/upstream/HEAD"], { cwd: dir });
+        const behind = left.ok ? Number(left.value.trim()) : NaN;
+        state = { ...state, behind: Number.isSafeInteger(behind) ? behind : state.behind, taken };
+      }
+    }
     const repo = getRepo(app.db, o, n);
     // Remember the tip before the card, so a crash between them can lose a card but never repeat one.
     const tell = repo !== undefined && link.mode === "tell-me" && state.error === "" && state.parentTip !== "" &&
@@ -183,6 +212,10 @@ export function upstreamWords(s: UpstreamState | undefined, now = Date.now()): s
   const mins = Math.max(0, Math.floor((now - s.checkedAt) / 60_000));
   const when = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : `${Math.floor(mins / 60)} h ago`;
   if (s.error !== "") return `could not check your parent: ${s.error} (${when})`;
+  if (s.taken?.kind === "took")
+    return `took ${s.taken.commits} new commit${s.taken.commits === 1 ? "" : "s"} from your parent${s.taken.merged ? " in a merge" : ""} (checked ${when})`;
+  if (s.taken?.kind === "conflict")
+    return `your parent's new code conflicts in ${s.taken.files.join(", ")}${s.taken.issue === null ? "" : `; see issue #${s.taken.issue}`} (checked ${when})`;
   if (s.behind === null) return `checked ${when}`;
   if (s.behind === 0) return `up to date (checked ${when})`;
   return `your parent has ${s.behind} new commit${s.behind === 1 ? "" : "s"} (checked ${when})`;
