@@ -29,17 +29,26 @@ export type SystemView = {
   at: string;
   /** Seconds between the two readings the rates are over; 0 when there was only one. */
   seconds: number;
-  cpu: { busyPct: number | null; cores: (number | null)[] };
+  cpu: {
+    busyPct: number | null;
+    cores: (number | null)[];
+    /** Each core's last readings, percent, oldest first (kept by `live.ts`; empty from `buildSystem`). */
+    history: number[][];
+  };
   temps: { chip: string; label: string; celsius: number }[];
   hottestC: number | null;
   load: [number, number, number] | null;
-  memory: { totalBytes: number; usedBytes: number; swapUsedBytes: number } | null;
+  memory: { totalBytes: number; usedBytes: number; swapUsedBytes: number; swapTotalBytes: number } | null;
   disks: { mount: string; fs: string; totalBytes: number; usedBytes: number }[];
   net: { name: string; rxBytesPerSecond: number | null; txBytesPerSecond: number | null }[];
+  io: { name: string; readBytesPerSecond: number | null; writeBytesPerSecond: number | null }[];
   processes: number;
   groups: Group[];
   duplicates: Duplicate[];
 };
+
+/** Processes kept per group. */
+const TOP = 8;
 
 export type Roots = readonly { label: string; root: number; cap?: { bytes: number; by: "kernel" | "watch" } }[];
 
@@ -125,7 +134,7 @@ export function buildSystem(prev: Raw | undefined, next: Raw, roots: Roots, self
   for (const g of groups.values()) {
     g.top = g.top
       .sort((a, b) => (b.cpuCores ?? 0) - (a.cpuCores ?? 0) || b.rssBytes - a.rssBytes)
-      .slice(0, 5);
+      .slice(0, TOP);
     if (g.cpuCores !== null) g.cpuCores = Math.round(g.cpuCores * 100) / 100;
   }
   const mem = next.memory;
@@ -135,6 +144,7 @@ export function buildSystem(prev: Raw | undefined, next: Raw, roots: Roots, self
     cpu: {
       busyPct: known.length === 0 ? null : Math.round((known.reduce((a, b) => a + b, 0) / known.length) * 10) / 10,
       cores,
+      history: [],
     },
     temps: next.temps,
     hottestC: next.temps.length === 0 ? null : Math.max(...next.temps.map((t) => t.celsius)),
@@ -143,6 +153,7 @@ export function buildSystem(prev: Raw | undefined, next: Raw, roots: Roots, self
       totalBytes: mem.total,
       usedBytes: mem.total - mem.available,
       swapUsedBytes: mem.swapTotal - mem.swapFree,
+      swapTotalBytes: mem.swapTotal,
     },
     disks: next.disks.map((d) => ({ mount: d.mount, fs: d.fs, totalBytes: d.total, usedBytes: d.used })),
     net: next.net.map((n) => {
@@ -152,6 +163,10 @@ export function buildSystem(prev: Raw | undefined, next: Raw, roots: Roots, self
         rxBytesPerSecond: rate(o?.rx, n.rx, seconds),
         txBytesPerSecond: rate(o?.tx, n.tx, seconds),
       };
+    }),
+    io: next.io.map((d) => {
+      const o = prev?.io.find((x) => x.name === d.name);
+      return { name: d.name, readBytesPerSecond: rate(o?.read, d.read, seconds), writeBytesPerSecond: rate(o?.write, d.write, seconds) };
     }),
     processes: next.procs.length,
     groups: [...groups.values()].sort((a, b) => (b.cpuCores ?? 0) - (a.cpuCores ?? 0) || b.rssBytes - a.rssBytes),

@@ -162,6 +162,7 @@ describe("/system: a check cell's memory beside its cap", () => {
       memory: null,
       disks: [],
       net: [],
+      io: [],
       procs: [proc(1, 0, 100), proc(200, 1, 1 << 20), proc(201, 200, 3 << 20)],
     };
     const v = buildSystem(undefined, raw, [

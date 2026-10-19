@@ -10,5 +10,10 @@ export const bytes = (n: number): string => {
   return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 };
 
+const BLOCKS = "▁▂▃▄▅▆▇█";
+/** A history as block characters, one per reading, each 0–100. */
+export const spark = (history: readonly number[]): string =>
+  history.map((n) => BLOCKS[Math.min(7, Math.max(0, Math.floor((n / 100) * 8)))]).join("");
+
 export const span = (s: number): string =>
   s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : s < 172_800 ? `${Math.round(s / 3600)}h` : `${Math.round(s / 86_400)}d`;

@@ -15,7 +15,7 @@ import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { telemetryReader } from "../../actions/telemetry.ts";
 import type { Ctx } from "../../http/context.ts";
 import { memoryCapHolder } from "../../apps/contain.ts";
-import { bytes, span } from "../../system/format.ts";
+import { bytes, spark, span } from "../../system/format.ts";
 import { eventStream } from "../../http/sse.ts";
 import type { SystemView } from "../../system/view.ts";
 import { live } from "../../system/live.ts";
@@ -23,7 +23,7 @@ import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html, raw, type Html } from "../html.ts";
 import { page } from "../layout.ts";
 import { systemLiveJs } from "../system-live.ts";
-import { card, empty, listCard, pill, row } from "../ui.ts";
+import { card, empty, pill } from "../ui.ts";
 
 /** A group's memory, and a cell's beside its cap and who holds the cap. */
 const memoryOf = (g: { rssBytes: number; capBytes: number | null; capBy: "kernel" | "watch" | null }): Html =>
@@ -33,6 +33,33 @@ const memoryOf = (g: { rssBytes: number; capBytes: number | null; capBy: "kernel
 
 const pct = (n: number | null): string => (n === null ? "—" : `${n.toFixed(1)}%`);
 const coresOf = (n: number | null): string => (n === null ? "—" : n.toFixed(2));
+
+const rateOf = (n: number | null): string => (n === null ? "—" : `${bytes(n)}/s`);
+
+/** One line of the machine card: a name, a meter, its figure and (for a core) its history. */
+const meterRow = (name: string, value: number | null, max: number, figure: string, history = ""): Html =>
+  html`<div class="bt-row"><span class="bt-name" title="${name}">${name}</span>
+    <meter class="bt-bar" aria-label="${name} ${figure}" min="0" max="${String(max)}" high="${String(max * 0.85)}" value="${String(value ?? 0)}">${figure}</meter>
+    <span class="bt-val">${figure}</span>${history ? html`<span class="bt-hist" aria-hidden="true">${history}</span>` : null}</div>`;
+
+/** Processes grouped forge, check, app, host; the client re-sorts them by CPU or memory (`system-live.ts`). */
+const KIND_ORDER = ["forge", "check", "app", "host"] as const;
+function procTable(v: SystemView): Html {
+  const groups = KIND_ORDER.flatMap((k) => v.groups.filter((g) => g.kind === k));
+  return html`<div class="table-wrap"><table class="table bt-procs" aria-label="Processes by what launched them">
+    <thead><tr><th scope="col">pid</th><th scope="col">command</th><th scope="col" class="num">cpu</th><th scope="col" class="num">mem</th><th scope="col" class="num">age</th></tr></thead>
+    ${groups.map(
+      (g) => html`<tbody data-kind="${g.kind}" data-cpu="${String(g.cpuCores ?? 0)}" data-mem="${String(g.rssBytes)}">
+        <tr class="bt-group"><th scope="colgroup" colspan="2">${g.label} <span class="muted">${String(g.procs)} procs</span></th>
+          <td class="num">${coresOf(g.cpuCores)}</td><td class="num">${memoryOf(g)}</td><td class="num">${span(g.oldestSeconds)}</td></tr>
+        ${g.top.map(
+          (p) => html`<tr data-cpu="${String(p.cpuCores ?? 0)}" data-mem="${String(p.rssBytes)}"><td class="mono">${String(p.pid)}</td><td class="mono">${p.comm}</td>
+            <td class="num mono">${coresOf(p.cpuCores)}</td><td class="num mono">${bytes(p.rssBytes)}</td><td class="num mono">${span(p.ageSeconds)}</td></tr>`,
+        )}
+      </tbody>`,
+    )}
+  </table></div>`;
+}
 
 const mib = (n: number) => `${(n / 1_048_576).toFixed(1)} MiB`;
 const hhmm = (at: number) => new Date(at).toISOString().slice(0, 16).replace("T", " ");
@@ -71,9 +98,6 @@ export function regions(v: SystemView): Record<string, string> {
           <ul class="list small mono">
             ${v.duplicates.map((d) => html`<li>${d.file} · ${String(d.checks.length)} checks: ${d.checks.join(", ")}</li>`)}
           </ul>`;
-  const cores = v.cpu.cores.map(
-    (c, i) => html`<span class="mono small" title="cpu${String(i)}">${c === null ? "—" : String(Math.round(c))}</span> `,
-  );
   const out: Record<string, Html> = {
     "sys-dup": dup,
     summary: html`${pill(`CPU ${pct(v.cpu.busyPct)}`, v.cpu.busyPct !== null && v.cpu.busyPct >= 90 ? "danger" : undefined)}
@@ -82,36 +106,22 @@ export function regions(v: SystemView): Record<string, string> {
           ${pill(`hottest ${v.hottestC === null ? "—" : `${v.hottestC.toFixed(0)}°C`}`)}
           ${pill(`memory ${v.memory ? `${bytes(v.memory.usedBytes)} of ${bytes(v.memory.totalBytes)}` : "—"}`)}
           ${pill(`${String(v.processes)} processes`)}`,
-    cores: html`${cores}`,
+    cores: html`${v.cpu.cores.map((c, i) => meterRow(`cpu${String(i)}`, c, 100, c === null ? "—" : `${c.toFixed(0)}%`, spark(v.cpu.history[i] ?? [])))}`,
+    mem: html`${v.memory
+        ? html`${meterRow("mem", v.memory.usedBytes, v.memory.totalBytes, `${bytes(v.memory.usedBytes)} / ${bytes(v.memory.totalBytes)}`)}
+            ${meterRow("swap", v.memory.swapUsedBytes, v.memory.swapTotalBytes, v.memory.swapTotalBytes === 0 ? "none" : `${bytes(v.memory.swapUsedBytes)} / ${bytes(v.memory.swapTotalBytes)}`)}`
+        : null}
+      ${v.load ? html`<div class="bt-row"><span class="bt-name">load</span><span class="bt-val">${v.load.map((l) => l.toFixed(2)).join("  ")}</span></div>` : null}`,
     temps: html`${v.temps.map((t) => `${t.chip} ${t.label} ${t.celsius.toFixed(0)}°C`).join(" · ")}`,
-    "sys-disks": listCard(
-      [
-        ...v.disks.map((d) =>
-          row({
-            title: html`<span class="mono">${d.mount}</span>`,
-            meta: html`${d.fs}`,
-            trail: html`${pill(`${String(Math.round((d.usedBytes / d.totalBytes) * 100))}%`)} ${bytes(d.totalBytes)}`,
-          }),
-        ),
-        ...v.net.map((n) =>
-          row({
-            title: html`<span class="mono">${n.name}</span>`,
-            trail: html`↓ ${n.rxBytesPerSecond === null ? "—" : `${bytes(n.rxBytesPerSecond)}/s`} ↑ ${n.txBytesPerSecond === null ? "—" : `${bytes(n.txBytesPerSecond)}/s`}`,
-          }),
-        ),
-      ],
+    "sys-disks": card(
+      html`<div class="bt-grid">
+        ${v.disks.map((d) => meterRow(d.mount, d.usedBytes, d.totalBytes, `${bytes(d.usedBytes)} / ${bytes(d.totalBytes)} ${d.fs}`))}
+        ${v.io.map((d) => html`<div class="bt-row" data-io="${d.name}"><span class="bt-name">${d.name}</span><span class="bt-val">R ${rateOf(d.readBytesPerSecond)} W ${rateOf(d.writeBytesPerSecond)}</span></div>`)}
+        ${v.net.map((n) => html`<div class="bt-row" data-net="${n.name}"><span class="bt-name">${n.name}</span><span class="bt-val">↓ ${rateOf(n.rxBytesPerSecond)} ↑ ${rateOf(n.txBytesPerSecond)}</span></div>`)}
+      </div>`,
       { head: html`<h2>Disks and network</h2>` },
     ),
-    "sys-procs": listCard(
-      v.groups.map(
-        (g) => html`<li data-kind="${g.kind}"><div class="row">
-          <span class="row-main"><span class="row-title mono">${g.label}</span>
-            <span class="row-meta">${String(g.procs)} processes · oldest ${span(g.oldestSeconds)}${g.top.length ? html` · ${g.top.slice(0, 3).map((p) => `${p.comm} ${coresOf(p.cpuCores)}`).join(" · ")}` : null}</span></span>
-          <span class="row-trail">${pill(`${coresOf(g.cpuCores)} cores`)} ${memoryOf(g)}</span>
-        </div></li>`,
-      ),
-      { head: html`<h2>Processes</h2>` },
-    ),
+    "sys-procs": procTable(v),
   };
   return Object.fromEntries(Object.entries(out).map(([k, h]) => [k, h.text]));
 }
@@ -157,12 +167,16 @@ export function systemPage(ctx: Ctx): Response {
     <div id="sys-dup">${at("sys-dup")}</div>
     ${card(
       html`<div id="summary" class="row-meta">${at("summary")}</div>
-        <p class="small" id="cores" aria-label="Per-core CPU, percent">${at("cores")}</p>
+        <div class="bt-grid" id="cores" aria-label="Per-core CPU, percent, with its last readings">${at("cores")}</div>
+        <div class="bt-grid" id="mem">${at("mem")}</div>
         ${caps}
         <p class="small mono" id="temps">${at("temps")}</p>`,
       { head: html`<h2>Machine</h2>` },
     )}
     <div id="sys-disks">${at("sys-disks")}</div>
+    <div class="page-head"><h2>Processes</h2>
+      <p class="small muted"><span class="js-only">Sort by <button class="btn" data-size="sm" type="button" data-sort="cpu" aria-pressed="true"><kbd>c</kbd> CPU</button>
+        <button class="btn" data-size="sm" type="button" data-sort="mem" aria-pressed="false"><kbd>m</kbd> memory</button></span></p></div>
     <div id="sys-procs">${at("sys-procs")}</div>
     ${memorySection(ctx)}`;
   return page({ ctx, title: "System", body, wide: true, scriptJs: systemLiveJs });

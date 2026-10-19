@@ -1,7 +1,8 @@
 /**
  * The System command's dialog, the owner's (#1789): the machine now, in the
- * lines of `/system` — CPU, load, heat, memory, disks, and the heaviest
- * groups of processes with the test files running in more than one check.
+ * lines of `/system` — per-core CPU with its history, load, heat,
+ * memory, swap, disks, disk and network rates, and the heaviest groups of
+ * processes with their top two with the test files running in more than one check.
  * It reads `live().read()`, the same view the page and the API serve.
  * Read-only; Enter, Esc or q closes it.
  *
@@ -16,7 +17,7 @@ import type { SystemView } from "../../system/view.ts";
 import { canSeeMemory, memoryHours } from "../../boards/memory.ts";
 import { binding } from "../app/keys.ts";
 import type { Session } from "../session.ts";
-import { bytes } from "../../system/format.ts";
+import { bytes, spark } from "../../system/format.ts";
 import { style } from "../term/style.ts";
 import { pad, wrap } from "../term/width.ts";
 import { dialog } from "../ui/widgets.ts";
@@ -24,6 +25,10 @@ import { Scroll, drawLines, hitScroll } from "./common.ts";
 
 const WIDTH = 72;
 const GROUPS = 6;
+const CORES = 8;
+const PROCS = 2;
+
+const rate = (n: number | null): string => (n === null ? "—" : `${bytes(n)}/s`);
 
 const pct = (n: number | null): string => (n === null ? "—" : `${n.toFixed(1)}%`);
 
@@ -46,12 +51,23 @@ const capOf = (g: SystemView["groups"][number]): string =>
 
 export function systemLines(v: SystemView): string[] {
   const inner = WIDTH - 6;
+  const cores = v.cpu.cores.slice(0, CORES).map(
+    (c, i) => `${pad(`cpu${i}`, 6)} ${pad(c === null ? "—" : `${Math.round(c)}%`, 4, "right")} ${spark(v.cpu.history[i] ?? [])}`,
+  );
   return [
     `CPU ${pct(v.cpu.busyPct)} over ${v.cpu.cores.length} cores · load ${v.load ? v.load.map((l) => l.toFixed(2)).join(" ") : "—"}`,
+    ...cores,
+    ...(v.cpu.cores.length > CORES ? [`… and ${v.cpu.cores.length - CORES} more cores`] : []),
     `hottest ${v.hottestC === null ? "—" : `${v.hottestC.toFixed(0)}°C`} · memory ${v.memory ? `${bytes(v.memory.usedBytes)} of ${bytes(v.memory.totalBytes)}` : "—"} · ${v.processes} processes`,
+    `swap ${v.memory ? (v.memory.swapTotalBytes === 0 ? "none" : `${bytes(v.memory.swapUsedBytes)} of ${bytes(v.memory.swapTotalBytes)}`) : "—"}`,
     ...v.disks.map((d) => `${pad(d.mount, 20)} ${Math.round((d.usedBytes / Math.max(1, d.totalBytes)) * 100)}% of ${bytes(d.totalBytes)}`),
+    ...v.io.map((d) => `${pad(d.name, 20)} R ${rate(d.readBytesPerSecond)}  W ${rate(d.writeBytesPerSecond)}`),
+    ...v.net.map((n) => `${pad(n.name, 20)} ↓ ${rate(n.rxBytesPerSecond)}  ↑ ${rate(n.txBytesPerSecond)}`),
     "",
-    ...v.groups.slice(0, GROUPS).map((g) => `${pad(g.label, 24)} ${pad(String(g.procs), 4, "right")} procs  ${capOf(g)}`.trimEnd()),
+    ...v.groups.slice(0, GROUPS).flatMap((g) => [
+      `${pad(g.label, 24)} ${pad(String(g.procs), 4, "right")} procs  ${capOf(g)}`.trimEnd(),
+      ...g.top.slice(0, PROCS).map((p) => `  ${pad(p.comm, 16)} ${pad(p.cpuCores === null ? "—" : p.cpuCores.toFixed(2), 5, "right")} cores  ${bytes(p.rssBytes)}`),
+    ]),
     "",
     ...duplicateLines(v.duplicates, inner),
   ];

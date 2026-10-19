@@ -6,7 +6,7 @@
  * series empty, never a guess. Paths are a parameter so a test can hand it a
  * directory it wrote.
  */
-import { readdirSync, readFileSync, statfsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statfsSync } from "node:fs";
 import { join } from "node:path";
 
 export type Paths = { proc: string; sys: string };
@@ -22,6 +22,8 @@ export type Temp = { chip: string; label: string; celsius: number };
 export type Memory = { total: number; available: number; swapTotal: number; swapFree: number };
 export type Disk = { mount: string; fs: string; total: number; used: number };
 export type Nic = { name: string; rx: number; tx: number };
+/** Bytes read and written since boot by one whole block device. */
+export type Io = { name: string; read: number; write: number };
 export type Proc = {
   pid: number;
   ppid: number;
@@ -42,6 +44,7 @@ export type Raw = {
   memory: Memory | null;
   disks: Disk[];
   net: Nic[];
+  io: Io[];
   procs: Proc[];
 };
 
@@ -94,6 +97,22 @@ export function parseNet(text: string | null): Nic[] {
     if (!m || m[1] === "lo") continue;
     const f = m[2]!.trim().split(/\s+/);
     out.push({ name: m[1]!, rx: num(f[0]), tx: num(f[8]) });
+  }
+  return out;
+}
+
+const SECTOR = 512;
+const DEVICES_MAX = 16;
+
+/** The whole devices of /proc/diskstats (`whole` says which names are not partitions or loop/ram devices). */
+export function parseDiskstats(text: string | null, whole: (name: string) => boolean): Io[] {
+  const out: Io[] = [];
+  for (const line of (text ?? "").split("\n")) {
+    const f = line.trim().split(/\s+/);
+    const name = f[2];
+    if (!name || !/^[\w.-]{1,32}$/.test(name) || /^(loop|ram|zram|dm-)/.test(name) || !whole(name)) continue;
+    out.push({ name, read: num(f[5]) * SECTOR, write: num(f[9]) * SECTOR });
+    if (out.length >= DEVICES_MAX) break;
   }
   return out;
 }
@@ -210,6 +229,7 @@ export function readRaw(paths: Paths, at: number): Raw {
     memory: parseMemory(read(join(paths.proc, "meminfo"))),
     disks: readDisks(paths.proc),
     net: parseNet(read(join(paths.proc, "net/dev"))),
+    io: parseDiskstats(read(join(paths.proc, "diskstats")), (n) => existsSync(join(paths.sys, "block", n))),
     procs: readProcs(paths.proc),
   };
 }

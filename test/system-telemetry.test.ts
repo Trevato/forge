@@ -100,7 +100,7 @@ describe("the machine, read from /proc and /sys", () => {
       expect(v.cpu.cores.length).toBe(2);
       expect(v.hottestC).toBe(76);
       expect(v.load?.[0]).toBe(64);
-      expect(v.memory).toEqual({ totalBytes: 1024_000, usedBytes: 614_400, swapUsedBytes: 0 });
+      expect(v.memory).toEqual({ totalBytes: 1024_000, usedBytes: 614_400, swapUsedBytes: 0, swapTotalBytes: 0 });
       expect(JSON.stringify(v)).not.toContain("hunter2");
       // A later reading gives rates over the two latest.
       fakeHost(root, 300);
@@ -303,10 +303,10 @@ describe("telemetry:read: the owner grants it, an agent reads with it, nobody el
     // Each check cell's memory beside its cap, and who holds the cap (#2410).
     expect(html).toContain('data-cap="8589934592" data-cap-by="kernel">of 8.0 GiB (kernel cap)');
     expect(html).toMatch(/id="cell-caps" data-by="(kernel|watch)"/);
-    // Built from the system's own parts: pills and rows, no table, no style attribute (#2691).
+    // Built from the system's own parts: pills, meters and the process table grouped by kind (#2721), no style attribute (#2691).
     expect(html).toMatch(/id="summary"[^>]*>\s*<span class="pill"/);
-    expect(html).toContain('<li data-kind="check"><div class="row">');
-    expect(html).not.toContain("<table");
+    expect(html).toContain('<tbody data-kind="check"');
+    expect(html).not.toMatch(/<[a-z]+ [^>]*\bstyle="/);
     const flowPage = await fetch(`${servers.url}/flow`, { headers: { cookie: await login("alice") } });
     expect(await flowPage.text()).toContain('id="duplicate-work" data-count="1"');
 

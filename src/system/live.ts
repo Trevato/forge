@@ -12,6 +12,9 @@ import { buildSystem, forAgent, type Roots, type SystemView } from "./view.ts";
 
 const FRESH_MS = 1_000;
 
+/** Readings of each core kept for the history on /system. */
+export const HISTORY = 30;
+
 /** How often a watched reading is pushed: only while someone is subscribed. */
 export const PUSH_MS = 2_000;
 
@@ -32,6 +35,7 @@ export function createLive(options: { paths?: Paths; roots?: () => Roots; self?:
   let prev: Raw | undefined;
   let last: Raw | undefined;
   let view: SystemView | undefined;
+  let history: number[][] = [];
   const listeners = new Set<(view: SystemView) => void>();
   let timer: ReturnType<typeof setInterval> | undefined;
   const self_: Live = {
@@ -65,7 +69,9 @@ export function createLive(options: { paths?: Paths; roots?: () => Roots; self?:
       // A first reading has no rate: its rates are null until a second reading is taken.
       prev = last;
       last = raw;
-      view = buildSystem(prev, last, roots(), self);
+      const built = buildSystem(prev, last, roots(), self);
+      history = built.cpu.cores.map((c, i) => [...(history[i] ?? []), c ?? 0].slice(-HISTORY));
+      view = { ...built, cpu: { ...built.cpu, history } };
       return view;
     },
   };
