@@ -28,6 +28,8 @@ import {
 } from "../../crew/notify.ts";
 import { forgeHost, noreplyAddress } from "../../core/commit_identity.ts";
 import { ABILITIES, roleOf, rowOf, type Ability } from "../../core/roles.ts";
+import { linkEdgeLogin, linkedLogin, unlinkEdgeLogin } from "../../core/edge_links.ts";
+import { activeEdgeToken, edgeIdentity } from "../../http/edge.ts";
 import { listKeys } from "../../core/keys.ts";
 import { endAccountSession } from "../../actions/signins.ts";
 import { listSessions, type SessionInfo } from "../../core/sessions.ts";
@@ -123,6 +125,62 @@ function notifyView(ctx: Ctx, error?: string): Html {
     </form>`,
     { head: html`<h3>Phone notifications</h3>` },
   );
+}
+
+/** open-platform.sh: linked as <login>, or not, with Link and Unlink. */
+function edgeLinkView(ctx: Ctx): Html {
+  const token = activeEdgeToken(ctx.app);
+  if (token === undefined) return html``;
+  const linked = linkedLogin(ctx.app.db, ctx.auth.user!.id);
+  const carried = edgeIdentity(ctx.request, token);
+  return card(
+    linked !== undefined
+      ? html`<p>open-platform.sh: linked as <strong>${linked}</strong></p>
+          <form method="post" action="/settings/edge/unlink">
+            ${btn("Unlink", { type: "submit" })}
+          </form>`
+      : html`<p>open-platform.sh: not linked</p>
+          ${carried === undefined
+            ? html`<p class="hint">Sign in through open-platform.sh, then come back here to link that login.</p>`
+            : html`<form method="post" action="/settings/edge/link">
+                ${btn(`Link ${carried}`, { type: "submit" })}
+              </form>`}`,
+    { head: html`<h3>open-platform.sh</h3>` },
+  );
+}
+
+// POST /settings/edge/link
+export async function edgeLink(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const login = edgeIdentity(ctx.request, activeEdgeToken(ctx.app));
+  if (login === undefined)
+    return flashTo(ctx, "/settings", {
+      message: "Sign in through open-platform.sh first, then link.",
+    });
+  const linked = linkEdgeLogin(ctx.app.db, ctx.auth.user, login);
+  if (!linked.ok)
+    return flashTo(ctx, "/settings", {
+      message:
+        linked.error === "already_linked"
+          ? "This account is linked to another open-platform.sh login. Unlink it first."
+          : linked.error === "login_taken"
+            ? "That open-platform.sh login belongs to another account here."
+            : "That open-platform.sh login cannot be linked.",
+    });
+  ctx.app.bus.append({ kind: "account.edge_linked", actorId: ctx.auth.user.id });
+  return flashTo(ctx, "/settings", { message: `Linked as ${login}.` });
+}
+
+// POST /settings/edge/unlink
+export async function edgeUnlink(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  if (unlinkEdgeLogin(ctx.app.db, ctx.auth.user.id))
+    ctx.app.bus.append({ kind: "account.edge_unlinked", actorId: ctx.auth.user.id });
+  return flashTo(ctx, "/settings", { message: "Unlinked." });
 }
 
 /** Shown above the profile until the email is proven. */
@@ -245,7 +303,7 @@ export function accountPage(ctx: Ctx): Response {
     ctx,
     "profile",
     "Settings",
-    html`${pair}${profileView(ctx, currentProfile(ctx.auth.user))}${notifyView(ctx)}`,
+    html`${pair}${profileView(ctx, currentProfile(ctx.auth.user))}${edgeLinkView(ctx)}${notifyView(ctx)}`,
     200,
     // The everyday form makes its account with a passkey (#1890).
     pair ? passkeyJs : undefined,

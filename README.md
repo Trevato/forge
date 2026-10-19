@@ -368,6 +368,11 @@ matches; people then sign in with a password or a passkey. An admin with
 neither is refused, so no one locks themselves out. Accounts the edge made
 cannot sign in while it is off until they add a passkey (a password-less
 account cannot set a password: `/settings/password` asks for the current one).
+Account settings show "open-platform.sh: linked as <login>" or "not linked": Link
+records the login the request carries against the signed-in account, Unlink removes
+it (same-origin POSTs). An edge sign-in finds the account by its link first, then by
+name; one login links to one account, and a login that is another account's name
+cannot be linked. The terminal's "What I can do" screen shows the same line and `u` unlinks (SSH carries no edge header, so linking is on the web page only).
 Mail out
 (the link that proves a newcomer's email) is SMTP submission over TLS,
 configured by the forge-level secrets `MAIL_SMTP_URL`

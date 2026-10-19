@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { linkEdgeLogin, linkedLogin } from "../src/core/edge_links.ts";
 import { createApp, type App as Forge } from "../src/app.ts";
 import { setMember } from "../src/core/roles.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
@@ -21,7 +22,7 @@ describe("what I can do in the terminal", () => {
   let dataDir: string;
   let forge: Forge;
 
-  async function shown(username: string): Promise<string> {
+  async function shown(username: string, presses: string[] = []): Promise<string> {
     const terminal = headlessTerminal(140, 32);
     const user = getUserByName(forge.db, username)!;
     const identity: TuiIdentity = { sshUsername: "t", remoteAddress: "127.0.0.1", user };
@@ -32,6 +33,8 @@ describe("what I can do in the terminal", () => {
     for (const ch of "What I can do") key(ch);
     key("enter");
     await settleApp(app);
+    for (const k of presses) key(k);
+    await settleApp(app);
     const text = app.screen.toText();
     app.stop();
     return text;
@@ -39,7 +42,7 @@ describe("what I can do in the terminal", () => {
 
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-tui-can-"));
-    forge = createApp({ dataDir, port: 0 });
+    forge = createApp({ dataDir, port: 0, edgeToken: "edge-secret-0123456789" });
     for (const [username, adminIfFirst] of [["alice", true], ["bob", false]] as const) {
       const made = await createUser(forge.db, {
         origin: "seed",
@@ -69,5 +72,19 @@ describe("what I can do in the terminal", () => {
     const admin = await shown("alice");
     expect(admin).toContain("You are admin here.");
     expect(admin).toContain("Administer the forge: yes");
+  });
+
+  test("the screen shows the open-platform.sh link, and u unlinks it and says so on the bus", async () => {
+    const bob = getUserByName(forge.db, "bob")!;
+    expect(await shown("bob")).toContain("open-platform.sh: not linked");
+    expect(linkEdgeLogin(forge.db, bob, "octo").ok).toBe(true);
+    expect(await shown("bob")).toContain("open-platform.sh: linked as octo");
+    const seen: string[] = [];
+    const stop = forge.bus.subscribe((e) => seen.push(e.kind));
+    const after = await shown("bob", ["u"]);
+    stop();
+    expect(after).toContain("open-platform.sh: not linked");
+    expect(linkedLogin(forge.db, bob.id)).toBeUndefined();
+    expect(seen).toContain("account.edge_unlinked");
   });
 });

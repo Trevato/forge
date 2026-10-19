@@ -388,6 +388,8 @@ import {
 import {
   accountPage,
   notifyUpdate,
+  edgeLink,
+  edgeUnlink,
   accountUpdate,
   keyCreate,
   keyDelete,
@@ -755,6 +757,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/settings", accountPage);
   router.add("POST", "/settings", accountUpdate);
   router.add("POST", "/settings/notify", notifyUpdate);
+  router.add("POST", "/settings/edge/link", edgeLink);
+  router.add("POST", "/settings/edge/unlink", edgeUnlink);
   router.add("POST", "/settings/email/verify", resendVerifyLink);
   router.add("GET", "/settings/password", passwordPage);
   router.add("POST", "/settings/password", passwordUpdate);

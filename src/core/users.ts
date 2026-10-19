@@ -451,13 +451,16 @@ export function getUserByName(
 
 /**
  * The person behind an identity the platform edge vouched for: found by
- * name, never made. The edge vouches for a login, not for a right to an
+ * its link first, then by name, never made. The edge vouches for a login, not for a right to an
  * account here, so an unknown login is signed out and goes to /signup, where
  * the `signup` setting decides. Accounts the edge made before still sign in.
  * A name that is an organization or a crew member here is nobody's login.
  */
 export function ensureEdgeUser(db: Database, login: string): User | undefined {
-  const existing = getUserByName(db, login);
+  const link = db
+    .query<{ user_id: string }, [string]>("SELECT user_id FROM edge_link WHERE login = ?")
+    .get(login);
+  const existing = (link === null ? undefined : getUserById(db, link.user_id)) ?? getUserByName(db, login);
   return existing && existing.kind === "user" && isActive(existing)
     ? existing
     : undefined;
