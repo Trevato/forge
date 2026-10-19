@@ -68,6 +68,8 @@ describe("the drill on the Backups page", () => {
           health: verdict === "green" ? "ok" : "unreached",
           verdict,
           failedStep: verdict === "green" ? null : "unseal",
+          phases: [],
+          budgetMs: 0,
           reason: verdict === "green" ? null : redReason,
         };
       },

@@ -18,6 +18,7 @@ import { forgetMirror, saveMirror } from "../../actions/mirror.ts";
 import { mirrorSealedSet, mirrorNeed, MIRROR_SEALED } from "../../snapshot/mirror.ts";
 import { resolveDestination, sealedSet } from "../../snapshot/destination.ts";
 import { keyOf } from "../../snapshot/snapshot.ts";
+import { formatBudget, formatSpan, type DrillResult } from "../../snapshot/drill.ts";
 import { lastDrill } from "../../snapshot/drills.ts";
 import { snapshotsOf } from "../../snapshot/service.ts";
 import { lastSnapshotOutcome } from "../../snapshot/outcome.ts";
@@ -89,9 +90,18 @@ function keyNote(
       </p>`;
 }
 
+/** "6 min 12 s of its 14 min budget: files 58 s, ..."; empty for a drill that kept no phases. */
+function drillTiming(d: DrillResult): string {
+  if (d.phases.length === 0 || d.budgetMs <= 0) return "";
+  return `${formatSpan(d.ms)} of its ${formatBudget(d.budgetMs)} budget: ${d.phases
+    .map((p) => `${p.phase} ${formatSpan(p.ms)}`)
+    .join(", ")}`;
+}
+
 /** The last drill in one line, and the button to run another. */
 function drillLine(ctx: Ctx): Html {
   const d = lastDrill(ctx.app.db);
+  const timing = d === undefined ? "" : drillTiming(d);
   const line =
     d === undefined
       ? html`<p class="backups-drill">No restore drill has run yet.</p>`
@@ -99,14 +109,16 @@ function drillLine(ctx: Ctx): Html {
         ? html`<p class="backups-drill">
             ${icon("check")} Last drill: ${time(d.at)}, ${d.ms} ms, all counts matched —
             snapshot <code>${d.snapshotId ?? ""}</code>, key opened —
-            ${d.counts.users} users, ${d.counts.repositories} repositories, ${d.counts.issues} issues, ${d.counts.pulls} pulls, ${d.counts.apps} apps.
+            ${d.counts.users} users, ${d.counts.repositories} repositories, ${d.counts.issues} issues, ${d.counts.pulls} pulls, ${d.counts.apps} apps.${timing
+              ? html` <span class="backups-timing">${timing}.</span>`
+              : ""}
           </p>`
         : html`<p class="backups-error backups-drill">
             ${icon("alert")} Last drill ${time(d.at)}: snapshot
             <code>${d.snapshotId ?? "none"}</code> failed at
             ${d.failedStep ?? "an unknown step"} after ${d.ms} ms${d.reason
               ? html`: ${d.reason}`
-              : ""}.
+              : ""}.${timing ? html` <span class="backups-timing">${timing}.</span>` : ""}
           </p>`;
   return html`${line}
     <form method="post" action="/settings/backups/drill" class="backups-now">

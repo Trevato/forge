@@ -139,6 +139,8 @@ describe("the drill's verdict", () => {
       health: "unreached",
       verdict: "red",
       failedStep: "fetch",
+      phases: [],
+      budgetMs: 0,
       reason: "the store holds no snapshot",
     });
     expect(text).toContain("FAILED at fetch");
@@ -226,6 +228,8 @@ describe("telling the recovery issue", () => {
         health: "ok",
         verdict: "green",
         failedStep: null,
+        phases: [],
+        budgetMs: 0,
         reason: null,
       },
       async (b) => (posts.push(b), "posted: 201"),

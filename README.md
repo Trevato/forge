@@ -978,7 +978,9 @@ The terminal has no backups view, so it has no readout.
 
 **Run a drill** on the same page (admins only) restores the newest snapshot
 into scratch, opens it, counts what is there and unseals a value; the page
-waits for it, up to 10 minutes, and the last drill shows there as one line.
+waits for it, up to 10 minutes, and the last drill shows there as one line,
+ending with the drill's time against its budget and each phase's time ("6 min
+12 s of its 14 min budget: files 58 s, …"); drills from before this show none.
 Only one runs at a time. See `docs/SNAPSHOT.md`.
 
 The forge also runs one itself every Sunday 09:00 UTC (a forge that was down

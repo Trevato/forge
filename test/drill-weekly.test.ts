@@ -77,6 +77,8 @@ describe("the service runs a due drill once", () => {
           health: "ok",
           verdict: "green",
           failedStep: null,
+          phases: [],
+          budgetMs: 0,
           reason: null,
         };
       },
@@ -115,6 +117,8 @@ describe("the service runs a due drill once", () => {
           health: verdict === "red" ? "unreached" : "ok",
           verdict,
           failedStep: verdict === "red" ? "restore" : null,
+          phases: [],
+          budgetMs: 0,
           reason: verdict === "red" ? "restore timed out: no answer in 600000 ms" : null,
         };
       },
@@ -145,6 +149,8 @@ describe("the service's own clock drills a red one again", () => {
     health: verdict === "red" ? "unreached" : "ok",
     verdict,
     failedStep: verdict === "red" ? "restore" : null,
+    phases: [],
+    budgetMs: 0,
     reason: verdict === "red" ? "restore timed out: no answer in 600000 ms" : null,
   });
 

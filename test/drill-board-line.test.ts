@@ -27,6 +27,8 @@ const drill = (at: number, red: boolean): DrillResult => ({
   health: red ? "failed" : "ok",
   verdict: red ? "red" : "green",
   failedStep: red ? "unseal" : null,
+  phases: [],
+  budgetMs: 0,
   reason: red ? "a sealed value does not open with the restored key" : null,
 });
 

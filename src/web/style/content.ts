@@ -381,6 +381,7 @@ a.origin-chip:hover { border-color: var(--border-strong); color: var(--fg); }
   .flag-form .input { min-width: 0; flex: 1 1 8rem; }
 }
 .backups-now { margin-top: 12px; }
+.backups-drill { overflow-wrap: anywhere; }
 /* The fleet graph: a selection's spend and runs, hour by hour and day by day.
    Series colours are Okabe–Ito (told apart with common colour-vision
    deficiencies); the eighth, the folded "others", is grey. */

@@ -65,6 +65,22 @@ export function formatBytes(bytes: number): string {
   return `${Math.round(v * 10) / 10} ${units[i]}`;
 }
 
+/** A span for people: "6 min 12 s", "58 s", "340 ms". */
+export function formatSpan(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "0 ms";
+  if (ms < 1_000) return `${Math.round(ms)} ms`;
+  const s = Math.round(ms / 1_000);
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  return s % 60 === 0 ? `${m} min` : `${m} min ${s % 60} s`;
+}
+
+/** One restore phase and the milliseconds it took. */
+export interface PhaseTime {
+  readonly phase: Progress["phase"];
+  readonly ms: number;
+}
+
 export type DrillStep = "fetch" | "restore" | "open" | "count" | "unseal" | "health";
 
 export interface DrillDeps {
@@ -91,6 +107,10 @@ export interface DrillResult {
   readonly health: "ok" | "failed" | "unreached";
   readonly verdict: "green" | "red";
   readonly failedStep: DrillStep | null;
+  /** How long each restore phase took, in the order they began; empty when none was reported. */
+  readonly phases: readonly PhaseTime[];
+  /** The time the drill was given, in ms. */
+  readonly budgetMs: number;
   /** Why it is red, for the person reading; never a value. */
   readonly reason: string | null;
 }
@@ -128,6 +148,9 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
   let scratch: string | undefined;
   let reason: string | null = null;
   let progress: Progress | undefined;
+  // When each restore phase was first reported, and when the restore ended.
+  const began: { phase: Progress["phase"]; at: number }[] = [];
+  let restoreEnd: number | undefined;
   let health: DrillResult["health"] = "unreached";
   try {
     // One clock for the whole drill, so a hang in any step ends it red.
@@ -148,11 +171,13 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
         passphrase: deps.passphrase,
         onProgress: (p) => {
           progress = p;
+          if (began[began.length - 1]?.phase !== p.phase) began.push({ phase: p.phase, at: performance.now() });
         },
       }),
       left(),
       budget,
     );
+    restoreEnd = performance.now();
 
     step = "open";
     const { Database } = await import("bun:sqlite");
@@ -229,6 +254,11 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
   return finish(null);
 
   function finish(failedStep: DrillStep | null): DrillResult {
+    const end = restoreEnd ?? performance.now();
+    const phases = began.map((b, i) => ({
+      phase: b.phase,
+      ms: Math.max(0, Math.round((began[i + 1]?.at ?? end) - b.at)),
+    }));
     return {
       at,
       snapshotId,
@@ -237,6 +267,8 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
       health,
       verdict: failedStep === null ? "green" : "red",
       failedStep,
+      phases,
+      budgetMs,
       reason,
     };
   }
