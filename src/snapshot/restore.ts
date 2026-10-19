@@ -56,6 +56,14 @@ export interface Restored {
   readonly sealedMissing: readonly string[];
 }
 
+/** Where a restore is, as plain data: `done` of `total` in `phase`, `bytes` so far in it. */
+export interface Progress {
+  readonly phase: "manifest" | "files" | "unpack" | "bundles" | "key";
+  readonly done: number;
+  readonly total: number;
+  readonly bytes: number;
+}
+
 /** Repositories cloned at once while restoring. */
 export const CLONES = 4;
 
@@ -144,6 +152,8 @@ export async function restoreSnapshot(
     readonly inFlightBytes?: number | undefined;
     /** Test seam: the git runner the clones go through. */
     readonly git?: typeof runGit | undefined;
+    /** Told when each phase starts and after each file or bundle finishes. */
+    readonly onProgress?: ((p: Progress) => void) | undefined;
   } = {},
 ): Promise<Restored> {
   if (!/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z$/.test(name))
@@ -152,11 +162,15 @@ export async function restoreSnapshot(
     throw new Error(
       `${dataDir} is not empty; a restore needs an empty data directory`,
     );
+  const say = (phase: Progress["phase"], done: number, total: number, bytes: number): void =>
+    options.onProgress?.({ phase, done, total, bytes });
   const prefix = `${SNAPSHOT_PREFIX}${name}/`;
+  say("manifest", 0, 1, 0);
   const raw = await store.get(`${prefix}manifest.json`);
   if (raw === undefined)
     throw new Error(`no snapshot ${name} in ${store.where}`);
   const manifest = JSON.parse(new TextDecoder().decode(raw)) as Manifest;
+  say("manifest", 1, 1, raw.byteLength);
   const wrapped = manifest.files.some((f) => f.path === WRAPPED_KEY)
     ? await store.get(prefix + WRAPPED_KEY)
     : undefined;
@@ -183,7 +197,13 @@ export async function restoreSnapshot(
   let files = 0;
   let repos = 0;
   const bundles: { at: number; owner: string; name: string; file: string }[] = [];
+  let fetched = 0;
+  let fetchedBytes = 0;
+  say("files", 0, manifest.files.length, 0);
   await fetchAll(store, prefix, manifest.files, async (entry, body, at) => {
+    fetched++;
+    fetchedBytes += entry.bytes;
+    say("files", fetched, manifest.files.length, fetchedBytes);
     if (entry.path === WRAPPED_KEY) return;
     // A part waits for the rest of its file.
     const part = partOf.get(entry.path);
@@ -220,6 +240,9 @@ export async function restoreSnapshot(
   }, name, options.inFlightBytes ?? IN_FLIGHT_BYTES);
   // Reads land in any order; repositories come back in the manifest's.
   bundles.sort((a, b) => a.at - b.at);
+  let unpacked = 0;
+  let unpackedBytes = 0;
+  say("unpack", 0, packed.length, 0);
   for (const file of packed) {
     const got = gathered.get(file.path) ?? [];
     const parts = partPaths(file).map((path, n) => {
@@ -231,13 +254,21 @@ export async function restoreSnapshot(
     gathered.delete(file.path);
     const target = join(dataDir, file.path);
     mkdirSync(dirname(target), { recursive: true });
-    await Bun.write(target, await unpack(file, parts));
+    const whole = await unpack(file, parts);
+    await Bun.write(target, whole);
     files++;
+    unpacked++;
+    unpackedBytes += whole.byteLength;
+    say("unpack", unpacked, packed.length, unpackedBytes);
   }
   // Each repository is its own clone, so several at once: a forge of
   // hundreds of them spent the drill's minutes here, one after another.
   const git = options.git ?? runGit;
   let next = 0;
+  let cloned = 0;
+  let clonedBytes = 0;
+  const sizes = new Map(manifest.files.map((f) => [f.path, f.bytes]));
+  say("bundles", 0, bundles.length, 0);
   // Clones finish in any order; a refusal names the earliest bundle in the
   // manifest that failed, so it reads the same however the clones raced.
   const failed: { at: number; error: string }[] = [];
@@ -246,18 +277,18 @@ export async function restoreSnapshot(
       for (let b = bundles[next++]; b !== undefined; b = bundles[next++]) {
         const dir = repoDir(join(dataDir, "repos"), b.owner, b.name);
         mkdirSync(dirname(dir), { recursive: true });
-        const cloned = await git([
+        const result = await git([
           "clone",
           "--quiet",
           "--mirror",
           b.file,
           dir,
         ]);
-        if (!cloned.ok) {
+        if (!result.ok) {
           next = bundles.length;
           failed.push({
             at: b.at,
-            error: `could not restore ${b.owner}/${b.name}: ${cloned.error.stderr}`,
+            error: `could not restore ${b.owner}/${b.name}: ${result.error.stderr}`,
           });
           return;
         }
@@ -267,6 +298,9 @@ export async function restoreSnapshot(
         await git(["config", "core.logAllRefUpdates", "true"], { cwd: dir });
         await installHooks(dir);
         repos++;
+        cloned++;
+        clonedBytes += sizes.get(`repos/${b.owner}/${b.name}.bundle`) ?? 0;
+        say("bundles", cloned, bundles.length, clonedBytes);
       }
     }),
   );
@@ -274,11 +308,13 @@ export async function restoreSnapshot(
     throw new Error(failed.sort((a, b) => a.at - b.at)[0]!.error);
   const { rmSync } = await import("node:fs");
   rmSync(join(dataDir, "restore-bundles"), { recursive: true, force: true });
+  say("key", 0, key === undefined ? 0 : 1, 0);
   if (key !== undefined) {
     const target = join(dataDir, "secret.key");
     await Bun.write(target, key);
     chmodSync(target, 0o600);
     files++;
+    say("key", 1, 1, key.byteLength);
   }
   const kind = keyOf(manifest);
   const have =
@@ -313,8 +349,16 @@ if (import.meta.main) {
     console.error(`no snapshot in ${store.where}`);
     process.exit(1);
   }
+  // One line per phase when it ends: its count, bytes and seconds.
+  let began = performance.now();
   const done = await restoreSnapshot(store, newest?.name ?? name, dataDir, {
     passphrase: process.env["FORGE_SNAPSHOT_PASSPHRASE"] || undefined,
+    onProgress: (p) => {
+      if (p.done < p.total) return;
+      const seconds = ((performance.now() - began) / 1000).toFixed(1);
+      console.log(`${p.phase}: ${p.done}/${p.total}, ${p.bytes} bytes, ${seconds}s`);
+      began = performance.now();
+    },
   });
   console.log(
     `restored ${done.manifest.name} (forge ${done.manifest.version}): ${done.files} files, ${done.repos} repositories into ${dataDir}`,
