@@ -7,7 +7,6 @@
  */
 import type { App } from "../app.ts";
 import { cellRoots } from "../apps/contain.ts";
-import { crewRoots } from "../crew/roots.ts";
 import { HOST, readRaw, type Paths, type Raw } from "./proc.ts";
 import { buildSystem, forAgent, type Roots, type SystemView } from "./view.ts";
 
@@ -31,7 +30,7 @@ export type Live = {
 
 export function createLive(options: { paths?: Paths; roots?: () => Roots; self?: number; pushMs?: number } = {}): Live {
   const paths = options.paths ?? HOST;
-  const roots = options.roots ?? (() => [...cellRoots(), ...crewRoots()]);
+  const roots = options.roots ?? (() => cellRoots());
   const self = options.self ?? process.pid;
   let prev: Raw | undefined;
   let last: Raw | undefined;

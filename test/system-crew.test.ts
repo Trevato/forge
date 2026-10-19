@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { crewRoots, watchCrewRoot } from "../src/crew/roots.ts";
 import type { Proc, Raw } from "../src/system/proc.ts";
 import { buildSystem, forAgent } from "../src/system/view.ts";
 
@@ -18,11 +17,4 @@ test("a crew run's tree is a crew:<name> group, hidden by name from agents", () 
   const seen = forAgent(view, () => false).groups.find((x) => x.kind === "crew")!;
   expect(seen.label).toBe("crew:private-1");
   expect(seen.top).toEqual([]);
-});
-
-test("a watched crew root lasts until it is released", () => {
-  const stop = watchCrewRoot("crew:scout", 42);
-  expect(crewRoots()).toContainEqual({ label: "crew:scout", root: 42 });
-  stop();
-  expect(crewRoots()).toEqual([]);
 });

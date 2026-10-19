@@ -12,7 +12,7 @@
  * settings files of the operator's, a spend budget, and a deadline.
  */
 
-import { watchCrewRoot } from "./roots.ts";
+import { watchLabelled } from "../apps/contain.ts";
 import { childEnv, pump } from "../apps/process.ts";
 import { spellings, stripForgeDirs } from "../runs/paths.ts";
 import type { SandboxPolicy } from "./sandbox.ts";
@@ -191,7 +191,7 @@ export async function runClaude(input: ClaudeInput): Promise<ClaudeOutcome> {
     detached: true,
   });
   if (input.label !== undefined) {
-    const unwatch = watchCrewRoot(input.label, proc.pid);
+    const unwatch = watchLabelled(proc.pid, input.label);
     void proc.exited.finally(unwatch);
   }
   // What the agent hears: the prompt first, then whatever a person says
