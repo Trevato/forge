@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { App } from "../app.ts";
 import { announceRun } from "../actions/runs.ts";
+import { announceShard } from "./shard_event.ts";
 import type { ForgeEvent } from "../core/events.ts";
 import { getPull, listPulls, type Pull } from "../core/pulls.ts";
 import { issueMayRun } from "../core/pull_trust.ts";
@@ -476,8 +477,10 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
       if (!claimed) return;
       const lease = holdLease(app.db, run.id);
       announceRun(app, claimed);
-      const write = (line: string): void =>
+      const write = (line: string): void => {
         appendRunLog(app.config.dataDir, run.id, line);
+        announceShard(app, run, line);
+      };
       if (options.label !== undefined)
         write(`forge ${options.label} — checked in its parent's lane`);
       const started = Date.now();

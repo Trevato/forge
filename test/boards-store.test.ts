@@ -175,7 +175,7 @@ describe("/boards", () => {
     const grid = body.match(/<section[^>]*id="board-grid"[^>]*>/)?.[0] ?? "";
     expect(grid).not.toContain("data-live-every");
     expect(grid).toMatch(/data-live="[^"]+"/);
-    expect(grid).toContain('data-live="run.*,pull.*,check.*,issue.*,usage.*"');
+    expect(grid).toContain('data-live="run.queued,run.started,run.finished,pull.*,check.*,issue.*,usage.*"');
     expect(body).toContain('data-live-src="/boards/fleet-health/live"');
     expect(body).toMatch(/<option value="10s" selected>on: redraw when events arrive<\/option>/);
     expect(body).not.toContain(">1m</option>");

@@ -1301,7 +1301,7 @@ export const mapViewJs = /* js */ `
 })();
 `;
 
-const LIVE_KINDS = "run.*,issue.*,pull.*";
+const LIVE_KINDS = "run.queued,run.started,run.finished,issue.*,pull.*";
 
 /** The empty state in the studio's own words, pointing at the app page's
  * own box for telling the crew (`#tell`, `src/web/studio/app.ts`). */

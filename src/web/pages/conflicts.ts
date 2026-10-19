@@ -124,7 +124,7 @@ async function proposalCard(
     </form>`);
   if (parts.length === 0) return html``;
   // A live region: the run's events re-read the card, so nobody reloads.
-  return html`<div id="crew-proposal" data-live="run.*,pull.*,comment.*">${card(html`${parts}`, { head: html`<h2>The crew</h2>` })}</div>`;
+  return html`<div id="crew-proposal" data-live="run.queued,run.started,run.finished,pull.*,comment.*">${card(html`${parts}`, { head: html`<h2>The crew</h2>` })}</div>`;
 }
 
 const CSS = `

@@ -338,7 +338,7 @@ function forgeStrip(ctx: Ctx): Html | null {
   return html`<div
     class="board-forge"
     id="forge"
-    data-live="run.*,app.*"
+    data-live="run.queued,run.started,run.finished,app.*"
     data-ok="${ok ? "yes" : "no"}"
     data-rollout="${fh.rollout.state}"
     role="status"
@@ -491,7 +491,7 @@ function declinedStrip(ctx: Ctx, scope: BoardScope): Html | null {
   return html`<div
     class="board-declined"
     id="declined"
-    data-live="run.*,issue.*,pull.*"
+    data-live="run.queued,run.started,run.finished,issue.*,pull.*"
     role="status"
   >
     ${declines.map((d) => {
@@ -611,7 +611,7 @@ function windowsStrip(ctx: Ctx): Html | null {
   return html`<div
     class="board-windows"
     id="windows"
-    data-live="run.*,usage.*"
+    data-live="run.queued,run.started,run.finished,usage.*"
     aria-label="Subscription windows"
   >
     <div class="board-subs" data-group="crew">
@@ -700,7 +700,7 @@ function working(ctx: Ctx, scope: BoardScope): Html {
     "working",
     "1",
     "Working now",
-    "run.*",
+    "run.queued,run.started,run.finished",
     rows,
     scope.repos.length === 0
       ? "No apps to watch."
@@ -921,7 +921,7 @@ function decided(ctx: Ctx, scope: BoardScope): Html {
     "decided",
     "3",
     "Decided",
-    "run.*,pull.*",
+    "run.queued,run.started,run.finished,pull.*",
     rows,
     pile === null ? "Nothing decided yet." : PILE_EMPTY[pile],
     pile === null
@@ -1041,7 +1041,7 @@ function today(ctx: Ctx, scope: BoardScope): Html {
     "today",
     "4",
     "Today",
-    "run.*,pull.merged",
+    "run.queued,run.started,run.finished,pull.merged",
     rows,
     scope.repos.length === 0
       ? "No apps to watch."

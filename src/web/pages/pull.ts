@@ -273,15 +273,12 @@ export function checksLine(
               : waiting
                 ? html`<span>${icon("lock")}${WAITING_WORDS}</span>`
                 : html`<span>${icon("clock")}No checks on this head yet</span>`;
-  // Its own address: an event or the beat fetches this line, not the page.
-  // While a check runs there is no event for a finished shard, so it also
-  // asks on a beat.
+  // Its own address: an event fetches this line, not the page. A finished
+  // shard is a `run.shard` event (`checks/shard_event.ts`), so no beat.
   const live =
     liveSrc === ""
       ? null
-      : html`id="live-checks" data-live="run.*" data-live-src="${liveSrc}"${
-          check.state === "running" || check.state === "queued" ? html` data-live-every="5"` : null
-        }`;
+      : html`id="live-checks" data-live="run.*" data-live-src="${liveSrc}"`;
   return html`<p class="checks-line" ${live}>
     ${body}${against}${when(
       tier !== "",

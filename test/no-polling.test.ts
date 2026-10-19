@@ -14,7 +14,6 @@ const ALLOWED: Record<string, { allow: string[]; why: string }> = {
   "src/web/pages/migrate.ts": { allow: ["refresh: {", 'http-equiv="refresh"'], why: "migrate progress runs in a process that emits no events" },
   "src/web/pages/browse.ts": { allow: ["refresh: {"], why: "mirror progress runs in a process that emits no events" },
   "src/web/pages/backups.ts": { allow: ["refresh: {"], why: "a backup moving emits no event" },
-  "src/web/pages/pull.ts": { allow: ["data-live-every"], why: "a shard finishing emits no event, so a running check row beats" },
   "src/web/client.ts": { allow: ["data-live-every", "setInterval"], why: "the data-live-every mechanism itself, and clocks that only redraw text" },
   "src/web/fleet-graph.ts": { allow: ["setInterval"], why: "no fleet event yet; remove once it has one" },
 };

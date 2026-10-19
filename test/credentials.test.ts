@@ -324,7 +324,7 @@ describe("the board", () => {
     expect(page.slice(crewAt, apartAt)).toContain("platform (env)");
     expect(page.slice(crewAt, apartAt)).not.toContain("trevato-espo");
     expect(page.slice(apartAt)).toContain("trevato-espo");
-    expect(page).toContain('data-live="run.*,usage.*"');
+    expect(page).toContain('data-live="run.queued,run.started,run.finished,usage.*"');
     expect(page).toContain('data-by="byKind"');
     expect(page).toContain("The 10 costliest runs");
 

@@ -1332,7 +1332,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(text).toMatch(/^\s*<div data-etag="[0-9a-f]{16}"/);
     expect(`"${/data-etag="([0-9a-f]{16})"/.exec(text)![1]}"`).toBe(etag!);
     expect(text).toContain('id="live-now"');
-    expect(text).toContain('data-live="run.*,pull.*,issue.*"');
+    expect(text).toContain('data-live="run.queued,run.started,run.finished,pull.*,issue.*"');
     expect(text).toContain('data-live-src="/alice/vault/app/now"');
     expect(text).toContain("<h2>Now</h2>");
 

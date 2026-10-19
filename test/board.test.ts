@@ -136,12 +136,12 @@ describe("the board", () => {
     expect(html).not.toContain('class="topbar"');
     expect(html).not.toContain('class="foot"');
     expect(html).toMatch(/<main\s+class="bare"\s+id="main"\s*>/);
-    expect(html).toMatch(/id="working"\s+data-live="run\.\*"/);
+    expect(html).toMatch(/id="working"\s+data-live="run\.queued,run\.started,run\.finished"/);
     expect(html).toMatch(
       /id="landed"\s+data-live="pull\.merged,run\.finished"/,
     );
-    expect(html).toMatch(/id="decided"\s+data-live="run\.\*,pull\.\*"/);
-    expect(html).toMatch(/id="today"\s+data-live="run\.\*,pull\.merged"/);
+    expect(html).toMatch(/id="decided"\s+data-live="run\.queued,run\.started,run\.finished,pull\.\*"/);
+    expect(html).toMatch(/id="today"\s+data-live="run\.queued,run\.started,run\.finished,pull\.merged"/);
     expect(html).toContain("Nobody is working right now.");
     expect(html).toContain("Nothing has shipped yet.");
     expect(html).toContain("Nothing decided yet.");
@@ -348,7 +348,7 @@ describe("the board", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     expect(html).toMatch(/<div class="board"\s+data-wall="">/);
-    expect(html).toMatch(/id="working"\s+data-live="run\.\*"/);
+    expect(html).toMatch(/id="working"\s+data-live="run\.queued,run\.started,run\.finished"/);
     expect(html).toMatch(/class="board-scope"\s*>notes</);
   });
 
@@ -449,7 +449,7 @@ describe("the board's forge strip", () => {
 
   test("an admin reads All fine; a stuck run becomes a linked sentence; a non-admin sees nothing", async () => {
     const fine = await board("root");
-    expect(fine).toMatch(/id="forge"\s+data-live="run\.\*,app\.\*"/);
+    expect(fine).toMatch(/id="forge"\s+data-live="run\.queued,run\.started,run\.finished,app\.\*"/);
     expect(fine).toContain("All fine");
 
     const made = await createRepo(app, admin, { name: "stuck" });

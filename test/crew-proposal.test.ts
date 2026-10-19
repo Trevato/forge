@@ -225,7 +225,7 @@ echo '{"type":"result","subtype":"success","is_error":false,"result":"Wrote note
     ).then((r) => r.text());
     expect(page).toContain("The crew proposed a resolution");
     expect(page).toContain("Kept both lines");
-    expect(page).toContain('id="crew-proposal" data-live="run.*');
+    expect(page).toContain('id="crew-proposal" data-live="run.queued,run.started,run.finished');
     expect(page).toContain(`/edit/`);
     expect(page).toContain(now.headOid.slice(0, 7));
   });

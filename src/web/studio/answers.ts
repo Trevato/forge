@@ -22,7 +22,7 @@ import { time } from "../ui.ts";
 import { tellHref } from "./nouns.ts";
 
 /** The events that can change an answer. */
-export const ANSWERS_LIVE = "run.*,issue.*";
+export const ANSWERS_LIVE = "run.queued,run.started,run.finished,issue.*";
 
 /** How many tells the region shows, and the longest answer it quotes. */
 const SHOWN = 8;

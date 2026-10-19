@@ -110,7 +110,7 @@ test("a viewer who can gets the line, without counts until the log has them", as
   const text = await res.text();
   expect(text).toContain('id="live-checks"');
   expect(text).toContain("Check running");
-  expect(text).toContain('data-live-every="5"');
+  expect(text).not.toContain("data-live-every");
   expect(text).not.toContain(" files");
 });
 
@@ -134,7 +134,8 @@ test("the page that draws the line also ships the script that drives it", async 
   expect(res.status).toBe(200);
   const text = await res.text();
   expect(text).toContain('id="live-checks"');
-  expect(text).toContain('data-live-every="5"');
+  // The line itself carries no beat attribute; the script still knows the mechanism.
+  expect(text).not.toMatch(/id="live-checks"[^>]*data-live-every/);
   // liveRegionsJs reads data-live-src and arms the beat; liveClientJs alone does not.
   expect(text).toContain("data-live-src");
   expect(text).toContain("function arm(");
@@ -161,7 +162,7 @@ test("the change page the owner lands on draws the same live line, with the coun
   expect(res.status).toBe(200);
   const text = await res.text();
   expect(text).toContain('id="live-checks"');
-  expect(text).toContain('data-live-every="5"');
+  expect(text).not.toMatch(/id="live-checks"[^>]*data-live-every/);
   expect(text).toContain("2 of 170 files · 500 passed, 0 failed");
   expect(text).toContain("function arm(");
 });

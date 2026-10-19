@@ -46,6 +46,7 @@ import { pullWord, servingHistory } from "../src/web/studio/words.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { listEvents } from "../src/core/events.ts";
 import { readRunLog } from "../src/runs/log.ts";
 import { promote } from "./helpers/members.ts";
 
@@ -1206,6 +1207,58 @@ describe("startChecks: a booting forge removes only checkouts nobody is running 
       expect(existsSync(where("no-such-run"))).toBe(false);
     } finally {
       db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("checks: a finished shard is announced as the runner writes it (#2889)", () => {
+  test("each shard-done line the check prints puts one run.shard on the bus, and nothing else does", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "forge-shards-"));
+    const shardApp = createApp({ dataDir: dir, port: 0 });
+    const shardServers = await serve(shardApp);
+    const handle = startChecks(shardApp, { forgeUrl: shardServers.url, concurrency: 1 });
+    try {
+      const u = await createUser(shardApp.db, {
+        origin: "seed",
+        trusted: true,
+        username: "alice",
+        email: "alice@forge.local",
+        password: "a-good-passphrase",
+        adminIfFirst: true,
+      });
+      if (!u.ok) throw new Error(u.error);
+      const made = await createRepo(shardApp, u.value, { name: "lib", visibility: "public" });
+      if (!made.ok) throw new Error(String(made.error));
+      const lines = [
+        "test-shards: 3 files in 2 shards",
+        "── shard 1/2: a.ts b.ts",
+        " 5 pass",
+        "── shard 1/2 done (exit 0, 1.0s)",
+        "── shard 2/2: c.ts",
+        "── shard 2/2 done (exit 0, 1.0s)",
+      ];
+      const script = lines.map((l) => `echo '${l}'`).join("; ");
+      const pushed = await commitToBranch(shardApp, u.value, made.value, {
+        message: "Declare a check",
+        files: [{ path: "forge.json", content: checkJson(script) }],
+      });
+      if (!pushed.ok) throw new Error(JSON.stringify(pushed.error));
+      const deadline = Date.now() + 30_000;
+      let run: Run | undefined;
+      while (Date.now() < deadline) {
+        run = listRuns(shardApp.db, made.value.id, { kind: "check", limit: 5 })[0];
+        if (run && (run.state === "ok" || run.state === "failed")) break;
+        await Bun.sleep(50);
+      }
+      expect(run?.state).toBe("ok");
+      const shards = listEvents(shardApp.db, { repoId: made.value.id, kind: "run.shard" });
+      expect(shards.map((e) => e.payload["shard"]).sort()).toEqual([1, 2]);
+      expect(shards.every((e) => e.payload["runId"] === run!.id && e.payload["of"] === 2)).toBe(true);
+    } finally {
+      await handle.stop();
+      shardServers.stop();
+      shardApp.close();
       await rm(dir, { recursive: true, force: true });
     }
   });

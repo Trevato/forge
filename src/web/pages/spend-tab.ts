@@ -16,7 +16,7 @@ import { usageShell } from "./usage-tabs.ts";
 export function spendPage(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
-  const body = html`<div id="spend" data-live="run.*,usage.*">${card(
+  const body = html`<div id="spend" data-live="run.queued,run.started,run.finished,usage.*">${card(
     spendView(readSpend(ctx.app, new Date())),
     { head: html`${icon("clock")}<h2>Spend</h2>` },
   )}</div>`;

@@ -40,7 +40,7 @@ import {
 } from "./words.ts";
 
 /** The events that can change what Now says. */
-export const NOW_LIVE = "run.*,pull.*,issue.*";
+export const NOW_LIVE = "run.queued,run.started,run.finished,pull.*,issue.*";
 
 /**
  * The card in its live region: the kinds it listens for, the repository

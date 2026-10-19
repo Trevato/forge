@@ -23,7 +23,7 @@ import { cellsOf, chartBox, paramsOf, queryFields, readParams, runFor } from "./
 
 const RANGE_MS = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 } as const;
 /** The events the panels' queries read (runs, pulls, checks, issues, usage): any of them may change a chart. */
-const READS = "run.*,pull.*,check.*,issue.*,usage.*";
+const READS = "run.queued,run.started,run.finished,pull.*,check.*,issue.*,usage.*";
 
 const option = (value: string, selected: boolean) =>
   html`<option value="${value}" ${selected ? raw("selected") : null}>${value}</option>`;

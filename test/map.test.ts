@@ -366,7 +366,7 @@ describe("the map, per app and across the forge", () => {
       await fetch(`${base}/alice/engine/map`, { headers: { cookie } })
     ).text();
     const region = page.match(/<div[^>]*id="map-live"[^>]*>/)?.[0] ?? "";
-    expect(region).toContain('data-live="run.*,issue.*,pull.*"');
+    expect(region).toContain('data-live="run.queued,run.started,run.finished,issue.*,pull.*"');
     expect(region).toContain('data-live-repo="alice/engine"');
     // The canvas carries its size for the fit, and the tools for the rest.
     expect(page).toMatch(
@@ -392,7 +392,7 @@ describe("the map, per app and across the forge", () => {
     ).text();
     expect(page).toContain("<h1>Map</h1>");
     expect(page).toMatch(
-      /<div[^>]*id="map-lanes"[^>]*data-live="run\.\*,issue\.\*,pull\.\*"/,
+      /<div[^>]*id="map-lanes"[^>]*data-live="run\.queued,run\.started,run\.finished,issue\.\*,pull\.\*"/,
     );
     const lane = (id: string) =>
       page.match(new RegExp(`<details[^>]*id="${id}"[^>]*>`))?.[0] ?? "";

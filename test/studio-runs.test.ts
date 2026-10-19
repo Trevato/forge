@@ -1021,7 +1021,7 @@ describe("the app's page tails the crew's log while it works", () => {
     // for this repository's runs, and the tail rides the one /events stream.
     expect(page).not.toMatch(/<meta\s+http-equiv="refresh"/);
     expect(page).toMatch(
-      /id="live-now"\s+data-live="run\.\*[^"]*"\s+data-live-repo="alice\/engine"/,
+      /id="live-now"\s+data-live="run\.queued,run\.started,run\.finished[^"]*"\s+data-live-repo="alice\/engine"/,
     );
 
     const stream = await get(
