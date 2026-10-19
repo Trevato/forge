@@ -25,7 +25,7 @@ export function telemetryPage(ctx: Ctx): Response {
   const reads = recentReads(ctx.app.db);
   const body = html`${card(
       html`<div class="card-body"><p class="muted small">
-        A granted agent reads <a href="/flow">Flow</a>, <a href="/system">System</a> and the
+        A granted agent reads <a href="/boards">Boards</a>, <a href="/system">System</a> and the
         boards' sources through the API and MCP — counts and rates, with
         private repositories and sealed values cut out. Revoke at any time;
         every read is listed below.

@@ -161,7 +161,7 @@ export function systemPage(ctx: Ctx): Response {
         The machine now, updated in place about every 2 s over one event
         stream; <a href="/system?pause">pause</a>. Its history is on
         <a href="/boards">Boards</a> (the machine source); the pipeline is on
-        <a href="/flow">Flow</a>.
+        <a href="/boards">Boards</a>.
       </p>
     </div>
     <div id="sys-dup">${at("sys-dup")}</div>

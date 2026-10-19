@@ -241,9 +241,6 @@ function userMenu(
         ]
       : []),
     { separator: true, label: "" },
-    ...(user.isAdmin
-      ? [{ label: "Flow", href: "/flow", icon: "activity" as const }]
-      : []),
     helpItem,
     themeForm(theme),
     { separator: true, label: "" },
@@ -334,7 +331,6 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
       : []),
     ...(ctx.auth.user?.isAdmin
       ? [
-          { t: "Flow", h: "/flow", c: "Go to" },
           { t: "System", h: "/system", c: "Go to" },
           { t: "Forges you sent", h: "/forges", c: "Go to" },
           { t: "Family of forges", h: "/family", c: "Go to" },

@@ -248,8 +248,8 @@ describe("/flow: the forge shows its own bottleneck", () => {
     for (const key of ["ready", "building", "checking", "review", "approved", "landed", "live"])
       expect(page).toContain(`data-stage="${key}"`);
     expect(page).toContain('href="/settings/capacity"');
-    // An admin reaches Flow from every page, through the user menu.
-    expect(await (await get("/", cookie)).text()).toContain('href="/flow"');
+    // Nothing links to Flow any more (#2831): the home an admin sees has no such href.
+    expect(await (await get("/", cookie)).text()).not.toContain('href="/flow"');
   });
 
   test("nobody but a forge admin reads it", async () => {
@@ -269,7 +269,7 @@ describe("/flow: the forge shows its own bottleneck", () => {
     expect(bar.match(/<details/g)?.length).toBe(2);
     // They are still one open away, in the user menu.
     const panel = bar.slice(bar.lastIndexOf('<details'));
-    expect(panel).toContain('href="/flow"');
+    expect(panel).not.toContain('href="/flow"');
     expect(panel).toContain("data-help");
     expect(panel).toContain('action="/theme"');
   });
