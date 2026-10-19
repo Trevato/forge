@@ -321,7 +321,7 @@ describe("boards API", () => {
   });
 
   test("the security sources are admin only: a non-admin gets 403, a repo scope gets nothing", async () => {
-    for (const source of ["signins", "tokens", "adminActions"]) {
+    for (const source of ["signins", "tokens", "adminActions", "reach"]) {
       expect((await q("bob", { source, aggregate: "count" })).status).toBe(403);
       expect((await q("agent", { source, aggregate: "count" })).status).toBe(403);
       expect((await q("admin", { source, aggregate: "count" })).status).toBe(200);
@@ -329,8 +329,53 @@ describe("boards API", () => {
     }
   });
 
+  test("reach: seeded vitals and sessions give the expected p75, p95 and counts, to an admin only", async () => {
+    const ins = app.db.prepare(
+      "INSERT INTO page_vital (day, at, route, visitor, ttfb, lcp, inp, cls) VALUES (?, 0, ?, ?, ?, ?, ?, 0)",
+    );
+    // /x on day 1: lcp 100..400, ttfb 10..40, one null inp; two visitors; /y has one view
+    [100, 200, 300, 400].forEach((v, i) => ins.run("2026-10-01", "/x", i < 2 ? "a" : "b", v / 10, v, i === 0 ? null : v));
+    ins.run("2026-10-01", "/y", "c", 5, 50, 60);
+    ins.run("2026-10-02", "/x", "a", 7, 70, 80);
+    const users = app.db.query<{ id: string }, []>("SELECT id FROM user LIMIT 2").all();
+    const sess = app.db.prepare(
+      "INSERT INTO session (token_hash, user_id, expires_at, last_seen_at) VALUES (?, ?, '2999-01-01T00:00:00.000Z', ?)",
+    );
+    const now = new Date();
+    sess.run("h1", users[0]!.id, now.toISOString());
+    sess.run("h2", users[1]!.id, new Date(now.getTime() - 3 * 86400_000).toISOString());
+    sess.run("h3", users[1]!.id, new Date(now.getTime() - 30 * 86400_000).toISOString());
+    const total = app.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM user").get()!.n;
+
+    const ask = async (metric: string, extra: object = {}) => {
+      const res = await q("admin", {
+        source: "reach", aggregate: "max", column: "value",
+        filter: [{ column: "metric", op: "eq", value: metric }], ...extra,
+      });
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { rows: { group: string | null; value: number }[] }).rows;
+    };
+    expect(await ask("lcp_p75", { groupBy: "route", filter: [{ column: "metric", op: "eq", value: "lcp_p75" }, { column: "at", op: "lt", value: "2026-10-02" }] }))
+      .toEqual([{ group: "/x", value: 300 }, { group: "/y", value: 50 }]);
+    expect(await ask("inp_p75", { groupBy: "route", filter: [{ column: "metric", op: "eq", value: "inp_p75" }, { column: "route", op: "eq", value: "/x" }, { column: "at", op: "lt", value: "2026-10-02" }] }))
+      .toEqual([{ group: "/x", value: 400 }]);
+    expect((await ask("server_p50", { filter: [{ column: "metric", op: "eq", value: "server_p50" }, { column: "route", op: "eq", value: "/x" }, { column: "at", op: "lt", value: "2026-10-02" }] }))[0]!.value).toBe(20);
+    expect((await ask("server_p95", { filter: [{ column: "metric", op: "eq", value: "server_p95" }, { column: "route", op: "eq", value: "/x" }, { column: "at", op: "lt", value: "2026-10-02" }] }))[0]!.value).toBe(40);
+    expect(await ask("visitors", { groupBy: { bucket: "day" } })).toEqual([
+      { group: "2026-10-01T00:00:00Z", value: 3 },
+      { group: "2026-10-02T00:00:00Z", value: 1 },
+    ]);
+    expect((await ask("accounts_active_1d"))[0]!.value).toBe(1);
+    expect((await ask("accounts_active_7d"))[0]!.value).toBe(2);
+    expect((await ask("accounts_total"))[0]!.value).toBe(total);
+
+    const strangerQuery = { source: "reach", aggregate: "count" };
+    expect((await q("bob", strangerQuery)).status).toBe(403);
+    expect((await q(null, strangerQuery)).status).toBe(401);
+  });
+
   test("the security sources list no secret column", () => {
-    for (const source of ["signins", "tokens", "adminActions"]) {
+    for (const source of ["signins", "tokens", "adminActions", "reach"]) {
       for (const c of Object.keys(SOURCES[source]!.columns)) expect(c).not.toMatch(/hash|token|secret|payload|name/);
     }
   });

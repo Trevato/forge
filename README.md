@@ -1640,3 +1640,5 @@ operator. (The three guards of migrations 62, 70 and 81 predate the prefix and
 are known by name in `src/http/refusal.ts`.) The terminal's toasts follow the
 same rule. A guard installed by hand without the prefix answers `refused`
 until it is re-created with `forge: ` in front of its message.
+
+`reach` is a boards source for an admin only (anyone else gets 403, an agent too): `visitors` per day, `lcp_p75` and `inp_p75` per route per day, `server_p50` and `server_p95` per route per day (the beacon's time to first byte, the only per-route server timing the forge keeps), and `accounts_active_1d`, `accounts_active_7d` and `accounts_total` as of now. Filter by `metric`, group by `route` or a time bucket. Percentiles are nearest-rank within one route and day, so a `max` or `avg` over several days is a summary of daily percentiles, not a percentile of the period. Account activity comes from a session's last-seen time, so it is a count as of now, not a history. No dependency was added.
