@@ -321,6 +321,31 @@ export function grantUrl(
   return `${originFor(runtime, target, host)}/__forge/grant?t=${encodeURIComponent(token)}&to=${encodeURIComponent(path)}`;
 }
 
+/**
+ * The forge's and the edge's credentials never reach tenant code: every
+ * `x-plat-*` header, `authorization`, and this forge's grant cookie for
+ * this app. Cookies are named, not swept by prefix: a forge hosted here
+ * authenticates its own people with `forge_session` and `forge_grant_*`
+ * on its own hostnames, and those are not ours to take. Our own session
+ * cookie is host-only on the forge's host, so no app host ever receives it.
+ */
+export function stripForgeCredentials(
+  headers: Headers,
+  grantCookie: string,
+): void {
+  for (const name of [...headers.keys()])
+    if (name.startsWith("x-plat-")) headers.delete(name);
+  headers.delete("authorization");
+  const cookie = headers.get("cookie");
+  if (cookie === null) return;
+  const kept = cookie
+    .split(";")
+    .map((part) => part.trim())
+    .filter((part) => part !== "" && part.split("=", 1)[0]!.trim() !== grantCookie);
+  if (kept.length === 0) headers.delete("cookie");
+  else headers.set("cookie", kept.join("; "));
+}
+
 const HOP_BY_HOP = [
   "connection",
   "keep-alive",
@@ -615,6 +640,7 @@ export async function proxyApp(
   const headers = new Headers(request.headers);
   for (const name of HOP_BY_HOP) headers.delete(name);
   for (const name of IDENTITY_HEADERS) headers.delete(name);
+  stripForgeCredentials(headers, grantCookieName(target));
   headers.set("x-forwarded-host", request.headers.get("host") ?? "");
   headers.set("x-forwarded-proto", url.protocol.replace(":", ""));
   for (const [name, value] of Object.entries(

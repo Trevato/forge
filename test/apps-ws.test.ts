@@ -44,6 +44,12 @@ export const server = Bun.serve<{ seen: string }>({
   port,
   fetch(request, server) {
     const url = new URL(request.url);
+    if (url.pathname === "/headers")
+      return Response.json({
+        plat: [...request.headers.keys()].filter((k) => k.startsWith("x-plat-")),
+        authorization: request.headers.get("authorization"),
+        cookie: request.headers.get("cookie"),
+      });
     if (url.pathname === "/last-close") return new Response(lastClose);
     if (url.pathname === "/ws") {
       const offered = (request.headers.get("sec-websocket-protocol") ?? "")
@@ -54,6 +60,8 @@ export const server = Bun.serve<{ seen: string }>({
         path: url.pathname + url.search,
         host: request.headers.get("host"),
         cookie: request.headers.get("cookie"),
+        plat: [...request.headers.keys()].filter((k) => k.startsWith("x-plat-")),
+        authorization: request.headers.get("authorization"),
         identity: request.headers.get("x-forge-identity"),
         forwardedHost: request.headers.get("x-forwarded-host"),
         forwardedProto: request.headers.get("x-forwarded-proto"),
@@ -111,6 +119,7 @@ describe("apps: websockets through the proxy", () => {
   let runtime: AppsRuntime;
   let alice: User;
   let repo: Repo;
+  let grantName = "";
   const DOMAIN = "apps.test";
   const HOST = `wsecho.${DOMAIN}`;
 
@@ -235,6 +244,7 @@ describe("apps: websockets through the proxy", () => {
     });
     if (!made.ok) throw new Error(made.error);
     repo = made.value.repo;
+    grantName = `forge_grant_${made.value.app.id.slice(-8)}`;
     await settled((run) => run.env === "production");
     // The scaffold becomes the echo app; the push redeploys production.
     const committed = await commitToBranch(app, alice, repo, {
@@ -311,6 +321,43 @@ describe("apps: websockets through the proxy", () => {
 
     client.ws.close(1000, "done");
     expect((await client.closed).code).toBe(1000);
+  });
+
+  const forgeHeaders = () => ({
+    "x-plat-edge-token": "edge-secret",
+    "x-plat-user": "admin",
+    authorization: "Bearer forge-token",
+    cookie: "sid=abc; forge_session=hosted-forge-login; forge_grant_zzzzzzzz=hosted;",
+  });
+
+  test("a request through the proxy reaches the app without the forge's or the edge's credentials, and a hosted forge's own cookies survive", async () => {
+    const res = await viaHost(HOST, "/headers", {
+      headers: {
+        ...forgeHeaders(),
+        cookie: `sid=abc; ${grantName}=ours; forge_session=hosted; forge_grant_zzzzzzzz=hosted`,
+      },
+    });
+    const seen = (await res.json()) as Record<string, unknown>;
+    expect(seen["plat"]).toEqual([]);
+    expect(seen["authorization"]).toBeNull();
+    expect(seen["cookie"]).toBe(
+      "sid=abc; forge_session=hosted; forge_grant_zzzzzzzz=hosted",
+    );
+  });
+
+  test("a websocket handshake reaches the app without the forge's or the edge's credentials", async () => {
+    const client = connect("/ws", {
+      headers: {
+        ...forgeHeaders(),
+        cookie: `sid=abc; ${grantName}=ours; forge_session=hosted`,
+      },
+    });
+    expect(await client.opened).toBe(true);
+    const seen = await seenBy(client.next);
+    expect(seen["plat"]).toEqual([]);
+    expect(seen["authorization"]).toBeNull();
+    expect(seen["cookie"]).toBe("sid=abc; forge_session=hosted");
+    client.ws.close();
   });
 
   test("a close on either side reaches the other, code and reason intact", async () => {
