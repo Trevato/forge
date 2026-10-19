@@ -272,6 +272,8 @@ export async function placeThought(
       reply = `You asked this on ${said}; #${number} is open but deferred behind the Later gate, so it is not raised.`;
     } else if (issue?.state === "open") {
       raiseIssue(app.db, issue.id, now);
+      // The ready order moved: say so on the repository, so a cached map misses.
+      app.bus.append({ kind: "issue.raised", repoId: repo.id, payload: { number: issue.number } });
       const done = addComment(app, by, repo, issue, `Asked again; raised in the ready order.\n\n${ref}\n\n${quote(text)}`);
       if (!done.ok) log.warn("could not comment", { issue: issue.number, error: String(done.error) });
       reply = `You asked this on ${said}; #${number} is open${issue.assigneeId ? " and being built" : ""}. Raised it.`;

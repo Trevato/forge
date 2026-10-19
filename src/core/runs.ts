@@ -1143,6 +1143,25 @@ export function listActiveRuns(
     .map(toRun);
 }
 
+/** Which of these repositories have an agent run queued or running: one grouped read. */
+export function reposWithActiveRuns(
+  db: Database,
+  repoIds: readonly string[],
+): Set<string> {
+  const unique = [...new Set(repoIds)];
+  if (unique.length === 0) return new Set();
+  return new Set(
+    db
+      .query<{ repo_id: string }, string[]>(
+        `SELECT DISTINCT repo_id FROM run
+          WHERE kind = 'agent' AND state IN ('queued','running')
+            AND repo_id IN (${unique.map((_, n) => `?${n + 1}`).join(",")})`,
+      )
+      .all(...unique)
+      .map((r) => r.repo_id),
+  );
+}
+
 /** What is waiting to start, by kind: one grouped query, however many runs there are. */
 export function queueDepth(
   db: Database,

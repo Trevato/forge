@@ -81,6 +81,16 @@ The machine is shared, so latency varies from run to run: an earlier run of
 were the same in both runs. Treat latency as an order of magnitude and the
 statement count as the exact figure.
 
+After #2716 (same fixture, same machine, `--n 30`, warm; `/` unchanged):
+
+| request             | p50 ms | p95 ms | SQL / request |
+| ------------------- | -----: | -----: | ------------: |
+| `GET /map` owner    |   26.7 |   34.5 |          25.0 |
+| `GET /map` stranger |   25.2 |   27.6 |          33.0 |
+
+What is left is rendering the ~1 MB of SVG (25 ms), which rule 3 keeps
+per request.
+
 ### Where the time goes
 
 - **`/map`: `layout` of the big lane alone takes 408 ms of the ~490 ms
@@ -131,8 +141,10 @@ statement count as the exact figure.
   status. The per-repository map page and the API read the same entry.
 - **Key:** `lane:{repoId}:{head}:{scope}:{utcDay}`.
   - `head` is the repository's `MAX(event.seq)`. One grouped read covers
-    every lane on the page:
-    `SELECT repo_id, MAX(seq) FROM event WHERE repo_id IN (…) GROUP BY repo_id`.
+    every lane on the page: `SELECT repo.id, (SELECT MAX(seq) FROM event
+    WHERE repo_id = repo.id) FROM repo WHERE repo.id IN (…)`. (A grouped
+    `MAX … GROUP BY` scans every event of every listed repository, 17 ms
+    on the fixture; the correlated form is one index seek each, 0.3 ms.)
   - `scope` comes from `sealedScope(db, repo, viewer)`, worked out fresh:
     `all` for a writer or the crew, `own:{userId}` for any other signed-in
     active account, `none` for no one. Every part of a lane that reads
@@ -273,30 +285,35 @@ or stops saying what it did, this doc goes red before the cache goes stale.
 
 ## Gaps: writes that change a lane without an event on its repository
 
-The 60-second max age covers these until they append an event. #2716
-closes each one, either by appending an event with the repository's id or
-by adding the input to the key:
+Closed by #2716, except the clock:
 
 - **A thought raising an issue** (`raiseIssue` from `crew/triage.ts`):
-  it writes `issue_raise`, and the only event is the forge-wide
-  `thought.received`. The ready order moves silently.
-- **A fleet "move limb"** (`moveLimb` from `fleet/verbs.ts`): it writes
-  `limb_place` through core. `fleet.operated` carries no repository id.
-- **A username change** (`user.updated`, no repository): the workers'
-  names in a lane header.
+  `crew/triage` now appends `issue.raised` with the repository's id beside
+  it, so `head` moves.
+- **A fleet "move limb"** (`moveLimb` from `fleet/verbs.ts`): the verb
+  already appends `limb.moved` with the repository's id.
+- **A username change** (`user.updated`, no repository): the lane keeps its
+  workers' ids, never their names. The names are read on every request in
+  one grouped read.
 - **The clock:** "deferred" and the spend day turn over with time. The
-  `utcDay` in the key covers the spend; the max age covers the rest.
+  `utcDay` in the key covers the spend; the 60 s max age covers the rest.
 
 ## Budgets
 
 These are what #2716 and #2717 test against, on the forge-sized fixture,
 warm:
 
-- **`/map`: p95 ≤ 50 ms on the bench, and at most 2 + 2 × lanes
-  statements.** That is one grouped head read, one grouped access read,
-  and two reads per lane for what is never cached. The test asserts the
-  statement count, which does not depend on the machine. Its wall-clock
-  bound is 200 ms p95, the floor `test/flake.test.ts` allows a request.
+- **`/map`: p95 ≤ 50 ms on the bench, and a statement count that does not
+  grow with the plan.** Measured warm (#2716): 25 statements for the owner
+  (10 lanes) and 33 for a stranger (8 lanes), against 2,685 and 2,637.
+  About 25 of them are the page around the lanes (session, settings, the
+  repository lists the chrome reads); each lane adds at most two (its head
+  is one grouped read for all of them, and `canWrite`'s owner lookup is
+  one per lane for a viewer who is not an admin). The first draft of this
+  budget, 2 + 2 × lanes, left the page's own chrome out. The test
+  (`test/map-cache.test.ts`) asserts 26 + 2 × lanes, which does not depend
+  on the machine. Its wall-clock bound is 200 ms p95, the floor
+  `test/flake.test.ts` allows a request; the 50 ms is read off the bench.
 - **`/`: p95 ≤ 50 ms on the bench, and a statement count that does not
   grow with the feed's candidates** (the `test/counts.test.ts` pattern).
   The test's wall-clock bound is 200 ms, for the same reason.

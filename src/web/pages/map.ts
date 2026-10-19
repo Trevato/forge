@@ -36,13 +36,14 @@ import {
   type Ranked,
 } from "../../core/dependencies.ts";
 import type { Issue } from "../../core/issues.ts";
+import { cachedLane, cachedLayout, repoHeads, scopeKey } from "../map_cache.ts";
 import { holdsFor } from "../../core/holds.ts";
 import {
   getRepoById,
   listReposVisibleTo,
   type Repo,
 } from "../../core/repos.ts";
-import { listActiveRuns, type Run, type RunState } from "../../core/runs.ts";
+import { listActiveRuns, reposWithActiveRuns, type Run, type RunState } from "../../core/runs.ts";
 import { getUsersByIds, type User } from "../../core/users.ts";
 import type { Ctx } from "../../http/context.ts";
 import {
@@ -1412,7 +1413,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
   const ready = readyNow(graph);
   const blocked = blockedOn(graph);
   const critical = criticalPath(graph);
-  const placed = layout(graph);
+  const placed = cachedLayout(graph, layout);
   const marks = marksFor(db, repo.id, graph, listActiveRuns(db, [repo.id]));
   const readySet = new Set(ready.map((r) => r.issue.id));
   const counts = countWords(
@@ -1613,6 +1614,63 @@ export interface Lane {
   readonly status: AutonomyStatus | undefined;
 }
 
+/** A lane as kept: everything but the repository and the workers' names. */
+type KeptLane = Omit<Lane, "repo" | "workers"> & {
+  /** The runs' actors, running ones first; their names are read per request. */
+  readonly workerIds: string[];
+};
+
+/**
+ * One repository's lane for one scope, or null when it has nothing to draw.
+ * Every read of issues here respects `scope`, so the entry it becomes is
+ * the same for everyone whose scope computes to the same key.
+ */
+function buildLane(
+  app: App,
+  repo: Repo,
+  viewer: User | undefined,
+  scope: ReturnType<typeof sealedScope>,
+): KeptLane | null {
+  const db = app.db;
+  // A run on a sealed report is not shown to who may not see the report.
+  const flying = listActiveRuns(db, [repo.id]).filter((r) =>
+    mayViewId(db, repo, r.issueId, viewer),
+  );
+  if ((repo.counts?.openIssues ?? 0) === 0 && flying.length === 0) return null;
+  const graph = repoGraph(db, repo.id, scope);
+  const marks = marksFor(db, repo.id, graph, flying);
+  const ready = readyNow(graph);
+  const readySet = new Set(ready.map((r) => r.issue.id));
+  const workerIds = [
+    ...new Set(
+      [...flying]
+        .sort(
+          (a, b) =>
+            (a.state === "running" ? -1 : 0) - (b.state === "running" ? -1 : 0),
+        )
+        .map((r) => r.actorId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  const counts = countWords(
+    graph.issues.map((i) => wordFor(i, readySet, marks)),
+  );
+  return {
+    graph,
+    placed: cachedLayout(graph, layout),
+    marks,
+    ready,
+    critical: criticalPath(graph),
+    counts,
+    inFlight: flying.length,
+    workerIds,
+    // Nothing in flight and no card that says ready: a parked or proposed
+    // issue is not one a free slot would take.
+    idle: flying.length === 0 && counts.ready === 0,
+    status: repo.autonomy === "off" ? undefined : autonomyStatus(app, repo),
+  };
+}
+
 /**
  * One lane per repository the viewer can see that has something to draw:
  * an open issue, or a run in flight. The rest are left out rather than
@@ -1622,62 +1680,49 @@ export interface Lane {
  */
 export function globalLanes(app: App, viewer: User | undefined): Lane[] {
   const db = app.db;
+  const now = new Date();
+  // Access first, every request, and into the key (docs/CACHING.md rule 1).
   const repos = listReposVisibleTo(db, viewer, { limit: 200 });
-  const runs = listActiveRuns(
+  const heads = repoHeads(
     db,
     repos.map((r) => r.id),
   );
+  const running = reposWithActiveRuns(db, repos.map((r) => r.id));
+  const built: { repo: Repo; lane: KeptLane }[] = [];
+  for (const repo of repos) {
+    // Nothing open and nobody running: no lane for anyone, so no scope to work out.
+    if ((repo.counts?.openIssues ?? 0) === 0 && !running.has(repo.id)) continue;
+    const scope = sealedScope(db, repo, viewer);
+    const lane = cachedLane(
+      {
+        repoId: repo.id,
+        head: heads.get(repo.id) ?? 0,
+        scope: scopeKey(scope),
+        now,
+      },
+      () => buildLane(app, repo, viewer, scope),
+    );
+    if (lane !== null) built.push({ repo, lane });
+  }
+  // Names are read now, not kept: a renamed account shows on the next view.
   const actors = getUsersByIds(
     db,
-    runs.map((r) => r.actorId).filter((id): id is string => id !== null),
+    built.flatMap(({ lane }) => lane.workerIds),
   );
-  const byRepo = new Map<string, Run[]>();
-  for (const run of runs)
-    byRepo.set(run.repoId, [...(byRepo.get(run.repoId) ?? []), run]);
-  const lanes: Lane[] = [];
-  for (const repo of repos) {
-    // A run on a sealed report is not shown to who may not see the report.
-    const flying = (byRepo.get(repo.id) ?? []).filter((r) =>
-      mayViewId(db, repo, r.issueId, viewer),
-    );
-    if ((repo.counts?.openIssues ?? 0) === 0 && flying.length === 0) continue;
-    const graph = repoGraph(db, repo.id, sealedScope(db, repo, viewer));
-    const marks = marksFor(db, repo.id, graph, flying);
-    const ready = readyNow(graph);
-    const readySet = new Set(ready.map((r) => r.issue.id));
-    const workers = [
-      ...new Set(
-        [...flying]
-          .sort(
-            (a, b) =>
-              (a.state === "running" ? -1 : 0) -
-              (b.state === "running" ? -1 : 0),
-          )
-          .map((r) =>
-            r.actorId === null ? undefined : actors.get(r.actorId)?.username,
-          )
-          .filter((n): n is string => n !== undefined),
-      ),
-    ];
-    const counts = countWords(
-      graph.issues.map((i) => wordFor(i, readySet, marks)),
-    );
-    lanes.push({
+  const lanes: Lane[] = built.map(({ repo, lane }) => {
+    const { workerIds, ...rest } = lane;
+    return {
+      ...rest,
       repo,
-      graph,
-      placed: layout(graph),
-      marks,
-      ready,
-      critical: criticalPath(graph),
-      counts,
-      inFlight: flying.length,
-      workers,
-      // Nothing in flight and no card that says ready: a parked or proposed
-      // issue is not one a free slot would take.
-      idle: flying.length === 0 && counts.ready === 0,
-      status: repo.autonomy === "off" ? undefined : autonomyStatus(app, repo),
-    });
-  }
+      workers: [
+        ...new Set(
+          workerIds
+            .map((id) => actors.get(id)?.username)
+            .filter((n): n is string => n !== undefined),
+        ),
+      ],
+    };
+  });
   // Where the crew is first, then what has work ready, idle lanes last;
   // by name within each, so the page reads the same twice.
   return lanes.sort(

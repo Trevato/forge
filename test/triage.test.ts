@@ -251,6 +251,22 @@ describe("triage", () => {
     }
   });
 
+  test("raising an issue for a repeated ask is an event on its repository", async () => {
+    app.config.decider = stub({ build: ["work", 0.9, "none", "P7"] });
+    const text = "show the build time next to each pull";
+    const first = await placeThought(app, fresh(), alice, think(text));
+    const number = first.placed[0]!.number;
+    const raisedEvents = () =>
+      app.db
+        .query<{ c: number }, [string]>("SELECT COUNT(*) c FROM event WHERE kind = 'issue.raised' AND repo_id = ?1")
+        .get(repo.id)!.c;
+    const before = raisedEvents();
+    const again = await placeThought(app, fresh(), alice, think(text));
+    expect(again.reply).toContain("Raised it");
+    expect(raisedEvents()).toBe(before + 1);
+    expect(number).toBeGreaterThan(0);
+  });
+
   test("a repeat of an ask that was deferred says so and does not claim to raise it", async () => {
     app.config.decider = stub({ build: ["work", 0.9, "none", "P7"], scrap: ["reversal", 0.9, "#0"] });
     const text = "build a heatmap of commits per hour";
