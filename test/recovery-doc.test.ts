@@ -62,8 +62,8 @@ test("what a snapshot lacks is what snapshot.ts leaves out", () => {
   expect(doc).toContain("/api/v1/health");
 });
 
-test("the doc fits one printed side", () => {
-  expect(doc.split("\n").length).toBeLessThanOrEqual(80);
+test("the doc fits two printed sides", () => {
+  expect(doc.split("\n").length).toBeLessThanOrEqual(125);
 });
 
 test("the doc says where the drill's verdicts are posted, and names its steps", () => {

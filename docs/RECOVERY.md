@@ -69,6 +69,47 @@ a repository with `git clone --mirror <file> <data-dir>/repos/<owner>/<repo>.git
 scrypt and AES-256-GCM (`src/snapshot/wrap.ts`): only `restore.ts` opens it,
 so by hand the sealed values are set again.
 
+## When the drill is red
+
+The weekly drill restores the newest snapshot into scratch and names where it
+stopped: a step, and for `restore` a phase inside it. Each entry says what it
+was doing, the likely cause, and the first thing to check. Whatever the step,
+the next move is the same: run Route 1 by hand on a new directory and watch
+which line it stops at.
+
+### Steps
+
+- **fetch** — listing the store for the newest snapshot. Likely the store is
+  unreachable or its keys changed, or no snapshot exists. Check the `S3_*`
+  variables and that the store lists the snapshot objects.
+- **restore** — running the restore command; the phase below says where.
+  Likely a bad snapshot or a slow store. Check the phase, then Route 1.
+- **open** — opening the restored `forge.db`. Likely the file is truncated or
+  corrupt. Check its size against the snapshot's manifest.
+- **count** — counting rows and comparing with the counts the snapshot kept.
+  Likely the snapshot was cut mid-write or rows were lost. Check which table
+  the message names and its count in the snapshot.
+- **unseal** — opening one sealed value with the restored key. Likely the key
+  is missing or from another forge, or the passphrase is wrong. Check
+  `FORGE_SNAPSHOT_PASSPHRASE` and that the snapshot holds the key.
+- **health** — booting the restored forge and asking it for health. Likely a
+  migration or config problem, or a boot slower than the limit. Boot it by
+  hand as in Route 1 and read its log.
+
+### Restore phases
+
+- **manifest** — reading the snapshot's list of files and bundles. Likely the
+  manifest object is missing or damaged. Check the object exists in the store.
+- **files** — fetching the plain files. Likely a slow or failing store. Check
+  how far it got against the manifest's file count, then retry.
+- **unpack** — unpacking the fetched files into the data directory. Likely the
+  disk is full or the archive is damaged. Check free space.
+- **bundles** — cloning each repository from its bundle. Likely a slow store
+  or many repositories. Compare its counts with the snapshot's and retry the
+  restore by hand with Route 1.
+- **key** — restoring the secret key, opened with the passphrase. Likely the
+  passphrase is missing or wrong. Check `FORGE_SNAPSHOT_PASSPHRASE`.
+
 ## What a snapshot does NOT hold
 
 - Sealed values, unless the passphrase was set: they stay sealed and are set
