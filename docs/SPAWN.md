@@ -87,11 +87,8 @@ The spawner chooses `followMode` in the spawn input: `tell-me` (default) or
 `take-updates`; it is part of the plan. `/:owner/forge/following` on the
 child shows the chain, root first, one line per hop with its mode and how
 many commits of its own it had when the next hop was born (the last hop is
-counted now). Behind-counts are not shown: they need a fetch of the parent,
-which spawn does not do; that waits on cross-forge following (#1052), which
-is also what will make `mode` act. Until a follower acts on it, `tell-me`
-and `take-updates` are the owner's recorded choice, shown on the chain, not
-behaviour.
+counted now). What the modes do is in
+"Following the parent forge" below.
 
 Every door reads and cuts the chain the same way: the page
 (`GET /:owner/forge/following`), `GET /api/v1/repos/:owner/forge/following`
@@ -101,6 +98,26 @@ Sever's one implementation is `severForge` in `src/actions/follow.ts`.
 
 A child's heartbeat adds `forgeTip` and `severedAt` when it carries a fork;
 `/family` on the parent shows `code at <tip>` or `follows nothing since …`.
+
+## Following the parent forge
+
+An hourly check (`CHECK_MS`, `src/spawn/upstream.ts`) fetches the parent's
+code into the child's `forge` repository under `refs/upstream/*`. What it
+learned (the parent's tip, how far behind the child is) is kept in
+`upstream.json` under the app's data directory. Fetching changes no branch.
+
+The owner's `followMode` decides what happens when the parent has new commits:
+
+- `tell-me` sends one inbox card per new tip, listing its commits.
+- `take-updates` opens one pull from the branch `forge/take-updates`
+  (`TAKE_BRANCH`) holding the parent's code, and updates that same pull when
+  the parent moves again. The pull carries the check like any other.
+
+The chain page, the API, the terminal and the MCP also offer "take now",
+which opens the same take pull. Sever stops all of it.
+
+What never happens: the default branch is never moved, and nothing merges
+itself. A person merges the take pull.
 
 **Sever** (`POST /:owner/forge/following/sever`, owner only, same-origin,
 type `sever`) writes `severedAt` into `forgeCode` and nothing else: the
