@@ -138,6 +138,7 @@ import {
   backupsClear,
   backupsDestination,
   backupsDrill,
+  backupsLive,
   backupsMirror,
   backupsMirrorClear,
   backupsMirrorNow,
@@ -829,6 +830,7 @@ export function buildRouter(): Router<Handler> {
   router.add("POST", "/admin/invites", inviteMint);
   router.add("POST", "/admin/invites/:id/revoke", inviteRevoke);
   router.add("GET", "/settings/backups", backupsPage);
+  router.add("GET", "/settings/backups/live", backupsLive);
   router.add("POST", "/settings/backups/now", backupsNow);
   router.add("POST", "/settings/backups/drill", backupsDrill);
   router.add("POST", "/settings/backups/destination", backupsDestination);

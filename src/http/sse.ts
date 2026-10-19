@@ -250,7 +250,7 @@ export function viewerStream(
       emit("run.log", { run: runId, ...frameOf(lines) });
     }, gone.signal);
     const unsubscribe = app.bus.subscribe((event: ForgeEvent) => {
-      if (event.repoId === null || !visible(event.repoId)) return;
+      if (event.repoId === null ? !event.kind.startsWith("backup.") : !visible(event.repoId)) return;
       if (!meant(event)) return;
       emit("forge", named(event), event.id);
     });

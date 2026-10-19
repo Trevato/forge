@@ -26,13 +26,15 @@ import { resolveDestination, sealedSet } from "../../snapshot/destination.ts";
 import { keyOf } from "../../snapshot/snapshot.ts";
 import { formatMinutes, formatSpan, timeByPart, type DrillResult } from "../../snapshot/drill.ts";
 import { lastDrill } from "../../snapshot/drills.ts";
-import { snapshotsOf } from "../../snapshot/service.ts";
+import type { Store } from "../../snapshot/store.ts";
+import { snapshotsOf, type SnapshotsHandle } from "../../snapshot/service.ts";
 import { lastSnapshotOutcome } from "../../snapshot/outcome.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage, settingsLayout, signInFirst } from "../chrome.ts";
 import { field, readForm, type Form } from "../form.ts";
 import { html, when, type Html } from "../html.ts";
-import { flashTo, page, redirect } from "../layout.ts";
+import { liveRegionsJs } from "../client.ts";
+import { flashTo, fragment, page, redirect } from "../layout.ts";
 import { btn, card, empty, fileSize, icon, row, time } from "../ui.ts";
 import { accountSections } from "./origins.ts";
 
@@ -42,11 +44,11 @@ function requireAdmin(ctx: Ctx): Response | undefined {
   return undefined;
 }
 
-function shell(ctx: Ctx, body: Html, moving = false): Response {
+function shell(ctx: Ctx, body: Html): Response {
   return page({
     ctx,
     title: "Backups",
-    ...(moving ? { refresh: { seconds: 5 } } : {}),
+    scriptJs: liveRegionsJs,
     body: html`<div class="page-head"><h1>Backups</h1></div>
       ${settingsLayout(
         accountSections("backups", { admin: true }),
@@ -245,20 +247,40 @@ export async function backupsPage(ctx: Ctx): Promise<Response> {
   if (denied) return denied;
   const svc = snapshotsOf(ctx.app);
   const form = html`${destinationCard(ctx)}${mirrorCard(ctx)}${domainsCard(ctx)}`;
-  const now = Date.now();
   if (svc === undefined || svc.store === undefined)
     return shell(
       ctx,
       html`${recoveryLine({
         reachable: false,
         unreachable: "no snapshot store is set",
-        now,
+        now: Date.now(),
       })}${empty({
         icon: "download",
         title: "No snapshots are taken",
         note: "This forge was given nowhere to put them. On the platform an app's bucket (S3_*) is the place; on a machine, FORGE_SNAPSHOT_DIR names a directory. Seal a bucket below, or restart with one set, and a snapshot is taken every night at 08:00 UTC.",
       })}${form}`,
     );
+  return shell(ctx, html`${await movingPart(ctx, svc, svc.store)}${form}`);
+}
+
+/** GET /settings/backups/live — the moving part alone, which the page refetches on an event. */
+export async function backupsLive(ctx: Ctx): Promise<Response> {
+  if (!ctx.auth.user?.isAdmin) return fragment(html``, { status: 404 });
+  const svc = snapshotsOf(ctx.app);
+  if (svc === undefined || svc.store === undefined) return fragment(html``, { status: 404 });
+  return fragment(await movingPart(ctx, svc, svc.store), { request: ctx.request });
+}
+
+/**
+ * What changes while a snapshot is taken: the recovery line, the progress,
+ * the outcome and the list. It patches in place from `backup.*` events.
+ */
+async function movingPart(
+  ctx: Ctx,
+  svc: SnapshotsHandle,
+  store: Store,
+): Promise<Html> {
+  const now = Date.now();
   // A failure is kept on disk, so it is shown after a restart too; this
   // process's own failure is newer when the file could not be written.
   const kept = lastSnapshotOutcome(ctx.app.config.dataDir);
@@ -292,13 +314,11 @@ export async function backupsPage(ctx: Ctx): Promise<Response> {
     ? html`<pre class="backups-restore">
 bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
     : null;
-  return shell(
-    ctx,
-    html`${recovery}${card(
+  return html`<div id="backups-live" data-live="backup.*" data-live-src="/settings/backups/live">${recovery}${card(
       html`<p>
           Every night at 08:00 UTC the forge writes what cannot be rebuilt — its
           database, its keys, every repository, every app's production data, the
-          crew's logs — to <code>${svc.store.where}</code>, and keeps the newest
+          crew's logs — to <code>${store.where}</code>, and keeps the newest
           fourteen.
         </p>
         ${keyNote(svc.wraps, snapshots[0])}
@@ -384,9 +404,7 @@ bun run src/snapshot/restore.ts ${snapshots[0].name} /path/to/empty/data</pre>`
             },
           )
     }
-    ${form}`,
-    svc.progress() !== undefined,
-  );
+  </div>`;
 }
 
 const SOURCE: Record<string, string> = {

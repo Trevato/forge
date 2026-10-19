@@ -34,6 +34,8 @@ const log = createLog("snapshots");
 const NIGHTLY_HOUR_UTC = 8;
 /** After a failed snapshot, the next try is this soon (or the nightly, if sooner). */
 export const RETRY_MS = 3_600_000;
+/** A moving snapshot tells the page how far it is no oftener than this. */
+const PROGRESS_EVENT_MS = 2_000;
 
 /**
  * A forge given nowhere to put a snapshot. Not a failure: the Backups page
@@ -110,6 +112,8 @@ export function startSnapshots(
     /** Test seam: how often the mirror is looked at. */
     readonly mirrorEveryMs?: number | undefined;
     readonly nightly?: boolean;
+    /** Test seam: how often a moving snapshot tells the outbox its progress. */
+    readonly progressEventMs?: number | undefined;
     /** Test seam: how soon a failed snapshot is tried again. */
     readonly retryMs?: number | undefined;
     readonly passphrase?: string | undefined;
@@ -152,6 +156,9 @@ export function startSnapshots(
       const store = current();
       if (store === undefined) throw new Nowhere();
       running = { objects: 0, bytes: 0, elapsedMs: 0 };
+      // Admin-only, no repository, nothing /backups does not already show.
+      app.bus.append({ kind: "backup.started" });
+      let toldAt = Date.now();
       const manifest = await takeSnapshot(
         {
           db: app.db,
@@ -161,6 +168,9 @@ export function startSnapshots(
           passphrase: options.passphrase,
           onLand: (p) => {
             running = p;
+            if (Date.now() - toldAt < (options.progressEventMs ?? PROGRESS_EVENT_MS)) return;
+            toldAt = Date.now();
+            app.bus.append({ kind: "backup.progress", payload: { objects: p.objects, bytes: p.bytes } });
           },
         },
         store,
@@ -177,6 +187,7 @@ export function startSnapshots(
       (m) => {
         last = { manifest: m, at: m.finishedAt };
         keep({ landed: m.name });
+        app.bus.append({ kind: "backup.finished", payload: { ok: true } });
         arm(untilNightly());
         return m;
       },
@@ -188,6 +199,7 @@ export function startSnapshots(
         }
         log.error("snapshot failed", { error: String(error) });
         keep({ error: error instanceof Error ? error.message : String(error) });
+        app.bus.append({ kind: "backup.finished", payload: { ok: false } });
         arm(Math.min(options.retryMs ?? RETRY_MS, untilNightly()));
         throw error;
       },

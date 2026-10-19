@@ -42,6 +42,8 @@ export function eventAudience(kind: string): EventAudience {
     kind.startsWith("mail.") ||
     // A restore drill's verdict is the forge owner's (`snapshot/service.ts`).
     kind.startsWith("drill.") ||
+    // A snapshot moving is the forge owner's too, and has no repository.
+    kind.startsWith("backup.") ||
     // A report from outside waits for a person who decides; its arrival is
     // theirs to see, never the readers' (`actions/reports.ts`).
     kind.startsWith("report.") ||
@@ -151,7 +153,9 @@ export function audienceFilter(
       case "actor":
         return viewer !== undefined && event.actorId === viewer.id;
       case "admins":
-        return event.repoId !== null && isAdmin(event.repoId);
+        return event.repoId === null
+          ? viewer?.isAdmin === true && isActive(viewer)
+          : isAdmin(event.repoId);
     }
   };
 }

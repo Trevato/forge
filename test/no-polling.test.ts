@@ -13,7 +13,6 @@ const ALLOWED: Record<string, { allow: string[]; why: string }> = {
   "src/web/layout.ts": { allow: ['http-equiv="refresh"'], why: "defines the refresh option and its meta tag; callers are listed here" },
   "src/web/pages/migrate.ts": { allow: ["refresh: {", 'http-equiv="refresh"'], why: "migrate progress runs in a process that emits no events" },
   "src/web/pages/browse.ts": { allow: ["refresh: {"], why: "mirror progress runs in a process that emits no events" },
-  "src/web/pages/backups.ts": { allow: ["refresh: {"], why: "a backup moving emits no event" },
   "src/web/client.ts": { allow: ["data-live-every", "setInterval"], why: "the data-live-every mechanism itself, and clocks that only redraw text" },
   "src/web/fleet-graph.ts": { allow: ["setInterval"], why: "no fleet event yet; remove once it has one" },
 };
