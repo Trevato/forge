@@ -502,7 +502,7 @@ describe("browsing an origin repository on the web", () => {
     );
     expect(running).toContain("new EventSource(url)");
     expect(running).toMatch(/<script nonce="[^"]+">/);
-    expect(running).not.toMatch(/<script[^>]*src="(?!\/assets\/shell-)/);
+    expect(running).not.toMatch(/<script[^>]*src="(?!\/assets\/(?:shell|beacon)-)/);
 
     const done = await settled(jobPath.split("/").pop()!);
     expect(done?.stage).toBe("done");

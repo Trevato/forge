@@ -25,7 +25,7 @@ import {
   THEMES,
   type ThemeName,
 } from "../design/themes.ts";
-import { shellAsset, stylesheetAsset } from "./asset.ts";
+import { beaconAsset, shellAsset, stylesheetAsset } from "./asset.ts";
 import { linkHeader, pageLinks } from "./standards.ts";
 import {
   clearFlashCookie,
@@ -672,6 +672,7 @@ export function page(options: PageOptions, status = 200): Response {
       <body>
         ${shell}${iconSprite(shell.text)}
         <script nonce="${nonce}" src="${shellAsset().path}"></script>
+        <script nonce="${nonce}" src="${beaconAsset().path}" defer></script>
         ${options.scriptJs
           ? raw(`<script nonce="${nonce}">${options.scriptJs}</script>`)
           : null}

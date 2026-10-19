@@ -23,6 +23,7 @@ import { usagePage } from "../web/pages/usage.ts";
 import { spendPage } from "../web/pages/spend-tab.ts";
 import { resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
+import { measureSubmit } from "./measure.ts";
 import { boardsPage } from "../web/pages/boards.ts";
 import { boardNew, boardPin, boardPost } from "../web/pages/boards-edit.ts";
 import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
@@ -97,6 +98,7 @@ import { sha256 } from "../kernel/hash.ts";
 import {
   assetResponse,
   highlightAsset,
+  beaconAsset,
   shellAsset,
   stylesheetAsset,
   stylesheetRedirect,
@@ -641,6 +643,8 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/assets/:name.js", async (ctx) => {
     const shell = shellAsset();
     if (ctx.params.name === shell.name) return assetResponse(ctx.request, shell);
+    if (ctx.params.name === beaconAsset().name)
+      return assetResponse(ctx.request, beaconAsset());
     if (ctx.params.name === TOOLBAR_NAME) return toolbarResponse(ctx.request);
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();
@@ -649,6 +653,8 @@ export function buildRouter(): Router<Handler> {
   // The service worker: root scope needs a root path, and it must never be
   // cached by the browser's HTTP cache or an update would wait a day.
   router.add("GET", "/sw.js", serviceWorker);
+  // The page-view beacon's report (http/measure.ts): numbers only, no IP kept.
+  router.add("POST", "/_measure", (ctx) => measureSubmit(ctx, routeOf));
   router.add("GET", "/", home);
   // A spawned child's claim link: GET shows, POST takes it (spawn/claim.ts).
   router.add("GET", "/claim", claimFragmentPage);
@@ -1380,6 +1386,12 @@ export function buildApiRouter(): Router<Handler> {
   apiRoutes(router);
   feedRoutes(router);
   return router;
+}
+
+let pages: Router<Handler> | undefined;
+/** The route pattern a page's path belongs to, for the beacon: never the path itself. */
+function routeOf(path: string): string | undefined {
+  return (pages ??= buildRouter()).match("GET", path)?.pattern;
 }
 
 let known: string[] | undefined;

@@ -18,6 +18,7 @@
 
 import { sha256 } from "../kernel/hash.ts";
 import { createLog } from "../kernel/log.ts";
+import { beaconJs } from "./beacon.ts";
 import { shellJs } from "./client.ts";
 import { css } from "./style.ts";
 
@@ -147,4 +148,16 @@ export function shellAsset(): BuiltAsset {
     shell = { path: `/assets/${name}.js`, name, code: shellJs, etag: `"${hash}"` };
   }
   return shell;
+}
+
+let beacon: BuiltAsset | null = null;
+
+/** The page-view beacon (`web/beacon.ts`), content-addressed and immutable. */
+export function beaconAsset(): BuiltAsset {
+  if (beacon === null) {
+    const hash = sha256(beaconJs);
+    const name = `beacon-${hash.slice(0, 16)}`;
+    beacon = { path: `/assets/${name}.js`, name, code: beaconJs, etag: `"${hash}"` };
+  }
+  return beacon;
 }

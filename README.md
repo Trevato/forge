@@ -228,6 +228,10 @@ form that mints one and shows its secret once; others see no section.
   `owner/name`. `n` mints (the child's name, then its https address) and shows
   the secret once on its own screen; `x` revokes the one under the cursor.
 
+## Page-view beacon
+
+Every page links one static, immutable script (`src/web/beacon.ts`, under 2 KB, no dependency) that sends, once per page view with `sendBeacon`, the route's path, TTFB, load time, LCP, INP (the worst interaction) and CLS to `POST /_measure`. The route is same-origin only, validates every field, caps the body at 512 bytes and the rate per client, and answers 204. Reports land in `page_vital` (bun:sqlite) keyed by route *pattern*; no IP and no user agent string is stored. A unique visitor is a hash under a salt that rotates daily (yesterday's salt is deleted), rows are kept 90 days. Do-Not-Track and the `forge_measure=off` cookie send nothing, and the server stores nothing for them either. The CSP is unchanged: the script is nonce'd like the shell's.
+
 ## Live in the terminal
 
 `ssh` into the forge and you get the whole thing — repositories, code, issues,
