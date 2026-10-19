@@ -648,6 +648,16 @@ export async function proxyApp(
   ))
     headers.set(name, value);
 
+  // A page the pill may be written into is asked for plain: the rewrite
+  // cannot read a compressed body, and the app compresses what it is allowed.
+  if (
+    request.method === "GET" &&
+    !target.nested &&
+    status.toolbar !== false &&
+    (request.headers.get("accept") ?? "").includes("text/html")
+  )
+    headers.set("accept-encoding", "identity");
+
   if (isWebSocketHandshake(request)) {
     return proxyWebSocket(
       runtime,

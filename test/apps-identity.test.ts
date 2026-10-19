@@ -25,6 +25,7 @@ const SERVER_SUITES = [
   "src/audit.test.ts",
   "src/openapi.test.ts",
   "src/security.test.ts",
+  "src/site.test.ts",
 ];
 import {
   APPS_DOMAIN,

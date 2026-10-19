@@ -43,6 +43,16 @@ describe("the forge pill", () => {
       fetch(request) {
         const path = new URL(request.url).pathname;
         const html = { "content-type": "text/html; charset=utf-8" };
+        if (path === "/negotiate") {
+          // Gzips whenever it is allowed to, and says what it was asked for.
+          const saw = request.headers.get("accept-encoding") ?? "";
+          const headers = { ...html, "x-saw": saw };
+          return /\bgzip\b/.test(saw)
+            ? new Response(gzipSync(HTML), {
+                headers: { ...headers, "content-encoding": "gzip" },
+              })
+            : new Response(HTML, { headers });
+        }
         if (path === "/json") return Response.json({ a: 1 });
         if (path === "/img") return new Response(PNG, { headers: { "content-type": "image/png" } });
         if (path === "/bare") return new Response("<p>no body tag</p>", { headers: html });
@@ -177,6 +187,34 @@ describe("the forge pill", () => {
     toolbar = false;
     expect(await (await at("/")).text()).toBe(HTML);
     toolbar = undefined;
+  });
+
+  test("an app that gzips whenever it may still gets the pill, because the page is asked for plain", async () => {
+    toolbar = undefined;
+    const res = await fetch(`${servers.url}/negotiate`, {
+      headers: { host: `notes.${DOMAIN}`, accept: "text/html", "accept-encoding": "gzip" },
+      redirect: "manual",
+    });
+    expect(res.headers.get("x-saw")).toBe("identity");
+    expect(await res.text()).toBe(HTML.replace("</body>", `${tag()}</body>`));
+  });
+
+  test("the client's own accept-encoding is left alone where no pill goes in", async () => {
+    const ask = (host: string, accept: string) =>
+      fetch(`${servers.url}/negotiate`, {
+        headers: { host, accept, "accept-encoding": "gzip" },
+        redirect: "manual",
+      });
+    // Not a page: an API client or an asset fetch.
+    expect((await ask(`notes.${DOMAIN}`, "application/json")).headers.get("x-saw")).toBe("gzip");
+    // Nested: a guest's world, never given the pill.
+    expect((await ask(`guest--notes.${DOMAIN}`, "text/html")).headers.get("x-saw")).toBe("gzip");
+    // Opted out.
+    toolbar = false;
+    const off = await ask(`notes.${DOMAIN}`, "text/html");
+    toolbar = undefined;
+    expect(off.headers.get("x-saw")).toBe("gzip");
+    expect(await off.text()).toBe(HTML);
   });
 
   test("the script is served from the forge, immutable, small, and plain", async () => {

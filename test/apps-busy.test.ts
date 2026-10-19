@@ -167,6 +167,7 @@ describe("apps that are busy", () => {
         { path: "src/audit.test.ts", content: null },
         { path: "src/openapi.test.ts", content: null },
         { path: "src/security.test.ts", content: null },
+        { path: "src/site.test.ts", content: null },
       ],
     });
     if (!committed.ok) throw new Error(String(committed.error));

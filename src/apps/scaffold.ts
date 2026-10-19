@@ -67,6 +67,8 @@ export function scaffoldFiles(input: ScaffoldInput): FileWrite[] {
     { path: "src/http.ts", content: HTTP_TS },
     { path: "src/mcp.ts", content: MCP_TS },
     { path: "src/page.ts", content: PAGE_TS },
+    { path: "src/site.ts", content: SITE_TS },
+    { path: "src/compress.ts", content: COMPRESS_TS },
     { path: "src/tokens.ts", content: TOKENS_TS },
     { path: "src/openapi.ts", content: OPENAPI_TS },
     { path: "src/routes.ts", content: ROUTES_TS },
@@ -87,6 +89,7 @@ export function scaffoldFiles(input: ScaffoldInput): FileWrite[] {
     { path: "src/audit.test.ts", content: AUDIT_TEST },
     { path: "src/openapi.test.ts", content: OPENAPI_TEST },
     { path: "src/design.test.ts", content: DESIGN_TEST },
+    { path: "src/site.test.ts", content: SITE_TEST },
   ];
 }
 
@@ -169,6 +172,8 @@ decide nothing themselves. \`AGENTS.md\` says how to add to it.
 | \`src/routes.ts\`                    | every path, in one table, each API route described beside it   |
 | \`src/openapi.ts\`                   | the routes as OpenAPI; committed at \`contract/openapi.json\`    |
 | \`src/page.ts\`                      | the HTML, rendered on the server, with its share metadata      |
+| \`src/site.ts\`                      | icon, manifest, card, sitemap, llms.txt, structured data       |
+| \`src/compress.ts\`                  | gzip for text responses                                        |
 | \`design/tokens.json\`, \`src/tokens.ts\` | the look as data, light and dark; compiled to \`/tokens.css\` |
 | \`src/http.ts\`                      | the floor: headers, body cap, files                            |
 | \`src/server.ts\`                    | boot: open the database, serve                                 |
@@ -197,9 +202,25 @@ decide nothing themselves. \`AGENTS.md\` says how to add to it.
   light and dark; nothing else spells out a colour (\`bun run lint:design\`),
   and every pair a person reads meets 4.5:1 in both themes.
 - **The open web.** A shared link unfurls (description, Open Graph, a
-  card); \`/robots.txt\` keeps crawlers to the page, and out of previews
-  entirely; \`/.well-known/security.txt\` sends a reporter to the forge
-  that runs the app.
+  large generated card at \`/og.png\`); every page names its canonical
+  address and carries \`WebSite\` structured data; there is an icon
+  (\`/icon.svg\`), a 180px home-screen icon and a manifest; \`/sitemap.xml\`
+  and \`/llms.txt\` describe the site; \`/robots.txt\` keeps crawlers to the
+  page (and names the sitemap), and out of previews entirely;
+  \`/.well-known/security.txt\` sends a reporter to the forge that runs the
+  app. A missing page and a failure are the app's own page, with the right
+  status. HSTS covers subdomains and is never a preload promise.
+- **Reachable.** A skip link and \`<main id="main">\`, forced-colours
+  styles, and one \`<h1>\` with no skipped level (\`src/site.test.ts\` holds
+  all of it).
+- **Small on the wire.** \`src/compress.ts\` gzips text of a kilobyte or
+  more for browsers that read gzip (never the event stream); a proxy in
+  front that compresses sees \`content-encoding\` and leaves it alone.
+- **Left to the owner.** Telling AI crawlers what they may do, content
+  signals, an agent card and \`.md\` versions of pages are decisions about
+  who may read the site and for what; the template makes none of them.
+  Decide, then add them (and a test) deliberately. The card and icons are
+  flat shapes in the accent colour, not a drawn logo: swap in your own.
 
 ## Who you are
 
@@ -1345,8 +1366,9 @@ import { env, publicOrigin } from "./env.ts";
 // Scripts and styles come from this origin (inline styles allowed, inline
 // scripts not), nothing frames us, browsers never guess a content type, and
 // referrers stay on this site. Once served over https, always: browsers
-// remember for a year. Anything but production asks not to be indexed: a
-// preview is a draft, and its address goes away with its pull.
+// remember for a year, subdomains too (never preloaded: that is a promise
+// the owner makes, not a template). Anything but production asks not to be
+// indexed: a preview is a draft, and its address goes away with its pull.
 export const SECURITY: Record<string, string> = {
   "content-security-policy":
     "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
@@ -1354,7 +1376,7 @@ export const SECURITY: Record<string, string> = {
   "referrer-policy": "strict-origin-when-cross-origin",
   "permissions-policy": "camera=(), microphone=(), geolocation=()",
   ...(publicOrigin.startsWith("https:")
-    ? { "strict-transport-security": "max-age=31536000" }
+    ? { "strict-transport-security": "max-age=31536000; includeSubDomains" }
     : {}),
   ...(env === "production" ? {} : { "x-robots-tag": "noindex" }),
 };
@@ -1677,15 +1699,25 @@ import {
   where,
 } from "./env.ts";
 import { asset, escape } from "./http.ts";
+import { CARD, websiteLd } from "./site.ts";
 import { token, tokensHref } from "./tokens.ts";
 import type { Who } from "./who.ts";
 
 /**
  * The frame every page shares: the tokens and the look, who you are, and
  * what a link to the page says when it is shared — a title, a sentence
- * and the address, for Open Graph and the card a chat app unfurls.
+ * and the address, for Open Graph and the card a chat app unfurls. A page
+ * that is not a place to land (an error) says \`indexable = false\`: no
+ * canonical address, no structured data, and a request to stay out of
+ * search.
  */
-export function layout(body: string, who: Who, path = "/"): string {
+export function layout(
+  body: string,
+  who: Who,
+  path = "/",
+  indexable = true,
+  heading = title,
+): string {
   const door =
     who.role === "anon"
       ? \`<a class="button button-quiet" href="/signin">Sign in</a>\`
@@ -1698,26 +1730,40 @@ export function layout(body: string, who: Who, path = "/"): string {
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="\${token("color-bg")}" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="\${token("color-bg", "dark")}" media="(prefers-color-scheme: dark)">
-<link rel="icon" href="data:,">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <title>\${escape(title)}</title>
 <meta name="description" content="\${escape(description)}">
+\${
+  indexable
+    ? \`<link rel="canonical" href="\${escape(publicOrigin + path)}">\`
+    : \`<meta name="robots" content="noindex">\`
+}
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="\${escape(title)}">
 <meta property="og:title" content="\${escape(title)}">
 <meta property="og:description" content="\${escape(description)}">
 <meta property="og:url" content="\${escape(publicOrigin + path)}">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="\${escape(publicOrigin)}/og.png">
+<meta property="og:image:width" content="\${CARD.width}">
+<meta property="og:image:height" content="\${CARD.height}">
+<meta property="og:image:alt" content="\${escape(title)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="\${escape(publicOrigin)}/og.png">
 <meta name="twitter:title" content="\${escape(title)}">
 <meta name="twitter:description" content="\${escape(description)}">
+\${indexable ? \`<script type="application/ld+json">\${websiteLd(title, description, publicOrigin)}</script>\` : ""}
 <link rel="stylesheet" href="\${tokensHref}">
 <link rel="stylesheet" href="\${asset("app.css")}">
 <script defer src="\${asset("beacon.js")}"></script>
 <script type="module" src="\${asset("live.js")}"></script>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div class="page">
   <header class="head">
     <div>
-      <h1>\${escape(title)}</h1>
+      <h1>\${escape(heading)}</h1>
       <p class="muted">\${escape(description)}</p>
     </div>
     <nav class="row">
@@ -1725,7 +1771,7 @@ export function layout(body: string, who: Who, path = "/"): string {
       \${door}
     </nav>
   </header>
-  <main>\${body}</main>
+  <main id="main" tabindex="-1">\${body}</main>
   <footer class="muted">
     \${ssh === undefined ? "" : \`<p>Terminal: <code>\${escape(ssh)}</code></p>\`}
     <p>Also at <a href="/api/notes">/api/notes</a> (<a href="/openapi.json">described</a>) and <code>POST /mcp</code>, with the same rules.</p>
@@ -1735,6 +1781,24 @@ export function layout(body: string, who: Who, path = "/"): string {
 </body>
 </html>
 \`;
+}
+
+/** The page for a refusal or a failure: the same frame, a plain word, a way back. */
+export function problem(status: 404 | 500, who: Who): string {
+  const [heading, sentence] =
+    status === 404
+      ? ["Not found", "There is nothing at this address."]
+      : ["Something went wrong", "It was not you. Try again in a moment."];
+  return layout(
+    \`<section class="card">
+    <p>\${escape(sentence)}</p>
+    <p><a href="/">Back to \${escape(title)}</a></p>
+  </section>\`,
+    who,
+    "/",
+    false,
+    heading,
+  );
 }
 
 export function home(input: {
@@ -1814,7 +1878,7 @@ import {
   type Failure,
   type Result,
 } from "./actions.ts";
-import { commit, env, forgeUrl, startedAt, version } from "./env.ts";
+import { commit, env, forgeUrl, publicOrigin, startedAt, version } from "./env.ts";
 import {
   back,
   cookie,
@@ -1832,6 +1896,7 @@ import {
 import { events } from "./live.ts";
 import { rpc } from "./mcp.ts";
 import { home } from "./page.ts";
+import { appleTouch, card, iconSvg, llmsTxt, manifest, sitemap } from "./site.ts";
 import {
   begin,
   endSession,
@@ -1950,6 +2015,22 @@ const answer = <T>(result: Result<T>, status = 200): Response =>
 /** A result for a form: back to the page, with what went wrong if it did. */
 const done = <T>(result: Result<T>): Response =>
   result.ok ? back() : back(result.message);
+
+const DAY = 86400;
+
+/** A generated file, with the floor and how long it may be kept. */
+const file = (
+  body: string | Uint8Array,
+  type: string,
+  maxAge = 0,
+): Response =>
+  new Response(body as BodyInit, {
+    headers: {
+      "content-type": type,
+      "cache-control": maxAge > 0 ? \`public, max-age=\${maxAge}\` : "no-cache",
+      ...SECURITY,
+    },
+  });
 
 /** A whole number from the query, or undefined. */
 const whole = (value: string | null): number | undefined =>
@@ -2256,9 +2337,42 @@ export const routes: readonly Route[] = [
     handle: () =>
       text(
         env === "production"
-          ? "User-agent: *\\nDisallow: /api/\\nDisallow: /mcp\\nDisallow: /events\\nDisallow: /__forge/\\n"
+          ? \`User-agent: *\\nDisallow: /api/\\nDisallow: /mcp\\nDisallow: /events\\nDisallow: /__forge/\\n\\nSitemap: \${publicOrigin}/sitemap.xml\\n\`
           : "User-agent: *\\nDisallow: /\\n",
       ),
+  },
+  {
+    method: "GET",
+    path: "/sitemap.xml",
+    handle: () => file(sitemap(), "application/xml; charset=utf-8"),
+  },
+  {
+    method: "GET",
+    path: "/llms.txt",
+    handle: () => file(llmsTxt(), "text/plain; charset=utf-8"),
+  },
+  // The app's face outside the page: the tab's icon, the home-screen icon
+  // and install manifest, and the card a shared link unfurls. Drawn from
+  // the tokens and the app's name, so they change when those do.
+  {
+    method: "GET",
+    path: "/icon.svg",
+    handle: () => file(iconSvg(), "image/svg+xml", DAY),
+  },
+  {
+    method: "GET",
+    path: "/apple-touch-icon.png",
+    handle: () => file(appleTouch(), "image/png", DAY),
+  },
+  {
+    method: "GET",
+    path: "/og.png",
+    handle: () => file(card(), "image/png", DAY),
+  },
+  {
+    method: "GET",
+    path: "/manifest.webmanifest",
+    handle: () => file(manifest(), "application/manifest+json", DAY),
   },
   {
     method: "GET",
@@ -2315,6 +2429,389 @@ export function match(
 }
 `;
 
+// What the web expects beyond the pages.
+const SITE_TS = `/**
+ * What the web expects of a site beyond its pages, each drawn from the
+ * app's name and its tokens so nothing here is edited by hand: the icon,
+ * the home-screen icon and install manifest, the card a shared link
+ * unfurls, the sitemap, \`/llms.txt\` for agents that read, and the
+ * structured data a search engine reads from the page. Plain data in,
+ * a string or bytes out; \`routes.ts\` serves them.
+ *
+ * The cards are PNGs written here with \`node:zlib\`, since a link
+ * unfurler will not draw an SVG and a dependency to draw text is more
+ * than a starting point needs. They carry the app's colours and a mark,
+ * not its name; put a designed \`og.png\` in \`static/\` and point
+ * \`og:image\` at it when there is one.
+ */
+
+import { deflateSync } from "node:zlib";
+import { description, publicOrigin, title } from "./env.ts";
+import { token } from "./tokens.ts";
+
+/** The size a link card is drawn at, and what \`og:image:width\`/\`height\` say. */
+export const CARD = { width: 1200, height: 630 } as const;
+
+type Channels = readonly [number, number, number];
+
+/** \`#rrggbb\` (the tokens' only colour form) as three bytes. */
+function channels(hex: string): Channels {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (m === null) throw new Error(\`\${hex}: the site files need a #rrggbb token\`);
+  const n = parseInt(m[1]!, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+/** The mark: the app's first letter, in the accent. */
+const letter = (): string => [...title][0]?.toUpperCase() ?? "A";
+
+export const iconSvg = (): string =>
+  \`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="\${token("color-accent")}"/><text x="32" y="45" text-anchor="middle" font-family="system-ui, sans-serif" font-size="38" font-weight="700" fill="\${token("color-accent-fg")}">\${xml(letter())}</text></svg>\\n\`;
+
+export const manifest = (): string =>
+  JSON.stringify({
+    name: title,
+    short_name: title.slice(0, 12),
+    description,
+    start_url: "/",
+    display: "standalone",
+    background_color: token("color-bg"),
+    theme_color: token("color-bg"),
+    icons: [
+      { src: "/icon.svg", sizes: "any", type: "image/svg+xml" },
+      { src: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
+    ],
+  });
+
+export const sitemap = (): string =>
+  \`<?xml version="1.0" encoding="UTF-8"?>\\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\\n  <url><loc>\${xml(publicOrigin)}/</loc></url>\\n</urlset>\\n\`;
+
+/** \`/llms.txt\`: what the site is and where its machine-readable parts are, in the format llmstxt.org describes. */
+export const llmsTxt = (): string =>
+  \`# \${oneLine(title)}\\n\\n> \${oneLine(description)}\\n\\n## Pages\\n\\n- [Home](\${publicOrigin}/): the notes, and who may add them\\n\\n## For programs\\n\\n- [API description](\${publicOrigin}/openapi.json): every endpoint, as OpenAPI\\n- [MCP endpoint](\${publicOrigin}/mcp): the same actions as tools, POST JSON-RPC\\n- [Health](\${publicOrigin}/healthz): whether the app is up\\n\`;
+
+/** The page as a \`WebSite\`, for a \`<script type="application/ld+json">\`. A \`<\` cannot close the tag: it is written \\\\u003c. */
+export const websiteLd = (name: string, about: string, origin: string): string =>
+  JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name,
+    description: about,
+    url: \`\${origin}/\`,
+  }).replace(/</g, "\\\\u003c");
+
+/** The 180px icon iOS puts on a home screen. */
+export const appleTouch = (): Uint8Array => cached("apple", () => draw(180, 180, "icon"));
+
+/** The card a shared link unfurls. */
+export const card = (): Uint8Array => cached("card", () => draw(CARD.width, CARD.height, "card"));
+
+const made = new Map<string, Uint8Array>();
+function cached(key: string, make: () => Uint8Array): Uint8Array {
+  let bytes = made.get(key);
+  if (bytes === undefined) made.set(key, (bytes = make()));
+  return bytes;
+}
+
+const xml = (s: string): string =>
+  s.replace(/[&<>"']/g, (c) => \`&#\${c.charCodeAt(0)};\`);
+const oneLine = (s: string): string => s.replace(/\\s+/g, " ").trim();
+
+/** A flat PNG: the accent, with the accent's foreground as a mark at the middle (a square frame with a block inside). */
+function draw(w: number, h: number, kind: "icon" | "card"): Uint8Array {
+  const bg = channels(token("color-accent"));
+  const fg = channels(token("color-accent-fg"));
+  const side = Math.round(Math.min(w, h) * (kind === "icon" ? 0.5 : 0.4));
+  const x0 = Math.round((w - side) / 2);
+  const y0 = Math.round((h - side) / 2);
+  const edge = Math.max(2, Math.round(side / 10));
+  const row = 1 + w * 3;
+  const raw = new Uint8Array(row * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const inside = x >= x0 && x < x0 + side && y >= y0 && y < y0 + side;
+      const ring =
+        inside &&
+        (x < x0 + edge || x >= x0 + side - edge || y < y0 + edge || y >= y0 + side - edge);
+      const block =
+        inside && x >= x0 + 3 * edge && x < x0 + side - 3 * edge && y >= y0 + 3 * edge && y < y0 + side - 3 * edge;
+      const c = ring || block ? fg : bg;
+      raw.set(c, y * row + 1 + x * 3);
+    }
+  }
+  const header = new Uint8Array(13);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, w);
+  view.setUint32(4, h);
+  header.set([8, 2, 0, 0, 0], 8); // 8-bit, truecolour, no interlace
+  return join([
+    Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(raw)),
+    chunk("IEND", new Uint8Array(0)),
+  ]);
+}
+
+const TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc(bytes: Uint8Array): number {
+  let c = 0xffffffff;
+  for (const b of bytes) c = TABLE[(c ^ b) & 255]! ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function chunk(type: string, data: Uint8Array): Uint8Array {
+  const body = join([new TextEncoder().encode(type), data]);
+  const out = new Uint8Array(8 + data.length + 4);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, data.length);
+  out.set(body, 4);
+  view.setUint32(8 + data.length, crc(body));
+  return out;
+}
+function join(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+`;
+
+// Smaller on the wire.
+const COMPRESS_TS = `/**
+ * Compression, in the app, so a deploy that no proxy sits in front of is
+ * still small on the wire. A response is gzipped when the person's browser
+ * said it reads gzip, the body is text (HTML, CSS, JS, JSON, XML, SVG)
+ * and is worth the trouble (1 KiB or more). The event stream is never
+ * touched — it must reach the browser as it is written — and neither is
+ * anything already encoded. A proxy that compresses for itself sees
+ * \`content-encoding\` and leaves the body alone.
+ */
+
+/** The least body worth compressing; below it the headers outweigh the gain. */
+export const MIN_BYTES = 1024;
+
+const TEXTUAL = /^(text\\/(?!event-stream)|application\\/([\\w.+-]*json|xml|javascript)|image\\/svg\\+xml)/i;
+
+export async function compress(
+  request: Request,
+  response: Response,
+): Promise<Response> {
+  const type = response.headers.get("content-type") ?? "";
+  if (
+    request.method !== "GET" ||
+    response.body === null ||
+    response.headers.has("content-encoding") ||
+    !/\\bgzip\\b/i.test(request.headers.get("accept-encoding") ?? "") ||
+    !TEXTUAL.test(type)
+  )
+    return response;
+  const headers = new Headers(response.headers);
+  headers.append("vary", "accept-encoding");
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.length < MIN_BYTES || response.status === 206)
+    return new Response(bytes, { status: response.status, headers });
+  headers.set("content-encoding", "gzip");
+  headers.delete("content-length");
+  return new Response(Bun.gzipSync(bytes), { status: response.status, headers });
+}
+`;
+
+// The specification, held.
+const SITE_TEST = `/**
+ * The specification a site is held to, as the template keeps it: the head
+ * a crawler and a chat app read, the files they ask for, the pages that
+ * are not the page, and the shape of the headings. A generated app
+ * inherits every one of these and fails its own \`bun test\` if it loses one.
+ */
+import { afterAll, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { compress, MIN_BYTES } from "./compress.ts";
+import { env, publicOrigin, title } from "./env.ts";
+import { SECURITY } from "./http.ts";
+import { problem } from "./page.ts";
+import { CARD, websiteLd } from "./site.ts";
+import { serve } from "./server.ts";
+import { ANON } from "./who.ts";
+
+const server = serve({
+  port: 0,
+  dataDir: mkdtempSync(join(tmpdir(), "app-")),
+  identityKey: "a-key-only-the-forge-holds",
+});
+const base = \`http://\${server.hostname}:\${server.port}\`;
+afterAll(() => server.stop(true));
+const get = (path: string, headers: Record<string, string> = {}) =>
+  fetch(base + path, { headers, redirect: "manual" });
+
+/** The heading levels in a page, in order. */
+const levels = (page: string): number[] =>
+  [...page.matchAll(/<h([1-6])[\\s>]/g)].map((m) => Number(m[1]));
+
+/** One h1, and no level skipped on the way down: what a screen reader's outline needs. */
+const outlineProblems = (page: string): string[] => {
+  const all = levels(page);
+  const problems: string[] = [];
+  if (all.filter((n) => n === 1).length !== 1)
+    problems.push("a page has exactly one h1");
+  all.forEach((n, i) => {
+    if (n > (all[i - 1] ?? 0) + 1) problems.push(\`h\${n} follows h\${all[i - 1] ?? 0}\`);
+  });
+  return problems;
+};
+
+test("the head says where the page lives, what it looks like and what it is", async () => {
+  const page = await (await get("/")).text();
+  expect(page).toContain(\`<link rel="canonical" href="\${publicOrigin}/">\`);
+  expect(page).toContain('<link rel="icon" href="/icon.svg" type="image/svg+xml">');
+  expect(page).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
+  expect(page).toContain('<link rel="manifest" href="/manifest.webmanifest">');
+  expect(page).not.toContain('href="data:,"');
+  expect(page).toContain(\`<meta property="og:image" content="\${publicOrigin}/og.png">\`);
+  expect(page).toContain(\`<meta property="og:image:width" content="\${CARD.width}">\`);
+  expect(page).toContain('<meta name="twitter:card" content="summary_large_image">');
+  const ld = /<script type="application\\/ld\\+json">(.*?)<\\/script>/s.exec(page)?.[1];
+  expect(JSON.parse(ld ?? "null")).toMatchObject({
+    "@type": "WebSite",
+    name: title,
+    url: \`\${publicOrigin}/\`,
+  });
+});
+
+test("structured data cannot close its own tag", () => {
+  const out = websiteLd("</script><b>", "a & b", "https://x.test");
+  expect(out).not.toContain("<");
+  expect(JSON.parse(out).name).toBe("</script><b>");
+});
+
+test("the first stop for a keyboard skips to the main landmark", async () => {
+  const page = await (await get("/")).text();
+  expect(page.indexOf('<a class="skip" href="#main">')).toBeLessThan(page.indexOf("<header"));
+  expect(page).toContain('<main id="main" tabindex="-1">');
+  const css = readFileSync(join(import.meta.dir, "..", "static", "app.css"), "utf8");
+  expect(css).toContain("@media (forced-colors: active)");
+});
+
+test("the icon, the home-screen icon, the manifest and the card are real files", async () => {
+  const svg = await get("/icon.svg");
+  expect(svg.headers.get("content-type")).toBe("image/svg+xml");
+  expect(await svg.text()).toStartWith("<svg ");
+  const size = async (path: string) => {
+    const r = await get(path);
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toBe("image/png");
+    expect(r.headers.get("x-content-type-options")).toBe("nosniff");
+    const b = new Uint8Array(await r.arrayBuffer());
+    expect([...b.slice(0, 8)]).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+    const view = new DataView(b.buffer);
+    return [view.getUint32(16), view.getUint32(20)];
+  };
+  expect(await size("/apple-touch-icon.png")).toEqual([180, 180]);
+  expect(await size("/og.png")).toEqual([CARD.width, CARD.height]);
+  const m = await (await get("/manifest.webmanifest")).json();
+  expect(m).toMatchObject({ name: title, start_url: "/" });
+  expect(m.icons.map((i: { src: string }) => i.src)).toContain("/apple-touch-icon.png");
+});
+
+test("sitemap.xml lists the page, robots.txt points at it where crawlers are welcome, llms.txt introduces the site", async () => {
+  const sitemap = await (await get("/sitemap.xml")).text();
+  expect(sitemap).toContain(\`<loc>\${publicOrigin}/</loc>\`);
+  expect((await get("/sitemap.xml")).headers.get("content-type")).toContain("xml");
+  const robots = await (await get("/robots.txt")).text();
+  if (env === "production") expect(robots).toContain(\`Sitemap: \${publicOrigin}/sitemap.xml\\n\`);
+  else expect(robots).not.toContain("Sitemap:");
+  const llms = await get("/llms.txt");
+  expect(llms.headers.get("content-type")).toContain("text/plain");
+  const body = await llms.text();
+  expect(body).toStartWith(\`# \${title}\\n\\n> \`);
+  expect(body).toContain(\`(\${publicOrigin}/openapi.json)\`);
+});
+
+test("HSTS covers subdomains and is never a preload promise", () => {
+  const hsts = SECURITY["strict-transport-security"];
+  if (publicOrigin.startsWith("https:")) {
+    expect(hsts).toContain("includeSubDomains");
+    expect(hsts).not.toContain("preload");
+  } else expect(hsts).toBeUndefined();
+});
+
+test("a missing page is the app's own page with a 404, and a script gets the word", async () => {
+  const browser = await get("/no/such/page", { accept: "text/html,*/*" });
+  expect(browser.status).toBe(404);
+  expect(browser.headers.get("content-type")).toContain("text/html");
+  expect(browser.headers.get("content-security-policy")).not.toBeNull();
+  const page = await browser.text();
+  expect(page).toContain("<h1>Not found</h1>");
+  expect(page).toContain('<meta name="robots" content="noindex">');
+  expect(page).not.toContain('rel="canonical"');
+  expect(outlineProblems(page)).toEqual([]);
+  const script = await get("/no/such/page", { accept: "application/json" });
+  expect(script.status).toBe(404);
+  expect(await script.text()).toBe("not found");
+});
+
+test("a failure is the same frame with nothing of the cause in it", () => {
+  const page = problem(500, ANON);
+  expect(page).toContain("<h1>Something went wrong</h1>");
+  expect(page).toContain('<meta name="robots" content="noindex">');
+  expect(outlineProblems(page)).toEqual([]);
+});
+
+test("the home page has one h1 and no skipped level", async () => {
+  expect(outlineProblems(await (await get("/")).text())).toEqual([]);
+  expect(outlineProblems("<h1>a</h1><h3>b</h3>")).toEqual(["h3 follows h1"]);
+  expect(outlineProblems("<h2>a</h2>")).toContain("a page has exactly one h1");
+});
+
+test("text over a kilobyte is gzipped for a browser that reads gzip, and nothing else is touched", async () => {
+  const big = "x".repeat(MIN_BYTES * 2);
+  const ask = (encoding?: string) =>
+    new Request("http://x.test/", encoding ? { headers: { "accept-encoding": encoding } } : {});
+  const html = () => new Response(big, { headers: { "content-type": "text/html" } });
+  const squeezed = await compress(ask("gzip, br"), html());
+  expect(squeezed.headers.get("content-encoding")).toBe("gzip");
+  expect(squeezed.headers.get("vary")).toContain("accept-encoding");
+  expect(Bun.gunzipSync(new Uint8Array(await squeezed.arrayBuffer()))).toEqual(new TextEncoder().encode(big));
+  // Not asked for, too small, a stream, or an image: as they were.
+  expect((await compress(ask(), html())).headers.get("content-encoding")).toBeNull();
+  const small = new Response("tiny", { headers: { "content-type": "text/html" } });
+  expect(await (await compress(ask("gzip"), small)).text()).toBe("tiny");
+  const stream = new Response(big, { headers: { "content-type": "text/event-stream" } });
+  expect((await compress(ask("gzip"), stream)).headers.get("content-encoding")).toBeNull();
+  const png = new Response(big, { headers: { "content-type": "image/png" } });
+  expect((await compress(ask("gzip"), png)).headers.get("content-encoding")).toBeNull();
+});
+
+// decompress: false keeps fetch from decoding the body behind the test's back.
+const raw = (path: string, headers: Record<string, string>) =>
+  fetch(base + path, { headers, redirect: "manual", decompress: false } as RequestInit);
+
+test("the server gzips a large asset for a browser that reads gzip, and not for one that does not", async () => {
+  const zipped = await raw("/static/app.css", { "accept-encoding": "gzip" });
+  expect(zipped.headers.get("content-encoding")).toBe("gzip");
+  expect(zipped.headers.get("vary")).toContain("accept-encoding");
+  const bytes = new Uint8Array(await zipped.arrayBuffer());
+  expect(new TextDecoder().decode(Bun.gunzipSync(bytes))).toContain(".button");
+  const plain = await raw("/static/app.css", { "accept-encoding": "identity" });
+  expect(plain.headers.get("content-encoding")).toBeNull();
+  expect(await plain.text()).toContain(".button");
+});
+
+test("the event stream is never compressed", async () => {
+  const r = await raw("/events", { "accept-encoding": "gzip" });
+  expect(r.headers.get("content-type")).toContain("text/event-stream");
+  expect(r.headers.get("content-encoding")).toBeNull();
+  await r.body?.cancel();
+});
+`;
+
 // Boot.
 const SERVER_TS = `/**
  * The process the forge runs. \`serve\` opens the database and listens:
@@ -2334,11 +2831,13 @@ import {
   title,
   where,
 } from "./env.ts";
+import { compress } from "./compress.ts";
 import { html, text } from "./http.ts";
+import { problem } from "./page.ts";
 import { match } from "./routes.ts";
 import { door } from "./security.ts";
 import { ensureClient, sessionWho, type Signin } from "./signin.ts";
-import { who } from "./who.ts";
+import { ANON, who } from "./who.ts";
 
 export interface ServeOptions {
   readonly port: number;
@@ -2375,12 +2874,23 @@ export function serve(options: ServeOptions) {
         me,
         server.requestIP(request)?.address ?? "?",
       );
-      if (refused !== undefined) return head(request, refused);
+      if (refused !== undefined)
+        return head(request, await compress(request, refused));
       const found = match(
         request.method === "HEAD" ? "GET" : request.method,
         url.pathname,
       );
-      if (found === undefined) return text("not found", 404);
+      // A browser is shown the app's own page; a script gets the word.
+      if (found === undefined)
+        return head(
+          request,
+          await compress(
+            request,
+            (request.headers.get("accept") ?? "").includes("text/html")
+              ? html(problem(404, me), 404)
+              : text("not found", 404),
+          ),
+        );
       const response = await found.route.handle({
         request,
         url,
@@ -2389,7 +2899,7 @@ export function serve(options: ServeOptions) {
         params: found.params,
         signin: options.signin,
       });
-      return head(request, response);
+      return head(request, await compress(request, response));
     },
     // A bug answers with the floor and nothing else: never the runtime's
     // own error page, which carries source and paths, and never without
@@ -2397,7 +2907,11 @@ export function serve(options: ServeOptions) {
     error(error) {
       // Inside the generated app, which has no forge log module.
       console.error(error);
-      return html("<h1>Something went wrong</h1>", 500);
+      try {
+        return html(problem(500, ANON), 500);
+      } catch {
+        return html("<h1>Something went wrong</h1>", 500);
+      }
     },
   });
 }
@@ -2600,6 +3114,23 @@ code,
 .muted {
   color: var(--color-muted);
 }
+/* The first thing a keyboard reaches: a way past the header, seen only when focused. */
+.skip {
+  position: absolute;
+  left: var(--space-3);
+  top: var(--space-3);
+  transform: translateY(-300%);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border-radius: var(--radius-md);
+}
+.skip:focus {
+  transform: none;
+}
+main:focus {
+  outline: none;
+}
 .you {
   color: var(--color-muted);
   white-space: nowrap;
@@ -2740,6 +3271,21 @@ footer code {
   100% {
     opacity: 0;
     visibility: hidden;
+  }
+}
+/* Forced colours replace ours with the person's own; what only a background
+   or a shadow drew gets a border, so it is still there to see. */
+@media (forced-colors: active) {
+  .card,
+  .input,
+  .button,
+  .pill,
+  .toast,
+  .skip {
+    border: 1px solid CanvasText;
+  }
+  :focus-visible {
+    outline-color: Highlight;
   }
 }
 /* Motion is a courtesy: whoever asked for less gets none. */
@@ -3571,7 +4117,7 @@ test("a link to the page unfurls: description, Open Graph, a card", async () => 
     'property="og:description"',
     'property="og:url"',
     'property="og:type" content="website"',
-    'name="twitter:card" content="summary"',
+    'name="twitter:card" content="summary_large_image"',
     'name="theme-color"',
   ])
     expect([meta, page.includes(meta)]).toEqual([meta, true]);

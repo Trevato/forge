@@ -773,7 +773,7 @@ file), and if you named an agent, the sentence became issue #1, assigned.
   a copy of production's — copy-on-write where the filesystem can — and
   never writes back. Merging moves code and touches no data.
 - **The forge pill acts.** The pill the proxy adds to an app's pages
-  (`"toolbar": false` in `forge.json` turns it off) links to a forge page,
+  (`"toolbar": false` in `forge.json` turns it off; to write it in, the proxy asks the app for the page uncompressed, so a page that carries the pill goes out without gzip) links to a forge page,
   `/:owner/:name/toolbar?env=production|pull-N`, opened in a tab of its own: the
   pill posts nothing and reads nothing of the app's page, and every action is a
   same-origin form on the forge. Signed out, the page is where you are and Home.
