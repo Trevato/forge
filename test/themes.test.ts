@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bootCss, THEME_NAMES, THEMES } from "../src/design/themes.ts";
+import { bootCss, FIXED_TOKENS, THEME_NAMES, THEMES } from "../src/design/themes.ts";
+import { css } from "../src/web/style.ts";
 
 describe("bootCss: the ground before the stylesheet arrives (#1240)", () => {
   test("with no data-theme, the system pair follows the OS", () => {
@@ -25,5 +26,15 @@ describe("bootCss: the ground before the stylesheet arrives (#1240)", () => {
     for (const rule of rest.split("}").filter(Boolean)) {
       expect(rule).toStartWith("html[data-theme=");
     }
+  });
+});
+
+describe("fixed tokens: colours every theme shares (#2697)", () => {
+  test("the stylesheet defines each one, and every var(--series-N|qr-ground) it reads is defined", () => {
+    for (const [key, value] of Object.entries(FIXED_TOKENS)) expect(css).toContain(`--${key}: ${value};`);
+    for (const m of css.matchAll(/var\(--((?:series-\d+)|qr-ground)\)/g)) {
+      expect(Object.keys(FIXED_TOKENS)).toContain(m[1]!);
+    }
+    expect(css).toContain(".fg-s0 { fill: var(--series-0); color: var(--series-0); }");
   });
 });

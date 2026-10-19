@@ -383,6 +383,25 @@ export function isThemeName(value: string): value is ThemeName {
   return Object.hasOwn(THEMES, value);
 }
 
+/**
+ * Colours every theme shares, because their meaning does not depend on the
+ * surface: the chart series are the Okabe–Ito palette (told apart with the
+ * common colour-vision deficiencies; the folded "others" series is grey),
+ * and a QR code keeps a white ground because a scanner reads dark modules on
+ * light and refuses the inverse.
+ */
+export const FIXED_TOKENS = {
+  "series-0": "#0072b2",
+  "series-1": "#e69f00",
+  "series-2": "#009e73",
+  "series-3": "#cc79a7",
+  "series-4": "#56b4e9",
+  "series-5": "#d55e00",
+  "series-6": "#c9b800",
+  "series-7": "#8a8a8a",
+  "qr-ground": "#ffffff",
+} as const;
+
 function vars(theme: Theme): string {
   const lines = TOKEN_KEYS.map((key) => `  --${key}: ${theme.tokens[key]};`);
   lines.push(`  color-scheme: ${theme.appearance};`);
@@ -394,6 +413,7 @@ function vars(theme: Theme): string {
  * `data-theme`; with no attribute the default pair follows the OS.
  */
 export const themeCss = [
+  `:root {\n${Object.entries(FIXED_TOKENS).map(([key, value]) => `  --${key}: ${value};`).join("\n")}\n}`,
   `:root {\n${vars(THEMES.light)}\n}`,
   `@media (prefers-color-scheme: dark) {\n:root:not([data-theme]) {\n${vars(THEMES.dark)}\n}\n}`,
   ...THEME_NAMES.map(

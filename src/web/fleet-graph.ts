@@ -9,7 +9,9 @@
  * is the smallest 1, 2, 2.5 or 5 × 10ⁿ at or above the tallest stack
  * (`niceCeiling`). Colours are the Okabe–Ito palette, chosen to be told
  * apart with the common colour-vision deficiencies; the folded "others"
- * series is grey. They are classes (`fg-s0`…), set in the stylesheet.
+ * series is grey. They are classes (`fg-s0`…), set in the stylesheet from
+ * the `--series-N` tokens in `src/design/themes.ts`. Text is sized here in
+ * viewBox units, beside the geometry it has to fit, not in the stylesheet.
  *
  * `fleetGraphSection` carries `data-src`: the client script below fetches
  * it every 30 s while the tab is visible, and at once on a
@@ -107,6 +109,7 @@ export function windowSvg(graph: FleetGraph, w: FleetWindow): Html {
     class="fleet-svg"
     viewBox="0 0 ${SVG_W} ${SVG_H}"
     preserveAspectRatio="xMinYMin meet"
+    font-size="10"
     role="img"
     aria-label="${label}"
     data-window="${w.name}"

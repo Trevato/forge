@@ -55,6 +55,7 @@ variables, so a theme is data. Six ship today. What each role _means_:
 | `--add-*` / `--del-*` / `--wd-*` | the diff. Tints stay ≤14% so syntax color survives on top.                                                              |
 | `--tok-*`                        | syntax, in two layers: eleven colour classes every consumer knows, plus finer kinds the web paints over them (§6c).     |
 | `--shadow-1` / `--shadow-2`      | a hint and an overlay. Near-transparent in dark palettes, so one rule serves every theme.                               |
+| `--series-0…7` / `--qr-ground`   | the same in every theme (`FIXED_TOKENS`): chart series (Okabe–Ito, colour-vision safe) and a QR code's white ground.    |
 
 **Status surfaces are tinted, never saturated**: `color-mix(in srgb, var(--x)
 12%, transparent)` for the fill, the pure token for the text, a 34% mix for the

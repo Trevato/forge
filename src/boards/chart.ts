@@ -58,7 +58,7 @@ const tip = (label: string, v: number) => `<title>${t(label, 40)}: ${escapeXml(f
 
 /** The `<svg>` open tag and its title. */
 const open = (title: string) => [
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CHART_WIDTH} ${CHART_HEIGHT}" width="${CHART_WIDTH}" height="${CHART_HEIGHT}" role="img" aria-label="${t(title, 120)}" class="chart" preserveAspectRatio="xMidYMid meet" font-size="11" font-family="inherit" fill="currentColor">`,
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CHART_WIDTH} ${CHART_HEIGHT}" width="${CHART_WIDTH}" height="${CHART_HEIGHT}" role="img" aria-label="${t(title, 120)}" class="chart" preserveAspectRatio="xMidYMid meet" font-size="10" font-family="inherit" fill="currentColor">`,
   `<title>${t(title, 120)}</title>`,
 ];
 const nothing = (out: string[]) => {
