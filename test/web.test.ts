@@ -42,6 +42,7 @@ describe("stylesheet asset", () => {
 });
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { adminCookie } from "./helpers/admin.ts";
+import { quietLogs } from "./helpers/globals.ts";
 
 describe("html template", () => {
   test("escapes interpolations by default", () => {
@@ -900,6 +901,7 @@ describe("the security floor is on every response", () => {
 });
 
 describe("a refused cross-origin mutation says why in the log", () => {
+  quietLogs("warn");
   let dataDir: string;
   let app: App;
   let servers: Servers;
