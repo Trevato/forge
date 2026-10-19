@@ -1262,7 +1262,7 @@ export const shellJs = /* js */ `
     if (!m || !m.matches || !m.matches('details.menu[open]')) return;
     closeMenus(m);
     var first = m.querySelector('.menu-panel .menu-item, .menu-panel input');
-    if (first && !m.querySelector('.theme-option')) first.focus();
+    if (first && !first.closest('.theme-option')) first.focus();
   }, true);
   doc.addEventListener('keydown', function (e) {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -1275,7 +1275,7 @@ export const shellJs = /* js */ `
   });
 
   // ---- theme: apply instantly, persist once the choice settles ----
-  var themeForm = doc.querySelector('.theme-menu form');
+  var themeForm = doc.querySelector('.theme-form');
   if (themeForm) {
     var apply = themeForm.querySelector('.theme-apply');
     if (apply) apply.hidden = true;

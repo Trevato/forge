@@ -130,7 +130,8 @@ export interface PageOptions {
 
 // ---- topbar pieces ----
 
-function themeMenu(active: ThemeName | undefined): Html {
+/** The theme choice as a panel section: lives in a menu, never in the bar. */
+function themeForm(active: ThemeName | undefined): Html {
   const option = (value: string, label: string, checked: boolean) =>
     html`<label class="theme-option">
       <input
@@ -143,11 +144,7 @@ function themeMenu(active: ThemeName | undefined): Html {
       ${label}
       <span class="tick" aria-hidden="true">${icon("check")}</span>
     </label>`;
-  return html`<details class="menu theme-menu">
-    <summary class="btn btn-icon" aria-label="Choose theme" title="Theme">
-      ${themeGlyph}
-    </summary>
-    <form class="menu-panel" method="post" action="/theme">
+  return html`<form class="theme-form" method="post" action="/theme">
       <span class="menu-title">Theme</span>
       ${option("system", "System", active === undefined)}
       ${THEME_NAMES.map((name) =>
@@ -156,8 +153,22 @@ function themeMenu(active: ThemeName | undefined): Html {
       <button class="btn theme-apply" data-size="sm" type="submit">
         Apply
       </button>
-    </form>
-  </details>`;
+    </form>`;
+}
+
+/** Keyboard help: js-only, since the shortcuts it lists only exist then. */
+const helpItem = html`<button class="menu-item js-only hide-sm" type="button" data-help>
+  ${icon("help")}<span class="grow">Keyboard shortcuts</span>
+</button>`;
+
+/** Someone not signed in has no user menu; theme and help share this one. */
+function guestMenu(theme: ThemeName | undefined): Html {
+  return menu({
+    trigger: themeGlyph,
+    items: [helpItem, themeForm(theme)],
+    label: "Appearance and help",
+    triggerOptions: { extra: "btn-icon" },
+  });
 }
 
 /** A whole forge for someone (`/forges/new`): any signed-in person's. */
@@ -194,8 +205,13 @@ function newMenu(ctx: Ctx): Html {
   });
 }
 
-function userMenu(ctx: Ctx, user: User, signOut: MenuItem): Html {
-  const items: MenuItem[] = [
+function userMenu(
+  ctx: Ctx,
+  user: User,
+  theme: ThemeName | undefined,
+  signOut: MenuItem,
+): Html {
+  const items: (MenuItem | Html)[] = [
     { label: "Your profile", href: `/${user.username}`, icon: "user" },
     { label: "Your repositories", href: "/", icon: "repo" },
     { label: "Apps", href: "/apps", icon: "rocket" },
@@ -224,6 +240,12 @@ function userMenu(ctx: Ctx, user: User, signOut: MenuItem): Html {
               ]),
         ]
       : []),
+    { separator: true, label: "" },
+    ...(user.isAdmin
+      ? [{ label: "Flow", href: "/flow", icon: "activity" as const }]
+      : []),
+    helpItem,
+    themeForm(theme),
     { separator: true, label: "" },
     signOut,
   ];
@@ -255,25 +277,6 @@ function searchBar(): Html {
     <a class="btn btn-icon hide-lg" href="/search" aria-label="Search"
       >${icon("search")}</a
     >`;
-}
-
-/**
- * Keyboard help. The shortcuts it lists only exist when the script runs, so
- * the button that opens it only exists then too — `js-only` is revealed by
- * the shell script rather than shown and then found to be dead.
- */
-function helpButton(): Html {
-  // Keyboard shortcuts have no meaning on a phone; the button would only
-  // cost the width that pushes the page sideways.
-  return html`<button
-    class="btn btn-icon js-only hide-sm"
-    type="button"
-    data-help
-    aria-label="Keyboard shortcuts"
-    title="Keyboard shortcuts"
-  >
-    ${icon("help")}
-  </button>`;
 }
 
 // ---- palette index ----
@@ -459,22 +462,12 @@ function topbar(
       )}
       <span class="spacer"></span>
       <span class="topbar-tools">
-        ${when(
-          user?.isAdmin === true,
-          () =>
-            html`<a
-              id="flow-link"
-              class="btn"
-              data-size="sm"
-              href="/flow"
-              title="The pipeline and its bottleneck"
-              >${icon("activity")}<span class="hide-sm">Flow</span></a
-            >`,
-        )}${searchBar()}<span class="hide-sm">${helpButton()}</span>${themeMenu(theme)}
+        ${searchBar()}
         ${user
           ? html`<span class="hide-sm">${newMenu(ctx)}</span>${userMenu(
                 ctx,
                 user,
+                theme,
                 ctx.auth.via === "edge"
                   ? {
                       label: "Sign out",
@@ -483,12 +476,12 @@ function topbar(
                     }
                   : { label: "Sign out", post: "/logout", icon: "signOut" },
               )}`
-          : btn("Sign in", {
+          : html`${guestMenu(theme)}${btn("Sign in", {
               href:
                 ctx.app.config.edgeToken === undefined
                   ? "/signin"
                   : edgeLoginUrl(ctx.url.pathname + ctx.url.search),
-            })}
+            })}`}
       </span>
     </header>`;
 }

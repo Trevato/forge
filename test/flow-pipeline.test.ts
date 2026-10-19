@@ -23,6 +23,7 @@ import { createRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { bottleneck, readPipeline, span, verdict } from "../src/flow/pipeline.ts";
+import { shellJs } from "../src/web/client.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import type { Ctx, Screen } from "../src/tui/app/app.ts";
 import { forgeCommands, Session } from "../src/tui/forge.ts";
@@ -247,14 +248,48 @@ describe("/flow: the forge shows its own bottleneck", () => {
     for (const key of ["ready", "building", "checking", "review", "approved", "landed", "live"])
       expect(page).toContain(`data-stage="${key}"`);
     expect(page).toContain('href="/settings/capacity"');
-    expect(page).toContain('id="flow-link"');
+    // An admin reaches Flow from every page, through the user menu.
+    expect(await (await get("/", cookie)).text()).toContain('href="/flow"');
   });
 
   test("nobody but a forge admin reads it", async () => {
     const bob = await login("bob");
     expect((await get("/flow", bob)).status).toBe(404);
-    expect(await (await get("/", bob)).text()).not.toContain('id="flow-link"');
+    expect(await (await get("/", bob)).text()).not.toContain('href="/flow"');
     expect((await get("/flow", "")).status).not.toBe(200);
+  });
+
+  test("the top bar holds search, New and the user menu; Flow, help and theme live in menus", async () => {
+    expect(alice.isAdmin).toBe(true);
+    const page = await (await get("/", await login("alice"))).text();
+    const bar = page.slice(page.indexOf('<header class="topbar"'), page.indexOf("</header>"));
+    // Nothing but menus and search sits in the bar: no bare Flow link, no help button.
+    expect(bar).not.toContain("flow-link");
+    expect(bar).not.toContain("theme-menu");
+    expect(bar.match(/<details/g)?.length).toBe(2);
+    // They are still one open away, in the user menu.
+    const panel = bar.slice(bar.lastIndexOf('<details'));
+    expect(panel).toContain('href="/flow"');
+    expect(panel).toContain("data-help");
+    expect(panel).toContain('action="/theme"');
+  });
+
+  test("a guest's bar has search, one appearance menu and Sign in; no bare theme button", async () => {
+    const page = await (await get("/", "")).text();
+    const bar = page.slice(page.indexOf('<header class="topbar"'), page.indexOf("</header>"));
+    expect(bar).toContain("Sign in");
+    expect(bar).not.toContain("theme-menu");
+    expect(bar.replace(/<details[\s\S]*?<\/details>/g, "")).not.toContain("<button");
+    expect(bar.match(/<details/g)?.length).toBe(1);
+    const panel = bar.slice(bar.indexOf("<details"));
+    expect(panel).toContain("data-help");
+    expect(panel).toContain('action="/theme"');
+  });
+
+  test("the shell script wires the theme form by its new class and guards focus on theme options", () => {
+    expect(shellJs).toContain("doc.querySelector('.theme-form')");
+    expect(shellJs).not.toContain(".theme-menu form");
+    expect(shellJs).toContain("first.closest('.theme-option')");
   });
 
   const flowCommand = (user?: User) => {
