@@ -199,6 +199,7 @@ describe("the forge over MCP", () => {
       "claim_link",
       "take_updates",
       "sever",
+      "follow_mode",
       "propose_to_parent_forge",
       "forge_proposals",
       "converge",

@@ -5,11 +5,11 @@
  * sever. A severed forge says so with the date and nothing is deleted.
  */
 
-import { severForge } from "../../actions/follow.ts";
+import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge } from "../../actions/follow.ts";
 import { forgeProposals, proposeToParentForge, type ForgeProposal } from "../../actions/upstream.ts";
 import { canAdmin, canWrite } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
-import { chainView, forgeLinkOf, type ChainLine } from "../../spawn/chain.ts";
+import { chainView, FOLLOW_MODES, forgeLinkOf, type ChainLine, type FollowMode } from "../../spawn/chain.ts";
 import { parentCredential } from "../../spawn/parent_credential.ts";
 import { loadRepo, notFoundPage, pageHead, repoBase, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -18,7 +18,30 @@ import { flashOrJson, page, redirect } from "../layout.ts";
 import { btn, card } from "../ui.ts";
 
 /** The events that change what the chain page says. */
-export const CHAIN_LIVE = "forge.severed,forge.proposal";
+export const CHAIN_LIVE = "forge.severed,forge.proposal,forge.follow_mode";
+
+const MODE_LABELS: Record<FollowMode, string> = {
+  "tell-me": "Tell me when the parent has something new",
+  "take-updates": "Take the parent's updates",
+};
+
+function modeCard(base: string, current: FollowMode | null): Html {
+  return card(
+    html`<form method="post" action="${base}/following/mode">
+      <fieldset class="form-field">
+        <legend>How this forge follows its parent</legend>
+        ${FOLLOW_MODES.map(
+          (m) => html`<label class="row"
+            ><input type="radio" name="mode" value="${m}" ${m === current ? "checked" : null} />
+            ${MODE_LABELS[m]}</label
+          >`,
+        )}
+      </fieldset>
+      <div class="form-actions">${btn("Save", { type: "submit" })}</div>
+    </form>`,
+    { head: html`<h2>Follow mode</h2>` },
+  );
+}
 
 const MODE_WORDS = { "tell-me": "recorded: tell me (nothing tells it yet)", "take-updates": "recorded: take updates (nothing acts on it yet)" } as const;
 
@@ -111,6 +134,7 @@ export async function chainPage(ctx: Ctx): Promise<Response> {
         </ul>`,
         { pad: false },
       )}
+      ${owner && view.severedAt === null ? modeCard(base, view.lines[view.lines.length - 1]?.mode ?? null) : null}
       ${proposing ? proposalCard(base, proposals, writer) : null}
       ${view.severedAt !== null
         ? html`<p class="muted" id="severed">
@@ -156,6 +180,19 @@ export async function severSubmit(ctx: Ctx): Promise<Response> {
       message: cut.error === "forbidden" ? "Only this forge's owner can sever it." : "This repository follows nothing.",
     });
   return flashOrJson(ctx, to, { message: `Severed: following nothing since ${cut.value.slice(0, 10)}. Nothing was deleted.` });
+}
+
+/** POST /:owner/:name/following/mode {mode}; the owner only. */
+export async function modeSubmit(ctx: Ctx): Promise<Response> {
+  const repo = loadRepo(ctx);
+  if (!repo) return notFoundPage(ctx);
+  if (!ctx.auth.user) return signInFirst(ctx);
+  const form = await readForm(ctx, "rw");
+  if (form instanceof Response) return form;
+  const to = `${repoBase(repo)}/following`;
+  const set = await setFollowMode(ctx.app, ctx.auth.user, repo, field(form, "mode"));
+  if (!set.ok) return flashOrJson(ctx, to, { tone: "danger", message: FOLLOW_MODE_REFUSALS[set.error].message });
+  return flashOrJson(ctx, to, { message: `Now following in ${set.value} mode.` });
 }
 
 /** POST /:owner/:name/following/propose: push to the parent forge and open the pull there; a writer only. */

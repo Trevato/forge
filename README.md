@@ -187,6 +187,13 @@ the default branch is pushed to `child/<name>/<branch>-<tip>` at the parent,
 and the pull opens there, titled by the change that landed last and naming it
 (`org/forge#7`). Asking again for the same tip returns the pull already made.
 
+The repository's admin changes how the forge follows its parent (`tell-me` or
+`take-updates`) from the radio form on the same page, with `PATCH
+/api/v1/forge/following {"mode"}`, with the MCP `follow_mode` tool, or by pressing `m` on the chain screen in the terminal. The
+record in `parent.json` is rewritten atomically and a `forge.follow_mode` event
+is appended. A non-admin is refused (403), a value outside the two modes is
+422, and a severed forge is 409; each leaves `parent.json` untouched.
+
 The page and `GET …/following/proposals` show each proposal as open, merged or
 closed, read from the parent (the token may read back only pulls it opened) and
 cached for a minute (only a signed-in viewer makes the parent get asked); a merged or closed one is final. A parent that does not

@@ -12,7 +12,7 @@ import { convergeFork, type Converge } from "../crew/converge.ts";
 import { ARCHIVED_WHY, canAdmin, canWrite, forkParentFor, type Repo } from "../core/repos.ts";
 import type { User } from "../core/users.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { chainOfRepo, severChain } from "../spawn/chain.ts";
+import { chainOfRepo, FOLLOW_MODES, isFollowMode, setChainMode, severChain, type FollowMode } from "../spawn/chain.ts";
 import { requireUser } from "./access.ts";
 import { takeUpdates, type ForkSync, type TakeUpdatesError } from "./forks.ts";
 
@@ -60,6 +60,40 @@ export async function severForge(
     payload: { repo: `${repo.ownerName}/${repo.name}`, at: cut.value },
   });
   return ok(cut.value);
+}
+
+export type FollowModeError = SeverError | "invalid_mode" | "severed";
+
+/** The one answer every door gives a refused mode change, with the status an HTTP door sends. */
+export const FOLLOW_MODE_REFUSALS: Record<FollowModeError, { status: number; message: string }> = {
+  unauthorized: { status: 401, message: "sign in to change how this forge follows its parent" },
+  forbidden: { status: 403, message: "only this forge's owner can change how it follows" },
+  not_following: { status: 404, message: "this repository follows nothing across forges" },
+  invalid_mode: { status: 422, message: `mode is one of: ${FOLLOW_MODES.join(", ")}` },
+  severed: { status: 409, message: "this forge is severed and follows nothing; there is no mode to change" },
+};
+
+/** Choose how a forge follows its parent: the repository's admin only; the record changes atomically. */
+export async function setFollowMode(
+  app: App,
+  actor: User | undefined,
+  repo: Repo,
+  mode: unknown,
+): Promise<Result<FollowMode, FollowModeError>> {
+  const who = requireUser(actor);
+  if (!who.ok) return err("unauthorized");
+  if ((await chainOfRepo(app, repo)) === undefined) return err("not_following");
+  if (!canAdmin(app.db, repo, who.value) || !canWrite(app.db, repo, who.value)) return err("forbidden");
+  if (!isFollowMode(mode)) return err("invalid_mode");
+  const set = await setChainMode(app, mode);
+  if (!set.ok) return err(set.error);
+  app.bus.append({
+    kind: "forge.follow_mode",
+    repoId: repo.id,
+    actorId: who.value.id,
+    payload: { repo: `${repo.ownerName}/${repo.name}`, mode },
+  });
+  return ok(mode);
 }
 
 /** What the crew did about a conflict, in a sentence; `danger` when nothing is in hand. */

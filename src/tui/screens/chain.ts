@@ -1,16 +1,17 @@
 /**
  * The chain of forges this forge's code descends from, in a card. The gate is
  * the page's: only someone who can read `<org>/forge` sees it, and only that
- * repository's owner is offered Sever, which asks for the same typed word.
+ * repository's owner is offered Sever, which asks for the same typed word,
+ * and `m`, which flips the follow mode.
  */
 
 import type { App as Forge } from "../../app.ts";
-import { severForge } from "../../actions/follow.ts";
+import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge } from "../../actions/follow.ts";
 import { forgeProposalLine, forgeProposals, proposeToParentForge } from "../../actions/upstream.ts";
 import { parentCredential } from "../../spawn/parent_credential.ts";
 import { canAdmin, canRead, canWrite, getRepo, type Repo } from "../../core/repos.ts";
 import type { User } from "../../core/users.ts";
-import { chainLines, chainOfRepo, forgeLinkOf, type ChainView } from "../../spawn/chain.ts";
+import { chainLines, chainOfRepo, forgeLinkOf, type ChainView, type FollowMode } from "../../spawn/chain.ts";
 import type { Ctx, Screen } from "../app/app.ts";
 import { binding } from "../app/keys.ts";
 import { card } from "../ui/widgets.ts";
@@ -39,7 +40,7 @@ export async function chainScreen(app: Forge, user: User | undefined, ctx: Ctx):
   const writer = user !== undefined && view.severedAt === null && canWrite(app.db, repo, user);
   const proposing = view.severedAt === null && (await parentCredential(app)) !== undefined;
   const linesOf = async (): Promise<[string, string][]> => [
-    ...chainLines(view),
+    ...chainLines((await chainOfRepo(app, repo)) ?? view),
     ...(proposing
       ? (await forgeProposals(app, repo, Date.now(), user !== undefined)).map(
           (p): [string, string] => ["proposal", forgeProposalLine(p)],
@@ -52,7 +53,7 @@ export async function chainScreen(app: Forge, user: User | undefined, ctx: Ctx):
     title: "Chain",
     keys: [
       ...(writer && proposing ? [binding(["p"], "propose")] : []),
-      ...(owner ? [binding(["s"], "sever")] : []),
+      ...(owner ? [binding(["m"], "follow mode"), binding(["s"], "sever")] : []),
       binding(["esc"], "close"),
     ],
     render(area, s) {
@@ -82,6 +83,14 @@ export async function chainScreen(app: Forge, user: User | undefined, ctx: Ctx):
           }
           rows = await linesOf();
           ctx.toast(`Proposed to the parent forge as #${made.value.number}`, "success");
+        });
+      else if (e.key === "m" && owner)
+        void forgeLinkOf(app).then(async (link) => {
+          const next: FollowMode = link?.mode === "take-updates" ? "tell-me" : "take-updates";
+          const set = await setFollowMode(app, user, repo, next);
+          if (!set.ok) return ctx.toast(FOLLOW_MODE_REFUSALS[set.error].message, "danger");
+          rows = await linesOf();
+          ctx.toast(`Now following in ${set.value} mode.`, "success");
         });
       else if (e.key === "s" && owner)
         ctx.push(

@@ -197,14 +197,28 @@ export async function severChain(app: App, now = new Date()): Promise<Result<str
   if (doc === undefined || link === undefined) return err("not_following");
   if (link.severedAt !== undefined) return ok(link.severedAt);
   const at = now.toISOString();
-  const path = join(app.config.dataDir, "parent.json");
-  await Bun.write(
-    `${path}.tmp`,
-    JSON.stringify({ ...doc, forgeCode: { ...(doc["forgeCode"] as object), severedAt: at } }),
-  );
-  await rename(`${path}.tmp`, path);
+  await writeLink(app, doc, { severedAt: at });
   return ok(at);
 }
+
+/** Rewrite `forgeCode` with `patch` laid over it, atomically: the file is whole before and after. */
+async function writeLink(app: App, doc: Record<string, unknown>, patch: object): Promise<void> {
+  const path = join(app.config.dataDir, "parent.json");
+  await Bun.write(`${path}.tmp`, JSON.stringify({ ...doc, forgeCode: { ...(doc["forgeCode"] as object), ...patch } }));
+  await rename(`${path}.tmp`, path);
+}
+
+/** Record how this forge follows its parent from now on; a severed forge follows nothing, so it refuses. */
+export async function setChainMode(app: App, mode: FollowMode): Promise<Result<FollowMode, "not_following" | "severed">> {
+  const doc = await readDoc(app);
+  const link = await forgeLinkOf(app);
+  if (doc === undefined || link === undefined) return err("not_following");
+  if (link.severedAt !== undefined) return err("severed");
+  await writeLink(app, doc, { mode });
+  return ok(mode);
+}
+
+export const isFollowMode = isMode;
 
 /** The chain, when `repo` is this forge's own code repository; undefined for any other. */
 export async function chainOfRepo(app: App, repo: { ownerName: string; name: string }): Promise<ChainView | undefined> {

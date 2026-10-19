@@ -62,9 +62,9 @@ import { receiveBeat, SIGNATURE_HEADER } from "../spawn/heartbeat.ts";
 import { reissueDoor, spawnDoor } from "../spawn/door.ts";
 import { listSecrets, putSecret, removeSecret } from "../actions/secrets.ts";
 import { forgeProposals, proposeToParentForge, proposeUpstream } from "../actions/upstream.ts";
-import { severForge, takeOrTell } from "../actions/follow.ts";
+import { FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeOrTell } from "../actions/follow.ts";
 import { relationOf } from "../actions/forks.ts";
-import { chainOfRepo } from "../spawn/chain.ts";
+import { chainOfRepo, forgeLinkOf } from "../spawn/chain.ts";
 import { noteRead, telemetryReader, type Reader } from "../actions/telemetry.ts";
 import { flowFor, historyFor, sourcesOut, systemFor, welcome } from "../system/telemetry.ts";
 import { convergeFork, convergeState } from "../crew/converge.ts";
@@ -2354,6 +2354,21 @@ export function apiRoutes(router: Router<Handler>): void {
       return json({ severedAt: cut.value });
     },
   );
+
+  // How this forge follows the forge its code came from: its own code
+  // repository's admin only, the same words as the page and MCP.
+  router.add("PATCH", "/api/v1/forge/following", async (ctx) => {
+    const denied = requireScope(ctx, "rw");
+    if (denied) return denied;
+    const link = await forgeLinkOf(ctx.app);
+    const [owner, name] = (link?.repo ?? "/").split("/") as [string, string];
+    const repo = link === undefined ? undefined : getRepo(ctx.app.db, owner, name);
+    if (repo === undefined) return apiError("not_following", 404, FOLLOW_MODE_REFUSALS.not_following.message);
+    const set = await setFollowMode(ctx.app, ctx.auth.user, repo, (await body(ctx.request)).mode);
+    if (set.ok) return json({ mode: set.value });
+    const r = FOLLOW_MODE_REFUSALS[set.error];
+    return apiError(set.error, r.status, r.message);
+  });
 
   router.add(
     "POST",

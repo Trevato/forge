@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
+import { listEvents } from "../src/core/events.ts";
 import { getRepo, updateRepoSettings } from "../src/core/repos.ts";
 import { createToken } from "../src/core/tokens.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
@@ -166,6 +167,28 @@ describe("the chain at the MCP and terminal doors", () => {
     expect((await tool(readerRw, "sever", { repo: "kid/forge" })).error).toBeDefined();
     expect((await tool(ro, "sever", { repo: "kid/forge" })).error).toBeDefined();
     expect((await forgeLinkOf(child))?.severedAt).toBeUndefined();
+  });
+
+  test("the terminal's owner flips the follow mode with m; a reader has no such key", async () => {
+    const was = (await forgeLinkOf(child))!.mode;
+    const next = was === "tell-me" ? "take-updates" : "tell-me";
+    const events = () => listEvents(child.db, { kind: "forge.follow_mode" }).length;
+    const before = events();
+    const guest = boot(reader);
+    await guest.openChain();
+    expect(guest.text()).not.toContain("follow mode");
+    await guest.press("m");
+    expect((await forgeLinkOf(child))?.mode).toBe(was);
+    expect(events()).toBe(before);
+    guest.app.stop();
+    const owner = boot(alice);
+    await owner.openChain();
+    expect(owner.text()).toContain("follow mode");
+    await owner.press("m");
+    await settleUntil(owner.app, `Now following in ${next} mode`);
+    expect((await forgeLinkOf(child))?.mode).toBe(next);
+    expect(events()).toBe(before + 1);
+    owner.app.stop();
   });
 
   test("the terminal's owner types the word to sever; a wrong word does nothing", async () => {

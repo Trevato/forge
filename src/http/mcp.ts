@@ -32,9 +32,9 @@ import { changeSignup, readSignup } from "../actions/signup.ts";
 import { SIGNUP_MODES } from "../settings/signup.ts";
 import { QUOTA_KEYS } from "../settings/quotas.ts";
 import { LIMIT_KEYS } from "../settings/limits.ts";
-import { convergeWords, severForge, takeOrTell } from "../actions/follow.ts";
+import { convergeWords, FOLLOW_MODE_REFUSALS, setFollowMode, severForge, takeOrTell } from "../actions/follow.ts";
 import { relationOf } from "../actions/forks.ts";
-import { chainOfRepo } from "../spawn/chain.ts";
+import { chainOfRepo, FOLLOW_MODES, forgeLinkOf } from "../spawn/chain.ts";
 import { watchMilestone } from "../actions/watches.ts";
 import {
   addCommentThrough,
@@ -1592,6 +1592,27 @@ const TOOLS: readonly Tool[] = [
         cut.error,
         cut.error === "not_following" ? "this repository follows nothing across forges" : "only this forge's owner can sever it",
       );
+    },
+  },
+  {
+    name: "follow_mode",
+    description:
+      "Choose how a spawned forge follows the forge its code came from: `tell-me` or `take-updates` (its `forge` repository's admin only). Refused on a severed forge. The same words as the radio form on the following page.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        mode: { type: "string", enum: [...FOLLOW_MODES], description: "How this forge follows its parent." },
+      },
+      required: ["repo", "mode"],
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const set = await setFollowMode(ctx.app, user, repo, args["mode"]);
+      if (set.ok) return good({ says: `Now following in ${set.value} mode.`, mode: set.value });
+      return bad(set.error, FOLLOW_MODE_REFUSALS[set.error].message);
     },
   },
   {
