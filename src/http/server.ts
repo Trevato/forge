@@ -46,6 +46,7 @@ import {
   armClose,
   BODY_MAX,
   carryNotes,
+  closeAfter,
   mustClose,
   noteSignedIn,
   readBounded,
@@ -82,7 +83,14 @@ import {
   isGitService,
   serviceRpc,
   type GitService,
+  type SmartHttpOptions,
 } from "../git/smart-http.ts";
+import {
+  strangerLimits,
+  strangerTransfer,
+  takeDoor,
+  tooManyStrangers,
+} from "./strangers.ts";
 import { timingSafeEqual } from "node:crypto";
 import {
   forwardedGitEnv,
@@ -1000,12 +1008,16 @@ export function buildRouter(): Router<Handler> {
     if (!isGitService(service))
       return new Response("smart http only", { status: 400 });
     return withGitAccess(ctx, service, (dir) =>
-      advertiseRefs(dir, service, ctx.request),
+      asStranger(ctx, (options) =>
+        advertiseRefs(dir, service, ctx.request, options),
+      ),
     );
   });
   router.add("POST", "/:owner/:name.git/git-upload-pack", (ctx) =>
     withGitAccess(ctx, "git-upload-pack", (dir) =>
-      serviceRpc(dir, "git-upload-pack", ctx.request),
+      asStranger(ctx, (options) =>
+        serviceRpc(dir, "git-upload-pack", ctx.request, options),
+      ),
     ),
   );
   router.add("POST", "/:owner/:name.git/git-receive-pack", (ctx) =>
@@ -1396,6 +1408,39 @@ let known: string[] | undefined;
 /** Every pattern the studio's and the API's routers know, read once on first use. */
 export function knownPatterns(): string[] {
   return (known ??= [...buildRouter().patterns(), ...buildApiRouter().patterns()]);
+}
+
+/**
+ * A transfer someone signed in makes runs as it always has; a stranger's
+ * takes a share of the transfer pool first (`strangers.ts`) — refused with
+ * a 429 when its address or every stranger together has none left — and
+ * runs on a shorter clock. Called once access is decided, so a private
+ * repository still answers a stranger with the credential challenge.
+ */
+async function asStranger(
+  ctx: Ctx,
+  run: (options: SmartHttpOptions) => Promise<Response>,
+): Promise<Response> {
+  if (ctx.auth.user !== undefined) return run({});
+  const held = strangerTransfer(ctx.app, ctx.request);
+  if (!held.allowed) {
+    // Refused before a byte of the body is wanted: nothing more is read of
+    // it, and the connection ends once the 429 is out (`http/limits.ts`).
+    closeAfter(ctx.request);
+    void ctx.request.body?.cancel().catch(() => {});
+    return tooManyStrangers(held);
+  }
+  const limits = strangerLimits(ctx.app);
+  try {
+    return await run({
+      release: held.release,
+      timeoutMs: limits.transferTimeoutMs,
+      idleMs: limits.transferIdleMs,
+    });
+  } catch (error) {
+    held.release();
+    throw error;
+  }
 }
 
 async function withGitAccess(
@@ -2310,9 +2355,11 @@ async function answer(
   request: Request,
 ): Promise<Response> {
   const response = await answerGet(app, router, apiRouter, limiter, request);
-  return request.method === "HEAD"
-    ? new Response(null, { status: response.status, headers: response.headers })
-    : response;
+  if (request.method !== "HEAD") return response;
+  // The body nobody will read is cancelled, so a stream behind it (an
+  // event stream's slot, a git process) ends now rather than never.
+  void response.body?.cancel().catch(() => {});
+  return new Response(null, { status: response.status, headers: response.headers });
 }
 
 async function answerGet(
@@ -2390,13 +2437,26 @@ async function answerGet(
   // The two things standing between one runaway agent and everybody
   // else's latency, applied before a handler runs and after auth is
   // known — a limit needs an identity, and a replay needs a credential.
+  // A stranger has no token to count against: its address does, and every
+  // stranger together (`strangers.ts`) — on the API, which is what a
+  // script reads; the doors that cost more keep tighter limits of their own.
   const credential = tokenCredential(request, auth);
   const verdict =
-    credential === undefined
-      ? undefined
-      : limiter.take(credential, auth.scope ?? "ro");
+    credential !== undefined
+      ? limiter.take(credential, auth.scope ?? "ro")
+      : auth.user === undefined && isApiPath && limiter.enabled
+        ? takeDoor(app, "api", request)
+        : undefined;
   if (verdict !== undefined && !verdict.allowed) {
-    return withRateHeaders(tooManyRequests(verdict), verdict);
+    const refusal =
+      credential === undefined
+        ? apiError(
+            "rate_limited",
+            429,
+            `too many requests without a token: ${verdict.limit} per minute — sign in, or retry in ${verdict.retryAfter}s`,
+          )
+        : tooManyRequests(verdict);
+    return withRateHeaders(refusal, verdict);
   }
 
   const themeCookie = cookieValue(request, "forge_theme") ?? "";

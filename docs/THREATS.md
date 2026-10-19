@@ -106,6 +106,12 @@ Wants: accounts, spam, resources, or a way to exhaust the forge.
   Test: `test/fuzz-parsers.test.ts`
 - Anonymous spawn is rate limited per client address.
   Test: `test/spawn-anon.test.ts`
+- Every door a stranger can reach that costs (API reads, clones, code
+  search on the page, the API and the terminal's guest palette, event
+  streams, spawn plans) is limited per address and for every stranger
+  together (`src/http/strangers.ts`, docs/ARCHITECTURE.md, concurrency
+  invariant 7); a signed-in push keeps its share of the pool.
+  Test: `test/strangers.test.ts`
 - The client address is the socket's peer unless that peer is a configured
   trusted proxy; `X-Forwarded-For` is read from the right, past trusted hops.
   Test: `test/client-address.test.ts`

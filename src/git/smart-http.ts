@@ -35,7 +35,18 @@ export interface SmartHttpOptions {
   env?: Record<string, string>;
   /** Kill a wedged transfer after this long. @default 600_000 */
   timeoutMs?: number;
+  /**
+   * End a fetch whose request body stops arriving for this long: a client
+   * that opens a negotiation and trickles it holds a transfer permit the
+   * whole time. Upload-pack only; a push's pack may pause. @default 30_000
+   */
+  idleMs?: number;
+  /** Given back when the transfer ends, however it ends (a stranger's share). */
+  release?: () => void;
 }
+
+/** How long a fetch's negotiation may go without a byte before it ends. */
+export const FETCH_IDLE_MS = 30_000;
 
 /**
  * GET /:owner/:name.git/info/refs?service=… — the ref advertisement.
@@ -77,7 +88,9 @@ export async function serviceRpc(
   options: SmartHttpOptions = {},
 ): Promise<Response> {
   const proc = await spawnService(repoDir, service, request, options, []);
-  feedStdin(proc, service, request).catch(() => proc.kill("SIGKILL"));
+  feedStdin(proc, service, request, options.idleMs ?? FETCH_IDLE_MS).catch(() =>
+    proc.kill("SIGKILL"),
+  );
 
   return new Response(proc.stdout, {
     headers: {
@@ -108,7 +121,11 @@ async function spawnService(
   options: SmartHttpOptions,
   extraArgs: readonly string[],
 ) {
-  const release = await transferGate.acquire();
+  const permit = await transferGate.acquire();
+  const release = (): void => {
+    permit();
+    options.release?.();
+  };
   // "git-upload-pack" the service is "upload-pack" the subcommand.
   const subcommand = service.slice(4);
 
@@ -177,6 +194,7 @@ async function feedStdin(
   proc: Bun.Subprocess<"pipe", "pipe", "ignore">,
   service: GitService,
   request: Request,
+  idleMs: number,
 ): Promise<void> {
   const stdin = proc.stdin;
   if (request.body === null) {
@@ -184,13 +202,23 @@ async function feedStdin(
     return;
   }
   let gone = false;
-  void proc.exited.then(() => {
-    gone = true;
-  });
   const stop = (): void => {
     closeNow(request);
     proc.kill("SIGKILL");
   };
+  // A fetch's negotiation is a few kilobytes sent at once; one that stops
+  // arriving is a client holding a permit open, and it ends.
+  let idle: ReturnType<typeof setTimeout> | undefined;
+  const poke = (): void => {
+    if (service !== "git-upload-pack") return;
+    clearTimeout(idle);
+    idle = setTimeout(stop, idleMs);
+  };
+  poke();
+  void proc.exited.then(() => {
+    gone = true;
+    clearTimeout(idle);
+  });
   const write = async (chunk: Uint8Array): Promise<void> => {
     const wrote: unknown = stdin.write(chunk);
     if (wrote instanceof Promise) await wrote;
@@ -211,11 +239,14 @@ async function feedStdin(
       const max = service === "git-receive-pack" ? PUSH_MAX : FETCH_MAX;
       for await (const chunk of counted(request.body, max, stop)) {
         if (gone) break;
+        poke();
         await write(chunk);
       }
     }
+    clearTimeout(idle);
     if (!gone) await stdin.end();
   } catch {
+    clearTimeout(idle);
     // Git went away mid-write: the body has nowhere to go, and its answer
     // (or its absence) is the response's business.
     proc.kill("SIGKILL");

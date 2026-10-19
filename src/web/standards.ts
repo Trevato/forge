@@ -24,6 +24,8 @@ import releases from "../core/releases.json" with { type: "json" };
 import { markPng, type MarkShape } from "../design/mark.ts";
 import { BODY_MAX, TITLE_MAX } from "../core/reports.ts";
 import { canRead, getRepo, listReposVisibleTo } from "../core/repos.ts";
+import type { App } from "../app.ts";
+import { Fresh } from "../kernel/fresh.ts";
 import type { Ctx } from "../http/context.ts";
 import { notFound } from "../http/respond.ts";
 
@@ -138,20 +140,41 @@ function xml(s: string): string {
   );
 }
 
+/**
+ * A sitemap is up to five thousand rows, asked for by anyone: its rows are
+ * read once a minute, however many ask. They are kept without an origin,
+ * under one key, and the origin is put on per answer — so a caller who
+ * varies `Host` (where `FORGE_URL` does not fix the origin) gets their own
+ * origin on the same rows and cannot make the forge read them again.
+ */
+const SITEMAP_MS = 60_000;
+const sitemaps = new WeakMap<App, Fresh<readonly string[]>>();
+
 /** GET /sitemap.xml — the front page and every public repository. */
 export function sitemapXml(ctx: Ctx): Response {
-  const origin = ctx.url.origin;
-  const repos = listReposVisibleTo(ctx.app.db, undefined, { limit: 5000 });
+  let kept = sitemaps.get(ctx.app);
+  if (kept === undefined) {
+    kept = new Fresh(SITEMAP_MS, 1);
+    sitemaps.set(ctx.app, kept);
+  }
+  const paths = kept.get("", () => sitemapPaths(ctx.app));
+  // Escaping is per character, so the escaped origin and the escaped path
+  // join into the escaped URL.
+  const origin = xml(ctx.url.origin);
   const urls = [
-    `<url><loc>${xml(origin)}/</loc></url>`,
-    ...repos.map(
-      (r) =>
-        `<url><loc>${xml(`${origin}/${r.ownerName}/${r.name}`)}</loc></url>`,
-    ),
+    `<url><loc>${origin}/</loc></url>`,
+    ...paths.map((path) => `<url><loc>${origin}${path}</loc></url>`),
   ];
   return text(
     `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.join("\n")}\n</urlset>\n`,
     "application/xml; charset=utf-8",
+  );
+}
+
+/** Every public repository's path, escaped for XML, newest first. */
+function sitemapPaths(app: App): readonly string[] {
+  return listReposVisibleTo(app.db, undefined, { limit: 5000 }).map((r) =>
+    xml(`/${r.ownerName}/${r.name}`),
   );
 }
 

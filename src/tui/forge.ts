@@ -10,6 +10,8 @@
 
 import type { App as Forge } from "../app.ts";
 import { search } from "../actions/search.ts";
+import { cleanQuery } from "../core/search.ts";
+import { guestCodeSearch } from "../http/strangers.ts";
 import { sentinelSummary } from "../crew/sentinel.ts";
 import { canRead, getRepo, type Repo } from "../core/repos.ts";
 import { sourceFor } from "../view/source.ts";
@@ -533,13 +535,26 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
  * first, mirror if you mean it (`view/source.ts`). A repo somebody else's
  * origin holds is `not_found` for you, and `sourceFor` is what says so.
  */
-function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
+export function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
   return (ctx) => async (query, live, signal) => {
-    const found = await search(session.app, session.user, {
-      q: query,
-      limit: 8,
-      live,
-    });
+    // A guest is a stranger with a key: its search greps code under the same
+    // limits as the page's and the API's (`http/strangers.ts`), counted
+    // under its peer address. Refused, everything but the code is searched.
+    const greps = session.user === undefined && cleanQuery(query) !== "";
+    const held = greps
+      ? guestCodeSearch(session.app, session.identity.remoteAddress)
+      : undefined;
+    let found;
+    try {
+      found = await search(session.app, session.user, {
+        q: query,
+        limit: 8,
+        live,
+        withCode: held === undefined || held.allowed,
+      });
+    } finally {
+      if (held?.allowed) held.release();
+    }
     if (signal.aborted) return [];
     const items: PaletteItem[] = [];
     const set = ctx.icons;
@@ -655,6 +670,15 @@ function forgeSearch(session: Session): (ctx: Ctx) => PaletteSearch {
         },
       });
     }
+    if (held !== undefined && !held.allowed)
+      items.push({
+        id: "code:not-searched",
+        section: "Code",
+        mark: G.ring,
+        title: "Code was not searched",
+        hint: `${held.why}; retry in ${held.retryAfter}s`,
+        run: () => ctx.toast("Sign in to search code without waiting.", "secondary"),
+      });
     return items;
   };
 }

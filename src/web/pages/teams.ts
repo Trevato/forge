@@ -100,7 +100,7 @@ export const teamsLiveJs = /* js */ `
 // GET /settings/teams/stream: the page's regions again, each time a team changes.
 export function teamsStream(ctx: Ctx): Response {
   if (!isAdminPerson(ctx)) return notFoundPage(ctx);
-  return eventStream(ctx.request, (emit, _close, ready) => {
+  return eventStream(ctx.app, ctx.request, (emit, _close, ready) => {
     const send = () => {
       const r = regions(ctx);
       if (r && ready()) emit("teams", { regions: r });

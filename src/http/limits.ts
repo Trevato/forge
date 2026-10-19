@@ -48,6 +48,9 @@ export const noteSignedIn = (request: Request): void => {
   signedIn.add(request);
 };
 
+/** Whether the request carries a signed-in person or a token. */
+export const isSignedIn = (request: Request): boolean => signedIn.has(request);
+
 /** The most a shared reader keeps of this request's body. */
 export const bodyCapFor = (request: Request): number =>
   signedIn.has(request) ? BODY_MAX : STRANGER_MAX;

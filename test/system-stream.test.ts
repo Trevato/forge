@@ -122,7 +122,7 @@ describe("/system over server-sent events", () => {
     let emitter: ((e: string, d: unknown) => void) | undefined;
     let ready: (() => boolean) | undefined;
     let closed = false;
-    const res = eventStream(new Request("http://x/s"), (emit, _close, r) => {
+    const res = eventStream({} as App, new Request("http://x/s"), (emit, _close, r) => {
       emitter = emit;
       ready = r;
       return () => {

@@ -10,6 +10,7 @@
  * that was never meant to be confirmed.
  */
 
+import { strangerCodeSearch } from "../../http/strangers.ts";
 import { search } from "../../actions/search.ts";
 import { appsRuntime, envsFor } from "../../apps/runtime.ts";
 import type { AppRecord } from "../../core/apps.ts";
@@ -299,8 +300,32 @@ function section(
 
 /** The same `search()` the API and the palette call, so the sources can
  * never disagree between surfaces. */
-async function find(ctx: Ctx, a: Asked): Promise<SearchResults> {
-  return search(ctx.app, ctx.auth.user, { q: a.query, kind: a.kind, live: a.live });
+async function find(
+  ctx: Ctx,
+  a: Asked,
+): Promise<{ found: SearchResults; busy?: number }> {
+  // A stranger's code search takes a slot of its own (`http/strangers.ts`);
+  // refused, the page still answers with everything but the code, and says so.
+  // The same test as the API's: a blank or stop-word query greps nothing.
+  const greps =
+    ctx.auth.user === undefined &&
+    (a.kind === "code" || a.kind === "all") &&
+    cleanQuery(a.query) !== "";
+  const held = greps ? strangerCodeSearch(ctx.app, ctx.request) : undefined;
+  const withCode = held === undefined || held.allowed;
+  try {
+    const found = await search(ctx.app, ctx.auth.user, {
+      q: a.query,
+      kind: a.kind,
+      live: a.live,
+      withCode,
+    });
+    return held !== undefined && !held.allowed
+      ? { found, busy: held.retryAfter }
+      : { found };
+  } finally {
+    if (held?.allowed) held.release();
+  }
 }
 
 /**
@@ -360,7 +385,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
     });
   }
 
-  const found = await find(ctx, a);
+  const { found, busy } = await find(ctx, a);
   const seen = appsOf(ctx, ctx.auth.user);
   const apps: Apps = {
     byId: seen.records,
@@ -425,6 +450,15 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
   const body = html`${pageHead(html`Results for “${a.query}”`)} ${form}
   <div class="filters">${chips}</div>
   ${liveToggle}
+  ${when(
+    busy !== undefined,
+    () =>
+      html`<p class="muted small" data-code-busy>
+        Code was not searched: code search is busy for visitors who are not
+        signed in. <a href="/signin">Sign in</a>, or try again in
+        ${String(busy)} s.
+      </p>`,
+  )}
   ${WORDS
     .filter(
       ([kind]) => kind !== "all" && (a.kind === "all" || a.kind === kind),

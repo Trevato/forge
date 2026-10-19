@@ -15,6 +15,7 @@ import { kindOfToken, parseApiBase } from "../core/subscriptions.ts";
 import type { User } from "../core/users.ts";
 import { repoDir } from "../git/repos.ts";
 import type { Ctx } from "../http/context.ts";
+import { takeDoor } from "../http/strangers.ts";
 import {
   childPublicUrl,
   hostedPlacement,
@@ -154,6 +155,19 @@ export async function spawnDoor(
 ): Promise<Door> {
   const anon = user === undefined;
   if (!anon && user.kind !== "user") return spawnWords({ kind: "forbidden" });
+  // A plan is free of children but not of work — it reads every catalog
+  // app it names — so a stranger's are counted per address and per forge.
+  if (anon) {
+    const verdict = takeDoor(ctx.app, "plan", ctx.request);
+    if (!verdict.allowed)
+      return {
+        status: 429,
+        body: {
+          error: "rate_limited",
+          message: `too many plans without signing in: ${verdict.limit} a minute; try again in ${verdict.retryAfter}s`,
+        },
+      };
+  }
   if (raw["dryRun"] !== undefined && typeof raw["dryRun"] !== "boolean")
     return invalid("dryRun", "must be true or false");
   const dry = raw["dryRun"] !== false;

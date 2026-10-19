@@ -673,6 +673,7 @@ describe("backpressure", () => {
     let push: ((text: string) => void) | undefined;
     const controller = new AbortController();
     const response = eventStream(
+      {} as App,
       new Request("http://forge/stream", { signal: controller.signal }),
       (emit) => {
         push = (text) => emit("noise", { text });

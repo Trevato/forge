@@ -15,6 +15,8 @@
  */
 
 import { holdForCaller } from "./caller.ts";
+import { isSignedIn } from "./limits.ts";
+import { holdStream, tooManyStrangers } from "./strangers.ts";
 import type { App } from "../app.ts";
 import type { User } from "../core/users.ts";
 import { listEvents, listEventsVisibleTo } from "../core/events.ts";
@@ -82,11 +84,19 @@ export type Emit = (event: string, data: unknown, id?: string) => void;
  * Open a stream. `register` is called once with the emitter and a `close`;
  * it returns its own unsubscribe, which runs when the client goes away, when
  * `close` is called, or when a write fails — whichever happens first.
+ *
+ * Every stream is counted on `app` while it is open (`strangers.ts`): a
+ * stranger's against its address and every stranger's together, anyone's
+ * against the forge's whole budget. Past either, the answer is a 429 and
+ * nothing is registered.
  */
 export function eventStream(
+  app: App,
   request: Request,
   register: (emit: Emit, close: () => void, ready: () => boolean) => () => void,
 ): Response {
+  const held = holdStream(app, request, !isSignedIn(request));
+  if (!held.allowed) return tooManyStrangers(held);
   const encoder = new TextEncoder();
   let cleanup = () => {};
 
@@ -132,6 +142,7 @@ export function eventStream(
         cleanup = () => {
           if (!open) return;
           open = false;
+          held.release();
           release();
           unsubscribe();
           clearInterval(heartbeat);
@@ -218,7 +229,7 @@ export function viewerStream(
   // admins', a person's own choices are theirs (`core/event_audience.ts`).
   const meant = audienceFilter(app.db, viewer);
   const after = resumeFrom(request);
-  return eventStream(request, (emit, _close, ready) => {
+  return eventStream(app, request, (emit, _close, ready) => {
     if (after !== undefined) {
       const missed = listEventsVisibleTo(app.db, viewer, {
         afterId: after,
@@ -269,7 +280,7 @@ export function sseStream(
 ): Response {
   const meant = audienceFilter(app.db, viewer);
   const after = resumeFrom(request);
-  return eventStream(request, (emit) => {
+  return eventStream(app, request, (emit) => {
     // The event id doubles as the SSE id, so a reconnecting client resumes
     // from where it stopped: what it missed first, oldest first, then live.
     if (after !== undefined)

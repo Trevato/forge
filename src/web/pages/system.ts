@@ -134,7 +134,7 @@ export function systemStream(ctx: Ctx): Response {
   if (!ctx.auth.user) return signInFirst(ctx);
   if (telemetryReader(ctx.app, ctx.auth.user)?.kind !== "owner") return notFoundPage(ctx);
   const sampler = live();
-  return eventStream(ctx.request, (emit, _close, ready) => {
+  return eventStream(ctx.app, ctx.request, (emit, _close, ready) => {
     emit("sample", sampleFrame(sampler.read()));
     return sampler.subscribe((view) => {
       if (ready()) emit("sample", sampleFrame(view));

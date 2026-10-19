@@ -18,6 +18,7 @@
 
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { Fresh } from "../../kernel/fresh.ts";
 import type { App } from "../../app.ts";
 import type { Run } from "../../core/runs.ts";
 import { getUserById } from "../../core/users.ts";
@@ -351,7 +352,7 @@ async function resolve(ctx: Ctx, kind: OgKind, ref: string): Promise<CardInput |
   if (kind === "issue" || kind === "pull") return threadInput(ctx, kind, ref);
   if (kind === "run") return runInput(ctx, ref);
   if (kind === "map") return mapCardInput(ctx, ref);
-  if (kind === "audit") return ref === "" ? auditCardInput(ctx) : undefined;
+  if (kind === "audit") return ref === "" ? auditCards(ctx.app).get("", () => auditCardInput(ctx)) : undefined;
   if (kind === "site") return ref === "" ? SITE_CARD : undefined;
   if (kind === "repo") return repoCard(ctx, ref);
   if (!isSlug(ref)) return undefined;
@@ -372,6 +373,21 @@ async function resolve(ctx: Ctx, kind: OgKind, ref: string): Promise<CardInput |
       crewNow(ctx, repo),
     ],
   };
+}
+
+/**
+ * The audit card reads every public app's repository with git; anyone may
+ * ask for it, so it is made once per AUDIT_CARD_MS however many do.
+ */
+const AUDIT_CARD_MS = 45_000;
+const auditCache = new WeakMap<App, Fresh<Promise<CardInput>>>();
+function auditCards(app: App): Fresh<Promise<CardInput>> {
+  let kept = auditCache.get(app);
+  if (kept === undefined) {
+    kept = new Fresh(AUDIT_CARD_MS, 1);
+    auditCache.set(app, kept);
+  }
+  return kept;
 }
 
 const caches = new WeakMap<App, PngCache>();

@@ -51,6 +51,12 @@ export interface SearchInput {
   limit?: number;
   /** Also ask each connected origin's own issue search. @default false */
   live?: boolean;
+  /**
+   * Grep the code when `kind` asks for it. False when a stranger's code
+   * search was refused (`http/strangers.ts`): the rest still answers.
+   * @default true
+   */
+  withCode?: boolean;
 }
 
 /**
@@ -113,7 +119,7 @@ export async function search(
     issues.push(...(await liveIssues(app, actor, q, limit)));
   }
 
-  const code = wants("code")
+  const code = wants("code") && input.withCode !== false
     ? await grepRepos(
         app.reposRoot,
         visible,

@@ -383,6 +383,20 @@ Paid-for lessons from open-platform-ts, designed in structurally:
    answered. A body no route read, of no declared length, is treated the
    same. A cancelled read is never used: it leaves the rest of the body on
    the connection to be taken for the next request.
+7. No stranger can spend the forge (`src/http/strangers.ts`). A request with
+   no session and no token is counted per client address (an IPv6 /64) and
+   for every stranger together, at each door that costs: API reads (600 a
+   minute per address, 6000 for all), clones and fetches (60 a minute, at
+   most 4 in flight per address and half the transfer pool for all, killed
+   after 300 s, and a negotiation that goes 30 s without a byte ends), code
+   search (10 a minute, one stranger's at a time, so half the plumbing pool
+   stays the forge's — the page, the API and the terminal's guest palette,
+   which is counted under its SSH peer address, alike), event streams (8 open per address, 256 for all
+   strangers, 4096 for anyone) and spawn plans (10 a minute). Past a limit
+   the answer is a 429 with `Retry-After`. The audit card and the sitemap,
+   which anyone may ask for, are made at most once a minute
+   (`src/kernel/fresh.ts`). `/healthz` is never limited: refusing a probe
+   turns load into a restart.
 
 ## Two processes at once
 

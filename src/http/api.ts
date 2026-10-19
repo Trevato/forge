@@ -217,7 +217,8 @@ import {
   canWrite,
   getRepoById,
 } from "../core/repos.ts";
-import { searchKind } from "../core/search.ts";
+import { cleanQuery, searchKind } from "../core/search.ts";
+import { strangerCodeSearch } from "./strangers.ts";
 import {
   isReviewState,
   listReviewComments,
@@ -2146,15 +2147,35 @@ export function apiRoutes(router: Router<Handler>): void {
   // caller has connected, conversations here, and the code itself. `live=1`
   // additionally asks each origin's own issue search, inside one budget.
 
+  // A stranger's search that greps code (`kind` code or all) takes a slot
+  // of its own first (`strangers.ts`): `git grep` over fifty repositories
+  // is not a request to answer as fast as anyone can send it.
   router.add("GET", "/api/v1/search", async (ctx) => {
     const q = ctx.url.searchParams;
-    const found = await search(ctx.app, ctx.auth.user, {
-      q: q.get("q") ?? "",
-      kind: searchKind(q.get("kind")),
-      ...(q.has("limit") ? { limit: Number(q.get("limit")) } : {}),
-      live: q.get("live") === "1" || q.get("live") === "true",
-    });
-    return json(found);
+    const kind = searchKind(q.get("kind"));
+    const query = q.get("q") ?? "";
+    const greps =
+      ctx.auth.user === undefined &&
+      (kind === "code" || kind === "all") &&
+      cleanQuery(query) !== "";
+    const held = greps ? strangerCodeSearch(ctx.app, ctx.request) : undefined;
+    if (held !== undefined && !held.allowed) {
+      const refused = apiError("rate_limited", 429, `${held.why}; sign in, or retry in ${held.retryAfter}s`);
+      refused.headers.set("retry-after", String(held.retryAfter));
+      return refused;
+    }
+    try {
+      return json(
+        await search(ctx.app, ctx.auth.user, {
+          q: query,
+          kind,
+          ...(q.has("limit") ? { limit: Number(q.get("limit")) } : {}),
+          live: q.get("live") === "1" || q.get("live") === "true",
+        }),
+      );
+    } finally {
+      held?.release();
+    }
   });
 
   // ── repositories ─────────────────────────────────────────────────────
@@ -4558,7 +4579,7 @@ export function apiRoutes(router: Router<Handler>): void {
       ctx.params.job!,
     );
     if (!found.ok) return respondAccess(found.error, 404);
-    return eventStream(ctx.request, (emit, close) =>
+    return eventStream(ctx.app, ctx.request, (emit, close) =>
       subscribeJob(found.value.id, (job) => {
         emit(`mirror.${job.stage}`, jobJson(ctx, job), job.id);
         if (job.stage === "done" || job.stage === "failed") close();
@@ -4984,7 +5005,7 @@ export function apiRoutes(router: Router<Handler>): void {
   router.add("GET", "/api/v1/migrate/:job/stream", (ctx) => {
     const found = migrationJobFor(ctx.auth.user, ctx.params.job!);
     if (!found.ok) return respondAccess(found.error, 404);
-    return eventStream(ctx.request, (emit, close) =>
+    return eventStream(ctx.app, ctx.request, (emit, close) =>
       subscribeJob(found.value.id, (job) => {
         emit(`migrate.${job.stage}`, migrationJson(ctx, job), job.id);
         if (job.stage === "done" || job.stage === "failed") close();
@@ -5517,7 +5538,7 @@ export function apiRoutes(router: Router<Handler>): void {
         (status.state === "running" || status.state === "deploying")
       );
     };
-    return eventStream(ctx.request, (emit, close) => {
+    return eventStream(ctx.app, ctx.request, (emit, close) => {
       const controller = new AbortController();
       let index = 0;
       const send = (line: string): void => {
