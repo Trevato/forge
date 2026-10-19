@@ -38,7 +38,8 @@ import {
   mirrorFor,
   suggestBranch,
 } from "../src/web/pages/edit.ts";
-import { highlightAsset } from "../src/web/asset.ts";
+import { TOOLBAR_PATH } from "../src/apps/toolbar.ts";
+import { highlightAsset, stylesheetAsset, shellAsset } from "../src/web/asset.ts";
 import { highlightToHtml } from "../src/web/highlight-html.ts";
 import { fixtureSlot } from "./helpers/slot.ts";
 import { seedAdmin } from "./helpers/admin.ts";
@@ -666,6 +667,37 @@ describe("editing files on the web", () => {
       404,
     );
     expect((await get("/assets/../src/main.js")).status).toBe(404);
+  });
+
+  test("hashed assets carry a strong ETag and answer 304 to a match, floor intact", async () => {
+    const asset = await highlightAsset();
+    if (asset === null) throw new Error("the bundle did not build");
+    for (const path of [asset.path, stylesheetAsset().path, shellAsset().path, TOOLBAR_PATH]) {
+      const first = await get(path);
+      const etag = first.headers.get("etag") ?? "";
+      expect(etag).toMatch(/^"[0-9a-f]{64}"$/);
+      await first.text();
+      for (const match of [etag, `"nope", ${etag}`, "*"]) {
+        const res = await fetch(`${base}${path}`, { headers: { "if-none-match": match } });
+        expect(res.status).toBe(304);
+        expect(await res.text()).toBe("");
+        expect(res.headers.get("etag")).toBe(etag);
+        expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+        expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(res.headers.get("referrer-policy")).not.toBeNull();
+        expect(res.headers.get("content-security-policy")).not.toBeNull();
+      }
+      const miss = await fetch(`${base}${path}`, { headers: { "if-none-match": '"other"' } });
+      expect(miss.status).toBe(200);
+    }
+  });
+
+  test("an HTML page is never immutable and has no ETag from the asset path", async () => {
+    const res = await get("/");
+    expect(res.headers.get("cache-control") ?? "").not.toContain("immutable");
+    await res.text();
+    const redirect = await get("/assets/forge.css");
+    expect(redirect.headers.get("cache-control")).toBe("no-cache");
   });
 
   test("the served bundle renders exactly what the server renders", async () => {

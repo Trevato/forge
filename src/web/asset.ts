@@ -29,6 +29,8 @@ export interface BuiltAsset {
   /** The `:name` the route matches, i.e. the path's basename without `.js`. */
   name: string;
   code: string;
+  /** The strong ETag, hashed once with the name. */
+  etag: string;
 }
 
 let pending: Promise<BuiltAsset | null> | null = null;
@@ -53,23 +55,43 @@ async function build(): Promise<BuiltAsset | null> {
       return null;
     }
     const code = await first.text();
-    const name = `highlight-${sha256(code).slice(0, 16)}`;
-    return { path: `/assets/${name}.js`, name, code };
+    const hash = sha256(code);
+    const name = `highlight-${hash.slice(0, 16)}`;
+    return { path: `/assets/${name}.js`, name, code, etag: `"${hash}"` };
   } catch (error) {
     log.warn("web.highlight_asset_failed", { error: String(error) });
     return null;
   }
 }
 
+/**
+ * A content-hashed body, answered conditionally. The ETag is the body's own
+ * hash, strong, computed once by the caller; a matching `If-None-Match` (or `*`) gets a 304 with no body
+ * and the same validators, and the security floor is added to it like any
+ * other response. Only hashed assets come through here, so only they are
+ * immutable.
+ */
+export function staticResponse(request: Request, body: string, type: string, etag: string): Response {
+  const headers = {
+    "content-type": type,
+    "cache-control": "public, max-age=31536000, immutable",
+    "x-content-type-options": "nosniff",
+    etag,
+  };
+  if (matches(request.headers.get("if-none-match"), etag))
+    return new Response(null, { status: 304, headers });
+  return new Response(body, { headers });
+}
+
+function matches(header: string | null, etag: string): boolean {
+  if (header === null) return false;
+  if (header.trim() === "*") return true;
+  return header.split(",").some((tag) => tag.trim() === etag);
+}
+
 /** The response for a hit on the built asset: immutable, because it is. */
-export function assetResponse(asset: BuiltAsset): Response {
-  return new Response(asset.code, {
-    headers: {
-      "content-type": "text/javascript; charset=utf-8",
-      "cache-control": "public, max-age=31536000, immutable",
-      "x-content-type-options": "nosniff",
-    },
-  });
+export function assetResponse(request: Request, asset: BuiltAsset): Response {
+  return staticResponse(request, asset.code, "text/javascript; charset=utf-8", asset.etag);
 }
 
 /** The stylesheet, content-addressed the same way. Hashed once per process. */
@@ -78,27 +100,24 @@ export interface CssAsset {
   path: string;
   /** The `:name` the route matches, i.e. the path's basename without `.css`. */
   name: string;
+  /** The strong ETag, hashed once with the name. */
+  etag: string;
 }
 
 let cssAsset: CssAsset | null = null;
 
 export function stylesheetAsset(): CssAsset {
   if (cssAsset === null) {
-    const name = `forge-${sha256(css).slice(0, 16)}`;
-    cssAsset = { path: `/assets/${name}.css`, name };
+    const hash = sha256(css);
+    const name = `forge-${hash.slice(0, 16)}`;
+    cssAsset = { path: `/assets/${name}.css`, name, etag: `"${hash}"` };
   }
   return cssAsset;
 }
 
 /** The response for a hit on the stylesheet: immutable, because it is. */
-export function stylesheetResponse(): Response {
-  return new Response(css, {
-    headers: {
-      "content-type": "text/css; charset=utf-8",
-      "cache-control": "public, max-age=31536000, immutable",
-      "x-content-type-options": "nosniff",
-    },
-  });
+export function stylesheetResponse(request: Request): Response {
+  return staticResponse(request, css, "text/css; charset=utf-8", stylesheetAsset().etag);
 }
 
 /** `/assets/forge.css` for pages rendered before the hash: send them to the current sheet, never cached long. */
@@ -123,8 +142,9 @@ let shell: BuiltAsset | null = null;
  */
 export function shellAsset(): BuiltAsset {
   if (shell === null) {
-    const name = `shell-${sha256(shellJs).slice(0, 16)}`;
-    shell = { path: `/assets/${name}.js`, name, code: shellJs };
+    const hash = sha256(shellJs);
+    const name = `shell-${hash.slice(0, 16)}`;
+    shell = { path: `/assets/${name}.js`, name, code: shellJs, etag: `"${hash}"` };
   }
   return shell;
 }

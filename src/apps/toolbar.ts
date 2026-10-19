@@ -10,6 +10,7 @@
  * `style-src` does not block.
  */
 
+import { staticResponse } from "../web/asset.ts";
 import { sha256 } from "../kernel/hash.ts";
 
 /** The client, as plain source: no `eval`, no inline handlers. */
@@ -143,21 +144,16 @@ export const toolbarJs = `(function () {
 })();
 `;
 
-const name = `toolbar-${sha256(toolbarJs).slice(0, 16)}`;
+const hash = sha256(toolbarJs);
+const name = `toolbar-${hash.slice(0, 16)}`;
 
 /** The path the script is served from on the forge, content-addressed. */
 export const TOOLBAR_PATH = `/assets/${name}.js`;
 export const TOOLBAR_NAME = name;
 
 /** The forge's answer for the script: immutable, because its name is its hash. */
-export function toolbarResponse(): Response {
-  return new Response(toolbarJs, {
-    headers: {
-      "content-type": "text/javascript; charset=utf-8",
-      "cache-control": "public, max-age=31536000, immutable",
-      "x-content-type-options": "nosniff",
-    },
-  });
+export function toolbarResponse(request: Request): Response {
+  return staticResponse(request, toolbarJs, "text/javascript; charset=utf-8", `"${hash}"`);
 }
 
 /** The largest page the proxy will hold in memory to add the tag to. */

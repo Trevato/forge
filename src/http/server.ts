@@ -616,7 +616,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/assets/:name.css", (ctx) => {
     if (ctx.params.name === "forge") return stylesheetRedirect();
     if (ctx.params.name !== stylesheetAsset().name) return notFound();
-    return stylesheetResponse();
+    return stylesheetResponse(ctx.request);
   });
   // What the open web expects of a site, from the forge's own facts.
   router.add("GET", "/.well-known/security.txt", securityTxt);
@@ -632,11 +632,11 @@ export function buildRouter(): Router<Handler> {
   // with, so a miss means an old tab, and an old tab should reload.
   router.add("GET", "/assets/:name.js", async (ctx) => {
     const shell = shellAsset();
-    if (ctx.params.name === shell.name) return assetResponse(shell);
-    if (ctx.params.name === TOOLBAR_NAME) return toolbarResponse();
+    if (ctx.params.name === shell.name) return assetResponse(ctx.request, shell);
+    if (ctx.params.name === TOOLBAR_NAME) return toolbarResponse(ctx.request);
     const asset = await highlightAsset();
     if (asset === null || ctx.params.name !== asset.name) return notFound();
-    return assetResponse(asset);
+    return assetResponse(ctx.request, asset);
   });
   // The service worker: root scope needs a root path, and it must never be
   // cached by the browser's HTTP cache or an update would wait a day.
