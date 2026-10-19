@@ -75,9 +75,36 @@ export function formatSpan(ms: number): string {
   return s % 60 === 0 ? `${m} min` : `${m} min ${s % 60} s`;
 }
 
+/** What people call each phase; the manifest read counts as download. */
+const PART_WORD: Record<PhaseTime["phase"], string> = {
+  manifest: "download",
+  files: "download",
+  unpack: "decompress",
+  bundles: "clone",
+  key: "key",
+  open: "open",
+  boot: "start and migrate",
+};
+
+/** The drill's time by part, longest first: download, decompress, clone, open, migrate. Parts that share a word are added. */
+export function timeByPart(phases: readonly PhaseTime[]): { part: string; ms: number }[] {
+  const sums = new Map<string, number>();
+  for (const p of phases) sums.set(PART_WORD[p.phase], (sums.get(PART_WORD[p.phase]) ?? 0) + p.ms);
+  return [...sums].map(([part, ms]) => ({ part, ms })).sort((a, b) => b.ms - a.ms);
+}
+
+/** "download about 8 min, decompress 40 s, open 2 s; download was the slowest"; empty when nothing was timed. */
+export function describeTimes(phases: readonly PhaseTime[]): string {
+  const parts = timeByPart(phases).filter((p) => p.part !== "key");
+  if (parts.length === 0) return "";
+  const words = parts.map((p) => `${p.part} ${p.ms >= 60_000 ? "about " : ""}${formatSpan(p.ms)}`);
+  return `${words.join(", ")}; ${parts[0]!.part} was the slowest`;
+}
+
 /** One restore phase and the milliseconds it took. */
 export interface PhaseTime {
-  readonly phase: Progress["phase"];
+  /** A restore phase, then `open` (the database read) and `boot` (the restored forge starting and migrating). */
+  readonly phase: Progress["phase"] | "open" | "boot";
   readonly ms: number;
 }
 
@@ -151,6 +178,7 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
   // When each restore phase was first reported, and when the restore ended.
   const began: { phase: Progress["phase"]; at: number }[] = [];
   let restoreEnd: number | undefined;
+  let bootStart: number | undefined;
   let health: DrillResult["health"] = "unreached";
   try {
     // One clock for the whole drill, so a hang in any step ends it red.
@@ -228,6 +256,7 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
     }
 
     step = "health";
+    bootStart = performance.now();
     const booted = await within(
       (deps.boot ?? bootRestored)(target, left()),
       left(),
@@ -255,10 +284,16 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
 
   function finish(failedStep: DrillStep | null): DrillResult {
     const end = restoreEnd ?? performance.now();
-    const phases = began.map((b, i) => ({
+    const phases: PhaseTime[] = began.map((b, i) => ({
       phase: b.phase,
       ms: Math.max(0, Math.round((began[i + 1]?.at ?? end) - b.at)),
     }));
+    // The database read, then the restored forge's start and migration.
+    if (restoreEnd !== undefined) {
+      const now = performance.now();
+      phases.push({ phase: "open", ms: Math.round((bootStart ?? now) - restoreEnd) });
+      if (bootStart !== undefined) phases.push({ phase: "boot", ms: Math.round(now - bootStart) });
+    }
     return {
       at,
       snapshotId,

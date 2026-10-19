@@ -9,7 +9,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { formatSpan, type DrillResult, type DrillStep, type PhaseTime } from "./drill.ts";
+import { describeTimes, formatSpan, timeByPart, type DrillResult, type DrillStep } from "./drill.ts";
 
 const STEPS: readonly DrillStep[] = ["fetch", "restore", "open", "count", "unseal", "health"];
 
@@ -38,7 +38,8 @@ export function lastVerdict(dataDir: string): DrillResult | undefined {
 /** The inbox card's sentence for a red drill; undefined for a green one. */
 export function failedSentence(r: DrillResult | undefined): string | undefined {
   if (r === undefined || r.verdict !== "red") return undefined;
-  return `The restore drill failed at ${r.failedStep ?? "an unknown step"}${r.reason ? `: ${r.reason}` : ""}. Snapshot ${r.snapshotId ?? "none"}; docs/RECOVERY.md says what to do.`;
+  const times = describeTimes(r.phases);
+  return `The restore drill failed at ${r.failedStep ?? "an unknown step"}${r.reason ? `: ${r.reason}` : ""}${times ? ` (${times})` : ""}. Snapshot ${r.snapshotId ?? "none"}; docs/RECOVERY.md says what to do.`;
 }
 
 /** A green drill that used more than this share of its budget is a warning. */
@@ -52,9 +53,9 @@ export const DRILL_SLOW_SHARE = 0.8;
 export function slowSentence(r: DrillResult | undefined): string | undefined {
   if (r === undefined || r.verdict !== "green") return undefined;
   if (!(r.budgetMs > 0) || !(r.ms > r.budgetMs * DRILL_SLOW_SHARE)) return undefined;
-  const slowest = r.phases.reduce<PhaseTime | undefined>((a, p) => (a === undefined || p.ms > a.ms ? p : a), undefined);
+  const slowest = timeByPart(r.phases)[0];
   const spare = `${formatSpan(Math.max(0, r.budgetMs - r.ms))} to spare`;
-  return `The last restore drill passed with ${spare}${slowest ? `; ${slowest.phase} took ${formatSpan(slowest.ms)} of it` : ""}.`;
+  return `The last restore drill passed with ${spare}${slowest ? `; ${slowest.part} took ${formatSpan(slowest.ms)} of it` : ""}.`;
 }
 
 const firstFile =(dataDir: string): string => join(dataDir, "drill", "first-seen");

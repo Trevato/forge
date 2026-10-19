@@ -22,7 +22,7 @@ interface Row {
   phases: string | null;
 }
 
-const PHASES = new Set(["manifest", "files", "unpack", "bundles", "key"]);
+const PHASES = new Set(["manifest", "files", "unpack", "bundles", "key", "open", "boot"]);
 
 /** The stored JSON as phases; anything that is not a list of known phases with whole ms reads as none. */
 export function parsePhases(raw: string | null): { phases: PhaseTime[]; budgetMs: number } {

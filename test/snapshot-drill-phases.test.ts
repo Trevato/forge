@@ -71,7 +71,7 @@ describe("drill phases", () => {
     expect(r.verdict).toBe("green");
     expect(r.budgetMs).toBeGreaterThanOrEqual(600_000);
     expect(r.budgetMs).toBeLessThan(601_000);
-    expect(r.phases.map((p) => p.phase)).toEqual(["files", "unpack", "key"]);
+    expect(r.phases.map((p) => p.phase)).toEqual(["files", "unpack", "key", "open", "boot"]);
     expect(r.phases[0]!.ms).toBeGreaterThanOrEqual(25);
     expect(r.phases[1]!.ms).toBeGreaterThanOrEqual(25);
   });
@@ -101,6 +101,8 @@ describe("drill phases", () => {
       phases: [
         { phase: "files", ms: 58_000 },
         { phase: "bundles", ms: 290_000 },
+        { phase: "open", ms: 2_000 },
+        { phase: "boot", ms: 3_000 },
       ],
       budgetMs: 840_000,
       reason: null,
@@ -167,12 +169,14 @@ describe("the Backups page line", () => {
       { phase: "unpack", ms: 20_000 },
       { phase: "bundles", ms: 290_000 },
       { phase: "key", ms: 1_000 },
+      { phase: "open", ms: 2_000 },
+      { phase: "boot", ms: 3_000 },
     ],
     budgetMs: 840_000,
     reason: null,
     ...over,
   });
-  const LINE = "6 min 12 s of its 14 min budget: files 58 s, unpack 20 s, bundles 4 min 50 s, key 1 s";
+  const LINE = "6 min 12 s of its 14 min budget: clone 4 min 50 s, download 58 s, decompress 20 s, start and migrate 3 s, open 2 s, key 1 s";
   const backups = async (): Promise<string> => {
     const r = await fetch(`${servers.url}/signin`, {
       method: "POST",
@@ -183,6 +187,13 @@ describe("the Backups page line", () => {
     const cookie = (r.headers.get("set-cookie") ?? "").split(";")[0]!;
     return (await fetch(`${servers.url}/settings/backups`, { headers: { cookie } })).text();
   };
+
+  test("the line says the plain words, not the raw phase names", async () => {
+    recordDrill(app.db, kept({}));
+    const page = await backups();
+    expect(page).toContain("start and migrate 3 s");
+    expect(page).not.toMatch(/boot \d|unpack \d|files \d|manifest \d|bundles \d/);
+  });
 
   test("a green drill shows the time against the budget with each phase", async () => {
     recordDrill(app.db, kept({}));

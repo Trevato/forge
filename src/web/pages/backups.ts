@@ -18,7 +18,7 @@ import { forgetMirror, saveMirror } from "../../actions/mirror.ts";
 import { mirrorSealedSet, mirrorNeed, MIRROR_SEALED } from "../../snapshot/mirror.ts";
 import { resolveDestination, sealedSet } from "../../snapshot/destination.ts";
 import { keyOf } from "../../snapshot/snapshot.ts";
-import { formatBudget, formatSpan, type DrillResult } from "../../snapshot/drill.ts";
+import { formatBudget, formatSpan, timeByPart, type DrillResult } from "../../snapshot/drill.ts";
 import { lastDrill } from "../../snapshot/drills.ts";
 import { snapshotsOf } from "../../snapshot/service.ts";
 import { lastSnapshotOutcome } from "../../snapshot/outcome.ts";
@@ -90,11 +90,11 @@ function keyNote(
       </p>`;
 }
 
-/** "6 min 12 s of its 14 min budget: files 58 s, ..."; empty for a drill that kept no phases. */
+/** "6 min 12 s of its 14 min budget: clone 4 min, download 58 s, ..."; empty for a drill that kept no phases. */
 function drillTiming(d: DrillResult): string {
   if (d.phases.length === 0 || d.budgetMs <= 0) return "";
-  return `${formatSpan(d.ms)} of its ${formatBudget(d.budgetMs)} budget: ${d.phases
-    .map((p) => `${p.phase} ${formatSpan(p.ms)}`)
+  return `${formatSpan(d.ms)} of its ${formatBudget(d.budgetMs)} budget: ${timeByPart(d.phases)
+    .map((p) => `${p.part} ${formatSpan(p.ms)}`)
     .join(", ")}`;
 }
 

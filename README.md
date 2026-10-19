@@ -1018,8 +1018,12 @@ The terminal has no backups view, so it has no readout.
 **Run a drill** on the same page (admins only) restores the newest snapshot
 into scratch, opens it, counts what is there and unseals a value; the page
 waits for it, up to 10 minutes, and the last drill shows there as one line,
-ending with the drill's time against its budget and each phase's time ("6 min
-12 s of its 14 min budget: files 58 s, …"); drills from before this show none.
+ending with the drill's time against its budget and each part's time, longest first ("6 min
+12 s of its 14 min budget: clone 4 min, download 58 s, …"); drills from before this show none.
+The parts are download, decompress, clone, open, and start and migrate (the
+whole side-boot of the restored forge, process start included). The same words,
+slowest named, are in the drill's log line and in a red drill's card
+("… (download about 8 min, decompress 40 s, …; download was the slowest)").
 Only one runs at a time. See `docs/SNAPSHOT.md`.
 
 The forge also runs one itself every Sunday 09:00 UTC (a forge that was down

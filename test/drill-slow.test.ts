@@ -23,9 +23,9 @@ const drill = (over: Partial<DrillResult>): DrillResult => ({
 test("81% of the budget warns, naming the slowest phase", () => {
   const r = drill({ ms: 9 * MIN, budgetMs: 11 * MIN });
   expect(slowSentence(drill({ ms: 8.91 * MIN }))).toBe(
-    "The last restore drill passed with 2 min 5 s to spare; bundles took 9 min of it.",
+    "The last restore drill passed with 2 min 5 s to spare; clone took 9 min of it.",
   );
-  expect(slowSentence(r)).toContain("bundles took 9 min");
+  expect(slowSentence(r)).toContain("clone took 9 min");
   const need = drillNeed(r, Date.parse(r.at) + MIN);
   expect(need?.sentence).toBe(slowSentence(r));
 });

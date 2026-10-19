@@ -21,7 +21,7 @@ import {
   type Manifest,
   type Progress,
 } from "./snapshot.ts";
-import { runDrill, type DrillDeps, type DrillResult } from "./drill.ts";
+import { describeTimes, runDrill, type DrillDeps, type DrillResult } from "./drill.ts";
 import { BOOT_RED_FLOOR_MS, drillDue, RED_RETRY_MS } from "./due.ts";
 import { lastDrill, recordDrill } from "./drills.ts";
 import { lastMirror, mirrorPass, MIRROR_EVERY_MS, recordMirror, type MirrorState } from "./mirror.ts";
@@ -244,7 +244,7 @@ export function startSnapshots(
       // The card and the recovery issue hear of every drill, whoever asked.
       const posted = await reportVerdict(app.config.dataDir, result);
       app.bus.append({ kind: "drill.finished", payload: { verdict: result.verdict, step: result.failedStep } });
-      log.info("restore drill", { verdict: result.verdict, step: result.failedStep ?? "none", posted });
+      log.info("restore drill", { verdict: result.verdict, step: result.failedStep ?? "none", posted, times: describeTimes(result.phases) });
       return result;
     })().finally(() => {
       drilling = undefined;
