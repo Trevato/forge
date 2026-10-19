@@ -790,7 +790,7 @@ When a deploy comes up green the forge takes a picture of it — every page
 (390×844), a laptop's (1280×800), and a thumb's (200×125, desktop's own
 aspect, small), and keeps the pictures beside the commit they are of, so a
 person judges a change from what it is rather than from what it says.
-`app.looks` may name at most three pages: a browser start per picture per
+`app.looks` may name at most 24 pages: a browser start per picture per
 width is the heaviest thing the forge does, and more is a manifest error
 rather than a silent, slower deploy. The pull page shows the phone and
 desktop pair under the checks, with the commit and a word when the head has

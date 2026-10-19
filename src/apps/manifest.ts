@@ -68,8 +68,9 @@ const READY_DEFAULT = 30;
 const READY_MAX = 600;
 const COMMAND_MAX = 1_000;
 /** More than this many pages is a manifest error: a browser start per
- * picture per width is the heaviest thing the forge does. */
-const LOOKS_MAX = 3;
+ * picture per width is the heaviest thing the forge does. Room for every
+ * top-level page of the forge itself. */
+const LOOKS_MAX = 24;
 const LOOK_PATH_MAX = 200;
 
 /**

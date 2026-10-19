@@ -389,19 +389,16 @@ describe("manifest: parseManifest edge cases", () => {
     if (result.ok) expect(result.value.looks).toEqual(["/"]);
   });
 
-  test("app.looks names up to three pages", () => {
-    const result = parseManifest(
-      JSON.stringify({ app: { run: "x", looks: ["/", "/board"] } }),
-      undefined,
-    );
+  test("app.looks names up to 24 pages, enough for every top-level page of the forge", () => {
+    const looks = Array.from({ length: 24 }, (_, i) => `/p${i}`);
+    const result = parseManifest(JSON.stringify({ app: { run: "x", looks } }), undefined);
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.value.looks).toEqual(["/", "/board"]);
+    if (result.ok) expect(result.value.looks).toEqual(looks);
   });
-
-  test("app.looks with more than three paths is refused", () => {
+  test("app.looks with more than 24 paths is refused", () => {
     const result = parseManifest(
       JSON.stringify({
-        app: { run: "x", looks: ["/", "/a", "/b", "/c"] },
+        app: { run: "x", looks: Array.from({ length: 25 }, (_, i) => `/p${i}`) },
       }),
       undefined,
     );
