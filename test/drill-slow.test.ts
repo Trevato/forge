@@ -46,7 +46,7 @@ test("a drill with no budget says nothing", () => {
 test("a red drill's card says its budget in minutes; an older one that kept none says nothing of it", () => {
   const red = drill({ verdict: "red", failedStep: "restore", reason: "get snapshots/x failed after 5 attempts: no answer in 2 min", budgetMs: 1_000_000, phases: [] });
   expect(failedSentence(red)).toBe(
-    "The restore drill failed at restore: get snapshots/x failed after 5 attempts: no answer in 2 min. It had 16.7 min. Snapshot snap-1; docs/RECOVERY.md says what to do.",
+    "The restore drill failed at restore: get snapshots/x failed after 5 attempts: no answer in 2 min. It had 16.7 min. The newest snapshot is snap-1. Next: restore it by hand as docs/RECOVERY.md Route 1 says; the card clears when a drill passes.",
   );
   expect(failedSentence({ ...red, budgetMs: 0 })).not.toContain("It had");
 });

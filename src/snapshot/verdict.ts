@@ -35,13 +35,40 @@ export function lastVerdict(dataDir: string): DrillResult | undefined {
   }
 }
 
-/** The inbox card's sentence for a red drill; undefined for a green one. */
-export function failedSentence(r: DrillResult | undefined): string | undefined {
+/** The durations the drill and the store write ("no answer in 596591.19 ms", "in 45 s") said the way a person would. */
+export function plainDurations(text: string): string {
+  return text.replace(/\b(no answer in|timed out in|after) (\d+(?:\.\d+)?) (ms|s)\b/g, (_, lead: string, n: string, unit: string) => {
+    const ms = Number(n) * (unit === "s" ? 1000 : 1);
+    if (ms < 1000) return `${lead} under a second`;
+    if (ms < 90_000) return `${lead} about ${Math.round(ms / 1000)} seconds`;
+    const min = Math.round(ms / 60_000);
+    return `${lead} about ${min} minute${min === 1 ? "" : "s"}`;
+  });
+}
+
+/** How old a snapshot is, from its id (`2026-10-14T08-00-00Z`): "5 days old"; undefined when the id is no time. */
+function snapshotAge(id: string | null, now: number): string | undefined {
+  const at = Date.parse((id ?? "").replace(/T(\d\d)-(\d\d)-(\d\d)Z$/, "T$1:$2:$3Z"));
+  if (!Number.isFinite(at)) return undefined;
+  const hours = Math.max(0, Math.round((now - at) / 3_600_000));
+  if (hours < 48) return `${hours} hour${hours === 1 ? "" : "s"} old`;
+  return `${Math.round(hours / 24)} days old`;
+}
+
+/**
+ * The inbox card's sentence for a red drill; undefined for a green one.
+ * Says what failed, how old the snapshot it tried is (when `now` is given)
+ * and the one next step; no raw milliseconds.
+ */
+export function failedSentence(r: DrillResult | undefined, now?: number): string | undefined {
   if (r === undefined || r.verdict !== "red") return undefined;
+  const why = r.reason ? `: ${plainDurations(r.reason)}` : "";
   const times = describeTimes(r.phases);
+  const age = now === undefined ? undefined : snapshotAge(r.snapshotId, now);
+  const which = r.snapshotId === null ? "No snapshot was found." : `The newest snapshot is ${r.snapshotId}${age ? `, ${age}` : ""}.`;
   // An older drill kept no budget; it says none.
   const budget = r.budgetMs > 0 ? ` It had ${formatMinutes(r.budgetMs)}.` : "";
-  return `The restore drill failed at ${r.failedStep ?? "an unknown step"}${r.reason ? `: ${r.reason}` : ""}${times ? ` (${times})` : ""}.${budget} Snapshot ${r.snapshotId ?? "none"}; docs/RECOVERY.md says what to do.`;
+  return `The restore drill failed at ${r.failedStep ?? "an unknown step"}${why}${times ? ` (${times})` : ""}.${budget} ${which} Next: restore it by hand as docs/RECOVERY.md Route 1 says; the card clears when a drill passes.`;
 }
 
 /** A green drill that used more than this share of its budget is a warning. */
@@ -103,7 +130,7 @@ export function drillNeed(
   now: number,
   forgeSince?: () => string | undefined,
 ): DrillNeed | undefined {
-  const red = failedSentence(r);
+  const red = failedSentence(r, now);
   if (r !== undefined && red !== undefined) return { key: `red:${r.at}`, sentence: red, since: r.at };
   const days = Math.floor(DRILL_STALE_MS / 86_400_000);
   if (r === undefined) {
