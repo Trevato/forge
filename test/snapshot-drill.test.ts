@@ -3,7 +3,7 @@
  * counts; a corrupt one drills red naming the step; a hang ends red naming
  * the step; the scratch directory is gone afterwards in every case.
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, jest, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,12 +13,39 @@ import { enableApp, setAppEnvVar } from "../src/actions/apps.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createIssue } from "../src/core/issues.ts";
 import { createUser } from "../src/core/users.ts";
-import { runDrill } from "../src/snapshot/drill.ts";
+import { drillBudgetMs, formatBudget, formatBytes, runDrill } from "../src/snapshot/drill.ts";
 import { pack, partPath } from "../src/snapshot/parts.ts";
 import { takeSnapshot } from "../src/snapshot/snapshot.ts";
 import { dirStore } from "../src/snapshot/store.ts";
 
 const PASS = "correct horse battery staple";
+
+describe("the drill's budget", () => {
+  const GiB = 1024 ** 3;
+  test("an empty snapshot gets the 10 min floor", () => {
+    expect(drillBudgetMs(0)).toBe(600_000);
+  });
+  test("4 GiB gets 10 min + 4 × 60 s = 14 min", () => {
+    expect(drillBudgetMs(4 * GiB)).toBe(840_000);
+  });
+  test("100 GiB would be 110 min; it is capped at 45 min", () => {
+    expect(drillBudgetMs(100 * GiB)).toBe(2_700_000);
+  });
+  test("a size that is not a count of bytes counts as 0", () => {
+    for (const b of [NaN, -5, Infinity]) expect(drillBudgetMs(b)).toBe(600_000);
+  });
+  test("budgets read in min, s or whole ms, never a raw float", () => {
+    expect(formatBudget(840_000)).toBe("14 min");
+    expect(formatBudget(846_000)).toBe("14.1 min");
+    expect(formatBudget(1500.75)).toBe("1.5 s");
+    expect(formatBudget(250.4)).toBe("250 ms");
+  });
+  test("sizes read in binary units with one decimal", () => {
+    expect(formatBytes(Math.round(4.1 * GiB))).toBe("4.1 GiB");
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(1536)).toBe("1.5 KiB");
+  });
+});
 
 describe("the restore drill", () => {
   let root: string;
@@ -166,9 +193,73 @@ describe("the restore drill", () => {
     expect(scratchLeft()).toEqual([]);
   });
 
-  test("a step that times out says its budget in whole milliseconds", async () => {
+  test("a step that times out names its budget and the snapshot's size, never a raw float of ms", async () => {
     const r = await runDrill(deps({ timeoutMs: 1500.75, restore: () => new Promise(() => {}) }));
-    expect(r.reason).toMatch(/^restore timed out: no answer in \d+ ms$/);
+    expect(r.reason).toMatch(/^restore timed out: no answer within its 1\.5 s budget for a [\d.]+ (B|KiB|MiB) snapshot$/);
+  });
+
+  /** A store holding one snapshot with this manifest; its objects are never fetched. */
+  const holding = (manifest: object) => ({
+    where: "test",
+    put: async () => {},
+    get: async (key: string) =>
+      key === "snapshots/2026-10-18T08-00-00Z/manifest.json"
+        ? new TextEncoder().encode(JSON.stringify({ name: "2026-10-18T08-00-00Z", ...manifest }))
+        : undefined,
+    list: async () => [],
+    names: async () => ["2026-10-18T08-00-00Z"],
+    delete: async () => {},
+  });
+
+  /** Drill `manifest` with a restore that hangs, on fake timers; still waiting at `quietMs`, red by `redMs`. */
+  async function hang(manifest: object, quietMs: number, redMs: number) {
+    let begun!: () => void;
+    const restoring = new Promise<void>((resolve) => (begun = resolve));
+    jest.useFakeTimers();
+    try {
+      let done = false;
+      const running = runDrill(
+        deps({
+          store: holding(manifest),
+          restore: () => {
+            begun();
+            return new Promise(() => {});
+          },
+        }),
+      ).finally(() => (done = true));
+      await restoring;
+      jest.advanceTimersByTime(quietMs);
+      await Promise.resolve();
+      expect(done).toBe(false);
+      jest.advanceTimersByTime(redMs - quietMs);
+      const r = await running;
+      expect(r.verdict).toBe("red");
+      expect(r.failedStep).toBe("restore");
+      return r;
+    } finally {
+      jest.useRealTimers();
+      expect(scratchLeft()).toEqual([]);
+    }
+  }
+
+  test("with no timeout given, a hanging restore of a 4.1 GiB snapshot has 10 min + 60 s per GiB", async () => {
+    const bytes = Math.round(4.1 * 1024 ** 3);
+    // 10 + 4.1 = 14.1 min; still waiting at 14 min, red past 14.1.
+    const r = await hang({ files: [{ path: "forge.db", bytes }], bytes }, 14 * 60_000, 14.1 * 60_000 + 1);
+    expect(r.reason).toBe("restore timed out: no answer within its 14.1 min budget for a 4.1 GiB snapshot");
+  });
+
+  test("a manifest with no total, or one that is not a number, is sized by the sum of its files", async () => {
+    const GiB = 1024 ** 3;
+    const files = [
+      { path: "forge.db", bytes: 2 * GiB },
+      { path: "repos/a/b.bundle", bytes: 2 * GiB },
+    ];
+    // 2 + 2 GiB: 10 + 4 = 14 min; still waiting just before, red just after.
+    for (const manifest of [{ files }, { files, bytes: "4 GiB" }]) {
+      const r = await hang(manifest, 14 * 60_000 - 1_000, 14 * 60_000 + 1);
+      expect(r.reason).toBe("restore timed out: no answer within its 14 min budget for a 4 GiB snapshot");
+    }
   });
 
   test("an empty store is red at fetch", async () => {

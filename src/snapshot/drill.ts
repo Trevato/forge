@@ -7,7 +7,8 @@
  *
  * Plain data out: when it ran, which snapshot, how long, what it counted,
  * and a verdict. A red verdict names the step that failed; a step that
- * hangs past the timeout is red too, naming the step it hung in.
+ * hangs past the budget is red too, naming the step it hung in and the
+ * budget it had. The budget grows with the snapshot (`drillBudgetMs`).
  */
 
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -19,7 +20,50 @@ import { restoreSnapshot } from "./restore.ts";
 import { listSnapshots } from "./snapshot.ts";
 import type { Store } from "./store.ts";
 
+/** The floor of every drill's budget, and the whole budget for finding the newest snapshot. */
 export const DRILL_TIMEOUT_MS = 10 * 60_000;
+/** What each GiB of snapshot adds to the budget. */
+export const DRILL_MS_PER_GIB = 60_000;
+/** No snapshot is given longer than this. */
+export const DRILL_MAX_MS = 45 * 60_000;
+const GIB = 1024 ** 3;
+
+/**
+ * How long a drill of a snapshot of `bytes` may take, in whole ms:
+ * 10 min + 60 s per GiB (2^30 bytes), capped at 45 min. So 0 B is 10 min,
+ * 4 GiB is 14 min, and anything from 35 GiB up is 45 min. A size that is
+ * not a finite count of bytes counts as 0.
+ */
+export function drillBudgetMs(bytes: number): number {
+  const b = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+  return Math.min(DRILL_MAX_MS, Math.round(DRILL_TIMEOUT_MS + (b / GIB) * DRILL_MS_PER_GIB));
+}
+
+/** A snapshot's size from its manifest, or the sum of its files when the total is missing. */
+function snapshotBytes(m: { readonly bytes?: unknown; readonly files: readonly { readonly bytes?: unknown }[] }): number {
+  if (typeof m.bytes === "number" && Number.isFinite(m.bytes) && m.bytes >= 0) return m.bytes;
+  return m.files.reduce((sum, f) => sum + (typeof f.bytes === "number" && Number.isFinite(f.bytes) && f.bytes > 0 ? f.bytes : 0), 0);
+}
+
+/** A budget for people: "14 min", "1.5 s", never a raw float of ms. */
+export function formatBudget(ms: number): string {
+  if (ms >= 60_000) return `${Math.round(ms / 6_000) / 10} min`;
+  if (ms >= 1_000) return `${Math.round(ms / 100) / 10} s`;
+  return `${Math.round(ms)} ms`;
+}
+
+/** A size for people, binary units with one decimal: "4.1 GiB". */
+export function formatBytes(bytes: number): string {
+  const units = ["KiB", "MiB", "GiB", "TiB"] as const;
+  if (bytes < 1024) return `${Math.round(bytes)} B`;
+  let v = bytes / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${Math.round(v * 10) / 10} ${units[i]}`;
+}
 
 export type DrillStep = "fetch" | "restore" | "open" | "count" | "unseal" | "health";
 
@@ -53,10 +97,11 @@ export interface DrillResult {
 
 class StepTimeout extends Error {}
 
-function within<T>(work: Promise<T>, ms: number): Promise<T> {
+/** Race `work` against `ms`; a loss says `budget`, the whole drill's, not what was left of it. */
+function within<T>(work: Promise<T>, ms: number, budget: () => string): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   const late = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new StepTimeout(`no answer in ${Math.round(ms)} ms`)), ms);
+    timer = setTimeout(() => reject(new StepTimeout(`no answer within its ${budget()}`)), ms);
   });
   return Promise.race([work, late]).finally(() => clearTimeout(timer));
 }
@@ -65,7 +110,11 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
   const clock = deps.now ?? (() => new Date());
   const started = performance.now();
   const at = clock().toISOString();
-  const timeoutMs = deps.timeoutMs ?? DRILL_TIMEOUT_MS;
+  // Until the newest snapshot is known its size is not; the floor holds.
+  let budgetMs = deps.timeoutMs ?? DRILL_TIMEOUT_MS;
+  let sized: number | undefined;
+  const budget = (): string =>
+    `${formatBudget(budgetMs)} budget${sized === undefined ? "" : ` for a ${formatBytes(sized)} snapshot`}`;
   const restore = deps.restore ?? restoreSnapshot;
   const counts: { -readonly [K in keyof DrillCounts]: number } = { repositories: 0, issues: 0, users: 0, pulls: 0, apps: 0 };
   let snapshotId: string | null = null;
@@ -75,11 +124,12 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
   let health: DrillResult["health"] = "unreached";
   try {
     // One clock for the whole drill, so a hang in any step ends it red.
-    const deadline = started + timeoutMs;
-    const left = (): number => Math.max(1, deadline - performance.now());
-    const newest = (await within(listSnapshots(deps.store), left()))[0];
+    const left = (): number => Math.max(1, started + budgetMs - performance.now());
+    const newest = (await within(listSnapshots(deps.store), left(), budget))[0];
     if (newest === undefined) throw new Error("the store holds no snapshot");
     snapshotId = newest.name;
+    sized = snapshotBytes(newest);
+    if (deps.timeoutMs === undefined) budgetMs = drillBudgetMs(sized);
 
     step = "restore";
     const parent = join(deps.dataDir, "drill");
@@ -89,6 +139,7 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
     await within(
       restore(deps.store, newest.name, target, { passphrase: deps.passphrase }),
       left(),
+      budget,
     );
 
     step = "open";
@@ -143,6 +194,7 @@ export async function runDrill(deps: DrillDeps): Promise<DrillResult> {
     const booted = await within(
       (deps.boot ?? bootRestored)(target, left()),
       left(),
+      budget,
     );
     health = booted.ok ? "ok" : "failed";
     if (!booted.ok) throw new Error(booted.reason);
