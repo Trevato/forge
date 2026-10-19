@@ -1,15 +1,16 @@
 /**
  * Boards, drawn: `/boards` lists them and makes one, `/boards/:slug` is the
  * grid with each panel's chart and, under it, the panels' management (edit,
- * move, remove) and the board's own (rename, range, refresh, duplicate,
+ * move, remove) and the board's own (rename, range, live, duplicate,
  * delete). The grid is a live region with an address of its own
- * (`/boards/:slug/live`): a board that refreshes is refetched on its beat by
- * the same swap the wall uses, no client framework. Every form posts to
- * `boards-edit.ts`. Anyone but a person who is an admin gets the not-found page.
+ * (`/boards/:slug/live`): a board that is live is refetched, by the same
+ * swap the wall uses, when a run, pull, check, issue or usage event arrives.
+ * No client framework. Every form posts to `boards-edit.ts`. Anyone but a
+ * person who is an admin gets the not-found page.
  */
 import { listAllBoards, showBoard } from "../../actions/boards.ts";
 import { CHART_NAMES } from "../../boards/chart.ts";
-import { MAX_H, MAX_PANELS, MAX_TITLE, MAX_W, RANGES, REFRESHES, type Board, type Panel } from "../../boards/store.ts";
+import { MAX_H, MAX_PANELS, MAX_TITLE, MAX_W, RANGES, type Board, type Panel } from "../../boards/store.ts";
 import type { App } from "../../app.ts";
 import type { Ctx } from "../../http/context.ts";
 import { liveRegionsJs } from "../client.ts";
@@ -21,7 +22,8 @@ import { flowPanel, flowPanelCss } from "./flow-panel.ts";
 import { cellsOf, chartBox, paramsOf, queryFields, readParams, runFor } from "./boards.ts";
 
 const RANGE_MS = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 } as const;
-const EVERY = { "10s": 10, "1m": 60 } as const;
+/** The events the panels' queries read (runs, pulls, checks, issues, usage): any of them may change a chart. */
+const READS = "run.*,pull.*,check.*,issue.*,usage.*";
 
 const option = (value: string, selected: boolean) =>
   html`<option value="${value}" ${selected ? raw("selected") : null}>${value}</option>`;
@@ -48,13 +50,12 @@ function drawPanel(app: App, board: Board, panel: Panel): Html {
 
 /** The grid alone: what the page shows and what the live address answers with. */
 function grid(app: App, slug: string, board: Board): Html {
-  const every = board.refresh === "off" ? null : EVERY[board.refresh];
   return html`<section
     class="bgrid"
     id="board-grid"
-    ${every === null
+    ${board.refresh === "off"
       ? null
-      : html`data-live="board.none" data-live-src="/boards/${slug}/live" data-live-every="${String(every)}"`}
+      : html`data-live="${READS}" data-live-src="/boards/${slug}/live"`}
   >
     ${board.panels.length === 0
       ? html`<p class="muted">No panels yet. Add one below.</p>`
@@ -145,7 +146,7 @@ function manage(slug: string, board: Board, adding: Html): Html {
         </form>
         <form method="post" action="/boards/${slug}/settings" class="bform">
           <label class="qf"><span>Range</span><select class="input" name="range">${RANGES.map((r) => option(r, r === board.range))}</select></label>
-          <label class="qf"><span>Refresh</span><select class="input" name="refresh">${REFRESHES.map((r) => option(r, r === board.refresh))}</select></label>
+          <label class="qf"><span>Live</span><select class="input" name="refresh"><option value="off" ${board.refresh === "off" ? raw("selected") : null}>off</option><option value="10s" ${board.refresh === "off" ? null : raw("selected")}>on: redraw when events arrive</option></select></label>
           ${btn("Save settings")}
         </form>
         <form method="post" action="/boards/${slug}/duplicate" class="bform">${btn("Duplicate")}</form>

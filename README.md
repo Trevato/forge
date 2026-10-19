@@ -1502,8 +1502,8 @@ work here.
   by the admin who made it, and a file that does not validate is not shown. Make, rename,
   duplicate, delete, add/edit/remove/reorder panels, or pin the query on `/boards/data`.
   The first boot also writes six starting boards, **Usage**, **Crew**, **Releases**, **Apps**, **Security** and **Throughput**. Apps' per-app panels show repo ids until a source exposes a safe name; Security (sign-ins, failed sign-ins, tokens by scope, admin actions, from the admin-only `signins`, `tokens` and `adminActions` sources and `usage`) shows no token text, hash, payload or IP; Throughput is items entering each stage from issue to live, per hour, from the `stages` source. Each is written once: `.offered` in that repo records them, so an edit stays and a deletion sticks.
-  A board with a refresh redraws its grid on that beat through the live-region swap
-  (`/boards/:slug/live`, etag'd). The same doors are in the API: `GET /api/v1/boards`, `GET|PUT|DELETE /api/v1/boards/:slug`
+  A live board (any `refresh` but `off`; the form offers off or on, and `10s` and `1m` are still accepted and mean the same) redraws its grid when a run, pull, check, issue or usage event arrives, through the live-region swap
+  (`/boards/:slug/live`, etag'd, one fetch per burst). The same doors are in the API: `GET /api/v1/boards`, `GET|PUT|DELETE /api/v1/boards/:slug`
   (an agent or anyone but an admin is 403; a panel whose query cannot run is refused with 422). The same four doors are MCP tools (`boards`, `board_write`, `board_delete`; `boards` with a `slug` reads one) and, for the same person, a **Boards** screen in the terminal that lists boards and shows a board's panels as text. No dependency was added.
 - **Issues** — labels, threaded comments, close/reopen, markdown.
 - **Pull requests** — open from a branch, a **beautiful diff viewer** (syntax

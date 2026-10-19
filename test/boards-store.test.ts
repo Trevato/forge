@@ -172,8 +172,13 @@ describe("/boards", () => {
     const saved = await post("/boards/fleet-health/settings", { range: "24h", refresh: "10s" });
     expect(saved.status).toBe(303);
     const body = await (await asAdmin("/boards/fleet-health")).text();
-    expect(body).toContain('data-live-every="10"');
+    const grid = body.match(/<section[^>]*id="board-grid"[^>]*>/)?.[0] ?? "";
+    expect(grid).not.toContain("data-live-every");
+    expect(grid).toMatch(/data-live="[^"]+"/);
+    expect(grid).toContain('data-live="run.*,pull.*,check.*,issue.*,usage.*"');
     expect(body).toContain('data-live-src="/boards/fleet-health/live"');
+    expect(body).toMatch(/<option value="10s" selected>on: redraw when events arrive<\/option>/);
+    expect(body).not.toContain(">1m</option>");
     const live = await asAdmin("/boards/fleet-health/live");
     expect(live.status).toBe(200);
     const text = await live.text();
