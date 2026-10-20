@@ -8,6 +8,7 @@
  * back to continue); errors are `{ error, message }`.
  */
 
+import { goldenPath } from "../apps/golden_path.ts";
 import { upstreamPayload } from "../spawn/upstream.ts";
 import { setRole } from "../actions/roles.ts";
 import { listPeople, NOT_A_MEMBER } from "../core/roles.ts";
@@ -1051,6 +1052,7 @@ function appJson(
 ) {
   return {
     ...record,
+    ...goldenPath(ctx.app.db, record),
     repo: { owner: repo.ownerName, name: repo.name },
     url: runtime?.urlFor(record, "production") ?? null,
     domains: listDomains(ctx.app.db, record.id)

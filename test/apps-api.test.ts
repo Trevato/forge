@@ -674,6 +674,22 @@ describe("apps, runs and the crew over the API", () => {
     ).toBe(true);
   }, 90_000);
 
+  test("the app carries firstPreviewMs once a preview has served, and not before", async () => {
+    const read = async () =>
+      (await (await api("/api/v1/repos/alice/hello/app")).json()) as { firstPreviewMs?: number };
+    app.db.query("UPDATE run SET serving_at = NULL WHERE env LIKE 'pull-%'").run();
+    expect((await read()).firstPreviewMs).toBeUndefined();
+    const repoId = app.db.query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'hello'").get()!.id;
+    app.db
+      .query(
+        `INSERT INTO run (id, repo_id, kind, env, state, created_at, serving_at)
+         VALUES ('gp-pace', ?1, 'deploy', 'pull-77', 'ok', ?2, ?2)`,
+      )
+      .run(repoId, new Date(Date.now() + 60_000).toISOString());
+    expect(typeof (await read()).firstPreviewMs).toBe("number");
+    app.db.query("DELETE FROM run WHERE id = 'gp-pace'").run();
+  });
+
   test("a private repo's app is not_found to strangers; disabling removes it", async () => {
     await api("/api/v1/repos/alice/hello", {
       method: "PATCH",

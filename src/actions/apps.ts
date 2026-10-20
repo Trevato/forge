@@ -12,6 +12,7 @@ import { mayView } from "../core/sealed.ts";
 import { requireVerified } from "./verify.ts";
 import { requireAppRoom } from "./app_limit.ts";
 import type { App } from "../app.ts";
+import { goldenPath, goldenPathLine } from "../apps/golden_path.ts";
 import { appVitals, type AppVitals } from "../apps/vitals.ts";
 import { appsRuntime, envsFor, type EnvStatus } from "../apps/runtime.ts";
 import { grantUrl, originFor } from "../apps/proxy.ts";
@@ -489,6 +490,13 @@ export function appVisitors(app: App, actor: User | undefined, repo: Repo): AppV
   if (!canAdmin(app.db, repo, actor)) return undefined;
   const record = getAppByRepo(app.db, repo.id);
   return record === undefined ? undefined : appVitals(app.db, record.id);
+}
+
+/** The golden path's pace line, for whoever may read the app's repository; `""` until there is one. */
+export function appPace(app: App, actor: User | undefined, repo: Repo): string {
+  if (!requireReader(app, actor, repo).ok) return "";
+  const record = getAppByRepo(app.db, repo.id);
+  return record === undefined ? "" : goldenPathLine(goldenPath(app.db, record));
 }
 
 export type EnvError = "not_found" | "no_runtime" | "no_such_env";

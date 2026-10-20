@@ -7,7 +7,7 @@
  * joined to `deploy_pull` in one grouped read for `carries #3 #5`.
  */
 
-import { appVisitors } from "../../actions/apps.ts";
+import { appPace, appVisitors } from "../../actions/apps.ts";
 import { trendLine, visitorsLine } from "../../apps/vitals.ts";
 import { listRepoRuns } from "../../actions/runs.ts";
 import { carriedByRuns, carriesText } from "../../core/carried.ts";
@@ -41,6 +41,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
   let loaded = false;
   let visitors = "";
   let trend = "";
+  let pace = "";
 
   const read = (): void => {
     const runs = readDeploys(f, repo);
@@ -52,6 +53,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     const seen = appVisitors(f.app, f.user, repo);
     visitors = seen === undefined ? "" : visitorsLine(seen);
     trend = seen === undefined ? "" : trendLine(seen.loadDays);
+    pace = appPace(f.app, f.user, repo);
     loaded = true;
     ctx.invalidate();
   };
@@ -68,7 +70,7 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
     load: async () => read(),
     render(area, s) {
       const c = ctx.theme.c;
-      const [head, body] = split(area, "v", [len(visitors === "" ? 1 : trend === "" ? 2 : 3), fill(1)]);
+      const [head, body] = split(area, "v", [len(1 + (visitors === "" ? 0 : 1) + (trend === "" ? 0 : 1) + (pace === "" ? 0 : 1)), fill(1)]);
       s.text(
         head!.x,
         head!.y,
@@ -76,10 +78,11 @@ export function deploysScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
         style(c.mutedFg, c.bg),
         head!.x + head!.w,
       );
-      if (visitors !== "")
-        s.text(head!.x, head!.y + 1, truncate(visitors, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
-      if (trend !== "")
-        s.text(head!.x, head!.y + 2, truncate(trend, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w);
+      [visitors, trend, pace]
+        .filter((line) => line !== "")
+        .forEach((line, i) =>
+          s.text(head!.x, head!.y + 1 + i, truncate(line, head!.w), style(c.mutedFg, c.bg), head!.x + head!.w),
+        );
       if (list.runs.length === 0) {
         emptyState(s, body!, c, {
           title: loaded ? "No deploys" : "Reading…",

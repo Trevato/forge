@@ -29,6 +29,7 @@ import { planningAvailable } from "../../crew/plan.ts";
 import { appNameJs, deriveAppName } from "./apps-name.ts";
 import { envPull, previewEnv, type EnvName } from "../../apps/data.ts";
 import { appsRuntime, type EnvStatus, envsFor } from "../../apps/runtime.ts";
+import { goldenPath, goldenPathLine } from "../../apps/golden_path.ts";
 import { appHostSuffix } from "../../apps/host.ts";
 import { appsForRepos, type AppRecord } from "../../core/apps.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
@@ -484,6 +485,7 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
   const production = environments.find((env) => env.env === "production");
   const previews = environments.length - (production === undefined ? 0 : 1);
   const url = appsRuntime(ctx.app)?.urlFor(record, "production");
+  const pace = goldenPathLine(goldenPath(ctx.app.db, record));
   return html`<div class="app-strip">
     ${icon("rocket")}
     ${serving
@@ -509,6 +511,7 @@ export function appStrip(ctx: Ctx, repo: Repo): Html {
           >${previews} preview${previews === 1 ? "" : "s"}</span
         >`,
     )}
+    ${when(pace, (line) => html`<span class="muted">${line}</span>`)}
   </div>`;
 }
 

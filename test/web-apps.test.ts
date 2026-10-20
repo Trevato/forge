@@ -889,6 +889,19 @@ describe("apps, runs and the crew on the web", () => {
     expect(flashOf(refused)).toContain("cannot see this repository");
   });
 
+  test("the app strip says how long the first preview took, once one has served", async () => {
+    app.db.query("UPDATE run SET serving_at = NULL WHERE env LIKE 'pull-%'").run();
+    expect(await bodyOf(alice, "/alice/hello/files")).not.toContain("after New app");
+    app.db
+      .query(
+        `INSERT INTO run (id, repo_id, kind, env, state, created_at, serving_at)
+         VALUES ('gp-strip', ?1, 'deploy', 'pull-77', 'ok', ?2, ?2)`,
+      )
+      .run(hello.id, new Date(Date.now() + 60_000).toISOString());
+    expect(await bodyOf(alice, "/alice/hello/files")).toMatch(/first preview [^<]* after New app/);
+    app.db.query("DELETE FROM run WHERE id = 'gp-strip'").run();
+  });
+
   // ---- CSRF ----
 
   test("every new POST refuses a cross-origin submission", async () => {
