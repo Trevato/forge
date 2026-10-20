@@ -2,10 +2,9 @@
  * Home's row of nine figures (#2871, #2713), from `flow/kpis.ts`: shipped per
  * hour with a day's sparkline, the live version and since when, the median
  * check time, the crew builders running of their slots, the crew's spend
- * today of the daily ceiling, the age of the last off-box backup, visitors,
- * accounts signed in, and page speed. Server-rendered, one fixed-height card
- * each, so nothing moves when it paints. Only the studio's words: shipped,
- * change, check time.
+ * today of the daily ceiling, the age of the last off-box backup, visitors with 30 days as a sparkline, accounts signed in, and page speed.
+ * Server-rendered, one fixed-height card each, so nothing moves when it
+ * paints. Only the studio's words: shipped, change, check time.
  */
 
 import type { Database } from "bun:sqlite";
@@ -20,17 +19,26 @@ import { sha, time } from "../ui.ts";
 const W = 96;
 const H = 24;
 
-/** The last 24 hours, oldest on the left, as an SVG polyline; the numbers are the only input. */
-export function sparkline(hours: readonly number[]): Html {
-  const series = [...hours].reverse();
+/** A series oldest first as a fixed-size SVG polyline; the numbers are the only input. */
+function spark(series: readonly number[], label: string): Html {
   const top = Math.max(1, ...series);
   const step = W / Math.max(1, series.length - 1);
   const points = series
     .map((v, i) => `${(i * step).toFixed(1)},${(H - 2 - (v / top) * (H - 4)).toFixed(1)}`)
     .join(" ");
   return raw(
-    `<svg class="kpi-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Shipped each hour over the last 24 hours"><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`,
+    `<svg class="kpi-spark" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${label}"><polyline points="${points}" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`,
   );
+}
+
+/** The last 24 hours, newest first in, oldest on the left out. */
+export function sparkline(hours: readonly number[]): Html {
+  return spark([...hours].reverse(), "Shipped each hour over the last 24 hours");
+}
+
+/** Distinct visitors per day, oldest first, today on the right. */
+export function visitorsSpark(days: readonly number[]): Html {
+  return spark(days, `Distinct visitors each day over the last ${days.length} days`);
 }
 
 function tile(label: string, href: string, value: Html | string, full: string, note: string | Html, title: string, extra: Html | null = null, tone: "attn" | null = null): Html {
@@ -103,7 +111,7 @@ export function kpiRowFor(k: Kpis, live: { sha: string; at: string } | null, now
       null,
       overdue ? "attn" : null,
     )}
-    ${tile("Visitors", "/boards/reach", visitorsValue(k.reach), `${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}`, visitorsNote(k.reach), "Distinct browsers per day, summed over 7 days")}
+    ${tile("Visitors", "/boards/reach", visitorsValue(k.reach), `${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}`, visitorsNote(k.reach), "Distinct browsers per day, summed over 7 days", visitorsSpark(k.reach.visitorDays))}
     ${tile("Accounts", "/boards/reach", usersValue(k.reach), usersValue(k.reach), "signed in today", "Accounts signed in today (UTC), of all accounts")}
     ${tile(
       "Page speed",

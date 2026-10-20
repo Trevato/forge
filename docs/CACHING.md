@@ -204,7 +204,9 @@ and rounds to 0.0):
   landings per hour (24 h sparkline), the live version and when it went
   live, the median check time, crew builders active out of slots, today's
   spend against the ceiling, and the age of the last good off-box backup.
-  Numbers only, rendered for each request.
+  Numbers only, rendered for each request. The visitors tile also carries
+  30 days of distinct visitors per day (#3186), part of the same entry and
+  so admin-only by the same gate.
 - **Key:** `kpi:{head}:{utcHour}`, a single entry. It is read only **after**
   the request has established `viewer.isAdmin`. The figures add up private
   repositories, so the entry is admin-scoped by its gate, and a viewer who

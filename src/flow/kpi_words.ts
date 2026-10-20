@@ -20,9 +20,13 @@ const BLOCKS = "▁▂▃▄▅▆▇█";
 
 /** The terminal's sparkline: the same 24 hours, oldest on the left, one block each. */
 export function sparkText(hours: readonly number[]): string {
-  const top = Math.max(1, ...hours);
-  return [...hours]
-    .reverse()
+  return trendText([...hours].reverse());
+}
+
+/** One block per value, oldest on the left; the series is already in that order. */
+export function trendText(series: readonly number[]): string {
+  const top = Math.max(1, ...series);
+  return series
     .map((v) => (v === 0 ? BLOCKS[0]! : BLOCKS[Math.min(BLOCKS.length - 1, Math.ceil((v / top) * (BLOCKS.length - 1)))]!))
     .join("");
 }
@@ -107,7 +111,7 @@ export function kpiLines(k: Kpis, live: { sha: string; since: string } | null, n
     `Builders running ${buildersValue(k.builders)}${k.builders.slots === 0 ? ", no slots set" : ""}`,
     `Crew spend today ${spendValue(k.spend)}${k.spend.ceilingUsd === null ? ", no ceiling" : ""}`,
     `Last off-box backup ${backupAge(k.backupAt, now)}${backupOverdue(k.backupAt, now) ? ", overdue" : ""}`,
-    `Visitors ${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}`,
+    `Visitors ${visitorsValue(k.reach)}, ${visitorsNote(k.reach)}  ${trendText(k.reach.visitorDays)}  30 days`,
     `Accounts ${usersValue(k.reach)} signed in today`,
     `Page speed ${k.reach.loadP75 === null ? "no page views measured yet" : `loads in ${speedWords(k.reach.loadP75)}`}, ${reactNote(k.reach)}`,
   ];

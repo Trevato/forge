@@ -12,18 +12,22 @@
 import type { Database } from "bun:sqlite";
 
 const DAY_MS = 86_400_000;
+/** How many days the visitors sparkline covers. */
+export const DAYS = 30;
 
 export interface Reach {
   readonly usersToday: number;
   readonly usersTotal: number;
   readonly visitorsToday: number;
   readonly visitors7d: number;
+  /** Distinct visitors per UTC day over the last 30 days, oldest first, today last. */
+  readonly visitorDays: readonly number[];
   /** Milliseconds; null when no page view in 7 days measured it. */
   readonly loadP75: number | null;
   readonly inpP75: number | null;
 }
 
-export const NO_REACH: Reach = { usersToday: 0, usersTotal: 0, visitorsToday: 0, visitors7d: 0, loadP75: null, inpP75: null };
+export const NO_REACH: Reach = { usersToday: 0, usersTotal: 0, visitorsToday: 0, visitors7d: 0, visitorDays: new Array<number>(DAYS).fill(0), loadP75: null, inpP75: null };
 
 /** The 75th percentile, nearest rank, of a column over the days since `fromDay`. */
 function p75(db: Database, column: "load" | "inp", fromDay: string): number | null {
@@ -50,15 +54,22 @@ export function readReach(db: Database, now: Date): Reach {
               (SELECT COUNT(*) FROM user) AS total`,
     )
     .get(`${today}T00:00:00Z`) ?? { today: 0, total: 0 };
-  const days = db
+  const monthFrom = new Date(now.getTime() - (DAYS - 1) * DAY_MS).toISOString().slice(0, 10);
+  const month = db
     .query<{ day: string; n: number }, [string, string]>(
       "SELECT day, COUNT(DISTINCT visitor) AS n FROM page_vital WHERE day >= ?1 AND day <= ?2 GROUP BY day",
     )
-    .all(weekFrom, today);
+    .all(monthFrom, today);
+  const perDay = new Map(month.map((d) => [d.day, d.n]));
+  const visitorDays = Array.from({ length: DAYS }, (_, i) =>
+    perDay.get(new Date(now.getTime() - (DAYS - 1 - i) * DAY_MS).toISOString().slice(0, 10)) ?? 0,
+  );
+  const days = month.filter((d) => d.day >= weekFrom);
   return {
     usersToday: users.today,
     usersTotal: users.total,
     visitorsToday: days.find((d) => d.day === today)?.n ?? 0,
+    visitorDays,
     visitors7d: days.reduce((a, d) => a + d.n, 0),
     loadP75: p75(db, "load", weekFrom),
     inpP75: p75(db, "inp", weekFrom),

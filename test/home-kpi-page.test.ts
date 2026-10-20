@@ -74,8 +74,11 @@ test("home renders the nine tiles; only an admin sees them", async () => {
 
   // The figures count every repository, so a non-admin sees none.
   expect(a).toContain("no ceiling");
+  expect(a).toContain("last 30 days");
   expect(await home(bob)).not.toContain('class="kpis"');
+  expect(await home(bob)).not.toContain("last 30 days");
   expect(await home()).not.toContain('class="kpis"');
+  expect(await home()).not.toContain("last 30 days");
 });
 
 test("home passes the forge's daily ceiling to the spend tile", async () => {

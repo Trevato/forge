@@ -1,4 +1,5 @@
-/** Home's figures row (#2871): the five tiles, their links, studio words only, a sparkline of 24 points. */
+/** Home's figures row (#2871): the tiles, their links, studio words only, a sparkline of 24 points and one of 30 days of visitors (#3186). */
+import { Database } from "bun:sqlite";
 import { reachTables } from "./helpers/reach-tables.ts";
 import { NO_REACH, readReach } from "../src/flow/reach.ts";
 import { describe, expect, test } from "bun:test";
@@ -242,7 +243,7 @@ describe("home kpi row: the last off-box backup", () => {
 
 describe("the reach tiles", () => {
   test("say what they count in words, each linking to the reach board", () => {
-    const reach = { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, loadP75: 1250, inpP75: 180 };
+    const reach = { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180 };
     const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
     for (const v of ["5 today", "31 in 7 days", "3 of 12", "signed in today", "1.3 s", "reacts in 180 ms"]) expect(out).toContain(`>${v}<`);
     expect((out.match(/class="card kpi" href="\/boards\/reach"/g) ?? []).length).toBe(3);
@@ -250,11 +251,37 @@ describe("the reach tiles", () => {
     expect(out).not.toContain("p75");
   });
 
+  test("the terminal draws the 30 days as one block per day", () => {
+    const days = Array.from({ length: 30 }, (_, i) => (i === 29 ? 8 : 0));
+    const reach = { usersToday: 0, usersTotal: 1, visitorsToday: 8, visitors7d: 8, visitorDays: days, loadP75: null, inpP75: null };
+    const line = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).find((l) => l.startsWith("Visitors"))!;
+    expect(line).toContain("▁".repeat(29) + "█");
+  });
+
   test("the terminal says the same", () => {
-    const lines = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, loadP75: 1250, inpP75: 180 }, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null);
-    expect(lines).toContain("Visitors 5 today, 31 in 7 days");
+    const lines = kpiLines({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: { usersToday: 3, usersTotal: 12, visitorsToday: 5, visitors7d: 31, visitorDays: new Array<number>(30).fill(0), loadP75: 1250, inpP75: 180 }, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null);
+    expect(lines.find((l) => l.startsWith("Visitors"))).toContain("Visitors 5 today, 31 in 7 days");
     expect(lines).toContain("Accounts 3 of 12 signed in today");
+    expect(lines.find((l) => l.startsWith("Visitors"))).toContain("▁".repeat(30));
     expect(lines).toContain("Page speed loads in 1.3 s, reacts in 180 ms");
+  });
+});
+
+describe("the visitors sparkline", () => {
+  test("is 30 points, oldest first, and ends at today", () => {
+    const db = new Database(":memory:");
+    reachTables(db);
+    const NOW = new Date("2026-10-19T15:00:00.000Z");
+    db.run("INSERT INTO page_vital (day, visitor) VALUES ('2026-10-19','a'),('2026-10-19','b'),('2026-10-19','a'),('2026-09-20','c'),('2026-09-19','old')");
+    const r = readReach(db, NOW);
+    expect(r.visitorDays).toHaveLength(30);
+    expect(r.visitorDays[29]).toBe(2);
+    expect(r.visitorDays[0]).toBe(1); // 2026-09-20 is 29 days back; 09-19 is out
+    expect(r.visitorDays.reduce((a, b) => a + b, 0)).toBe(3);
+    const out = kpiRowFor({ landedHours: hours(0), landed: 0, live: null, backupAt: null, reach: r, medianCheckMs: null, builders: { running: 0, slots: 0 }, spend: { todayUsd: 0, ceilingUsd: null } }, null).toString();
+    const svg = /<svg[^>]*last 30 days[^>]*><polyline points="([^"]+)"/.exec(out)!;
+    expect(svg[1]!.split(" ")).toHaveLength(30);
+    expect(out).toContain('href="/boards/reach"');
   });
 });
 
