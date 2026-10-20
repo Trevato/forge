@@ -814,6 +814,9 @@ function expectFloor(what: string, response: Response): void {
   expect(label + response.headers.get("strict-transport-security")).toBe(
     label + "max-age=31536000",
   );
+  expect(label + response.headers.get("cross-origin-opener-policy")).toBe(
+    label + "same-origin",
+  );
   const policy = response.headers.get("content-security-policy") ?? "";
   expect(label + (policy === "" ? "(none)" : "(a policy)")).toBe(
     label + "(a policy)",
@@ -898,8 +901,12 @@ describe("the security floor is on every response", () => {
           "content-type": "text/html; charset=utf-8",
           "content-security-policy": "default-src 'none'; sandbox",
           "referrer-policy": "no-referrer",
+          "cross-origin-opener-policy": "same-origin-allow-popups",
         },
       }),
+    );
+    expect(own.headers.get("cross-origin-opener-policy")).toBe(
+      "same-origin-allow-popups",
     );
     expect(own.headers.get("content-security-policy")).toBe(
       "default-src 'none'; sandbox",

@@ -138,7 +138,9 @@ const HSTS = "max-age=31536000";
 /**
  * The security floor every response the forge writes leaves with: never
  * sniffed into another type, never a referrer sent off-site, no powers a
- * page does not use, https once https, and — unless the body is a document
+ * page does not use, https once https, no window another site opened or
+ * opens kept in reach (Cross-Origin-Opener-Policy; the sign-in and consent
+ * flows redirect and never read `window.opener`), and — unless the body is a document
  * that wrote its own policy — inert.
  *
  * A responder that already set one of these keeps its value: `page()` has a
@@ -158,6 +160,8 @@ export function securityFloor(response: Response): Response {
       headers.set("permissions-policy", PERMISSIONS_POLICY);
     if (!headers.has("strict-transport-security"))
       headers.set("strict-transport-security", HSTS);
+    if (!headers.has("cross-origin-opener-policy"))
+      headers.set("cross-origin-opener-policy", "same-origin");
     // What left decides, not what was asked for: an HTML body writes the
     // only policy that can name its own nonce, and `default-src 'none'`
     // over a page would strip it of its stylesheet.
