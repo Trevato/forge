@@ -19,6 +19,7 @@ import { listRuns, type Run } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { setCapacity } from "../src/core/capacity.ts";
 import { readRunLog } from "../src/runs/log.ts";
 
 const checkJson = (run: string): string => `{"check": {"run": ${JSON.stringify(run)}, "install": ""}}\n`;
@@ -148,6 +149,10 @@ describe("checks placed", () => {
       }),
     );
     afterAll(down);
+    // Egress is enforced by default, which keeps checks in cells.
+    beforeAll(() => {
+      setCapacity(app.db, "cells.egress", "report", alice.id);
+    });
 
     test("a check runs as a Job: log in the run, node and placement recorded", async () => {
       const run = await settled(await push("exit 0"));
@@ -206,6 +211,32 @@ describe("checks placed", () => {
       } finally {
         exit = 0;
       }
+    });
+  });
+
+  describe("job under enforce", () => {
+    beforeAll(() => boot({ mode: "job", image: "oven/bun:1", claim: "checks-root", nodeSelector: {}, tolerations: [] }));
+    afterAll(down);
+
+    test("never calls the cluster: the check runs in a cell and says why", async () => {
+      calls.length = 0;
+      const run = await settled(await push("echo in a cell"));
+      expect(run.state).toBe("ok");
+      expect(run.placement).toBe("process");
+      expect(run.node).toBe("");
+      expect(calls).toHaveLength(0);
+      const log = readRunLog(dataDir, run.id).lines.join("\n");
+      expect(log).toContain("placement: job skipped, egress is enforced and a Job cannot hold it");
+      expect(log).toContain("in a cell");
+      const page = await (await globalThis.fetch(`${servers.url}/alice/lib/runs/${run.id}`)).text();
+      expect(page).not.toContain("cluster job");
+    });
+
+    test("is read per run: flipping to report sends the next check to a Job", async () => {
+      setCapacity(app.db, "cells.egress", "report", alice.id);
+      const run = await settled(await push("echo flipped"));
+      expect(run.placement).toBe("job");
+      expect(calls.some((c) => c.method === "POST")).toBe(true);
     });
   });
 

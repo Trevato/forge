@@ -766,9 +766,15 @@ export function startChecks(app: App, options: ChecksOptions): ChecksHandle {
     // The check is repository code: it runs in a cell of its own
     // (`apps/contain.ts`), its checkout and a home its only places to write,
     // the forge, the registry and what it declared its only way out.
-    const job = placement.mode === "job" ? placement : undefined;
+    // A Job cannot hold egress (#1428), so while it is enforced the check
+    // stays in a cell. Read per run: an admin can flip it at runtime.
+    const fellBack = placement.mode === "job" && egressSetting(app.db) === "enforce";
+    const placed: Placement = fellBack ? { mode: "process" } : placement;
+    const job = placed.mode === "job" ? placed : undefined;
     if (x.runId !== undefined)
-      noteRunProgress(app.db, x.runId, { placement: placement.mode });
+      noteRunProgress(app.db, x.runId, { placement: placed.mode });
+    if (fellBack)
+      write("placement: job skipped, egress is enforced and a Job cannot hold it");
     // A Job is its own boundary: no cell here, the cluster holds it.
     const cells = job === undefined ? await cellsAvailable() : undefined;
     if (cells !== undefined) {

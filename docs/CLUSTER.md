@@ -51,6 +51,15 @@ Read once at boot by `src/checks/placement.ts`. A malformed value leaves
 | `FORGE_CHECKS_NODE_SELECTOR` | `pool=checks,disk=ssd`                 | `key=value,key=value`; optional |
 | `FORGE_CHECKS_TOLERATIONS`   | `[{"key":"dedicated","operator":"Equal","value":"checks","effect":"NoSchedule"}]` | JSON list, at most 20; optional |
 
+## Only while egress is reported
+
+The lane applies only while `cells.egress` is `report`. Under `enforce` (the
+default) a Job cannot hold egress, so every check stays in a cell: the run
+records `placement: process` and its log says
+`placement: job skipped, egress is enforced and a Job cannot hold it`. The
+setting is read on every run, so an admin's change takes effect on the next
+check.
+
 ## Label for a NetworkPolicy
 
 The forge does not enforce egress on a Job. Every check pod carries the label
@@ -65,7 +74,7 @@ podSelector:
 ## Confirming the lane is on
 
 1. Push to a pull, or re-run its check.
-2. The run's page says "ran as a cluster job on <node>"; a `process` run says
+2. With `cells.egress` at `report`, the run's page says "ran as a cluster job on <node>"; a `process` run says
    nothing.
 3. In the cluster, `kubectl get jobs,pods -l forge-check=true` shows the Job
    while it runs (it is deleted when the run ends).

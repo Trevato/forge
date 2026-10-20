@@ -10,6 +10,7 @@ import { createApp, type App } from "../src/app.ts";
 import { commitToBranch, createRepo } from "../src/actions/repos.ts";
 import { startChecks, type ChecksHandle } from "../src/checks/service.ts";
 import { VANISHED_SUMMARY, listRuns } from "../src/core/runs.ts";
+import { setCapacity } from "../src/core/capacity.ts";
 import { createUser } from "../src/core/users.ts";
 import type { Repo } from "../src/core/repos.ts";
 import { serve, type Servers } from "../src/http/server.ts";
@@ -45,6 +46,8 @@ describe("a vanished check Job", () => {
   beforeAll(async () => {
     dataDir = await mkdtemp(join(tmpdir(), "forge-vanish-"));
     app = createApp({ dataDir, port: 0 });
+    // Jobs run only while egress is reported (#3190).
+    setCapacity(app.db, "cells.egress", "report", "test");
     servers = await serve(app);
     const fetch = async (_u: string, init: RequestInit) =>
       init.method === "GET" ? new Response("{}", { status: 404 }) : Response.json({});
