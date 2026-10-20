@@ -77,6 +77,7 @@ import { issuesScreen, newIssueScreen } from "./screens/issues.ts";
 import { limbsScreen } from "./screens/limbs.ts";
 import { newPullScreen } from "./screens/newpull.ts";
 import { newForgeScreen } from "./screens/newforge.ts";
+import { migrateScreen } from "./screens/migrate.ts";
 import { newRepoScreen } from "./screens/newrepo.ts";
 import { repoScreen } from "./screens/repo.ts";
 import { signInScreen } from "./screens/signin.ts";
@@ -206,6 +207,13 @@ export function forgeCommands(session: Session): (ctx: Ctx) => Command[] {
               ctx.push(signInScreen(session, ctx, () => ctx.invalidate())),
           },
     );
+    if (session.signedIn)
+      commands.push({
+        id: "migrate",
+        title: "Migrate a repository",
+        hint: "bring one in from an origin or a URL, pick its branch, put a crew on it",
+        run: () => ctx.push(migrateScreen(session, ctx)),
+      });
     // A client's forge, as /forges/new makes it: any signed-in person's; the door decides the rest.
     if (session.signedIn)
       commands.push({

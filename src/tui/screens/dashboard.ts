@@ -91,6 +91,7 @@ import { running } from "../../kernel/version.ts";
 import { deciderLine, deciderScreen } from "./decider.ts";
 import { issueScreen } from "./issue.ts";
 import { listPinned } from "../../actions/board-pins.ts";
+import { migrateScreen } from "./migrate.ts";
 import { newRepoScreen } from "./newrepo.ts";
 import { pullScreen } from "./pull.ts";
 import { repoScreen } from "./repo.ts";
@@ -728,6 +729,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         }),
         binding(["C"], "decider", { disabled: !f.user }),
         binding(["n"], "new repo", { disabled: !f.signedIn }),
+        binding(["M"], "migrate", { disabled: !f.signedIn }),
         binding(["A"], "account", { disabled: !f.signedIn }),
         binding(["s"], "sign in", { disabled: f.signedIn }),
         ...(focus === "repos" && f.user !== undefined && shown().some(mayArchive)
@@ -920,6 +922,10 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       }
       if (e.key === "n" && f.signedIn) {
         ctx.push(newRepoScreen(f, ctx));
+        return true;
+      }
+      if (e.key === "M" && f.signedIn) {
+        ctx.push(migrateScreen(f, ctx));
         return true;
       }
       if (e.key === "A" && f.user) {
