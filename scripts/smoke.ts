@@ -11,9 +11,10 @@
  * never answers with `Response.error()`.
  *
  * `--standards` runs the website-specification report (`release/webspec.ts`)
- * over forge.json's `app.looks` paths, prints one line per finding with its
- * section (head, headers, well-known files, error pages; `--error-path`
- * names a path that must answer 500), and exits 0: it reports, it does not gate.
+ * over forge.json's `app.looks` paths (head, headers, well-known files, error pages,
+ * a no-JavaScript render and axe-core in light and dark, `release/axe.ts`), prints one
+ * line per finding with its section (`--error-path` names a path that must answer
+ * 500), and exits 0: it reports, it does not gate.
  *
  * `--outsider` also signs up a fresh account and proves each thing a
  * stranger must not do is refused over HTTP and MCP (`release/outsider.ts`,
@@ -22,6 +23,8 @@
  */
 
 import { smoke } from "../src/release/smoke.ts";
+import { axe, noScript } from "../src/release/axe.ts";
+import { findChromium } from "../src/looks/capture.ts";
 import { webspec } from "../src/release/webspec.ts";
 import { outsider } from "../src/release/outsider.ts";
 import { PROBE_HEADER } from "../src/kernel/probe.ts";
@@ -54,7 +57,11 @@ if (import.meta.main) {
   if (standards) {
     const looks = (await Bun.file(new URL("../forge.json", import.meta.url)).json())?.app?.looks;
     const paths: string[] = Array.isArray(looks) ? looks.filter((p): p is string => typeof p === "string") : ["/"];
-    const findings = await webspec(base, paths, fetch, { site: true, ...(errorPath ? { errorPath } : {}) });
+    const findings = [
+      ...(await webspec(base, paths, fetch, { site: true, ...(errorPath ? { errorPath } : {}) })),
+      ...(await axe(base, paths)),
+      ...(findChromium() === undefined ? await noScript(base, paths) : []),
+    ];
     for (const f of findings) console.log(`${f.path} ${f.check}${f.edge ? " (edge)" : ""}: ${f.message} <${f.section}>`);
     console.log(`standards: ${findings.length} finding(s) over ${paths.length} path(s); report only`);
     process.exit(0);

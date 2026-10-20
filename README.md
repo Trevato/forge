@@ -342,6 +342,13 @@ report never causes an error on its own. It only reports and always exits 0.
 `(edge)` marks a finding the edge in front of the app may own (HSTS), so fix it
 there rather than in the app. Each fetch gives up after 10 seconds.
 
+`--standards` also runs axe-core (`src/release/axe.ts`) over each path in light
+and dark and loads each with JavaScript off, reporting an empty `<main>` or a
+missing `<h1>`; it needs `chromium` on `PATH` or `FORGE_CHROMIUM` (without one
+it falls back to a regex read of the served HTML). axe-core is a devDependency
+of this check only, never loaded by the server: its rules need a rendered page
+and an accessibility tree, which nothing dependency-free gives.
+
 What you asked for: `Ctrl+K`, then **Asked**, is `/asked` in the terminal — your
 thoughts, then the issues you can write to that are not shipped, oldest first
 (`j`/`k` move, `enter` gives the issue's web address, `r` refreshes). It is read

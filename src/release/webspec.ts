@@ -23,7 +23,7 @@ type Problem = { check: string; message: string; section: string; edge?: true };
 
 const TIMEOUT_MS = 10000;
 const SPEC = "https://specification.website/";
-const s = (name: string) => `${SPEC}#${name}`;
+export const s = (name: string) => `${SPEC}#${name}`;
 
 const tags = (html: string, name: string): string[] => html.match(new RegExp(`<${name}\\b[^>]*>`, "gi")) ?? [];
 
