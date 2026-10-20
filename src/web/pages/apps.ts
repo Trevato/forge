@@ -100,8 +100,12 @@ interface AppEntry {
  * (`canRead` resolves org ownership from the database), and a listing must
  * not get slower as the forge grows more apps.
  */
-function appsForViewer(ctx: Ctx): AppEntry[] {
-  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, { limit: 200 });
+function appsForViewer(ctx: Ctx, archived: boolean): AppEntry[] {
+  const repos = listReposVisibleTo(
+    ctx.app.db,
+    ctx.auth.user,
+    archived ? { limit: 200, archivedOnly: true } : { limit: 200, withoutArchived: true },
+  );
   const records = appsForRepos(
     ctx.app.db,
     repos.map((repo) => repo.id),
@@ -123,6 +127,18 @@ function appsForViewer(ctx: Ctx): AppEntry[] {
   return out;
 }
 
+/** How many archived apps the viewer can see (the "N archived" line). */
+function archivedAppCount(ctx: Ctx): number {
+  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, {
+    limit: 200,
+    archivedOnly: true,
+  });
+  return appsForRepos(
+    ctx.app.db,
+    repos.map((repo) => repo.id),
+  ).size;
+}
+
 /** `production` or `preview of #12`, as a phrase that fits in a sentence. */
 export function envLabel(env: EnvName): string {
   const number = envPull(env);
@@ -141,11 +157,19 @@ export function envLabel(env: EnvName): string {
  */
 export async function appsList(ctx: Ctx): Promise<Response> {
   notePhase(ctx.request, "session", takeSessionTime(ctx.request));
-  const entries = timePhase(ctx.request, "apps", () => appsForViewer(ctx));
+  // Archived apps are put away, not gone: `?archived=1` lists only them. Each
+  // view reads its own window, so archived repos never push live ones off.
+  const archivedView = ctx.url.searchParams.get("archived") === "1";
+  const entries = timePhase(ctx.request, "apps", () =>
+    appsForViewer(ctx, archivedView),
+  );
+  const archivedCount = archivedView
+    ? 0
+    : timePhase(ctx.request, "archived", () => archivedAppCount(ctx));
   const liveCount = entries.filter(
     (e) => e.production?.state === "running",
   ).length;
-  const live = ctx.url.searchParams.get("live") === "1";
+  const live = !archivedView && ctx.url.searchParams.get("live") === "1";
   const shown = live
     ? entries.filter((e) => e.production?.state === "running")
     : entries;
@@ -159,7 +183,7 @@ export async function appsList(ctx: Ctx): Promise<Response> {
       })
     : btn("Sign in to make one", { href: "/signin", size: "sm" });
   const filters =
-    entries.length === 0
+    archivedView || entries.length === 0
       ? null
       : html`<div class="filters mb">
           ${seg([
@@ -191,10 +215,21 @@ export async function appsList(ctx: Ctx): Promise<Response> {
     ${pageHead("Apps", { actions: create })}
     ${cost}
     ${filters}
+    ${archivedView
+      ? html`<p class="muted small mb"><a href="/apps">Back to apps</a></p>`
+      : archivedCount > 0
+        ? html`<p class="muted small mb">
+            <a href="/apps?archived=1">${archivedCount} archived</a>
+          </p>`
+        : null}
     ${shown.length === 0
       ? empty({
           icon: "rocket",
-          title: live ? "Nothing is live" : "Nothing runs here yet",
+          title: archivedView
+            ? "Nothing is archived"
+            : live
+              ? "Nothing is live"
+              : "Nothing runs here yet",
           note: live
             ? "Nothing is serving right now — clear the filter to see every app."
             : "A new app is a repository with a small working app in it, served at its own hostname a few seconds later.",

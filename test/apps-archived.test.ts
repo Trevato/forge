@@ -1,0 +1,110 @@
+/** `/apps` leaves archived apps out, says how many, and lists them at `?archived=1` (#3480). */
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createRepo, updateRepoSettings } from "../src/actions/repos.ts";
+import { createApp, type App } from "../src/app.ts";
+import { createApp as makeAppRecord } from "../src/core/apps.ts";
+import { getRepo } from "../src/core/repos.ts";
+import { createUser, type User } from "../src/core/users.ts";
+import { serve, type Servers } from "../src/http/server.ts";
+import { proveAll } from "./helpers/verified.ts";
+import { quietLogs } from "./helpers/globals.ts";
+
+quietLogs();
+
+let root = "";
+let app: App;
+let servers: Servers;
+let cookie = "";
+let alice: User;
+
+beforeAll(async () => {
+  root = mkdtempSync(join(tmpdir(), "forge-apps-archived-"));
+  app = createApp({ dataDir: root, port: 0, forgeRepo: "alice/forge" });
+  const u = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "alice",
+    email: "alice@forge.local",
+    password: "a-good-passphrase",
+    adminIfFirst: true,
+  });
+  if (!u.ok) throw new Error(u.error);
+  proveAll(app);
+  alice = u.value;
+  for (const name of ["keeper", "shelved"]) {
+    const made = await createRepo(app, alice, { name });
+    if (!made.ok) throw new Error(made.error);
+    const rec = makeAppRecord(app.db, { repoId: made.value.id, slug: name, access: "public" });
+    if (!rec.ok) throw new Error(rec.error);
+  }
+  servers = await serve(app);
+  const signin = await fetch(`${servers.url}/signin`, {
+    method: "POST",
+    headers: { origin: servers.url },
+    body: new URLSearchParams({ username: "alice", password: "a-good-passphrase" }),
+    redirect: "manual",
+  });
+  cookie = (signin.headers.get("set-cookie") ?? "").split(";")[0]!;
+});
+afterAll(() => {
+  servers.stop();
+  app.close();
+  rmSync(root, { recursive: true, force: true });
+});
+
+const ROW_KEEPER = '<a href="/alice/keeper" class="row"';
+const ROW_SHELVED = '<a href="/alice/shelved" class="row"';
+const get = async (path: string) => {
+  const res = await fetch(`${servers.url}${path}`, { headers: { cookie } });
+  return { status: res.status, body: await res.text() };
+};
+
+test("archiving hides an app from /apps, lists it at ?archived=1, and waking brings it back", async () => {
+  let page = await get("/apps");
+  expect(page.body).toContain(ROW_KEEPER);
+  expect(page.body).toContain(ROW_SHELVED);
+  expect(page.body).not.toContain("archived</a>");
+
+  const done = await updateRepoSettings(app, alice, getRepo(app.db, "alice", "shelved")!, { archived: true });
+  expect(done.ok).toBe(true);
+
+  page = await get("/apps");
+  expect(page.body).toContain(ROW_KEEPER);
+  expect(page.body).not.toContain(ROW_SHELVED);
+  expect(page.body).toContain('href="/apps?archived=1">1 archived</a>');
+
+  const only = await get("/apps?archived=1");
+  expect(only.body).toContain(ROW_SHELVED);
+  expect(only.body).not.toContain(ROW_KEEPER);
+
+  expect((await get("/alice/shelved")).status).toBe(200);
+
+  const woke = await updateRepoSettings(app, alice, getRepo(app.db, "alice", "shelved")!, { archived: false });
+  expect(woke.ok).toBe(true);
+  page = await get("/apps");
+  expect(page.body).toContain(ROW_SHELVED);
+  expect(page.body).not.toContain("archived</a>");
+});
+
+test("the archived view has no All/Live filters, only a way back", async () => {
+  await updateRepoSettings(app, alice, getRepo(app.db, "alice", "shelved")!, { archived: true });
+  const only = await get("/apps?archived=1&live=1");
+  expect(only.body).toContain(ROW_SHELVED);
+  expect(only.body).not.toContain('href="/apps?live=1"');
+  expect(only.body).toContain('href="/apps">Back to apps</a>');
+  await updateRepoSettings(app, alice, getRepo(app.db, "alice", "shelved")!, { archived: false });
+});
+
+test("a signed-out viewer does not see a private archived app", async () => {
+  const made = await createRepo(app, alice, { name: "secret", visibility: "private" });
+  if (!made.ok) throw new Error(made.error);
+  const rec = makeAppRecord(app.db, { repoId: made.value.id, slug: "secret", access: "private" });
+  if (!rec.ok) throw new Error(rec.error);
+  await updateRepoSettings(app, alice, getRepo(app.db, "alice", "secret")!, { archived: true });
+  const anon = await (await fetch(`${servers.url}/apps?archived=1`)).text();
+  expect(anon).not.toContain("/alice/secret");
+  expect((await get("/apps?archived=1")).body).toContain("/alice/secret");
+});

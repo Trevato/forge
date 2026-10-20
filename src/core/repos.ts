@@ -652,6 +652,8 @@ export interface ListReposOptions {
   appsFirst?: boolean;
   /** Leave archived repositories out. @default false */
   withoutArchived?: boolean;
+  /** Only archived repositories. @default false */
+  archivedOnly?: boolean;
 }
 
 // Visibility in SQL: public, owned, or owned by an org the viewer is on a
@@ -683,6 +685,7 @@ export function listReposVisibleTo(
     where += ` AND repo.id < ?${params.length}`;
   }
   if (options.withoutArchived === true) where += " AND repo.archived_at IS NULL";
+  if (options.archivedOnly === true) where += " AND repo.archived_at IS NOT NULL";
   params.push(pageLimit(options.limit));
   const rows = db
     .query<RepoRow, (string | number)[]>(

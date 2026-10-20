@@ -598,6 +598,13 @@ reader and the explorer's default view; `/explore` shows it with `archived:yes`
 (the **Show archived** toggle). It stays in `/apps`, search, the palette and
 the repository API (`GET /api/v1/repos`).
 
+`/apps` lists live (unarchived) apps only, with an "N archived" line linking to
+`/apps?archived=1`, which lists just the archived ones (no All/Live filters, one
+"Back to apps" link); each view reads its own window of 200 repositories. In
+the SSH terminal the dashboard's *Yours* leaves archived repositories out too;
+type in its filter (`/`) to reach them, as the filter searches every
+repository you can see.
+
 A site admin archives many at once from the home. In the **Your apps** card,
 **Select** shows a checkbox per app (they take no room until then); tick some
 and press **Archive**. This is the fleet's `archive` operation over those
