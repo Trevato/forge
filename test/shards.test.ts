@@ -24,6 +24,7 @@ import {
   parseTimes,
   refreshTimes,
   parseShardSpec,
+  MEASURE_WORKER_MEMORY_BYTES,
   shardCount,
   shardCountFromEnv,
   sliceFiles,
@@ -296,6 +297,31 @@ describe("shardCount", () => {
     // Memory never raises the count past the CPUs, and the override wins.
     expect(shardCount(4, 400, undefined, 64 * GiB)).toEqual({ ok: true, value: 4 });
     expect(shardCount(16, 400, "20", 4 * GiB)).toEqual({ ok: true, value: 20 });
+  });
+
+  test("a measuring run under coverage starts fewer workers than the cell's 4 GiB would hold plain (#3118)", () => {
+    const GiB = 1024 * 1024 * 1024;
+    // 16 CPUs held to 4 workers by the cell's CPU limit.
+    expect(shardCount(16, 630, undefined, 4 * GiB, "6")).toEqual({ ok: true, value: 4 });
+    const measuring = shardCount(16, 630, undefined, 4 * GiB, "6", MEASURE_WORKER_MEMORY_BYTES);
+    expect(measuring).toEqual({ ok: true, value: 3 });
+    // 3 coverage workers at their measured ~1170 MiB peak fit under 4096 MiB; 4 did not.
+    expect(3 * 1170).toBeLessThan(4096);
+    expect(4 * 1170).toBeGreaterThan(4096);
+    expect(shardCountFromEnv({ FORGE_CELL_CPUS: "6" }, 16, 630, 4 * GiB)).toEqual({ ok: true, value: 4 });
+    expect(
+      shardCountFromEnv({ FORGE_CELL_CPUS: "6" }, 16, 630, 4 * GiB, MEASURE_WORKER_MEMORY_BYTES),
+    ).toEqual({ ok: true, value: 3 });
+    // The override still wins.
+    expect(
+      shardCountFromEnv({ FORGE_CELL_CPUS: "6", FORGE_CHECK_SHARDS: "4" }, 16, 630, 4 * GiB, MEASURE_WORKER_MEMORY_BYTES),
+    ).toEqual({ ok: true, value: 4 });
+  });
+
+  test("the runner sizes a measuring run by the coverage figure (#3118)", () => {
+    // The script runs at import, so its wiring is read from its source.
+    const source = readFileSync(new URL("../scripts/test-shards.ts", import.meta.url), "utf8");
+    expect(source).toContain("measure ? MEASURE_WORKER_MEMORY_BYTES : undefined");
   });
 
   test("the declared memory is held to what the machine grants before shards are sized (#3105)", () => {

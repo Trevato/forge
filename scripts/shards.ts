@@ -24,6 +24,16 @@ export const SHARDS_MAX = 32;
  */
 export const WORKER_MEMORY_BYTES = 512 * 1024 * 1024;
 
+/**
+ * Memory one worker of a measuring run (`--impact`: one file per `bun test`
+ * under `--coverage`) is given room for. Coverage roughly doubles a worker
+ * that boots forges and apps: six main checks of 4 such workers were stopped
+ * at 4105–4668 MiB of tree RSS against the cell's 4096 MiB (#3118), so about
+ * 1170 MiB each at the peak; 1.25 GiB holds that with a little room, and
+ * gives 3 workers in a 4096 MiB cell.
+ */
+export const MEASURE_WORKER_MEMORY_BYTES = 1280 * 1024 * 1024;
+
 // Lives in src/ because the running forge sizes its checks with it, and the
 // image ships src/ alone (#2652).
 export { CELL_CPU_SHARE, workerCpus } from "../src/core/capacity.ts";
@@ -34,7 +44,9 @@ import { workerCpus } from "../src/core/capacity.ts";
  * memory holds at {@link WORKER_MEMORY_BYTES} each, capped at
  * {@link SHARDS_MAX} and at the number of files, at least one. One per CPU,
  * not fewer: most of a forge test's time is spent waiting on git children
- * and timers, not computing. `memory` absent is not a bound.
+ * and timers, not computing. `memory` absent is not a bound; `workerBytes`
+ * is what one worker needs of it ({@link MEASURE_WORKER_MEMORY_BYTES} for a
+ * measuring run).
  * `FORGE_CHECK_SHARDS` overrides it (still capped at the file count) so a
  * small or busy host can turn it down; that is an explicit operator
  * choice and wins over the cell cap below. `cellCpus` (`FORGE_CELL_CPUS`, the
@@ -49,12 +61,13 @@ export function shardCount(
   override?: string,
   memory?: number,
   cellCpus?: string,
+  workerBytes: number = WORKER_MEMORY_BYTES,
 ): { ok: true; value: number } | { ok: false; error: string } {
   let n = Math.min(SHARDS_MAX, Math.floor(cpus));
   if (cellCpus !== undefined && /^[1-9][0-9]{0,3}$/.test(cellCpus.trim()))
     n = workerCpus(n, Number(cellCpus.trim()));
   if (memory !== undefined && Number.isFinite(memory) && memory > 0)
-    n = Math.min(n, Math.floor(memory / WORKER_MEMORY_BYTES));
+    n = Math.min(n, Math.floor(memory / workerBytes));
   if (override !== undefined && override.trim() !== "") {
     if (!/^[1-9][0-9]{0,2}$/.test(override.trim()))
       return {
@@ -76,8 +89,9 @@ export function shardCountFromEnv(
   cpus: number,
   files: number,
   memory?: number,
+  workerBytes?: number,
 ): { ok: true; value: number } | { ok: false; error: string } {
-  return shardCount(cpus, files, env["FORGE_CHECK_SHARDS"], memory, env["FORGE_CELL_CPUS"]);
+  return shardCount(cpus, files, env["FORGE_CHECK_SHARDS"], memory, env["FORGE_CELL_CPUS"], workerBytes);
 }
 
 /**

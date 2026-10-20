@@ -46,6 +46,7 @@ import { resolveLimits } from "../src/apps/contain.ts";
 import {
   formatTimes,
   heaviestFirst,
+  MEASURE_WORKER_MEMORY_BYTES,
   memoryLimit,
   overlayTimes,
   refreshTimes,
@@ -360,7 +361,14 @@ const memory = memoryLimit(totalmem(), [
     ? undefined
     : String(resolveLimits("step", declared).memoryMiB * 1024 * 1024),
 ]);
-const count = shardCountFromEnv(process.env, cpus, files.length, memory);
+// A measuring run's workers are under coverage and need more room each (#3118).
+const count = shardCountFromEnv(
+  process.env,
+  cpus,
+  files.length,
+  memory,
+  measure ? MEASURE_WORKER_MEMORY_BYTES : undefined,
+);
 if (!count.ok) {
   console.error(`test-shards: ${count.error}`);
   process.exit(2);
