@@ -14,6 +14,7 @@ import { diffCommit, type Diff } from "../../git/diff.ts";
 import { isSafeOid, isSafeRef, isSafeTreePath } from "../../git/guard.ts";
 import { commitLog } from "../../git/read.ts";
 import { repoDir } from "../../git/repos.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { Commit } from "../../view/source.ts";
 import { loadRepo, notFoundPage, scopeHeader } from "../chrome.ts";
@@ -244,6 +245,7 @@ export async function commitsPage(ctx: Ctx): Promise<Response> {
 
 // GET /:owner/:name/commit/:oid — one commit's metadata and its diff.
 export async function commitPage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const scope = localScope(ctx, repo);
@@ -251,28 +253,35 @@ export async function commitPage(ctx: Ctx): Promise<Response> {
   if (!isSafeOid(rev) && !isSafeRef(rev)) return notFoundPage(ctx);
   const dir = repoDir(ctx.app.reposRoot, repo.ownerName, repo.name);
 
+  const reading = performance.now();
   const log = await commitLog(dir, rev, { limit: 1 });
   if (!log.ok || log.value.length === 0) return notFoundPage(ctx);
   const commit = log.value[0]!;
 
   const diffResult = await diffCommit(dir, commit.oid);
+  notePhase(ctx.request, "git", performance.now() - reading);
   const diff = diffResult.ok
     ? diffResult.value
     : { files: [], additions: 0, deletions: 0 };
   // Old side is the first parent (or the empty tree for a root commit, where
   // every file is an addition and no old blob is read).
   const parent = commit.parents[0] ?? commit.oid;
+  const highlighting = performance.now();
   const syntax = await diffSyntax(dir, diff, parent, commit.oid);
+  notePhase(ctx.request, "highlight", performance.now() - highlighting);
 
+  const rendering = performance.now();
   const body = html`${scopeHeader(ctx, scope, "commits", { compact: true })}
   ${renderCommit(scope, commit, diff, syntax)}`;
-  return page({
+  const response = page({
     ctx,
     title: `${commit.subject} · ${repo.name}`,
     crumbs: scope.crumbs,
     palette: scope.palette,
     body,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 // ---- the live-browse pages ----
