@@ -31,6 +31,13 @@ export const SHARED_PULLS = 3;
  */
 const QUEUED_SLACK_MS = 6 * 3_600_000;
 
+/**
+ * What `bun test` prints for a failure that belongs to no test (an unhandled
+ * error, a hook): unrelated pulls share the label, not a cause, so it never
+ * makes a lane's red.
+ */
+export const NO_TEST_NAME = "(unnamed)";
+
 export interface SharedTest {
   readonly repoId: string;
   /** `owner/name`, for the card. */
@@ -66,16 +73,17 @@ const PULLS_PER_TEST = `
    WHERE run.id >= ?1 AND run.finished_at >= ?2
      AND run.kind = 'check' AND run.issue_id IS NOT NULL AND run.state = 'failed'
      AND (?3 IS NULL OR run.repo_id = ?3)
-     AND n.type = 'text'
+     AND n.type = 'text' AND n.value <> ?4
    GROUP BY run.repo_id, n.value`;
 
 function pullsPerTest(db: Database, now: number, repoId: string | null): Row[] {
   return db
-    .query<Row, [string, string, string | null]>(PULLS_PER_TEST)
+    .query<Row, [string, string, string | null, string]>(PULLS_PER_TEST)
     .all(
       idFloor(now - SHARED_WINDOW_MS - QUEUED_SLACK_MS),
       new Date(now - SHARED_WINDOW_MS).toISOString(),
       repoId,
+      NO_TEST_NAME,
     );
 }
 

@@ -56,6 +56,12 @@ describe("a red many pulls share", () => {
     expect(shared(second)).toBe(true);
   });
 
+  test("bun's (unnamed) label is no test: unrelated pulls sharing it are not the lane's", () => {
+    for (const i of ["i1", "i2", "i3"]) red(i, ["(unnamed)"]);
+    expect(shared(red("i4", ["(unnamed)"]))).toBe(false);
+    expect(sharedTests(db)).toEqual([]);
+  });
+
   test("one pull red three times is its own red, not the lane's", () => {
     red("i1", ["X"]);
     red("i1", ["X"]);
