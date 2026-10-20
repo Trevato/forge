@@ -303,9 +303,9 @@ export function appPanels(
   const audience = audienceOf(
     audienceFacts(db, repo, ctx.auth.user),
   ).sentence;
-  const head = html`<div class="page-head studio-head">
+  const head = html`<div class="page-head">
     <div class="stack stack-tight">
-      <h1>
+      <h1 class="bar">
         ${repo.name}
         ${badge(
           live.word,

@@ -1191,13 +1191,13 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
   });
 
   test("the fragment's markup is what the live client's status announcement reads: the head's word in a badge, a preview row's word beside its `#N title`", async () => {
-    // `live.ts`'s `announceSwap` finds the head's word at `.studio-head
+    // `live.ts`'s `announceSwap` finds the head's word at `.page-head h1
     // .badge` and, for a preview row, the pull's label at the start of
     // `.row-meta` beside its word at `.row-trail .badge`. If this markup
     // ever moves, the announcement goes silent without a test failing here.
     const text = await (await get("/alice/vault/app/state", owner)).text();
-    expect(text).toContain("studio-head");
-    expect(text).toMatch(/studio-head[\s\S]*?class="badge"[^>]*>not running</);
+    expect(text).toContain('class="page-head"');
+    expect(text).toMatch(/class="page-head"[\s\S]*?<h1 class="bar">[\s\S]*?class="badge"[^>]*>not running</);
 
     const alice = getUserByName(app.db, "alice")!;
     const branch = await commitToBranch(app, alice, repo, {

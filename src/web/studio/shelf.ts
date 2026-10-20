@@ -113,15 +113,9 @@ function sealedRow(repo: Repo, user: User | undefined): Html {
       ? repo.name
       : html`<span class="muted">${repo.ownerName}/</span>${repo.name}`,
     titleAttr: repo.description || repo.name,
-    meta: html`<span class="shelf-meta"
-      >${repo.description
-        ? html`<span class="shelf-desc">${repo.description}</span>`
-        : null}<span class="shelf-facts"
-        >${repo.description ? "· " : null}<span class="muted"
-          >private app</span
-        ></span
-      ></span
-    >`,
+    meta: html`<span class="muted">private app</span>${repo.description
+      ? html` · ${repo.description}`
+      : null}`,
     trail: raw(`\n        <span class="badge" data-tone="default">private</span>`),
   });
 }
@@ -282,9 +276,7 @@ export async function shelfRows(
             : canTell
               ? html`<span class="muted">quiet — tell the crew something</span>`
               : html`<span class="muted">quiet</span>`
-          : html`<span class="studio-word" data-word="${word.word}"
-                >${word.word}</span
-              >
+          : html`<strong data-word="${word.word}">${word.word}</strong>
               ${who ? html`· ${who}` : null}
               ${word.word === "working"
                 ? html`· now`
@@ -305,13 +297,11 @@ export async function shelfRows(
         lead: dot(tone),
         title,
         titleAttr: repo.description || repo.name,
-        meta: html`<span class="shelf-meta"
-          >${repo.description
-            ? html`<span class="shelf-desc">${repo.description}</span>`
-            : null}<span class="shelf-facts"
-            >${repo.description ? "· " : null}${happening}</span
-          ></span
-        >`,
+        // The word leads and the description follows, so the meta line's one
+        // ellipsis falls on the description (whole in the title), never the word.
+        meta: html`${happening}${repo.description
+          ? html` · ${repo.description}`
+          : null}`,
         trail: raw(
           `\n        <span class="badge" data-tone="${tone}">${escapeHtml(live.word)}</span>`,
         ),

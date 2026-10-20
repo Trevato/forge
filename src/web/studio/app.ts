@@ -287,7 +287,7 @@ export async function studioApp(
   const tell = !ownerFacts
     ? null
     : html`<form
-        class="card comment-form studio-tell"
+        class="card comment-form"
         method="post"
         action="${base}/tell"
       >

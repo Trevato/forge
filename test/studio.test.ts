@@ -249,19 +249,27 @@ describe("the studio", () => {
     const sheet = await fetch(`${base}${stylesheetAsset().path}`);
     expect(sheet.headers.get("content-type")).toContain("text/css");
     const css = await sheet.text();
-    expect(css).toContain(".studio-tell textarea");
-    expect(css).toContain(".studio-ask-actions");
     expect(css).toContain("@keyframes studio-flash");
     expect(css).toContain('.board[data-focus="working"] #working');
     // In the `components` layer, last: an inline block used to win over every
     // layer, and last in `components` is the nearest place that still reads
     // the same — a `content` rule or a utility must keep out-specifying them.
-    for (const rule of [".studio-tell textarea", ".board-region > h2"]) {
+    for (const rule of ["@keyframes studio-flash", ".board-region > h2"]) {
       expect(css.indexOf(rule)).toBeGreaterThan(
         css.indexOf("@layer components {"),
       );
       expect(css.indexOf(rule)).toBeLessThan(css.indexOf("@layer content {"));
     }
+  });
+
+  test("the head, tell box, word and shelf rows are §5's own parts: no studio-*, shelf-* or fcard-app class is left on a page (#3616)", async () => {
+    const old = /class="[^"]*\b(?:fcard-app|shelf-desc|shelf-facts|shelf-meta|studio-ask-actions|studio-head|studio-tell|studio-word)\b/;
+    for (const path of ["/", "/alice/notes", "/apps"]) {
+      expect(await (await get(path)).text()).not.toMatch(old);
+    }
+    const studio = await (await get("/alice/notes")).text();
+    expect(studio).toMatch(/<div class="page-head">\s*<div class="stack stack-tight">\s*<h1 class="bar">/);
+    expect(studio).toContain('class="card comment-form"');
   });
 
   test("telling the crew opens an issue and hands it to a builder", async () => {

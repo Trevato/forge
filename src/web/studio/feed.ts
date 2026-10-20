@@ -68,7 +68,7 @@ export function feedCard(
   const head = html`${avatar(item.actor ?? item.app)}
       <strong class="fcard-who">${item.actor ?? item.app}</strong
       >${nameMark(item.actor === null ? undefined : marks.get(item.actor))}
-      <span class="fcard-app muted small">${item.app} · ${timeAgo(item.at)}</span>
+      <span class="muted small">${item.app} · ${timeAgo(item.at)}</span>
       <span class="spacer"></span>
       <span class="badge">${KIND_LABEL[item.kind]}</span>`;
   const body = html`<p class="fcard-reason"><a href="${item.link}" data-feed-open>${item.what}</a></p>
@@ -107,7 +107,7 @@ const THOUGHT_AGE_MS = 24 * 60 * 60 * 1000;
 export function thoughtCard(thought: Thought, who: string, placement?: Placement): Html {
   const head = html`${avatar(who)}
       <strong class="fcard-who">${who}</strong>
-      <span class="fcard-app muted small">${timeAgo(thought.receivedAt)}</span>
+      <span class="muted small">${timeAgo(thought.receivedAt)}</span>
       <span class="spacer"></span>
       <span class="badge">Received</span>`;
   return card(

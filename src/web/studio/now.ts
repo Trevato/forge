@@ -203,9 +203,7 @@ export async function nowCard(
           ? null
           : html` · ${time(r.finishedAt ?? r.createdAt)}`}`,
         trail: stop
-          ? html`<span class="studio-ask-actions"
-              >${wordBadge(word)} ${stop}</span
-            >`
+          ? html`${wordBadge(word)} ${stop}`
           : wordBadge(word),
       }),
     );

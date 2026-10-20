@@ -19,7 +19,7 @@ const BUTTON: Record<StalledStep["action"], string> = { run: "Run check", rerun:
 function stalledCard(s: StalledStep): Html {
   const base = `/${s.ownerName}/${s.repoName}/pulls/${s.pull}`;
   const head = html`<strong class="fcard-who">${s.stage}</strong>
-      <span class="fcard-app muted small">${s.ownerName}/${s.repoName} · stuck since ${timeAgo(s.since)}</span>`;
+      <span class="muted small">${s.ownerName}/${s.repoName} · stuck since ${timeAgo(s.since)}</span>`;
   const body = html`<p class="fcard-reason"><a href="${base}">${s.title}</a>${s.issue === null ? null : html` <span class="muted small">for #${String(s.issue)}</span>`}</p>
     <form method="post" action="${base}/checks" class="fcard-unblock">
       <input type="hidden" name="next" value="/">

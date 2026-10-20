@@ -240,7 +240,7 @@ describe("apps, runs and the crew on the web", () => {
     // and Open live; production's state is the row's own phrase.
     const list = await bodyOf(alice, "/apps");
     expect(list).toContain('href="/alice/hello"');
-    expect(list).toContain('class="shelf-');
+    expect(list).toContain('class="row"');
     // Signed out, a public app is still listed; the button says sign in.
     const anonymous = await bodyOf("", "/apps");
     expect(anonymous).toContain('href="/alice/hello"');

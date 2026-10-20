@@ -398,7 +398,6 @@ gone, so this list only shrinks.
 - **`pages/flow-panel.ts`** — the pipeline's outflow sparklines, on /flow and /boards: `.flow-bar` `.flow-out`
 - **`pages/map.ts`** — the map of what waits for what: `.map-ask` `.map-breath` `.map-canvas` `.map-card` `.map-counts` `.map-dot` `.map-edge` `.map-edge-crit` `.map-edge-done` `.map-empty` `.map-lane` `.map-lane-caret` `.map-lane-crew` `.map-lane-head` `.map-lane-name` `.map-lane-word` `.map-lanes` `.map-list` `.map-main` `.map-meta` `.map-node` `.map-pillars` `.map-rule` `.map-svg` `.map-title` `.map-tool` `.map-tools` `.map-who` `.map-who-i` `.map-who-n` `.map-word` `.map-wrap`
 - **`studio/feed_style.ts`** — the home feed's cards, its composer and the apps rail: `.composer` `.composer-bar` `.fcard-form` `.fcard-reason` `.fcard-reply` `.fcard-text` `.fcard-unblock` `.fcard-who` `.fcard-why` `.feed` `.feed-head` `.kpi` `.kpi-note` `.kpi-spark` `.kpi-value` `.kpis` `.home-app` `.home-apps` `.home-apps-verbs` `.home-pick` `.home-rail` `.home-tabs`
-- **`studio/style.ts`** — the studio's tell box, app head, word and shelf rows: `.fcard-app` `.shelf-desc` `.shelf-facts` `.shelf-meta` `.studio-ask-actions` `.studio-head` `.studio-tell` `.studio-word`
 
 ---
 

@@ -147,12 +147,12 @@ export const liveClientJs = /* js */ `
   }
   // The head card's own word, whatever envPhrase drew into its badge.
   function headWord(root) {
-    return textOf(root && root.querySelector('.studio-head .badge'));
+    return textOf(root && root.querySelector('.page-head h1 .badge'));
   }
   // When the word is "live", the timing phrase envFacts already printed
   // under it — never a second way of saying how fast.
   function headPhrase(root) {
-    var spans = root ? root.querySelectorAll('.studio-head .env-facts span') : [];
+    var spans = root ? root.querySelectorAll('.page-head .env-facts span') : [];
     for (var i = 0; i < spans.length; i++) {
       var t = textOf(spans[i]);
       if (t.indexOf('live ') === 0) return t;
