@@ -72,9 +72,15 @@ describe("/map on the forge-sized fixture, warm", () => {
       // Both viewers share one cache, so drop it here: the first request is a
       // real cold build for this viewer, whichever test ran before.
       clearMapCache();
-      const coldStarted = performance.now();
-      const warm = await get(servers, "/map", cookie);
-      const cold = performance.now() - coldStarted;
+      const coldCounter = countStatements(f.app.db);
+      let cold: number;
+      let warm: string;
+      try {
+        warm = await get(servers, "/map", cookie);
+        cold = coldCounter.count;
+      } finally {
+        coldCounter.stop();
+      }
       const lanes = lanesIn(warm);
       expect(lanes).toBeGreaterThan(5);
       const counter = countStatements(f.app.db);
@@ -93,17 +99,16 @@ describe("/map on the forge-sized fixture, warm", () => {
       }
       times.sort((a, b) => a - b);
       const p95 = times[Math.ceil(times.length * 0.95) - 1]!;
-      const median = times[times.length >> 1]!;
       // The steady state: a lane's minute or the UTC day turning over mid-loop
       // rebuilds one request, and that is the cache working, not failing.
       counts.sort((a, b) => a - b);
       const statements = counts[counts.length >> 1]!;
-      console.log(`${who}: ${lanes} lanes, p95 ${p95.toFixed(1)} ms, ${statements} statements`);
-      // Wall-clock is the check machine's, so it is only ever a ratio between
-      // two timings taken here, a real cold build and the warm median: a
-      // missing cache puts them level. The doc's 50 ms budget is read off
-      // bench/map-home.ts. p95 below is a hang guard, nothing more.
-      expect(median * 3).toBeLessThan(cold);
+      console.log(`${who}: ${lanes} lanes, p95 ${p95.toFixed(1)} ms, ${statements} statements (cold ${cold})`);
+      // Wall-clock is the check machine's load, so the verdict is read from
+      // statement counts, which depend only on the code: a missing cache
+      // puts the cold and warm counts level. The doc's 50 ms budget is read
+      // off bench/map-home.ts. p95 below is a hang guard, nothing more.
+      expect(statements * 3).toBeLessThan(cold);
       expect(p95).toBeLessThan(5_000);
       // The page's own chrome costs a fixed ~25 statements (session, settings,
       // the repository lists); a lane costs at most two. Cold, it was ~2,700.
