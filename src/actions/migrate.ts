@@ -11,6 +11,13 @@
  * environment, scoped to the origin's host — never argv, never the URL. A
  * pasted URL is cloned anonymously: public repositories only.
  *
+ * From a connected origin the conversations come too (`origins/carry.ts`):
+ * every issue with its comments and labels, and the open pull requests as
+ * pulls here, on the branches the clone brought — each opening with a link
+ * back to the original; one from a fork has its head under
+ * `refs/pull/<n>/head` and waits for a writer to approve it to run. A
+ * pasted URL brings the history alone.
+ *
  * The clone runs as a job (`origins/jobs.ts`, the mirror's registry), so a
  * page can watch it. With a crew asked for, the same job then puts the
  * agent on the crew, makes the repository an app, and tells the crew one
@@ -30,9 +37,16 @@ import { isSafeRef } from "../git/guard.ts";
 import { repoDir } from "../git/repos.ts";
 import { type Resolve, vetHost } from "../kernel/outbound.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { carryConversations, plural } from "../origins/carry.ts";
 import { providerForOrigin } from "../origins/credential.ts";
 import { redact, safeRemoteUrl, secretsIn } from "../origins/credentials.ts";
 import { MIRROR_REFSPECS, snapshotRefs } from "../origins/git-mirror.ts";
+import {
+  localTips,
+  pickWorkBranch,
+  remoteTips,
+  type Who,
+} from "../origins/work-branch.ts";
 import {
   advance,
   createJob,
@@ -40,6 +54,7 @@ import {
   runningJob,
   type MirrorJob,
 } from "../origins/jobs.ts";
+import type { Provider } from "../origins/types.ts";
 import { requireUser } from "./access.ts";
 import { enableApp } from "./apps.ts";
 import { addToCrew } from "./crew.ts";
@@ -70,6 +85,12 @@ export interface MigrateInput {
   readonly name?: string;
   /** @default "private" */
   readonly visibility?: "public" | "private";
+  /**
+   * The branch the app lives on — the default branch here and the one the
+   * crew is pointed at. Left out, the branch with the person's newest
+   * commits (`origins/work-branch.ts`), else the source's default.
+   */
+  readonly branch?: string;
   /** Put an agent on it: the crew makes it run here. */
   readonly crew?: { readonly agent: string; readonly autonomous: boolean };
   /** Name → addresses, for the private-address check. Tests inject it. */
@@ -89,6 +110,7 @@ export type MigrateError =
   | "private_host"
   | "no_such_origin"
   | "unreachable"
+  | "invalid_branch"
   | "no_such_agent";
 
 /** What the clone reads from, resolved: where, and how to authenticate. */
@@ -100,6 +122,18 @@ interface Resolved {
   readonly name: string;
   readonly description: string;
   readonly authEnv: () => Promise<Record<string, string>>;
+  /** A connected origin's adapter: what issues and pulls are read through. */
+  readonly provider?: Provider;
+  /** The person, as the source's commits may name them. */
+  readonly who: Who;
+}
+
+/** Why the work branch is the one it is: said in the job and the brief. */
+type WorkReason = "picked" | "newest" | "default";
+
+interface WorkBranch {
+  readonly name: string;
+  readonly reason: WorkReason;
 }
 
 /**
@@ -121,6 +155,8 @@ export async function migrateRepo(
   if (!source.ok) return source;
   if (input.crew !== undefined && !getAgentByName(app.db, input.crew.agent))
     return err("no_such_agent");
+  const branch = (input.branch ?? "").trim();
+  if (branch !== "" && !isSafeRef(branch)) return err("invalid_branch");
 
   // A double-click joins the migration already under way rather than
   // failing the second one on the name the first just took.
@@ -150,7 +186,11 @@ export async function migrateRepo(
     actorId: user.value.id,
   });
   advance(job.id, { stage: "creating", repo });
-  void runMigration(app, user.value, repo, source.value, input.crew, job.id);
+  void runMigration(app, user.value, repo, source.value, {
+    branch: branch === "" ? undefined : branch,
+    crew: input.crew,
+    jobId: job.id,
+  });
   return ok({ repo, job: getJob(job.id) ?? job });
 }
 
@@ -188,6 +228,8 @@ export function migrateMessage(error: MigrateError, limit = "at the repositories
       return "The origin could not be reached. Try again, or reconnect it under Settings → Origins.";
     case "no_such_agent":
       return "That agent is not on this forge.";
+    case "invalid_branch":
+      return "That is not a branch name git would take.";
     case "name_taken":
       return "That owner already has a repository by that name. Pick another name.";
     case "invalid_name":
@@ -354,6 +396,7 @@ async function resolveSource(
       name: nameFromUrl(url),
       description: "",
       authEnv: () => Promise.resolve({}),
+      who: { logins: [user.username], emails: [user.email] },
     });
   }
   const origin = getOriginFor(app.db, user.id, source.originId);
@@ -376,6 +419,8 @@ async function resolveSource(
     // Only the header: the origin's credential reaches this one git
     // invocation scoped to its host, and the repository never learns it.
     authEnv: () => provider.value.gitAuthEnv(url),
+    provider: provider.value,
+    who: { logins: [origin.login, user.username], emails: [user.email] },
   });
 }
 
@@ -385,9 +430,13 @@ async function runMigration(
   user: User,
   repo: Repo,
   source: Resolved,
-  crew: MigrateInput["crew"],
-  jobId: string,
+  asked: {
+    readonly branch: string | undefined;
+    readonly crew: MigrateInput["crew"];
+    readonly jobId: string;
+  },
 ): Promise<void> {
+  const { crew, jobId } = asked;
   const fail = async (error: string): Promise<void> => {
     // An empty repository nobody asked for is clutter, and it holds the
     // name a retry wants: a clone that did not happen leaves nothing.
@@ -398,23 +447,65 @@ async function runMigration(
     advance(jobId, { stage: "fetching", detail: "every branch and tag" });
     const cloned = await cloneInto(app, repo, source);
     if (!cloned.ok) return await fail(cloned.error);
-    storageStale(app, repo.ownerId);
     let current = getRepoById(app.db, repo.id) ?? repo;
 
-    // The source's default branch is kept; a source that never said which
-    // keeps the forge's own, or the branch it plainly meant.
-    const branches = [...cloned.value.refs.keys()]
+    // The conversations, when an origin can be asked for them. A refusal
+    // part-way keeps what arrived and says so; the history is the move.
+    let conversations = "";
+    const refs = cloned.value.refs;
+    if (source.provider !== undefined) {
+      advance(jobId, { stage: "issues", detail: "reading issues" });
+      const carried = await carryConversations({
+        db: app.db,
+        provider: source.provider,
+        fullName: source.label,
+        repoId: current.id,
+        actorId: user.id,
+        report: (stage, detail) => advance(jobId, { stage, detail }),
+      });
+      // A fork's head is fetched where the forge keeps pull heads, not as
+      // a branch: no push event runs it, and no branch the clone brought
+      // is overwritten. Its pull waits for a writer to approve it to run.
+      await fetchForkHeads(
+        app,
+        current,
+        source,
+        carried.forkPulls.map((p) => p.number),
+      );
+      const forks = carried.forkPulls.length;
+      conversations = `; ${plural(carried.issues, "issue")}, ${plural(carried.pulls, "open pull request")}${forks === 0 ? "" : ` (${forks} from forks, waiting for your approval to run here)`}, ${plural(carried.comments, "comment")}${carried.error === "" ? "" : ` (the origin stopped part-way: ${redact(carried.error)})`}`;
+      app.bus.append({
+        kind: "repo.imported",
+        repoId: current.id,
+        actorId: user.id,
+        payload: {
+          fullName: source.label,
+          issues: carried.issues,
+          pulls: carried.pulls,
+          comments: carried.comments,
+          via: "migrate",
+        },
+      });
+    }
+    storageStale(app, repo.ownerId);
+
+    // The default branch here is the work branch: the one picked, else
+    // the one with the person's newest commits, else the source's default
+    // — and a source that never said which keeps the forge's own, or the
+    // branch it plainly meant.
+    const branches = [...refs.keys()]
       .filter((ref) => ref.startsWith("refs/heads/"))
       .map((ref) => ref.slice("refs/heads/".length));
-    const wanted = [
+    const fallback = [
       cloned.value.head,
       current.defaultBranch,
       "master",
       ...branches.sort(),
     ].find((b) => b !== undefined && branches.includes(b));
-    if (wanted !== undefined && wanted !== current.defaultBranch) {
+    const work = await workBranch(app, current, source, asked.branch, branches, fallback);
+    if (work !== undefined && work.name !== current.defaultBranch) {
       const moved = await updateRepoSettings(app, user, current, {
-        defaultBranch: wanted,
+        defaultBranch: work.name,
       });
       if (moved.ok) current = moved.value;
     }
@@ -422,13 +513,13 @@ async function runMigration(
     // The history arrived without a push, so nothing downstream heard it.
     // One event, shaped like a push, says so — the feed, webhooks and the
     // default branch's check see what landed.
-    if (cloned.value.refs.size > 0) {
+    if (refs.size > 0) {
       app.bus.append({
         kind: "push",
         repoId: current.id,
         actorId: user.id,
         payload: {
-          updates: [...cloned.value.refs].map(([ref, newOid]) => ({
+          updates: [...refs].map(([ref, newOid]) => ({
             ref,
             oldOid: "0".repeat(40),
             newOid,
@@ -440,10 +531,12 @@ async function runMigration(
     }
 
     const where = `${current.ownerName}/${current.name}`;
-    let detail = `migrated as ${where} — ${plural(branches.length, "branch", "branches")}, ${plural(cloned.value.refs.size - branches.length, "tag")}`;
+    let detail = `migrated as ${where} — ${plural(branches.length, "branch", "branches")}, ${plural(refs.size - branches.length, "tag")}${conversations}`;
+    if (work !== undefined)
+      detail += `. Working on ${work.name}, ${reasonWords(work.reason)}${asked.branch !== undefined && work.reason !== "picked" ? ` (${asked.branch} did not come with the clone)` : ""}`;
     if (crew !== undefined) {
       advance(jobId, { stage: "crew", detail: `putting ${crew.agent} on it` });
-      detail += `. ${await putCrewOn(app, user, current, source, crew)}`;
+      detail += `. ${await putCrewOn(app, user, current, source, crew, work)}`;
     }
     advance(jobId, {
       stage: "done",
@@ -519,6 +612,86 @@ async function cloneInto(
 }
 
 /**
+ * Which branch the app lives on. A picked branch that arrived wins; else
+ * the newest branch tip that is the person's — by the clone's authors, and
+ * by the origin's account logins when there is an origin to ask — else the
+ * fallback.
+ */
+async function workBranch(
+  app: App,
+  repo: Repo,
+  source: Resolved,
+  picked: string | undefined,
+  branches: readonly string[],
+  fallback: string | undefined,
+): Promise<WorkBranch | undefined> {
+  if (picked !== undefined && branches.includes(picked))
+    return { name: picked, reason: "picked" };
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  let tips = await localTips(dir, source.who);
+  if (source.provider !== undefined) {
+    const remote = await remoteTips(source.provider, source.label, source.who);
+    const theirs = new Set(
+      (remote ?? []).filter((t) => t.mine).map((t) => `${t.name}\0${t.oid}`),
+    );
+    tips = tips.map((t) =>
+      theirs.has(`${t.name}\0${t.oid}`) ? { ...t, mine: true } : t,
+    );
+  }
+  const name = pickWorkBranch(tips, fallback);
+  if (name === undefined) return undefined;
+  return {
+    name,
+    reason: tips.some((t) => t.mine && t.name === name) ? "newest" : "default",
+  };
+}
+
+function reasonWords(reason: WorkReason): string {
+  switch (reason) {
+    case "picked":
+      return "the branch picked";
+    case "newest":
+      return "the branch with your newest commits";
+    case "default":
+      return "the source's default branch";
+  }
+}
+
+/**
+ * Bring the heads of pulls opened from forks: the origin serves each as
+ * `refs/pull/<n>/head` (GitHub and Forgejo alike), and it lands under the
+ * same name here — the forge's own namespace for pull heads, which a push
+ * cannot write and the clone never brings. One fetch; a fetch that fails
+ * leaves those pulls showing the head the origin reported, still waiting.
+ */
+async function fetchForkHeads(
+  app: App,
+  repo: Repo,
+  source: Resolved,
+  numbers: readonly number[],
+): Promise<void> {
+  if (numbers.length === 0) return;
+  const dir = repoDir(app.reposRoot, repo.ownerName, repo.name);
+  const authEnv = await source.authEnv();
+  await runGitCapture(
+    [
+      "fetch",
+      "--no-write-fetch-head",
+      "--no-recurse-submodules",
+      "--quiet",
+      "--",
+      source.url,
+      ...numbers.map((n) => `+refs/pull/${n}/head:refs/pull/${n}/head`),
+    ],
+    {
+      cwd: dir,
+      env: remoteGitEnv(authEnv, undefined, ALLOWED_PROTOCOL),
+      timeoutMs: MIGRATE_TIMEOUT_MS,
+    },
+  );
+}
+
+/**
  * The crew half: the agent joins, the repository becomes an app, autonomy
  * is set when asked, and the crew is told the one thing it is there for.
  * Each step says what happened; one that fails does not undo the clone.
@@ -529,6 +702,7 @@ async function putCrewOn(
   repo: Repo,
   source: Resolved,
   crew: NonNullable<MigrateInput["crew"]>,
+  work: WorkBranch | undefined,
 ): Promise<string> {
   const said: string[] = [];
   const added = addToCrew(app, user, repo, crew.agent);
@@ -547,7 +721,7 @@ async function putCrewOn(
     });
     if (!set.ok) said.push("Autonomy could not be turned on.");
   }
-  const told = await tell(app, user, repo, importerBrief(repo, source.label));
+  const told = await tell(app, user, repo, importerBrief(repo, source.label, work));
   said.unshift(told.ok ? toldWords(told.value) : "The crew could not be told.");
   return said.join(" ");
 }
@@ -557,10 +731,23 @@ async function putCrewOn(
  * contract (docs/APPS.md), from the other side: someone else's project,
  * made to run here with the smallest diff that does it.
  */
-export function importerBrief(repo: Repo, from: string): string {
+export function importerBrief(
+  repo: Repo,
+  from: string,
+  work?: WorkBranch,
+): string {
+  const branch = work?.name ?? repo.defaultBranch;
+  const why =
+    work?.reason === "picked"
+      ? "the branch the person who migrated it picked"
+      : work?.reason === "newest"
+        ? "the branch with the newest commits of the person who migrated it"
+        : "the source's default branch";
   return `Make ${repo.name} run here
 
 ${repo.name} was migrated to this forge from ${from} — every branch and tag, its history intact. It is someone else's project. Make it run here as an app without changing what it does.
+
+The app is on the branch \`${branch}\` — ${why}, and the default branch here. Start from \`${branch}\` and open your pull against it; the other branches are history, not the app.
 
 Adapt, don't rewrite:
 
@@ -576,6 +763,3 @@ Adapt, don't rewrite:
 Done means the pull's preview starts, answers its \`health\` path, and does what the original did.`;
 }
 
-function plural(n: number, one: string, many = `${one}s`): string {
-  return `${n} ${n === 1 ? one : many}`;
-}

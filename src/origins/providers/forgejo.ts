@@ -790,6 +790,7 @@ function toRepo(raw: unknown): RemoteRepo {
     openIssues: asNumber(field(raw, "open_issues_count")),
     openPulls: asNumber(field(raw, "open_pr_counter")),
     openIssuesIncludesPulls: false,
+    sizeKb: asNumber(field(raw, "size")),
   };
 }
 

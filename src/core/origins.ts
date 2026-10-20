@@ -323,6 +323,8 @@ export interface OriginRepoRow {
   readonly openIssues: number;
   readonly openPulls: number;
   readonly openIssuesIncludingPulls: boolean;
+  /** KiB, as the origin last reported it; 0 when unknown. */
+  readonly sizeKb: number;
 }
 
 const REPO_SELECT = `
@@ -348,6 +350,7 @@ interface RawOriginRepo {
   open_issues: number;
   open_pulls: number;
   counts_include_pulls: number;
+  size_kb: number;
   mirrored_id: string | null;
 }
 
@@ -369,6 +372,7 @@ const toOriginRepo = (row: RawOriginRepo): OriginRepoRow => ({
   openIssues: row.open_issues,
   openPulls: row.open_pulls,
   openIssuesIncludingPulls: row.counts_include_pulls === 1,
+  sizeKb: row.size_kb,
 });
 
 /**
@@ -379,8 +383,8 @@ const UPSERT_ORIGIN_REPO = `
   INSERT INTO origin_repo
     (origin_id, remote_id, full_name, description, private, fork,
      default_branch, clone_url, html_url, pushed_at, can_push, seen_at,
-     open_issues, open_pulls, counts_include_pulls, fork_of)
-  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+     open_issues, open_pulls, counts_include_pulls, fork_of, size_kb)
+  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
   ON CONFLICT (origin_id, remote_id) DO UPDATE SET
     full_name = excluded.full_name,
     description = excluded.description,
@@ -395,6 +399,7 @@ const UPSERT_ORIGIN_REPO = `
     open_issues = excluded.open_issues,
     open_pulls = excluded.open_pulls,
     counts_include_pulls = excluded.counts_include_pulls,
+    size_kb = excluded.size_kb,
     -- A listing that does not report the parent must not forget one we
     -- already know: listRepos omits it on both forges, getRepo states it.
     fork_of = COALESCE(excluded.fork_of, origin_repo.fork_of)`;
@@ -421,6 +426,7 @@ const upsertArgs = (
   repo.openPulls,
   repo.openIssuesIncludesPulls ? 1 : 0,
   repo.parent,
+  Number.isSafeInteger(repo.sizeKb) && repo.sizeKb > 0 ? repo.sizeKb : 0,
 ];
 
 /**

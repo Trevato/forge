@@ -5016,7 +5016,8 @@ export function apiRoutes(router: Router<Handler>): void {
   //
   // A repository brought here for good: `source` is `{ originId, fullName }`
   // (one of your origins, its credential in the environment) or `{ url }`
-  // (public, anonymous). Refusals are words before anything exists; the
+  // (public, anonymous); `branch` is the one the app lives on (left out,
+  // the one with your newest commits). Refusals are words before anything exists; the
   // clone itself is the job this answers with, watched at /migrate/:job.
 
   router.add("POST", "/api/v1/migrate", async (ctx) => {
@@ -5052,6 +5053,7 @@ export function apiRoutes(router: Router<Handler>): void {
       source,
       ...(typeof input.owner === "string" ? { owner: input.owner } : {}),
       ...(typeof input.name === "string" ? { name: input.name } : {}),
+      ...(typeof input.branch === "string" ? { branch: input.branch } : {}),
       ...(input.visibility === "public" || input.visibility === "private"
         ? { visibility: input.visibility }
         : {}),

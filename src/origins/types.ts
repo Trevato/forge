@@ -78,6 +78,8 @@ export interface RemoteRepo {
   readonly openIssues: number;
   readonly openPulls: number;
   readonly openIssuesIncludesPulls: boolean;
+  /** On-disk size as the origin reports it, in KiB; 0 when it says nothing. */
+  readonly sizeKb: number;
 }
 
 export interface RemoteLabel {

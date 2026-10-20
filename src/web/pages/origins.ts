@@ -374,6 +374,14 @@ const blankValues = (): ConnectValues => ({
  * the reader to find out on GitHub's site what to put in it, which is the
  * kind of dead end that sends someone back to pasting a token forever.
  */
+/** Whether "Connect GitHub" has a client id to run the device flow with. */
+export function githubConnectable(ctx: Ctx): boolean {
+  return (
+    (process.env.FORGE_GITHUB_CLIENT_ID ?? "").trim() !== "" ||
+    listOriginApps(ctx.app, ctx.auth.user!).some((a) => a.kind === "github")
+  );
+}
+
 function githubSection(configured: boolean, callback: string): Html {
   if (!configured) {
     const back =
@@ -617,9 +625,7 @@ function originsView(ctx: Ctx, values: ConnectValues): Html {
   const origins = listUserOrigins(ctx.app, user);
   const mirrors = mirrorsByOrigin(ctx.app.db, user.id);
   const apps = listOriginApps(ctx.app, user);
-  const githubConfigured =
-    (process.env.FORGE_GITHUB_CLIENT_ID ?? "").trim() !== "" ||
-    apps.some((a) => a.kind === "github");
+  const githubConfigured = githubConnectable(ctx);
   const matched =
     values.host === ""
       ? undefined
@@ -830,6 +836,16 @@ function connectMessage(error: string): string {
 }
 
 // POST /settings/origins/oauth
+/**
+ * Where a connect or a disconnect started, when it was not here: only
+ * `/migrate`, named by a fixed word — never a path a form can choose.
+ */
+type Then = "/migrate" | undefined;
+const thenOf = (value: string | null): Then =>
+  value === "migrate" ? "/migrate" : undefined;
+const thenQuery = (then: Then): string =>
+  then === undefined ? "" : "then=migrate";
+
 export async function originOAuthStart(ctx: Ctx): Promise<Response> {
   const denied = accountOnly(ctx);
   if (denied) return denied;
@@ -837,6 +853,7 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
   if (form instanceof Response) return form;
   const kind = field(form, "kind");
   const host = field(form, "host").trim();
+  const then = thenOf(field(form, "then"));
 
   const back = callbackUri(ctx);
   if (back === "" && kind !== "github") {
@@ -869,11 +886,12 @@ export async function originOAuthStart(ctx: Ctx): Promise<Response> {
         : connectMessage(started.error.error);
     return shell(ctx, originsView(ctx, values), 422);
   }
-  const to =
-    started.value.flow === "code"
-      ? `?to=${encodeURIComponent(started.value.url)}`
-      : "";
-  return redirect(`/settings/origins/flows/${started.value.flowId}${to}`);
+  const query = new URLSearchParams(
+    started.value.flow === "code" ? { to: started.value.url } : {},
+  );
+  if (then !== undefined) query.set("then", "migrate");
+  const qs = query.size === 0 ? "" : `?${query}`;
+  return redirect(`/settings/origins/flows/${started.value.flowId}${qs}`);
 }
 
 /**
@@ -959,14 +977,16 @@ export function originFlowPage(ctx: Ctx): Response {
   if (denied) return denied;
   const flow = getFlowFor(ctx.app.db, ctx.auth.user!.id, ctx.params.id ?? "");
   if (!flow) return shell(ctx, notFoundNote(), 404);
+  const then = thenOf(ctx.url.searchParams.get("then"));
 
-  if (flow.status === "done") return redirect("/settings/origins?connected=1");
+  if (flow.status === "done")
+    return redirect(`${then ?? "/settings/origins"}?connected=1`);
   if (flow.status === "failed")
     return redirect(
       `/settings/origins?error=${encodeURIComponent(flow.detail.slice(0, 120))}`,
     );
 
-  const pollAction = `/settings/origins/flows/${flow.id}/poll`;
+  const pollAction = `/settings/origins/flows/${flow.id}/poll${then === undefined ? "" : `?${thenQuery(then)}`}`;
   const authorize =
     flow.flow === "code"
       ? authorizeLink(ctx.url.searchParams.get("to") ?? "", flow.webUrl)
@@ -1152,13 +1172,17 @@ export async function originFlowPoll(ctx: Ctx): Promise<Response> {
       : redirect("/settings/origins?error=state");
   }
   const { status, detail } = polled.value;
+  const then = thenOf(ctx.url.searchParams.get("then"));
   if (wantsJson) return Response.json({ status, detail });
-  if (status === "done") return redirect("/settings/origins?connected=1");
+  if (status === "done")
+    return redirect(`${then ?? "/settings/origins"}?connected=1`);
   if (status === "failed")
     return redirect(
       `/settings/origins?error=${encodeURIComponent(detail.slice(0, 120))}`,
     );
-  return redirect(`/settings/origins/flows/${ctx.params.id ?? ""}`);
+  return redirect(
+    `/settings/origins/flows/${ctx.params.id ?? ""}${then === undefined ? "" : `?${thenQuery(then)}`}`,
+  );
 }
 
 // ---- one origin ----
@@ -1200,12 +1224,13 @@ export async function originDisconnect(ctx: Ctx): Promise<Response> {
     ctx.auth.user,
     ctx.params.id ?? "",
   );
+  const back = thenOf(field(form, "then")) ?? "/settings/origins";
   if (!gone.ok)
-    return flashTo(ctx, "/settings/origins", {
+    return flashTo(ctx, back, {
       tone: "danger",
       message: "No such origin.",
     });
-  return flashTo(ctx, "/settings/origins", {
+  return flashTo(ctx, back, {
     message: gone.value.revokedUpstream
       ? "Disconnected, and the grant was revoked upstream."
       : "Disconnected. Revoke the token on the origin too if you want it dead there.",

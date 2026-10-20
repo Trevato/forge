@@ -460,6 +460,50 @@ repository), the agent — is refused in words before the repository exists;
 what is left for the job is the network. A clone that fails removes the
 empty repository it made, so the name is free to try again.
 
+**One click from GitHub.** `/migrate` carries its own "Your accounts"
+card: **Connect GitHub** runs the device flow above (no token pasted; it
+needs the forge's GitHub application, `FORGE_GITHUB_CLIENT_ID`) and comes
+back to `/migrate`, and each connected account has a **Disconnect** that
+comes back too. The return is the fixed word `then=migrate`, never a path a
+form can choose. Every repository the account can see (owned and its orgs')
+is a row — name, a `private` mark, its size as the origin reports it (KiB,
+shown in KiB/MiB/GiB), its description — filtered by `?q=` on the server and
+live as you type. A row's button is the form's submitter (`name="pick"`), so
+one click migrates it with the destination and crew fields as they stand;
+the first agent is picked by default, "Nobody" is one choice away.
+
+**The branch the app lives on.** A fork often keeps the upstream's tree on
+`main` and the person's app on a branch of their own, so the source's default
+is not always the app. A row's **Branches** link (`/migrate?source=…&branches=1`) draws
+that repository's branches, each with its last commit — subject, author,
+date — read through the origin's API (the first 30 branches' commits; the
+rest by name), remembered a minute per account and repository so a reload or
+a refused form spends nothing at the origin; a plain visit asks for none of it. The one selected is the branch whose last commit is the
+person's and newest (an account login the origin resolved, a GitHub noreply
+address with their login, their forge email, or an author name that is one
+of their logins), else the source's default. A one-click row with no branch
+chosen gets the same rule in the job, over the clone's own tips
+(`git for-each-ref`) and the origin's logins (`origins/work-branch.ts`).
+That branch becomes the default branch here, the job says which and why,
+and the crew's brief names it: start from it, open the pull against it.
+
+**The conversations come too** — from a connected origin, not a pasted URL
+(`origins/carry.ts`). Labels; every issue, open and closed, with its comments
+and labels, under its original number; and the open pull requests as pulls
+here, on the branches the clone brought — native ones (`origin_head_repo`
+cleared), so they review and merge like any other. A pull whose head lived
+in a fork is a stranger's code: its head is fetched into `refs/pull/<n>/head`
+(the forge's own namespace — no push event, no branch the clone brought is
+touched), it keeps `origin_head_repo`, and its check and preview wait for a
+writer's **Approve to run here**, exactly as a mirror's do. The job's message
+says how many wait. Closed pulls stay behind: their work is in
+the history or was turned down. Each body opens with
+`> Migrated from [owner/name#n](<original>) by @login on GitHub.` — the link
+only when it is http(s), the login reduced to login characters — and the
+author also travels in `origin_author`, so every page marks it as theirs on
+the origin. One `repo.imported` event (`via: "migrate"`) says so, not one per
+row. A refusal part-way keeps what arrived and says so in the job's detail.
+
 **Put a crew on it.** Name an agent and, after the clone, the same job puts
 it on the crew, makes the repository an app, sets it autonomous when asked,
 and `tell`s the crew one thing: make it run here. The brief is the
@@ -486,8 +530,9 @@ the person still presses Migrate (POST, same-origin checked).
 
 The clone runs as a job in the mirror's registry (`origins/jobs.ts`, kind
 `migrate`, owned by whoever started it — anyone else's is `not_found`).
-`/migrate/jobs/:job` refreshes until it stops, then lands on the repository
-with what happened as the flash.
+`/migrate/jobs/:job` follows its stages — clone, issues, pull requests, the
+app and the crew's first run — and then lands on the repository, which is
+the app's page, with what happened as the flash.
 
 ## API
 
@@ -536,7 +581,7 @@ GET    /api/v1/user/pins  PUT/DELETE /api/v1/user/pins/:owner/:name
 
 POST   /api/v1/migrate                         {source: {url} | {originId, fullName},
                                                 owner?, name?, visibility?,
-                                                crew?: {agent, autonomous}}
+                                                branch?, crew?: {agent, autonomous}}
                                                → 202 {repo, job}
 GET    /api/v1/migrate/:job                    poll one migration (its starter only)
 GET    /api/v1/migrate/:job/stream             SSE: migrate.<stage>, ends on done
@@ -551,7 +596,7 @@ credential, which is the same authority as spending it. Repo-level sync and
 pins take the ordinary `rw` floor; so does a migration from a URL, while one
 from an origin takes `admin` — it spends the origin's credential. Its
 refusals are 422 `{ error, message }`: `invalid_url`, `no_such_origin`,
-`unreachable`, `no_such_agent`, and the new-repository codes (`name_taken`,
+`unreachable`, `no_such_agent`, `invalid_branch`, and the new-repository codes (`name_taken`,
 `invalid_name`, `forbidden_owner`).
 
 A contribute answers 201 with

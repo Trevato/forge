@@ -23,6 +23,13 @@ import {
   migrateUrl,
 } from "../src/actions/migrate.ts";
 import { createAgent, listCrew } from "../src/actions/crew.ts";
+import { connectOrigin } from "../src/actions/origins.ts";
+import { getPull, pullStatus } from "../src/core/pulls.ts";
+import { pullMayRun } from "../src/core/pull_trust.ts";
+import { approveHere } from "../src/actions/pulls.ts";
+import { labelsFor, listComments } from "../src/core/issues.ts";
+import { backlink } from "../src/origins/carry.ts";
+import { formatKib, matchesFilter } from "../src/web/pages/migrate.ts";
 import {
   commitToBranch,
   createRepo,
@@ -39,7 +46,12 @@ import { createToken } from "../src/core/tokens.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { advance, createJob, settled } from "../src/origins/jobs.ts";
 import { forgetProviders } from "../src/origins/providers/index.ts";
-import { newFakeState, serveFakeForge, type FakeForge } from "./fake-origin.ts";
+import {
+  newFakeOAuth,
+  newFakeState,
+  serveFakeForge,
+  type FakeForge,
+} from "./fake-origin.ts";
 import { gitClientEnv } from "./helpers/git-client.ts";
 import { prefill } from "../src/web/pages/migrate-prefill.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -98,6 +110,7 @@ describe("migrate", () => {
   let bobToken = "";
   let fixtureUrl = "";
   let originId = "";
+  let octo: User;
   // octo's credential at the "upstream": a token, since a password would
   // cost an argon2 verify on every git request.
   let upstreamSecret = "";
@@ -185,7 +198,7 @@ describe("migrate", () => {
     // request here rides a session or a token.
     alice = await person("alice", true);
     bob = await person("bob");
-    const octo = await person("octo");
+    octo = await person("octo");
     upstreamSecret = createToken(app.db, octo.id, "upstream", "rw").token;
     aliceCookie = cookieOf(alice);
     bobCookie = cookieOf(bob);
@@ -517,6 +530,479 @@ describe("migrate", () => {
     );
   });
 
+  test("one click from GitHub: the repository, 3 issues, 1 open pull request and a crew run on the app", async () => {
+    // Upstream: a private repository with a branch an open pull stands on.
+    const made = await createRepo(app, octo, {
+      name: "gadgets",
+      visibility: "private",
+    });
+    if (!made.ok) throw new Error(made.error);
+    for (const [branch, path] of [
+      ["main", "README.md"],
+      ["fix-typo", "typo.txt"],
+    ] as const) {
+      const done = await commitToBranch(app, octo, made.value, {
+        branch,
+        message: `on ${branch}`,
+        files: [{ path, content: "x\n" }],
+      });
+      if (!done.ok) throw new Error(String(done.error));
+    }
+    const upstreamDir = repoDir(app.reposRoot, "octo", "gadgets");
+    const headSha = (await git(["rev-parse", "fix-typo"], upstreamDir)).out;
+
+    // A fake GitHub API in front of it, seeded: 3 issues (one closed, one
+    // with a comment), 1 open pull request, and 1 closed one that stays.
+    const state = newFakeState("github", "octo", upstreamSecret);
+    state.repos.push({
+      id: 501,
+      fullName: "octo/gadgets",
+      description: "small machines",
+      cloneUrl: `${base}/octo/gadgets.git`,
+      htmlUrl: "https://github.com/octo/gadgets",
+      defaultBranch: "main",
+      private: true,
+      sizeKb: 2048,
+    });
+    state.labels.set("octo/gadgets", [{ id: 9, name: "bug", color: "d73a4a" }]);
+    state.issues.set("octo/gadgets", [
+      { id: 601, number: 1, title: "Crashes on start", body: "Stack trace.", user: "mona", labels: ["bug"], commentCount: 1 },
+      { id: 602, number: 2, title: "An old thing", user: "hubot", state: "closed", closedAt: "2026-01-02T00:00:00Z" },
+      { id: 603, number: 3, title: "Write the docs", user: "mona" },
+      {
+        id: 604,
+        number: 4,
+        title: "Fix the typo",
+        body: "One letter.",
+        user: "octocat",
+        pull: { base: "main", head: "fix-typo", headRepo: "octo/gadgets", headSha },
+      },
+      {
+        id: 605,
+        number: 5,
+        title: "Turned down",
+        user: "octocat",
+        state: "closed",
+        pull: { base: "main", head: "nope", headRepo: "octo/gadgets" },
+      },
+    ]);
+    state.comments.set("octo/gadgets", [
+      { id: 701, issueNumber: 1, body: "Same here.", user: "hubot" },
+    ]);
+    const github = serveFakeForge(state);
+    try {
+      forgetProviders(dataDir);
+      const connected = await connectOrigin(app, alice, {
+        host: github.url,
+        kind: "github",
+        token: upstreamSecret,
+      });
+      if (!connected.ok) throw new Error(connected.error);
+      const agent = await createAgent(app, alice, {
+        username: "mover",
+        model: "",
+        brief: "Moves things in.",
+      });
+      expect(agent.ok).toBe(true);
+
+      // The picker: a row, marked private, sized, with its one button —
+      // and the account it came through can be disconnected from here.
+      const html = await (await browser(aliceCookie, "/migrate")).text();
+      const row = new RegExp(`name="pick"\\s+value="(${connected.value.id}/octo/gadgets)"`).exec(html);
+      expect(row).not.toBeNull();
+      expect(html).toContain("2.0 MiB");
+      expect(html).toContain("Migrate with the crew");
+      expect(html).toContain(`action="/settings/origins/${connected.value.id}/delete"`);
+      expect(html).toContain('name="then" value="migrate"');
+
+      // The filter narrows the rows on the server too (no script needed).
+      const filtered = await (await browser(aliceCookie, "/migrate?q=nothing-like-it")).text();
+      expect(filtered).not.toContain('value="' + row![1] + '"');
+
+      // One click: the row's button and the form's fields as they stood.
+      const posted = await browser(aliceCookie, "/migrate", {
+        pick: row![1]!,
+        url: "",
+        owner: "alice",
+        name: "",
+        visibility: "private",
+        agent: "mover",
+      });
+      expect(posted.status).toBe(303);
+      const where = posted.headers.get("location")!;
+      const job = await settled(where.split("/").pop()!);
+      expect(job?.error).toBeUndefined();
+      expect(job?.stage).toBe("done");
+      expect(job?.detail).toContain("3 issues, 1 open pull request, 1 comment");
+      // It ends at the app: the repository's page is the app's.
+      const landed = await browser(aliceCookie, where);
+      expect(landed.headers.get("location")).toBe("/alice/gadgets");
+
+      const repo = getRepo(app.db, "alice", "gadgets")!;
+      expect(repo.origin).toBeNull();
+      expect(getAppByRepo(app.db, repo.id)).toBeDefined();
+
+      // The issues, open and closed, numbered as they were, by their
+      // GitHub authors, each linking back.
+      const carried = listIssues(app.db, repo.id, { kind: "issue", state: "all" })
+        .filter((i) => i.originAuthor !== null)
+        .sort((a, b) => a.number - b.number);
+      expect(carried.map((i) => [i.number, i.state, i.originAuthor])).toEqual([
+        [1, "open", "mona"],
+        [2, "closed", "hubot"],
+        [3, "open", "mona"],
+      ]);
+      expect(carried[0]!.body).toStartWith(
+        "> Migrated from [octo/gadgets#1](",
+      );
+      expect(carried[0]!.body).toContain("by @mona on GitHub.");
+      expect(carried[0]!.body).toContain("Stack trace.");
+      expect(labelsFor(app.db, carried[0]!.id).map((l) => l.name)).toEqual(["bug"]);
+      const comments = listComments(app.db, carried[0]!.id);
+      expect(comments.map((c) => [c.originAuthor, c.body])).toEqual([
+        ["hubot", "Same here."],
+      ]);
+
+      // One pull request — the open one — native here, on its branch.
+      const pulls = listIssues(app.db, repo.id, { kind: "pull", state: "all" });
+      expect(pulls.map((p) => p.number)).toEqual([4]);
+      const pull = getPull(app.db, repo.id, 4)!;
+      expect(pull.headBranch).toBe("fix-typo");
+      expect(pull.originHeadRepo).toBeNull();
+      expect(pull.body).toContain("by @octocat on GitHub.");
+      const dir = repoDir(app.reposRoot, "alice", "gadgets");
+      expect((await git(["rev-parse", "fix-typo"], dir)).out).toBe(headSha);
+
+      // The crew's brief is the next number, assigned to the agent: the
+      // durable event the dispatcher (`crew/dispatch.ts`, started by
+      // main.ts) queues the first run from.
+      const brief = listIssues(app.db, repo.id, { kind: "issue", state: "open" })
+        .find((i) => i.originAuthor === null)!;
+      expect(brief.number).toBe(5);
+      expect(brief.assigneeName).toBe("mover");
+      const assigned = app.db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM event WHERE repo_id = ?1 AND kind = 'issue.assigned'",
+        )
+        .all(repo.id)
+        .map((e) => JSON.parse(e.payload) as { number: number; agent?: boolean });
+      expect(assigned).toContainEqual(
+        expect.objectContaining({ number: 5, agent: true }),
+      );
+      // And the import said so once, not once per row.
+      const imported = app.db
+        .query<{ n: number }, [string]>(
+          "SELECT count(*) AS n FROM event WHERE repo_id = ?1 AND kind = 'repo.imported'",
+        )
+        .get(repo.id);
+      expect(imported?.n).toBe(1);
+    } finally {
+      github.stop();
+    }
+  });
+
+  test("a pull opened from a fork arrives with its head under refs/pull/<n>/head, waiting for a writer to let it run", async () => {
+    const made = await createRepo(app, octo, { name: "forked-pulls", visibility: "private" });
+    if (!made.ok) throw new Error(made.error);
+    for (const branch of ["main", "their-work"]) {
+      const done = await commitToBranch(app, octo, made.value, {
+        branch,
+        message: `on ${branch}`,
+        files: [{ path: `${branch}.txt`, content: "x\n" }],
+      });
+      if (!done.ok) throw new Error(String(done.error));
+    }
+    // The head lives only where GitHub keeps it: refs/pull/<n>/head.
+    const upstream = repoDir(app.reposRoot, "octo", "forked-pulls");
+    const sha = (await git(["rev-parse", "their-work"], upstream)).out;
+    expect((await git(["update-ref", "refs/pull/6/head", sha], upstream)).code).toBe(0);
+    expect((await git(["branch", "-D", "their-work"], upstream)).code).toBe(0);
+    // A branch of the source's own that happens to be called pull/6.
+    const mainSha = (await git(["rev-parse", "main"], upstream)).out;
+    expect((await git(["branch", "pull/6", "main"], upstream)).code).toBe(0);
+
+    const state = newFakeState("github", "octo", upstreamSecret);
+    state.repos.push({
+      id: 801,
+      fullName: "octo/forked-pulls",
+      cloneUrl: `${base}/octo/forked-pulls.git`,
+      defaultBranch: "main",
+      private: true,
+    });
+    state.issues.set("octo/forked-pulls", [
+      {
+        id: 806,
+        number: 6,
+        title: "From a fork",
+        user: "stranger",
+        pull: { base: "main", head: "their-work", headRepo: "stranger/forked-pulls", headSha: sha },
+      },
+    ]);
+    const github = serveFakeForge(state);
+    try {
+      forgetProviders(dataDir);
+      const connected = await connectOrigin(app, alice, {
+        host: github.url,
+        kind: "github",
+        token: upstreamSecret,
+      });
+      if (!connected.ok) throw new Error(connected.error);
+      const job = await migrate(alice, {
+        source: { originId: connected.value.id, fullName: "octo/forked-pulls" },
+      });
+      expect(job?.error).toBeUndefined();
+      expect(job?.detail).toContain(
+        "1 open pull request (1 from forks, waiting for your approval to run here)",
+      );
+      const repo = getRepo(app.db, "alice", "forked-pulls")!;
+      const pull = getPull(app.db, repo.id, 6)!;
+      // Still the stranger's: the head is where the forge keeps pull heads,
+      // the source's own pull/6 branch is untouched, and no push event
+      // carried the stranger's head to a check or a preview.
+      expect(pull.originHeadRepo).toBe("stranger/forked-pulls");
+      const dir = repoDir(app.reposRoot, "alice", "forked-pulls");
+      expect((await git(["rev-parse", "refs/pull/6/head"], dir)).out).toBe(sha);
+      expect((await git(["rev-parse", "refs/heads/pull/6"], dir)).out).toBe(mainSha);
+      const pushed = app.db
+        .query<{ payload: string }, [string]>(
+          "SELECT payload FROM event WHERE repo_id = ?1 AND kind = 'push'",
+        )
+        .all(repo.id)
+        .map((e) => JSON.stringify(JSON.parse(e.payload)));
+      expect(pushed.length).toBe(1);
+      expect(pushed[0]).not.toContain(sha);
+      expect(pushed[0]).not.toContain("refs/pull/");
+      // It runs only once a writer approves this head.
+      const status = await pullStatus(dir, pull);
+      expect(status.headOid).toBe(sha);
+      expect(pullMayRun(app.db, repo, pull, sha)).toBe(false);
+      const approved = await approveHere(app, alice, repo, pull);
+      expect(approved.ok).toBe(true);
+      expect(pullMayRun(app.db, repo, pull, sha)).toBe(true);
+    } finally {
+      github.stop();
+    }
+  });
+
+  test("the app's branch: the person's newest beats the source's default, by URL and from GitHub, and the brief names it", async () => {
+    // trevato/arm's shape: `main` is the upstream's tree (and the newest
+    // commit), `workbench` is the person's app, ahead of it.
+    const upstreamer = await person("upstreamer");
+    const made = await createRepo(app, upstreamer, { name: "arm", visibility: "public" });
+    if (!made.ok) throw new Error(made.error);
+    const put = async (user: User, branch: string, message: string) => {
+      const done = await commitToBranch(app, user, made.value, {
+        branch,
+        message,
+        files: [{ path: `${message}.txt`, content: "x\n" }],
+      });
+      if (!done.ok) throw new Error(String(done.error));
+    };
+    // Which tip is newer is the rule's own test (work-branch.test.ts);
+    // here, whose it is decides.
+    await put(upstreamer, "main", "upstream-start");
+    await put(alice, "workbench", "the-app");
+    await put(upstreamer, "main", "upstream-later");
+    const upstream = repoDir(app.reposRoot, "upstreamer", "arm");
+    const mainSha = (await git(["rev-parse", "main"], upstream)).out;
+    const workSha = (await git(["rev-parse", "workbench"], upstream)).out;
+    const agent = await createAgent(app, alice, { username: "armer", model: "", brief: "Moves things in." });
+    expect(agent.ok).toBe(true);
+    const briefOf = (owner: string, name: string): string =>
+      listIssues(app.db, getRepo(app.db, owner, name)!.id, { kind: "issue", state: "open" })
+        .find((i) => i.title === `Make ${name} run here`)!.body;
+
+    // By URL, the clone's own authors: alice's branch, not the source's main.
+    const byUrl = await migrate(alice, {
+      source: { url: `${base}/upstreamer/arm.git` },
+      name: "arm-url",
+      crew: { agent: "armer", autonomous: false },
+    });
+    expect(byUrl?.error).toBeUndefined();
+    expect(byUrl?.detail).toContain("Working on workbench, the branch with your newest commits");
+    expect(getRepo(app.db, "alice", "arm-url")!.defaultBranch).toBe("workbench");
+    expect(briefOf("alice", "arm-url")).toContain("The app is on the branch `workbench`");
+    expect(briefOf("alice", "arm-url")).toContain("open your pull against it");
+    // Someone with no commits there keeps the source's default.
+    const theirs = await migrate(bob, { source: { url: `${base}/upstreamer/arm.git` }, name: "arm-bob" });
+    expect(getRepo(app.db, "bob", "arm-bob")!.defaultBranch).toBe("main");
+    expect(theirs?.detail).toContain("Working on main, the source's default branch");
+    // A branch that is not one git would take is refused before anything exists.
+    const bad = await migrateRepo(app, alice, {
+      source: { url: `${base}/upstreamer/arm.git` },
+      name: "arm-bad",
+      branch: "--upload-pack=x",
+    });
+    expect(bad.ok ? "" : bad.error).toBe("invalid_branch");
+    expect(getRepo(app.db, "alice", "arm-bad")).toBeUndefined();
+
+    // From GitHub: the origin says whose each last commit is by login.
+    const state = newFakeState("github", "octo", upstreamSecret);
+    state.repos.push({
+      id: 901,
+      fullName: "octo/arm",
+      cloneUrl: `${base}/upstreamer/arm.git`,
+      defaultBranch: "main",
+      private: true,
+    });
+    state.branches.set("octo/arm", [
+      { name: "main", sha: mainSha },
+      { name: "workbench", sha: workSha },
+    ]);
+    state.commits.set("octo/arm", [
+      { sha: workSha, message: "<b>the app</b>\n\nbody", authorName: "Octo Cat", authorEmail: "octo@laptop.invalid", login: "octo", date: "2026-10-19T12:00:00Z" },
+      { sha: mainSha, message: "upstream later", authorName: "Up Streamer", login: "upstreamer", date: "2026-10-20T09:00:00Z" },
+    ]);
+    const github = serveFakeForge(state);
+    try {
+      forgetProviders(dataDir);
+      const connected = await connectOrigin(app, alice, { host: github.url, kind: "github", token: upstreamSecret });
+      if (!connected.ok) throw new Error(connected.error);
+      const value = `${connected.value.id}/octo/arm`;
+
+      // The row links to its branches; the list shows each last commit,
+      // escaped, newest first, and selects the person's.
+      const listing = await (await browser(aliceCookie, "/migrate")).text();
+      expect(listing).not.toContain('id="migrate-branches"');
+      expect(listing).toContain(`href="/migrate?source=${encodeURIComponent(value)}&amp;branches=1#migrate-branches"`);
+      // A plain visit with the row selected asks the origin for nothing.
+      const asking = () => state.requests.filter((r) => r.path.endsWith("/branches") || r.path.endsWith("/commits")).length;
+      const before = asking();
+      const plain = await (await browser(aliceCookie, `/migrate?${new URLSearchParams({ source: value })}`)).text();
+      expect(plain).not.toContain('id="migrate-branches"');
+      expect(asking()).toBe(before);
+      const html = await (await browser(aliceCookie, `/migrate?${new URLSearchParams({ source: value, branches: "1" })}`)).text();
+      // One listing and one commit per branch; a reload within the minute costs none.
+      expect(asking()).toBe(before + 3);
+      await browser(aliceCookie, `/migrate?${new URLSearchParams({ source: value, branches: "1" })}`);
+      expect(asking()).toBe(before + 3);
+      const rows = [...html.matchAll(/data-branch="([^"]+)"/g)].map((m) => m[1]);
+      expect(rows).toEqual(["main", "workbench"]);
+      expect(html).toMatch(/value="workbench"\s+checked/);
+      expect(html).not.toMatch(/value="main"\s+checked/);
+      expect(html).toContain("&lt;b&gt;the app&lt;/b&gt;");
+      expect(html).not.toContain("<b>the app</b>");
+      expect(html).toMatch(/octo ·\s+<time datetime="2026-10-19T12:00:00(\.000)?Z">2026-10-19<\/time>/);
+      expect(html).toContain("default there");
+      // Asked for, another branch is the one selected.
+      const asked = await (await browser(aliceCookie, `/migrate?${new URLSearchParams({ source: value, branch: "main" })}`)).text();
+      expect(asked).toMatch(/value="main"\s+checked/);
+
+      // The Migrate button carries the branch chosen.
+      const chosen = await browser(aliceCookie, "/migrate", {
+        source: value, branch: "main", url: "", owner: "alice", name: "arm-main", visibility: "private", agent: "armer",
+      });
+      expect(chosen.status).toBe(303);
+      const chosenJob = await settled(chosen.headers.get("location")!.split("/").pop()!);
+      expect(chosenJob?.detail).toContain("Working on main, the branch picked");
+      expect(getRepo(app.db, "alice", "arm-main")!.defaultBranch).toBe("main");
+      expect(briefOf("alice", "arm-main")).toContain("The app is on the branch `main` — the branch the person who migrated it picked");
+
+      // Another row's button ignores a branch drawn for a different row:
+      // one click migrates by the rule — here, by the origin's login alone,
+      // since the clone's author (alice) is not the person connected (octo).
+      const oneClick = await browser(aliceCookie, "/migrate", {
+        pick: value, source: "elsewhere/x/y", branch: "main", url: "", owner: "alice", name: "arm-click", visibility: "private", agent: "armer",
+      });
+      expect(oneClick.status).toBe(303);
+      const clickJob = await settled(oneClick.headers.get("location")!.split("/").pop()!);
+      expect(clickJob?.error).toBeUndefined();
+      expect(getRepo(app.db, "alice", "arm-click")!.defaultBranch).toBe("workbench");
+      expect(briefOf("alice", "arm-click")).toContain("The app is on the branch `workbench` — the branch with the newest commits of the person who migrated it");
+    } finally {
+      github.stop();
+    }
+  }, 30_000);
+
+  test("Connect GitHub from /migrate comes back to /migrate, and so does Disconnect; nothing else can be named", async () => {
+    const state = newFakeState("github", "bobby", "bob-gh-token");
+    const oauth = newFakeOAuth("migrate-client");
+    state.oauth = oauth;
+    const github = serveFakeForge(state);
+    process.env.FORGE_GITHUB_CLIENT_ID = "migrate-client";
+    try {
+      forgetProviders(dataDir);
+      const page = await (await browser(bobCookie, "/migrate")).text();
+      expect(page).toContain('action="/settings/origins/oauth"');
+      expect(page).toContain("Connect GitHub");
+      // One filled button on the page: Migrate. Connect is an outline.
+      expect(page.match(/data-variant="primary"/g)?.length).toBe(1);
+      expect(page).toMatch(/data-variant="outline"[^>]*>\s*(<svg[\s\S]*?<\/svg>)?\s*Connect GitHub/);
+
+      const started = await browser(bobCookie, "/settings/origins/oauth", {
+        kind: "github",
+        host: github.url,
+        then: "migrate",
+      });
+      expect(started.status).toBe(303);
+      const flowPage = started.headers.get("location")!;
+      expect(flowPage).toMatch(/^\/settings\/origins\/flows\/[^?]+\?then=migrate$/);
+      const waiting = await (await browser(bobCookie, flowPage)).text();
+      expect(waiting).toContain("WXYZ-1234");
+      expect(waiting).toContain("/poll?then=migrate");
+
+      oauth.approved = true;
+      const flowId = flowPage.split("/").pop()!.split("?")[0]!;
+      const polled = await browser(
+        bobCookie,
+        `/settings/origins/flows/${flowId}/poll?then=migrate`,
+        {},
+      );
+      expect(polled.headers.get("location")).toBe("/migrate?connected=1");
+      const origin = listOrigins(app.db, bob.id).find((o) => o.kind === "github")!;
+      expect(origin).toBeDefined();
+
+      // Connected: the page lists the account and offers Disconnect, not Connect.
+      const after = await (await browser(bobCookie, "/migrate?connected=1")).text();
+      expect(after).toContain('id="migrate-connected"');
+      expect(after).toContain(`action="/settings/origins/${origin.id}/delete"`);
+      expect(after).not.toContain('action="/settings/origins/oauth"');
+
+      // `then` is a word, not an address: anything else goes home.
+      const steered = await browser(bobCookie, "/settings/origins/oauth", {
+        kind: "github",
+        host: github.url,
+        then: "https://evil.test/",
+      });
+      expect(steered.headers.get("location")).not.toContain("then=");
+
+      const gone = await browser(bobCookie, `/settings/origins/${origin.id}/delete`, {
+        then: "migrate",
+      });
+      expect(gone.status).toBe(303);
+      expect(gone.headers.get("location")).toBe("/migrate");
+      expect(listOrigins(app.db, bob.id).some((o) => o.id === origin.id)).toBe(false);
+    } finally {
+      delete process.env.FORGE_GITHUB_CLIENT_ID;
+      github.stop();
+    }
+  });
+
+  test("the picker's pieces: sizes in binary units, a filter on name or description, a backlink that cannot be steered", () => {
+    expect(formatKib(0)).toBe("");
+    expect(formatKib(512)).toBe("512 KiB");
+    expect(formatKib(1536)).toBe("1.5 MiB");
+    expect(formatKib(20 * 1024)).toBe("20 MiB");
+    expect(formatKib(3 * 1024 * 1024)).toBe("3.0 GiB");
+    expect(matchesFilter({ fullName: "octo/Gadgets", description: "" }, "gadg")).toBe(true);
+    expect(matchesFilter({ fullName: "octo/x", description: "Small machines" }, "MACHINE")).toBe(true);
+    expect(matchesFilter({ fullName: "octo/x", description: "" }, "y")).toBe(false);
+
+    expect(
+      backlink({ number: 7, author: "mona", htmlUrl: "https://github.com/o/r/issues/7" }, "o/r", "GitHub"),
+    ).toBe("> Migrated from [o/r#7](https://github.com/o/r/issues/7) by @mona on GitHub.");
+    // A link that is not http(s) is named, not linked; a login cannot
+    // smuggle markdown or a mention of someone else.
+    const hostile = backlink(
+      { number: 7, author: "x](javascript:alert(1)) @admin", htmlUrl: "javascript:alert(1)" },
+      "o/r",
+      "GitHub",
+    );
+    expect(hostile).not.toContain("javascript:");
+    expect(hostile).not.toContain("](");
+    expect(hostile).toBe("> Migrated from o/r#7 by @xjavascriptalert1admin on GitHub.");
+  });
+
   test("the page: the form, the plus menu, the job, and who may see it", async () => {
     const anonymous = await browser("", "/migrate");
     expect(anonymous.status).toBe(303);
@@ -525,7 +1011,8 @@ describe("migrate", () => {
     const html = await (await browser(aliceCookie, "/migrate")).text();
     expect(html).toContain('action="/migrate"');
     expect(html).toContain('name="url"');
-    expect(html).toContain('name="source"');
+    // Each repository is a row whose button is the form's submitter.
+    expect(html).toMatch(/name="pick"\s+value="[^"]+\/octo\/secret-widgets"/);
     expect(html).toContain("octo/secret-widgets");
     expect(html).toContain("Put a crew on it");
     expect(html).toContain('name="agent"');
@@ -627,7 +1114,8 @@ describe("migrate", () => {
     const hit = await get(
       new URLSearchParams({ from: `${host}/octo/secret-widgets`, crew: "porter" }).toString(),
     );
-    expect(hit).toMatch(/<option\s+value="[^"]+\/octo\/secret-widgets"[^>]*selected/);
+    expect(hit).toMatch(/name="source" value="[^"]+\/octo\/secret-widgets"/);
+    expect(hit).toMatch(/aria-current="true"/);
     expect(hit).toMatch(/<option[^>]*value="porter"[^>]*selected|selected[^>]*value="porter"/);
     expect(hit).not.toContain("prefill-unmatched");
 
@@ -641,7 +1129,8 @@ describe("migrate", () => {
     expect(miss).toContain("from=other.example/octo/secret-widgets");
     expect(miss).not.toContain("<script>alert(1)");
     expect(miss).toContain("&lt;script&gt;");
-    expect(miss).not.toMatch(/<option[^>]*value="[^"]+"[^>]*selected[^>]*>\s*octo/);
+    expect(miss).not.toContain('name="source" value=');
+    expect(miss).not.toContain('aria-current="true"');
 
     // A link starts nothing: no repository, no job.
     expect(getRepo(app.db, "alice", "secret-widgets")?.id).toBe(already);

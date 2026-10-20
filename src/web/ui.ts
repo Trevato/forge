@@ -829,6 +829,11 @@ export interface RowOptions {
   /** The row joins `j`/`k` keyboard traversal. */
   nav?: boolean;
   titleAttr?: string;
+  /** `data-*` hooks on the row's `<li>` (a script's filter, a test's
+   * handle). Keys are lower-case words and dashes; others are dropped. */
+  data?: Readonly<Record<string, string>>;
+  /** The row is the one chosen (`aria-current="true"`). */
+  current?: boolean;
 }
 
 /** One list row. `<a>` when it navigates, `<div>` when it holds its own
@@ -851,7 +856,10 @@ export function row(o: RowOptions): Html {
   const attrs = html`class="row"
   ${o.state ? html`data-state="${o.state}"` : null}
   ${o.nav ? raw('data-nav tabindex="-1"') : null}`;
-  return html`<li>
+  const data = Object.entries(o.data ?? {})
+    .filter(([key]) => /^[a-z][a-z-]*$/.test(key))
+    .map(([key, value]) => html` data-${raw(key)}="${value}"`);
+  return html`<li${data}${o.current ? raw(' aria-current="true"') : null}>
     ${o.href !== undefined
       ? html`<a href="${o.href}" ${attrs}>${inner}</a>`
       : html`<div ${attrs}>${inner}</div>`}

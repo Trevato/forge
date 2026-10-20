@@ -4,6 +4,15 @@
  * pasted URL, lands under an owner and a name you choose, and — when you
  * put a crew on it — becomes an app the crew is already making run.
  *
+ * GitHub connects from here too ("Connect GitHub" runs the origins'
+ * device flow and comes back), and is disconnected from here. Each of your
+ * repositories there is a row; one click on a row migrates it with the crew
+ * picked below — issues and open pull requests included.
+ *
+ * A row's Branches link draws that repository's branches with their last
+ * commits and selects the one the app most likely lives on — the person's
+ * newest (`origins/work-branch.ts`); the Migrate button carries the choice.
+ *
  * Every mutation is `migrateRepo`; the page only puts its answer into words.
  */
 
@@ -17,7 +26,13 @@ import {
 } from "../../actions/migrate.ts";
 import { listRemoteRepos, listUserOrigins } from "../../actions/origins.ts";
 import { accessAllows, listOrgsForUser, orgAccess } from "../../core/orgs.ts";
-import type { OriginRepoRow } from "../../core/origins.ts";
+import { getOriginFor, type OriginRepoRow } from "../../core/origins.ts";
+import { providerForOrigin } from "../../origins/credential.ts";
+import {
+  cachedRemoteTips,
+  pickWorkBranch,
+  type BranchTip,
+} from "../../origins/work-branch.ts";
 import { scopeAllows } from "../../core/tokens.ts";
 import type { Ctx } from "../../http/context.ts";
 import type { MirrorJob, MirrorStage } from "../../origins/jobs.ts";
@@ -25,42 +40,307 @@ import { notFoundPage, pageHead, signInFirst } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
 import { html, raw, type Html } from "../html.ts";
 import { flashTo, page, redirect } from "../layout.ts";
-import { btn, card, icon, selectField, field as formField } from "../ui.ts";
+import {
+  badge,
+  btn,
+  card,
+  icon,
+  row,
+  selectField,
+  field as formField,
+} from "../ui.ts";
 import { prefill, originHost } from "./migrate-prefill.ts";
-import { hostLabel } from "./origins.ts";
+import { githubConnectable, hostLabel } from "./origins.ts";
 
 interface MigrateValues {
   source: string;
+  /** The picker's filter: rows whose name or description holds it. */
+  q: string;
   url: string;
   owner: string;
   name: string;
   visibility: string;
   agent: string;
   autonomous: boolean;
+  /** The branch asked for; "" lets the work-branch rule choose. */
+  branch: string;
+  /** Draw the picked repository's branches: Branches was pressed, or one was chosen. */
+  showBranches: boolean;
+}
+
+/** The picked repository's branches, and the one selected. */
+interface BranchChoices {
+  readonly fullName: string;
+  readonly sourceDefault: string;
+  readonly tips: readonly BranchTip[];
+  readonly selected: string | undefined;
 }
 
 /** An origin's repositories, for the picker; an origin that cannot answer is left out. */
 interface OriginChoices {
   readonly label: string;
   readonly id: string;
+  readonly kind: string;
   readonly host: string;
   readonly repos: readonly OriginRepoRow[];
 }
 
+/** Every origin you connected; one that cannot list has no rows. */
 async function originChoices(ctx: Ctx): Promise<OriginChoices[]> {
   const user = ctx.auth.user!;
   const out: OriginChoices[] = [];
   for (const origin of listUserOrigins(ctx.app, user)) {
     const listed = await listRemoteRepos(ctx.app, user, origin.id);
-    if (!listed.ok || listed.value.length === 0) continue;
     out.push({
       id: origin.id,
+      kind: origin.kind,
       host: originHost(origin.webUrl),
       label: `${origin.login} @ ${hostLabel(origin.webUrl)}`,
-      repos: listed.value,
+      repos: listed.ok ? listed.value : [],
     });
   }
   return out;
+}
+
+/**
+ * The branches of the repository `source` names, when it is one of the
+ * picker's rows: read through its origin, with the selection the work-branch
+ * rule makes — or the branch asked for, when it is one of them.
+ */
+async function branchChoices(
+  ctx: Ctx,
+  origins: readonly OriginChoices[],
+  source: string,
+  asked: string,
+): Promise<BranchChoices | undefined> {
+  const picked = source === "" ? undefined : parsePick(source);
+  if (picked === undefined || "url" in picked) return undefined;
+  const row = origins
+    .find((o) => o.id === picked.originId)
+    ?.repos.find((r) => r.fullName === picked.fullName);
+  const user = ctx.auth.user!;
+  const origin = getOriginFor(ctx.app.db, user.id, picked.originId);
+  if (row === undefined || origin === undefined) return undefined;
+  const provider = providerForOrigin(ctx.app, origin);
+  if (!provider.ok) return undefined;
+  const tips = await cachedRemoteTips(origin.id, provider.value, row.fullName, {
+    logins: [origin.login, user.username],
+    emails: [user.email],
+  });
+  if (tips === undefined || tips.length === 0) return undefined;
+  return {
+    fullName: row.fullName,
+    sourceDefault: row.defaultBranch,
+    tips,
+    selected: tips.some((t) => t.name === asked)
+      ? asked
+      : pickWorkBranch(tips, row.defaultBranch),
+  };
+}
+
+/**
+ * One radio per branch, newest first: its last commit's subject, author
+ * and date (UTC), the source's default marked, the person's own marked.
+ */
+function branchList(choices: BranchChoices): Html {
+  const rows = [...choices.tips].sort(
+    (a, b) => (Date.parse(b.date) || 0) - (Date.parse(a.date) || 0),
+  );
+  return html`<div class="field" id="migrate-branches">
+    <label>Branch the app lives on — ${choices.fullName}</label>
+    <ul class="list">
+      ${rows.map((tip) =>
+        row({
+          data: { branch: tip.name },
+          title: html`<label class="check">
+            <input
+              type="radio"
+              name="branch"
+              value="${tip.name}"
+              ${tip.name === choices.selected ? raw("checked") : null}
+            />
+            <span class="mono">${tip.name}</span>
+          </label>`,
+          ...(tip.date === ""
+            ? {}
+            : {
+                meta: html`${tip.subject} · ${tip.author} ·
+                  <time datetime="${tip.date}">${tip.date.slice(0, 10)}</time>`,
+              }),
+          trail: html`${tip.name === choices.sourceDefault
+            ? badge("default there")
+            : null}${tip.mine ? badge("yours") : null}`,
+        }),
+      )}
+    </ul>
+    <span class="hint"
+      >Every branch comes; this one becomes the default branch here, and the
+      crew is told the app is on it. Selected: the branch with your newest
+      commits, else the origin's default.</span
+    >
+  </div>`;
+}
+
+/** Rows drawn per origin; past it, the filter narrows. */
+export const PICKER_ROWS = 200;
+
+/**
+ * A size an origin reported in KiB, in the unit that keeps it short:
+ * 1 KiB = 1024 bytes, 1 MiB = 1024 KiB. 0 is "not reported" — GitHub says
+ * 0 for an empty repository too — so it draws nothing.
+ */
+export function formatKib(kib: number): string {
+  if (!Number.isFinite(kib) || kib <= 0) return "";
+  if (kib < 1024) return `${Math.round(kib)} KiB`;
+  const mib = kib / 1024;
+  if (mib < 1024) return `${mib < 10 ? mib.toFixed(1) : Math.round(mib)} MiB`;
+  const gib = mib / 1024;
+  return `${gib < 10 ? gib.toFixed(1) : Math.round(gib)} GiB`;
+}
+
+/** Whether a row answers the filter: name or description, any case. */
+export function matchesFilter(
+  repo: Pick<OriginRepoRow, "fullName" | "description">,
+  q: string,
+): boolean {
+  const needle = q.trim().toLowerCase();
+  return (
+    needle === "" ||
+    repo.fullName.toLowerCase().includes(needle) ||
+    repo.description.toLowerCase().includes(needle)
+  );
+}
+
+/**
+ * The accounts half, outside the migrate form (forms do not nest): each
+ * connected origin with a Disconnect, and Connect GitHub when there is no
+ * GitHub account yet. Both come back here (`then=migrate`).
+ */
+function accounts(ctx: Ctx, origins: readonly OriginChoices[]): Html {
+  const hasGithub = origins.some((o) => o.kind === "github");
+  const connect = hasGithub
+    ? null
+    : githubConnectable(ctx)
+      ? html`<form method="post" action="/settings/origins/oauth" class="bar">
+          <input type="hidden" name="kind" value="github" />
+          <input type="hidden" name="then" value="migrate" />
+          ${btn("Connect GitHub", { variant: "outline", icon: "github", type: "submit" })}
+          <span class="muted small"
+            >A short code you type at github.com — no token to paste. Your
+            private repositories and their issues come too.</span
+          >
+        </form>`
+      : html`<p class="muted small">
+          ${icon("github")} Connect GitHub needs this forge's GitHub
+          application, set up once under
+          <a href="/settings/origins">Settings → Origins</a>; a token pasted
+          there works until then.
+        </p>`;
+  return card(
+    html`${origins.length === 0
+      ? null
+      : html`<ul class="list" id="migrate-accounts">
+          ${origins.map((origin) =>
+            row({
+              lead: icon(origin.kind === "github" ? "github" : "globe"),
+              title: origin.label,
+              meta: html`${origin.repos.length} repositories`,
+              trail: html`<form
+                method="post"
+                action="/settings/origins/${origin.id}/delete"
+              >
+                <input type="hidden" name="then" value="migrate" />
+                ${btn("Disconnect", { size: "sm", variant: "ghost", type: "submit" })}
+              </form>`,
+            }),
+          )}
+        </ul>`}
+    ${connect}`,
+    {
+      head: html`${icon("globe")}
+        <h2>Your accounts</h2>`,
+    },
+  );
+}
+
+/**
+ * One row per repository: name, private mark, size, description, and the
+ * button that migrates it. The buttons are the form's submitters
+ * (`name="pick"`), so one click carries the destination and crew fields
+ * below with it.
+ */
+function picker(
+  origins: readonly OriginChoices[],
+  values: MigrateValues,
+  withCrew: boolean,
+  branches: BranchChoices | undefined,
+): Html {
+  const listed = origins.filter((o) => o.repos.length > 0);
+  if (listed.length === 0)
+    return html`<p class="muted small mb">
+      ${icon("globe")} Connect an account above — or another forge under
+      <a href="/settings/origins">Settings → Origins</a> — to pick from your
+      repositories there, private ones included.
+    </p>`;
+  return html`<div class="field" id="migrate-picker">
+    <label for="f-q">Your repositories</label>
+    <input
+      class="input"
+      type="search"
+      id="f-q"
+      name="q"
+      form="migrate-search"
+      value="${values.q}"
+      placeholder="Filter by name or description"
+      autocomplete="off"
+    />
+    ${values.source === ""
+      ? null
+      : html`<input type="hidden" name="source" value="${values.source}" />`}
+    ${listed.map((origin) => {
+      const rows = origin.repos.filter((r) => matchesFilter(r, values.q));
+      const shown = rows.slice(0, PICKER_ROWS);
+      return html`<h4 class="mt small muted">${origin.label}</h4>
+        <ul class="list" data-pick-rows>
+          ${shown.map((remote) => {
+            const value = pickValue(origin.id, remote.fullName);
+            const size = formatKib(remote.sizeKb);
+            const branches = `/migrate?${new URLSearchParams({
+              source: value,
+              branches: "1",
+              ...(values.q === "" ? {} : { q: values.q }),
+            })}#migrate-branches`;
+            return row({
+              data: {
+                q: `${remote.fullName} ${remote.description}`.toLowerCase(),
+              },
+              current: values.source === value,
+              title: html`<span class="mono">${remote.fullName}</span>
+                ${remote.private ? badge("private") : null}`,
+              meta: html`${size === "" ? null : html`${size} · `}${remote.description}`,
+              trail: html`${btn("Branches", { href: branches, size: "sm", variant: "ghost" })}
+              ${btn(withCrew ? "Migrate with the crew" : "Migrate", {
+                size: "sm",
+                variant: "outline",
+                type: "submit",
+                name: "pick",
+                value,
+              })}`,
+            });
+          })}
+        </ul>
+        ${rows.length > shown.length
+          ? html`<p class="muted small">
+              ${rows.length - shown.length} more — filter to narrow.
+            </p>`
+          : null}`;
+    })}
+    ${branches === undefined ? null : branchList(branches)}
+    <span class="hint"
+      >Cloned with your account's credential, so private repositories come
+      too — with their issues, comments, labels and open pull requests.</span
+    >
+  </div>`;
 }
 
 /** `<origin id>/<owner>/<name>` — an id never holds a slash, so the first one splits. */
@@ -77,6 +357,7 @@ function migrateForm(
   ctx: Ctx,
   values: MigrateValues,
   origins: readonly OriginChoices[],
+  branches: BranchChoices | undefined,
   error?: string,
   unmatched: readonly string[] = [],
 ): Html {
@@ -88,63 +369,38 @@ function migrateForm(
   const agents = listAllAgents(ctx.app, user);
   const crew = agents.ok ? agents.value : [];
 
-  const picker =
-    origins.length === 0
-      ? html`<p class="muted small mb">
-          ${icon("globe")} Connect an origin under
-          <a href="/settings/origins">Settings → Origins</a> to pick from your
-          repositories there, private ones included.
-        </p>`
-      : html`<div class="field">
-          <label for="f-source">From one of your origins</label>
-          <select class="input" id="f-source" name="source">
-            <option value="" ${values.source === "" ? raw("selected") : null}>
-              — none, I'll paste a URL —
-            </option>
-            ${origins.map(
-              (origin) =>
-                html`<optgroup label="${origin.label}">
-                  ${origin.repos.map((remote) => {
-                    const value = pickValue(origin.id, remote.fullName);
-                    return html`<option
-                      value="${value}"
-                      data-name="${remote.fullName.split("/").pop() ?? ""}"
-                      ${values.source === value ? raw("selected") : null}
-                    >
-                      ${remote.fullName}${remote.private ? " (private)" : ""}
-                    </option>`;
-                  })}
-                </optgroup>`,
-            )}
-          </select>
-          <span class="hint"
-            >Cloned with your origin's credential, so private repositories come
-            too.</span
-          >
-        </div>`;
-
   return html`<div class="narrow-wide">
     ${pageHead("Migrate a repository", {
       sub: "A one-time clone of the whole history — every branch, every tag — into a repository that lives here from now on. Nothing is written back to where it came from.",
     })}
+    ${ctx.url.searchParams.get("connected") === "1"
+      ? html`<p class="muted small mb" id="migrate-connected">
+          ${icon("check")} Connected. Pick a repository below — one click
+          migrates it.
+        </p>`
+      : null}
     ${unmatched.length === 0
       ? null
       : html`<p class="muted small mb" id="prefill-unmatched">
           ${icon("globe")} Ignored, nothing here matches:
           ${unmatched.join(", ")}
         </p>`}
+    ${accounts(ctx, origins)}
+    <form method="get" action="/migrate" id="migrate-search"></form>
     ${card(
       html`<form method="post" action="/migrate">
         <h3 class="mb">Source</h3>
-        ${picker}
+        ${picker(origins, values, crew.length > 0, branches)}
         ${formField({
-          label: origins.length === 0 ? "Repository URL" : "Or a URL",
+          label: origins.every((o) => o.repos.length === 0)
+            ? "Repository URL"
+            : "Or a URL",
           name: "url",
           value: values.url,
           placeholder: "https://github.com/owner/name",
           autocomplete: "off",
           mono: true,
-          autofocus: origins.length === 0,
+          autofocus: origins.every((o) => o.repos.length === 0),
           hint: "Any public repository over https, http or git. It is cloned anonymously.",
         })}
         <h3 class="mb mt">Destination</h3>
@@ -241,7 +497,13 @@ const migrateJs = /* js */ `
 (function () {
   var name = document.getElementById('f-name');
   var url = document.getElementById('f-url');
-  var source = document.getElementById('f-source');
+  var q = document.getElementById('f-q');
+  if (q) q.addEventListener('input', function () {
+    var needle = q.value.trim().toLowerCase();
+    var rows = document.querySelectorAll('[data-pick-rows] [data-q]');
+    for (var i = 0; i < rows.length; i++)
+      rows[i].hidden = needle !== '' && rows[i].getAttribute('data-q').indexOf(needle) < 0;
+  });
   if (!name) return;
   var touched = name.value.trim() !== '';
   name.addEventListener('input', function () { touched = true; });
@@ -251,29 +513,30 @@ const migrateJs = /* js */ `
   }
   function follow() {
     if (touched) return;
-    var picked = source && source.selectedIndex > 0
-      ? source.options[source.selectedIndex].getAttribute('data-name') || ''
-      : '';
-    name.value = picked !== '' ? picked : url ? fromUrl(url.value) : '';
+    name.value = url ? fromUrl(url.value) : '';
   }
   if (url) url.addEventListener('input', follow);
-  if (source) source.addEventListener('change', follow);
 })();
 `;
 
-function show(
+async function show(
   ctx: Ctx,
   values: MigrateValues,
   origins: readonly OriginChoices[],
   error?: string,
   status = 200,
   unmatched: readonly string[] = [],
-): Response {
+): Promise<Response> {
+  // Asked for only: each draw is a listing and a commit per branch at the
+  // origin (remembered a minute), so a plain visit costs none of it.
+  const branches = values.showBranches
+    ? await branchChoices(ctx, origins, values.source, values.branch)
+    : undefined;
   return page(
     {
       ctx,
       title: "Migrate",
-      body: migrateForm(ctx, values, origins, error, unmatched),
+      body: migrateForm(ctx, values, origins, branches, error, unmatched),
       scriptJs: migrateJs,
     },
     status,
@@ -286,10 +549,11 @@ export async function migratePage(ctx: Ctx): Promise<Response> {
   const q = ctx.url.searchParams;
   const origins = await originChoices(ctx);
   const agents = listAllAgents(ctx.app, ctx.auth.user);
+  const names = agents.ok ? agents.value.map((a) => a.user.username) : [];
   const linked = prefill(
     { from: q.get("from"), crew: q.get("crew") },
     origins,
-    agents.ok ? agents.value.map((a) => a.user.username) : [],
+    names,
   );
   return show(
     ctx,
@@ -297,12 +561,17 @@ export async function migratePage(ctx: Ctx): Promise<Response> {
       source: linked.repo
         ? pickValue(linked.repo.originId, linked.repo.fullName)
         : (q.get("source") ?? ""),
+      q: (q.get("q") ?? "").slice(0, 100),
       url: q.get("url") ?? "",
       owner: q.get("owner") ?? ctx.auth.user.username,
       name: q.get("name") ?? (linked.repo?.fullName.split("/").pop() ?? ""),
       visibility: "private",
-      agent: linked.agent ?? "",
+      // One click on a row is "with the crew": the first agent is ready
+      // unless the link named one; "Nobody" is one choice away.
+      agent: linked.agent ?? names[0] ?? "",
       autonomous: false,
+      branch: (q.get("branch") ?? "").slice(0, 300),
+      showBranches: q.get("branches") === "1" || (q.get("branch") ?? "") !== "",
     },
     origins,
     undefined,
@@ -317,14 +586,24 @@ export async function migrateSubmit(ctx: Ctx): Promise<Response> {
   const form = await readForm(ctx, "rw");
   if (form instanceof Response) return form;
   const values: MigrateValues = {
-    source: field(form, "source"),
+    // A row's button names its repository; it wins over a prefilled pick.
+    source: field(form, "pick") || field(form, "source"),
+    q: "",
     url: field(form, "url").trim(),
     owner: field(form, "owner"),
     name: field(form, "name").trim(),
     visibility: field(form, "visibility") === "public" ? "public" : "private",
     agent: field(form, "agent"),
     autonomous: field(form, "autonomous") !== "",
+    // A branch belongs to the repository its list was drawn for: another
+    // row's button migrates that row by the rule, not by this choice.
+    branch:
+      field(form, "pick") === "" || field(form, "pick") === field(form, "source")
+        ? field(form, "branch").trim()
+        : "",
+    showBranches: false,
   };
+  values.showBranches = values.branch !== "";
   const again = async (message: string): Promise<Response> =>
     show(ctx, values, await originChoices(ctx), message, 422);
 
@@ -348,6 +627,9 @@ export async function migrateSubmit(ctx: Ctx): Promise<Response> {
     owner: values.owner,
     name: values.name,
     visibility: values.visibility === "public" ? "public" : "private",
+    ...(picked === undefined || values.branch === ""
+      ? {}
+      : { branch: values.branch }),
     ...(values.agent === ""
       ? {}
       : { crew: { agent: values.agent, autonomous: values.autonomous } }),
@@ -365,14 +647,23 @@ export async function migrateSubmit(ctx: Ctx): Promise<Response> {
 const STAGES: { name: MirrorStage; label: string }[] = [
   { name: "creating", label: "Creating the repository" },
   { name: "fetching", label: "Cloning every branch and tag" },
-  { name: "crew", label: "Putting the crew on it" },
+  { name: "issues", label: "Bringing issues, comments and labels" },
+  { name: "pulls", label: "Bringing open pull requests and their branches" },
+  { name: "crew", label: "Making it an app and starting the crew's first run" },
   { name: "done", label: "Done" },
 ];
 
+/** A pasted URL brings history alone: no conversation rows to wait on. */
+const stagesFor = (job: MirrorJob): typeof STAGES =>
+  job.originId === ""
+    ? STAGES.filter((s) => s.name !== "issues" && s.name !== "pulls")
+    : STAGES;
+
 function stageRows(job: MirrorJob): Html {
-  const at = STAGES.findIndex((s) => s.name === job.stage);
+  const stages = stagesFor(job);
+  const at = stages.findIndex((s) => s.name === job.stage);
   return html`<ol class="stages">
-    ${STAGES.map((stage, i) => {
+    ${stages.map((stage, i) => {
       const state =
         job.stage === "failed"
           ? "todo"
@@ -403,7 +694,7 @@ const migrateJobJs = /* js */ `
   var box = document.getElementById('migrate-job');
   var job = box && box.getAttribute('data-job');
   if (!job || typeof EventSource === 'undefined') return;
-  var order = ['creating', 'fetching', 'crew', 'done'];
+  var order = ['creating', 'fetching', 'issues', 'pulls', 'crew', 'done'];
   var source = new EventSource('/api/v1/migrate/' + encodeURIComponent(job) + '/stream');
   function patch(e) {
     var data;

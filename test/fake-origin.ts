@@ -51,6 +51,8 @@ export interface FakeRepo {
   openIssues?: number;
   /** Forgejo only — GitHub has no separate pull counter. */
   openPulls?: number;
+  /** KiB, as both forges report `size`. */
+  sizeKb?: number;
 }
 
 export interface FakeIssue {
@@ -64,6 +66,8 @@ export interface FakeIssue {
   createdAt?: string;
   updatedAt?: string;
   closedAt?: string | null;
+  /** What the listing says `comments` is; the thread itself is `comments`. */
+  commentCount?: number;
   /** Present for a pull request. */
   pull?: {
     base: string;
@@ -936,6 +940,7 @@ function repoJson(state: FakeState, repo: FakeRepo): Record<string, unknown> {
     ssh_url: "",
     html_url: repo.htmlUrl ?? `https://example.invalid/${repo.fullName}`,
     permissions: { push: repo.push ?? true, admin: repo.admin ?? true },
+    size: repo.sizeKb ?? 0,
     // Both forges report the parent here and nowhere else, which is why the
     // picker's cache must keep the one it has when a listing omits it.
     ...(repo.parent === undefined
@@ -975,7 +980,7 @@ function issueJson(
     updated_at: issue.updatedAt ?? issue.createdAt ?? new Date().toISOString(),
     closed_at: issue.closedAt ?? null,
     html_url: `${url.origin}/${issue.number}`,
-    comments: 0,
+    comments: issue.commentCount ?? 0,
   };
   if (issue.pull === undefined) return common;
   // GitHub marks a pull by the mere presence of this key; Forgejo puts the
