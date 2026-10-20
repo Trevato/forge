@@ -8,6 +8,7 @@
 import { readResilience } from "../../checks/resilience.ts";
 import type { Standing } from "../../core/threats.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { notFoundPage, signInFirst } from "../chrome.ts";
 import { html } from "../html.ts";
 import { page } from "../layout.ts";
@@ -17,9 +18,11 @@ const TONE = { green: "success", red: "danger", untested: "default", "no test ye
 
 // GET /resilience: a forge admin's, since live red lines name what to attack.
 export function resiliencePage(ctx: Ctx): Response {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   if (!ctx.auth.user) return signInFirst(ctx);
   if (!ctx.auth.user.isAdmin) return notFoundPage(ctx);
-  const rows = readResilience(ctx.app.config.dataDir);
+  const rows = timePhase(ctx.request, "threats", () => readResilience(ctx.app.config.dataDir));
+  const rendering = performance.now();
   const count = (s: Standing): number => rows.filter((r) => r.s === s).length;
   const body = html`<div class="page-head">
       <h1>Resilience</h1>
@@ -47,5 +50,7 @@ export function resiliencePage(ctx: Ctx): Response {
       </ul>`,
       { pad: false },
     )}`;
-  return page({ ctx, title: "Resilience", body });
+  const response = page({ ctx, title: "Resilience", body });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
