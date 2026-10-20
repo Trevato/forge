@@ -45,15 +45,6 @@
       "input": 0,
       "target": 0
     },
-    "src/web/style/base.ts": {
-      "colour": 0,
-      "size": 0,
-      "motion": 4,
-      "forced": 1,
-      "focus": 0,
-      "input": 0,
-      "target": 0
-    },
     "src/web/style/components.ts": {
       "colour": 3,
       "size": 2,
