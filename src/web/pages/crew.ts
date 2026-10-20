@@ -26,6 +26,8 @@ import {
 } from "../../core/runs.ts";
 import {
   crewScorecards,
+  RECENT_DAYS,
+  recentWindow,
   spanText,
   type Scorecard,
 } from "../../core/scorecard.ts";
@@ -229,25 +231,49 @@ function totalsCells(t: AgentTotals | undefined): Html {
 
 /**
  * The scorecard: how each agent's pulls fare once opened — so the owner
- * can tune who does what. What they cost is the table above's ("Per
- * landed"), not repeated here. An agent with no pull yet is a row of
- * dashes, never a row of misleading zeros. The agent's name stays in view
- * while a phone scrolls the figures sideways.
+ * can tune who does what. Landed, review rounds and red checks stand as the
+ * last 30 days beside all time, so a change to an agent shows as movement.
+ * What they cost is the table above's ("Per landed"), not repeated here. An
+ * agent with no pull yet is a row of dashes, never a row of misleading
+ * zeros. The agent's name stays in view while a phone scrolls the figures
+ * sideways.
  */
 function scorecardCard(
   agents: readonly Agent[],
   cards: ReadonlyMap<string, Scorecard>,
+  recent: ReadonlyMap<string, Scorecard>,
 ): Html {
   const dash = html`<td class="num muted">—</td>`;
+  const lately = `${RECENT_DAYS} days`;
+  const windowHead = (label: string, span: string) =>
+    html`<th>${label}<br /><span class="muted small">${span}</span></th>`;
+  const landed = (s: Scorecard | undefined) =>
+    s === undefined
+      ? dash
+      : html`<td class="num">
+          ${s.landed}
+          <span class="muted small">of ${s.opened}</span>
+        </td>`;
+  const rounds = (s: Scorecard | undefined) =>
+    s?.reviewRounds == null
+      ? dash
+      : html`<td class="num">${s.reviewRounds.toFixed(1)}</td>`;
+  const red = (s: Scorecard | undefined) =>
+    s?.redCheckRate == null
+      ? dash
+      : html`<td class="num">${Math.round(100 * s.redCheckRate)}%</td>`;
   return card(
     html`<div class="table-scroll">
       <table class="table" id="crew-scorecard" data-sticky-lead>
         <thead>
           <tr>
             <th>Agent</th>
-            <th>Pulls landed</th>
-            <th>Review rounds</th>
-            <th>Red checks</th>
+            ${windowHead("Pulls landed", lately)}
+            ${windowHead("Pulls landed", "all time")}
+            ${windowHead("Review rounds", lately)}
+            ${windowHead("Review rounds", "all time")}
+            ${windowHead("Red checks", lately)}
+            ${windowHead("Red checks", "all time")}
             <th>Reverts</th>
             <th>Time to land</th>
           </tr>
@@ -255,6 +281,7 @@ function scorecardCard(
         <tbody>
           ${agents.map((agent) => {
             const s = cards.get(agent.user.id);
+            const r = recent.get(agent.user.id);
             return html`<tr>
               <td>
                 ${userLink(agent.user.username, {
@@ -262,21 +289,10 @@ function scorecardCard(
                   mark: markOf(agent.user),
                 })}
               </td>
+              ${landed(r)}${landed(s)}${rounds(r)}${rounds(s)}${red(r)}${red(s)}
               ${s === undefined
-                ? html`${dash}${dash}${dash}${dash}${dash}`
-                : html`<td class="num">
-                      ${s.landed}
-                      <span class="muted small">of ${s.opened}</span>
-                    </td>
-                    ${s.reviewRounds === null
-                      ? dash
-                      : html`<td class="num">${s.reviewRounds.toFixed(1)}</td>`}
-                    ${s.redCheckRate === null
-                      ? dash
-                      : html`<td class="num">
-                          ${Math.round(100 * s.redCheckRate)}%
-                        </td>`}
-                    <td class="num">${s.reverts}</td>
+                ? html`${dash}${dash}`
+                : html`<td class="num">${s.reverts}</td>
                     ${s.meanLandMs === null
                       ? dash
                       : html`<td class="num">${spanText(s.meanLandMs)}</td>`}`}
@@ -291,10 +307,11 @@ function scorecardCard(
       head: html`${icon("activity")}
         <h2>Scorecard</h2>
         <span class="muted small"
-          >Over every pull each agent opened: review rounds are change
-          requests per landed pull, red checks the share of finished checks
-          that failed, reverts the landed pulls a merged pull took back, time
-          to land the mean from opening to merge.</span
+          >Over the pulls each agent opened in the last ${RECENT_DAYS} days
+          and over all time: review rounds are change requests per landed pull, red checks
+          the share of finished checks that failed; reverts (the landed pulls
+          a merged pull took back) and time to land (the mean from opening to
+          merge) are all time.</span
         >`,
     },
   );
@@ -363,6 +380,7 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
   const agents = listed.ok ? listed.value : [];
   const totals = agentTotals(ctx.app.db);
   const scorecards = crewScorecards(ctx.app.db);
+  const recentScorecards = crewScorecards(ctx.app.db, recentWindow());
   // Where the money goes today: every app running on its own, its spend
   // against its ceiling. The ceilings are the one control on the drain, and
   // this is the page where the crew is wielded, so they are read here.
@@ -460,7 +478,9 @@ function crewView(ctx: Ctx, values: AgentValues, error?: string): Html {
         </div>`,
         { pad: false },
       )}
-  ${when(agents.length > 0, () => scorecardCard(agents, scorecards))}
+  ${when(agents.length > 0, () =>
+    scorecardCard(agents, scorecards, recentScorecards),
+  )}
   ${splitsCard(
     "Per model",
     "Model",

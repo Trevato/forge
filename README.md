@@ -27,6 +27,9 @@ claim state and the same apps-running note, never a claim link.
 Each agent's scorecard — pulls landed of opened, review rounds, red checks,
 reverts, time to land — is on Settings → Crew (`/settings/crew`) and in the
 terminal's palette as "Crew scorecard per agent"; both are a forge admin's only.
+Landed, review rounds and red checks stand as the last 30 days (pulls opened
+since then) beside all time, so tuning an agent shows as movement; reverts and
+time to land are all time.
 
 Git hosting, code browsing, and a JSON API in one fast Bun process, with
 **zero runtime dependencies** — the `package.json` dependency list is empty and

@@ -10,7 +10,7 @@ import {
   createRun,
   finishRun,
 } from "../src/core/runs.ts";
-import { crewScorecards } from "../src/core/scorecard.ts";
+import { crewScorecards, recentWindow } from "../src/core/scorecard.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
 import { createForgeApp } from "../src/tui/forge.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
@@ -97,14 +97,10 @@ describe("a scorecard per crew member", () => {
       headers: { cookie },
     }).then((r) => r.text());
     expect(page).toContain(`id="crew-scorecard"`);
-    for (const head of [
-      "Pulls landed",
-      "Review rounds",
-      "Red checks",
-      "Reverts",
-      "Time to land",
-    ])
-      expect(page).toContain(`<th>${head}</th>`);
+    for (const head of ["Pulls landed", "Review rounds", "Red checks"])
+      for (const span of ["30 days", "all time"])
+        expect(page).toContain(`<th>${head}<br /><span class="muted small">${span}</span></th>`);
+    for (const head of ["Reverts", "Time to land"]) expect(page).toContain(`<th>${head}</th>`);
     // What a landed pull costs is the agent table's "Per landed"; one figure, one column.
     expect(page).not.toContain("<th>Landed per $</th>");
     // The agent's name stays in view while a phone scrolls the figures.
@@ -166,6 +162,53 @@ describe("a scorecard per crew member", () => {
     expect(table).toContain("3h");
   });
 
+  test("the last 30 days and all time are different figures over old and new pulls", async () => {
+    const old = (n: number) => `2020-01-0${n}T00:00:00.000Z`;
+    await fetch(`${base}/api/v1/agents`, {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ username: "jones", model: "opus" }),
+    });
+    const jones = getUserByName(app.db, "jones")!.id;
+    // Long ago: two landed, three change requests between them, one red check of one.
+    const a = pull(jones, "Old one", { openedAt: old(1), mergedAt: old(2) });
+    const b = pull(jones, "Old two", { openedAt: old(3), mergedAt: old(4) });
+    for (const issueId of [a, a, b])
+      submitReview(app.db, { issueId, authorId: adminId, state: "changes_requested", body: "", commitOid: "b" });
+    check(a, "failed");
+    // Lately: one landed with no change request and a green check, one still open.
+    const hour = 3_600_000;
+    const recent = pull(jones, "New one", {
+      openedAt: new Date(Date.now() - 2 * hour).toISOString(),
+      mergedAt: new Date(Date.now() - hour).toISOString(),
+    });
+    check(recent, "ok");
+    pull(jones, "New, open");
+
+    // The window both doors share: 30 days of 86 400 000 ms before now.
+    expect(recentWindow(Date.UTC(2026, 9, 31)).since).toEqual(new Date(Date.UTC(2026, 9, 1)));
+    const all = crewScorecards(app.db).get(jones)!;
+    const month = crewScorecards(app.db, recentWindow()).get(jones)!;
+    expect([all.opened, all.landed]).toEqual([4, 3]);
+    expect(all.reviewRounds).toBe(1); // 3 change requests ÷ 3 landed
+    expect(all.redCheckRate).toBe(0.5); // 1 failed ÷ 2 finished
+    expect([month.opened, month.landed]).toEqual([2, 1]);
+    expect(month.reviewRounds).toBe(0); // 0 ÷ 1 landed
+    expect(month.redCheckRate).toBe(0); // 0 failed ÷ 1 finished
+    // An agent with nothing in the window is absent from it, not zeros.
+    const later = new Date(Date.now() + 86_400_000);
+    expect(crewScorecards(app.db, { since: later }).has(jones)).toBe(false);
+
+    const page = await fetch(`${base}/settings/crew`, { headers: { cookie } }).then((r) => r.text());
+    const table = page.slice(page.indexOf(`id="crew-scorecard"`));
+    const row = table.slice(table.indexOf("jones"), table.indexOf("</tr>", table.indexOf("jones")));
+    const cells = [...row.matchAll(/<td class="num">([\s\S]*?)<\/td>/g)].map((m) =>
+      m[1]!.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim(),
+    );
+    // 30 days beside all time: landed, review rounds, red checks; then reverts.
+    expect(cells.slice(0, 7)).toEqual(["1 of 2", "3 of 4", "0.0", "1.0", "0%", "50%", "0"]);
+  });
+
   /** The forge's terminal, signed in as one account, on a headless screen. */
   function terminal(username: string) {
     const user = getUserByName(app.db, username)!;
@@ -198,11 +241,24 @@ describe("a scorecard per crew member", () => {
     await t.enter();
     const text = t.text();
     expect(text).toContain("smith");
-    expect(text).toContain("2 landed of 3");
-    expect(text).toContain("review rounds 1.0");
-    expect(text).toContain("red checks 25%");
+    expect(text).toContain("· all 2 of 3");
+    expect(text).toContain("· all 1.0");
+    expect(text).toContain("· all 25%");
     expect(text).toContain("reverts 1");
     expect(text).toContain("time to land 3h");
+    t.stop();
+  });
+
+  test("the terminal shows the last 30 days beside all time, as the page does", async () => {
+    // jones: two landed pulls from 2020 and two opened within the hour (see above).
+    const t = terminal("ada");
+    await t.palette("Crew scorecard per agent");
+    await t.enter();
+    const text = t.text();
+    expect(text).toContain("Over the last 30 days (30d) and all time");
+    expect(text).toContain("landed 30d 1 of 2 · all 3 of 4");
+    expect(text).toContain("review rounds 30d 0.0 · all 1.0");
+    expect(text).toContain("red checks 30d 0% · all 50%");
     t.stop();
   });
 
@@ -219,7 +275,7 @@ describe("a scorecard per crew member", () => {
     await t.palette("Crew scorecard per agent");
     expect(t.text()).not.toContain("review rounds, red checks");
     await t.enter();
-    expect(t.text()).not.toContain("2 landed of 3");
+    expect(t.text()).not.toContain("all 2 of 3");
     t.stop();
   });
 });

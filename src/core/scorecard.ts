@@ -4,7 +4,8 @@
  * says what an agent spent and how many of its pulls landed; this says how
  * hard they were to land and whether they stayed landed.
  *
- * Every figure is over the pulls an agent authored, all time:
+ * Every figure is over the pulls an agent authored — all time, or only those
+ * opened (issue.created_at) at or after `since`, so tuning shows movement:
  *
  *   reviewRounds  = count(changes_requested reviews on its landed pulls) ÷ landed
  *   redCheckRate  = failed ÷ finished (ok + failed) check runs on its pulls
@@ -35,8 +36,27 @@ export interface Scorecard {
   readonly meanLandMs: number | null;
 }
 
+/** Which pulls a scorecard counts: all of them, or those opened at or after `since`. */
+export interface ScorecardWindow {
+  readonly since?: Date;
+}
+
+/** The recent window both doors show beside all time, in days. */
+export const RECENT_DAYS = 30;
+
+/** Where the recent window starts: `RECENT_DAYS` × 86 400 000 ms before `now`. */
+export function recentWindow(now: number = Date.now()): ScorecardWindow {
+  return { since: new Date(now - RECENT_DAYS * 86_400_000) };
+}
+
 /** Each agent's scorecard, keyed by its user id: one grouped query. */
-export function crewScorecards(db: Database): Map<string, Scorecard> {
+export function crewScorecards(
+  db: Database,
+  window: ScorecardWindow = {},
+): Map<string, Scorecard> {
+  // created_at is stored as ISO-8601 UTC, so the string compare is the time compare.
+  // An invalid Date throws here rather than widen the window to all time.
+  const since = window.since === undefined ? null : window.since.toISOString();
   const rows = db
     .query<
       {
@@ -49,7 +69,7 @@ export function crewScorecards(db: Database): Map<string, Scorecard> {
         reverts: number;
         mean_land_days: number | null;
       },
-      []
+      [string | null]
     >(
       `SELECT issue.author_id AS author_id,
               COUNT(*) AS opened,
@@ -74,9 +94,10 @@ export function crewScorecards(db: Database): Map<string, Scorecard> {
          FROM issue
          JOIN pull ON pull.issue_id = issue.id
          JOIN user ON user.id = issue.author_id AND user.is_agent = 1
+        WHERE ?1 IS NULL OR issue.created_at >= ?1
         GROUP BY issue.author_id`,
     )
-    .all();
+    .all(since);
   return new Map(
     rows.map((r) => {
       const checks = r.checks_ok + r.checks_failed;
