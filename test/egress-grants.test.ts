@@ -104,6 +104,10 @@ describe("the proxy's verdict", () => {
     expect((await decide(p, "100.89.95.68", 22)).ok).toBe(false);
     expect((await decide(p, "100.89.95.69", 8101)).ok).toBe(false);
   });
+  test("a wildcard entry declares a name but never makes it grantable", async () => {
+    const p = policy(["*.localhost:8101"], ["a.localhost:8101"]);
+    expect((await decide(p, "a.localhost", 8101)).ok).toBe(false);
+  });
   test("a name that resolves to the metadata address is refused even if granted", async () => {
     const v = await decide(policy(["localhost:8101"], ["localhost:8101"]), "localhost", 8101);
     expect(v.ok).toBe(false);

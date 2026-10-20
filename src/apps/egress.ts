@@ -116,7 +116,11 @@ export async function decide(
   const askAdmin =
     `${name}:${port} is a private destination: ` +
     "add it to forge.json egress and ask a site admin to grant it";
-  const granted = declared && (policy.granted ?? []).includes(`${name}:${port}`);
+  // A grant opens only a destination forge.json names exactly: a wildcard
+  // entry declares names, it never makes one of them grantable.
+  const granted =
+    (policy.granted ?? []).includes(`${name}:${port}`) &&
+    policy.hosts.some((h) => h.toLowerCase() === `${name}:${port}`);
   // Reporting lets an undeclared host through (and says so) on the web
   // ports alone; any other port, and any private address (below), is
   // refused in both modes.
