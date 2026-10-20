@@ -15,14 +15,15 @@ import { createApp, type App } from "../src/app.ts";
 import { serve, type Servers } from "../src/http/server.ts";
 import { findChromium } from "../src/looks/capture.ts";
 import { quietLogs } from "./helpers/globals.ts";
-import { measurePageWidth } from "./helpers/chrome.ts";
+import { chromiumRuns, measurePageWidth } from "./helpers/chrome.ts";
 
 quietLogs();
 
-const chromium = findChromium();
+const found = findChromium();
+const chromium = found !== undefined && chromiumRuns(found) ? found : undefined;
 if (chromium === undefined) {
   console.log(
-    "SKIPPING: no chromium on this machine, so the phone-width test cannot run",
+    "SKIPPING: no chromium that starts on this machine, so the phone-width test cannot run",
   );
 }
 

@@ -104,14 +104,17 @@ async function readDebuggerUrl(
 
 /**
  * Load `url` in headless Chromium at a `width`×`height` viewport, carrying
- * one cookie (a session), and report how wide the document ended up.
+ * cookies and the given colour scheme, and return what `expression` (a JS
+ * expression that yields a JSON string) says once the page has loaded.
  */
-export async function measurePageWidth(
+async function evaluateLoaded(
   binary: string,
   url: string,
   viewport: { width: number; height: number },
-  cookie: { name: string; value: string },
-): Promise<PageWidth> {
+  cookies: { name: string; value: string }[],
+  expression: string,
+  scheme: "light" | "dark" = "light",
+): Promise<string> {
   const profile = mkdtempSync(join(tmpdir(), "forge-phone-"));
   const proc = Bun.spawn(
     [
@@ -157,16 +160,39 @@ export async function measurePageWidth(
       deviceScaleFactor: 1,
       mobile: true,
     });
-    await cdp.send("Network.setCookie", {
-      name: cookie.name,
-      value: cookie.value,
-      url,
+    await cdp.send("Emulation.setEmulatedMedia", {
+      features: [{ name: "prefers-color-scheme", value: scheme }],
     });
+    for (const cookie of cookies)
+      await cdp.send("Network.setCookie", {
+        name: cookie.name,
+        value: cookie.value,
+        url,
+      });
     const loaded = cdp.once("Page.loadEventFired");
     await cdp.send("Page.navigate", { url });
     await loaded;
     const { result } = await cdp.send("Runtime.evaluate", {
-      expression: `(() => {
+      expression,
+      returnByValue: true,
+    });
+    return result.value as string;
+  } finally {
+    ws?.close();
+    proc.kill("SIGKILL");
+    await proc.exited.catch(() => {});
+    rmSync(profile, { recursive: true, force: true });
+  }
+}
+
+/** Load `url` and report how wide the document ended up. */
+export async function measurePageWidth(
+  binary: string,
+  url: string,
+  viewport: { width: number; height: number },
+  cookie: { name: string; value: string },
+): Promise<PageWidth> {
+  const expression = `(() => {
           // documentElement.clientWidth, not window.innerWidth: after an
           // in-process navigation under an active device-metrics override,
           // headless Chromium leaves window.innerWidth stale while every
@@ -186,14 +212,80 @@ export async function measurePageWidth(
             viewportWidth: vw,
             overflowing,
           });
-        })()`,
-      returnByValue: true,
-    });
-    return JSON.parse(result.value as string) as PageWidth;
+        })()`;
+  return JSON.parse(
+    await evaluateLoaded(binary, url, viewport, [cookie], expression),
+  ) as PageWidth;
+}
+
+/** A button that looks busy: marked `aria-busy`, or holding a running animation. */
+export interface BusyButton {
+  button: string;
+  why: string;
+}
+
+/**
+ * Load `url` at rest and list every `button` and `.btn` that is busy or
+ * spinning: `aria-busy="true"` on it, or inside it an element (or the
+ * button itself) whose computed `animation-name` is not `none`.
+ */
+export async function findBusyButtons(
+  binary: string,
+  url: string,
+  viewport: { width: number; height: number },
+  cookies: { name: string; value: string }[],
+  scheme: "light" | "dark",
+): Promise<{ buttons: number; busy: BusyButton[] }> {
+  const expression = `(() => {
+    const name = (el) =>
+      el.tagName.toLowerCase() +
+      (typeof el.className === "string" && el.className.trim()
+        ? "." + el.className.trim().split(/\\s+/).join(".")
+        : "") + " [" + (el.textContent || "").trim().slice(0, 30) + "]";
+    const all = [...document.querySelectorAll("button, .btn")];
+    const busy = [];
+    for (const b of all) {
+      if (b.getAttribute("aria-busy") === "true")
+        busy.push({ button: name(b), why: "aria-busy" });
+      for (const el of [b, ...b.querySelectorAll("*")]) {
+        const a = getComputedStyle(el).animationName;
+        if (a !== "none")
+          busy.push({ button: name(b), why: "animation " + a + " on " + el.tagName.toLowerCase() + "." + String(el.getAttribute("class")) });
+      }
+    }
+    return JSON.stringify({ buttons: all.length, busy });
+  })()`;
+  return JSON.parse(
+    await evaluateLoaded(binary, url, viewport, cookies, expression, scheme),
+  );
+}
+
+/**
+ * Whether `binary` can actually start headless here. A binary on the path
+ * is not a browser that runs: a sandbox that forbids sockets kills it at
+ * launch. Tests skip, named, on `false` rather than fail or pass silently.
+ */
+export function chromiumRuns(binary: string): boolean {
+  const profile = mkdtempSync(join(tmpdir(), "forge-probe-"));
+  try {
+    const probe = Bun.spawnSync(
+      [
+        binary,
+        "--headless=new",
+        "--no-sandbox",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--no-first-run",
+        `--user-data-dir=${profile}`,
+        "--dump-dom",
+        "about:blank",
+      ],
+      { env: childEnv({}), stdin: "ignore", stdout: "pipe", stderr: "ignore", timeout: 15_000 },
+    );
+    return probe.exitCode === 0 && probe.stdout.toString().includes("<html");
+  } catch {
+    return false;
   } finally {
-    ws?.close();
-    proc.kill("SIGKILL");
-    await proc.exited.catch(() => {});
     rmSync(profile, { recursive: true, force: true });
   }
 }
