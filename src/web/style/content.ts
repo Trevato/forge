@@ -873,6 +873,10 @@ form.inline { display: inline; margin-left: auto; }
 .look-pair { display: flex; gap: 14px; align-items: flex-start; }
 .look { display: block; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--muted); }
 .look img { display: block; width: 100%; height: auto; }
+.look-compare { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.look-side { flex: 1 1 320px; min-width: 0; }
+.look-side > p { margin: 0 0 6px; }
+.look-side .look-pair { flex-wrap: wrap; }
 .look-attachments { flex-wrap: wrap; margin-top: 10px; }
 .look-attached { margin: 0; display: flex; flex-direction: column; gap: 6px; flex: 1 1 200px; min-width: 0; max-width: 1280px; }
 .look-attached-phone { flex: 0 0 200px; }

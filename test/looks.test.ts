@@ -1100,6 +1100,41 @@ describe("the look", () => {
     }
   });
 
+  test("a pull's look of a page sits beside main's newest look of it, or says main has none", async () => {
+    const env = previewEnv(pull.number);
+    const oid = "a".repeat(40);
+    const mainOid = "b".repeat(40);
+    const put = (e: string, commitOid: string, page: string) =>
+      recordLook(app.db, {
+        appId: record.id,
+        env: e,
+        commitOid,
+        page,
+        kind: "phone",
+        path: `looks/${record.id}/${e}/${commitOid}-x-phone.png`,
+      });
+    put(env, oid, "/map");
+    put(env, oid, "/solo");
+    put("production", mainOid, "/map");
+    const text = await (
+      await web(`/alice/hello/pulls/${pull.number}`, aliceCookie)
+    ).text();
+    const group = (page: string) =>
+      text.split(`<p class="muted small look-page">${page}</p>`)[1]!.split("look-group")[0]!;
+    const map = group("/map");
+    expect(map).toContain(`/looks/production/${mainOid}/map-phone.png?v=`);
+    expect(map).toContain(`/looks/${env}/${oid}/map-phone.png?v=`);
+    expect(map.indexOf("Before")).toBeLessThan(map.indexOf("After"));
+    expect(map.indexOf(`/looks/production/`)).toBeLessThan(
+      map.indexOf(`/looks/${env}/`),
+    );
+    expect(map).not.toContain("has no look");
+    expect(map).toContain(`/commit/${mainOid}`);
+    const solo = group("/solo");
+    expect(solo).toContain("Main has no look of /solo yet.");
+    expect(solo).not.toContain("/looks/production/");
+  });
+
   test("memory pressure is what the container truly holds, never its page cache", async () => {
     const { cgroupMemoryPressure, memoryPressure } =
       await import("../src/looks/service.ts");

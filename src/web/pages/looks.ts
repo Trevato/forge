@@ -170,7 +170,16 @@ export function lookCard(
     a === DEFAULT_PAGE ? -1 : b === DEFAULT_PAGE ? 1 : a.localeCompare(b),
   );
   const labelled = pages.length > 1;
-  const picture = (look: Look, kind: LookKind, page: string): Html => {
+  // What main looks like, to set each page beside: only what this viewer may fetch.
+  const mainLooks = looksForEnv(ctx.app.db, record.id, "production").filter(
+    (l) => !isAttached(l) && mayFetchLook(ctx, repo, record, l),
+  );
+  const picture = (
+    look: Look,
+    kind: LookKind,
+    page: string,
+    of = `#${pull.number}`,
+  ): Html => {
     const url = lookUrl(base, look);
     const scheme = look.theme === "dark" ? " in the dark" : "";
     return html`<a class="look look-${kind}" href="${url}">
@@ -180,7 +189,7 @@ export function lookCard(
         height="${LOOK_SIZES[kind].height}"
         alt="${repo.name}${page === DEFAULT_PAGE
           ? ""
-          : ` ${page}`} #${pull.number} on a ${kind}${scheme}"
+          : ` ${page}`} ${of} on a ${kind}${scheme}"
         loading="lazy"
       />
     </a>`;
@@ -206,6 +215,14 @@ export function lookCard(
         </p>
       </div>`;
     const moved = shown.commitOid !== headOid;
+    const mainOfPage = mainLooks.filter((l) => l.page === page);
+    const beforePhone = pictured(mainOfPage, "phone");
+    const beforeDesktop = pictured(mainOfPage, "desktop");
+    // Beside the same page at the same width: a width main lacks is left out.
+    const beforeShown = [
+      phone === undefined ? undefined : beforePhone,
+      desktop === undefined ? undefined : beforeDesktop,
+    ].filter((l): l is Look => l !== undefined);
     // Only the dark pictures of the commit the caption names: after a push
     // the light pair is retaken first, and an old head's dark pair must not
     // sit under the new head's words.
@@ -216,9 +233,28 @@ export function lookCard(
     const darkDesktop = pictured(darkOfPage, "desktop");
     return html`<div class="look-group">
       ${label}
-      <div class="look-pair">
-        ${when(phone, (l) => picture(l, "phone", page))}
-        ${when(desktop, (l) => picture(l, "desktop", page))}
+      <div class="look-compare">
+        <div class="look-side look-before">
+          <p class="muted small">Before · main</p>
+          ${beforeShown.length === 0
+            ? html`<p class="muted small look-nobefore">
+                Main has no look of ${page} yet.
+              </p>`
+            : html`<div class="look-pair">
+                  ${beforeShown.map((l) => picture(l, l.kind, page, "main"))}
+                </div>
+                <span class="muted small look-of"
+                  >at ${sha(beforeShown[0]!.commitOid, `${base}/commit/${beforeShown[0]!.commitOid}`)} ·
+                  ${time(beforeShown[0]!.createdAt)}</span
+                >`}
+        </div>
+        <div class="look-side look-after">
+          <p class="muted small">After · #${pull.number}</p>
+          <div class="look-pair">
+            ${when(phone, (l) => picture(l, "phone", page))}
+            ${when(desktop, (l) => picture(l, "desktop", page))}
+          </div>
+        </div>
       </div>
       ${when(darkPhone ?? darkDesktop, () =>
         html`<details class="quiet-details">
