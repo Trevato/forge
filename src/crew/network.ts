@@ -8,7 +8,7 @@
 import type { ClaudeOutcome } from "./claude.ts";
 
 const NETWORK =
-  /EAI_AGAIN|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EPIPE|fetch failed|socket hang up|can'?t reach the API server|unable to connect|connection error/i;
+  /EAI_AGAIN|ECONNRESET|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|EPIPE|fetch failed|socket hang up|can['’]?t reach the API server|unable to connect|connection error/i;
 
 /** Seconds to wait before each retry; its length is the number of retries. */
 export const NETWORK_RETRY_SECONDS: readonly number[] = [5, 20, 60];

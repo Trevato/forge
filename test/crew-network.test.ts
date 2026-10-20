@@ -53,6 +53,16 @@ describe("isNetworkError", () => {
       false,
     );
   });
+
+  test("matches the exact wording of the failed quorum run 01m2vkf45fq3wkrbd7373yr2ah (#3123)", () => {
+    const logged =
+      "API Error: Can't reach the API server — check your internet or DNS (EAI_AGAIN) (api_error)";
+    expect(isNetworkError(outcome({ result: logged }))).toBe(true);
+    expect(isNetworkError(outcome({ result: "", reason: logged }))).toBe(true);
+    // The same sentence without the code, and with a typographic apostrophe.
+    const bare = "API Error: Can’t reach the API server — check your internet";
+    expect(isNetworkError(outcome({ result: bare }))).toBe(true);
+  });
 });
 
 describe("the crew, with a stand-in Claude Code: network errors", () => {
