@@ -149,11 +149,55 @@ export function readTiming(db: Database, sinceHour: string): TimingRow[] {
 }
 
 /** The header every response carries: `app;dur=<ms>`, and `db` when known. */
-export function serverTiming(appMs: number, dbMs?: number): string {
+export function serverTiming(
+  appMs: number,
+  dbMs?: number,
+  phases: readonly Phase[] = [],
+): string {
   const f = (n: number) => n.toFixed(1);
-  return dbMs === undefined
-    ? `app;dur=${f(appMs)}`
-    : `db;dur=${f(dbMs)}, app;dur=${f(appMs)}`;
+  const head =
+    dbMs === undefined
+      ? `app;dur=${f(appMs)}`
+      : `db;dur=${f(dbMs)}, app;dur=${f(appMs)}`;
+  return [head, ...phases.map((p) => `${p.name};dur=${f(p.ms)}`)].join(", ");
+}
+
+/** One named stretch of a request, in milliseconds. */
+export interface Phase {
+  readonly name: string;
+  readonly ms: number;
+}
+
+/** A phase name is a header token: lowercase letters, nothing a viewer chose. */
+const PHASE_NAME = /^[a-z][a-z0-9-]{0,15}$/;
+
+const phaseLists = new WeakMap<Request, Phase[]>();
+
+/** A page names a phase it spent `ms` in; `serverTiming` writes it after `app`. */
+export function notePhase(request: Request, name: string, ms: number): void {
+  if (!PHASE_NAME.test(name))
+    throw new RangeError("phase refused: the name must be a lowercase token");
+  if (!Number.isFinite(ms) || ms < 0) return;
+  const list = phaseLists.get(request) ?? [];
+  list.push({ name, ms });
+  phaseLists.set(request, list);
+}
+
+export function takePhases(request: Request): Phase[] {
+  const list = phaseLists.get(request) ?? [];
+  phaseLists.delete(request);
+  return list;
+}
+
+const sessionTimes = new WeakMap<Request, number>();
+
+/** The server says how long resolving the session took; a page may name it. */
+export function noteSessionTime(request: Request, ms: number): void {
+  sessionTimes.set(request, ms);
+}
+
+export function takeSessionTime(request: Request): number {
+  return sessionTimes.get(request) ?? 0;
 }
 
 const dbTimes = new WeakMap<Request, number>();

@@ -230,3 +230,34 @@ describe("the layout key", () => {
     expect(layout(graph).nodes.length).toBe(graph.issues.length);
   });
 });
+
+describe("/map's Server-Timing names its phases", () => {
+  let servers: Servers;
+  let f: Fixture;
+  beforeAll(async () => {
+    ({ f, servers } = await boot(SMALL));
+  }, 120_000);
+  afterAll(() => servers.stop(), 60_000);
+
+  for (const who of ["owner", "stranger"] as const) {
+    test(`${who}: session, lanes, layout and render follow app, and sum to no more than it`, async () => {
+      clearMapCache();
+      const cookie = who === "owner" ? f.ownerCookie : f.strangerCookie;
+      for (const pass of ["cold", "warm"]) {
+        const res = await fetch(`${servers.url}/map`, { headers: { cookie } });
+        const header = res.headers.get("server-timing") ?? "";
+        const dur = new Map(
+          [...header.matchAll(/([a-z-]+);dur=(\d+\.\d)/g)].map((m) => [m[1]!, Number(m[2])]),
+        );
+        const names = [...dur.keys()];
+        expect(names.slice(-4), `${pass}: ${header}`).toEqual(["session", "lanes", "layout", "render"]);
+        expect(header.split(", ").every((p) => /^[a-z-]+;dur=\d+\.\d$/.test(p))).toBe(true);
+        const sum = ["session", "lanes", "layout", "render"].reduce((n, k) => n + dur.get(k)!, 0);
+        // Each is printed to a tenth of a millisecond, so allow that rounding.
+        expect(sum).toBeLessThanOrEqual(dur.get("app")! + 0.4);
+        // No repository name rides in the header.
+        expect(header).not.toMatch(/\//);
+      }
+    });
+  }
+});

@@ -11,7 +11,9 @@ import {
   createRouteTiming,
   KEEP_DAYS,
   readTiming,
+  notePhase,
   serverTiming,
+  takePhases,
 } from "../src/core/route_timing.ts";
 import { serve } from "../src/http/server.ts";
 import { migrate } from "../src/kernel/migrate.ts";
@@ -87,4 +89,12 @@ test("rows older than 30 days are pruned at flush", () => {
 test("the header names db time only when known", () => {
   expect(serverTiming(1.234)).toBe("app;dur=1.2");
   expect(serverTiming(2, 0.5)).toBe("db;dur=0.5, app;dur=2.0");
+});
+
+test("phases follow app in the header, and a name that is not a token is refused", () => {
+  const request = new Request("http://x/");
+  notePhase(request, "lanes", 1.26);
+  expect(serverTiming(5, undefined, takePhases(request))).toBe("app;dur=5.0, lanes;dur=1.3");
+  expect(takePhases(request)).toEqual([]);
+  expect(() => notePhase(request, "my repo", 1)).toThrow();
 });

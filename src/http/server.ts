@@ -462,6 +462,8 @@ import { createUsageCounter, type UsageCounter } from "../core/usage_count.ts";
 import {
   createRouteTiming,
   noteDbTime,
+  noteSessionTime,
+  takePhases,
   serverTiming,
   takeDbTime,
   type RouteTiming,
@@ -2123,7 +2125,7 @@ export async function serve(app: App): Promise<Servers> {
     const tag = takeUsage(request);
     const ms = performance.now() - started;
     try {
-      response.headers.set("server-timing", serverTiming(ms, takeDbTime(request)));
+      response.headers.set("server-timing", serverTiming(ms, takeDbTime(request), takePhases(request)));
     } catch {
       // A response the forge is only carrying keeps the headers it came with.
     }
@@ -2428,7 +2430,9 @@ async function answerGet(
     }
     return noRoute(request.method, url.pathname);
   }
+  const authStart = performance.now();
   const auth = await resolveAuth(app, request);
+  noteSessionTime(request, performance.now() - authStart);
   if (auth.retryAfter !== undefined) return tooManyAttempts(auth.retryAfter);
   noteUsage(request, { pattern: matched.pattern, role: roleOf(auth) });
   // From here a body's cap depends on who is asking (`http/limits.ts`), and

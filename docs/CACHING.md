@@ -91,6 +91,21 @@ After #2716 (same fixture, same machine, `--n 30`, warm; `/` unchanged):
 What is left is rendering the ~1 MB of SVG (25 ms), which rule 3 keeps
 per request.
 
+`/map`'s `Server-Timing` names where that goes (#3159): `app` is the total,
+then `session`, `lanes` (the cache lookups, and the build on a miss, less the
+layout inside it), `layout` (graph layout on a miss) and `render`. Their sum
+is never more than `app`; the rest is routing and sending. One
+`bun run bench/map-home.ts` run (`--n 30`, warm, so `layout` is a cache hit
+and rounds to 0.0):
+
+| `GET /map` phase | owner p50 | owner p95 | stranger p50 | stranger p95 |
+| ---------------- | --------: | --------: | -----------: | -----------: |
+| total (`app`)    |      27.8 |      31.2 |         27.2 |         29.6 |
+| `session`        |       0.2 |       0.3 |          0.2 |          0.3 |
+| `lanes`          |       1.8 |       2.2 |          1.7 |          1.9 |
+| `layout`         |       0.0 |       0.0 |          0.0 |          0.0 |
+| `render`         |      17.7 |      20.1 |         17.4 |         19.1 |
+
 ### Where the time goes
 
 - **`/map`: `layout` of the big lane alone takes 408 ms of the ~490 ms

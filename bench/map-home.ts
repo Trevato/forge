@@ -363,6 +363,49 @@ export async function benchMapHome(
   return samples;
 }
 
+/** `/map`'s Server-Timing phases, p50 and p95 in ms, over `iterations` warm hits. */
+export async function benchMapPhases(
+  fixture: Fixture,
+  iterations: number,
+): Promise<string> {
+  const servers = await serve(fixture.app);
+  const names = ["app", "session", "lanes", "layout", "render"];
+  const rows: string[] = [
+    "| `GET /map` phase | owner p50 | owner p95 | stranger p50 | stranger p95 |",
+    "| ---------------- | --------: | --------: | -----------: | -----------: |",
+  ];
+  const stats = new Map<string, number[][]>();
+  try {
+    for (const cookie of [fixture.ownerCookie, fixture.strangerCookie]) {
+      const seen = new Map<string, number[]>(names.map((n) => [n, []]));
+      for (let i = 0; i < iterations + 1; i++) {
+        const response = await fetch(`${servers.url}/map`, { headers: { cookie } });
+        await response.arrayBuffer();
+        if (i === 0) continue;
+        const header = response.headers.get("server-timing") ?? "";
+        for (const m of header.matchAll(/([a-z-]+);dur=([\d.]+)/g))
+          seen.get(m[1]!)?.push(Number(m[2]));
+      }
+      for (const n of names) {
+        const sorted = seen.get(n)!.sort((a, b) => a - b);
+        const at = (p: number) =>
+          sorted[Math.min(sorted.length - 1, Math.floor((sorted.length * p) / 100))] ?? 0;
+        stats.set(n, [...(stats.get(n) ?? []), [at(50), at(95)]]);
+      }
+    }
+  } finally {
+    servers.stop();
+  }
+  for (const n of names) {
+    const [o, s] = stats.get(n)!;
+    const label = n === "app" ? "total (`app`)" : `\`${n}\``;
+    rows.push(
+      `| ${label} | ${o![0]!.toFixed(1)} | ${o![1]!.toFixed(1)} | ${s![0]!.toFixed(1)} | ${s![1]!.toFixed(1)} |`,
+    );
+  }
+  return rows.join("\n");
+}
+
 const TITLES = [
   "the map lays out by what waits for what",
   "home paints before the feed",
@@ -390,6 +433,9 @@ if (import.meta.main) {
       Number.isFinite(n) && n > 0 ? n : 30,
     );
     console.log(report(samples, argv.includes("--verbose")));
+    console.log(
+      `\n${await benchMapPhases(fixture, Number.isFinite(n) && n > 0 ? n : 30)}`,
+    );
     fixture.app.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });

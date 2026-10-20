@@ -33,6 +33,7 @@ import {
   type Ranked,
 } from "../../core/dependencies.ts";
 import type { Issue } from "../../core/issues.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import { cachedLane, cachedLayout, repoHeads, scopeKey } from "../map_cache.ts";
 import { holdsFor } from "../../core/holds.ts";
 import {
@@ -1513,6 +1514,21 @@ type KeptLane = Omit<Lane, "repo" | "workers"> & {
   readonly workerIds: string[];
 };
 
+/** Milliseconds a request spent laying graphs out, inside the lanes' build. */
+export interface Spent {
+  layoutMs: number;
+}
+
+function timed<T>(spent: Spent | undefined, run: () => T): T {
+  if (spent === undefined) return run();
+  const started = performance.now();
+  try {
+    return run();
+  } finally {
+    spent.layoutMs += performance.now() - started;
+  }
+}
+
 /**
  * One repository's lane for one scope, or null when it has nothing to draw.
  * Every read of issues here respects `scope`, so the entry it becomes is
@@ -1523,6 +1539,7 @@ function buildLane(
   repo: Repo,
   viewer: User | undefined,
   scope: ReturnType<typeof sealedScope>,
+  spent?: Spent,
 ): KeptLane | null {
   const db = app.db;
   // A run on a sealed report is not shown to who may not see the report.
@@ -1550,7 +1567,7 @@ function buildLane(
   );
   return {
     graph,
-    placed: cachedLayout(graph, layout),
+    placed: timed(spent, () => cachedLayout(graph, layout)),
     marks,
     ready,
     critical: criticalPath(graph),
@@ -1571,7 +1588,11 @@ function buildLane(
  * for every run in flight and one for who runs them; a graph and its marks
  * only for the lanes that stay.
  */
-export function globalLanes(app: App, viewer: User | undefined): Lane[] {
+export function globalLanes(
+  app: App,
+  viewer: User | undefined,
+  spent?: Spent,
+): Lane[] {
   const db = app.db;
   const now = new Date();
   // Access first, every request, and into the key (docs/CACHING.md rule 1).
@@ -1593,7 +1614,7 @@ export function globalLanes(app: App, viewer: User | undefined): Lane[] {
         scope: scopeKey(scope),
         now,
       },
-      () => buildLane(app, repo, viewer, scope),
+      () => buildLane(app, repo, viewer, scope, spent),
     );
     if (lane !== null) built.push({ repo, lane });
   }
@@ -1680,7 +1701,15 @@ export function laneHtml(lane: Lane, width: number): Html {
 export function globalMapPage(ctx: Ctx): Response {
   const viewer = ctx.auth.user;
   if (!viewer) return signInFirst(ctx);
-  const lanes = globalLanes(ctx.app, viewer);
+  const { request } = ctx;
+  notePhase(request, "session", takeSessionTime(request));
+  const spent: Spent = { layoutMs: 0 };
+  const lanesStart = performance.now();
+  const lanes = globalLanes(ctx.app, viewer, spent);
+  const lanesMs = performance.now() - lanesStart;
+  notePhase(request, "lanes", Math.max(0, lanesMs - spent.layoutMs));
+  notePhase(request, "layout", spent.layoutMs);
+  const renderStart = performance.now();
   const width = Math.max(0, ...lanes.map((l) => drawingWidth(l.placed)));
   const body = html`${pageHead("Map", {
       sub: "Every app you can see, laid out by what waits for what. The top edge of each lane is ready now; a ringed card is where the crew is.",
@@ -1693,13 +1722,15 @@ export function globalMapPage(ctx: Ctx): Response {
           </p>`
         : lanes.map((lane) => laneHtml(lane, width))}
     </div>`;
-  return page({
+  const response = page({
     ctx,
     title: "Map",
     body,
     styleCss: mapCss,
     scriptJs: `${liveRegionsJs}\n${mapViewJs}`,
   });
+  notePhase(request, "render", performance.now() - renderStart);
+  return response;
 }
 
 /** GET /api/v1/map — the lanes as data, one entry per repository. */
