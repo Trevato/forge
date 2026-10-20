@@ -1737,10 +1737,11 @@ async function withIdempotency(
 
 /**
  * Fields of an API answer that are a secret shown once (a spawned child's
- * claim link): an idempotent replay must not return them, and the
- * idempotency table must not keep them.
+ * claim link, a minted token, a webhook's signing secret, an invite's link,
+ * which carries its token): an idempotent replay must not return them, and
+ * the idempotency table must not keep them.
  */
-const SHOWN_ONCE = ["claimUrl"] as const;
+const SHOWN_ONCE = ["claimUrl", "token", "secret", "link"] as const;
 export const SHOWN_ONCE_NOTE = "shown once, in the first answer";
 
 export function withoutShownOnce(body: string): string {

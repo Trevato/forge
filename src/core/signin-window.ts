@@ -2,9 +2,10 @@
  * Sign-in attempts, throttled. The token limiter does not see a password
  * form — a stranger has no credential yet — so guessing a password runs at
  * line speed and each guess costs a slow hash. Three sliding windows, checked
- * before the hash: an account may be tried twenty times a minute, a source
- * sixty, and the forge as a whole two hundred, so neither one account, one
- * source nor every account at once is worth the trying. A person signing in
+ * before the hash: an account may be tried twenty times a minute from one
+ * source (another source's guesses never use it up), a source sixty, and the
+ * forge as a whole two hundred, so neither one account, one source nor every
+ * account at once is worth the trying. A person signing in
  * does not notice; a refused attempt is not counted, so the door reopens
  * exactly a window later. One limiter per forge database, so a test's forge
  * never throttles another's. Every door that proves a secret asks here: the
@@ -61,7 +62,9 @@ export function admitSignin(
     adminPerMinute: limitValue(db, "signin.per_forge"),
     enabled: true,
   });
-  const accountKey = `account:${account.toLowerCase()}`;
+  // By account *and* source: a stranger spamming "admin" fills only their
+  // own window, never the owner's, so guessing cannot be turned into a lockout.
+  const accountKey = `account:${account.toLowerCase()}|${bucketOf(address)}`;
   // The one key first: a key already refused must not spend the forge's budget.
   const one = limiter.take(accountKey, "ro");
   if (!one.allowed) return { admitted: false, retryAfter: one.retryAfter };

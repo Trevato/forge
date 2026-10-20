@@ -121,12 +121,12 @@ export const LIMITS: Record<LimitKey, LimitDef> = {
     reason: "A person's feed is theirs: shares past the day's allowance wait instead of crowding it out.",
   },
   "signin.per_account": {
-    label: "Sign-in attempts per account a minute",
+    label: "Sign-in attempts per account from one source a minute",
     unit: "attempts",
     default: 20,
     min: 1,
     max: 1_000,
-    reason: "Every attempt costs a password hash, and a guesser gets only so many tries at one account.",
+    reason: "Every attempt costs a password hash, and a guesser gets only so many tries at one account from one source, so one stranger cannot lock the owner out. A guesser spread over many sources is bounded only by the per-forge limit.",
   },
   "signin.per_source": {
     label: "Sign-in attempts per source a minute",

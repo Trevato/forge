@@ -32,6 +32,10 @@ function inline(escaped: string): string {
           // relative path (`docs/keeping.md`), a rooted one, or an anchor —
           // all of which stay on this origin by construction.
           if (url.startsWith("//")) return match;
+          // Browsers strip C0 controls before reading a scheme, so
+          // "\u0001javascript:" is javascript: to them and no scheme to the
+          // test below — refuse any control character outright.
+          if (/[\u0000-\u001f\u007f-\u009f]/.test(url)) return match;
           const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url);
           if (scheme && !/^https?$/i.test(scheme[1]!)) return match;
           return `<a href="${url}" rel="nofollow noopener">${text}</a>`;

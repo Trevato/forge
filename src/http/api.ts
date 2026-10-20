@@ -1280,6 +1280,9 @@ export function apiRoutes(router: Router<Handler>): void {
   });
 
   router.add("POST", "/api/v1/sessions", async (ctx) => {
+    // The answer sets a cookie, so a page on another site must not be able
+    // to sign a visitor in as someone else (login CSRF).
+    if (crossOrigin(ctx.request, ctx.url, ctx.app.log)) return forbidden();
     // Anyone may call this, so its body is a stranger's (`http/limits.ts`).
     const input = await boundedBody(ctx.request, STRANGER_MAX);
     if (input === "too_large")
