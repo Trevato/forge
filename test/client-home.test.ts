@@ -12,7 +12,9 @@ import { join } from "node:path";
 import { createRepo } from "../src/actions/repos.ts";
 import { childDirOf, spawnForge } from "../src/actions/spawn.ts";
 import { createApp, type App } from "../src/app.ts";
+import { clientAppRows } from "../src/core/client-apps.ts";
 import { addCrew, createAgentRow, setCrewRole } from "../src/core/agents.ts";
+import { moveArchived } from "../src/core/repos.ts";
 import { createSession } from "../src/core/sessions.ts";
 import { linkEveryday } from "../src/core/everyday.ts";
 import { createUser, getUserByName } from "../src/core/users.ts";
@@ -290,5 +292,29 @@ describe("a client's first screen", () => {
     expect(app.screen.toText()).toContain("bakery: Its agents are waiting for something to do.");
     expect(app.screen.toText()).not.toContain("Shipped per hour");
     app.stop();
+  });
+
+  test("an archived app leaves the first screen and comes back when woken", async () => {
+    const maria = getUserByName(child.db, "maria")!;
+    const second = await createRepo(child, maria, { name: "cafe", owner: "marias" });
+    if (!second.ok) throw new Error(JSON.stringify(second.error));
+    const bakery = child.db
+      .query<{ id: string }, []>("SELECT id FROM repo WHERE name = 'bakery'")
+      .get()!;
+    const names = async () =>
+      (await clientAppRows(child, maria)).map((r) => r.repo.name).sort();
+    expect(await names()).toEqual(["bakery", "cafe"]);
+    expect(moveArchived(child.db, bakery.id, true)).toBe(true);
+    expect(await names()).toEqual(["cafe"]);
+    const apps = async () => {
+      const home = main(await page(owner));
+      return home.slice(home.indexOf('id="client-apps"'));
+    };
+    expect(await apps()).not.toContain('href="/marias/bakery"');
+    expect(await apps()).toContain('href="/marias/cafe"');
+    expect((await fetch(url("/marias/bakery"), { headers: { cookie: owner } })).status).toBe(200);
+    expect(moveArchived(child.db, bakery.id, false)).toBe(true);
+    expect(await names()).toEqual(["bakery", "cafe"]);
+    expect(await apps()).toContain('href="/marias/bakery"');
   });
 });

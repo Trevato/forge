@@ -6,7 +6,7 @@
 
 import type { App } from "../app.ts";
 import { spawnedRepos } from "./next-steps.ts";
-import type { Repo } from "./repos.ts";
+import { withoutArchived, type Repo } from "./repos.ts";
 import type { User } from "./users.ts";
 
 export interface ClientApp {
@@ -17,12 +17,12 @@ export interface ClientApp {
   readonly queued: number;
 }
 
-/** The apps `user` can see on a spawned forge, each with its agent counts. */
+/** The apps `user` can see on a spawned forge, each with its agent counts; archived ones are put away, not shown. */
 export async function clientAppRows(
   app: App,
   user: User,
 ): Promise<readonly ClientApp[]> {
-  const repos = await spawnedRepos(app, user);
+  const repos = withoutArchived(await spawnedRepos(app, user));
   if (repos.length === 0) return [];
   const rows = app.db
     .query<{ repo_id: string; state: string; n: number }, string[]>(
