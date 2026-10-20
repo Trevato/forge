@@ -1,10 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { createRepo } from "../src/core/repos.ts";
 import { createUser } from "../src/core/users.ts";
+import { createSession } from "../src/core/sessions.ts";
+import { serve } from "../src/http/server.ts";
+import { LOOPBACK, plainHook } from "./helpers/loopback-hook.ts";
 import {
   createWebhook,
   deliverDue,
@@ -80,13 +84,8 @@ describe("webhook delivery", () => {
 
   test("a matching event is delivered, signed, and verifiable", async () => {
     received = [];
-    const { secret } = unwrap(
-      createWebhook(app.db, {
-        repoId,
-        url: `${receiverUrl}/ok`,
-        kinds: "push",
-      }),
-    );
+    plainHook(app, repoId, `${receiverUrl}/ok`, "push");
+    const secret = "test-secret";
     // A matching event enqueues a delivery via the bus subscriber.
     app.bus.append({
       kind: "push",
@@ -102,7 +101,7 @@ describe("webhook delivery", () => {
       payload: {},
     });
 
-    const attempted = await deliverDue(app.db, app.log);
+    const attempted = await deliverDue(app.db, app.log, new Date(), LOOPBACK);
     expect(attempted).toBe(1); // only the push matched "push"
     expect(received).toHaveLength(1);
     expect(received[0]!.event).toBe("push");
@@ -116,11 +115,11 @@ describe("webhook delivery", () => {
   });
 
   test("a failing endpoint retries then gives up, without losing the row", async () => {
-    createWebhook(app.db, { repoId, url: `${receiverUrl}/fail`, kinds: "tag" });
+    plainHook(app, repoId, `${receiverUrl}/fail`, "tag");
     app.bus.append({ kind: "tag", repoId, actorId: userId, payload: {} });
 
     // First attempt fails → row goes pending with a future next_try_at.
-    await deliverDue(app.db, app.log);
+    await deliverDue(app.db, app.log, new Date(), LOOPBACK);
     let row = app.db
       .query<
         { state: string; attempts: number; next_try_at: string | null },
@@ -133,7 +132,7 @@ describe("webhook delivery", () => {
 
     // Drive it to exhaustion by delivering far in the future each time.
     for (let i = 0; i < 6; i++) {
-      await deliverDue(app.db, app.log, new Date(Date.now() + i * 3_600_000));
+      await deliverDue(app.db, app.log, new Date(Date.now() + i * 3_600_000), LOOPBACK);
     }
     const failed = app.db
       .query<
@@ -147,11 +146,7 @@ describe("webhook delivery", () => {
   test("a flaky endpoint eventually succeeds on retry", async () => {
     received = [];
     failCount = 0;
-    createWebhook(app.db, {
-      repoId,
-      url: `${receiverUrl}/flaky`,
-      kinds: "flaky.*",
-    });
+    plainHook(app, repoId, `${receiverUrl}/flaky`, "flaky.*");
     app.bus.append({
       kind: "flaky.event",
       repoId,
@@ -162,7 +157,7 @@ describe("webhook delivery", () => {
     // 503, 503, then 200 — deliver repeatedly with advancing time.
     let ok = false;
     for (let i = 0; i < 5 && !ok; i++) {
-      await deliverDue(app.db, app.log, new Date(Date.now() + i * 3_600_000));
+      await deliverDue(app.db, app.log, new Date(Date.now() + i * 3_600_000), LOOPBACK);
       const row = app.db
         .query<
           { state: string },
@@ -175,6 +170,105 @@ describe("webhook delivery", () => {
     expect(received).toHaveLength(1);
   });
 });
+
+describe("webhook urls and refused deliveries", () => {
+  test("only https is saved, with invalid_url", () => {
+    const app = createApp({ dataDir: tmp(), port: 0 });
+    try {
+      const r = createWebhook(app.db, { repoId: "r", url: "http://example.com/h" });
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.error).toBe("invalid_url");
+    } finally {
+      app.close();
+    }
+  });
+
+  test("a delivery to a private address is refused and records no status", async () => {
+    const app = createApp({ dataDir: tmp(), port: 0 });
+    try {
+      app.db.query("INSERT INTO user (id, username, email, password_hash) VALUES ('u1', 'w', 'w@f.dev', 'x')").run();
+      app.db.query("INSERT INTO repo (id, owner_id, name) VALUES ('r1', 'u1', 'h')").run();
+      plainHook(app, "r1", "https://127.0.0.1:9/h");
+      app.bus.append({ kind: "push", repoId: "r1" });
+      await deliverDue(app.db, app.log);
+      const row = app.db
+        .query<{ last_status: number | null; last_error: string | null; attempts: number }, []>(
+          "SELECT last_status, last_error, attempts FROM webhook_delivery",
+        )
+        .get();
+      expect(row?.last_status).toBeNull();
+      expect(row?.last_error).toBe("refused: private address");
+      expect(row?.attempts).toBe(1);
+    } finally {
+      app.close();
+    }
+  });
+  test("a refusal fails at once, and the hooks page says why", async () => {
+    const app = createApp({ dataDir: tmp(), port: 0 });
+    const servers = await serve(app);
+    try {
+      const user = unwrap(
+        await createUser(app.db, { origin: "seed", trusted: true, username: "shown", email: "s@f.dev", password: "shown-in-settings" }),
+      );
+      const repo = unwrap(await createRepo(app.db, app.reposRoot, { ownerId: user.id, name: "h" }));
+      unwrap(createWebhook(app.db, { repoId: repo.id, url: "https://127.0.0.1:9/h" }));
+      app.bus.append({ kind: "push", repoId: repo.id });
+      await deliverDue(app.db, app.log);
+      const row = app.db
+        .query<{ state: string; attempts: number }, []>("SELECT state, attempts FROM webhook_delivery")
+        .get();
+      expect(row).toEqual({ state: "failed", attempts: 1 });
+      const cookie = `forge_session=${createSession(app.db, user.id).token}`;
+      const page = await fetch(`${servers.url}/shown/h/settings/hooks`, { headers: { cookie } });
+      expect(page.status).toBe(200);
+      expect(await page.text()).toContain("refused: private address");
+    } finally {
+      servers.stop();
+      app.close();
+    }
+  });
+
+  test("a delivery that succeeds clears a stale last_error", async () => {
+    const app = createApp({ dataDir: tmp(), port: 0 });
+    const receiver = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    try {
+      app.db.query("INSERT INTO user (id, username, email, password_hash) VALUES ('u1', 'w', 'w@f.dev', 'x')").run();
+      app.db.query("INSERT INTO repo (id, owner_id, name) VALUES ('r1', 'u1', 'h')").run();
+      plainHook(app, "r1", `http://127.0.0.1:${receiver.port}/h`);
+      app.bus.append({ kind: "push", repoId: "r1" });
+      app.db.query("UPDATE webhook_delivery SET last_error = 'old'").run();
+      await deliverDue(app.db, app.log, new Date(), LOOPBACK);
+      const row = app.db
+        .query<{ state: string; last_error: string | null }, []>("SELECT state, last_error FROM webhook_delivery")
+        .get();
+      expect(row).toEqual({ state: "ok", last_error: null });
+    } finally {
+      receiver.stop(true);
+      app.close();
+    }
+  });
+
+  test("a hook saved as http before the https rule is refused, not sent", async () => {
+    const app = createApp({ dataDir: tmp(), port: 0 });
+    try {
+      app.db.query("INSERT INTO user (id, username, email, password_hash) VALUES ('u1', 'w', 'w@f.dev', 'x')").run();
+      app.db.query("INSERT INTO repo (id, owner_id, name) VALUES ('r1', 'u1', 'h')").run();
+      plainHook(app, "r1", "http://93.184.216.34/h");
+      app.bus.append({ kind: "push", repoId: "r1" });
+      await deliverDue(app.db, app.log);
+      const row = app.db
+        .query<{ state: string; last_error: string | null }, []>("SELECT state, last_error FROM webhook_delivery")
+        .get();
+      expect(row).toEqual({ state: "failed", last_error: "refused: not https" });
+    } finally {
+      app.close();
+    }
+  });
+});
+
+function tmp(): string {
+  return mkdtempSync(join(tmpdir(), "forge-hook-r-"));
+}
 
 function unwrap<T>(
   r: { ok: true; value: T } | { ok: false; error: unknown },

@@ -14,6 +14,7 @@ import { getAgentByName } from "../../src/core/agents.ts";
 import { getIssue } from "../../src/core/issues.ts";
 import { getRepo } from "../../src/core/repos.ts";
 import { deliverDue } from "../../src/core/webhooks.ts";
+import { LOOPBACK } from "./loopback-hook.ts";
 import { queueAgentRun } from "../../src/crew/dispatch.ts";
 
 const [mode, dataDir, startAt, count] = process.argv.slice(2);
@@ -30,7 +31,7 @@ if (mode === "queue") {
 } else {
   const until = Date.now() + 3000;
   while (Date.now() < until) {
-    const sent = await deliverDue(app.db, app.log);
+    const sent = await deliverDue(app.db, app.log, new Date(), LOOPBACK);
     done += sent;
     if (sent === 0) await Bun.sleep(20);
   }

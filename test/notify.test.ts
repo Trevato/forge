@@ -15,6 +15,7 @@ import type { Repo } from "../src/core/repos.ts";
 import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { post } from "../src/crew/notify.ts";
 import {
   notifyHost,
   notifyUrlOf,
@@ -158,6 +159,13 @@ describe("notify", () => {
     // The fourth pull already spent one of this hour's ten.
     for (let i = 5; i < 20; i++) await greenPull(i, `Pull ${i}`);
     expect(posts.length - before).toBe(9);
+  });
+});
+
+describe("the real sender", () => {
+  test("a plain-http or private URL is a message not sent, not a throw", async () => {
+    expect(await post("http://ntfy.example.test/t", "x", {})).toBe(false);
+    expect(await post("https://127.0.0.1:9/t", "x", {})).toBe(false);
   });
 });
 

@@ -1619,7 +1619,10 @@ work here.
   say what the local client keeps cloned.
 - **Automation** — a JSON API covering repos, issues, forks, and orgs (the
   label-as-queue surface), a durable event outbox, and **webhooks** (HMAC-signed
-  delivery with retry).
+  delivery with retry). Every send goes through `src/kernel/outbound.ts`:
+  - https URLs only; the host is resolved, private addresses are refused, and no redirect is followed.
+  - A refused delivery fails at once, with the reason shown on the hooks page.
+  - An unreachable or erroring endpoint is retried with growing delay.
 - **Where an account came from** — `GET /api/v1/admin/accounts` lists each
   account with `via` (`signup`, `edge`, or null) and `signsInThrough`
   (`"open-platform.sh"` for an account the platform edge made, else null);

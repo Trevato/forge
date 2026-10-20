@@ -13,6 +13,11 @@ import type { Database } from "bun:sqlite";
 import { defect } from "../kernel/error.ts";
 import { id, secret as randomSecret } from "../kernel/id.ts";
 import type { Log } from "../kernel/log.ts";
+import {
+  outboundFetch,
+  RefusedError,
+  type OutboundOptions,
+} from "../kernel/outbound.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { ForgeEvent } from "./events.ts";
 
@@ -68,8 +73,8 @@ export function createWebhook(
   input: CreateWebhookInput,
 ): Result<{ webhook: Webhook; secret: string }, CreateWebhookError> {
   const url = input.url.trim();
-  // Only http(s), and never a bare/relative URL — this value is fetched.
-  if (!/^https?:\/\/.+/i.test(url)) return err("invalid_url");
+  // Only https, and never a bare/relative URL — this value is fetched.
+  if (!/^https:\/\/.+/i.test(url)) return err("invalid_url");
   try {
     // eslint-disable-next-line no-new
     new URL(url);
@@ -190,6 +195,7 @@ export async function deliverDue(
   db: Database,
   log: Log,
   now = new Date(),
+  outbound: OutboundOptions = {},
 ): Promise<number> {
   const nowIso = now.toISOString();
   const due = db
@@ -226,7 +232,7 @@ export async function deliverDue(
       );
     if (claimed.changes !== 1) continue;
     try {
-      await deliverOne(db, log, row, now);
+      await deliverOne(db, log, row, now, outbound);
     } catch (error) {
       // One malformed delivery must not take the batch with it. Without
       // this, a single unsendable row stops every delivery behind it — and
@@ -249,6 +255,7 @@ async function deliverOne(
   log: Log,
   row: DueRow,
   now: Date,
+  outbound: OutboundOptions,
 ): Promise<void> {
   const body = JSON.stringify({
     id: row.event_id,
@@ -263,23 +270,36 @@ async function deliverOne(
 
   let status = 0;
   try {
-    const response = await fetch(row.url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "user-agent": "forge-webhook",
-        "x-forge-event": row.kind,
-        "x-forge-delivery": row.id,
-        ...(signature === ""
-          ? {}
-          : { "x-forge-signature-256": `sha256=${signature}` }),
+    const response = await outboundFetch(
+      row.url,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "forge-webhook",
+          "x-forge-event": row.kind,
+          "x-forge-delivery": row.id,
+          ...(signature === ""
+            ? {}
+            : { "x-forge-signature-256": `sha256=${signature}` }),
+        },
+        body,
+        signal: AbortSignal.timeout(DELIVER_TIMEOUT_MS),
+        redirect: "manual",
       },
-      body,
-      signal: AbortSignal.timeout(DELIVER_TIMEOUT_MS),
-      redirect: "manual",
-    });
+      outbound,
+    );
     status = response.status;
   } catch (error) {
+    if (error instanceof RefusedError) {
+      // A private address or a plain-http URL will not mend itself in
+      // seconds, so there is nothing to retry: fail it now, with the reason.
+      log.warn("webhook delivery refused", { delivery: row.id });
+      db.query(
+        "UPDATE webhook_delivery SET state = 'failed', attempts = ?1, last_status = NULL, last_error = ?2 WHERE id = ?3",
+      ).run(attempt, error.message, row.id);
+      return;
+    }
     log.warn("webhook delivery error", {
       delivery: row.id,
       error: String(error),
@@ -289,7 +309,7 @@ async function deliverOne(
   const ok2xx = status >= 200 && status < 300;
   if (ok2xx) {
     db.query(
-      "UPDATE webhook_delivery SET state = 'ok', attempts = ?1, last_status = ?2 WHERE id = ?3",
+      "UPDATE webhook_delivery SET state = 'ok', attempts = ?1, last_status = ?2, last_error = NULL WHERE id = ?3",
     ).run(attempt, status, row.id);
     return;
   }
@@ -368,6 +388,8 @@ export interface DeliveryInfo {
   readonly state: "pending" | "ok" | "failed";
   readonly attempts: number;
   readonly lastStatus: number | null;
+  /** Why nothing was sent ("refused: private address"), when nothing was. */
+  readonly lastError: string | null;
   readonly kind: string;
 }
 
@@ -383,11 +405,12 @@ export function recentDeliveries(
         state: "pending" | "ok" | "failed";
         attempts: number;
         last_status: number | null;
+        last_error: string | null;
         kind: string;
       },
       [string, number]
     >(
-      `SELECT d.id, d.state, d.attempts, d.last_status, e.kind
+      `SELECT d.id, d.state, d.attempts, d.last_status, d.last_error, e.kind
        FROM webhook_delivery d JOIN event e ON e.id = d.event_id
        WHERE d.webhook_id = ?1 ORDER BY d.id DESC LIMIT ?2`,
     )
@@ -397,6 +420,7 @@ export function recentDeliveries(
     state: r.state,
     attempts: r.attempts,
     lastStatus: r.last_status,
+    lastError: r.last_error,
     kind: r.kind,
   }));
 }

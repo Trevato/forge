@@ -23,7 +23,7 @@
 import { newAccountLines } from "../actions/accounts.ts";
 import { mailCeilingLines } from "../actions/mail.ts";
 import type { Database } from "bun:sqlite";
-import { lookup } from "node:dns/promises";
+import { outboundFetch } from "../kernel/outbound.ts";
 import type { App } from "../app.ts";
 import { isPrivateHost } from "../actions/migrate.ts";
 import { getUserSetting, setUserSetting } from "../core/settings.ts";
@@ -141,20 +141,23 @@ export type Sender = (
   headers: Record<string, string>,
 ) => Promise<boolean>;
 
-/** The real sender: the name is resolved and judged first, no redirect is followed. */
-const post: Sender = async (url, body, headers) => {
-  const host = new URL(url).hostname;
-  const found = await lookup(host, { all: true });
-  if (found.length === 0 || found.some((a) => isPrivateHost(a.address)))
+/**
+ * The real sender: the name is resolved and judged first, no redirect is
+ * followed, and only https is spoken. A refusal or a transport error is a
+ * message not sent, never a throw.
+ */
+export const post: Sender = async (url, body, headers) => {
+  try {
+    const res = await outboundFetch(url, {
+      method: "POST",
+      body,
+      headers: { "content-type": "text/plain; charset=utf-8", ...headers },
+      signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
+    });
+    return res.status >= 200 && res.status < 300;
+  } catch {
     return false;
-  const res = await fetch(url, {
-    method: "POST",
-    body,
-    headers: { "content-type": "text/plain; charset=utf-8", ...headers },
-    redirect: "manual",
-    signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
-  });
-  return res.status >= 200 && res.status < 300;
+  }
 };
 
 /**

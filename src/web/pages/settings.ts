@@ -1640,7 +1640,7 @@ export function hooksPage(ctx: Ctx): Response {
                               ${d.state}
                             </td>
                             <td>${d.attempts}</td>
-                            <td>${d.lastStatus ?? "—"}</td>
+                            <td>${d.lastError ?? d.lastStatus ?? "—"}</td>
                           </tr>`,
                       )}
                     </tbody>

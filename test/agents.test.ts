@@ -970,7 +970,10 @@ describe("git process limits and timeouts", () => {
 
       const { deliverDue } = await import("../src/core/webhooks.ts");
       const started = Date.now();
-      await deliverDue(app.db, app.log);
+      await deliverDue(app.db, app.log, new Date(), {
+        allow: ["127.0.0.1", "::1"],
+        plain: true,
+      });
       const elapsed = Date.now() - started;
       // The delivery timeout is 10s; anything under 30 proves a signal fired
       // rather than the request hanging on forever.

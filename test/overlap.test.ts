@@ -16,10 +16,10 @@ import { createApp, type App } from "../src/app.ts";
 import { createUser } from "../src/core/users.ts";
 import {
   CLAIM_MS,
-  createWebhook,
   DELIVER_TIMEOUT_MS,
   deliverDue,
 } from "../src/core/webhooks.ts";
+import { LOOPBACK, plainHook } from "./helpers/loopback-hook.ts";
 import { serve } from "../src/http/server.ts";
 import { drainStreams } from "../src/http/sse.ts";
 
@@ -97,12 +97,7 @@ describe("two processes on one data directory start each run once", () => {
       },
     });
     try {
-      const made = createWebhook(app.db, {
-        repoId,
-        url: `http://127.0.0.1:${receiver.port}/hook`,
-        kinds: "",
-      });
-      if (!made.ok) throw new Error(String(made.error));
+      plainHook(app, repoId, `http://127.0.0.1:${receiver.port}/hook`);
       for (let n = 0; n < 60; n++)
         app.bus.append({ kind: "push", repoId, payload: { n } });
       const pending = (
@@ -150,19 +145,14 @@ describe("two processes on one data directory start each run once", () => {
       },
     });
     try {
-      const made = createWebhook(app.db, {
-        repoId,
-        url: `http://127.0.0.1:${receiver.port}/slow`,
-        kinds: "",
-      });
-      if (!made.ok) throw new Error(String(made.error));
+      plainHook(app, repoId, `http://127.0.0.1:${receiver.port}/slow`);
       for (let n = 0; n < 4; n++)
         app.bus.append({ kind: "push", repoId, payload: { slow: n } });
       // A batch that began a while ago, as one behind a slow endpoint has:
       // its claims must still be leased from the moment each is taken.
-      const behind = deliverDue(app.db, app.log, new Date(Date.now() - 2 * CLAIM_MS));
+      const behind = deliverDue(app.db, app.log, new Date(Date.now() - 2 * CLAIM_MS), LOOPBACK);
       await Bun.sleep(100);
-      const beside = deliverDue(app.db, app.log);
+      const beside = deliverDue(app.db, app.log, new Date(), LOOPBACK);
       await Promise.all([behind, beside]);
       expect(hits.size).toBe(4);
       expect([...hits.values()].every((n) => n === 1)).toBe(true);
