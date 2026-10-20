@@ -340,7 +340,7 @@ function fromEvent(
     ...(pull?.authorIsAgent ? [`by ${pull.authorName}`] : []),
   ].join(", ");
   const toldWords = toldParts === "" ? "" : ` (${toldParts})`;
-  const change = number === undefined ? base(repo) : `${base(repo)}/changes/${number}`;
+  const change = number === undefined ? base(repo) : `${base(repo)}/pulls/${number}`;
   switch (e.kind) {
     case "run.finished": {
       const state = p["state"] === "failed" ? "failed" : "ok";
@@ -364,11 +364,11 @@ function fromEvent(
       };
     }
     case "pull.opened":
-      return { ...common, kind: "pull", link: change, what: `a change was opened${title ? `: ${clip(title)}` : ""}${toldWords}` };
+      return { ...common, kind: "pull", link: change, what: `opened a pull request${title ? `: ${clip(title)}` : ""}${toldWords}` };
     case "pull.merged":
-      return { ...common, kind: "pull", link: change, what: `a change shipped${title ? `: ${clip(title)}` : ""}${toldWords}` };
+      return { ...common, kind: "pull", link: change, what: `merged a pull request${title ? `: ${clip(title)}` : ""}${toldWords}` };
     case "pull.reviewed":
-      return { ...common, kind: "pull", link: change, what: `a change was reviewed${title ? `: ${clip(title)}` : ""}` };
+      return { ...common, kind: "pull", link: change, what: `reviewed a pull request${title ? `: ${clip(title)}` : ""}` };
     case "look.taken":
       return { ...common, kind: "look", link: base(repo), what: "a new picture of it is ready" };
     case "app.serving":
@@ -380,8 +380,8 @@ function fromEvent(
       return {
         ...common,
         kind: "tell",
-        link: `${base(repo)}/tells/${number}`,
-        what: told === "" ? `told #${number}` : clip(told),
+        link: `${base(repo)}/issues/${number}`,
+        what: `opened an issue: ${told === "" ? `#${number}` : clip(told)}`,
       };
     }
     case "issue.commented":
@@ -399,7 +399,7 @@ function fromEvent(
         kind: "reply",
         link:
           e.kind === "issue.commented"
-            ? `${base(repo)}/tells/${number}`
+            ? `${base(repo)}/issues/${number}`
             : change,
         what: said === "" ? `replied on “${on}”` : `on “${on}”: ${clip(said)}`,
       };

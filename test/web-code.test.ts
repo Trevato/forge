@@ -446,7 +446,7 @@ describe("the code browser on the web", () => {
     });
     expect(repo).toBeDefined();
     const html = await text("/alice/beacon/issues", alice);
-    expect(html).toContain('href="/alice/beacon/tells/1"');
+    expect(html).toContain('href="/alice/beacon/issues/1"');
     expect(html).toContain("data-word=");
     expect(await text("/alice/beacon/issues/1", alice)).toContain(
       "still flickering",
@@ -458,7 +458,7 @@ describe("the code browser on the web", () => {
   test("the search page renders repositories, conversations and code", async () => {
     const html = await text("/search?q=lamp", alice);
     expect(html).toContain("Apps and repositories");
-    expect(html).toContain("Tells and changes");
+    expect(html).toContain("Issues and pull requests");
     expect(html).toContain(">Code");
     // A code hit says where it is and shows the line with the query marked.
     expect(html).toContain("src/lamp.ts");

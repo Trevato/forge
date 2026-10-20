@@ -158,10 +158,10 @@ export const TOO_LONG_WORDS = "That is too long to tell in one go.";
 /** What happened, in the sentence both doors say. */
 export function toldWords(told: Told): string {
   if (told.routed === undefined)
-    return `Told as #${told.issue.number}. Nobody is on the crew to take it yet — add someone under Settings → Crew.`;
+    return `Opened as issue #${told.issue.number}. Nobody is on the crew to take it yet — add someone under Settings → Crew.`;
   const r = told.routed;
   const who = r.builder.user.username;
   return told.assigned
     ? `${who} is on it — ${r.size} ${r.kind}${r.by === "rule" ? "" : `, ${r.by} decided in ${r.ms} ms`}.`
-    : `Told as #${told.issue.number}, but ${who} could not take it.`;
+    : `Opened as issue #${told.issue.number}, but ${who} could not take it.`;
 }

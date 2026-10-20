@@ -1590,15 +1590,12 @@ export const shellJs = /* js */ `
             d: r.originKind ? 'on ' + r.originKind : 'on an origin' }
         : { t: r.owner + '/' + r.name, h: '/' + r.owner + '/' + r.name, g: 'Repositories' });
     });
-    // Which noun a tell or a change lives under is the mode's, and the index
-    // carries it — the studio's /tells/:n and /changes/:n, dev's /issues/:n
-    // and /pulls/:n, the same addresses the server just rendered into the
-    // page behind this box (\`tellHref\`/\`changeHref\`, src/web/studio/nouns.ts).
-    var studio = loadIndex().studio === true;
+    // An issue lives at /issues/:n and a pull request at /pulls/:n in every
+    // mode (\`tellHref\`/\`changeHref\`, src/web/studio/nouns.ts).
     (out.issues || []).slice(0, 5).forEach(function (i) {
       if (i.source !== 'local') return;
       var tell = i.kind === 'issue';
-      var noun = tell ? (studio ? 'tells' : 'issues') : (studio ? 'changes' : 'pulls');
+      var noun = tell ? 'issues' : 'pulls';
       rows.push({
         t: i.title,
         h: '/' + i.repo.owner + '/' + i.repo.name + '/' + noun + '/' + i.number,

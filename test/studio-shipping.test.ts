@@ -226,7 +226,7 @@ describe("a stranger sees the app, not the owner's books", () => {
       // The app itself is still there: what it is, that it shipped, a way in.
       expect(page).toContain("a light that stays on");
       expect(page).toContain(">Shipped<");
-      expect(page).toContain("1 change");
+      expect(page).toContain("1 pull request");
       expect(page).toContain("Open the app");
       // The direction's own number is the same owner's-books fact as spend
       // and the ledger: a stranger and an anonymous visitor see neither.
@@ -2014,18 +2014,18 @@ describe("this week's shipping is counted by the database, not read off a page o
 
   test("the app page says 150 changes shipped, not the 100 a page of closed pulls holds", async () => {
     const page = await (await get("/alice/busy")).text();
-    expect(page).toMatch(/Shipped<\/dt>\s*<dd>150 changes<\/dd>/);
-    expect(page).not.toContain("100 changes");
+    expect(page).toMatch(/Shipped<\/dt>\s*<dd>150 pull requests<\/dd>/);
+    expect(page).not.toContain("100 pull requests");
     // And the cost of a shipped change divides by all 150.
     expect(page).toContain(
-      `$${(SPENT / SHIPPED).toFixed(2)} per shipped change`,
+      `$${(SPENT / SHIPPED).toFixed(2)} per shipped pull request`,
     );
   });
 
   test("an app with real history but nothing shipped this week reads 0 changes and no cost per change", async () => {
     const page = await (await get("/alice/quiet")).text();
-    expect(page).toMatch(/Shipped<\/dt>\s*<dd>0 changes<\/dd>/);
-    expect(page).not.toContain("per shipped change");
+    expect(page).toMatch(/Shipped<\/dt>\s*<dd>0 pull requests<\/dd>/);
+    expect(page).not.toContain("per shipped pull request");
   });
 });
 
@@ -2130,6 +2130,6 @@ describe("a one-minute-old app's front door does not lead with a week of zeros (
   test("a stranger sees the same quiet line, not the owner's zeros", async () => {
     const page = await (await fetch(`${base}/alice/newborn`)).text();
     expect(page).toContain("Nothing to show yet");
-    expect(page).not.toMatch(/Shipped<\/dt>\s*<dd>0 changes<\/dd>/);
+    expect(page).not.toMatch(/Shipped<\/dt>\s*<dd>0 pull requests<\/dd>/);
   });
 });

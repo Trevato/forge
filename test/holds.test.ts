@@ -678,9 +678,9 @@ describe("a hold is set, shown and lifted", () => {
 
   test("the change page offers the hold, then says who holds it and why, with the way to let it go", async () => {
     const cookie = await signIn("alice");
-    const change = `/alice/garden/changes/${pull.number}`;
+    const change = `/alice/garden/pulls/${pull.number}`;
     const before = await page(change, cookie);
-    expect(before).toContain("Hold this change");
+    expect(before).toContain("Hold this pull request");
     expect(before).toContain(
       `action="/alice/garden/pulls/${pull.number}/hold"`,
     );
@@ -707,7 +707,7 @@ describe("a hold is set, shown and lifted", () => {
     expect(after).toContain(
       `action="/alice/garden/pulls/${pull.number}/release"`,
     );
-    expect(after).not.toContain("Hold this change");
+    expect(after).not.toContain("Hold this pull request");
     // The change's Files step, the one that reads the code, says it too
     // (#628: one change page; `?mode=dev` answers the same page now).
     const dev = await page(`/alice/garden/pulls/${pull.number}/files`, cookie);

@@ -319,7 +319,7 @@ describe("the manifest: what you can do here, as who you are", () => {
       headBranch: "mine",
     });
     if (!own.ok) throw new Error(String(own.error));
-    const ownBody = (await manifest(`/acme/game/changes/${own.value.number}`)).body;
+    const ownBody = (await manifest(`/acme/game/pulls/${own.value.number}`)).body;
     expect(ownBody.here.pull).toEqual({ number: own.value.number, runs: true });
   });
 });

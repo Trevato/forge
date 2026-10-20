@@ -176,9 +176,9 @@ describe("finding things in the studio: /search", () => {
   test("a change and a tell are found too, each saying which app they belong to", async () => {
     const html = await (await asAlice("/search?q=chess")).text();
     expect(html).toContain("Add a chess clock timer");
-    expect(html).toContain(`/alice/widgets/tells/${tellNumber}`);
+    expect(html).toContain(`/alice/widgets/issues/${tellNumber}`);
     expect(html).toContain("Wire up the chess clock");
-    expect(html).toContain(`/alice/widgets/changes/${changeNumber}`);
+    expect(html).toContain(`/alice/widgets/pulls/${changeNumber}`);
     expect(html).toContain("alice/widgets");
   });
 
@@ -210,8 +210,8 @@ describe("finding things in the studio: /search", () => {
       ).text(),
     ]) {
       expect(html).toContain("Apps and repositories");
-      expect(html).toContain("Tells and changes");
-      expect(html).toContain(`/alice/widgets/tells/${tellNumber}`);
+      expect(html).toContain("Issues and pull requests");
+      expect(html).toContain(`/alice/widgets/issues/${tellNumber}`);
       expect(mainOf(html)).not.toContain('name="mode"');
     }
   });
@@ -604,8 +604,8 @@ describe("every studio page's headings form one outline", () => {
   test("the app page, the three lists, a tell, a change and a run each have one outline with no skipped level", async () => {
     const pages: Record<string, string> = {
       "the app page": "/alice/outline",
-      "everything told": "/alice/outline/tells",
-      "every change": "/alice/outline/changes",
+      "everything told": "/alice/outline/issues",
+      "every change": "/alice/outline/pulls",
       "every run": "/alice/outline/runs",
       "a tell": `/alice/outline/issues/${issueNumber}`,
       "a change": `/alice/outline/pulls/${pullNumber}`,
@@ -812,10 +812,10 @@ describe("the studio's Stop and Redeploy come back to the page they were pressed
     const stopped = await press(
       "stop",
       "studio",
-      `${base}/alice/notes/changes/1`,
+      `${base}/alice/notes/pulls/1`,
     );
     expect(stopped.status).toBe(303);
-    expect(stopped.headers.get("location")).toBe("/alice/notes/changes/1");
+    expect(stopped.headers.get("location")).toBe("/alice/notes/pulls/1");
   });
 
   test("no referer, or one from somewhere else, falls back to the app's studio page — never the raw /app", async () => {
@@ -1104,11 +1104,11 @@ describe("the studio names a person on the app's page, and the crew only for the
 
   test("an anonymous visitor reads one author for one change on all three pages, avatar included", async () => {
     const appPage = await anon("/ivy/pub");
-    const changes = await anon("/ivy/pub/changes");
-    const change = await anon(`/ivy/pub/changes/${personPull.number}`);
+    const changes = await anon("/ivy/pub/pulls");
+    const change = await anon(`/ivy/pub/pulls/${personPull.number}`);
 
-    const onApp = rowWith(appPage, `/changes/${personPull.number}`);
-    const onList = rowWith(changes, `/changes/${personPull.number}`);
+    const onApp = rowWith(appPage, `/pulls/${personPull.number}`);
+    const onList = rowWith(changes, `/pulls/${personPull.number}`);
     expect(onApp).toContain("ivy");
     expect(onApp).not.toContain("the crew");
     // The same name the list gives, and the same initials beside it.
@@ -1117,7 +1117,7 @@ describe("the studio names a person on the app's page, and the crew only for the
     expect(change).toContain("ivy");
 
     // A tell she took herself is hers on the same panel, by the same rule.
-    const held = rowWith(appPage, `/tells/${heldTell.number}`);
+    const held = rowWith(appPage, `/issues/${heldTell.number}`);
     expect(held).toContain("ivy");
     expect(held).not.toContain("the crew");
     expect(initialsIn(held)).toBe("i");
@@ -1125,7 +1125,7 @@ describe("the studio names a person on the app's page, and the crew only for the
 
   test("the crew's own change and the crew's own run still read as the crew's to that visitor", async () => {
     const appPage = await anon("/ivy/pub");
-    const onApp = rowWith(appPage, `/changes/${agentPull.number}`);
+    const onApp = rowWith(appPage, `/pulls/${agentPull.number}`);
     expect(onApp).toContain("the crew");
     expect(onApp).not.toContain("quill");
     expect(initialsIn(onApp)).toBe("tc");
@@ -1134,7 +1134,7 @@ describe("the studio names a person on the app's page, and the crew only for the
     expect(runRow).toContain("the crew");
     expect(runRow).not.toContain("quill");
 
-    const tellRow = rowWith(appPage, `/tells/${waitingTell.number}`);
+    const tellRow = rowWith(appPage, `/issues/${waitingTell.number}`);
     expect(tellRow).toContain("the crew");
     expect(tellRow).not.toContain("quill");
 
@@ -1146,9 +1146,9 @@ describe("the studio names a person on the app's page, and the crew only for the
 
   test("the owner still reads the crew by name, and her own change as her own", async () => {
     const appPage = await owner("/ivy/pub");
-    expect(rowWith(appPage, `/changes/${agentPull.number}`)).toContain("quill");
+    expect(rowWith(appPage, `/pulls/${agentPull.number}`)).toContain("quill");
     expect(rowWith(appPage, `/runs/${agentRun.id}`)).toContain("quill");
-    expect(rowWith(appPage, `/changes/${personPull.number}`)).toContain("ivy");
+    expect(rowWith(appPage, `/pulls/${personPull.number}`)).toContain("ivy");
   });
 });
 
@@ -1226,7 +1226,7 @@ describe("the studio's empty lists", () => {
     await setup("blank");
     for (const [path, words] of [
       ["issues", "Tell the crew what you want"],
-      ["pulls", "A change is the crew"],
+      ["pulls", "A pull request is the crew"],
       ["runs", "A run is one go"],
     ] as const) {
       const page = await get(`/alice/blank/${path}`);
@@ -1241,10 +1241,10 @@ describe("the studio's empty lists", () => {
     const told = openIssue(app, alice, repo, { title: "Add a tab", body: "" });
     if (!told.ok) throw new Error(String(told.error));
     const issues = await get("/alice/busy/issues?word=shipped");
-    expect(issues).toContain("Nothing told is shipped yet.");
+    expect(issues).toContain("No issue is shipped yet.");
     expect(issues).not.toContain("Tell the crew what you want");
     const pulls = await get("/alice/busy/pulls?word=look");
-    expect(pulls).toContain("No change is look yet.");
+    expect(pulls).toContain("No pull request is look yet.");
     const runs = await get("/alice/busy/runs?word=stopped");
     expect(runs).toContain("No run is stopped yet.");
   });

@@ -120,7 +120,7 @@ describe("tell the crew in the terminal", () => {
     } as unknown as Told;
     const answer = tellAnswer({ ok: true, value });
     expect(answer.text).toBe(toldWords(value));
-    expect(answer.text).toContain("Told as #7, but mason could not take it.");
+    expect(answer.text).toContain("Opened as issue #7, but mason could not take it.");
     expect(answer.text).not.toContain("is on it");
     expect(answer.tone).toBe("danger");
   });

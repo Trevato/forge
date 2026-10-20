@@ -266,7 +266,7 @@ describe("a name always says who it is", () => {
           app: "alice/garden",
           actor,
           at: new Date().toISOString(),
-          link: `/alice/garden/changes/${pull.number}`,
+          link: `/alice/garden/pulls/${pull.number}`,
           what: "Beds",
           reason: "",
           score: 1,

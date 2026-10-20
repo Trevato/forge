@@ -152,7 +152,7 @@ export async function nowCard(
     .slice(0, 6);
   // Who signs a "Now" row is the one rule for it, `voiceFor`
   // (`studio/voice.ts`): a person is named to anyone who can see the row —
-  // the same name `/changes` and the change's own page give — and only the
+  // the same name `/pulls` and the pull request's own page give — and only the
   // crew's own work reads as the app's own story for a viewer who cannot
   // see the roster. The avatar takes the same string, so its initials can
   // never disagree with the name beside them.
@@ -259,13 +259,13 @@ export async function nowCard(
         nav: true,
         lead: avatar(who),
         title: i.title,
-        meta: html`${who} · told ${time(i.createdAt)}, not picked up yet`,
+        meta: html`${who} · opened ${time(i.createdAt)}, not picked up yet`,
         trail: wordBadge("waiting"),
       });
     }),
     // Held by a person: `tellWord` — the one place a tell's word is
     // decided (`studio/tell.ts`) — says so honestly, the same word and
-    // note the tell's own page and "Everything told" already show for it.
+    // note the issue's own page and the issues list already show for it.
     // `personHeld` has already established the holder is a person, so
     // `voiceFor` names them to every viewer who can see the row.
     ...(await Promise.all(
@@ -300,7 +300,7 @@ export async function nowCard(
         title: html`<a href="${tellHref(base, i.number)}">${i.title}</a>`,
         // The invitation is a writer's (the shelf's rule, `ownerFacts`); the
         // fact — nobody has taken it — stays for everyone.
-        meta: html`told ${time(i.createdAt)} ·
+        meta: html`opened ${time(i.createdAt)} ·
           <span class="muted">nobody on the crew to take it</span>${ownerFacts
             ? html` — <a href="${base}/settings">add someone</a>`
             : null}`,

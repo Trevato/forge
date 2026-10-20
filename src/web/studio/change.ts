@@ -239,7 +239,7 @@ export function changeTabs(
   return html`<div class="filters mt">
     ${seg([
       {
-        label: "Change",
+        label: "Conversation",
         href: changeHref(base, pull.number),
         current: current === "change",
       },
@@ -262,8 +262,7 @@ function conflictWords(baseBranch: string, files: readonly string[]): string {
 }
 
 /**
- * GET /:owner/:name/pulls/:number and /changes/:number: one page, two
- * addresses, for every repository and every viewer. An older `?rc=` link (an inline comment form
+ * GET /:owner/:name/pulls/:number, for every repository and every viewer. An older `?rc=` link (an inline comment form
  * on the diff) is handed on to the Files step, where the diff now lives.
  */
 export async function pullPage(ctx: Ctx): Promise<Response> {
@@ -277,10 +276,6 @@ export async function pullPage(ctx: Ctx): Promise<Response> {
   return await changeConversation(ctx, repo, pull);
 }
 
-/** GET /:owner/:name/changes/:number — the studio's own noun for the page
- * `/pulls/:number` reaches; see `pullPage`. */
-export const changePage = pullPage;
-
 /**
  * What a change's page says about where it stands, drawn once: the word and
  * its note, the deploy worth linking, and the Preview card. The page's first
@@ -292,10 +287,8 @@ async function pullPanels(ctx: Ctx, repo: Repo, pull: Pull, spent: Spent = newSp
   const record: AppRecord | undefined = getAppByRepo(ctx.app.db, repo.id);
   const db = ctx.app.db;
   const base = repoBase(repo);
-  // Dev's own address for this change, and the only one the page *posts*
-  // to: ship, say and the escape to the diff all live under
-  // `/pulls/:number`, whether a reader arrived there or at
-  // `/changes/:number` (`changeHref`, nouns.ts).
+  // The pull request's address, and the only one the page *posts* to:
+  // ship, say and the escape to the diff all live under `/pulls/:number`.
   const thread = `${base}/pulls/${pull.number}`;
   const wordCtx: WordCtx = {
     db,
@@ -624,7 +617,7 @@ async function changeConversation(
             : {}),
           state: pull.state,
           locked: pull.mergedAt !== null,
-          closeLabel: "Close change",
+          closeLabel: "Close pull request",
           crewNote: threadNote(ctx.app.db, repo, pull),
         })}
       </div>

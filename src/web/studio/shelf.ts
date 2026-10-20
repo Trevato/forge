@@ -277,7 +277,7 @@ export async function shelfRows(
         word === undefined
           ? stuck.has(repo.id)
             ? html`<span class="muted"
-                >told — ${NOBODY_ON_CREW} to take it</span
+                >open — ${NOBODY_ON_CREW} to take it</span
               >`
             : canTell
               ? html`<span class="muted">quiet — tell the crew something</span>`

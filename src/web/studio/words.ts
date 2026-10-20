@@ -397,7 +397,7 @@ const WORD_ICON: Record<Word, Parameters<typeof icon>[0]> = {
  * live script repaints as a run finishes (`studioRunJs`). `cancelled` draws
  * the same quiet, secondary look as `waiting` and `planned` — a restart is
  * never the danger red a real failure earns. */
-export function wordBadge(word: Word, id?: string, plain = false): Html {
+export function wordBadge(word: Word, id?: string): Html {
   const variant =
     word === "look" || word === "shipped" || word === "done"
       ? "success"
@@ -411,7 +411,7 @@ export function wordBadge(word: Word, id?: string, plain = false): Html {
     data-variant="${variant}"
     data-word="${word}"
     ${id === undefined ? null : html`id="${id}"`}
-    >${word === "working" ? icon("loader") : null}${plain && word === "told"
+    >${word === "working" ? icon("loader") : null}${word === "told"
       ? "open"
       : word}</span
   >`;

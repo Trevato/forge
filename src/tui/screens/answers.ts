@@ -68,7 +68,7 @@ export function answersScreen(f: Session, ctx: Ctx, repo: Repo): Screen {
       );
       if (lines.length === 0) {
         emptyState(s, body!, c, {
-          title: "No tells yet",
+          title: "No issues yet",
           body: "What you tell the crew about this app shows up here, with its answer.",
         });
         return;

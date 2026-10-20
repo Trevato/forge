@@ -1301,7 +1301,7 @@ export function workspaceScreen(
               binding(["V"], "waves"),
               ...(repo === undefined ? [] : [binding(["d"], "production deploys")]),
               ...(repo !== undefined && canSeeAnswers(f.db, repo, f.user)
-                ? [binding(["a"], "your tells and the crew's answers")]
+                ? [binding(["a"], "your issues and the crew's answers")]
                 : []),
               ...(repo !== undefined && admin()
                 ? [binding(["R"], `decisions by ${(getRepoById(f.db, repo.id) ?? repo).decisionsBy} (cycle)`)]

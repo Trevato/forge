@@ -492,7 +492,7 @@ describe("every open pull's preview on the studio page", () => {
     expect(production).not.toContain(note);
 
     const changePage = await (
-      await get(`/alice/widget/changes/${pull.number}`)
+      await get(`/alice/widget/pulls/${pull.number}`)
     ).text();
     expect(changePage).toContain("<h2>Preview</h2>");
     expect(changePage).toContain(note);

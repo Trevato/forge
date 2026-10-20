@@ -4,7 +4,7 @@
  * of work to two different people.
  *
  * The decision, once: **an agent's name is not a secret.** A change's own
- * page and `/changes` already name the agent that opened it to anyone who
+ * page and `/pulls` already name the agent that opened it to anyone who
  * can read the repository, and nothing here could take that back. What
  * "the crew" stands in for is narrower — who is on the crew is part of the
  * roster, the ceiling and the ledger, the owner's own book-keeping
@@ -17,7 +17,7 @@
  *
  *  1. Is the actor an agent? A person is named to every viewer that can see
  *     the row at all — their authorship is theirs, and the app page must
- *     say what `/changes` and the change's own page say.
+ *     say what `/pulls` and the pull request's own page say.
  *  2. Can this viewer see the owner's facts? A writer reads the real name.
  *
  * Nothing here decides *whether* a row is visible: a viewer who cannot see

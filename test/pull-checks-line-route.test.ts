@@ -156,7 +156,7 @@ test("once the check has passed, the line has no beat, no counts, and reads as p
 
 test("the change page the owner lands on draws the same live line, with the counts", async () => {
   app.db.run("UPDATE run SET state = 'running', finished_at = NULL WHERE id = ?", [runId]);
-  const res = await fetch(`${servers.url}/alice/open/changes/${numbers["open"]}`, {
+  const res = await fetch(`${servers.url}/alice/open/pulls/${numbers["open"]}`, {
     headers: { cookie: `forge_session=${createSession(app.db, alice.id).token}` },
   });
   expect(res.status).toBe(200);

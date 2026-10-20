@@ -79,7 +79,7 @@ async function tellFrom(
   const { routed } = told.value;
   if (routed === undefined)
     return flashOrJson(ctx, back, {
-      message: `Told. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
+      message: `Opened as an issue. Nobody is on the crew to take it yet — add someone under Settings → Crew.`,
     });
   const builder = routed.builder;
   return flashOrJson(ctx, back, {
@@ -135,11 +135,11 @@ async function tellFromPage(ctx: Ctx, repo: Repo, form: Form): Promise<Response>
   const issue = `${repoBase(repo)}/issues/${told.value.issue.number}`;
   return page({
     ctx,
-    title: `Told · ${repo.name}`,
+    title: `Issue opened · ${repo.name}`,
     crumbs: crumbsFor(repo),
-    body: html`${pageHead("Told")}
+    body: html`${pageHead("Issue opened")}
       <p>${toldWords(told.value)}</p>
-      <p><a href="${issue}" data-receipt>See your tell, #${String(told.value.issue.number)}</a></p>`,
+      <p><a href="${issue}" data-receipt>See issue #${String(told.value.issue.number)}</a></p>`,
   });
 }
 
@@ -235,9 +235,9 @@ function takeBackWords(error: RevertPullError): string {
       case "unauthorized":
         return "sign in first";
       case "forbidden":
-        return "only a person can take a change back";
+        return "only a person can take a pull request back";
       case "not_found":
-        return "that change was not found";
+        return "that pull request was not found";
     }
   }
   switch (error.kind) {
@@ -311,7 +311,7 @@ export async function saySubmit(ctx: Ctx): Promise<Response> {
   const said = addComment(ctx.app, ctx.auth.user, repo, pull, text);
   return flashOrJson(ctx, base, {
     ...(said.ok
-      ? { message: `Told ${pull.authorName}. It picks the change back up.` }
+      ? { message: `Told ${pull.authorName}. It picks the pull request back up.` }
       : { tone: "danger" as const, message: "That could not be said." }),
   });
 }

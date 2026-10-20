@@ -212,7 +212,7 @@ describe("the first login to a spawned forge", () => {
     expect(home).toContain("Your crew has its direction:");
     expect(home).not.toContain("already at work");
     expect(home).toContain("atlas");
-    expect(home).toMatch(/href="\/marias\/bakery\/tells\/\d+"[^>]*>[^<]*Run Maria/);
+    expect(home).toMatch(/href="\/marias\/bakery\/issues\/\d+"[^>]*>[^<]*Run Maria/);
     // Each app with its way in.
     expect(home).toContain('href="/marias/bakery"');
   });

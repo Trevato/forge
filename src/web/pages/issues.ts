@@ -38,17 +38,15 @@ import {
 import {
   PAGE_TITLES,
   pageTitle,
-  studioRecord,
   tellsHref,
 } from "../studio/nouns.ts";
 
 // ---- compose ----
 
 /**
- * The compose page, in the face the viewer has: the studio's own noun for
- * it (`PAGE_TITLES.compose`) on the tab, the heading and the button, and
- * Cancel back to the list that face calls home. The form posts to
- * `/issues/new` in both faces — the one door that changes something.
+ * The compose page: `PAGE_TITLES.compose` on the tab, the heading and the
+ * button, and Cancel back to the issues list. The form posts to
+ * `/issues/new` — the one door that changes something.
  */
 function composePage(
   ctx: Ctx,
@@ -56,13 +54,12 @@ function composePage(
   values: { title: string; body: string; sealed?: boolean },
   error?: string,
 ): Response {
-  const studio = studioRecord(ctx, repo) !== undefined;
-  const heading = PAGE_TITLES.compose[studio ? "studio" : "dev"];
+  const heading = PAGE_TITLES.compose;
   const base = repoBase(repo);
   return page(
     {
       ctx,
-      title: pageTitle("compose", repo, studio),
+      title: pageTitle("compose", repo, false),
       crumbs: crumbsFor(repo),
       palette: repoPalette(ctx, repo),
       body: html`${repoHeader(ctx, repo, "issues", {
@@ -73,8 +70,8 @@ function composePage(
         ${newIssueForm(
           repo,
           values,
-          studio ? "Tell" : "Create issue",
-          studio ? tellsHref(base) : `${base}/issues`,
+          "Create issue",
+          tellsHref(base),
           error,
         )}`,
     },
@@ -171,17 +168,6 @@ function accountOrReport(ctx: Ctx, repo: Repo): Response {
         ${btn("Sign in", { href: signInHref(ctx), variant: "ghost" })}`,
       })}`,
   });
-}
-
-// GET /:owner/:name/tells/new — the studio's own door onto the compose page
-// `/issues/new` reaches, redirecting there when the studio does not apply,
-// the same rule `tellPage` follows for one tell.
-export function newTellPage(ctx: Ctx): Response {
-  const repo = loadRepo(ctx);
-  if (!repo) return notFoundPage(ctx);
-  if (studioRecord(ctx, repo) === undefined)
-    return redirect(`${repoBase(repo)}/issues/new${ctx.url.search}`);
-  return newIssuePage(ctx);
 }
 
 // POST /:owner/:name/issues/new

@@ -226,7 +226,7 @@ describe("asks that earn their place", () => {
       }
     ).items;
     const ask = items.find((i) => i.kind === "ask");
-    expect(ask?.ask?.decision).toBe("Ship this change?");
+    expect(ask?.ask?.decision).toBe("Ship this pull request?");
     expect(
       items.some((i) => (i.ask as { why?: string } | undefined)?.why === "security"),
     ).toBe(true);
@@ -334,7 +334,7 @@ describe("asks that earn their place", () => {
     const fromMcp = await mcpAsks();
     expect(fromMcp.measure.raised).toBe(6);
     expect(fromMcp.rows).toHaveLength(3);
-    expect(fromMcp.rows[0]!.words.decision).toBe("Ship this change?");
+    expect(fromMcp.rows[0]!.words.decision).toBe("Ship this pull request?");
     // Nothing changed: a second pass raises nothing new.
     recordAskLedger(app.db);
     expect((await mcpAsks()).measure.raised).toBe(6);

@@ -48,6 +48,30 @@ import { previewVerdict } from "../src/web/studio/previews.ts";
 import { testsClause } from "../src/web/studio/words.ts";
 
 /**
+ * The nouns the studio once had for issues and pull requests (#3241: "i dont
+ * like the told and changes"). Issues and pull requests are called that in
+ * every mode, so none of these is said as a noun for one — in a nav tab, a
+ * heading, a title, a list's empty state or a feed badge. "Tell the crew"
+ * stays: it is a verb, the box a person types into. Checked against the
+ * whole page's visible words, the repo header's tabs included.
+ */
+const RETIRED_NOUNS: readonly RegExp[] = [
+  />\s*Told\s*</,
+  />\s*Changes\s*</,
+  /\bTells\b/,
+  /\bEverything told\b/i,
+  /\bNothing told\b/i,
+  /\bEvery change\b/i,
+  /\bClose (?:tell|change)\b/i,
+  /\b(?:a|the|your|this|its|no) tells?\b/i,
+  /\bTells? (?:&|and) changes\b/i,
+  /<span class="badge"[^>]*>\s*(?:Change|Told)\s*<\/span>/,
+];
+
+/** The addresses the studio once gave them; none is linked to any more. */
+const RETIRED_HREF = /href="\/[^"/]+\/[^"/]+\/(?:tells|changes)(?:[/?"])/;
+
+/**
  * Dev's own words, each with the reason it must never reach a studio page.
  * Checked with every `<script>` stripped first: the shared client script
  * (`shellJs`, `src/web/client.ts`) ships on every page and classifies a raw
@@ -87,18 +111,6 @@ const DEV_WORDS: readonly { pattern: RegExp; because: string }[] = [
   {
     pattern: /\bmerge\b/i,
     because: "the studio's own word for a merge is shipped",
-  },
-  {
-    pattern: /pull request/i,
-    because: "the studio's own word for a pull is change",
-  },
-  {
-    // Bare "issue" also rides the topbar's own live-event wiring
-    // (`data-live="run.*,pull.*,issue.*,check.*"`) on every page, which is
-    // not a word a person reads — so only the composer's own button text is
-    // checked here, the shape #171 actually leaked.
-    pattern: /Close issue\b/,
-    because: "the studio's own word for a tell is tell",
   },
   {
     pattern: /\bworkbench\b/i,
@@ -484,7 +496,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
     const blankRepo = await createRepo(app, a.value, {
       name: "blank",
       visibility: "private",
-      description: "nothing told yet",
+      description: "nothing asked yet",
     });
     if (!blankRepo.ok) throw new Error(String(blankRepo.error));
     const blankSeeded = await commitToBranch(app, a.value, blankRepo.value, {
@@ -521,7 +533,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "app",
         path: repoPath,
         title: "vocab",
-        shows: [`href="#i-pull"/></svg>Changes`],
+        shows: [`href="#i-issue"/></svg>Issues`, `href="#i-pull"/></svg>Pulls`],
         hides: [`href="#i-eye"/></svg>Look`, `>Look<`, 'class="where"'],
         // #630: the app page is the home in every mode; its code, with dev's
         // where strip, is the Files step one tab over.
@@ -529,21 +541,9 @@ describe("dev's vocabulary never reaches a studio page", () => {
       {
         word: "tell",
         path: `${repoPath}/issues/${tellNumber}`,
-        // #171: the composer's close button used to say "Close issue" here,
-        // dev's own noun on the studio's own page.
-        shows: ["Close tell"],
+        // #3241: an issue is closed with "Close issue" in every mode.
+        shows: ["Close issue"],
         // One issue page (#626): dev's controls are its closed Details.
-        title: `${tellTitle} · vocab`,
-      },
-      // The studio's own nouns for the same two pages (#158): one handler
-      // each, so what is walked here is the very page above under the
-      // address the studio's own links hand out. No `dev` half — `?mode=dev`
-      // at these addresses is a redirect to dev's own (`/issues/:number`,
-      // `/pulls/:number`), which the row above already proves.
-      {
-        word: "tell (the studio's noun)",
-        path: `${repoPath}/tells/${tellNumber}`,
-        shows: [tellTitle, "Close tell"],
         title: `${tellTitle} · vocab`,
       },
       {
@@ -554,18 +554,11 @@ describe("dev's vocabulary never reaches a studio page", () => {
       {
         word: "look",
         path: `${repoPath}/pulls/${openPullNumber}`,
-        // #171: the composer's close button used to say "Close pull
-        // request" here, dev's own noun on the studio's own page.
-        // One change page (#628): the diff, the branch and the merge box are
+        // #3241: a pull request is closed with "Close pull request".
+        // One pull page (#628): the diff, the branch and the merge box are
         // its Files step, which speaks git on purpose, so it is not a row.
-        shows: ["Close change", `${repoPath}/pulls/${openPullNumber}/files`],
+        shows: ["Close pull request", `${repoPath}/pulls/${openPullNumber}/files`],
         hides: ['class="where"'],
-        title: `${openPullTitle} · vocab`,
-      },
-      {
-        word: "look (the studio's noun)",
-        path: `${repoPath}/changes/${openPullNumber}`,
-        shows: [openPullTitle, "Close change"],
         title: `${openPullTitle} · vocab`,
       },
       {
@@ -581,10 +574,6 @@ describe("dev's vocabulary never reaches a studio page", () => {
         shows: [
           tellTitle,
           untouchedTitle,
-          `href="${repoPath}/tells/${tellNumber}"`,
-          `href="${repoPath}/tells/${untouchedNumber}"`,
-        ],
-        hides: [
           `href="${repoPath}/issues/${tellNumber}"`,
           `href="${repoPath}/issues/${untouchedNumber}"`,
         ],
@@ -593,7 +582,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
         // The empty case: what a new app's map says before anything is told.
         word: "map (empty)",
         path: "/alice/blank/map",
-        shows: ["No tells to map yet."],
+        shows: ["No issues to map yet."],
       },
       // A word from the app's own description, not its name — the app's own
       // row coming back for it proves the search reaches the description,
@@ -606,8 +595,8 @@ describe("dev's vocabulary never reaches a studio page", () => {
         word: "tells",
         path: `${repoPath}/issues`,
         shows: [untouchedTitle, tellTitle],
-        // One list (#627): `?mode=dev` has no other page to show here.
-        title: "Everything told · vocab",
+        // One list (#627), one noun (#3241).
+        title: "Issues · vocab",
       },
       {
         word: "tells (told)",
@@ -622,39 +611,18 @@ describe("dev's vocabulary never reaches a studio page", () => {
         hides: [tellTitle],
       },
       {
-        word: "tells (the studio's noun)",
-        path: `${repoPath}/tells`,
-        shows: [untouchedTitle, tellTitle],
-        title: "Everything told · vocab",
-      },
-      {
-        // #262: the one compose page, under the studio's own noun and dev's
-        // own address alike — the tab, the heading and the button all say
-        // the studio's word, and the form still posts where it always has.
-        word: "tell the crew (the studio's noun)",
-        path: `${repoPath}/tells/new`,
-        shows: [`action="${repoPath}/issues/new"`, "<h1 class=\"mt\">Tell the crew</h1>"],
-        title: "Tell the crew · vocab",
-      },
-      {
-        word: "tell the crew",
+        // #262: the one compose page; #3241: called a new issue in every
+        // mode, and the form still posts where it always has.
+        word: "new issue",
         path: `${repoPath}/issues/new`,
-        shows: [`action="${repoPath}/issues/new"`, "<h1 class=\"mt\">Tell the crew</h1>"],
-        title: "Tell the crew · vocab",
-        dev: ["New issue", "Create issue"],
-        devTitle: "New issue · vocab",
+        shows: [`action="${repoPath}/issues/new"`, "<h1 class=\"mt\">New issue</h1>", "Create issue"],
+        title: "New issue · vocab",
       },
       {
-        word: "changes (the studio's noun)",
-        path: `${repoPath}/changes`,
-        shows: [openPullTitle, secondChangeTitle],
-        title: "Every change · vocab",
-      },
-      {
-        word: "changes",
+        word: "pulls",
         path: `${repoPath}/pulls`,
         shows: [openPullTitle, secondChangeTitle],
-        title: "Every change · vocab",
+        title: "Pull requests · vocab",
       },
       {
         word: "changes (look)",
@@ -748,6 +716,15 @@ describe("dev's vocabulary never reaches a studio page", () => {
           `${p.word} (${p.path}) said dev's word ${pattern} — ${because}`,
         ).not.toMatch(pattern);
       }
+      for (const noun of RETIRED_NOUNS) {
+        expect(
+          visible,
+          `${p.word} (${p.path}) called an issue or a pull request ${noun} (#3241)`,
+        ).not.toMatch(noun);
+      }
+      expect(html, `${p.word} (${p.path}) linked a retired address`).not.toMatch(
+        RETIRED_HREF,
+      );
       for (const branch of branches) {
         expect(
           visible,
@@ -787,7 +764,7 @@ describe("dev's vocabulary never reaches a studio page", () => {
     expect(h1).not.toContain(runId);
   });
 
-  test("the command palette speaks the studio's own nouns for an app (#246) — it rides a script tag the vocabulary walk above never opens", async () => {
+  test("the command palette calls them issues and pull requests on an app too (#246, #3241) — it rides a script tag the vocabulary walk above never opens", async () => {
     const res = await fetch(`${base}${repoPath}`, {
       headers: { cookie: `${cookie}; forge_mode=studio` },
       redirect: "manual",
@@ -806,18 +783,17 @@ describe("dev's vocabulary never reaches a studio page", () => {
       "alice/vocab — Code",
       "alice/vocab — Commits",
       "alice/vocab — New issue",
-      "alice/vocab — Issues",
-      "alice/vocab — Pull requests",
+      "alice/vocab — Told",
+      "alice/vocab — Changes",
     ]) {
       expect(rows.has(t), `palette still offers "${t}" on a studio app page`).toBe(
         false,
       );
     }
 
-    // The studio's own nouns, at the studio's own addresses.
     expect(rows.get("alice/vocab — Studio")).toBe(repoPath);
-    expect(rows.get("alice/vocab — Told")).toBe(`${repoPath}/tells`);
-    expect(rows.get("alice/vocab — Changes")).toBe(`${repoPath}/changes`);
+    expect(rows.get("alice/vocab — Issues")).toBe(`${repoPath}/issues`);
+    expect(rows.get("alice/vocab — Pull requests")).toBe(`${repoPath}/pulls`);
     // The studio's first verb — telling the crew — reachable from the
     // palette, landing on the app page where the tell box lives.
     expect(rows.get("alice/vocab — Tell the crew")).toBe(`${repoPath}#tell`);
@@ -856,14 +832,26 @@ describe("dev's vocabulary never reaches a studio page", () => {
       expect(res.status, path).toBe(200);
       expect(titleOf(await res.text()), path).toBe(title);
     }
-    // No studio, no studio door: the compose address under the studio's
-    // noun hands a non-app to dev's own.
-    const door = await fetch(`${base}/alice/plain/tells/new`, {
-      headers: { cookie: `${cookie}; forge_mode=studio` },
-      redirect: "manual",
-    });
-    expect(door.status).toBe(303);
-    expect(door.headers.get("location")).toBe("/alice/plain/issues/new");
+  });
+
+  test("the retired addresses /tells and /changes answer 301 to the issues and pulls pages, query kept, app or not (#3241)", async () => {
+    const moved = new Map([
+      [`${repoPath}/tells`, `${repoPath}/issues`],
+      [`${repoPath}/tells?word=told`, `${repoPath}/issues?word=told`],
+      [`${repoPath}/tells/new?title=hi`, `${repoPath}/issues/new?title=hi`],
+      [`${repoPath}/tells/${tellNumber}`, `${repoPath}/issues/${tellNumber}`],
+      [`${repoPath}/changes`, `${repoPath}/pulls`],
+      [`${repoPath}/changes/${openPullNumber}`, `${repoPath}/pulls/${openPullNumber}`],
+      ["/alice/plain/tells/new", "/alice/plain/issues/new"],
+    ]);
+    for (const [from, to] of moved) {
+      const res = await fetch(`${base}${from}`, {
+        headers: { cookie },
+        redirect: "manual",
+      });
+      expect(res.status, from).toBe(301);
+      expect(res.headers.get("location"), from).toBe(to);
+    }
   });
 
   test("reopening a merged change refuses in the reader's own noun — dev's word never rides the flash on a studio page (#171)", async () => {

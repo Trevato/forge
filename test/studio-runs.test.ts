@@ -510,7 +510,7 @@ describe("working: a run's own page in the studio", () => {
     ).text();
     expect(page).toContain("Fix the flicker on load");
     // The tell it came from, in the studio's own noun (#158).
-    expect(page).toContain(`href="/alice/engine/tells/${tell.value.number}"`);
+    expect(page).toContain(`href="/alice/engine/issues/${tell.value.number}"`);
     expect(page).toContain("$0.42 spent");
     expect(page).toContain('data-word="working"');
     // An agent's own run still speaks in the agent's name (#195).

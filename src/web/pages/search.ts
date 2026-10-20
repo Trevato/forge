@@ -249,9 +249,9 @@ const WORDS: readonly Words[] = [
   ],
   [
     "issues",
-    "Tells & changes",
-    "Tells and changes",
-    "No tell or change matches",
+    "Issues & pull requests",
+    "Issues and pull requests",
+    "No issue or pull request matches",
   ],
   ["code", "Code", "Code", "No line of code matches"],
 ];
@@ -359,7 +359,7 @@ export async function searchPage(ctx: Ctx): Promise<Response> {
       type="search"
       name="q"
       value="${a.query}"
-      placeholder="Search apps, repositories, tells, changes and code"
+      placeholder="Search apps, repositories, issues, pull requests and code"
       aria-label="Search"
       autofocus
       data-search-input

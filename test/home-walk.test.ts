@@ -75,7 +75,7 @@ test("composer, timeline, a tell, a crew member's run and pull, a share, the app
   });
   expect(posted.status).toBe(303);
   expect(await home(alice)).toMatch(
-    /href="\/alice\/garden\/tells\/1"[^>]*data-feed-open>Plant the beans</,
+    /href="\/alice\/garden\/issues\/1"[^>]*data-feed-open>opened an issue: Plant the beans</,
   );
 
   // The crew member's run and pull are posts under its name.
@@ -94,7 +94,7 @@ test("composer, timeline, a tell, a crew member's run and pull, a share, the app
   const page = await home(alice);
   expect(page).toContain("Sorted the seed list");
   expect(page).toMatch(/fcard-who">scribe<\/strong\s*>\s*<span[^>]*data-mark="crew"/);
-  expect(page).toContain("a change was opened");
+  expect(page).toContain("opened a pull request");
 
   // A share reaches another person as a post that says who shared it.
   const shared = await share(app, alice, `event:${run.id}`, ["bob"]);

@@ -1,12 +1,12 @@
 /**
- * The forge's three lists — everything told, every change, every run — and
+ * The forge's three lists — issues, pull requests, runs — and
  * the one filter bar they share: five words, each a link carrying `?word=`,
  * so what a person is looking at lives in the address and can be shared. A
  * row is the same word, note and time the thing's own page shows, because
  * every one of them is read through `tellWord`/`pullWord`/`runWord`. Each
- * list is bounded to one page. Told and changes are the only lists of
- * issues and pulls there are: every repository, every viewer, at `/issues`
- * and `/tells`, `/pulls` and `/changes` alike.
+ * list is bounded to one page. These are the only lists of issues and
+ * pulls there are: every repository, every viewer, at `/issues` and
+ * `/pulls`.
  */
 
 import { sealedScope } from "../../core/sealed.ts";
@@ -117,6 +117,7 @@ function emptyNote(
   starter: string,
 ): string {
   if (filter === undefined) return starter;
+  if (filter === "told") return `${subject} is waiting to be picked up.`;
   return `${subject} is ${filter} yet.`;
 }
 
@@ -135,7 +136,9 @@ function wordFilterBar(
     ${seg([
       { label: "Open", href: href(undefined), current: open },
       ...words.map((w) => ({
-        label: w[0]!.toUpperCase() + w.slice(1),
+        // `told` is the state of an issue nobody has picked up: the filter
+        // says so in those words, never as a noun for the issue (#3241).
+        label: w === "told" ? "Not started" : w[0]!.toUpperCase() + w.slice(1),
         href: href(w),
         current: current === w,
       })),
@@ -324,7 +327,7 @@ function listRead(ctx: Ctx, repo: Repo, f: ListFacets) {
 }
 
 /**
- * GET /:owner/:name/issues, and /tells: everything told, for every
+ * GET /:owner/:name/issues: every issue, for every
  * repository and every viewer — one row per issue in its studio word, who
  * has it, its labels, when it last moved, and the tell itself as the row's
  * own link. `?word=` narrows it, and so do `?label=`, `?assignee=`,
@@ -367,7 +370,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
           title: "Nothing here",
           note: emptyNote(
             f.word,
-            record === undefined ? "No issue" : "Nothing told",
+            "No issue",
             record === undefined
               ? "Nothing open."
               : "Nothing open. Tell the crew what you want and it shows up here.",
@@ -387,18 +390,17 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
               )}${issue.assigneeName
                 ? html`${issue.assigneeName} · `
                 : null}${info.note} · ${time(issue.updatedAt)}`,
-              trail: wordBadge(info.word, undefined, record === undefined),
+              trail: wordBadge(info.word),
             }),
           ),
         );
   const lastNumber = fetched[fetched.length - 1]?.number;
-  // Self-links follow whichever noun reached this page — `/tells` or
-  // `/issues` — so paging never jumps a reader to the other address.
+  // Self-links follow the address that reached this page.
   const listBase = ctx.url.pathname;
   // The one verb besides opening a row: say what you want. It posts from
   // `/issues/new`, the compose page, in the words the repository has.
   const compose = when(ctx.auth.user, () =>
-    btn(PAGE_TITLES.compose[record === undefined ? "dev" : "studio"], {
+    btn(PAGE_TITLES.compose, {
       href: `${base}/issues/new`,
       size: "sm",
       variant: "outline",
@@ -465,7 +467,7 @@ export async function tellsList(ctx: Ctx): Promise<Response> {
 }
 
 /**
- * GET /:owner/:name/pulls, and /changes: every change, for every
+ * GET /:owner/:name/pulls: every pull request, for every
  * repository and every viewer — one row per pull in its studio word, who
  * made it, its labels, when it last moved, and the change itself as the
  * row's own link. Where a change lives, its diff and its reviews are one
@@ -500,10 +502,10 @@ export async function changesList(ctx: Ctx): Promise<Response> {
           title: "Nothing here",
           note: emptyNote(
             f.word,
-            "No change",
+            "No pull request",
             record === undefined
               ? "Nothing open."
-              : "Nothing open. A change is the crew's proposed edit to your app; the crew opens them as it works.",
+              : "Nothing open. A pull request is the crew's proposed edit to your app; the crew opens them as it works.",
           ),
         })
       : listCard(
@@ -518,12 +520,12 @@ export async function changesList(ctx: Ctx): Promise<Response> {
                 ? originTag(pull.originAuthor, originGlyph(repo))
                 : pull.authorName} · ${info.note} ·
               ${when(answered.get(pull.number), (t) => html`${tellLine(base, t)} · `)}${time(pull.updatedAt)}`,
-              trail: wordBadge(info.word, undefined, record === undefined),
+              trail: wordBadge(info.word),
             }),
           ),
         );
   const lastNumber = fetched[fetched.length - 1]?.number;
-  // See `tellsList`: `/changes` or `/pulls`, whichever reached this page.
+  // See `tellsList`.
   const listBase = ctx.url.pathname;
 
   const body = html`${repoHeader(ctx, repo, "pulls")}
@@ -675,7 +677,7 @@ export async function runsListPage(ctx: Ctx, repo: Repo): Promise<Response> {
                     ${time(run.finishedAt ?? run.createdAt)}`
                   : html`${run.kind === "agent" ? html`${who} · ` : null}${info.note}
               · ${time(run.finishedAt ?? run.createdAt)}`,
-              trail: wordBadge(info.word, undefined, record === undefined),
+              trail: wordBadge(info.word),
             });
           }),
         );

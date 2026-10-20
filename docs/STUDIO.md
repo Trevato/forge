@@ -17,15 +17,15 @@ command palette from anywhere, a field included. The box takes its query to
 `/search` (`searchPage`, `src/web/pages/search.ts`), the one search in
 both faces, server-rendered with no script: every repository the viewer
 can see, matched by name or description, an app saying whether it is live,
-then every tell and change whose title mentions the word, each saying
-which app it's on and linked by the studio's noun — the same `search()`
+then every issue and pull request whose title mentions the word, each
+saying which app it's on and linked at `/issues/:n` or `/pulls/:n` — the same `search()`
 the API and the palette ask, so a signed-out reader sees only what a
 signed-out reader would anywhere. The studio's face leaves code to dev's:
 it says _Search the code_, a link to the same page with `?mode=dev`, which
 keeps that face on every link and the form until the reader leaves. The palette starts from a short local
 index — your own apps, then places and actions like Home, Apps, Map, New
 app — and past two characters asks that very same search, folding its apps,
-changes and tells in under their own headings (`rankPalette`,
+pull requests and issues in under their own headings (`rankPalette`,
 `src/web/palette.ts`), so what it turns up can never disagree with the page
 behind it.
 
@@ -75,10 +75,9 @@ with a door to make it one — `/settings/app`, the same "Run as an app" form
 Settings already carries — open only to whoever could submit it (`canAdmin`);
 a reader sees the sentence with no button that would just come back
 refused. `?mode=dev` on the same URL is unaffected: the card is the studio's
-own, never dev's. `/tells` and `/changes` on such a repository still send a
-studio viewer on to `/issues` and `/pulls`, as they do for any repository
-the studio does not apply to — the card names the one thing to do here,
-not a second front door onto lists that would be empty anyway.
+own, never dev's. `/issues` and `/pulls` on such a repository are the same
+lists they are everywhere — the card names the one thing to do here, not a
+second front door onto lists that would be empty anyway.
 
 An app's home in the studio (`/:owner/:name`, when the repository is an
 app) shows, top to bottom: what it serves and where; the box; what asks
@@ -152,7 +151,7 @@ it already answers only to people who can read it at all.
 **Whose name a row carries** is one rule, in one place — `voiceFor`
 (`src/web/studio/voice.ts`), which the app's page, a run's own page and the
 board all sign their rows with. An agent's name is _not_ a secret: a
-change's own page and `/changes` name the agent that opened it to anyone
+pull request's own page and `/pulls` name the agent that opened it to anyone
 who can read the repository. "The crew" is a voice, not a redaction, and it
 is chosen by **what the actor is** first: a person is named to every viewer
 who can see the row at all, so one visitor reads one name for one change on
@@ -202,34 +201,24 @@ presses instead of deciding.
 ## The three lists
 
 `/:owner/:name/issues`, `/pulls` and `/runs` on an app, in the studio, are
-_everything told_, _every change_ and _every run_ — dev's tabs with dev's
-issue numbers, labels, milestones and branch names replaced by the same
-five words the rest of the studio speaks. Each is a page of rows, newest
-first: who has it (the assignee, the author, or who ran it), when it last
-moved, its state as `wordBadge` draws it (`src/web/studio/words.ts`), and
-one link — the row itself — to the tell, the change or the transcript.
-`/:owner/:name/tells` and `/:owner/:name/changes` are the studio's own
-nouns for the first two lists, and `/:owner/:name/tells/:number` and
-`/:owner/:name/changes/:number` for one tell and one change — the same
-handler each, the same authorization, the same `?word=` filter and paging,
-not a second copy of any page; a viewer the studio does not apply to (dev
-mode, `?mode=dev`, or a repository that is not an app) is sent on to
-`/issues`, `/pulls`, `/issues/:number` or `/pulls/:number`, dev's own
-address, rather than the studio's nouns ever growing a second,
-dev-flavoured address of their own. It goes one way only: a dev URL asked
-for in studio mode answers the studio's page where it stands, never a
-redirect, so every link ever written to `/issues/7` keeps working and
-`?mode=dev` on it is still the one click to dev's own. In studio mode the
-studio's own links use the studio's nouns wherever a tell or a change is
-linked — the three lists' rows, the app page's _now_,
-a tell's dependencies and the change that closes it, a run's own tell, the
-search box and the command palette — so a person is never handed two
-addresses for one thing. The app page's own footer (`the map · everything
-told · every change`, and _Every run_ above **Now**) and the repository
-header's tabs (`Told`, `Changes`, in place of dev's `Issues`, `Pulls`) link
-to `/tells` and `/changes`; dev's `Commits`/`Branches` stay dev's alone.
-`/runs` has no second noun — the studio and dev share the one address
-there. What a page _posts_ to never moves with the noun: ship, close,
+the app's issues, pull requests and runs — dev's tabs with dev's labels,
+milestones and branch names replaced by the same five words the rest of
+the studio speaks. Each is a page of rows, newest first: who has it (the
+assignee, the author, or who ran it), when it last moved, its state as
+`wordBadge` draws it (`src/web/studio/words.ts`), and one link — the row
+itself — to the issue, the pull request or the transcript. Issues and pull
+requests are called that in every mode (#3241): the studio once had its own
+nouns and addresses for them, `/tells` and `/changes`, and those —
+`/:owner/:name/tells`, `/tells/new`, `/tells/:number`, `/changes` and
+`/changes/:number` — now answer 301 to `/issues`, `/issues/new`,
+`/issues/:number`, `/pulls` and `/pulls/:number`, query kept, in every mode,
+so a link ever written to them keeps working. A dev URL asked for in studio
+mode answers the studio's page where it stands, never a redirect, and
+`?mode=dev` on it is still the one click to dev's own. The app page's own
+footer (`the map · issues · pull requests`, and _Every run_ above **Now**)
+and the repository header's tabs (`Issues`, `Pulls`) link to `/issues` and
+`/pulls`; dev's `Commits`/`Branches` stay dev's alone.
+What a page _posts_ to is the same address: ship, close,
 comment, edit and decide keep posting under `/issues/:number` and
 `/pulls/:number`, which is what `form-action 'self'` and the same-origin
 checks are written against.
@@ -265,13 +254,13 @@ production has not caught up to yet, or a run with nothing to show —
 still read as _working_: still moving, not one of the five a list links to
 on its own. Paging is the underlying list's own cursor, unchanged; a word
 filter narrows the page it lands on rather than inventing a second scheme.
-Told and changes are the only lists of issues and pulls: every repository,
-app or not, and every viewer, whatever the mode, at `/issues` and `/tells`,
-`/pulls` and `/changes` alike (`?mode=dev` changes nothing there). Besides
+These are the only lists of issues and pulls: every repository, app or
+not, and every viewer, whatever the mode, at `/issues` and `/pulls`
+(`?mode=dev` changes nothing there). Besides
 the word they narrow by `?label=` (the repository's labels are chips under
 the words), `?assignee=`, `?author=` and `?q=` (a piece of the title), each
 shown as a chip that clears itself; an older `?state=closed|all` address
-still answers with what it asked for. Told carries one verb besides opening
+still answers with what it asked for. Issues carries one verb besides opening
 a row — compose, for a signed-in person; a stranger on a public repository
 gets "Report a problem" instead, and its writers see how many reports from
 outside wait for them. A row wears its labels; a change's
@@ -280,8 +269,7 @@ list keeps `?mode=dev` to dev's runs until that list is contracted too.
 
 ## A tell, on its own page
 
-`/:owner/:name/issues/:number` — `/:owner/:name/tells/:number` in the
-studio's own noun, the same page — on an app, in the studio, is a tell — one
+`/:owner/:name/issues/:number` on an app, in the studio, is a tell — one
 sentence someone said to the crew — not dev's labels, milestones and
 dependency form. It answers three questions: who has it (or that nobody
 does yet), what it is waiting on and what waits on it (`dependenciesOf`,
@@ -319,8 +307,7 @@ mode, renders exactly what it always has.
 
 ## The look, on its own page
 
-`/:owner/:name/pulls/:n` — `/:owner/:name/changes/:n` in the studio's own
-noun, the same page — on an app, in the studio, is the change itself —
+`/:owner/:name/pulls/:n` on an app, in the studio, is the change itself —
 never its diff. The title and the opening post in the author's own words,
 who made it and when, the check in the studio's five words (`pullWord`,
 `src/web/studio/words.ts`) with its deploy one click away, the preview's

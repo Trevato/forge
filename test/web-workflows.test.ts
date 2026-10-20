@@ -772,7 +772,7 @@ describe("verdicts, threads, and the gate they open", () => {
   test("the pull list shows each pull in its word; where it stands on review is one step deeper, on the change", async () => {
     // One list (#627): a row is the pull's word, never a review badge.
     const list = await bodyOf("ada", "/acme/lib/pulls");
-    expect(list).toContain(`href="/acme/lib/changes/${pullNumber}"`);
+    expect(list).toContain(`href="/acme/lib/pulls/${pullNumber}"`);
     expect(list).toContain("data-word=");
     expect(words(list)).not.toContain("Needs review");
 

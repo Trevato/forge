@@ -371,7 +371,7 @@ describe("the studio, continued", () => {
       expect(issues).not.toContain(`href="/alice/plainlists/issues?word=told"`);
       expect(issues).not.toContain(`href="/alice/plainlists/issues?word=look"`);
       expect(issues).toContain(
-        `href="/alice/plainlists/tells/${told.value.number}"`,
+        `href="/alice/plainlists/issues/${told.value.number}"`,
       );
       expect(issues).not.toContain("See dev's list");
 
@@ -388,26 +388,21 @@ describe("the studio, continued", () => {
     expect(runs).not.toContain("See dev's list");
   });
 
-  test("/tells and /changes are the studio's own doors onto the same lists /issues and /pulls reach — same words, same filter, same paging", async () => {
+  test("the issues and pulls lists of an app filter by word, and their self-links stay on their own address", async () => {
     const told = openIssue(app, alice, repo, {
       title: "Door test: a tell",
-      body: "reached through /tells too",
+      body: "reached through /issues",
     });
     if (!told.ok) throw new Error(String(told.error));
 
     const viaIssues = await (await get("/alice/notes/issues")).text();
-    const viaTells = await (await get("/alice/notes/tells")).text();
-    expect(viaTells).toContain("Door test: a tell");
-    expect(viaTells).toContain('data-word="told"');
-    // Self-links (the word filter, paging) follow whichever door was used,
-    // so a dev URL asked for in studio mode still answers exactly as it
-    // does today.
-    expect(viaTells).toContain(`href="/alice/notes/tells?word=told"`);
+    expect(viaIssues).toContain("Door test: a tell");
+    expect(viaIssues).toContain('data-word="told"');
     expect(viaIssues).toContain(`href="/alice/notes/issues?word=told"`);
 
-    const filtered = await (await get("/alice/notes/tells?word=told")).text();
+    const filtered = await (await get("/alice/notes/issues?word=told")).text();
     expect(filtered).toContain("Door test: a tell");
-    const other = await (await get("/alice/notes/tells?word=shipped")).text();
+    const other = await (await get("/alice/notes/issues?word=shipped")).text();
     expect(other).not.toContain("Door test: a tell");
 
     const branch = await commitToBranch(app, alice, repo, {
@@ -437,18 +432,16 @@ describe("the studio, continued", () => {
     finishRun(app.db, doorCheck.id, { state: "ok", summary: "check passed" });
 
     const viaPulls = await (await get("/alice/notes/pulls")).text();
-    const viaChanges = await (await get("/alice/notes/changes")).text();
-    expect(viaChanges).toContain("Door test: a change");
-    expect(viaChanges).toContain('data-word="look"');
-    expect(viaChanges).toContain(`href="/alice/notes/changes?word=look"`);
+    expect(viaPulls).toContain("Door test: a change");
+    expect(viaPulls).toContain('data-word="look"');
     expect(viaPulls).toContain(`href="/alice/notes/pulls?word=look"`);
 
     const changeFiltered = await (
-      await get("/alice/notes/changes?word=look")
+      await get("/alice/notes/pulls?word=look")
     ).text();
     expect(changeFiltered).toContain("Door test: a change");
     const changeOther = await (
-      await get("/alice/notes/changes?word=shipped")
+      await get("/alice/notes/pulls?word=shipped")
     ).text();
     expect(changeOther).not.toContain("Door test: a change");
     // A green pull left open now asks the front door too (#208) — close it
@@ -456,7 +449,7 @@ describe("the studio, continued", () => {
     expect(setIssueState(app, alice, repo, doorPull, "closed").ok).toBe(true);
   });
 
-  test("/tells and /changes answer a dev-mode viewer, ?mode=dev, and a repository that is not an app with the same list, never a bounce", async () => {
+  test("/tells and /changes answer every viewer, app or not, with the same 301 to /issues and /pulls (#3241)", async () => {
     const plain = await createRepo(app, alice, {
       name: "doorlists",
       visibility: "private",
@@ -472,9 +465,10 @@ describe("the studio, continued", () => {
       ["/alice/doorlists/changes", cookie],
     ] as const) {
       const res = await get(path, { cookie: viewer });
-      expect(res.status).toBe(200);
-      const text = await res.text();
-      expect(text).toContain(`href="${path.split("?")[0]}?word=`);
+      expect(res.status).toBe(301);
+      expect(res.headers.get("location")).toBe(
+        path.replace(/\/tells$/, "/issues").replace(/\/changes$/, "/pulls"),
+      );
     }
   });
 
@@ -650,44 +644,37 @@ describe("the studio, continued", () => {
     expect(pulls).not.toContain('href="/alice/composelists/pulls/new"');
   });
 
-  test("a reader without access gets the forge's not-found on /tells and /changes, exactly as /issues and /pulls", async () => {
+  test("a reader without access who follows /tells or /changes lands on the forge's not-found, exactly as /issues and /pulls", async () => {
     const anonTells = await fetch(`${base}/alice/notes/tells`, {
       headers: { cookie: "forge_mode=studio" },
-      redirect: "manual",
     });
     expect(anonTells.status).toBe(404);
 
     const anonChanges = await fetch(`${base}/alice/notes/changes`, {
       headers: { cookie: "forge_mode=studio" },
-      redirect: "manual",
     });
     expect(anonChanges.status).toBe(404);
   });
 
-  test("/tells/:number and /changes/:number reach the same pages /issues/:number and /pulls/:number reach — one page, the same anchors, and forms that still post to dev's own address", async () => {
+  test("/issues/:number and /pulls/:number are an app's issue and pull request pages, and every studio surface links there", async () => {
     const told = openIssue(app, alice, repo, {
       title: "Door test: one tell",
-      body: "reached through /tells/:number too",
+      body: "reached through /issues/:number",
     });
     if (!told.ok) throw new Error(String(told.error));
     const n = told.value.number;
 
-    const viaTell = await get(`/alice/notes/tells/${n}`);
+    const viaTell = await get(`/alice/notes/issues/${n}`);
     expect(viaTell.status).toBe(200);
     const tellHtml = await viaTell.text();
-    const viaIssue = await (await get(`/alice/notes/issues/${n}`)).text();
-    // The same page, never a second copy of the markup.
     expect(tellHtml).toContain("Door test: one tell");
     expect(tellHtml).toContain('data-word="told"');
     // Still waiting, nobody assigned: the one case the line is true (#214).
     expect(tellHtml).toContain("nobody has it yet");
-    expect(viaIssue).toContain('data-word="told"');
-    // The write surface does not move with the noun: the reply, the close
-    // and every Details form still point at /issues/:number.
+    // The reply, the close and every Details form post to /issues/:number.
     expect(tellHtml).toContain(`action="/alice/notes/issues/${n}/comments"`);
     expect(tellHtml).toContain(`action="/alice/notes/issues/${n}/assignee"`);
-    // An anchor into the conversation still lands — the composer is on the
-    // page either door was used.
+    // An anchor into the conversation lands on the composer.
     expect(tellHtml).toContain('id="comment-body"');
 
     const branch = await commitToBranch(app, alice, repo, {
@@ -706,7 +693,7 @@ describe("the studio, continued", () => {
     if (!opened.ok) throw new Error(String(opened.error));
     const p = opened.value.number;
 
-    const viaChange = await get(`/alice/notes/changes/${p}`);
+    const viaChange = await get(`/alice/notes/pulls/${p}`);
     expect(viaChange.status).toBe(200);
     const changeHtml = await viaChange.text();
     expect(changeHtml).toContain("Door test: one change");
@@ -716,30 +703,22 @@ describe("the studio, continued", () => {
     expect(changeHtml).toContain(`href="/alice/notes/pulls/${p}/files"`);
     expect(changeHtml).toContain('id="comment-body"');
 
-    // Dev's own addresses answer the studio's pages where they stand — a
-    // link already written to one is never bounced anywhere.
-    const stillIssue = await get(`/alice/notes/issues/${n}`);
-    expect(stillIssue.status).toBe(200);
-    const stillPull = await get(`/alice/notes/pulls/${p}`);
-    expect(stillPull.status).toBe(200);
-
-    // The three lists, the app page and the search box all hand out the
-    // studio's noun, so a person is never given two addresses for one thing.
-    const tells = await (await get("/alice/notes/tells")).text();
-    expect(tells).toContain(`href="/alice/notes/tells/${n}"`);
-    const changes = await (await get("/alice/notes/changes")).text();
-    expect(changes).toContain(`href="/alice/notes/changes/${p}"`);
+    // The lists, the app page and the search box all hand out the one
+    // address, so a person is never given two addresses for one thing.
+    const tells = await (await get("/alice/notes/issues")).text();
+    expect(tells).toContain(`href="/alice/notes/issues/${n}"`);
+    const changes = await (await get("/alice/notes/pulls")).text();
+    expect(changes).toContain(`href="/alice/notes/pulls/${p}"`);
     const appPage = await (await get("/alice/notes")).text();
-    expect(appPage).toContain(`href="/alice/notes/changes/${p}"`);
+    expect(appPage).toContain(`href="/alice/notes/pulls/${p}"`);
+    expect(appPage).not.toMatch(/href="[^"]*\/(tells|changes)\//);
     const search = await (await get("/search?q=Door+test")).text();
-    expect(search).toContain(`/alice/notes/tells/${n}`);
-    expect(search).toContain(`/alice/notes/changes/${p}`);
-    // The palette's remote rows are folded in the browser; the index tells
-    // the script which mode it is in, so it folds the same nouns.
-    expect(appPage).toContain('"studio":true');
+    expect(search).toContain(`/alice/notes/issues/${n}`);
+    expect(search).toContain(`/alice/notes/pulls/${p}`);
+    expect(search).not.toMatch(/\/alice\/notes\/(tells|changes)\//);
   });
 
-  test("/tells/:number answers a dev-mode viewer, ?mode=dev, and a repository that is not an app with the same page, never a bounce", async () => {
+  test("/tells/:number answers every viewer, app or not, with the same 301 to /issues/:number (#3241)", async () => {
     const told = openIssue(app, alice, repo, { title: "Door test: dev's way" });
     if (!told.ok) throw new Error(String(told.error));
     const n = told.value.number;
@@ -750,8 +729,8 @@ describe("the studio, continued", () => {
       }),
       await get(`/alice/notes/tells/${n}`),
     ]) {
-      expect(res.status).toBe(200);
-      expect(await res.text()).toContain("Door test: dev");
+      expect(res.status).toBe(301);
+      expect(res.headers.get("location")).toBe(`/alice/notes/issues/${n}`);
     }
 
     const plain = await createRepo(app, alice, {
@@ -767,18 +746,19 @@ describe("the studio, continued", () => {
     const plainTell = await get(
       `/alice/doorpages/tells/${plainTold.value.number}`,
     );
-    expect(plainTell.status).toBe(200);
-    expect(await plainTell.text()).toContain("Not an app");
+    expect(plainTell.status).toBe(301);
+    expect(plainTell.headers.get("location")).toBe(
+      `/alice/doorpages/issues/${plainTold.value.number}`,
+    );
   });
 
-  test("a reader without access gets the forge's not-found on /tells/:number and /changes/:number, exactly as /issues/:number and /pulls/:number", async () => {
+  test("a reader without access who follows /tells/:number or /changes/:number lands on the forge's not-found, exactly as /issues/:number and /pulls/:number", async () => {
     const told = openIssue(app, alice, repo, { title: "Door test: private" });
     if (!told.ok) throw new Error(String(told.error));
     const n = told.value.number;
 
     const anonTell = await fetch(`${base}/alice/notes/tells/${n}`, {
       headers: { cookie: "forge_mode=studio" },
-      redirect: "manual",
     });
     expect(anonTell.status).toBe(404);
     const anonIssue = await fetch(`${base}/alice/notes/issues/${n}`, {
@@ -789,11 +769,10 @@ describe("the studio, continued", () => {
 
     // A number that is not a tell is not a tell at either address, and a
     // change's number is not one under the tell's own noun.
-    const missing = await get("/alice/notes/tells/99999");
+    const missing = await get("/alice/notes/issues/99999");
     expect(missing.status).toBe(404);
     const anonChange = await fetch(`${base}/alice/notes/changes/1`, {
       headers: { cookie: "forge_mode=studio" },
-      redirect: "manual",
     });
     expect(anonChange.status).toBe(404);
   });
@@ -1313,28 +1292,28 @@ describe("the studio, continued", () => {
     const stray = await open("scout/99999-nothing", "Answers nothing");
     const own = await open("revert-22", "A person's branch");
 
-    const list = await (await get("/alice/notes/changes")).text();
+    const list = await (await get("/alice/notes/pulls")).text();
     const rowOf = (title: string) => {
       const at = list.indexOf(title);
       return list.slice(at, list.indexOf("</a>", at + 400) + 4);
     };
-    expect(rowOf("Answers the tell")).toContain(`href="/alice/notes/tells/${n}"`);
+    expect(rowOf("Answers the tell")).toContain(`href="/alice/notes/issues/${n}"`);
     expect(rowOf("Answers the tell")).not.toContain("already done");
-    expect(rowOf("Answers nothing")).not.toContain("for tell");
-    expect(rowOf("A person's branch")).not.toContain("for tell");
+    expect(rowOf("Answers nothing")).not.toContain("for issue");
+    expect(rowOf("A person's branch")).not.toContain("for issue");
 
     setIssueState(app, alice, repo, told.value, "closed");
-    const closedList = await (await get("/alice/notes/changes")).text();
-    expect(closedList).toContain("its tell is already done");
+    const closedList = await (await get("/alice/notes/pulls")).text();
+    expect(closedList).toContain("its issue is already done");
     const page = await (
-      await get(`/alice/notes/changes/${answering.number}`)
+      await get(`/alice/notes/pulls/${answering.number}`)
     ).text();
-    expect(page).toContain(`href="/alice/notes/tells/${n}"`);
-    expect(page).toContain("its tell is already done");
+    expect(page).toContain(`href="/alice/notes/issues/${n}"`);
+    expect(page).toContain("its issue is already done");
     for (const p of [stray, own]) {
-      const res = await get(`/alice/notes/changes/${p.number}`);
+      const res = await get(`/alice/notes/pulls/${p.number}`);
       expect(res.status).toBe(200);
-      expect(await res.text()).not.toContain("for tell");
+      expect(await res.text()).not.toContain("for issue");
     }
   });
 });

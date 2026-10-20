@@ -240,8 +240,7 @@ async function tellClosingPull(
 }
 
 /**
- * GET /:owner/:name/issues/:number and /tells/:number: one page, two
- * addresses, for every repository and every viewer. Same `threadContext` at both, so a reader who
+ * GET /:owner/:name/issues/:number, for every repository and every viewer. Same `threadContext` at both, so a reader who
  * may not see it gets the forge's not-found at either.
  */
 export async function tellPage(ctx: Ctx): Promise<Response> {
@@ -279,9 +278,7 @@ async function studioTell(
   };
   const base = repoBase(repo);
   // The only address the page *posts* to: the reply, the close and every
-  // Details form live under `/issues/:number`, whether a reader arrived
-  // there or at `/tells/:number` (`tellHref`, nouns.ts). The write surface
-  // does not move with the noun.
+  // Details form live under `/issues/:number`.
   const thread = `${base}/issues/${issue.number}`;
   const direction = repo.directionIssueId === issue.id;
   const closingPull = links(() => openPullsClosing(db, repo.id).get(issue.number));
@@ -344,7 +341,7 @@ async function studioTell(
             ordinary tell</span
           >`
         : wordInfo
-          ? html`${wordBadge(wordInfo.word, undefined, plain)}
+          ? html`${wordBadge(wordInfo.word)}
               <span class="muted small">${wordInfo.note}</span>`
           : stateBadge(issue.state)}
       <span
@@ -419,7 +416,7 @@ async function studioTell(
           action: `${thread}/comments`,
           ...(mayClose ? { stateAction: `${thread}/state` } : {}),
           state: issue.state,
-          closeLabel: plain ? "Close issue" : "Close tell",
+          closeLabel: "Close issue",
           crewNote: threadNote(ctx.app.db, repo, issue),
           reasons: true,
         })}

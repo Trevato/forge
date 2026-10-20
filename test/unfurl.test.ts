@@ -166,13 +166,13 @@ describe("the pages", () => {
   });
 
   test("a tell opens on its state and first line", async () => {
-    const line = unfurl(await get(`/alice/open/tells/${numbers.tell}`));
+    const line = unfurl(await get(`/alice/open/issues/${numbers.tell}`));
     expect(line).toContain("Say hello from open.");
     expect(line).not.toContain("Second line");
   });
 
   test("a change opens on its word and its own words", async () => {
-    const line = unfurl(await get(`/alice/open/changes/${numbers.change}`));
+    const line = unfurl(await get(`/alice/open/pulls/${numbers.change}`));
     expect(line).toContain("Make open better.");
   });
 
@@ -192,8 +192,8 @@ describe("the pages", () => {
 
   test("no sentence uses dev's vocabulary", async () => {
     for (const path of [
-      `/alice/open/tells/${numbers.tell}`,
-      `/alice/open/changes/${numbers.change}`,
+      `/alice/open/issues/${numbers.tell}`,
+      `/alice/open/pulls/${numbers.change}`,
       `/alice/open/runs/${ids.run}`,
     ])
       expect(unfurl(await get(path))).not.toMatch(
@@ -203,8 +203,8 @@ describe("the pages", () => {
 
   test("a private tell, change, run and app say 'Private.' and no more", async () => {
     for (const path of [
-      `/alice/hush/tells/${numbers.hushTell}`,
-      `/alice/hush/changes/${numbers.hushChange}`,
+      `/alice/hush/issues/${numbers.hushTell}`,
+      `/alice/hush/pulls/${numbers.hushChange}`,
       `/alice/hush/runs/${ids.hushRun}`,
       "/alice/hush/app",
     ]) {
@@ -215,7 +215,7 @@ describe("the pages", () => {
   });
 
   test("anonymously a private page is not there at all", async () => {
-    const res = await fetch(`${servers.url}/alice/hush/tells/${numbers.hushTell}`);
+    const res = await fetch(`${servers.url}/alice/hush/issues/${numbers.hushTell}`);
     expect(res.status).toBe(404);
   });
 });

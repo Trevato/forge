@@ -158,7 +158,7 @@ describe("the studio", () => {
     // The depth row on every repository's header: Files (or Code), Changes
     // (or Pulls) and Runs; Terminal only where SSH is on, which it is not here.
     expect(withDev).toContain('href="/alice/notes/files"');
-    expect(withDev).toContain('href="/alice/notes/changes"');
+    expect(withDev).toContain('href="/alice/notes/pulls"');
     expect(withDev).toContain('href="/alice/notes/runs"');
     expect(withDev).not.toContain('href="/settings/keys#terminal"');
     // The toggle's POST is gone with it.
@@ -391,7 +391,7 @@ describe("the studio", () => {
     );
     expect(lost.status).toBe(303);
     expect(lost.headers.get("location")).toBe(
-      `/alice/notes/changes/${evil.number}`,
+      `/alice/notes/pulls/${evil.number}`,
     );
   });
 
@@ -1076,7 +1076,7 @@ describe("the studio", () => {
     expect(studio).toContain("Ground work");
     // What it waits on, in the studio's own noun (#158).
     expect(studio).toContain(
-      `href="/alice/notes/tells/${blocker.value.number}"`,
+      `href="/alice/notes/issues/${blocker.value.number}"`,
     );
     expect(studio).toContain('data-word="working"');
     expect(studio).toContain("$0.12");

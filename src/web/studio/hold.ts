@@ -61,7 +61,7 @@ export function holdCard(
     );
   if (!may || !open) return null;
   return html`<details class="mt mb" id="hold">
-    <summary class="muted small">Hold this change</summary>
+    <summary class="muted small">Hold this pull request</summary>
     <form class="bar mt" method="post" action="${thread}/hold">
       <input
         class="input"

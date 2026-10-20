@@ -364,17 +364,17 @@ export async function studioApp(
   const weekCard = card(
     !hasHistory
       ? html`<p class="muted small">
-          Nothing to show yet — it fills in once a change
+          Nothing to show yet — it fills in once a pull request
           ships${ownerFacts ? " or the crew takes a run" : ""}.
         </p>`
       : !ownerFacts
         ? html`<dl>
             <dt>Shipped</dt>
-            <dd>${shipped} change${shipped === 1 ? "" : "s"}</dd>
+            <dd>${shipped} pull request${shipped === 1 ? "" : "s"}</dd>
           </dl>`
         : html`<dl>
             <dt>Shipped</dt>
-            <dd>${shipped} change${shipped === 1 ? "" : "s"}</dd>
+            <dd>${shipped} pull request${shipped === 1 ? "" : "s"}</dd>
             <dt>Runs</dt>
             <dd>${weekTotals.runs}</dd>
             <dt>Preview</dt>
@@ -385,7 +385,7 @@ export async function studioApp(
             <dd>
               $${spent.toFixed(2)}${shipped > 0
                 ? html` <span class="muted"
-                    >· $${(spent / shipped).toFixed(2)} per shipped change</span
+                    >· $${(spent / shipped).toFixed(2)} per shipped pull request</span
                   >`
                 : null}
             </dd>
@@ -444,8 +444,8 @@ export async function studioApp(
   // domains — is the admin's, on the app's settings page.
   const more = html`<p class="muted small">
     <a href="${base}/map">The map</a> ·
-    <a href="${tellsHref(base)}">Everything told</a> ·
-    <a href="${changesHref(base)}">Every change</a>${when(
+    <a href="${tellsHref(base)}">Issues</a> ·
+    <a href="${changesHref(base)}">Pull requests</a>${when(
       canAdmin(db, repo, ctx.auth.user),
       () => html` · <a href="${base}/settings/app">Environment settings</a>`,
     )}

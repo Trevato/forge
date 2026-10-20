@@ -193,7 +193,7 @@ async function steer(
   item: Candidate,
 ): Promise<Outcome> {
   const text = `Shared by ${sender.username} with ${agent.username}: ${words(item)} (${item.link})`;
-  const number = /\/changes\/(\d+)$/.exec(item.link)?.[1];
+  const number = /\/pulls\/(\d+)$/.exec(item.link)?.[1];
   const issue =
     number === undefined ? undefined : getIssue(app.db, repo.id, Number(number));
   if (issue !== undefined) {

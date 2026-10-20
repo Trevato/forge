@@ -123,6 +123,6 @@ describe("a production deploy carries what it records", () => {
       })
     ).text();
     expect(page).toContain('id="run-carries"');
-    expect(page).toContain(`/changes/${two.number}`);
+    expect(page).toContain(`/pulls/${two.number}`);
   }, 180_000);
 });

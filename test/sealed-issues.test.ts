@@ -118,9 +118,7 @@ const SINGLES = (n: number, p: number) => [
   `/api/v1/repos/alice/square/runs/${runId}`,
   `/api/v1/repos/alice/square/runs/${runId}/log`,
   `/alice/square/issues/${n}`,
-  `/alice/square/tells/${n}`,
   `/alice/square/pulls/${p}`,
-  `/alice/square/changes/${p}`,
   `/alice/square/runs/${runId}`,
 ];
 

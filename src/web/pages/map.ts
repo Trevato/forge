@@ -1307,17 +1307,14 @@ const LIVE_KINDS = "run.queued,run.started,run.finished,issue.*,pull.*";
 /** The empty state in the studio's own words, pointing at the app page's
  * own box for telling the crew (`#tell`, `src/web/studio/app.ts`). */
 const studioEmpty = (base: string): Html =>
-  html`<p>No tells to map yet. <a href="${base}#tell">Say one</a>, then link what it waits for.</p>`;
+  html`<p>No issues to map yet. <a href="${base}#tell">Say one</a>, then link what it waits for.</p>`;
 
 /** GET /:owner/:name/map */
 export async function mapPage(ctx: Ctx): Promise<Response> {
   const repo = loadRepo(ctx);
   if (!repo) return notFoundPage(ctx);
   const db = ctx.app.db;
-  // In the studio a card is a tell and its link is `/tells/:number` — the
-  // same rule every other studio surface follows (`studioRecord`).
   const studio = studioRecord(ctx, repo) !== undefined;
-  const issueHref = studio ? tellHref : devIssueHref;
   const graph = repoGraph(db, repo.id, {
     ...sealedScope(db, repo, ctx.auth.user),
   });
@@ -1351,7 +1348,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
         ${drawMap(repo, graph, placed, emphasisFor(ready, critical, marks), {
           id: "map-canvas",
           cap: 1,
-          issueHref,
+          issueHref: tellHref,
           ...(studio ? { emptyHtml: studioEmpty(repoBase(repo)) } : {}),
         })}
         ${placed.nodes.length === 0 ? null : countsLine(counts)}
@@ -1374,7 +1371,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
                   ? "holds nothing up"
                   : `finishing it frees ${r.holdsUp}`,
               "Nothing is ready: everything open waits for something.",
-              issueHref,
+              tellHref,
             )}
         ${rankedList(
           repo,
@@ -1382,7 +1379,7 @@ export async function mapPage(ctx: Ctx): Promise<Response> {
           blocked,
           (r) => `holds up ${r.holdsUp}`,
           "Nothing open holds anything up.",
-          issueHref,
+          tellHref,
         )}
       </aside>
     </div>`;

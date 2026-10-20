@@ -33,13 +33,13 @@ const RUN_LINK = /^\/[^/]+\/[^/]+\/runs\/[A-Za-z0-9_-]+$/;
 const KIND_LABEL: Record<FeedItem["kind"], string> = {
   run: "Run",
   ask: "Needs you",
-  pull: "Change",
+  pull: "Pull request",
   decision: "Decision",
   map: "Map",
   cost: "Cost",
   milestone: "Watching",
   choose: "Choose",
-  tell: "Told",
+  tell: "Issue",
   reply: "Reply",
   look: "Look",
   release: "Release",
@@ -196,7 +196,7 @@ export function feedNote(): Html {
 }
 
 const CHIP_LABEL: Record<KindChip, string> = {
-  reviews: "Changes",
+  reviews: "Pull requests",
   decisions: "Decisions",
   crew: "Crew words",
   releases: "Releases",

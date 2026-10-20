@@ -61,12 +61,12 @@ export function tellsAnswered(
   return out;
 }
 
-/** The line a change carries for its tell: a link in the studio's own noun,
- * and — when that tell is closed — what a person can act on. Never a verdict:
+/** The line a pull request carries for the issue it answers: a link to it,
+ * and — when that issue is closed — what a person can act on. Never a verdict:
  * the change's word is judged elsewhere and is not touched by this. */
 export function tellLine(base: string, t: AnsweredTell): Html {
-  const link = html`<a href="${tellHref(base, t.number)}">tell #${t.number}</a>`;
+  const link = html`<a href="${tellHref(base, t.number)}">issue #${t.number}</a>`;
   return t.closed
-    ? html`for ${link} — its tell is already done`
+    ? html`for ${link} — its issue is already done`
     : html`for ${link}`;
 }

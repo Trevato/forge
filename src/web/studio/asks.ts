@@ -161,12 +161,12 @@ export interface AskWords {
 /** The words for each kind of ask: every ask names its decision, its options and its default. */
 export const ASK_WORDS: Readonly<Record<DecisionKind, AskWords>> = {
   look: {
-    decision: "Ship this change?",
+    decision: "Ship this pull request?",
     options: ["Ship", "Say what is off"],
     ifNothing: "it waits; nothing ships",
   },
   review: {
-    decision: "Review this change: ship it, or say what is off?",
+    decision: "Review this pull request: ship it, or say what is off?",
     options: ["Ship", "Say what is off"],
     ifNothing: "it waits; an agent's change never ships unreviewed",
   },
@@ -1102,7 +1102,7 @@ export function askLinesFor(
       ...about,
       line,
       number: only.pull!.number,
-      link: `${base}/changes/${only.pull!.number}`,
+      link: `${base}/pulls/${only.pull!.number}`,
     };
   });
 }

@@ -190,7 +190,7 @@ describe("asks that expire, hold and collapse", () => {
     const lines = askLinesFor(app.db, aliceUser);
     expect(lines.map((l) => l.id)).toEqual([`look:${apples.id}`]);
     expect(lines[0]!.link).toBe(
-      `/${repo.ownerName}/${repo.name}/changes/${apples.number}`,
+      `/${repo.ownerName}/${repo.name}/pulls/${apples.number}`,
     );
   });
 

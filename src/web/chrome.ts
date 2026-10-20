@@ -203,21 +203,17 @@ export function scopeHeader(
           },
         ]),
     {
-      // Studio names its own lists — told, not issues; a repository that is
-      // not an app keeps git's words.
-      label: studio ? "Told" : "Issues",
-      href: studio ? tellsHref(base) : `${base}/issues`,
-      icon: studio ? "clock" : "issue",
+      // Issues and pull requests are called that in every mode (#3241).
+      label: "Issues",
+      href: tellsHref(base),
+      icon: "issue",
       ...(facts.openIssues === null ? {} : { count: facts.openIssues }),
       current: active === "issues",
       shortcut: "g i",
     },
     {
-      // "Look" is the five-word state a green pull is in, and the name of
-      // the picture card on one — not the noun for this list, which is the
-      // same one `/changes` and "Every change" already use.
-      label: studio ? "Changes" : "Pulls",
-      href: studio ? changesHref(base) : `${base}/pulls`,
+      label: "Pulls",
+      href: changesHref(base),
       icon: "pull",
       ...(facts.openPulls === null ? {} : { count: facts.openPulls }),
       current: active === "pulls",
@@ -383,8 +379,8 @@ export function repoPalette(ctx: Ctx, repo: Repo): PaletteItem[] {
     return [
       { t: `${name} — Studio`, h: base, c: "This repo" },
       { t: `${name} — Files`, h: `${base}/files`, c: "This repo" },
-      { t: `${name} — Told`, h: tellsHref(base), c: "This repo" },
-      { t: `${name} — Changes`, h: changesHref(base), c: "This repo" },
+      { t: `${name} — Issues`, h: tellsHref(base), c: "This repo" },
+      { t: `${name} — Pull requests`, h: changesHref(base), c: "This repo" },
       // Telling the crew is for who may direct it (`mayDirectCrew`: a
       // writer, or anyone signed in where the owner let outsiders in), so
       // nobody else is offered a door that leads nowhere.

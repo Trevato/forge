@@ -134,7 +134,7 @@ describe("home is the feed", () => {
     // carries what was said.
     expect(text).toContain("Water the tomatoes at dawn");
     expect(text).toMatch(
-      /href="\/alice\/garden\/tells\/1"[^>]*data-feed-open>Water the tomatoes at dawn</,
+      /href="\/alice\/garden\/issues\/1"[^>]*data-feed-open>opened an issue: Water the tomatoes at dawn</,
     );
     // A reply names the tell it answers.
     expect(text).toContain("on “Water the tomatoes at dawn”: Mulch them first");

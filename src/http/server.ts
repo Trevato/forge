@@ -222,7 +222,6 @@ import {
   issueThreadFragment,
   newIssuePage,
   newIssueSubmit,
-  newTellPage,
 } from "../web/pages/issues.ts";
 import { tellPage } from "../web/studio/tell.ts";
 import { tellHerePage } from "../web/studio/tell_here.ts";
@@ -331,7 +330,6 @@ import {
 } from "../web/pages/crew.ts";
 import { newPullPage, newPullSubmit } from "../web/pages/pulls.ts";
 import {
-  changePage,
   pullPage,
   pullStateFragment,
 } from "../web/studio/change.ts";
@@ -621,6 +619,21 @@ const gitChallenge = () =>
   });
 
 // ---- the public server ----
+
+/**
+ * A handler that answers 301 to the same repository's `/<noun>`, with the
+ * rest of the old path (a literal, or `:number` for the matched number) and
+ * the query kept — for addresses retired from a name, never from a page.
+ */
+function movedTo(noun: "issues" | "pulls", rest?: "new" | ":number"): Handler {
+  return (ctx) => {
+    const { owner = "", name = "", number = "" } = ctx.params;
+    const tail =
+      rest === undefined ? "" : `/${encodeURIComponent(rest === "new" ? "new" : number)}`;
+    const location = `/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/${noun}${tail}${ctx.url.search}`;
+    return new Response(null, { status: 301, headers: { location } });
+  };
+}
 
 export function buildRouter(): Router<Handler> {
   const router = new Router<Handler>();
@@ -1059,15 +1072,12 @@ export function buildRouter(): Router<Handler> {
 
   // Issues (web). The literal /new is registered before /:number so it can
   // never be captured as a number.
-  // One list of issues: `/issues` and `/tells` are two addresses for the
-  // same page, for every repository and every viewer.
   router.add("GET", "/:owner/:name/issues", tellsList);
-  // One issue page, at `/issues/:number` and `/tells/:number` alike, for
-  // every repository and every viewer. The literal /tells is registered
-  // before /tells/:number for the same reason /issues/new is.
-  router.add("GET", "/:owner/:name/tells", tellsList);
-  router.add("GET", "/:owner/:name/tells/new", newTellPage);
-  router.add("GET", "/:owner/:name/tells/:number", tellPage);
+  // Issues are called issues in every mode (#3241): the studio's old
+  // addresses for them answer 301, so a link written to one still lands.
+  router.add("GET", "/:owner/:name/tells", movedTo("issues"));
+  router.add("GET", "/:owner/:name/tells/new", movedTo("issues", "new"));
+  router.add("GET", "/:owner/:name/tells/:number", movedTo("issues", ":number"));
   router.add("GET", "/:owner/:name/report", reportPage);
   router.add("POST", "/:owner/:name/report", reportSubmit);
   router.add("GET", "/:owner/:name/reports", reportsPage);
@@ -1134,12 +1144,10 @@ export function buildRouter(): Router<Handler> {
   );
 
   // Pull requests. Same /new-before-/:number ordering discipline.
-  // One list of pulls, at `/pulls` and `/changes` alike; one change under
-  // the studio's own noun. See the tells above for the rule; the forms that
-  // ship, close and comment keep posting under /pulls/:number.
+  // And pull requests are called pull requests: `/changes` answers 301.
   router.add("GET", "/:owner/:name/pulls", changesList);
-  router.add("GET", "/:owner/:name/changes", changesList);
-  router.add("GET", "/:owner/:name/changes/:number", changePage);
+  router.add("GET", "/:owner/:name/changes", movedTo("pulls"));
+  router.add("GET", "/:owner/:name/changes/:number", movedTo("pulls", ":number"));
   router.add("GET", "/:owner/:name/pulls/new", newPullPage);
   router.add("POST", "/:owner/:name/pulls/new", newPullSubmit);
   router.add("GET", "/:owner/:name/pulls/:number", pullPage);
