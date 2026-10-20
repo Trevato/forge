@@ -7,7 +7,9 @@
 
 import { Database } from "bun:sqlite";
 import { chmodSync, existsSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { createLog } from "./log.ts";
+import { tightenDbFiles } from "./file_modes.ts";
 import { type Migration, migrate } from "./migrate.ts";
 
 const log = createLog("db");
@@ -49,8 +51,8 @@ export function openDb(path: string, migrations: readonly Migration[]): Database
     db = new Database(path, { create: true, strict: true });
   }
   applyPragmas(db);
-  // Only files this call made: one that already exists is left as found, and
-  // vitals says when it is too open (`file_modes.ts`). The umask can widen
+  // Only files this call made: one that already exists is tightened below if
+  // too open (`file_modes.ts`; vitals names any it could not). The umask can widen
   // the mode at creation, so it is set again.
   if (fresh && !memory)
     for (const suffix of ["", "-wal", "-shm"])
@@ -62,6 +64,7 @@ export function openDb(path: string, migrations: readonly Migration[]): Database
   // On a copy every migration is already recorded, so this is a no-op —
   // and a list that grew since the copy was taken still runs what is new;
   // one behind the copy boots and says what it does not know (#783).
+  if (!fresh && !memory) tightenDbFiles(dirname(path));
   const { unknown } = migrate(db, migrations);
   if (unknown.length > 0)
     log.warn("database has migrations this build does not know; left as they are", {

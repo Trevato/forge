@@ -46,15 +46,14 @@ test("fresh database files are 0600", () => {
   }
 });
 
-test("a 0644 forge.db boots, stays 0644, and shows as degraded with the chmod", () => {
+test("a 0644 forge.db is tightened to 0600 at boot, with its side files", () => {
   const dataDir = tmp();
   createApp({ dataDir, port: 0 }).db.close();
   chmodSync(join(dataDir, "forge.db"), 0o644);
   const app = createApp({ dataDir, port: 0 });
   try {
-    expect(mode(join(dataDir, "forge.db"))).toBe(0o644);
-    const found = forgeVitals(app).degraded.find((d) => d.cause === "file:forge.db");
-    expect(found?.sentence).toContain(`chmod 600 ${join(dataDir, "forge.db")}`);
+    expect(mode(join(dataDir, "forge.db"))).toBe(0o600);
+    expect(forgeVitals(app).degraded.some((d) => d.cause.startsWith("file:"))).toBe(false);
   } finally {
     app.db.close();
   }

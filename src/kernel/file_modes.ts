@@ -2,12 +2,17 @@
  * Files that hold the forge's state must not be readable by anyone else on
  * the machine. The database and its write-ahead files are created 0600
  * (`db.ts`); one found wider at boot — a helper pod with fsGroup re-moded
- * the volume (#1436) — is said, never silently chmod-ed and never fatal:
- * production's files may have been 0644 for a long time.
+ * the volume (#1436) — is tightened at boot and logged, never fatal and never
+ * silent: production's files may have been 0644 for a long time, and SQLite
+ * gives -wal and -shm the mode of the main file, so leaving it wide kept
+ * the vitals degraded for good (#3084).
  */
 
-import { statSync } from "node:fs";
+import { chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { createLog } from "./log.ts";
+
+const log = createLog("file_modes");
 
 export const DB_FILES = ["forge.db", "forge.db-wal", "forge.db-shm"] as const;
 
@@ -29,4 +34,20 @@ export function openDbFiles(dataDir: string): { name: string; sentence: string }
       });
   }
   return found;
+}
+
+/**
+ * Narrow every too-open database file to 0600 and say each one. A file that
+ * cannot be changed (not ours) stays, and vitals keeps naming it.
+ */
+export function tightenDbFiles(dataDir: string): void {
+  for (const { name } of openDbFiles(dataDir)) {
+    const path = join(dataDir, name);
+    try {
+      chmodSync(path, 0o600);
+      log.warn("database file was too open; set to 0600", { path });
+    } catch {
+      // Not ours to change: vitals still says it.
+    }
+  }
 }
