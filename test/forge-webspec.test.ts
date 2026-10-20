@@ -8,6 +8,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
+import { commitToBranch, createRepo } from "../src/actions/repos.ts";
+import { createUser } from "../src/core/users.ts";
 import { forgeHttp, type ForgeHttp } from "../src/http/server.ts";
 import { webspec } from "../src/release/webspec.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -23,7 +25,6 @@ const PATHS = ["/", "/signin", "/signup", "/explore"];
  */
 const KNOWN: Record<string, [string, string]> = {};
 const WHY: Record<string, [string, string]> = {
-  canonical: ["https://specification.website/#canonical", "no page emits <link rel=canonical>; one origin serves each page, so nothing duplicates yet"],
   "color-scheme": ["https://specification.website/#color-scheme", "pages carry no color-scheme meta; the stylesheet picks the theme"],
   compression: ["https://specification.website/", "bodies leave the forge uncompressed: compression is set at the edge (edge: true)"],
   "permissions-policy": ["https://specification.website/#permissions-policy", "the security floor sets CSP, nosniff and Referrer-Policy but no Permissions-Policy"],
@@ -56,4 +57,34 @@ test("the forge's signed-out pages raise exactly the findings named in KNOWN", a
   // Fixed: named but no longer found, so the entry must go.
   const seen = new Set(found.map(keyOf));
   expect(Object.keys(KNOWN).filter((k) => !seen.has(k))).toEqual([]);
+});
+
+test("a page that answers 200 names its canonical address, equal to og:url; a 404 names none", async () => {
+  const made = await createUser(app.db, {
+    origin: "seed",
+    trusted: true,
+    username: "alice",
+    email: "a@forge.local",
+    password: "a-good-passphrase",
+    adminIfFirst: true,
+  });
+  if (!made.ok) throw new Error("user");
+  const repo = await createRepo(app, made.value, { name: "notes", visibility: "public" });
+  if (!repo.ok) throw new Error("repo");
+  await commitToBranch(app, made.value, repo.value, { message: "seed", files: [{ path: "a.txt", content: "a" }] });
+  const head = async (path: string) => {
+    const res = await http.handle(new Request(`http://forge.test${path}`));
+    return { status: res.status, html: await res.text() };
+  };
+  for (const path of ["/", "/explore", "/alice/notes", "/explore?x=1"]) {
+    const { status, html } = await head(path);
+    expect(status).toBe(200);
+    const url = html.match(/<meta\s+property="og:url"\s+content="([^"]*)"/)?.[1];
+    const canonical = html.match(/<link\s+rel="canonical"\s+href="([^"]*)"/)?.[1];
+    expect(url).toBe(`http://forge.test${path.split("?")[0]}`);
+    expect(canonical).toBe(url);
+  }
+  const missing = await head("/no-such-page-here");
+  expect(missing.status).toBe(404);
+  expect(missing.html).not.toContain('rel="canonical"');
 });

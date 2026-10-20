@@ -590,9 +590,13 @@ export function page(options: PageOptions, status = 200): Response {
           // the same bytes, or the difference tells a guesser something.
           status === 200
             ? html`<meta
-                property="og:url"
-                content="${ctx.url.origin}${ctx.url.pathname}"
-              />`
+                  property="og:url"
+                  content="${ctx.url.origin}${ctx.url.pathname}"
+                />
+                <link
+                  rel="canonical"
+                  href="${ctx.url.origin}${ctx.url.pathname}"
+                />`
             : null
         }
         <meta
