@@ -8,6 +8,7 @@
  */
 
 import { getRepoById } from "../../core/repos.ts";
+import { notePhase, takeSessionTime } from "../../core/route_timing.ts";
 import type { User } from "../../core/users.ts";
 import { running } from "../../kernel/version.ts";
 import type { Ctx } from "../../http/context.ts";
@@ -37,16 +38,25 @@ function pullCell(ctx: Ctx, r: Release): Html {
 }
 
 export async function releasesPage(ctx: Ctx): Promise<Response> {
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const user = ctx.auth.user;
   if (user === undefined) return signInFirst(ctx);
   if (!mayRead(ctx.app, user)) return notFoundPage(ctx);
+  const reading = performance.now();
   const releases = listReleases(ctx.app.db);
+  notePhase(ctx.request, "releases", performance.now() - reading);
   const live = running().commit;
   const writer = mayRollBack(ctx.app, user);
+  const checking = performance.now();
+  const rollable = writer
+    ? await Promise.all(releases.map((r) => (live !== null && r.sha === live ? false : canRollBackTo(ctx.app, r))))
+    : releases.map(() => false);
+  notePhase(ctx.request, "rollback", performance.now() - checking);
+  const rendering = performance.now();
   const rows: Html[] = [];
-  for (const r of releases) {
+  for (const [i, r] of releases.entries()) {
     const isLive = live !== null && r.sha === live;
-    const button = writer && !isLive && (await canRollBackTo(ctx.app, r));
+    const button = rollable[i] === true;
     rows.push(html`<tr>
       <td>${sha(r.sha)} ${when(isLive, () => badge("live", { tone: "success" }))}
         ${when(!r.ok, () => badge("preflight failed", { tone: "danger" }))}</td>
@@ -65,11 +75,13 @@ export async function releasesPage(ctx: Ctx): Promise<Response> {
           <thead><tr><th>Release</th><th>Pull</th><th>Landed</th><th>Healthy</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`);
-  return page({
+  const response = page({
     ctx,
     title: "Releases",
     body: html`<div class="page-head"><h1>Releases</h1></div>${body}`,
   });
+  notePhase(ctx.request, "render", performance.now() - rendering);
+  return response;
 }
 
 export async function rollbackSubmit(ctx: Ctx): Promise<Response> {
