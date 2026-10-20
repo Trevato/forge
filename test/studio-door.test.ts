@@ -3,11 +3,15 @@
  * current, the head, the terminal and the live fragment. One of the files
  * the studio's suite was split into so no one file sets the gate's floor
  * (#2038); the rest are test/studio*.test.ts.
+ *
+ * One forge for the whole file (#3566): each block below owns its own
+ * people and repositories on it, and one runtime — registered, never
+ * started — holds the environments a block puts where a deploy would
+ * have, so nothing here waits on an install, a health check or a clock.
  */
 
 import {
   afterAll,
-  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -20,7 +24,7 @@ import { join } from "node:path";
 import { createApp, type App } from "../src/app.ts";
 import { enableApp } from "../src/actions/apps.ts";
 import { previewEnv, type EnvName } from "../src/apps/data.ts";
-import { AppsRuntime, type EnvState } from "../src/apps/runtime.ts";
+import { AppsRuntime } from "../src/apps/runtime.ts";
 import { getAppByRepo, type AppRecord } from "../src/core/apps.ts";
 import { addToCrew, createAgent } from "../src/actions/crew.ts";
 import { createOrg } from "../src/actions/orgs.ts";
@@ -40,46 +44,115 @@ import {
   createRun,
   finishRun,
   getRun,
-  isTerminal,
-  listRuns,
   markServing,
 } from "../src/core/runs.ts";
 import { liveClientJs } from "../src/web/live.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
-import { serving } from "./helpers/studio.ts";
 import { promote } from "./helpers/members.ts";
 
-describe("an owner's page lists an app once, not once in each vocabulary (#221)", () => {
-  let dataDir: string;
-  let app: App;
-  let servers: Servers;
-  let base: string;
+let dataDir: string;
+let app: App;
+let servers: Servers;
+let base: string;
+let runtime: AppsRuntime;
 
-  beforeAll(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "forge-owner-once-"));
-    app = createApp({ dataDir, port: 0 });
-    servers = await serve(app);
-    base = servers.url;
+beforeAll(async () => {
+  dataDir = await mkdtemp(join(tmpdir(), "forge-studio-door-"));
+  // The terminal's block reads its command off this host.
+  app = createApp({ dataDir, port: 0, host: "forge.example" });
+  servers = await serve(app);
+  base = servers.url;
+  runtime = new AppsRuntime(app, {
+    domain: "apps.test",
+    scheme: "http",
+    publicPort: servers.port,
+    forgeUrl: servers.url,
+    concurrency: 1,
   });
+  // The forge's first account, and so its admin; bob and carol are readers
+  // and strangers to alice's apps.
+  await person("alice", true);
+  await person("bob");
+  await person("carol");
+});
 
-  afterAll(async () => {
-    servers.stop();
-    app.close();
-    await rm(dataDir, { recursive: true, force: true });
+afterAll(async () => {
+  // The slots stand in for deploys; there is no process behind them to stop.
+  slots().clear();
+  await runtime.stop();
+  servers.stop();
+  app.close();
+  await rm(dataDir, { recursive: true, force: true });
+});
+
+const PASSWORD = "a-good-passphrase";
+
+/** A person on the shared forge, promoted past the newcomer's limits. */
+async function person(username: string, adminIfFirst = false): Promise<User> {
+  const made = await createUser(app.db, { origin: "seed", trusted: true,
+    username,
+    email: `${username}@forge.local`,
+    password: PASSWORD,
+    adminIfFirst,
   });
+  if (!made.ok) throw new Error(made.error);
+  promote(app.db, made.value);
+  return made.value;
+}
 
-  const signIn = async (username: string, password: string) =>
+/** The session cookie `username` signs in with. */
+const signIn = async (username: string, password = PASSWORD): Promise<string> =>
+  (
     (
-      (
-        await fetch(`${base}/signin`, {
-          method: "POST",
-          body: new URLSearchParams({ username, password }),
-          redirect: "manual",
-        })
-      ).headers.get("set-cookie") ?? ""
-    ).split(";")[0]!;
+      await fetch(`${base}/signin`, {
+        method: "POST",
+        body: new URLSearchParams({ username, password }),
+        redirect: "manual",
+      })
+    ).headers.get("set-cookie") ?? ""
+  ).split(";")[0]!;
 
+/**
+ * An environment as the runtime holds it, without running a deploy: the
+ * pages read `runtime.status(record)`, and a real one would mean a real
+ * install and a real health check for a rendering test.
+ */
+interface Slot {
+  readonly app: AppRecord;
+  readonly env: EnvName;
+  readonly chain: Promise<void>;
+  readonly restarts: number[];
+  readonly deploying?: unknown;
+  readonly live?: unknown;
+  readonly lastError?: string;
+  readonly lastRunId?: string;
+  readonly lastErrorCommitOid?: string;
+}
+const slots = (): Map<string, Slot> =>
+  (runtime as unknown as { envs: Map<string, Slot> }).envs;
+
+const putEnv = (
+  record: AppRecord,
+  env: EnvName,
+  slot: Omit<Slot, "app" | "env" | "chain" | "restarts">,
+): void => {
+  slots().set(`${record.id}/${env}`, {
+    app: record,
+    env,
+    chain: Promise.resolve(),
+    restarts: [],
+    ...slot,
+  });
+};
+
+/** Take every environment of `record` away, as if none had ever deployed. */
+const clearEnvs = (record: AppRecord): void => {
+  for (const key of [...slots().keys()])
+    if (key.startsWith(`${record.id}/`)) slots().delete(key);
+};
+
+describe("an owner's page lists an app once, not once in each vocabulary (#221)", () => {
   const occurrences = (haystack: string, needle: string): number =>
     haystack.split(needle).length - 1;
 
@@ -105,8 +178,9 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
       files: [{ path: "README.md", content: "hi\n" }],
     });
     if (!appSeeded.ok) throw new Error(JSON.stringify(appSeeded.error));
+    // Not "beacon": alice's app in the terminal's block holds that slug.
     const enabled = await enableApp(app, dan.value, madeApp.value, {
-      slug: "beacon",
+      slug: "dan-beacon",
     });
     if (!enabled.ok) throw new Error(String(enabled.error));
 
@@ -320,13 +394,9 @@ describe("an owner's page lists an app once, not once in each vocabulary (#221)"
 });
 
 describe("every open pull's preview on the studio page", () => {
-  let dataDir: string;
-  let app: App;
-  let servers: Servers;
-  let runtime: AppsRuntime;
-  let base: string;
   let cookie: string;
   let repo: Repo;
+  let record: AppRecord;
 
   const get = (path: string) =>
     fetch(`${base}${path}`, {
@@ -334,97 +404,26 @@ describe("every open pull's preview on the studio page", () => {
       redirect: "manual",
     });
 
-  const WAIT_MS = 60_000;
-
-  /** The deploys this repo has not finished, as "env:state" words. */
-  const unfinished = () =>
-    listRuns(app.db, repo.id, { kind: "deploy", limit: 50 })
-      .filter((r) => !isTerminal(r.state))
-      .map((r) => `${r.env}:${r.state}`);
-
-  /** Wait for `env` to serve; fail naming the state it reached. */
-  async function previewServes(record: AppRecord, env: EnvName): Promise<void> {
-    const deadline = Date.now() + WAIT_MS;
-    while (runtime.envStatus(record, env)?.state !== "running") {
-      if (Date.now() > deadline) {
-        const status = runtime.envStatus(record, env);
-        throw new Error(
-          `${env} did not serve within ${WAIT_MS} ms: state ${status?.state ?? "absent"}` +
-            (status?.error ? ` (${status.error})` : "") +
-            `; open deploys: ${unfinished().join(", ") || "none"}`,
-        );
-      }
-      await Bun.sleep(50);
-    }
-  }
-
-  // A fresh app for each test: one test's open pull would otherwise be the
-  // next's preview, and its deploys queue ahead of the next's (concurrency 1).
-  beforeEach(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-previews-"));
-    app = createApp({ dataDir, port: 0 });
-    servers = await serve(app);
-    base = servers.url;
-    runtime = new AppsRuntime(app, {
-      domain: "studio-previews.test",
-      scheme: "http",
-      publicPort: servers.port,
-      forgeUrl: servers.url,
-      concurrency: 1,
-    });
-    await runtime.start();
-    const a = await createUser(app.db, { origin: "seed", trusted: true,
-      username: "alice",
-      email: "alice@forge.local",
-      password: "a-good-passphrase",
-      adminIfFirst: true,
-    });
-    if (!a.ok) throw new Error(a.error);
-    promote(app.db, a.value);
-    cookie = (
-      (
-        await fetch(`${base}/signin`, {
-          method: "POST",
-          body: new URLSearchParams({
-            username: "alice",
-            password: "a-good-passphrase",
-          }),
-          redirect: "manual",
-        })
-      ).headers.get("set-cookie") ?? ""
-    ).split(";")[0]!;
-    const made = await createRepo(app, a.value, {
+  // The tests take turns on one repository: the first leaves no pull open,
+  // which is the second's start.
+  beforeAll(async () => {
+    const alice = getUserByName(app.db, "alice")!;
+    cookie = await signIn("alice");
+    const made = await createRepo(app, alice, {
       name: "widget",
       visibility: "public",
       description: "",
     });
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value;
-    const seeded = await commitToBranch(app, a.value, repo, {
+    const seeded = await commitToBranch(app, alice, repo, {
       message: "Start",
-      files: [
-        {
-          path: "package.json",
-          content:
-            '{"name":"widget","scripts":{"start":"bun run server.ts"}}\n',
-        },
-        {
-          path: "server.ts",
-          content:
-            "Bun.serve({ port: Number(process.env.PORT), fetch: () => new Response('ok') });\n",
-        },
-      ],
+      files: [{ path: "README.md", content: "w\n" }],
     });
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    const enabled = await enableApp(app, a.value, repo, { slug: "widget" });
+    const enabled = await enableApp(app, alice, repo, { slug: "widget" });
     if (!enabled.ok) throw new Error(String(enabled.error));
-  }, 30_000);
-
-  afterEach(async () => {
-    await runtime.stop();
-    servers.stop();
-    app.close();
-    await rm(dataDir, { recursive: true, force: true });
+    record = getAppByRepo(app.db, repo.id)!;
   });
 
   test("an open pull's preview host and open link render; none do once nothing is open", async () => {
@@ -458,7 +457,7 @@ describe("every open pull's preview on the studio page", () => {
     const after = await (await get("/alice/widget")).text();
     expect(after).not.toContain("<h2>Previews</h2>");
     expect(after).not.toContain(`pull-${pull.number}/open`);
-  }, 120_000);
+  });
 
   test("a change's page names its preview's data as its own copy and gives the moment it was taken; production's card does not", async () => {
     const alice = getUserByName(app.db, "alice")!;
@@ -477,11 +476,21 @@ describe("every open pull's preview on the studio page", () => {
     });
     if (!opened.ok) throw new Error(String(opened.error));
     const pull = opened.value;
-    const record = getAppByRepo(app.db, repo.id)!;
-    const env = `pull-${pull.number}` as const;
+    const env = previewEnv(pull.number);
 
-    await previewServes(record, env);
-    expect(runtime.envStatus(record, env)?.state).toBe("running");
+    // Production and the preview both serving, as a deploy leaves them;
+    // test/apps.test.ts proves a real preview gets its copy of the data.
+    const serving = (commitOid: string) => ({
+      live: {
+        commitOid,
+        handle: { port: 4321 },
+        runId: "fake",
+        since: new Date().toISOString(),
+        manifest: { tty: null },
+      },
+    });
+    putEnv(record, "production", serving("0".repeat(40)));
+    putEnv(record, env, serving(pull.headOid));
 
     const note = "its own copy of production's data, taken";
 
@@ -496,7 +505,7 @@ describe("every open pull's preview on the studio page", () => {
     ).text();
     expect(changePage).toContain("<h2>Preview</h2>");
     expect(changePage).toContain(note);
-  }, 120_000);
+  });
 });
 
 /**
@@ -506,10 +515,6 @@ describe("every open pull's preview on the studio page", () => {
  * in place by `liveRegionsJs` (`src/web/client.ts`).
  */
 describe("the studio home keeps itself current", () => {
-  let dataDir: string;
-  let app: App;
-  let servers: Servers;
-  let base: string;
   let alice: User;
   let repo: Repo;
   let cookie: string;
@@ -525,31 +530,8 @@ describe("the studio home keeps itself current", () => {
     });
 
   beforeAll(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-live-home-"));
-    app = createApp({ dataDir, port: 0 });
-    servers = await serve(app);
-    base = servers.url;
-    const a = await createUser(app.db, { origin: "seed", trusted: true,
-      username: "alice",
-      email: "alice@forge.local",
-      password: "a-good-passphrase",
-      adminIfFirst: true,
-    });
-    if (!a.ok) throw new Error(a.error);
-    promote(app.db, a.value);
-    alice = a.value;
-    cookie = (
-      (
-        await fetch(`${base}/signin`, {
-          method: "POST",
-          body: new URLSearchParams({
-            username: "alice",
-            password: "a-good-passphrase",
-          }),
-          redirect: "manual",
-        })
-      ).headers.get("set-cookie") ?? ""
-    ).split(";")[0]!;
+    alice = getUserByName(app.db, "alice")!;
+    cookie = await signIn("alice");
     const made = await createRepo(app, alice, {
       name: "signals",
       visibility: "private",
@@ -598,12 +580,6 @@ describe("the studio home keeps itself current", () => {
     if (!asked.ok) throw new Error(String(asked.error));
     readme = asked.value;
     expect(assignIssue(app, alice, repo, readme, alice).ok).toBe(true);
-  });
-
-  afterAll(async () => {
-    servers.stop();
-    app.close();
-    await rm(dataDir, { recursive: true, force: true });
   });
 
   test("Your apps is a live region and the home has no On you, with the security floor's headers", async () => {
@@ -689,13 +665,8 @@ describe("the studio home keeps itself current", () => {
  * shows — why, the deploy that says the rest, and the way to try again.
  */
 describe("the studio head says why the app is not up", () => {
-  let dataDir: string;
-  let app: App;
-  let servers: Servers;
-  let base: string;
   let repo: Repo;
   let record: AppRecord;
-  let runtime: AppsRuntime;
   let deploy: string;
   let writer: string;
   let reader: string;
@@ -722,93 +693,27 @@ describe("the studio head says why the app is not up", () => {
     return row.match(/<span class="badge"[^>]*>([\s\S]*?)<\/span>/)?.[1] ?? "";
   };
 
-  const signIn = async (username: string): Promise<string> =>
-    (
-      (
-        await fetch(`${base}/signin`, {
-          method: "POST",
-          body: new URLSearchParams({
-            username,
-            password: "a-good-passphrase",
-          }),
-          redirect: "manual",
-        })
-      ).headers.get("set-cookie") ?? ""
-    ).split(";")[0]!;
-
-  /**
-   * An environment as the runtime holds it, without running a deploy: the
-   * page reads `runtime.status(record)`, and a real failure would mean a
-   * real install and a real health timeout for a rendering test.
-   */
-  interface Slot {
-    readonly app: AppRecord;
-    readonly env: EnvName;
-    readonly chain: Promise<void>;
-    readonly restarts: number[];
-    readonly live?: unknown;
-    readonly deploying?: unknown;
-    readonly lastError?: string;
-    readonly lastRunId?: string;
-    readonly lastErrorCommitOid?: string;
-  }
-  const put = (
-    slot: Omit<Slot, "app" | "env" | "chain" | "restarts">,
-  ): void => {
-    (runtime as unknown as { envs: Map<string, Slot> }).envs.set(
-      `${record.id}/production`,
-      {
-        app: record,
-        env: "production",
-        chain: Promise.resolve(),
-        restarts: [],
-        ...slot,
-      },
-    );
-  };
+  /** Production as the runtime holds it, in place of a real deploy. */
+  const put = (slot: Omit<Slot, "app" | "env" | "chain" | "restarts">): void =>
+    putEnv(record, "production", slot);
 
   beforeAll(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-notup-"));
-    app = createApp({ dataDir, port: 0 });
-    servers = await serve(app);
-    base = servers.url;
-    runtime = new AppsRuntime(app, {
-      domain: "apps.test",
-      scheme: "http",
-      publicPort: servers.port,
-      forgeUrl: servers.url,
-      concurrency: 1,
-    });
-    const a = await createUser(app.db, { origin: "seed", trusted: true,
-      username: "alice",
-      email: "alice@forge.local",
-      password: "a-good-passphrase",
-      adminIfFirst: true,
-    });
-    if (!a.ok) throw new Error(a.error);
-    promote(app.db, a.value);
-    const b = await createUser(app.db, { origin: "seed", trusted: true,
-      username: "bob",
-      email: "bob@forge.local",
-      password: "a-good-passphrase",
-    });
-    if (!b.ok) throw new Error(b.error);
-    promote(app.db, b.value);
+    const alice = getUserByName(app.db, "alice")!;
     writer = await signIn("alice");
     reader = await signIn("bob");
-    const made = await createRepo(app, a.value, {
+    const made = await createRepo(app, alice, {
       name: "notes",
       visibility: "public",
       description: "a place for notes",
     });
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value;
-    const seeded = await commitToBranch(app, a.value, repo, {
+    const seeded = await commitToBranch(app, alice, repo, {
       message: "Start",
       files: [{ path: "README.md", content: "notes\n" }],
     });
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    const enabled = await enableApp(app, a.value, repo, { slug: "notes" });
+    const enabled = await enableApp(app, alice, repo, { slug: "notes" });
     if (!enabled.ok) throw new Error(String(enabled.error));
     record = getAppByRepo(app.db, repo.id)!;
     const run = createRun(app.db, {
@@ -824,12 +729,6 @@ describe("the studio head says why the app is not up", () => {
       summary: "the deploy failed",
     });
     deploy = run.id;
-  });
-
-  afterAll(async () => {
-    servers.stop();
-    app.close();
-    await rm(dataDir, { recursive: true, force: true });
   });
 
   test("a failed production says what failed, links its deploy, and offers Redeploy to a writer only — and offers no live link to the host", async () => {
@@ -975,55 +874,23 @@ describe("the studio head says why the app is not up", () => {
  * withheld) correctly, not recomputed.
  */
 describe("the studio app page's terminal", () => {
-  let dataDir: string;
-  let app: App;
-  let servers: Servers;
-  let base: string;
   let repo: Repo;
   let record: AppRecord;
-  let runtime: AppsRuntime;
   let writer: string;
   let reader: string;
+  // What the forge had before this block gave it a listener and a key.
+  let before: Pick<App["config"], "sshPort" | "sshHostKey">;
 
-  interface Slot {
-    readonly app: AppRecord;
-    readonly env: EnvName;
-    readonly chain: Promise<void>;
-    readonly restarts: number[];
-    readonly live?: unknown;
-  }
-  const putLive = (tty: string | null): void => {
-    (runtime as unknown as { envs: Map<string, Slot> }).envs.set(
-      `${record.id}/production`,
-      {
-        app: record,
-        env: "production",
-        chain: Promise.resolve(),
-        restarts: [],
-        live: {
-          commitOid: "a".repeat(40),
-          handle: { port: 4321 },
-          runId: "fake",
-          since: new Date().toISOString(),
-          manifest: { tty },
-        },
+  const putLive = (tty: string | null): void =>
+    putEnv(record, "production", {
+      live: {
+        commitOid: "a".repeat(40),
+        handle: { port: 4321 },
+        runId: "fake",
+        since: new Date().toISOString(),
+        manifest: { tty },
       },
-    );
-  };
-
-  const signIn = async (username: string): Promise<string> =>
-    (
-      (
-        await fetch(`${base}/signin`, {
-          method: "POST",
-          body: new URLSearchParams({
-            username,
-            password: "a-good-passphrase",
-          }),
-          redirect: "manual",
-        })
-      ).headers.get("set-cookie") ?? ""
-    ).split(";")[0]!;
+    });
 
   const appPage = (cookie: string) =>
     fetch(`${base}/alice/beacon`, {
@@ -1032,58 +899,35 @@ describe("the studio app page's terminal", () => {
     }).then((r) => r.text());
 
   beforeAll(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-terminal-"));
-    app = createApp({ dataDir, port: 0, host: "forge.example" });
+    before = { ...app.config };
     app.config.sshPort = 2222;
     app.config.sshHostKey =
       "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
-    servers = await serve(app);
-    base = servers.url;
-    runtime = new AppsRuntime(app, {
-      domain: "apps.test",
-      scheme: "http",
-      publicPort: servers.port,
-      forgeUrl: servers.url,
-      concurrency: 1,
-    });
-    const a = await createUser(app.db, { origin: "seed", trusted: true,
-      username: "alice",
-      email: "alice@forge.local",
-      password: "a-good-passphrase",
-      adminIfFirst: true,
-    });
-    if (!a.ok) throw new Error(a.error);
-    promote(app.db, a.value);
-    const b = await createUser(app.db, { origin: "seed", trusted: true,
-      username: "bob",
-      email: "bob@forge.local",
-      password: "a-good-passphrase",
-    });
-    if (!b.ok) throw new Error(b.error);
-    promote(app.db, b.value);
+    const alice = getUserByName(app.db, "alice")!;
     writer = await signIn("alice");
     reader = await signIn("bob");
-    const made = await createRepo(app, a.value, {
+    const made = await createRepo(app, alice, {
       name: "beacon",
       visibility: "public",
       description: "a light that stays on",
     });
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value;
-    const seeded = await commitToBranch(app, a.value, repo, {
+    const seeded = await commitToBranch(app, alice, repo, {
       message: "Start",
       files: [{ path: "README.md", content: "beacon\n" }],
     });
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    const enabled = await enableApp(app, a.value, repo, { slug: "beacon" });
+    const enabled = await enableApp(app, alice, repo, { slug: "beacon" });
     if (!enabled.ok) throw new Error(String(enabled.error));
     record = getAppByRepo(app.db, repo.id)!;
   });
 
-  afterAll(async () => {
-    servers.stop();
-    app.close();
-    await rm(dataDir, { recursive: true, force: true });
+  afterAll(() => {
+    if (before.sshPort === undefined) delete app.config.sshPort;
+    else app.config.sshPort = before.sshPort;
+    if (before.sshHostKey === undefined) delete app.config.sshHostKey;
+    else app.config.sshHostKey = before.sshHostKey;
   });
 
   test("a writer sees the exact command and the host key; a reader sees neither", async () => {
@@ -1139,49 +983,10 @@ describe("the studio app page's terminal", () => {
  * renders from the same `appPanels` function the page's first paint does.
  */
 describe("the app's live fragment: /:owner/:name/app/state", () => {
-  let dataDir: string;
-  let app: App;
-  let servers: Servers;
-  let base: string;
-  let runtime: AppsRuntime;
   let repo: Repo;
   let record: AppRecord;
   let owner: string;
   let stranger: string;
-
-  interface PreviewSlot {
-    readonly app: AppRecord;
-    readonly env: EnvName;
-    readonly chain: Promise<void>;
-    readonly restarts: number[];
-    deploying?: unknown;
-    live?: unknown;
-    lastError?: string;
-    lastRunId?: string;
-  }
-  const putEnv = (
-    env: EnvName,
-    slot: Omit<PreviewSlot, "app" | "env" | "chain" | "restarts">,
-  ): void => {
-    (runtime as unknown as { envs: Map<string, PreviewSlot> }).envs.set(
-      `${record.id}/${env}`,
-      { app: record, env, chain: Promise.resolve(), restarts: [], ...slot },
-    );
-  };
-
-  const signIn = async (username: string): Promise<string> =>
-    (
-      (
-        await fetch(`${base}/signin`, {
-          method: "POST",
-          body: new URLSearchParams({
-            username,
-            password: "a-good-passphrase",
-          }),
-          redirect: "manual",
-        })
-      ).headers.get("set-cookie") ?? ""
-    ).split(";")[0]!;
 
   const get = (path: string, cookie: string) =>
     fetch(`${base}${path}`, {
@@ -1189,59 +994,31 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
       redirect: "manual",
     });
 
-  // A fresh app for each test: one test's pull or preview slot would
-  // otherwise show up in the next's head card and previews.
-  beforeEach(async () => {
-    dataDir = await mkdtemp(join(tmpdir(), "forge-studio-state-"));
-    app = createApp({ dataDir, port: 0 });
-    servers = await serve(app);
-    base = servers.url;
-    runtime = new AppsRuntime(app, {
-      domain: "state.test",
-      scheme: "http",
-      publicPort: servers.port,
-      forgeUrl: servers.url,
-      concurrency: 1,
-    });
-    const a = await createUser(app.db, { origin: "seed", trusted: true,
-      username: "alice",
-      email: "alice@forge.local",
-      password: "a-good-passphrase",
-      adminIfFirst: true,
-    });
-    if (!a.ok) throw new Error(a.error);
-    promote(app.db, a.value);
-    const c = await createUser(app.db, { origin: "seed", trusted: true,
-      username: "carol",
-      email: "carol@forge.local",
-      password: "a-good-passphrase",
-    });
-    if (!c.ok) throw new Error(c.error);
-    promote(app.db, c.value);
+  beforeAll(async () => {
+    const alice = getUserByName(app.db, "alice")!;
     owner = await signIn("alice");
     stranger = await signIn("carol");
-    const made = await createRepo(app, a.value, {
+    const made = await createRepo(app, alice, {
       name: "vault",
       visibility: "private",
       description: "",
     });
     if (!made.ok) throw new Error(String(made.error));
     repo = made.value;
-    const seeded = await commitToBranch(app, a.value, repo, {
+    const seeded = await commitToBranch(app, alice, repo, {
       message: "Start",
       files: [{ path: "README.md", content: "v\n" }],
     });
     if (!seeded.ok) throw new Error(JSON.stringify(seeded.error));
-    const enabled = await enableApp(app, a.value, repo, { slug: "vault" });
+    const enabled = await enableApp(app, alice, repo, { slug: "vault" });
     if (!enabled.ok) throw new Error(String(enabled.error));
     record = getAppByRepo(app.db, repo.id)!;
   });
 
-  afterEach(async () => {
-    servers.stop();
-    app.close();
-    await rm(dataDir, { recursive: true, force: true });
-  });
+  // Every test starts from an app nothing has deployed: one test's preview
+  // or production slot would otherwise show in the next's head card. Each
+  // opens a pull of its own, and reads only that pull's row.
+  beforeEach(() => clearEnvs(record));
 
   test("renders the head card for a viewer who may see it, with the security floor's headers; refuses one who may not, same as the page", async () => {
     const fragment = await get("/alice/vault/app/state", owner);
@@ -1386,7 +1163,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
       reason: "pull",
     });
     claimRun(app.db, deployRun.id);
-    putEnv(env, {
+    putEnv(record, env, {
       deploying: {
         run: { id: deployRun.id, commitOid: pull.headOid },
         abort: new AbortController(),
@@ -1398,7 +1175,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(starting).toContain(link);
 
     finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
-    putEnv(env, {
+    putEnv(record, env, {
       live: {
         commitOid: pull.headOid,
         handle: { port: 4321 },
@@ -1448,7 +1225,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     });
     claimRun(app.db, deployRun.id);
     finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
-    putEnv(env, {
+    putEnv(record, env, {
       live: {
         commitOid: pull.headOid,
         handle: { port: 4323 },
@@ -1488,7 +1265,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     });
     claimRun(app.db, deployRun.id);
     finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
-    putEnv("production", {
+    putEnv(record, "production", {
       live: {
         commitOid: "cafebabe",
         handle: { port: 4322 },
@@ -1507,7 +1284,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
 
     // The same deployment with no wait for a permit says only the one
     // number, exactly as it always has.
-    putEnv("production", {
+    putEnv(record, "production", {
       live: {
         commitOid: "cafebabe",
         handle: { port: 4322 },
@@ -1525,7 +1302,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
 
     // A deploy no push asked for — a redeploy someone pressed — carries no
     // push instant, and its words never claim one.
-    putEnv("production", {
+    putEnv(record, "production", {
       live: {
         commitOid: "cafebabe",
         handle: { port: 4322 },
@@ -1556,7 +1333,16 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     const stream = await fetch(`${base}/alice/vault/stream`, {
       headers: { cookie: owner },
     });
-    await Bun.sleep(50);
+    const reader = stream.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    // The stream says it is connected as it subscribes: from here on, an
+    // append reaches it — no sleep stands in for that.
+    while (!buffer.includes(": connected\n\n")) {
+      const { done, value } = await reader.read();
+      if (done) throw new Error("the stream closed before it connected");
+      buffer += decoder.decode(value);
+    }
 
     // The exact append `AppsRuntime` makes at the swap-in (runtime.ts),
     // republished here so the test does not have to spin up a real deploy.
@@ -1572,9 +1358,6 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
       },
     });
 
-    const reader = stream.body!.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     let event: Record<string, unknown> | undefined;
     const deadline = Date.now() + 5_000;
     while (!event && Date.now() < deadline) {
@@ -1614,7 +1397,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
       reason: "push",
     });
     claimRun(app.db, deployRun.id);
-    putEnv("production", {
+    putEnv(record, "production", {
       deploying: {
         run: { id: deployRun.id, commitOid: "cafed00d" },
         abort: new AbortController(),
@@ -1625,7 +1408,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(deploying).not.toContain(link);
 
     finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
-    putEnv("production", {
+    putEnv(record, "production", {
       live: {
         commitOid: "cafed00d",
         handle: { port: 4325 },
@@ -1676,7 +1459,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     };
 
     claimRun(app.db, deployRun.id);
-    putEnv(env, {
+    putEnv(record, env, {
       deploying: {
         run: { id: deployRun.id, commitOid: pull.headOid },
         abort: new AbortController(),
@@ -1694,7 +1477,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     finishRun(app.db, deployRun.id, { state: "ok", summary: "deploy" });
     const createdAt = new Date(Date.now() - 60_000).toISOString();
     const servingAt = new Date(Date.parse(createdAt) + 3_400).toISOString();
-    putEnv(env, {
+    putEnv(record, env, {
       live: {
         commitOid: pull.headOid,
         handle: { port: 4324 },
@@ -1719,7 +1502,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
       "live 3.4s after the push",
     );
 
-    putEnv(env, {
+    putEnv(record, env, {
       live: {
         commitOid: pull.headOid,
         handle: { port: 4324 },
@@ -1742,7 +1525,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(red).not.toContain('data-variant="success"');
     expect(red).not.toContain(">live<");
 
-    putEnv(env, {
+    putEnv(record, env, {
       deploying: {
         run: { id: deployRun.id, commitOid: pull.headOid },
         abort: new AbortController(),
@@ -1766,7 +1549,7 @@ describe("the app's live fragment: /:owner/:name/app/state", () => {
     expect(verifying).not.toContain('data-variant="success"');
     expect(verifying).not.toContain('data-variant="attn"');
 
-    putEnv(env, {
+    putEnv(record, env, {
       live: {
         commitOid: pull.headOid,
         handle: { port: 4324 },
