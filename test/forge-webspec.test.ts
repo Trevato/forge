@@ -27,7 +27,6 @@ const KNOWN: Record<string, [string, string]> = {};
 const WHY: Record<string, [string, string]> = {
   compression: ["https://specification.website/", "bodies leave the forge uncompressed: compression is set at the edge (edge: true)"],
   "permissions-policy": ["https://specification.website/#permissions-policy", "the security floor sets CSP, nosniff and Referrer-Policy but no Permissions-Policy"],
-  etag: ["https://specification.website/#caching", "server-rendered HTML carries no ETag, so a revisit is never a 304"],
 };
 for (const [check, why] of Object.entries(WHY)) for (const path of PATHS) KNOWN[`${check} ${path}`] = why;
 

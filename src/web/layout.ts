@@ -15,6 +15,7 @@ import type { Ctx } from "../http/context.ts";
 import { activeEdgeToken, edgeLoginUrl, edgeLogoutUrl, edgeStrangerLogin } from "../http/edge.ts";
 import { json } from "../http/respond.ts";
 import { sha256 } from "../kernel/hash.ts";
+import { holds, nonceFor, taggable, weakEtag } from "../http/etag.ts";
 import { secret } from "../kernel/id.ts";
 import { runningLine } from "../kernel/version.ts";
 import {
@@ -544,9 +545,10 @@ export function refreshMeta(r: { seconds: number; url?: string }): Html {
 }
 
 export function page(options: PageOptions, status = 200): Response {
-  // A per-response nonce lets exactly this page's <style> and <script> run
-  // while everything else stays forbidden.
-  const nonce = secret();
+  // A nonce lets exactly this page's <style> and <script> run while
+  // everything else stays forbidden; it is random, or bound to the body when
+  // the page is tagged (http/etag.ts).
+  const placeholder = secret();
   const { ctx } = options;
   const theme = ctx.theme ?? options.theme;
   const flash = readFlash(ctx.request);
@@ -651,13 +653,13 @@ export function page(options: PageOptions, status = 200): Response {
           rel="icon"
           href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%232563eb'/%3E%3Cstop offset='1' stop-color='%237c3aed'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect x='3' y='3' width='26' height='26' rx='8' fill='url(%23g)'/%3E%3C/svg%3E"
         />
-        ${raw(`<style nonce="${nonce}">${bootCss}</style>`)}
+        ${raw(`<style nonce="${placeholder}">${bootCss}</style>`)}
         <link rel="stylesheet" href="${stylesheetAsset().path}" />
         ${when(
           options.turnstile,
           () =>
             html`<script
-              nonce="${nonce}"
+              nonce="${placeholder}"
               src="${TURNSTILE_ORIGIN}/turnstile/v0/api.js"
               async
               defer
@@ -668,27 +670,32 @@ export function page(options: PageOptions, status = 200): Response {
           (src) => html`<script type="module" src="${src}"></script>`,
         )}
         ${options.styleCss
-          ? raw(`<style nonce="${nonce}">${options.styleCss}</style>`)
+          ? raw(`<style nonce="${placeholder}">${options.styleCss}</style>`)
           : null}
       </head>
       <body>
         ${shell}${iconSprite(shell.text)}
-        <script nonce="${nonce}" src="${shellAsset().path}" defer></script>
-        <script nonce="${nonce}" src="${beaconAsset().path}" defer></script>
+        <script nonce="${placeholder}" src="${shellAsset().path}" defer></script>
+        <script nonce="${placeholder}" src="${beaconAsset().path}" defer></script>
         ${options.scriptJs
           ? raw(
-              `<script nonce="${nonce}">document.addEventListener("DOMContentLoaded",()=>{${options.scriptJs}\n})</script>`,
+              `<script nonce="${placeholder}">document.addEventListener("DOMContentLoaded",()=>{${options.scriptJs}\n})</script>`,
             )
           : null}
       </body>
     </html>`;
 
+  // Signed-out, flash-free pages bind their nonce to their own bytes so a
+  // 304 can renew nothing the cached body disagrees with (`http/etag.ts`).
+  const tagged = taggable(ctx.request, ctx.auth.user !== undefined, flash !== undefined) && status === 200;
+  const bound = tagged ? nonceFor(doc.text, placeholder) : placeholder;
+  const text = tagged ? doc.text.replaceAll(placeholder, bound) : doc.text;
   const headers = new Headers({
     "content-type": "text/html; charset=utf-8",
     // The external stylesheet plus this page's own nonce'd <style>/<script>
     // are the only resources allowed; connect-src 'self' lets the live
     // event stream (EventSource) and fragment fetches reach same-origin.
-    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${nonce}'; script-src 'nonce-${nonce}'${options.scriptAsset === undefined ? "" : " 'self'"}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${options.turnstile ? `frame-src ${TURNSTILE_ORIGIN}; ` : ""}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+    "content-security-policy": `default-src 'none'; style-src 'self' 'nonce-${bound}'; script-src 'nonce-${bound}'${options.scriptAsset === undefined ? "" : " 'self'"}${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; connect-src 'self'${options.turnstile ? ` ${TURNSTILE_ORIGIN}` : ""}; ${options.turnstile ? `frame-src ${TURNSTILE_ORIGIN}; ` : ""}worker-src 'self'; manifest-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
     "referrer-policy": "same-origin",
     "x-content-type-options": "nosniff",
     // Markup is revalidated every time; only the hashed assets it names are
@@ -698,7 +705,13 @@ export function page(options: PageOptions, status = 200): Response {
   });
   // A flash is shown exactly once: rendering it is also what clears it.
   if (flash) headers.append("set-cookie", clearFlashCookie(ctx.url));
-  return new Response(doc.text, { status, headers });
+  if (tagged) {
+    const etag = weakEtag(text);
+    headers.set("etag", etag);
+    if (holds(ctx.request, etag))
+      return new Response(null, { status: 304, headers });
+  }
+  return new Response(text, { status, headers });
 }
 
 const TURNSTILE_ORIGIN = "https://challenges.cloudflare.com";
