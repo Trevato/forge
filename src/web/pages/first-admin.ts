@@ -15,6 +15,7 @@ import { clientAddress } from "../../http/peer.ts";
 import { boundedBody, json, str } from "../../http/respond.ts";
 import { FIRST_ADMIN_WORDS, firstAdminProblem, redeemFirstAdmin } from "../../actions/first_admin.ts";
 import { addPasskey } from "../../core/passkeys.ts";
+import { notePhase, takeSessionTime, timePhase } from "../../core/route_timing.ts";
 import { createSession } from "../../core/sessions.ts";
 import { pageHead } from "../chrome.ts";
 import { field, readForm } from "../form.ts";
@@ -110,8 +111,12 @@ function errorsOf(error: keyof typeof FIRST_ADMIN_WORDS): Errors {
 }
 
 // GET /first-admin — the form; the code is in the fragment, so nothing is known or spent here.
+// It reads no data, so its Server-Timing names the session and the render only.
 export function firstAdminPage(ctx: Ctx): Response {
-  return page({ ctx, title: TITLE, body: form({}, {}), scriptJs: fragmentJs + passkeyJs });
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
+  return timePhase(ctx.request, "render", () =>
+    page({ ctx, title: TITLE, body: form({}, {}), scriptJs: fragmentJs + passkeyJs }),
+  );
 }
 
 /** The status a refusal answers with: the throttle, a code, or the form. */
