@@ -194,6 +194,7 @@ describe("the forge over MCP", () => {
       "outsiders",
       "decisions_by",
       "archive",
+      "branches",
       "probe",
       "following",
       "spawn",

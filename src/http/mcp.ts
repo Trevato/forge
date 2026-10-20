@@ -106,6 +106,10 @@ import { resolveOid } from "../git/merge.ts";
 import { getPull, pullDir, pullMergeState } from "../core/pulls.ts";
 import { repoGraph } from "../core/dependencies.ts";
 import { pillarView } from "../core/pillars.ts";
+import { createBranch, deleteBranch } from "../actions/branches.ts";
+import { listBranches } from "../git/branches.ts";
+import { repoDir } from "../git/repos.ts";
+import { CREATE_ERRORS, DELETE_ERRORS } from "../web/pages/branches.ts";
 import { askToLiveFor } from "../web/ask_to_live.ts";
 import { getAppByRepo } from "../core/apps.ts";
 import {
@@ -1392,6 +1396,62 @@ const TOOLS: readonly Tool[] = [
             ? "Archived: put away, not deleted."
             : "Awake again.",
       });
+    },
+  },
+  {
+    name: "branches",
+    description:
+      "List a repository's branches, or with `name` and `action` create (from `from`, default the default branch) or delete one, as the branches page does: the default branch is never deleted and only a writer may act.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: REPO_ARG,
+        name: { type: "string", maxLength: 255, description: "The branch to create or delete." },
+        action: { type: "string", enum: ["create", "delete"] },
+        from: { type: "string", maxLength: 255, description: "For create: where it starts." },
+      },
+      required: ["repo"],
+    },
+    writes: true,
+    readsWithout: "name",
+    async run(ctx, user, args) {
+      const repo = repoArg(ctx, user, args);
+      if (isAnswer(repo)) return repo;
+      const base = `/${repo.ownerName}/${repo.name}/branches`;
+      if (args["name"] === undefined) {
+        const listed = await listBranches(
+          repoDir(ctx.app.reposRoot, repo.ownerName, repo.name),
+          repo.defaultBranch,
+        );
+        return good({
+          branches: listed.ok
+            ? listed.value.branches.map((b) => ({ name: b.name, default: b.isDefault, ahead: b.ahead, behind: b.behind }))
+            : [],
+          url: base,
+        });
+      }
+      const name = args["name"];
+      const action = args["action"];
+      const from = args["from"];
+      if (typeof name !== "string" || name.length > 255)
+        return bad("invalid", "`name` is a branch name");
+      if (action !== "create" && action !== "delete")
+        return bad("invalid", "`action` is create or delete");
+      if (from !== undefined && (typeof from !== "string" || from.length > 255))
+        return bad("invalid", "`from` is a branch, tag or commit");
+      if (action === "create") {
+        const made = await createBranch(ctx.app, user, repo, {
+          name,
+          ...(from === undefined || from === "" ? {} : { from }),
+        });
+        if (!made.ok)
+          return bad(made.error, CREATE_ERRORS[made.error] ?? "That branch was not created.");
+        return good({ says: `Created ${made.value.name} at ${made.value.oid.slice(0, 7)}.`, url: base });
+      }
+      const gone = await deleteBranch(ctx.app, user, repo, name);
+      if (!gone.ok)
+        return bad(gone.error, DELETE_ERRORS[gone.error] ?? "That branch was not deleted.");
+      return good({ says: `Deleted ${gone.value.name}.`, url: base });
     },
   },
   {

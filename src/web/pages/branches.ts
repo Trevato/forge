@@ -297,7 +297,7 @@ export async function renderBranches(
   });
 }
 
-const CREATE_ERRORS: Record<string, string> = {
+export const CREATE_ERRORS: Record<string, string> = {
   invalid_name: "That is not a branch name git will take.",
   invalid_start: "That start point is not one git will take.",
   unknown_start: "That start point does not exist here.",
@@ -340,7 +340,7 @@ export async function branchCreate(ctx: Ctx): Promise<Response> {
   });
 }
 
-const DELETE_ERRORS: Record<string, string> = {
+export const DELETE_ERRORS: Record<string, string> = {
   ...CREATE_ERRORS,
   default_branch:
     "The default branch cannot be deleted — it is what HEAD points at and what every clone lands on.",
