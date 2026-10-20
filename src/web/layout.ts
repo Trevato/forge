@@ -295,10 +295,12 @@ function paletteIndex(ctx: Ctx, extra: PaletteItem[]): Html {
   // One forge (#603): a conversation's remote row is built with the
   // studio's nouns, which answer for every repository.
   const studio = true;
-  // Apps first, then the other repositories, thirty in all.
+  // Apps first, then the other repositories, thirty in all; archived ones
+  // are put away, found by typing the full name into search.
   const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, {
     limit: 30,
     appsFirst: true,
+    withoutArchived: true,
   });
   const apps = appsForRepos(
     ctx.app.db,
