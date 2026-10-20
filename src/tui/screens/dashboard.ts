@@ -34,7 +34,6 @@ import { decideAsk, undoDecideAsk } from "../../actions/asks_decide.ts";
 import { actOnProposal, type ProposalVerb } from "../../actions/proposals.ts";
 import { putAsideWaves } from "../../web/studio/asks.ts";
 import type { Proposal } from "../../core/proposals.ts";
-import { answerSetting, openFindings, UNCLOSABLE_WORDS } from "../../actions/setting_ask.ts";
 import {
   applyAsksBulk,
   latestUndoable,
@@ -125,8 +124,6 @@ interface OnYouItem {
   readonly hand?: true;
   /** A pull the crew handed to a person: closed, marked and opened like any row. */
   readonly over?: true;
-  /** A setting away from its default: the key the owner keeps or puts back (admins only). */
-  readonly setting?: string;
   /** What it waits for, and on whom: the word the web's asks row shows. */
   readonly waiting: WaitingFor;
 }
@@ -319,14 +316,6 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     ];
     const out: OnYouItem[] = [];
     const seen = new Set<string>();
-    if (f.user.isAdmin)
-      for (const id of rows.filter((row) => row.kind === "setting").flatMap((row) => row.items)) {
-        const key = id.slice("setting:".length);
-        const issue = getIssueById(f.db, openFindings(f.app, f.user, key)[0] ?? "");
-        const repo = issue === undefined ? undefined : getRepoById(f.db, issue.repoId);
-        if (issue !== undefined && repo !== undefined)
-          out.push({ issue, repo, waiting: waitingOf(issue.id), setting: key });
-      }
     for (const { id, flag } of wanted) {
       if (seen.has(id) || have.some((item) => item.issue.id === id)) continue;
       seen.add(id);
@@ -394,7 +383,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
 
   /** The marked rows, or the one under the cursor when none is marked. */
   const targets = (): OnYouItem[] => {
-    const mine = onYou.filter((item) => item.hand !== true && item.setting === undefined);
+    const mine = onYou.filter((item) => item.hand !== true);
     const picked = mine.filter((item) => marked.has(item.issue.id));
     const here = mine.find((item) => item === onYou[at("onyou").index]);
     return picked.length > 0 ? picked : here === undefined ? [] : [here];
@@ -560,21 +549,6 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
     });
   };
 
-  /** Keep or Put back the setting under the cursor, through the action the web uses. */
-  const answerHere = (answer: "keep" | "put"): void => {
-    const here = onYou[at("onyou").index];
-    if (here?.setting === undefined) {
-      ctx.toast("only a setting card is kept or put back", "attn");
-      return;
-    }
-    const done = answerSetting(f.app, f.user, here.setting, answer);
-    reload();
-    ctx.toast(
-      done.ok ? (answer === "keep" ? "kept" : "put back") : `refused: ${done.error === "unclosable" ? UNCLOSABLE_WORDS : done.error}`,
-      done.ok ? "success" : "danger",
-    );
-  };
-
   const undoHand = (): void => {
     const id = lastHand;
     if (id === undefined) {
@@ -737,12 +711,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         ...(focus === "onyou" && waveHere() !== undefined
           ? [binding(["y"], "approve wave"), binding(["R"], "redirect"), binding(["l"], "later")]
           : []),
-        ...(asideWaves.length > 0 && !(focus === "onyou" && onYou[at("onyou").index]?.setting !== undefined)
-          ? [binding(["B"], "bring waves back")]
-          : []),
-        ...(focus === "onyou" && onYou[at("onyou").index]?.setting !== undefined
-          ? [binding(["K"], "keep setting"), binding(["B"], "put back")]
-          : []),
+        ...(asideWaves.length > 0 ? [binding(["B"], "bring waves back")] : []),
         ...(lastHand !== undefined ? [binding(["U"], "undo decider")] : []),
         ...(focus === "onyou" && onYou.length > 0
           ? [
@@ -898,7 +867,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       }
       if (focus === "onyou" && f.user !== undefined) {
         const item = onYou[at("onyou").index];
-        if (e.key === "space" && item !== undefined && item.hand !== true && item.setting === undefined) {
+        if (e.key === "space" && item !== undefined && item.hand !== true) {
           if (!marked.delete(item.issue.id)) marked.add(item.issue.id);
           return true;
         }
@@ -906,8 +875,6 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         if (e.key === "m") return clear("mute"), true;
         if (e.key === "S") return shipSet(), true;
         if (e.key === "D" && item !== undefined) return handToDecider(), true;
-        if (e.key === "K") return answerHere("keep"), true;
-        if (e.key === "B" && item?.setting !== undefined) return answerHere("put"), true;
         if (e.key === "h") return hideAuthor(), true;
         if (e.key === "y") return actOnWave("approve"), true;
         if (e.key === "R") return redirectWave(), true;
@@ -1004,7 +971,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
               ? PULL_MARK
               : ISSUE_MARK;
         return {
-          title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.setting !== undefined ? `setting ${item.setting} · K keep · B put back · ` : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : ""}${mark} #${item.issue.number} ${item.issue.title} · ${item.repo.ownerName}/${item.repo.name}`,
+          title: `${marked.has(item.issue.id) ? "[x] " : ""}${item.hand === true ? "parked " : item.over === true ? "handed over " : ""}${mark} #${item.issue.number} ${item.issue.title} · ${item.repo.ownerName}/${item.repo.name}`,
           meta: `${item.waiting.word} · on ${item.waiting.on}`,
         };
       }),

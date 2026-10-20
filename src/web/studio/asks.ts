@@ -13,7 +13,6 @@ import type { Degraded } from "../../kernel/vitals.ts";
 import { previewEnv } from "../../apps/data.ts";
 import { waitingFor, type WaitingFor } from "../../core/waiting_for.ts";
 import { crewForRepos } from "../../core/agents.ts";
-import { capacityDefault, isCapacityKey, storedCapacity } from "../../core/capacity.ts";
 import { appsForRepos } from "../../core/apps.ts";
 import { latestDecision, latestDecisionsFor, stopStands } from "../../core/decisions.ts";
 import { getHold, holdsFor } from "../../core/holds.ts";
@@ -107,7 +106,7 @@ export function writableAppsOf(ctx: Ctx, user: User | undefined) {
   );
 }
 
-export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover" | "assigned" | "proposal" | "setting";
+export type DecisionKind = "stopped" | "look" | "review" | "paused" | "parked" | "declined" | "handover" | "assigned" | "proposal";
 
 /** Dollars as a person reads them: cents when small, whole when not. */
 const dollars = (n: number): string => (n < 10 ? n.toFixed(2) : n.toFixed(0));
@@ -136,19 +135,8 @@ export interface Decision {
   /** Where the pull's preview opens, when its repository is an app. */
   readonly preview?: string | undefined;
   readonly consequence: Consequence;
-  /** For "setting": the key, its value, its default, and who set it and when. */
-  readonly setting?: SettingAway | undefined;
   /** What it waits for, and on whom (`core/waiting_for.ts`). */
   readonly waiting: WaitingFor;
-}
-
-/** A capacity setting away from its default, as the sentinel's finding reports it. */
-export interface SettingAway {
-  readonly key: string;
-  readonly value: string;
-  readonly default: string;
-  readonly by: string;
-  readonly at: string;
 }
 
 /** What an ask asks, the answers it takes, and what happens if nobody gives one. */
@@ -200,11 +188,6 @@ export const ASK_WORDS: Readonly<Record<DecisionKind, AskWords>> = {
     options: ["Approve", "Redirect", "Later"],
     ifNothing: "it stays proposed; no issue is opened",
   },
-  setting: {
-    decision: "A setting is away from its default: keep it, or put it back?",
-    options: ["Keep", "Put back"],
-    ifNothing: "the setting stays as it is, and this stays here",
-  },
   paused: {
     decision: "Raise today's ceiling?",
     options: ["Raise it in settings"],
@@ -234,7 +217,6 @@ export const KIND_TIER: Readonly<Record<DecisionKind, Consequence>> = {
   parked: { score: 40, why: "parked by the crew" },
   look: { score: 30, why: "green, waiting" },
   assigned: { score: 20, why: "assigned to you" },
-  setting: { score: 35, why: "a setting away from its default needs your word" },
 };
 
 /**
@@ -297,8 +279,6 @@ interface AskCandidate {
   readonly decline?: { readonly runId: string; readonly words: string };
   /** For "handover": the reviews that asked for changes. */
   readonly handover?: Handover;
-  /** For "setting": what is away, and who moved it. */
-  readonly setting?: SettingAway;
 }
 
 /**
@@ -545,10 +525,6 @@ function askCandidatesFor(
       proposal,
       who: getUserById(db, proposal.authorId)?.username ?? "the planner",
     });
-  // A setting the sentinel found away from its default is the owner's to keep
-  // or put back, never a crew run: one ask per key, from its newest open finding.
-  if (user.isAdmin)
-    for (const f of settingFindings(db, repos)) out.push(f);
   // Open work assigned to the viewer that no ask above already covers: a
   // pull that is an ask and assigned to them is one row, the ask's.
   const taken = new Set(out.flatMap((a) => [a.pull?.id, a.issue?.id].filter((i) => i !== undefined)));
@@ -668,7 +644,7 @@ function consequencesOf(
 /** The row an ask collapses into: one kind in one repository. */
 const groupId = (a: { kind: DecisionKind; repo: Repo; id: string }): string =>
   // Work assigned to you is each its own row: they share no decision.
-  a.kind === "assigned" || a.kind === "proposal" || a.kind === "setting" ? a.id : `${a.kind}:${a.repo.id}`;
+  a.kind === "assigned" || a.kind === "proposal" ? a.id : `${a.kind}:${a.repo.id}`;
 
 /**
  * The asks the viewer has not set aside: a muted repository's asks are all
@@ -766,52 +742,6 @@ function waitingOf(db: Database, user: User | undefined, a: AskCandidate): Waiti
   });
 }
 
-/** One candidate per capacity key still away whose finding is open in these repositories. */
-function settingFindings(db: Database, repos: readonly Repo[]): AskCandidate[] {
-  if (repos.length === 0) return [];
-  const byId = new Map(repos.map((r) => [r.id, r]));
-  const seen = new Set<string>();
-  const out: AskCandidate[] = [];
-  const rows = db
-    .query<{ key: string; issue_id: string }, [string]>(
-      `SELECT t.key, t.issue_id FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id
-        WHERE t.key LIKE 'setting:%' AND i.state = 'open' AND i.repo_id IN (SELECT value FROM json_each(?1))
-        ORDER BY i.created_at DESC`,
-    )
-    .all(JSON.stringify([...byId.keys()]));
-  for (const r of rows) {
-    const key = r.key.slice("setting:".length);
-    if (seen.has(key) || !isCapacityKey(key)) continue;
-    const value = storedCapacity(db, key);
-    if (value === undefined || value === capacityDefault(key)) continue;
-    const issue = getIssueById(db, r.issue_id);
-    const repo = issue && byId.get(issue.repoId);
-    if (issue === undefined || repo === undefined) continue;
-    seen.add(key);
-    const set = db
-      .query<{ updated_at: string; username: string | null }, [string]>(
-        "SELECT s.updated_at, u.username FROM forge_setting s LEFT JOIN user u ON u.id = s.updated_by WHERE s.key = ?1",
-      )
-      .get(key);
-    out.push({
-      kind: "setting",
-      id: `setting:${key}`,
-      since: issue.createdAt,
-      repo,
-      issue,
-      who: "the sentinel",
-      setting: {
-        key,
-        value,
-        default: capacityDefault(key),
-        by: set?.username ?? "unknown",
-        at: set?.updated_at ?? "",
-      },
-    });
-  }
-  return out;
-}
-
 /** Every candidate for the viewer, scored, dismissed or not. */
 function scoredFor(
   db: Database,
@@ -895,14 +825,6 @@ export function endOf(
     if (pull !== undefined && pull.state !== "open") return "acted";
     return getHold(db, what)?.heldBy === viewerId ? "acted" : "expired";
   }
-  if (kind === "setting") {
-    const open = db
-      .query<{ n: number }, [string]>(
-        "SELECT COUNT(*) AS n FROM sentinel_finding t JOIN issue i ON i.id = t.issue_id WHERE t.key = ?1 AND i.state = 'open'",
-      )
-      .get(`setting:${what}`);
-    return open !== null && open.n > 0 ? "expired" : "acted";
-  }
   if (kind === "assigned") {
     const issue = getIssueById(db, what);
     return issue !== undefined && issue.state !== "open" ? "acted" : "expired";
@@ -982,8 +904,6 @@ function lineOf(c: AskCandidate): string {
     return `proposes "${c.proposal?.title ?? ""}" and waits for your nod`;
   if (c.kind === "declined")
     return "the planner declined the direction and waits for you";
-  if (c.kind === "setting" && c.setting)
-    return `${c.setting.key} is "${c.setting.value}", not its default "${c.setting.default}"`;
   if (c.kind === "handover")
     return `"${c.pull?.title ?? ""}" had three reviews asking for changes and waits for you`;
   const title = c.pull?.title ?? "";
@@ -1014,7 +934,6 @@ export const ROW_PLURAL: Readonly<Record<DecisionKind, (n: number) => string>> =
   declined: (n) => `the planner declined ${n} times and waits for you`,
   proposal: (n) => `${n} waves wait for your nod`,
   paused: (n) => `${n} pauses at the ceiling`,
-  setting: (n) => `${n} settings are away from their defaults`,
   assigned: (n) => `${n} things assigned to you`,
 };
 
@@ -1175,17 +1094,6 @@ export function decisionsFor(
         says: `Three runs on #${c.issue.number} failed or were declined within an hour, so the crew parked it. Say what to try and it starts again.`,
         short: `#${c.issue.number} parked after three failed runs`,
       };
-    if (c.kind === "setting" && c.issue && c.setting)
-      return {
-        kind: "setting",
-        id: `setting:${c.setting.key}`,
-        repo: c.repo,
-        issue: c.issue,
-        who: c.who,
-        setting: c.setting,
-        says: `${c.setting.key} is "${c.setting.value}" and its default is "${c.setting.default}". ${c.setting.by} set it at ${c.setting.at}. Keep it, or put it back (recorded, and reversible on the capacity page).`,
-        short: `${c.setting.key} is "${c.setting.value}", default "${c.setting.default}", set by ${c.setting.by}`,
-      };
     if (c.kind === "declined" && c.issue && c.decline)
       return {
         kind: "declined",
@@ -1290,15 +1198,6 @@ export function decisionForm(d: Decision, back?: string): Html | null {
       <input type="hidden" name="ask" value="${d.id}" />
     </form>`;
   if (d.kind === "proposal" && d.proposal) return proposalForms(d, back);
-  if (d.kind === "setting" && d.setting)
-    return html`<form ${own}-keep action="/asks/setting">
-        <input type="hidden" name="key" value="${d.setting.key}" />
-        <input type="hidden" name="answer" value="keep" />
-      </form>
-      <form ${own}-put action="/asks/setting">
-        <input type="hidden" name="key" value="${d.setting.key}" />
-        <input type="hidden" name="answer" value="put" />
-      </form>`;
   if (pull === undefined) return null;
   const base = repoBase(d.repo);
   const where = back === undefined ? null : html`<input type="hidden" name="back" value="${back}" />`;
@@ -1365,11 +1264,6 @@ export function decisionButtons(ctx: Ctx, d: Decision): { primary: Html; others:
     return {
       primary: btn("Approve", { size: "sm", form: askFormId(d), variant: "primary" }),
       others: [btn("Later", { size: "sm", form: `${askFormId(d)}-later` })],
-    };
-  if (d.kind === "setting" && d.setting)
-    return {
-      primary: btn("Keep", { size: "sm", form: `${askFormId(d)}-keep`, variant: "primary" }),
-      others: [btn("Put back", { size: "sm", form: `${askFormId(d)}-put` })],
     };
   if (d.kind === "declined" && d.issue)
     return {

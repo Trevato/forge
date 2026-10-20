@@ -8,7 +8,6 @@
  */
 
 import type { WaitingFor } from "../../core/waiting_for.ts";
-import { answerSetting, UNCLOSABLE_WORDS } from "../../actions/setting_ask.ts";
 import {
   applyAsksBulk,
   BULK_MAX,
@@ -177,7 +176,6 @@ const KIND_LABEL: Readonly<Record<Decision["kind"], string>> = {
   proposal: "Proposed",
   paused: "Paused",
   assigned: "Assigned",
-  setting: "Setting away",
 };
 
 /**
@@ -710,23 +708,6 @@ export function asksProposal(verb: ProposalVerb) {
           : await asksScreen(ctx, nothingDone(done.error.message));
     return redirect(backTo(form, "/asks"));
   };
-}
-
-/** POST /asks/setting — the owner's Keep or Put back on a setting away from its default. */
-export async function asksSetting(ctx: Ctx): Promise<Response> {
-  if (!ctx.auth.user) return signInFirst(ctx);
-  const form = await readForm(ctx, "rw");
-  if (form instanceof Response) return form;
-  const done = answerSetting(ctx.app, ctx.auth.user, field(form, "key"), field(form, "answer"));
-  if (!done.ok) {
-    const why: Record<string, string> = {
-      forbidden: "only a forge admin puts a setting back",
-      unclosable: UNCLOSABLE_WORDS,
-      invalid: "that answer was not Keep or Put back",
-    };
-    return await asksScreen(ctx, nothingDone(why[done.error] ?? "it no longer asks you"));
-  }
-  return redirect("/asks");
 }
 
 /** POST /asks/decide/:id/undo — put a set-aside card back on the board, within a day. */

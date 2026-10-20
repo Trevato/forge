@@ -543,13 +543,6 @@ function labelBreach(app: App, repo: Repo, actor: User, issue: Issue): void {
   }
 }
 
-/** Remember that a person kept `key` as it stands: this value, set at `updatedAt`. */
-export function recordKept(db: Database, key: string, value: string, updatedAt: string, at: string): void {
-  db.query(
-    "INSERT INTO sentinel_kept (key, value, updated_at, kept_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = ?3, kept_at = ?4",
-  ).run(key, value, updatedAt, at);
-}
-
 /**
  * A degraded incident whose issue was closed as done and which goes on (same
  * cause, same first-open time) is told to that issue, not filed again: the

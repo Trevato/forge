@@ -1307,14 +1307,10 @@ JSON API and MCP carry the same fact: a setting away from its default has a
 
 A `setting:<key>` finding filed before that is closed on the next pass with a
 comment pointing at the capacity page (`closeSettingFindings` in
-`crew/setting_finding.ts`). Until it closes, it is the site admin's ask, never a
-crew run: not assigned, left out of the crew's ready list, and shown on the home
-(kind `setting`) and in the terminal's On you card with **Keep** and **Put
-back** (`POST /asks/setting`, `key`, `answer=keep|put`, same-origin; `K` and `B`
-in the terminal). Only a signed-in site admin can answer. Keep and Put back act
-only after the finding has closed; if none can (a mirrored repository, or the
-close is refused) nothing changes and the page says so (`unclosable`). This is
-the legacy path, kept until no open setting finding is left.
+`crew/setting_finding.ts`). Until it closes it is never a crew run: not
+assigned, and left out of the crew's ready list (`isSettingFinding`). It raises
+no ask; the capacity page's Put back is the one answer. Both helpers go once no
+open setting finding is left, with the unused `sentinel_kept` table.
 
 - **Board:** a site admin's forge strip shows the open findings and the last
   hunt; a guest or member sees nothing.
