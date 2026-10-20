@@ -181,7 +181,9 @@ answers
   and `text`. Empty words send nothing. `asks` rows carry `repo`
   (`owner/name`) beside `number` for this.
 - **Contract.** `GET /contract/openapi.json` is OpenAPI 3.1 for the routes
-  the manifest (`here`) names, plus `POST /mcp`. `test/openapi.test.ts` fails
+  the manifest (`here`) names, plus `POST /mcp`. It also describes planning: `GET …/map`, `POST …/plan`,
+  `POST …/issues/{number}/dependencies` and
+  `DELETE …/issues/{number}/dependencies/{blocker}`. `test/openapi.test.ts` fails
   when the manifest names a route it lacks.
 - **Where a tell came from.** `tell` takes `context`: `page` (http/https),
   `run`, `commit` (hex) and `said` (the person's words). Malformed context is

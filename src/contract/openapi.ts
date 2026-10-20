@@ -8,7 +8,7 @@
  */
 
 interface Route {
-  readonly method: "get" | "post" | "patch";
+  readonly method: "get" | "post" | "patch" | "delete";
   readonly path: string;
   readonly summary: string;
   /** Whether it needs a token; reads of public things do not. */
@@ -61,6 +61,27 @@ export const ROUTES: readonly Route[] = [
   { method: "post", path: `${REPO}/pulls/{number}/merge`, summary: "Merge a pull (a person's)", auth: true },
   { method: "patch", path: REPO, summary: "Change a repository's settings", auth: true },
   { method: "get", path: `${REPO}/app/production/open`, summary: "Open the running app", auth: false },
+  { method: "get", path: `${REPO}/map`, summary: "Read the plan: issues, their dependency edges and pillars", auth: false },
+  {
+    method: "post",
+    path: `${REPO}/plan`,
+    summary: "Open a plan of issues and their dependencies, all or nothing",
+    auth: true,
+    body: { issues: "array" },
+  },
+  {
+    method: "post",
+    path: `${REPO}/issues/{number}/dependencies`,
+    summary: "Make an issue wait for another",
+    auth: true,
+    body: { blockedBy: "integer" },
+  },
+  {
+    method: "delete",
+    path: `${REPO}/issues/{number}/dependencies/{blocker}`,
+    summary: "Stop an issue waiting for another",
+    auth: true,
+  },
   {
     method: "post",
     path: "/mcp",
@@ -70,7 +91,7 @@ export const ROUTES: readonly Route[] = [
   },
 ];
 
-const schema = (t: string) => (t === "object" ? { type: "object" } : { type: t });
+const schema = (t: string) => (t === "object" ? { type: "object" } : t === "array" ? { type: "array", items: { type: "object" } } : { type: t });
 
 /** The document, for the forge served at `origin`. */
 export function openapi(origin: string, version: string): Record<string, unknown> {
@@ -80,7 +101,7 @@ export function openapi(origin: string, version: string): Record<string, unknown
       name: m[1],
       in: "path",
       required: true,
-      schema: { type: m[1] === "number" ? "integer" : "string" },
+      schema: { type: m[1] === "number" || m[1] === "blocker" ? "integer" : "string" },
     }));
     (paths[r.path] ??= {})[r.method] = {
       operationId: `${r.method}${r.path.replace(/[^A-Za-z0-9]+(.)?/g, (_, c: string | undefined) => (c ?? "").toUpperCase())}`,
