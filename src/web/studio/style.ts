@@ -20,12 +20,14 @@ const part = (css: string): string => css.trim();
 const justChanged = part(/* css */ `
 #app-head.studio-just-changed, #app-previews.studio-just-changed { animation: studio-flash 1.1s var(--ease); border-radius: var(--radius); }
 @keyframes studio-flash { 0% { background-color: color-mix(in srgb, var(--accent) 14%, transparent); } 100% { background-color: transparent; } }
+@media (prefers-reduced-motion: reduce) { #app-head.studio-just-changed, #app-previews.studio-just-changed { animation: none; } }
 `);
 
 /** One of the five words, as a badge (`words.ts`). */
 const wordBadges = part(/* css */ `
 .badge[data-variant="accent"] { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 34%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .badge[data-word="working"] svg { animation: spin 1.1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .badge[data-word="working"] svg { animation: none; } }
 `);
 
 /** The phone: one document, narrower. Each rule belongs to a component above

@@ -18,24 +18,6 @@
       "input": 0,
       "target": 0
     },
-    "src/web/studio/feed_style.ts": {
-      "colour": 0,
-      "size": 0,
-      "motion": 0,
-      "forced": 1,
-      "focus": 0,
-      "input": 0,
-      "target": 0
-    },
-    "src/web/studio/style.ts": {
-      "colour": 0,
-      "size": 0,
-      "motion": 3,
-      "forced": 0,
-      "focus": 0,
-      "input": 0,
-      "target": 0
-    },
     "src/web/style/components.ts": {
       "colour": 3,
       "size": 2,

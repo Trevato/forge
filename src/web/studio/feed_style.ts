@@ -46,4 +46,7 @@ export const feedCss = /* css */ `
   .feed .bar .btn { padding: 8px 10px; }
   .feed .quiet-details > summary { min-height: 44px; display: flex; align-items: center; }
 }
+@media (forced-colors: active) {
+  .feed > .card:focus-visible, #apps-select:focus-visible ~ * .home-apps-verbs label { outline: 2px solid Highlight; }
+}
 `;
