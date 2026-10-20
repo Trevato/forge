@@ -15,7 +15,12 @@ interface Route {
   readonly auth: boolean;
   /** A JSON body's fields, when it takes one. */
   readonly body?: Readonly<Record<string, string>>;
+  /** The query parameters its handler reads, by name and type. */
+  readonly query?: Readonly<Record<string, string>>;
 }
+
+/** What `listQuery` in `http/api.ts` reads from a list of issues or pulls. */
+const LIST_QUERY = { state: "string", limit: "integer", cursor: "integer", label: "string", author: "string" };
 
 const REPO = "/api/v1/repos/{owner}/{name}";
 
@@ -29,6 +34,8 @@ export const ROUTES: readonly Route[] = [
     auth: false,
     body: { title: "string", body: "string", page: "string" },
   },
+  { method: "get", path: `${REPO}/issues`, summary: "List a repository's issues", auth: false, query: LIST_QUERY },
+  { method: "get", path: `${REPO}/pulls`, summary: "List a repository's pulls", auth: false, query: LIST_QUERY },
   {
     method: "post",
     path: `${REPO}/issues`,
@@ -112,10 +119,16 @@ export function openapi(origin: string, version: string): Record<string, unknown
       required: true,
       schema: { type: m[1] === "number" || m[1] === "blocker" ? "integer" : "string" },
     }));
+    const query = Object.entries(r.query ?? {}).map(([name, t]) => ({
+      name,
+      in: "query",
+      required: false,
+      schema: name === "state" ? { type: "string", enum: ["open", "closed", "all"] } : schema(t),
+    }));
     (paths[r.path] ??= {})[r.method] = {
       operationId: `${r.method}${r.path.replace(/[^A-Za-z0-9]+(.)?/g, (_, c: string | undefined) => (c ?? "").toUpperCase())}`,
       summary: r.summary,
-      parameters: params,
+      parameters: [...params, ...query],
       ...(r.body === undefined
         ? {}
         : {

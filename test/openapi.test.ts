@@ -47,6 +47,20 @@ test("the map, plan and dependency routes are described", () => {
   expect(del.parameters.find((p: any) => p.name === "blocker").schema.type).toBe("integer");
 });
 
+test("listing issues and pulls is described with the query the handlers read", () => {
+  const doc = openapi("https://f.test", "1") as any;
+  const R = "/api/v1/repos/{owner}/{name}";
+  for (const kind of ["issues", "pulls"]) {
+    const get = doc.paths[`${R}/${kind}`].get;
+    expect(get.security).toBeUndefined();
+    const q = get.parameters.filter((p: any) => p.in === "query");
+    expect(q.map((p: any) => p.name)).toEqual(["state", "limit", "cursor", "label", "author"]);
+    expect(q.find((p: any) => p.name === "limit").schema.type).toBe("integer");
+    expect(q.find((p: any) => p.name === "state").schema.enum).toEqual(["open", "closed", "all"]);
+    expect(get.parameters.filter((p: any) => p.in === "path").length).toBe(2);
+  }
+});
+
 test("reading and closing one issue and reading one pull are described", () => {
   const doc = openapi("https://f.test", "1") as any;
   const R = "/api/v1/repos/{owner}/{name}";
