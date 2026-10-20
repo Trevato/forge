@@ -1,8 +1,9 @@
 /**
  * What an agent's shell may touch. Claude Code sandboxes its Bash tool
  * (seatbelt on macOS, bubblewrap on Linux when installed); the forge hands
- * it the policy: the network is the forge and the package registry, and
- * nothing else; writes stay in the clone and the temp dir (the sandbox's
+ * it the policy: the network is the forge, the package registry and the
+ * run's own repository's app — production and its open pulls' previews
+ * (`crew/app_hosts.ts`) — and nothing else; writes stay in the clone and the temp dir (the sandbox's
  * own default); reads are refused for everything on this machine that is
  * not the agent's business — the forge's repositories, its index and key,
  * the other agents' clones, and the operator's own credentials.
@@ -196,6 +197,12 @@ export function sandboxPolicy(input: {
   agentName: string;
   /** URLs the agent must reach: the forge, locally and publicly. */
   urls: readonly string[];
+  /**
+   * The run's own repository's app URLs (`crew/app_hosts.ts`). Allowed by
+   * host and port together: an app domain of `localhost` resolves to
+   * loopback, and a bare `notes.localhost` would be every local port.
+   */
+  appUrls?: readonly string[] | undefined;
   /** Hosts the operator vouches for beyond the forge and the registry. */
   extraHosts?: readonly string[] | undefined;
   /** Whether the host can enforce it (`sandboxAvailable`); yes by default. */
@@ -214,6 +221,13 @@ export function sandboxPolicy(input: {
           ? parsed.host
           : parsed.hostname,
       );
+    } catch {
+      // Not a URL: nothing to allow.
+    }
+  }
+  for (const url of input.appUrls ?? []) {
+    try {
+      hosts.add(new URL(url).host);
     } catch {
       // Not a URL: nothing to allow.
     }

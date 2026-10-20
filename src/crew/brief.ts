@@ -7,6 +7,7 @@
  * rules (docs/APPS.md) hold whether or not the agent reads them.
  */
 
+import type { OwnApp } from "./app_hosts.ts";
 import type { Owed } from "./team_share.ts";
 import type { Agent, CrewRole } from "../core/agents.ts";
 import type { Comment, Issue } from "../core/issues.ts";
@@ -41,6 +42,8 @@ export interface BriefInput {
   readonly forgeUrl: string;
   readonly isApp: boolean;
   readonly previewUrl?: string | undefined;
+  /** Where this repository's app answers; the shell may reach these and no other app. */
+  readonly ownApp?: OwnApp | undefined;
   /** Whether a session is being continued (the task was already given). */
   readonly resuming: boolean;
   /** What this agent is for on this repository; a planner writes maps. */
@@ -68,7 +71,7 @@ export interface PolicyBrief {
  */
 export const SANDBOX_LINES = [
   "Your shell is sandboxed. It can run: `bun install` (the registry is reachable; run it first when there is a package.json and no node_modules, or the type check has no types), `bun x tsc --noEmit`, and `bun test` — FORGE_TEST_SOCKET=port is already set, so servers listen on a loopback port in place of a unix socket; the suites about unix sockets and cells themselves (stale-socket recovery, the egress proxy, cell limits) are skipped in that mode and named as skipped, and the forge's check runs them on every push. Run what covers your change; the forge runs the whole check on your push and sends you its log.",
-  "It cannot: reach any host but the forge and the package registry, write outside the clone and `$TMPDIR`, read the forge's data or the machine's, bind a unix socket, or signal a process started in an earlier command. Never leave the sandbox: it cannot be asked to. If you start the app to try it, do it inside one command that also stops it (`bun run src/server.ts & pid=$!; sleep 2; curl …; kill $pid`). Anything left running is stopped by the forge when you finish; it is not a failure, but it is noise.",
+  "It cannot: reach any host but the forge, the package registry and, when this repository is an app, its own production and previews, write outside the clone and `$TMPDIR`, read the forge's data or the machine's, bind a unix socket, or signal a process started in an earlier command. Never leave the sandbox: it cannot be asked to. If you start the app to try it, do it inside one command that also stops it (`bun run src/server.ts & pid=$!; sleep 2; curl …; kill $pid`). Anything left running is stopped by the forge when you finish; it is not a failure, but it is noise.",
 ];
 
 /**
@@ -147,6 +150,7 @@ export function systemPrompt(input: BriefInput): string {
         : [
             `- The preview of your pull is at ${input.previewUrl} once it is up.`,
           ]),
+      ...ownAppLines(input.ownApp),
     );
     if (input.policy !== undefined)
       lines.push("", ...policyLines(input.policy));
@@ -736,5 +740,22 @@ export function policyLines(policy: PolicyBrief): string[] {
     ...policy.lines.map((l) => `- ${l}`),
     `Identities the forge signs: ${policy.identities.join(", ")}. A role a row holds (an author) is what someone is to a row, not who they are.`,
     "Never compare roles by hand in an action; ask `permit`. A new kind of person is a new role under an existing one. A cell loosened — anything an identity could not do before that it can after — is a wall: the forge shows that pull to a person and never lands it on its own, so do not loosen a cell unless the issue asks for exactly that, and say so in the pull.",
+  ];
+}
+
+/**
+ * The app's own URLs, which the shell may fetch: an end-to-end check or a
+ * screenshot runs against them. A preview of a pull opened after the run
+ * started is reachable from the run's next invocation, not this one.
+ */
+export function ownAppLines(own: OwnApp | undefined): string[] {
+  if (own === undefined) return [];
+  const previews = own.previews.map((p) => `#${p.number} at ${p.url}`);
+  return [
+    `- Your shell may reach this app, and no other: production at ${own.production}` +
+      (previews.length === 0
+        ? "; no pull has a preview yet."
+        : `, and the previews of the open pulls: ${previews.join(", ")}.`) +
+      " Use them for checks that need the running app (end-to-end, screenshots, the public launch check).",
   ];
 }

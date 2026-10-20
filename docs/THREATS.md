@@ -81,7 +81,9 @@ trusts: a package, a model provider, a hosting provider, an origin it syncs from
 Wants: to read what it was not given, reach what it may not, or land code no
 person approved.
 
-- The agent's shell may reach only the forge and the package registry; the
+- The agent's shell may reach only the forge, the package registry and its
+  own repository's app — production and each open pull's preview, by exact
+  host, never another repository's app; the
   forge's repositories, index, key and every other agent's clone are denied by
   name and by allow-list, and a listing that fails refuses the run.
   Test: `test/crew-sandbox.test.ts`

@@ -31,6 +31,7 @@ import { forkRepo, sealedForkFor } from "../actions/repos.ts";
 import { announceRun } from "../actions/runs.ts";
 import { previewEnv } from "../apps/data.ts";
 import { appsRuntime } from "../apps/runtime.ts";
+import { ownApp, ownAppUrls } from "./app_hosts.ts";
 import { crewRole, getAgent, type Agent } from "../core/agents.ts";
 import { getAppByRepo, type AppRecord } from "../core/apps.ts";
 import {
@@ -929,6 +930,7 @@ async function work(
       forgeUrl: options.forgeUrl,
       isApp: record !== undefined,
       previewUrl,
+      ownApp: ownApp(app, repo),
       policy,
       // A review reads one head afresh: a resumed session would carry an
       // older head's diff and preview into the verdict on this one.
@@ -1171,6 +1173,7 @@ async function work(
         dataDir: app.config.dataDir,
         agentName: agent.user.username,
         urls: [options.localUrl, options.forgeUrl],
+        appUrls: ownAppUrls(ownApp(app, repo)),
         extraHosts: [
           ...(options.allowHosts ?? []),
           ...hosts,
