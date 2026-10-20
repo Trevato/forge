@@ -9,10 +9,11 @@ import {
   changeBoard, deleteBoard, duplicateBoard, makeBoard, type BoardError,
 } from "../../actions/boards.ts";
 import type { Edit } from "../../boards/edit.ts";
+import { movePinned, pinPanel, unpinPanel } from "../../actions/board-pins.ts";
 import { isSlug } from "../../boards/store.ts";
 import type { Ctx } from "../../http/context.ts";
 import { notFoundPage } from "../chrome.ts";
-import { field, readForm, type Form } from "../form.ts";
+import { backTo, field, readForm, type Form } from "../form.ts";
 import { flashTo } from "../layout.ts";
 import { PANEL_FIELDS, readParams, toQuery } from "./boards.ts";
 
@@ -98,4 +99,27 @@ export async function boardPost(ctx: Ctx): Promise<Response> {
   if (!edit) return notFoundPage(ctx);
   const changed = await changeBoard(ctx.app, ctx.auth.user, slug, edit);
   return changed.ok ? done(ctx, back, "Saved.") : failed(ctx, back, changed.error);
+}
+
+/**
+ * POST /boards/pin-panel, /boards/unpin-panel, /boards/move-pin — the
+ * signed-in admin's own pins for home, through `actions/board-pins.ts`.
+ */
+export async function pinPost(ctx: Ctx): Promise<Response> {
+  const form = await readForm(ctx, "admin");
+  if (form instanceof Response) return form;
+  const op = ctx.url.pathname.slice("/boards/".length);
+  const [slug, title] = [field(form, "slug"), field(form, "title")];
+  const back = backTo(form, "/");
+  const by = num(field(form, "by"));
+  const run = {
+    "pin-panel": () => pinPanel(ctx.app, ctx.auth.user, slug, title),
+    "unpin-panel": () => unpinPanel(ctx.app, ctx.auth.user, slug, title),
+    "move-pin": () => movePinned(ctx.app, ctx.auth.user, slug, title, by),
+  }[op];
+  if (!run) return notFoundPage(ctx);
+  const done = await run();
+  if (done.ok) return flashTo(ctx, back, { message: { "pin-panel": "Pinned to home.", "unpin-panel": "Unpinned.", "move-pin": "Moved." }[op]! });
+  if (done.error === "not_found") return notFoundPage(ctx);
+  return flashTo(ctx, back, { tone: "danger", message: done.error === "too_many" ? "That is too many pins." : "That is not a panel." });
 }

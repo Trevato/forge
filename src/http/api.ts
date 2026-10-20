@@ -16,6 +16,7 @@ import { storageLimitMessage } from "../core/storage.ts";
 import { voteVariant } from "../actions/variants.ts";
 import { parentForgeFor } from "../core/parent_releases.ts";
 import { readFlow } from "../flow/read.ts";
+import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel, type PinError } from "../actions/board-pins.ts";
 import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
 import { runQuery } from "../boards/query.ts";
 import { recordDrill } from "../core/domain_drills.ts";
@@ -1495,6 +1496,40 @@ export function apiRoutes(router: Router<Handler>): void {
     return listed.ok
       ? json({ boards: listed.value.map((b) => ({ slug: b.slug, ...b.board })) })
       : notFound();
+  });
+
+  // The signed-in admin's pins for home: GET lists them in order, POST
+  // {op: pin|unpin|move, slug, title, by?} changes them. Above `:slug`.
+  router.add("GET", "/api/v1/boards/pins", async (ctx) => {
+    const denied = boardsAdmin(ctx);
+    if (denied) return denied;
+    const listed = await listPinnedPanels(ctx.app, ctx.auth.user);
+    return listed.ok ? json({ pins: listed.value.map((p) => ({ slug: p.slug, title: p.title, panel: p.panel })) }) : notFound();
+  });
+
+  router.add("POST", "/api/v1/boards/pins", async (ctx) => {
+    const denied = boardsAdmin(ctx) ?? requireAccount(ctx, { adminToken: true });
+    if (denied) return denied;
+    const bytes = await readBounded(ctx.request, bodyCapFor(ctx.request));
+    if (bytes === "too_large") return apiError("too_large", 413, "that is too large to read here");
+    let input: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("not an object");
+      input = parsed as Record<string, unknown>;
+    } catch {
+      return apiError("bad_json", 400, "the body must be a JSON object");
+    }
+    const { op, slug, title, by } = input;
+    const done =
+      op === "pin" ? await pinPanel(ctx.app, ctx.auth.user, slug, title)
+      : op === "unpin" ? unpinPanel(ctx.app, ctx.auth.user, slug, title)
+      : op === "move" ? movePinned(ctx.app, ctx.auth.user, slug, title, by)
+      : undefined;
+    if (!done) return apiError("invalid", 422, "op must be pin, unpin or move");
+    if (done.ok) return json({ ...done.value });
+    const e: PinError = done.error;
+    return e === "not_found" ? notFound() : apiError(e, 422, e === "too_many" ? "too many pins" : "that is not a panel");
   });
 
   router.add("GET", "/api/v1/boards/:slug", async (ctx) => {

@@ -49,7 +49,7 @@ const span = (v: unknown, max: number): v is number =>
   typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= max;
 
 /** Names that belong to a page or an API door of their own, never a board's. */
-const TAKEN = new Set(["data", "sources", "query"]);
+const TAKEN = new Set(["data", "sources", "query", "pins"]);
 
 /** A slug is a file name: lowercase, short, and never one of `TAKEN`. */
 export const isSlug = (s: unknown): s is string =>

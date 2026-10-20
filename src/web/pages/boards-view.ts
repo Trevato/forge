@@ -19,6 +19,7 @@ import { html, raw, when, type Html } from "../html.ts";
 import { fragment, page } from "../layout.ts";
 import { btn, card, empty } from "../ui.ts";
 import { flowPanel, flowPanelCss } from "./flow-panel.ts";
+import { isPinned, listPins } from "../../boards/pins.ts";
 import { cellsOf, chartBox, paramsOf, queryFields, readParams, runFor } from "./boards.ts";
 
 const RANGE_MS = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000 } as const;
@@ -34,7 +35,7 @@ function ranged(query: Record<string, unknown>, range: Board["range"]): Record<s
   return { ...query, from: new Date(Date.now() - RANGE_MS[range]).toISOString() };
 }
 
-function drawPanel(app: App, board: Board, panel: Panel): Html {
+export function drawPanel(app: App, board: Board, panel: Panel, aside: Html | null = null): Html {
   const answer = runFor(app.db, panel.chart, ranged(panel.query, board.range));
   const q = paramsOf(panel.query, panel.chart);
   const body = !answer.ok
@@ -45,6 +46,7 @@ function drawPanel(app: App, board: Board, panel: Panel): Html {
     <div class="card-head"><h2>${panel.title}</h2>
       <a class="muted small" href="/boards/data?${explore.toString()}">explore</a></div>
     <div class="card-body">${body}</div>
+    ${aside}
   </div>`;
 }
 
@@ -115,12 +117,23 @@ function panelForm(slug: string, op: string, p: Panel | undefined, index: number
   </form>`;
 }
 
-function manage(slug: string, board: Board, adding: Html): Html {
+/** Pin to home / Unpin: one same-origin POST, back to this board. */
+function pinForm(slug: string, title: string, pinned: boolean): Html {
+  const verb = pinned ? "Unpin" : "Pin to home";
+  return html`<form method="post" action="/boards/${pinned ? "unpin-panel" : "pin-panel"}" class="row-actions">
+    <input type="hidden" name="slug" value="${slug}" /><input type="hidden" name="title" value="${title}" />
+    <input type="hidden" name="back" value="/boards/${slug}" />
+    ${btn(verb, { size: "sm", label: `${verb}: ${title}` })}
+  </form>`;
+}
+
+function manage(slug: string, board: Board, adding: Html, pins: ReturnType<typeof listPins>): Html {
   const one = (p: Panel, i: number) => html`<li class="row bmanage">
     <details>
       <summary><strong>${p.title}</strong> <span class="muted small">${CHART_NAMES[p.chart]} · ${String(p.w)}×${String(p.h)}</span></summary>
       ${panelForm(slug, "edit", p, i, queryFields(paramsOf(p.query, p.chart)))}
     </details>
+    ${pinForm(slug, p.title, isPinned(pins, slug, p.title))}
     <form method="post" action="/boards/${slug}/move" class="row-actions">
       <input type="hidden" name="index" value="${String(i)}" />
       ${btn("Up", { size: "sm", name: "by", value: "-1", label: `Move ${p.title} up` })}
@@ -167,7 +180,7 @@ export async function boardShow(ctx: Ctx): Promise<Response> {
     body: html`<div class="page-head"><h1>${board.title}</h1>
         ${btn("All boards", { href: "/boards", variant: "ghost" })}</div>
       ${grid(ctx.app, slug, board)}
-      ${manage(slug, board, queryFields(readParams(ctx.url.searchParams)))}`,
+      ${manage(slug, board, queryFields(readParams(ctx.url.searchParams)), listPins(ctx.app.db, ctx.auth.user?.id ?? ""))}`,
     scriptJs: liveRegionsJs,
   });
 }

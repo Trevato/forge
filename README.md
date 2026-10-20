@@ -1611,6 +1611,11 @@ work here.
   `forge/boards`, a repo the forge owns and makes on the first boot with an admin; every save is a commit
   by the admin who made it, and a file that does not validate is not shown. Make, rename,
   duplicate, delete, add/edit/remove/reorder panels, or pin the query on `/boards/data`.
+  Any panel has **Pin to home** / **Unpin** on its board page (a same-origin POST); pins are per admin, kept in `board_pin` (slug + panel title + position, `boards/pins.ts`), and home draws them under the KPI row in that person's order with Up, Down and Unpin beside each (`web/studio/pinned.ts`). A pin whose panel is gone is skipped, does not count toward the limit of 24, and is dropped at that person's next pin; nobody sees another's pins. All doors go through `actions/board-pins.ts` (an admin who is a person; anyone else gets not-found):
+  - the page (Pin to home / Unpin on `/boards/:slug`, Up / Down / Unpin on home);
+  - the terminal: on a board's screen `[` `]` mark a panel, `p` pins or unpins it, `<` `>` move a pinned one; the dashboard lists the pinned panels by title;
+  - `GET /api/v1/boards/pins` (the list, in order) and `POST /api/v1/boards/pins` with `{"op":"pin|unpin|move","slug":"…","title":"…","by":-1|1}` (`by` for move only);
+  - the `board_pins` MCP tool (no `op` lists; `op` pin, unpin or move changes). `pins` is therefore not a board slug.
   The first boot also writes seven starting boards, **Usage**, **Crew**, **Releases**, **Apps**, **Security**, **Throughput** and **Forges**. Apps' per-app panels show repo ids until a source exposes a safe name; Security (sign-ins, failed sign-ins, tokens by scope, admin actions, from the admin-only `signins`, `tokens` and `adminActions` sources and `usage`) shows no token text, hash, payload or IP; Throughput is items entering each stage from issue to live, per hour, from the `stages` source. Each is written once: `.offered` in that repo records them, so an edit stays and a deletion sticks.
   A live board (any `refresh` but `off`; the form offers off or on, and `10s` and `1m` are still accepted and mean the same) redraws its grid when a run, pull, check, issue or usage event arrives, through the live-region swap
   (`/boards/:slug/live`, etag'd, one fetch per burst). The same doors are in the API: `GET /api/v1/boards`, `GET|PUT|DELETE /api/v1/boards/:slug`

@@ -239,6 +239,7 @@ describe("the forge over MCP", () => {
       "signup",
       "boards",
       "board_write",
+      "board_pins",
       "board_delete",
       "report",
     ]);
@@ -818,6 +819,38 @@ describe("the forge over MCP", () => {
     expect(done.value).toMatchObject({ key, from: before, to: 13 });
     expect(limitValue(app.db, key)).toBe(13);
     expect(limitChanges(app.db)[0]).toMatchObject({ key });
+  });
+
+  test("board_pins: list, pin, move, unpin for an admin person; an agent and a non-admin are refused", async () => {
+    const board = { title: "Pinnable", range: "24h", refresh: "off", panels: [
+      { title: "One", chart: "number", query: { source: "runs", aggregate: "count" }, w: 1, h: 1 },
+      { title: "Two", chart: "number", query: { source: "runs", aggregate: "count" }, w: 1, h: 1 },
+    ] };
+    expect((await tool(rw, "board_write", { slug: "pinnable", board })).value).toMatchObject({ slug: "pinnable" });
+    const titles = async () => (await tool(rw, "board_pins")).value.pins.map((p: any) => p.title);
+    expect(await titles()).toEqual([]);
+    expect((await tool(rw, "board_pins", { op: "pin", slug: "pinnable", title: "One" })).value).toMatchObject({ slug: "pinnable", title: "One" });
+    await tool(rw, "board_pins", { op: "pin", slug: "pinnable", title: "Two" });
+    expect(await titles()).toEqual(["One", "Two"]);
+    await tool(rw, "board_pins", { op: "move", slug: "pinnable", title: "Two", by: -1 });
+    expect(await titles()).toEqual(["Two", "One"]);
+    expect((await tool(rw, "board_pins", { op: "move", slug: "pinnable", title: "Nope", by: 1 })).error).toContain("not_found");
+    expect((await tool(rw, "board_pins", { op: "pin", slug: "pinnable", title: "Nope" })).error).toContain("not_found");
+    await tool(rw, "board_pins", { op: "unpin", slug: "pinnable", title: "One" });
+    expect(await titles()).toEqual(["Two"]);
+    await tool(rw, "board_pins", { op: "unpin", slug: "pinnable", title: "Two" });
+    expect(await titles()).toEqual([]);
+
+    const made = await createAgent(app, alice, { username: "pinbot", brief: "x" });
+    if (!made.ok) throw new Error(String(made.error));
+    app.db.query("UPDATE user SET is_admin = 1 WHERE id = ?1").run(made.value.user.id);
+    const botToken = createToken(app.db, made.value.user.id, "bot", "rw").token;
+    for (const who of [bobRw, botToken]) {
+      expect((await tool(who, "board_pins")).error).toContain("forbidden");
+      expect((await tool(who, "board_pins", { op: "pin", slug: "pinnable", title: "One" })).error).toContain("forbidden");
+    }
+    expect(await titles()).toEqual([]);
+    await tool(rw, "board_delete", { slug: "pinnable" });
   });
 
   test("boards: list, read, write and delete for an admin person; an agent and a non-admin are refused", async () => {

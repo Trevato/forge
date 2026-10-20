@@ -24,6 +24,7 @@ import { nextStepsFor } from "../../core/next-steps.ts";
 import { agentsLine } from "../../web/studio/client_home.ts";
 import { mayView } from "../../core/sealed.ts";
 import { applyFleetIds, previewFleetIds, undoFleetOp } from "../../actions/fleet.ts";
+import { plain } from "./boards.ts";
 import { pinRepo, unpinRepo } from "../../actions/origins.ts";
 import { getProposal } from "../../core/proposals.ts";
 import { getIssueById, listAssignedTo, type Issue } from "../../core/issues.ts";
@@ -90,6 +91,7 @@ import { BOOTED } from "../../release/gate.ts";
 import { running } from "../../kernel/version.ts";
 import { deciderLine, deciderScreen } from "./decider.ts";
 import { issueScreen } from "./issue.ts";
+import { listPinned } from "../../actions/board-pins.ts";
 import { newRepoScreen } from "./newrepo.ts";
 import { pullScreen } from "./pull.ts";
 import { repoScreen } from "./repo.ts";
@@ -162,6 +164,8 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
   let decider: string | null = null;
   /** Home's three figures, as the web's row says them; empty unless an admin looks (they count every repository). */
   let figures: string[] = [];
+  /** The panels this admin pinned to the web home, by title and board, in their order. */
+  let panelLines: string[] = [];
   const filter = new Filter();
   /** One cursor per pane: moving in one must never move another. */
   const cursors: Record<PaneId, ListState> = {
@@ -183,6 +187,13 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         : apps.map(
             (a) => `${a.repo.name}: ${agentsLine(a.working, a.queued)}`,
           );
+    ctx.invalidate();
+  };
+
+  const loadPanelLines = async (): Promise<void> => {
+    const listed = await listPinned(f.app, f.user);
+    const titles = listed.ok ? listed.value.map((p) => `${plain(p.panel.title)} (${plain(p.board.title)})`) : [];
+    panelLines = titles.length === 0 ? [] : [`Pinned: ${titles.join(" · ")}`];
     ctx.invalidate();
   };
 
@@ -761,7 +772,7 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
       // functions of the outbox, so one subscription refreshes all of them.
       live(f, signal, {}, reload);
       reload();
-      return loadClientLines();
+      return Promise.all([loadClientLines(), loadPanelLines()]).then(() => undefined);
     },
     render(area, s) {
       const c = ctx.theme.c;
@@ -790,6 +801,11 @@ export function dashboardScreen(f: Session, ctx: Ctx): Screen {
         shown.forEach((line, i) =>
           s.text(strip!.x, strip!.y + i, truncate(line, strip!.w), style(c.mutedFg, c.bg), strip!.x + strip!.w),
         );
+        body = rest!;
+      }
+      if (panelLines.length > 0) {
+        const [strip, rest] = split(body, "v", [len(1), fill(1)]);
+        s.text(strip!.x, strip!.y, truncate(panelLines[0]!, strip!.w), style(c.mutedFg, c.bg), strip!.x + strip!.w);
         body = rest!;
       }
       if (decider !== null) {

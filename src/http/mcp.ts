@@ -186,6 +186,7 @@ import type { Router } from "./router.ts";
 import { mayReadRuns, runForReader } from "../actions/runs.ts";
 import { manifestFor } from "../actions/here.ts";
 import { clientBucket } from "./peer.ts";
+import { listPinned as listPinnedPanels, movePinned, pinPanel, unpinPanel } from "../actions/board-pins.ts";
 import { deleteBoard, listAllBoards, showBoard, writeBoard, type BoardError } from "../actions/boards.ts";
 import { fileReport } from "../actions/reports.ts";
 import { BODY_MAX, REQUEST_MAX, TITLE_MAX } from "../core/reports.ts";
@@ -2978,6 +2979,37 @@ const TOOLS: readonly Tool[] = [
       if (!mayBoards(user)) return boardRefused();
       const done = await writeBoard(ctx.app, user, str(args["slug"]), args["board"]);
       return done.ok ? good({ slug: str(args["slug"]), ...done.value }) : boardFailed(done.error);
+    },
+  },
+  {
+    name: "board_pins",
+    description:
+      "The panels pinned to the caller's own home, for a forge admin who is a person (an agent is refused). With no `op`, lists them in order. With `op` pin, unpin or move, changes them: `slug` and `title` name a panel of a board; `by` is -1 or 1 for move. The same as GET and POST /api/v1/boards/pins.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        op: { type: "string", enum: ["pin", "unpin", "move"] },
+        slug: { type: "string", maxLength: 40 },
+        title: { type: "string", maxLength: 80 },
+        by: { type: "integer", enum: [-1, 1] },
+      },
+    },
+    writes: true,
+    async run(ctx, user, args) {
+      if (!mayBoards(user)) return boardRefused();
+      const op = args["op"];
+      if (op === undefined) {
+        const listed = await listPinnedPanels(ctx.app, user);
+        return listed.ok ? good({ pins: listed.value.map((p) => ({ slug: p.slug, title: p.title })) }) : boardRefused();
+      }
+      const [slug, title] = [args["slug"], args["title"]];
+      const done =
+        op === "pin" ? await pinPanel(ctx.app, user, slug, title)
+        : op === "unpin" ? unpinPanel(ctx.app, user, slug, title)
+        : op === "move" ? movePinned(ctx.app, user, slug, title, args["by"])
+        : undefined;
+      if (!done) return bad("invalid", "op must be pin, unpin or move");
+      return done.ok ? good({ ...done.value }) : bad(done.error, "that could not be pinned");
     },
   },
   {

@@ -49,6 +49,7 @@ import { needsYouSection } from "./asks_page.ts";
 import { flowCards } from "./flow_card.ts";
 import { composer, feedJs, feedNote, feedRegion } from "./feed.ts";
 import { kpiRow } from "./kpi_row.ts";
+import { pinnedPanels } from "./pinned.ts";
 import { homeTabs } from "./home_tabs.ts";
 import { crewKeyNote } from "./crew.ts";
 import { everydayCard } from "../pages/everyday.ts";
@@ -249,6 +250,7 @@ export async function studioHome(
   const kpiOpts = { dataDir: ctx.app.config.dataDir, ...(ceilingUsd === undefined ? {} : { ceilingUsd }) };
   const body = html`<h1 class="sr-only">Home</h1>
     ${ask} ${address} ${figures ? kpiRow(ctx.app.db, kpiOpts) : liveLine(ctx)}
+    ${figures ? await pinnedPanels(ctx.app, user) : null}
     ${when(
       steps,
       () => html`<p class="small muted" id="lean-home">

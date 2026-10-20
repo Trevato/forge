@@ -7,11 +7,13 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { listPinned, pinPanel, unpinPanel } from "../src/actions/board-pins.ts";
 import { writeBoard } from "../src/actions/boards.ts";
 import { createAgent } from "../src/actions/crew.ts";
 import { createApp, type App } from "../src/app.ts";
 import { createUser, type User } from "../src/core/users.ts";
 import { createForgeApp, forgeCommands, Session } from "../src/tui/forge.ts";
+import { dashboardScreen } from "../src/tui/screens/dashboard.ts";
 import { boardRows, boardsScreen } from "../src/tui/screens/boards.ts";
 import { headlessTerminal } from "../src/tui/term/terminal.ts";
 import { quietLogs } from "./helpers/globals.ts";
@@ -38,8 +40,9 @@ async function screenText(user?: User, keys = ""): Promise<string> {
   tui.start();
   tui.ctx.push(boardsScreen(session, tui.ctx));
   await settleApp(tui);
-  if (keys !== "") {
-    terminal.feed(keys);
+  // One key at a time: a key that opens a screen must land before the next is read.
+  for (const key of keys) {
+    terminal.feed(key);
     await settleApp(tui);
   }
   const text = tui.screen.toText();
@@ -105,5 +108,63 @@ describe("tui boards", () => {
       expect(await screenText(who)).not.toContain("Runs this week");
     }
     expect(doors(carol)).toContain("boards");
+  });
+
+  test("p pins the marked panel, the dashboard lists it by title, p again unpins", async () => {
+    const pinned = async () => {
+      const listed = await listPinned(app, carol);
+      return listed.ok ? listed.value.map((p) => p.title) : [];
+    };
+    expect(await pinned()).toEqual([]);
+    const text = await screenText(carol, "\rp");
+    expect(text).toContain("[pinned to home]");
+    expect(await pinned()).toEqual(["Failed runs"]);
+
+    const terminal = headlessTerminal(120, 30);
+    const { app: tui, session } = createForgeApp(app, identity(carol), { terminal, exitHooks: false });
+    tui.start();
+    tui.ctx.push(dashboardScreen(session, tui.ctx));
+    await settleApp(tui);
+    expect(tui.screen.toText()).toContain("Pinned: Failed runs (Runs this week)");
+    tui.stop?.();
+
+    await screenText(carol, "\rp");
+    expect(await pinned()).toEqual([]);
+    // Nobody else can pin from the terminal.
+    await screenText(bob, "\rp");
+    const other = await listPinned(app, bob);
+    expect(other.ok).toBe(false);
+  });
+
+  test("> and < move the marked pinned panel in the home order; an unpinned one does not move", async () => {
+    const wrote = await writeBoard(app, carol, "runs", {
+      title: "Runs this week",
+      range: "7d",
+      refresh: "off",
+      panels: [
+        { title: "Failed runs", chart: "number", query: { source: "runs", aggregate: "count" }, w: 1, h: 1 },
+        { title: "Slow runs", chart: "number", query: { source: "runs", aggregate: "count" }, w: 1, h: 1 },
+      ],
+    });
+    expect(wrote.ok).toBe(true);
+    const order = async () => {
+      const listed = await listPinned(app, carol);
+      return listed.ok ? listed.value.map((p) => p.title) : [];
+    };
+    expect(await order()).toEqual([]);
+    // Not pinned: nothing moves and nothing is claimed.
+    expect(await screenText(carol, "\r>")).not.toContain("moved on home");
+    await pinPanel(app, carol, "runs", "Failed runs");
+    await pinPanel(app, carol, "runs", "Slow runs");
+    expect(await order()).toEqual(["Failed runs", "Slow runs"]);
+    await screenText(carol, "\r>");
+    expect(await order()).toEqual(["Slow runs", "Failed runs"]);
+    await screenText(carol, "\r<");
+    expect(await order()).toEqual(["Failed runs", "Slow runs"]);
+    // At the top already: it stays.
+    await screenText(carol, "\r<");
+    expect(await order()).toEqual(["Failed runs", "Slow runs"]);
+    unpinPanel(app, carol, "runs", "Failed runs");
+    unpinPanel(app, carol, "runs", "Slow runs");
   });
 });

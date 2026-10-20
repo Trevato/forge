@@ -25,7 +25,7 @@ import { resiliencePage } from "../web/pages/resilience.ts";
 import { limitsPage, limitsSet, quotasSet, signupSet, inviteMint, inviteRevoke } from "../web/pages/admin-limits.ts";
 import { measureSubmit } from "./measure.ts";
 import { boardsPage } from "../web/pages/boards.ts";
-import { boardNew, boardPin, boardPost } from "../web/pages/boards-edit.ts";
+import { boardNew, boardPin, boardPost, pinPost } from "../web/pages/boards-edit.ts";
 import { boardLive, boardShow, boardsList } from "../web/pages/boards-view.ts";
 import {
   closeStreamsOf,
@@ -830,6 +830,7 @@ export function buildRouter(): Router<Handler> {
   router.add("GET", "/boards/data", boardsPage);
   router.add("POST", "/boards/new", boardNew);
   router.add("POST", "/boards/pin", boardPin);
+  for (const op of ["pin-panel", "unpin-panel", "move-pin"]) router.add("POST", `/boards/${op}`, pinPost);
   router.add("GET", "/boards/:slug", boardShow);
   router.add("GET", "/boards/:slug/live", boardLive);
   router.add("POST", "/boards/:slug/:op", boardPost);
