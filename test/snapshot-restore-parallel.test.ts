@@ -12,7 +12,7 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { runGit } from "../src/git/env.ts";
-import { restoreSnapshot } from "../src/snapshot/restore.ts";
+import { restoreSnapshot, RESTORE_IN_FLIGHT } from "../src/snapshot/restore.ts";
 import { IN_FLIGHT } from "../src/snapshot/snapshot.ts";
 import { dirStore, type Store } from "../src/snapshot/store.ts";
 
@@ -97,7 +97,9 @@ describe("a restore reads in parallel", () => {
     const restored = await restoreSnapshot(store, NAME, dataDir);
     expect(restored.files).toBe(FILES);
     expect(store.most()).toBeGreaterThan(1);
-    expect(store.most()).toBeLessThanOrEqual(IN_FLIGHT);
+    // Reads outrun the upload's eight (#3108) but keep to their own line.
+    expect(store.most()).toBeGreaterThan(IN_FLIGHT);
+    expect(store.most()).toBeLessThanOrEqual(RESTORE_IN_FLIGHT);
     for (let n = 0; n < FILES; n++)
       expect(readFileSync(join(dataDir, "apps/a", `file-${n}.txt`), "utf8")).toBe(`file ${n}\n`);
   });

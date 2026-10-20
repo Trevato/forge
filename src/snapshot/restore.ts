@@ -37,7 +37,6 @@ import { runGit } from "../git/env.ts";
 import { installHooks } from "../git/hooks.ts";
 import { repoDir } from "../git/repos.ts";
 import {
-  IN_FLIGHT,
   IN_FLIGHT_BYTES,
   isRunBundle,
   keyOf,
@@ -109,6 +108,14 @@ async function sealedNames(dbFile: string): Promise<string[]> {
 }
 
 /**
+ * Gets in flight at once on a restore: three times the upload's. The
+ * 2026-10-20 drill spent 13 min 35 s of its 16 on download (#3108); reads
+ * hold nothing but their own bodies, so more of them may share the memory
+ * cap below.
+ */
+export const RESTORE_IN_FLIGHT = 24;
+
+/**
  * Every file the manifest lists, read with several gets in flight at once
  * and checked against its size, each handed to `each` as it lands. Read
  * one after another, the restore drill of a snapshot with thousands of
@@ -129,7 +136,7 @@ async function fetchAll(
   let held = 0;
   for (const [at, entry] of entries.entries()) {
     while (
-      (pending.size >= IN_FLIGHT ||
+      (pending.size >= RESTORE_IN_FLIGHT ||
         (pending.size > 0 && held + entry.bytes > maxBytes)) &&
       failure === undefined
     )
