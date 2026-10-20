@@ -42,7 +42,7 @@ const fixtures: Fixture[] = [];
 afterAll(() => {
   for (const f of fixtures) f.app.close();
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
-});
+}, 60_000);
 
 async function boot(shape: Shape): Promise<{ f: Fixture; servers: Servers }> {
   const dir = mkdtempSync(join(tmpdir(), "forge-map-cache-"));
@@ -64,7 +64,7 @@ describe("/map on the forge-sized fixture, warm", () => {
   beforeAll(async () => {
     ({ f, servers } = await boot(FORGE_SIZE));
   }, 120_000);
-  afterAll(() => servers.stop());
+  afterAll(() => servers.stop(), 60_000);
 
   for (const who of ["owner", "stranger"] as const) {
     test(`${who}: warm hits far cheaper than a cold build, statements within a fixed cost + 2 per lane`, async () => {
@@ -123,7 +123,7 @@ describe("/map after a write", () => {
     owner = getUserByName(f.app.db, "keeper")!;
     stranger = getUserByName(f.app.db, "passerby")!;
   }, 60_000);
-  afterAll(() => servers.stop());
+  afterAll(() => servers.stop(), 60_000);
 
   test("an issue opened, then closed, shows on the next /map", async () => {
     const repo = repoOf("plan-0");
