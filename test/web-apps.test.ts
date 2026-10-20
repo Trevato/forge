@@ -334,32 +334,6 @@ describe("apps, runs and the crew on the web", () => {
   test("the runs list, one run's log page, and the short door to it", async () => {
     const [run] = await runsOf(hello);
     expect(run).toBeDefined();
-    // One list (#629): the crew's runs by default; the deploys are its
-    // `?kind=deploy`, one quiet link under it.
-    const crew = await bodyOf(alice, "/alice/hello/runs");
-    expect(crew).toContain('href="/alice/hello/runs?kind=deploy"');
-    // Whichever word the deploy has reached, it is under one of them.
-    const list = (
-      await Promise.all(
-        ["", "&word=shipped", "&word=stopped"].map((w) =>
-          bodyOf(alice, `/alice/hello/runs?kind=${run!.kind}${w}`),
-        ),
-      )
-    ).join("");
-    expect(list).toContain("Deploy production");
-    expect(list).toContain(`href="/alice/hello/runs/${run!.id}"`);
-    expect(await bodyOf(alice, "/alice/hello/runs?kind=agent")).toContain(
-      "Nothing open.",
-    );
-
-    const page = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
-    expect(page).toContain("<h1>Deploy production</h1>");
-    expect(page).toContain('id="run-log"');
-    expect(page).toContain('id="run-word"');
-    // The log is drawn line by line, each by what kind of line it is: the
-    // forge's own words ("checking out …") are marked as such.
-    expect(page).toContain('class="ln ln-forge"');
-    expect(page).toContain('id="run-elapsed"');
     // The live log exists only while it is going, and the page never
     // reloads itself either way (#2873).
     // Match the real <meta> / data-stream= attributes — not the same
@@ -391,6 +365,43 @@ describe("apps, runs and the crew on the web", () => {
       }
     }
 
+    // Let the deploy settle before the list and log are read: a queued run
+    // has no log lines yet and moves between the list's words, so those
+    // assertions would depend on how loaded the machine is.
+    const settleBy = Date.now() + 20_000;
+    while (isGoing()) {
+      if (Date.now() >= settleBy) {
+        throw new Error(`run ${run!.id} never settled`);
+      }
+      await Bun.sleep(50);
+    }
+    // One list (#629): the crew's runs by default; the deploys are its
+    // `?kind=deploy`, one quiet link under it.
+    const crew = await bodyOf(alice, "/alice/hello/runs");
+    expect(crew).toContain('href="/alice/hello/runs?kind=deploy"');
+    // Whichever word the deploy has reached, it is under one of them.
+    const list = (
+      await Promise.all(
+        ["", "&word=shipped", "&word=stopped"].map((w) =>
+          bodyOf(alice, `/alice/hello/runs?kind=${run!.kind}${w}`),
+        ),
+      )
+    ).join("");
+    expect(list).toContain("Deploy production");
+    expect(list).toContain(`href="/alice/hello/runs/${run!.id}"`);
+    expect(await bodyOf(alice, "/alice/hello/runs?kind=agent")).toContain(
+      "Nothing open.",
+    );
+
+    const page = await bodyOf(alice, `/alice/hello/runs/${run!.id}`);
+    expect(page).toContain("<h1>Deploy production</h1>");
+    expect(page).toContain('id="run-log"');
+    expect(page).toContain('id="run-word"');
+    // The log is drawn line by line, each by what kind of line it is: the
+    // forge's own words ("checking out …") are marked as such.
+    expect(page).toContain('class="ln ln-forge"');
+    expect(page).toContain('id="run-elapsed"');
+
     const door = await web(alice, `/runs/${run!.id}`);
     expect(door.status).toBe(303);
     expect(door.headers.get("location")).toBe(`/alice/hello/runs/${run!.id}`);
@@ -402,7 +413,7 @@ describe("apps, runs and the crew on the web", () => {
     }
     expect((await web(alice, "/runs/nope")).status).toBe(404);
     expect((await web(alice, "/alice/hello/runs/nope")).status).toBe(404);
-  });
+  }, 40_000);
 
   test("cancelling a run: a writer may, a reader may not", async () => {
     const [run] = await runsOf(hello);
