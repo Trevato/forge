@@ -17,6 +17,12 @@ import { appsRuntime } from "../../apps/runtime.ts";
 import { appsForRepos, getAppByRepo } from "../../core/apps.ts";
 import { canWrite, listReposVisibleTo, type Repo } from "../../core/repos.ts";
 import type { Ctx } from "../../http/context.ts";
+import {
+  notePhase,
+  takeSessionTime,
+  timePhase,
+  timePhaseAsync,
+} from "../../core/route_timing.ts";
 import { audit, type Audited } from "../../contract/audit.ts";
 import {
   contractChanges,
@@ -52,21 +58,27 @@ import {
 const AUDIT_LIMIT = 200;
 
 export async function auditPage(ctx: Ctx): Promise<Response> {
-  const repos = listReposVisibleTo(ctx.app.db, ctx.auth.user, {
-    limit: AUDIT_LIMIT,
-  });
-  const records = appsForRepos(
-    ctx.app.db,
-    repos.map((r) => r.id),
+  const req = ctx.request;
+  notePhase(req, "session", takeSessionTime(req));
+  const repos = timePhase(req, "repos", () =>
+    listReposVisibleTo(ctx.app.db, ctx.auth.user, { limit: AUDIT_LIMIT }),
+  );
+  const records = timePhase(req, "apps", () =>
+    appsForRepos(
+      ctx.app.db,
+      repos.map((r) => r.id),
+    ),
   );
   const apps = repos.filter((r) => records.has(r.id));
-  const audited = await Promise.all(
-    apps.map((repo) => audit(ctx.app.reposRoot, repo)),
+  const audited = await timePhaseAsync(req, "contracts", () =>
+    Promise.all(apps.map((repo) => audit(ctx.app.reposRoot, repo))),
   );
   const sound = audited.filter((a) => a.standing.kind === "sound");
-  const probed = latestProbes(
-    ctx.app.db,
-    sound.map((a) => records.get(a.repo.id)!.id),
+  const probed = timePhase(req, "probes", () =>
+    latestProbes(
+      ctx.app.db,
+      sound.map((a) => records.get(a.repo.id)!.id),
+    ),
   );
   const disobeying = sound.filter(
     (a) => probed.get(records.get(a.repo.id)!.id)?.verdict === "mismatch",
@@ -80,21 +92,28 @@ export async function auditPage(ctx: Ctx): Promise<Response> {
   // The third lens: what moved. Contracts that changed, pulls at the wall,
   // apps whose doors started or stopped agreeing with their table.
   const changes = (
-    await Promise.all(
-      audited
-        .filter((a) => a.standing.kind !== "unread")
-        .map((a) => contractChanges(ctx.app.reposRoot, a.repo)),
+    await timePhaseAsync(req, "history", () =>
+      Promise.all(
+        audited
+          .filter((a) => a.standing.kind !== "unread")
+          .map((a) => contractChanges(ctx.app.reposRoot, a.repo)),
+      ),
     )
   )
     .flat()
     .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
     .slice(0, 30);
-  const crossings = crossingsWaiting(ctx.app.db, apps);
-  const verdicts = verdictChanges(
-    ctx.app.db,
-    sound.map((a) => ({ repo: a.repo, appId: records.get(a.repo.id)!.id })),
+  const crossings = timePhase(req, "crossings", () =>
+    crossingsWaiting(ctx.app.db, apps),
   );
-  return page({
+  const verdicts = timePhase(req, "verdicts", () =>
+    verdictChanges(
+      ctx.app.db,
+      sound.map((a) => ({ repo: a.repo, appId: records.get(a.repo.id)!.id })),
+    ),
+  );
+  const rendering = performance.now();
+  const response = page({
     ctx,
     title: "Audit",
     description:
@@ -141,6 +160,8 @@ export async function auditPage(ctx: Ctx): Promise<Response> {
             ${when(unread.length > 0, () => unreadCard(unread))}
             ${changesSection(crossings, changes, verdicts)}`}`,
   });
+  notePhase(req, "render", performance.now() - rendering);
+  return response;
 }
 
 const count = (n: number, one: string, many: string): string =>
