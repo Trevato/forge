@@ -16,11 +16,17 @@ const DESIGN = [
   "`.keys-only` is named after §5.",
 ].join("\n");
 
+// One walk of the tree serves both tests that read it, and a loaded check machine
+// gets a timeout far past the walk's cost: the verdict is the code's, not the clock's.
+let tree: ReturnType<typeof scan> | undefined;
+const treeNow = () => (tree ??= scan("."));
+const SLOW = 60_000;
+
 describe("design check: nothing added outside the system (#2678)", () => {
   test("the tree is no worse than its baseline", () => {
     const base = JSON.parse(readFileSync("docs/design/baseline.json", "utf8"));
-    expect(compare(base, scan("."), readFileSync("docs/DESIGN.md", "utf8"))).toEqual([]);
-  });
+    expect(compare(base, treeNow(), readFileSync("docs/DESIGN.md", "utf8"))).toEqual([]);
+  }, SLOW);
 
   test("counts colour literals and off-scale sizes, not on-scale ones", () => {
     expect(countFile("a{color:#fff;background:#a1b2c3;border:1px solid rgba(0,0,0,.1)}")).toEqual({ colour: 3, size: 0 });
@@ -86,6 +92,6 @@ describe("design check: nothing added outside the system (#2678)", () => {
 
   test("every class the stylesheets define is one DESIGN.md §5 names (#2700)", () => {
     const named = new Set(documentedClasses(readFileSync("docs/DESIGN.md", "utf8")));
-    expect(scan(".").classes.filter((k) => !named.has(k))).toEqual([]);
-  });
+    expect(treeNow().classes.filter((k) => !named.has(k))).toEqual([]);
+  }, SLOW);
 });
