@@ -382,6 +382,49 @@ describe("the look", () => {
     ).toBe(404);
   });
 
+  test("a picture asked for by its bare name carries an ETag, answers 304 to a match after the access check, and a retake changes the tag", async () => {
+    const env = `pull-${pull.number}`;
+    const url = `/alice/hello/looks/${env}/${second}/phone.png`;
+    const ask = (cookie: string, match?: string) =>
+      fetch(`${servers.url}${url}`, {
+        headers: { cookie, ...(match === undefined ? {} : { "if-none-match": match }) },
+        redirect: "manual",
+      });
+    const first200 = await ask(aliceCookie);
+    expect(first200.status).toBe(200);
+    const etag = first200.headers.get("etag")!;
+    expect(etag).toMatch(/^"\d+"$/);
+    expect(first200.headers.get("cache-control")).toBe("private, no-cache");
+
+    const same = await ask(aliceCookie, etag);
+    expect(same.status).toBe(304);
+    expect((await same.arrayBuffer()).byteLength).toBe(0);
+    expect(same.headers.get("cache-control")).toBe("private, no-cache");
+    expect(same.headers.get("etag")).toBe(etag);
+
+    // Not allowed to fetch it: the one 404, a matching tag or not.
+    expect((await ask(bobCookie, etag)).status).toBe(404);
+    expect((await ask("", etag)).status).toBe(404);
+
+    // A retake at the same commit is a new tag; the old one gets the picture.
+    const look = looksForEnv(app.db, record.id, env, "any").find(
+      (l) => l.commitOid === second && lookSlot(l.page, l.kind, l.theme) === "phone",
+    )!;
+    await Bun.sleep(5);
+    recordLook(app.db, {
+      appId: record.id,
+      env,
+      commitOid: second,
+      kind: look.kind,
+      page: look.page,
+      theme: look.theme,
+      path: look.path,
+    });
+    const retaken = await ask(aliceCookie, etag);
+    expect(retaken.status).toBe(200);
+    expect(retaken.headers.get("etag")).not.toBe(etag);
+  });
+
   let unpictured: Pull;
 
   test("a picture that could not be taken is recorded with its reason, and the page says so", async () => {

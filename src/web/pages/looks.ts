@@ -80,18 +80,23 @@ export function lookImage(ctx: Ctx): Response {
   if (!mayFetchLook(ctx, repo, record, look)) return notFound();
   const path = join(ctx.app.config.dataDir, look.path);
   if (!existsSync(path)) return notFound();
-  return new Response(Bun.file(path), {
-    headers: {
-      "content-type": path.endsWith(".jpg") ? "image/jpeg" : "image/png",
-      // Kept for good only under the name of this taking (`lookVersion`);
-      // asked for by its bare name, it is checked again every time, so a
-      // retake at the same commit is never hidden behind a cached old one.
-      "cache-control":
-        ctx.url.searchParams.get("v") === lookVersion(look)
-          ? "private, max-age=31536000, immutable"
-          : "private, no-cache",
-    },
-  });
+  const headers = {
+    "content-type": path.endsWith(".jpg") ? "image/jpeg" : "image/png",
+    // Named by this taking (`lookVersion`), so a retake at the same commit
+    // is a new tag as well as a new URL.
+    etag: `"${lookVersion(look)}"`,
+    // Kept for good only under the name of this taking; asked for by its
+    // bare name, it is checked again every time, so a retake at the same
+    // commit is never hidden behind a cached old one.
+    "cache-control":
+      ctx.url.searchParams.get("v") === lookVersion(look)
+        ? "private, max-age=31536000, immutable"
+        : "private, no-cache",
+  };
+  // Only after `mayFetchLook`: a 304 must not say a private picture exists.
+  if (ctx.request.headers.get("if-none-match") === headers.etag)
+    return new Response(null, { status: 304, headers });
+  return new Response(Bun.file(path), { headers });
 }
 
 /**
