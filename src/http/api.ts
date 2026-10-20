@@ -3076,10 +3076,18 @@ export function apiRoutes(router: Router<Handler>): void {
   );
 
   router.add("GET", "/api/v1/repos/:owner/:name/issues/:number", (ctx) => {
-    const found = loadIssue(ctx);
+    // Numbers are shared with pulls: a pull's number answers as the same
+    // shape, marked `kind: "pull"`, with the path where its diff lives (#3299).
+    const found = loadConversation(ctx);
     if ("error" in found) return found.error;
+    const { repo, issue } = found;
     return json({
-      ...withLabels(ctx, found.issue),
+      ...withLabels(ctx, issue),
+      ...(issue.kind === "pull"
+        ? {
+            pull: `/api/v1/repos/${repo.ownerName}/${repo.name}/pulls/${issue.number}`,
+          }
+        : {}),
       comments: readerMarked(
         ctx,
         found.repo.id,
