@@ -24,6 +24,7 @@ import {
   resolvedCount,
   type Choice,
 } from "../../git/conflicts.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import type { Ctx } from "../../http/context.ts";
 import { crumbsFor, notFoundPage, repoBase, repoPalette, repoHeader } from "../chrome.ts";
 import { FINISH_REFUSALS, finishConflicts } from "../../actions/finish-conflicts.ts";
@@ -143,21 +144,27 @@ const CSS = `
 `;
 
 export async function conflictsPage(ctx: Ctx): Promise<Response> {
-  const found = pullContext(ctx);
+  const req = ctx.request;
+  notePhase(req, "session", takeSessionTime(req));
+  const found = timePhase(req, "pull", () => pullContext(ctx));
   if (found instanceof Response) return found;
   const { repo, pull } = found;
   if (!canWrite(ctx.app.db, repo, ctx.auth.user)) return notFoundPage(ctx);
   const base = repoBase(repo);
   const back = `${base}/pulls/${pull.number}/files`;
-  const dir = await pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull);
-  const status = await pullStatus(dir, pull);
+  const dir = await timePhaseAsync(req, "checkout", () =>
+    pullDir(ctx.app.db, ctx.app.reposRoot, repo, pull),
+  );
+  const status = await timePhaseAsync(req, "status", () => pullStatus(dir, pull));
   const files = status.conflicts;
   const asked = ctx.url.searchParams.get("file") ?? "";
   // Only a path git itself named is read; the rest of the world is a 404.
   const file = asked === "" ? files[0] : files.find((f) => f === asked);
   const unknown = asked !== "" && file === undefined && files.length > 0;
   if (pull.state !== "open" || file === undefined) {
-    return page({
+    const crew = await timePhaseAsync(req, "crew", () => proposalCard(ctx, repo, pull, dir, false));
+    const rendering = performance.now();
+    const response = page({
       ctx,
       title: `Resolve · ${pull.title}`,
       crumbs: crumbsFor(repo),
@@ -170,11 +177,17 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
               : "Nothing to resolve: this pull has no conflicts."}
             <a href="${back}">Back to the files</a>.</p>`,
         )}
-        ${await proposalCard(ctx, repo, pull, dir, false)}`,
+        ${crew}`,
     });
+    notePhase(req, "render", performance.now() - rendering);
+    return response;
   }
 
-  const text = await readConflictedFile(dir, status.baseOid, status.headOid, file);
+  const text = await timePhaseAsync(req, "file", () =>
+    readConflictedFile(dir, status.baseOid, status.headOid, file),
+  );
+  const crew = await timePhaseAsync(req, "crew", () => proposalCard(ctx, repo, pull, dir, true));
+  const rendering = performance.now();
   const parsed = parseConflicts(text ?? "");
   const choices = choicesFrom(ctx.url.searchParams, parsed.blocks.length);
   const labels = { ours: pull.baseBranch, theirs: pull.headBranch };
@@ -232,7 +245,7 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
           )}
         </p>`
       : ""}
-    ${await proposalCard(ctx, repo, pull, dir, true)}
+    ${crew}
     ${total === 0
       ? card(
           html`<p>This file has no text blocks to choose between (it may be
@@ -251,7 +264,7 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
     <h2 class="mt">Merged file</h2>
     <pre class="rs-merged" aria-label="Merged ${file}">${merged}</pre>`;
 
-  return page({
+  const response = page({
     ctx,
     title: `Resolve · ${pull.title} · ${repo.name}`,
     crumbs: crumbsFor(repo),
@@ -259,6 +272,8 @@ export async function conflictsPage(ctx: Ctx): Promise<Response> {
     body,
     styleCss: CSS,
   });
+  notePhase(req, "render", performance.now() - rendering);
+  return response;
 }
 
 // POST /:owner/:name/pulls/:number/resolve
