@@ -14,6 +14,7 @@ import { gaps, SYSTEM } from "../../boards/sampler.ts";
 import { SOURCES } from "../../boards/sources.ts";
 import { listAllBoards } from "../../actions/boards.ts";
 import type { Ctx } from "../../http/context.ts";
+import { notePhase, takeSessionTime, timePhase, timePhaseAsync } from "../../core/route_timing.ts";
 import { notFoundPage } from "../chrome.ts";
 import { html, raw, when } from "../html.ts";
 import { page } from "../layout.ts";
@@ -235,9 +236,14 @@ export function paramsOf(q: Record<string, unknown>, chart: Chart = "line"): Par
 export async function boardsPage(ctx: Ctx): Promise<Response> {
   const user = ctx.auth.user;
   if (user?.isAdmin !== true || user.kind === "agent") return notFoundPage(ctx);
+  notePhase(ctx.request, "session", takeSessionTime(ctx.request));
   const p = readParams(ctx.url.searchParams);
   const src = Object.hasOwn(SOURCES, p.source) ? SOURCES[p.source]! : undefined;
-  const answer = p.rows === "" ? runFor(ctx.app.db, p.chart, toQuery(p)) : runQuery(ctx.app.db, toQuery(p), { repoIds: "all" });
+  const answer = timePhase(ctx.request, "query", () =>
+    p.rows === "" ? runFor(ctx.app.db, p.chart, toQuery(p)) : runQuery(ctx.app.db, toQuery(p), { repoIds: "all" }),
+  );
+  const rendering = performance.now();
+  let boardsMs = 0;
   const cols = src ? Object.keys(src.columns) : [];
 
   const sources = card(
@@ -291,7 +297,9 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
       </table>`)}`;
   }
 
-  const listed = await listAllBoards(ctx.app, user);
+  const listing = performance.now();
+  const listed = await timePhaseAsync(ctx.request, "boards", () => listAllBoards(ctx.app, user));
+  boardsMs = performance.now() - listing;
   const boards = listed.ok ? listed.value : [];
   const pin =
     boards.length === 0 || !answer.ok
@@ -325,10 +333,12 @@ export async function boardsPage(ctx: Ctx): Promise<Response> {
           { head: html`<h2>What this machine measures</h2>`, extra: "machine-gaps" },
         );
 
-  return page({
+  const response = page({
     ctx,
     title: "Boards",
     body: html`<div class="page-head"><h1>Data</h1>${btn("All boards", { href: "/boards", variant: "ghost" })}</div>
       ${form} ${absent} ${card(result, { head: html`<h2>${p.source}</h2>`, extra: "boards-result" })} ${pin} ${sources}`,
   });
+  notePhase(ctx.request, "render", Math.max(0, performance.now() - rendering - boardsMs));
+  return response;
 }
