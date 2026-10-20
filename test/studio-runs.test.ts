@@ -2,7 +2,7 @@
  * The studio: slot counts, words from facts, a run's page, the tails, and
  * what the front door calls news. One of the files the studio's suite was
  * split into so no one file sets the gate's floor (#2038); the rest are
- * test/studio*.test.ts.
+ * test/studio*.test.ts. It runs in about 2.5 s with no waits (#3578).
  */
 
 import {
