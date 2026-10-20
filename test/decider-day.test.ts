@@ -150,7 +150,7 @@ describe("the decider's day on Today's card", () => {
         html.indexOf('id="decided"'),
         html.indexOf('id="today"'),
       );
-      return (decided.match(/class="board-card board-decision"/g) ?? []).length;
+      return (decided.match(/data-key="decision:/g) ?? []).length;
     };
     expect(await rowsOf("closed")).toBe(2);
     expect(await rowsOf("deferred")).toBe(2);

@@ -1937,8 +1937,15 @@ export const boardJs = /* js */ `
 
   // ---- the dot: whether the stream is connected ----
   var live = doc.getElementById('board-live');
+  var TONES = { open: 'success', reconnecting: 'attn' };
   doc.addEventListener('forge:live', function (e) {
-    if (live && e.detail) live.setAttribute('data-state', e.detail.state);
+    if (!live || !e.detail) return;
+    live.setAttribute('data-state', e.detail.state);
+    var dot = live.querySelector('.dot');
+    var tone = TONES[e.detail.state];
+    if (!dot) return;
+    if (tone) dot.setAttribute('data-tone', tone);
+    else dot.removeAttribute('data-tone');
   });
 
   // ---- keys: f fullscreen, 1–4 one region, 0 all. Escape is the browser's. ----

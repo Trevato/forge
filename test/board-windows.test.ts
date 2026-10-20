@@ -306,7 +306,7 @@ describe("efficiency and standing, grouped", () => {
     expect(page).toContain("account 1");
     expect(page).toContain("5-hour window");
     expect(page).toContain("weekly window");
-    expect(page).toContain('class="board-inferred">inferred</i>');
+    expect(page).toMatch(/data-variant="outline"\s*>inferred</);
     expect(page).toContain(">full<");
     // ($3.00 + $1.50 + $0.50) ÷ 2 merged this week = $2.50.
     expect(page).toContain("$2.50 per shipped change this week");

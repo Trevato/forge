@@ -29,6 +29,8 @@ import { claimRun, createRun, finishRun } from "../src/core/runs.ts";
 import { submitReview } from "../src/core/reviews.ts";
 import { createUser, getUserByName, type User } from "../src/core/users.ts";
 import { serve, type Servers } from "../src/http/server.ts";
+import { boardCss } from "../src/web/pages/board.ts";
+import { meter } from "../src/web/ui.ts";
 
 describe("the board", () => {
   let dataDir: string;
@@ -146,7 +148,7 @@ describe("the board", () => {
     expect(html).toContain("Nothing has shipped yet.");
     expect(html).toContain("Nothing decided yet.");
     // The one app that runs on its own, with its ceiling.
-    expect(html).toContain('class="board-card board-app"');
+    expect(html).toContain('data-key="app:');
     expect(html).toMatch(/\$0\.00<\/b> of\s+\$20/);
     expect(html).toContain('id="board-live"');
     expect(html).toContain('id="board-clock"');
@@ -245,8 +247,8 @@ describe("the board", () => {
       html.indexOf('id="working"'),
       html.indexOf('id="landed"'),
     );
-    expect(working).toContain('data-state="working"');
-    expect(working).toContain('data-state="queued"');
+    expect(working).toContain(">working</span");
+    expect(working).toContain(">queued</span");
     expect(working.indexOf("on the cart")).toBeLessThan(
       working.indexOf("Make the notes page load"),
     );
@@ -271,7 +273,7 @@ describe("the board", () => {
       html.indexOf('id="today"'),
     );
     expect(decided).toContain("ship or show");
-    expect(decided).toContain('data-w="82"');
+    expect(decided).toContain('value="82"');
     expect(decided).toContain("by typesafe");
     expect(decided).toContain("next issue");
     expect(decided).toContain(`#${told.value.number}`);
@@ -341,6 +343,24 @@ describe("the board", () => {
     expect(home).toContain("Board");
   });
 
+  test("built from the design system: no page-local class but §5's board, one column under 1100px", async () => {
+    const html = await (await get("/board")).text();
+    const body = html.slice(html.indexOf('<div class="board"'), html.indexOf("<script"));
+    const classes = new Set(
+      [...body.matchAll(/class="([^"]*)"/g)].flatMap((m) => m[1]!.split(/\s+/)),
+    );
+    expect([...classes].filter((c) => c.startsWith("board")).sort()).toEqual([
+      "board",
+      "board-grid",
+      "board-region",
+    ]);
+    // The four regions sit side by side only on a monitor; a phone reads one
+    // column, each region after the last.
+    const sheet = boardCss.slice(0, boardCss.indexOf("@media (min-width: 1100px)"));
+    expect(sheet).not.toContain("grid-template-columns");
+    expect(boardCss.slice(sheet.length)).toContain(".board-grid { grid-template-columns");
+  });
+
   test("?wall is the wall mode: the same live regions, marked for the far screen", async () => {
     const plain = await (await get("/board")).text();
     expect(plain).not.toContain("data-wall");
@@ -349,7 +369,7 @@ describe("the board", () => {
     const html = await res.text();
     expect(html).toMatch(/<div class="board"\s+data-wall="">/);
     expect(html).toMatch(/id="working"\s+data-live="run\.queued,run\.started,run\.finished"/);
-    expect(html).toMatch(/class="board-scope"\s*>notes</);
+    expect(html).toMatch(/id="board-scope"\s*>notes</);
   });
 
   // The big view's every address, each its own test: all land on the wall mode.
@@ -496,9 +516,9 @@ describe("the board's forge strip", () => {
     try {
       const text = await board("root");
       expect(text).toContain("All fine");
-      expect(text).not.toContain("board-forge-need");
+      expect(text).not.toContain("data-need");
       expect(text).not.toContain("error-note");
-      expect(text).toContain("board-card board-run");
+      expect(text).toContain('data-key="run:');
     } finally {
       changeCapacity(app, admin, "cells.egress", "enforce");
     }
@@ -517,9 +537,9 @@ describe("the board's forge strip", () => {
       expect(blocked).toContain("needs you: forge stuck: quota refused &lt;i&gt;8Gi&lt;/i&gt;");
       expect(blocked).not.toContain("<i>8Gi</i>");
       // One line, said once, and the board beneath it still renders.
-      expect(blocked.match(/class="board-forge-need"/g)?.length).toBe(1);
+      expect(blocked.match(/<(?:a|span) data-need/g)?.length).toBe(1);
       expect(blocked).not.toContain("rollout blocked");
-      expect(blocked).toContain("board-card board-run");
+      expect(blocked).toContain('data-key="run:');
       expect(await board("bob")).not.toContain("quota refused");
     } finally {
       delete process.env["FORGE_GUARD_DIR"];
@@ -558,8 +578,9 @@ describe("the board's forge strip", () => {
     try {
       expect(hunt(app, "root/stuck").filed).toBeGreaterThan(0);
       const seen = await board("root");
-      expect(seen).toMatch(/<a class="board-forge-need" id="sentinel" href="\/root\/stuck\/issues">The sentinel has \d+ open findings?<\/a>/);
-      expect(seen).not.toContain('class="board-forge-ok" id="sentinel"');
+      expect(seen).toMatch(/<a data-need id="sentinel" href="\/root\/stuck\/issues">[\s\S]*?The sentinel has \d+ open findings?<\/a>/);
+      // A need, so it wears the attention dot, never the fine one.
+      expect(seen).toMatch(/id="sentinel"[^>]*>\s*<span\s+class="dot"\s+data-tone="attn"/);
       expect(await board("bob")).not.toMatch(/sentinel/i);
       const guest = await (await fetch(`${servers.url}/board`)).text();
       expect(guest).not.toMatch(/sentinel/i);
@@ -567,5 +588,16 @@ describe("the board's forge strip", () => {
       delete process.env["FORGE_SENTINEL_REPO"];
       setCapacity(app.db, "checks.concurrency", "1", admin.id);
     }
+  });
+});
+
+describe("meter", () => {
+  test("a whole percentage between 0 and 100, said in words, attn only when asked", () => {
+    expect(meter(82.4, "82% sure").text).toMatch(/value="82"[\s\S]*aria-label="82% sure"/);
+    expect(meter(140, "over").text).toContain('value="100"');
+    expect(meter(-3, "under").text).toContain('value="0"');
+    expect(meter(50, "half").text).not.toContain("data-tone");
+    expect(meter(100, "at the ceiling", "attn").text).toContain('data-tone="attn"');
+    expect(meter(1, '<b>"x"</b>').text).not.toContain("<b>");
   });
 });

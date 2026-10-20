@@ -216,6 +216,17 @@ a.label:hover { color: color-mix(in srgb, var(--label) 90%, var(--fg)); }
 .dot[data-tone="attn"] { background: var(--attn); }
 .dot[data-tone="merged"] { background: var(--merged); }
 
+/* ---- meter: a share as a bar — spend against a ceiling, a window used, how sure ---- */
+meter {
+  display: block; width: 100%; height: 6px; appearance: none;
+  background: var(--muted); border: 0; border-radius: 999px; overflow: hidden;
+}
+meter::-webkit-meter-bar { height: 6px; background: var(--muted); border: 0; border-radius: 999px; }
+meter::-webkit-meter-optimum-value, meter::-webkit-meter-suboptimum-value, meter::-webkit-meter-even-less-good-value { background: var(--muted-fg); border-radius: 999px; }
+meter::-moz-meter-bar { background: var(--muted-fg); border-radius: 999px; }
+meter[data-tone="attn"]::-webkit-meter-optimum-value, meter[data-tone="attn"]::-webkit-meter-suboptimum-value, meter[data-tone="attn"]::-webkit-meter-even-less-good-value { background: var(--attn); }
+meter[data-tone="attn"]::-moz-meter-bar { background: var(--attn); }
+
 kbd {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 20px; height: 20px; padding: 0 5px;

@@ -83,7 +83,7 @@ test("a burst of errors: the board says so, one page, no more; clear for five mi
   await at(0);
   const burst = await board();
   expect(burst).toMatch(/data-ok="no"/);
-  expect(burst).toMatch(/class="board-forge-need" href="\/settings\/capacity#errors">20 errors in the last hour/);
+  expect(burst).toMatch(/data-need href="\/settings\/capacity#errors">[\s\S]*?20 errors in the last hour/);
   expect(burst).not.toContain("All fine");
   await at(4);
   expect(posts).toHaveLength(0);
@@ -110,5 +110,5 @@ test("a burst of errors: the board says so, one page, no more; clear for five mi
   const calm = await board();
   expect(calm).toContain("All fine");
   expect(calm).toMatch(/data-ok="yes"/);
-  expect(calm).not.toContain("board-forge-need");
+  expect(calm).not.toContain("data-need");
 });

@@ -667,6 +667,21 @@ export function dot(tone: Tone = "default"): Html {
   ></span>`;
 }
 
+/**
+ * A share as a bar: a whole percentage, 0–100, and what it is a share of in
+ * words for a screen reader. `attn` when the share is a limit reached.
+ */
+export function meter(percent: number, label: string, tone?: "attn"): Html {
+  const value = Math.max(0, Math.min(100, Math.round(percent)));
+  return html`<meter
+    min="0"
+    max="100"
+    value="${value}"
+    aria-label="${label}"
+    ${tone ? html`data-tone="${tone}"` : null}
+  >${value}%</meter>`;
+}
+
 /** A short object id in a monospace chip — always the first 7 characters. */
 export function sha(oid: string, href?: string): Html {
   const short = oid.slice(0, 7);

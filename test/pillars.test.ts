@@ -655,7 +655,7 @@ describe("pillars", () => {
     expect("pillar" in data.issues[0]).toBe(false);
     expect(await get("/alice/plain/map")).not.toContain('id="map-pillars"');
     expect(await get("/board?apps=plain")).not.toContain(
-      'class="board-pillars"',
+      'data-pillars',
     );
   });
 

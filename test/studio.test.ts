@@ -252,11 +252,11 @@ describe("the studio", () => {
     expect(css).toContain(".studio-tell textarea");
     expect(css).toContain(".studio-ask-actions");
     expect(css).toContain("@keyframes studio-flash");
-    expect(css).toContain('.board-fill[data-w="100"]');
+    expect(css).toContain('.board[data-focus="working"] #working');
     // In the `components` layer, last: an inline block used to win over every
     // layer, and last in `components` is the nearest place that still reads
     // the same — a `content` rule or a utility must keep out-specifying them.
-    for (const rule of [".studio-tell textarea", ".board-h"]) {
+    for (const rule of [".studio-tell textarea", ".board-region > h2"]) {
       expect(css.indexOf(rule)).toBeGreaterThan(
         css.indexOf("@layer components {"),
       );

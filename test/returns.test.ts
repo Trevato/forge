@@ -298,7 +298,7 @@ describe("what the tokens bought", () => {
 
   test("the owner sees one line on the board, one tap to the breakdown, and the same over the API and MCP", async () => {
     const board = await (await get("/board", { cookie: aliceCookie })).text();
-    const line = /<a class="board-asks" id="returns-line"[^>]*>([\s\S]*?)<\/a>/
+    const line = /<a class="muted small" id="returns-line"[^>]*>([\s\S]*?)<\/a>/
       .exec(board)?.[1]
       ?.replace(/\s+/g, " ");
     expect(line).toContain("<b>$4.00</b> → <b>1</b> landed");
